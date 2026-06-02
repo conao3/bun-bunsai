@@ -75,10 +75,26 @@ const managedPolicy = JSON.stringify({
   Statement: [{ Effect: "Allow", Action: "s3:ListBucket", Resource: "*" }],
 });
 
+const trustPolicy = JSON.stringify({
+  Version: "2012-10-17",
+  Statement: [
+    {
+      Effect: "Allow",
+      Principal: { Service: "ec2.amazonaws.com" },
+      Action: "sts:AssumeRole",
+    },
+  ],
+});
+
 test("IAM inline role policy lifecycle", async () => {
   const client = iam();
 
-  await client.send(new CreateRoleCommand({ RoleName: "ops-inline-role" }));
+  await client.send(
+    new CreateRoleCommand({
+      RoleName: "ops-inline-role",
+      AssumeRolePolicyDocument: trustPolicy,
+    }),
+  );
 
   await client.send(
     new PutRolePolicyCommand({
@@ -119,7 +135,12 @@ test("IAM inline role policy lifecycle", async () => {
 test("IAM instance profile lifecycle", async () => {
   const client = iam();
 
-  await client.send(new CreateRoleCommand({ RoleName: "ops-profile-role" }));
+  await client.send(
+    new CreateRoleCommand({
+      RoleName: "ops-profile-role",
+      AssumeRolePolicyDocument: trustPolicy,
+    }),
+  );
 
   const created = await client.send(
     new CreateInstanceProfileCommand({
@@ -148,7 +169,12 @@ test("IAM instance profile lifecycle", async () => {
 test("IAM ListEntitiesForPolicy reports attached roles", async () => {
   const client = iam();
 
-  await client.send(new CreateRoleCommand({ RoleName: "ops-entity-role" }));
+  await client.send(
+    new CreateRoleCommand({
+      RoleName: "ops-entity-role",
+      AssumeRolePolicyDocument: trustPolicy,
+    }),
+  );
 
   const createdPolicy = await client.send(
     new CreatePolicyCommand({
@@ -176,7 +202,12 @@ test("IAM ListEntitiesForPolicy reports attached roles", async () => {
 test("IAM role tagging", async () => {
   const client = iam();
 
-  await client.send(new CreateRoleCommand({ RoleName: "ops-tag-role" }));
+  await client.send(
+    new CreateRoleCommand({
+      RoleName: "ops-tag-role",
+      AssumeRolePolicyDocument: trustPolicy,
+    }),
+  );
 
   await client.send(
     new TagRoleCommand({

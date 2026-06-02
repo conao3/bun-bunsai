@@ -40,6 +40,11 @@ import wafv2 from "./wafv2.ts";
 import scheduler from "./scheduler.ts";
 import sagemaker from "./sagemaker.ts";
 import mq from "./mq.ts";
+import eks from "./eks.ts";
+import appsync from "./appsync.ts";
+import codebuild from "./codebuild.ts";
+import codepipeline from "./codepipeline.ts";
+import transfer from "./transfer.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -83,6 +88,11 @@ export const services: ServiceDefinition[] = [
   scheduler,
   sagemaker,
   mq,
+  eks,
+  appsync,
+  codebuild,
+  codepipeline,
+  transfer,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

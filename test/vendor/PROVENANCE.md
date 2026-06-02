@@ -106,6 +106,11 @@ aws-models/
   scheduler.json       # botocore/data/scheduler/2021-06-30/service-2.json       (protocol rest-json)
   sagemaker.json       # botocore/data/sagemaker/2017-07-24/service-2.json       (protocol json)
   mq.json              # botocore/data/mq/2017-11-27/service-2.json              (protocol rest-json)
+  eks.json             # botocore/data/eks/2017-11-01/service-2.json             (protocol rest-json)
+  appsync.json         # botocore/data/appsync/2017-07-25/service-2.json         (protocol rest-json)
+  codebuild.json       # botocore/data/codebuild/2016-10-06/service-2.json       (protocol json)
+  codepipeline.json    # botocore/data/codepipeline/2015-07-09/service-2.json    (protocol json)
+  transfer.json        # botocore/data/transfer/2018-11-05/service-2.json        (protocol json)
 ```
 
 ### Notes

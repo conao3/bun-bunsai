@@ -136,13 +136,9 @@ test("ELBv2 load balancer / target group / listener round-trip", async () => {
   expect(describedListeners.Listeners?.[0]?.ListenerArn).toBe(listenerArn);
 
   await client.send(new DeleteTargetGroupCommand({ TargetGroupArn: tgArn }));
-  await client.send(
-    new DeleteLoadBalancerCommand({ LoadBalancerArn: lbArn }),
-  );
+  await client.send(new DeleteLoadBalancerCommand({ LoadBalancerArn: lbArn }));
 
-  const remaining = await client.send(
-    new DescribeLoadBalancersCommand({}),
-  );
+  const remaining = await client.send(new DescribeLoadBalancersCommand({}));
   expect(
     remaining.LoadBalancers?.some((entry) => entry.LoadBalancerArn === lbArn),
   ).toBe(false);

@@ -44,11 +44,7 @@ const requireString = (
 ): string => {
   const value = input[field];
   if (typeof value !== "string" || value === "") {
-    throw awsError(
-      "InvalidRequestException",
-      `${field} is required.`,
-      400,
-    );
+    throw awsError("InvalidRequestException", `${field} is required.`, 400);
   }
   return value;
 };

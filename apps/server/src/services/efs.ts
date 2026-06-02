@@ -208,7 +208,11 @@ const CreateMountTarget: OperationHandler = (input, ctx) => {
   const fileSystemId = stringOrUndefined(input["FileSystemId"]);
   const subnetId = stringOrUndefined(input["SubnetId"]);
   if (fileSystemId === undefined || subnetId === undefined) {
-    throw awsError("BadRequest", "FileSystemId and SubnetId are required.", 400);
+    throw awsError(
+      "BadRequest",
+      "FileSystemId and SubnetId are required.",
+      400,
+    );
   }
   const fileSystem = requireFileSystem(ctx, fileSystemId);
   const mountTargetId = `fsmt-${hex(8)}`;

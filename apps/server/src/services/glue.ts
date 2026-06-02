@@ -35,10 +35,7 @@ const requireName = (input: Record<string, unknown>): string => {
   return value;
 };
 
-const requireDatabase = (
-  ctx: ServiceContext,
-  name: string,
-): StoredDatabase => {
+const requireDatabase = (ctx: ServiceContext, name: string): StoredDatabase => {
   const database = ctx.store.get<StoredDatabase>(name);
   if (database === undefined) {
     throw awsError(
@@ -183,11 +180,7 @@ const requireTable = (
   const database = requireDatabase(ctx, databaseName);
   const table = database.tables[name];
   if (table === undefined) {
-    throw awsError(
-      "EntityNotFoundException",
-      `Table ${name} not found.`,
-      400,
-    );
+    throw awsError("EntityNotFoundException", `Table ${name} not found.`, 400);
   }
   return table;
 };
@@ -230,11 +223,7 @@ const DeleteTable: OperationHandler = (input, ctx) => {
   const name = requireName(input);
   const database = requireDatabase(ctx, databaseName);
   if (database.tables[name] === undefined) {
-    throw awsError(
-      "EntityNotFoundException",
-      `Table ${name} not found.`,
-      400,
-    );
+    throw awsError("EntityNotFoundException", `Table ${name} not found.`, 400);
   }
   delete database.tables[name];
   ctx.store.set(databaseName, database);

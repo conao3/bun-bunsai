@@ -1,10 +1,7 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import elbv2Model from "../../../../test/vendor/aws-models/elbv2.json" with { type: "json" };
-import type {
-  OperationHandler,
-  ServiceDefinition,
-} from "../core/types.ts";
+import type { OperationHandler, ServiceDefinition } from "../core/types.ts";
 
 const model = loadServiceModel(elbv2Model);
 
@@ -99,9 +96,7 @@ const objectList = (value: unknown): Record<string, unknown>[] =>
         .map((item) => ({ ...item }))
     : [];
 
-const loadBalancerView = (
-  lb: StoredLoadBalancer,
-): Record<string, unknown> => ({
+const loadBalancerView = (lb: StoredLoadBalancer): Record<string, unknown> => ({
   LoadBalancerArn: lb.LoadBalancerArn,
   DNSName: lb.DNSName,
   CanonicalHostedZoneId: lb.CanonicalHostedZoneId,
@@ -116,9 +111,7 @@ const loadBalancerView = (
   IpAddressType: lb.IpAddressType,
 });
 
-const targetGroupView = (
-  tg: StoredTargetGroup,
-): Record<string, unknown> => ({
+const targetGroupView = (tg: StoredTargetGroup): Record<string, unknown> => ({
   TargetGroupArn: tg.TargetGroupArn,
   TargetGroupName: tg.TargetGroupName,
   ...(tg.Protocol === undefined ? {} : { Protocol: tg.Protocol }),
@@ -130,9 +123,7 @@ const targetGroupView = (
   IpAddressType: tg.IpAddressType,
 });
 
-const listenerView = (
-  listener: StoredListener,
-): Record<string, unknown> => ({
+const listenerView = (listener: StoredListener): Record<string, unknown> => ({
   ListenerArn: listener.ListenerArn,
   LoadBalancerArn: listener.LoadBalancerArn,
   ...(listener.Port === undefined ? {} : { Port: listener.Port }),
@@ -322,11 +313,7 @@ const DescribeListeners: OperationHandler = (input, ctx) => {
     selected = arns.map((arn) => {
       const found = all.find((listener) => listener.ListenerArn === arn);
       if (found === undefined) {
-        throw awsError(
-          "ListenerNotFound",
-          `Listener '${arn}' not found`,
-          400,
-        );
+        throw awsError("ListenerNotFound", `Listener '${arn}' not found`, 400);
       }
       return found;
     });

@@ -72,9 +72,7 @@ describe("glue e2e", () => {
       }),
     );
 
-    const gotDb = await client.send(
-      new GetDatabaseCommand({ Name: dbName }),
-    );
+    const gotDb = await client.send(new GetDatabaseCommand({ Name: dbName }));
     expect(gotDb.Database?.Name).toBe(dbName);
     expect(gotDb.Database?.Description).toBe("e2e database");
     expect(gotDb.Database?.CreateTime).toBeInstanceOf(Date);

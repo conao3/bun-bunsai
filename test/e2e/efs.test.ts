@@ -94,9 +94,9 @@ test("EFS file system, mount target and lifecycle roundtrip", async () => {
   const mountTargets = await client.send(
     new DescribeMountTargetsCommand({ FileSystemId: fileSystemId }),
   );
-  expect((mountTargets.MountTargets ?? []).map((mt) => mt.MountTargetId)).toContain(
-    mountTargetId,
-  );
+  expect(
+    (mountTargets.MountTargets ?? []).map((mt) => mt.MountTargetId),
+  ).toContain(mountTargetId);
 
   const lifecycle = await client.send(
     new PutLifecycleConfigurationCommand({

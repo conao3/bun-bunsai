@@ -35,6 +35,11 @@ import batch from "./batch.ts";
 import redshift from "./redshift.ts";
 import acm from "./acm.ts";
 import cloudtrail from "./cloudtrail.ts";
+import opensearch from "./opensearch.ts";
+import wafv2 from "./wafv2.ts";
+import scheduler from "./scheduler.ts";
+import sagemaker from "./sagemaker.ts";
+import mq from "./mq.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -73,6 +78,11 @@ export const services: ServiceDefinition[] = [
   redshift,
   acm,
   cloudtrail,
+  opensearch,
+  wafv2,
+  scheduler,
+  sagemaker,
+  mq,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

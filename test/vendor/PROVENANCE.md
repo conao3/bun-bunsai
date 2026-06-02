@@ -101,6 +101,11 @@ aws-models/
   redshift.json        # botocore/data/redshift/2012-12-01/service-2.json       (protocol query)
   acm.json             # botocore/data/acm/2015-12-08/service-2.json            (protocol json)
   cloudtrail.json      # botocore/data/cloudtrail/2013-11-01/service-2.json     (protocol json)
+  opensearch.json      # botocore/data/opensearch/2021-01-01/service-2.json      (protocol rest-json)
+  wafv2.json           # botocore/data/wafv2/2019-07-29/service-2.json           (protocol json)
+  scheduler.json       # botocore/data/scheduler/2021-06-30/service-2.json       (protocol rest-json)
+  sagemaker.json       # botocore/data/sagemaker/2017-07-24/service-2.json       (protocol json)
+  mq.json              # botocore/data/mq/2017-11-27/service-2.json              (protocol rest-json)
 ```
 
 ### Notes

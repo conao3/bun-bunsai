@@ -49,6 +49,36 @@ botocore-protocol-tests/
   `botocore-protocol-tests/` to satisfy Apache-2.0 4(a)/4(d). The root `NOTICE`
   propagates the Botocore attribution.
 
+## aws-models/
+
+|               |                                                                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Upstream repo | https://github.com/boto/botocore                                                                                                               |
+| License       | Apache-2.0                                                                                                                                     |
+| Pinned tag    | `1.43.19`                                                                                                                                      |
+| Commit hash   | `8fdb47d1636e7f7ae0cacdd4584ffd339f88c546`                                                                                                     |
+| Source path   | `botocore/data/<service>/<apiVersion>/service-2.json`                                                                                          |
+| Fetched on    | 2026-06-02 (JST)                                                                                                                                |
+| Method        | GitHub Contents API (`api.github.com/repos/boto/botocore/contents/botocore/data/<service>?ref=<tag>`) to discover the apiVersion directory, then `raw.githubusercontent.com/boto/botocore/<commit>/botocore/data/<service>/<apiVersion>/service-2.json` for the bytes (verbatim) |
+
+### Layout
+
+```
+aws-models/
+  s3.json    # botocore/data/s3/2006-03-01/service-2.json  (protocol rest-xml)
+  sqs.json   # botocore/data/sqs/2012-11-05/service-2.json (protocol json)
+  sts.json   # botocore/data/sts/2011-06-15/service-2.json (protocol query)
+```
+
+### Notes
+
+- Each file is the upstream `service-2.json` ( `{ metadata, operations, shapes }` )
+  byte-for-byte. bunsai's `apps/server/src/core/shapes.ts` loads them at runtime
+  and normalizes the shapes dict into a common `ShapeRegistry`.
+- Apache-2.0 attribution is satisfied by the co-located
+  `botocore-protocol-tests/LICENSE.txt` / `NOTICE` and the root `NOTICE`, which
+  already propagate the Botocore attribution for all vendored botocore data.
+
 ## Refreshing
 
 Re-run with the same GitHub Contents API + raw.githubusercontent.com flow

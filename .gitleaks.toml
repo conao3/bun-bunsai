@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vendored upstream test data is byte-for-byte copies of botocore (Apache-2.0). It contains AWS's own public documentation example credentials (AKIAIOSFODNN7EXAMPLE / wJalrXUtnFEMI...EXAMPLEKEY), which are not real secrets."
+paths = [
+  '''test/vendor/.*''',
+]
+regexes = [
+  '''AKIAIOSFODNN7EXAMPLE''',
+  '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',
+]

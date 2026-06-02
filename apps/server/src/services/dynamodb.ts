@@ -280,6 +280,123 @@ const Scan: OperationHandler = (input, ctx) => {
   };
 };
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : {};
+
+const applyWriteRequest = (
+  ctx: ServiceContext,
+  name: string,
+  request: Record<string, unknown>,
+): void => {
+  const table = requireTable(ctx, name);
+  const put = request["PutRequest"];
+  const del = request["DeleteRequest"];
+  if (put !== undefined) {
+    const item = asItem(asRecord(put)["Item"]);
+    table.items[keyOf(table, item)] = item;
+    ctx.store.set(name, table);
+    return;
+  }
+  if (del !== undefined) {
+    const key = keyFromKeyInput(table, asItem(asRecord(del)["Key"]));
+    if (table.items[key] !== undefined) {
+      delete table.items[key];
+      ctx.store.set(name, table);
+    }
+  }
+};
+
+const BatchWriteItem: OperationHandler = (input, ctx) => {
+  const requestItems = asRecord(input["RequestItems"]);
+  for (const [name, requests] of Object.entries(requestItems)) {
+    const list = Array.isArray(requests)
+      ? (requests as Record<string, unknown>[])
+      : [];
+    for (const request of list) {
+      applyWriteRequest(ctx, name, asRecord(request));
+    }
+  }
+  return { UnprocessedItems: {} };
+};
+
+const BatchGetItem: OperationHandler = (input, ctx) => {
+  const requestItems = asRecord(input["RequestItems"]);
+  const responses: Record<string, Item[]> = {};
+  for (const [name, spec] of Object.entries(requestItems)) {
+    const table = requireTable(ctx, name);
+    const keys = Array.isArray(asRecord(spec)["Keys"])
+      ? (asRecord(spec)["Keys"] as Item[])
+      : [];
+    const found: Item[] = [];
+    for (const key of keys) {
+      const item = table.items[keyFromKeyInput(table, asItem(key))];
+      if (item !== undefined) found.push(item);
+    }
+    responses[name] = found;
+  }
+  return { Responses: responses, UnprocessedKeys: {} };
+};
+
+const TransactWriteItems: OperationHandler = (input, ctx) => {
+  const transactItems = Array.isArray(input["TransactItems"])
+    ? (input["TransactItems"] as Record<string, unknown>[])
+    : [];
+  const snapshots = new Map<string, StoredTable>();
+  const tableFor = (name: string): StoredTable => {
+    const existing = snapshots.get(name);
+    if (existing !== undefined) return existing;
+    const table = requireTable(ctx, name);
+    snapshots.set(name, {
+      ...table,
+      items: { ...table.items },
+    });
+    return snapshots.get(name) as StoredTable;
+  };
+  for (const entry of transactItems) {
+    const item = asRecord(entry);
+    const put = item["Put"];
+    const del = item["Delete"];
+    const update = item["Update"];
+    if (put !== undefined) {
+      const spec = asRecord(put);
+      const table = tableFor(requireString(spec, "TableName"));
+      const value = asItem(spec["Item"]);
+      table.items[keyOf(table, value)] = value;
+    } else if (del !== undefined) {
+      const spec = asRecord(del);
+      const table = tableFor(requireString(spec, "TableName"));
+      delete table.items[keyFromKeyInput(table, asItem(spec["Key"]))];
+    } else if (update !== undefined) {
+      const spec = asRecord(update);
+      const table = tableFor(requireString(spec, "TableName"));
+      const key = keyFromKeyInput(table, asItem(spec["Key"]));
+      const existing = table.items[key] ?? { ...asItem(spec["Key"]) };
+      const values = asRecord(spec["ExpressionAttributeValues"]);
+      table.items[key] = { ...existing, ...(values as Item) };
+    }
+  }
+  for (const [name, table] of snapshots) {
+    ctx.store.set(name, table);
+  }
+  return {};
+};
+
+const TransactGetItems: OperationHandler = (input, ctx) => {
+  const transactItems = Array.isArray(input["TransactItems"])
+    ? (input["TransactItems"] as Record<string, unknown>[])
+    : [];
+  const responses: Record<string, unknown>[] = [];
+  for (const entry of transactItems) {
+    const get = asRecord(asRecord(entry)["Get"]);
+    const table = requireTable(ctx, requireString(get, "TableName"));
+    const item = table.items[keyFromKeyInput(table, asItem(get["Key"]))];
+    responses.push(item === undefined ? {} : { Item: item });
+  }
+  return { Responses: responses };
+};
+
 const dynamodb: ServiceDefinition = {
   name: "dynamodb",
   protocol: "json",
@@ -294,6 +411,10 @@ const dynamodb: ServiceDefinition = {
     UpdateItem,
     Query,
     Scan,
+    BatchWriteItem,
+    BatchGetItem,
+    TransactWriteItems,
+    TransactGetItems,
   },
   model,
 } as const;

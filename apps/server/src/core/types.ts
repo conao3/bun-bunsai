@@ -1,4 +1,10 @@
-export const protocols = ["query", "json", "rest-json", "rest-xml"] as const;
+export const protocols = [
+  "query",
+  "ec2",
+  "json",
+  "rest-json",
+  "rest-xml",
+] as const;
 
 export type Protocol = (typeof protocols)[number];
 

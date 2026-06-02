@@ -694,8 +694,68 @@ const parseQueryStructure = (
   return out;
 };
 
+const capitalizeFirst = (value: string): string =>
+  value.length === 0 ? value : value[0].toUpperCase() + value.slice(1);
+
+const ec2WireName = (name: string, member: Member): string => {
+  if (member.queryName !== undefined) return member.queryName;
+  return capitalizeFirst(member.locationName ?? name);
+};
+
+const parseEc2Node = (
+  registry: ShapeRegistry,
+  shape: Shape | undefined,
+  node: unknown,
+): unknown => {
+  if (shape === undefined) return node;
+  if (shape.type === "structure")
+    return parseEc2Structure(registry, shape, node);
+  if (shape.type === "list") return parseEc2List(registry, shape, node);
+  if (shape.type === "map") return parseQueryMap(registry, shape, node);
+  if (typeof node === "string") return parseScalar(shape, node);
+  return node;
+};
+
+const parseEc2List = (
+  registry: ShapeRegistry,
+  shape: ListShape,
+  node: unknown,
+): unknown[] => {
+  if (typeof node !== "object" || node === null) return [];
+  const items = collectIndexed(node as Record<string, unknown>, undefined);
+  const itemShape = memberShape(registry, shape.member);
+  return items.map((item) => parseEc2Node(registry, itemShape, item));
+};
+
+const parseEc2Structure = (
+  registry: ShapeRegistry,
+  shape: StructureShape,
+  node: unknown,
+): Record<string, unknown> => {
+  if (typeof node !== "object" || node === null) return {};
+  const record = node as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [name, member] of Object.entries(shape.members)) {
+    const memberSh = memberShape(registry, member);
+    const wire = ec2WireName(name, member);
+    const raw = record[wire];
+    if (raw === undefined) continue;
+    out[name] = parseEc2Node(registry, memberSh, raw);
+  }
+  return out;
+};
+
 export const parseShapeInput = (req: ParseRequest): Record<string, unknown> => {
   const { protocol, registry, shape } = req;
+  if (protocol === "ec2") {
+    const form = formToTree([
+      ...req.query.entries(),
+      ...formEntries(req.bodyText),
+    ]);
+    if (shape !== undefined && shape.type === "structure")
+      return parseEc2Structure(registry, shape, form);
+    return form;
+  }
   if (protocol === "rest-json" || protocol === "rest-xml") {
     if (shape !== undefined && shape.type === "structure")
       return parseRestStructure(req, shape);

@@ -13,6 +13,7 @@ import type { CodecResult } from "./codec/common.ts";
 
 export const contentTypes = {
   query: "text/xml",
+  ec2: "text/xml;charset=UTF-8",
   json: "application/x-amz-json-1.1",
   "rest-json": "application/json",
   "rest-xml": "application/xml",
@@ -143,7 +144,8 @@ export type SerializeErrorOptions = {
 
 const fallbackParseInput = (req: ParsedRequest): Record<string, unknown> => {
   switch (req.protocol) {
-    case "query": {
+    case "query":
+    case "ec2": {
       const form = parseFormBody(req.bodyText);
       if (req.query.size > 0) {
         for (const [key, value] of req.query.entries()) form[key] = value;
@@ -195,13 +197,14 @@ const fallbackSerializeOutput = (
   result: unknown,
 ): CodecResult => {
   switch (protocol) {
-    case "query": {
+    case "query":
+    case "ec2": {
       const body = (result ?? {}) as Record<string, unknown>;
       return {
         body: buildXml(`${operation}Response`, body, {
           xmlns: "http://queue.amazonaws.com/doc/2012-11-05/",
         }),
-        contentType: contentTypes.query,
+        contentType: contentTypes[protocol],
       };
     }
     case "json":
@@ -263,6 +266,15 @@ const fallbackSerializeError = (
   error: AwsError,
 ): CodecResult => {
   switch (protocol) {
+    case "ec2":
+      return {
+        body: buildXml("Response", {
+          Errors: { Error: { Code: error.code, Message: error.message } },
+          RequestID: "foo-id",
+        }),
+        contentType: contentTypes.ec2,
+        statusCode: error.statusCode,
+      };
     case "query":
     case "rest-xml":
       return {

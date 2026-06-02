@@ -90,6 +90,22 @@ export const serializeShapeError = (
   const data = req.data ?? {};
   const message = req.message === "" ? undefined : req.message;
   switch (req.protocol) {
+    case "ec2": {
+      let inner = `<Code>${escapeXml(req.code)}</Code>`;
+      if (
+        message !== undefined &&
+        data.Message === undefined &&
+        data.message === undefined
+      )
+        inner += `<Message>${escapeXml(message)}</Message>`;
+      inner += dataMembersBody(req.shape, data);
+      const body = `<Response><Errors><Error>${inner}</Error></Errors><RequestID>foo-id</RequestID></Response>`;
+      return {
+        body,
+        contentType: contentTypes.ec2,
+        statusCode: req.statusCode,
+      };
+    }
     case "query":
     case "rest-xml": {
       const fault = req.senderFault === false ? "Receiver" : "Sender";

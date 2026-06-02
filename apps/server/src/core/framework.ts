@@ -38,7 +38,7 @@ export const resolveOperationName = (
     const parts = req.target.split(".");
     return parts[parts.length - 1];
   }
-  if (req.protocol === "query") {
+  if (req.protocol === "query" || req.protocol === "ec2") {
     const input = parseInput(req);
     const action = input["Action"];
     if (typeof action === "string") return action;

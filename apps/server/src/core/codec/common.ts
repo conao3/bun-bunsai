@@ -16,6 +16,7 @@ export type CodecResult = {
 
 export const contentTypes = {
   query: "text/xml",
+  ec2: "text/xml;charset=UTF-8",
   json: "application/x-amz-json-1.1",
   "rest-json": "application/json",
   "rest-xml": "application/xml",

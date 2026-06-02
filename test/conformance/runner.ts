@@ -71,7 +71,13 @@ export type VendorSuite = {
   cases: VendorCase[];
 };
 
-const supportedProtocols = ["query", "json", "rest-json", "rest-xml"] as const;
+const supportedProtocols = [
+  "query",
+  "ec2",
+  "json",
+  "rest-json",
+  "rest-xml",
+] as const;
 
 const isSupportedProtocol = (value: string): value is Protocol =>
   (supportedProtocols as readonly string[]).includes(value);
@@ -147,6 +153,7 @@ const compareBody = (
     case "rest-xml":
       expect(normalizeXml(actual)).toBe(normalizeXml(expected));
       return;
+    case "ec2":
     case "query":
       if (direction === "output") {
         expect(normalizeXml(actual)).toBe(normalizeXml(expected));
@@ -273,7 +280,10 @@ const runOutputCase = (
       registry,
       shape: outShape,
       outputShapeName: outShapeName,
-      xmlNamespace: protocol === "query" ? "https://example.com/" : undefined,
+      xmlNamespace:
+        protocol === "query" || protocol === "ec2"
+          ? "https://example.com/"
+          : undefined,
     },
   );
   if (response.body !== undefined)

@@ -492,6 +492,18 @@ const serializeQuery = (req: SerializeRequest): CodecResult => {
   return { body, contentType: contentTypes.query };
 };
 
+const serializeEc2 = (req: SerializeRequest): CodecResult => {
+  const { registry, shape } = req;
+  const ns = req.xmlNamespace;
+  const nsString = ns === undefined ? "" : ` xmlns="${escapeXml(ns)}"`;
+  const inner =
+    shape !== undefined && shape.type === "structure"
+      ? xmlStructureBody(registry, shape, req.result ?? {})
+      : "";
+  const body = `<${req.operation}Response${nsString}>${inner}<requestId>requestid</requestId></${req.operation}Response>`;
+  return { body, contentType: contentTypes.ec2 };
+};
+
 const serializeJson = (req: SerializeRequest): CodecResult => {
   const { registry, shape } = req;
   const value =
@@ -508,6 +520,8 @@ export const serializeShapeOutput = (req: SerializeRequest): CodecResult => {
   switch (req.protocol) {
     case "query":
       return serializeQuery(req);
+    case "ec2":
+      return serializeEc2(req);
     case "json":
       return serializeJson(req);
     case "rest-json":

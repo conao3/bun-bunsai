@@ -73,6 +73,9 @@ aws-models/
   secretsmanager.json  # botocore/data/secretsmanager/2017-10-17/service-2.json (protocol json)
   ssm.json             # botocore/data/ssm/2014-11-06/service-2.json            (protocol json)
   kms.json             # botocore/data/kms/2014-11-01/service-2.json            (protocol json)
+  iam.json             # botocore/data/iam/2010-05-08/service-2.json            (protocol query)
+  logs.json            # botocore/data/logs/2014-03-28/service-2.json           (protocol json)
+  eventbridge.json     # botocore/data/events/2015-10-07/service-2.json         (protocol json)
 ```
 
 ### Notes

@@ -13,7 +13,10 @@
     "fetch-protocol-tests": "bun scripts/fetch-protocol-tests.ts"
   },
   "devDependencies": {
+    "@aws-sdk/client-cloudwatch-logs": "^3.1058.0",
     "@aws-sdk/client-dynamodb": "^3.1058.0",
+    "@aws-sdk/client-eventbridge": "^3.1058.0",
+    "@aws-sdk/client-iam": "^3.1058.0",
     "@aws-sdk/client-kms": "^3.1058.0",
     "@aws-sdk/client-s3": "^3.1058.0",
     "@aws-sdk/client-secrets-manager": "^3.1058.0",

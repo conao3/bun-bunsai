@@ -7,6 +7,9 @@ import sns from "./sns.ts";
 import secretsmanager from "./secretsmanager.ts";
 import ssm from "./ssm.ts";
 import kms from "./kms.ts";
+import iam from "./iam.ts";
+import logs from "./logs.ts";
+import eventBridge from "./eventbridge.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -17,6 +20,9 @@ export const services: ServiceDefinition[] = [
   secretsmanager,
   ssm,
   kms,
+  iam,
+  logs,
+  eventBridge,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

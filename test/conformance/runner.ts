@@ -125,14 +125,22 @@ const normalizeXml = (text: string): string =>
 
 const compareBody = (
   protocol: Protocol,
+  direction: "input" | "output",
   actual: string,
   expected: string,
 ): void => {
   switch (protocol) {
     case "json":
     case "rest-json": {
-      const actualJson = actual.trim() === "" ? {} : JSON.parse(actual);
-      const expectedJson = expected.trim() === "" ? {} : JSON.parse(expected);
+      let actualJson: unknown;
+      let expectedJson: unknown;
+      try {
+        actualJson = actual.trim() === "" ? {} : JSON.parse(actual);
+        expectedJson = expected.trim() === "" ? {} : JSON.parse(expected);
+      } catch {
+        expect(actual).toBe(expected);
+        return;
+      }
       expect(sortKeys(actualJson)).toEqual(sortKeys(expectedJson));
       return;
     }
@@ -140,6 +148,10 @@ const compareBody = (
       expect(normalizeXml(actual)).toBe(normalizeXml(expected));
       return;
     case "query":
+      if (direction === "output") {
+        expect(normalizeXml(actual)).toBe(normalizeXml(expected));
+        return;
+      }
       expect(parseFormSet(actual)).toEqual(parseFormSet(expected));
       return;
   }
@@ -228,6 +240,11 @@ const runOutputCase = (
     const errShapeName = vcase.given.errors?.[0]?.shape;
     const errShape =
       errShapeName === undefined ? undefined : getShape(registry, errShapeName);
+    const data: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(vcase.error ?? {})) {
+      if (k === "Message" || k === "message") continue;
+      data[k] = v;
+    }
     const serialized = serializeError(protocol, toAwsError(vcase), {
       registry,
       shape:
@@ -235,9 +252,10 @@ const runOutputCase = (
           ? (errShape as StructureShape)
           : undefined,
       code: vcase.errorCode,
+      data,
     });
     if (response.body !== undefined)
-      compareBody(protocol, serialized.body, response.body);
+      compareBody(protocol, "output", serialized.body, response.body);
     compareHeaders(
       { "Content-Type": serialized.contentType, ...serialized.headers },
       response.headers,
@@ -251,9 +269,11 @@ const runOutputCase = (
     registry,
     shape: outShape,
     outputShapeName: outShapeName,
+    xmlNamespace:
+      protocol === "query" ? "https://example.com/" : undefined,
   });
   if (response.body !== undefined)
-    compareBody(protocol, serialized.body, response.body);
+    compareBody(protocol, "output", serialized.body, response.body);
   compareHeaders(
     { "Content-Type": serialized.contentType, ...serialized.headers },
     response.headers,

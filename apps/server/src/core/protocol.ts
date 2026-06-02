@@ -136,6 +136,7 @@ export type SerializeErrorOptions = {
   shape?: StructureShape;
   code?: string;
   senderFault?: boolean;
+  data?: Record<string, unknown>;
 };
 
 const fallbackParseInput = (req: ParsedRequest): Record<string, unknown> => {
@@ -300,6 +301,7 @@ export const serializeError = (
       message: error.message,
       statusCode: error.statusCode,
       senderFault: opts.senderFault,
+      data: opts.data,
     });
   }
   return fallbackSerializeError(protocol, error);

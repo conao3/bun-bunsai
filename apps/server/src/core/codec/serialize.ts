@@ -266,7 +266,10 @@ const serializeRestHeaders = (
     if (v === undefined || v === null) continue;
     if (member.location === "header") {
       const memberSh = memberShape(registry, member);
-      headers[member.locationName ?? name] = headerString(registry, memberSh, member, v);
+      headers[member.locationName ?? name] =
+        member.jsonvalue === true
+          ? blobToBase64(v)
+          : headerString(registry, memberSh, member, v);
     } else if (member.location === "headers") {
       const prefix = member.locationName ?? "";
       if (typeof v === "object")
@@ -285,7 +288,16 @@ const headerString = (
   if (shape !== undefined && shape.type === "list" && Array.isArray(value)) {
     const itemShape = memberShape(registry, shape.member);
     return value
-      .map((item) => headerString(registry, itemShape, shape.member, item))
+      .map((item) => {
+        const s = headerString(registry, itemShape, shape.member, item);
+        if (
+          itemShape !== undefined &&
+          itemShape.type === "string" &&
+          (s.includes(",") || s.includes('"') || s.includes("("))
+        )
+          return `"${s.replaceAll('"', '\\"')}"`;
+        return s;
+      })
       .join(", ");
   }
   if (shape !== undefined && shape.type === "timestamp")
@@ -362,13 +374,16 @@ const serializeRest = (req: SerializeRequest): CodecResult => {
       };
     if (memberSh !== undefined && memberSh.type === "structure") {
       if (isXml) {
-        const explicitName =
+        const memberOverride =
           member.locationName !== undefined &&
           member.locationName !== payloadMemberName
             ? member.locationName
             : undefined;
         const rootName =
-          explicitName ?? memberSh.locationName ?? payloadMemberName;
+          memberOverride ??
+          memberSh.locationName ??
+          member.shape ??
+          payloadMemberName;
         const attrParts = structureAttributes(registry, memberSh, v);
         const body = `<${rootName}${nsAttr(memberSh.xmlNamespace ?? member.xmlNamespace)}${attrParts}>${xmlStructureBody(registry, memberSh, v)}</${rootName}>`;
         return { body, contentType, headers, ...(statusCode !== undefined ? { statusCode } : {}) };

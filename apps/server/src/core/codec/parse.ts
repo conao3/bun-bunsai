@@ -243,7 +243,10 @@ const parseRestStructure = (
       const wire = (member.locationName ?? name).toLowerCase();
       const raw = req.headers.get(wire);
       if (raw !== null && raw !== undefined)
-        out[name] = parseHeaderValue(registry, memberSh, raw);
+        out[name] =
+          member.jsonvalue === true
+            ? blobFromBase64(raw)
+            : parseHeaderValue(registry, memberSh, raw);
       continue;
     }
     if (member.location === "headers") {
@@ -307,10 +310,17 @@ const parseRestStructure = (
         out[payloadMember] = req.bodyText;
       }
     } else if (memberSh !== undefined && memberSh.type === "structure") {
-      out[payloadMember] =
-        req.protocol === "rest-xml"
-          ? parseXmlStructure(registry, memberSh, parseXmlRoot(req.bodyText).children)
-          : parseBodyJson(registry, memberSh, req.bodyText);
+      if (req.protocol === "rest-xml") {
+        const root = parseXmlRoot(req.bodyText);
+        out[payloadMember] = parseXmlStructure(
+          registry,
+          memberSh,
+          root.children,
+          root.attrs,
+        );
+      } else {
+        out[payloadMember] = parseBodyJson(registry, memberSh, req.bodyText);
+      }
     } else if (memberSh !== undefined && memberSh.type === "blob") {
       out[payloadMember] = req.bodyText;
     } else {
@@ -321,10 +331,13 @@ const parseRestStructure = (
       type: "structure",
       members: bodyMembers,
     };
-    const parsedBody =
-      req.protocol === "rest-xml"
-        ? parseXmlStructure(registry, bodyShape, parseXmlRoot(req.bodyText).children)
-        : parseBodyJson(registry, bodyShape, req.bodyText);
+    let parsedBody: Record<string, unknown>;
+    if (req.protocol === "rest-xml") {
+      const root = parseXmlRoot(req.bodyText);
+      parsedBody = parseXmlStructure(registry, bodyShape, root.children, root.attrs);
+    } else {
+      parsedBody = parseBodyJson(registry, bodyShape, req.bodyText);
+    }
     for (const [k, v] of Object.entries(parsedBody)) out[k] = v;
   }
 
@@ -407,7 +420,7 @@ const parseAttrs = (text: string): Record<string, string> => {
   const re = /([\w:.-]+)\s*=\s*"([^"]*)"/g;
   let m: RegExpExecArray | null = re.exec(text);
   while (m !== null) {
-    out[m[1]] = m[2];
+    out[m[1]] = unescapeXml(m[2]);
     m = re.exec(text);
   }
   return out;

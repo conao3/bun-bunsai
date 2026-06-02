@@ -76,11 +76,22 @@ const dataMembersJson = (
   return out;
 };
 
+const messageMemberName = (
+  shape: StructureShape | undefined,
+): string | undefined => {
+  if (shape === undefined) return undefined;
+  for (const name of Object.keys(shape.members)) {
+    if (name === "Message" || name === "message" || name === "errorMessage")
+      return name;
+  }
+  return undefined;
+};
+
 export const serializeShapeError = (
   req: SerializeErrorRequest,
 ): CodecResult => {
   const data = req.data ?? {};
-  const message = req.message;
+  const message = req.message === "" ? undefined : req.message;
   switch (req.protocol) {
     case "query":
     case "rest-xml": {
@@ -98,8 +109,9 @@ export const serializeShapeError = (
     }
     case "json": {
       const payload: Record<string, unknown> = { __type: req.code };
-      if (message !== undefined && data.Message === undefined)
-        payload.Message = message;
+      const jsonMsgName = messageMemberName(req.shape) ?? "Message";
+      if (message !== undefined && data[jsonMsgName] === undefined)
+        payload[jsonMsgName] = message;
       Object.assign(payload, dataMembersJson(req.shape, data));
       return {
         body: JSON.stringify(payload),
@@ -109,8 +121,9 @@ export const serializeShapeError = (
     }
     case "rest-json": {
       const payload: Record<string, unknown> = {};
-      if (message !== undefined && data.Message === undefined)
-        payload.message = message;
+      const restMsgName = messageMemberName(req.shape) ?? "message";
+      if (message !== undefined && data[restMsgName] === undefined)
+        payload[restMsgName] = message;
       Object.assign(payload, dataMembersJson(req.shape, data));
       const headers: Record<string, string> = {
         "X-Amzn-Errortype": req.code,

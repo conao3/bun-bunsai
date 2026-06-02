@@ -83,6 +83,10 @@ aws-models/
   route53.json         # botocore/data/route53/2013-04-01/service-2.json        (protocol rest-xml)
   cloudformation.json  # botocore/data/cloudformation/2010-05-15/service-2.json (protocol query)
   apigateway.json      # botocore/data/apigateway/2015-07-09/service-2.json     (protocol rest-json)
+  ec2.json             # botocore/data/ec2/2016-11-15/service-2.json            (protocol ec2)
+  rds.json             # botocore/data/rds/2014-10-31/service-2.json            (protocol query)
+  ecr.json             # botocore/data/ecr/2015-09-21/service-2.json            (protocol json)
+  cognito-idp.json     # botocore/data/cognito-idp/2016-04-18/service-2.json    (protocol json)
 ```
 
 ### Notes

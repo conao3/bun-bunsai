@@ -17,6 +17,10 @@ import ses from "./ses.ts";
 import route53 from "./route53.ts";
 import cloudFormation from "./cloudformation.ts";
 import apiGateway from "./apigateway.ts";
+import ec2 from "./ec2.ts";
+import rds from "./rds.ts";
+import ecr from "./ecr.ts";
+import cognitoIdp from "./cognito-idp.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -37,6 +41,10 @@ export const services: ServiceDefinition[] = [
   route53,
   cloudFormation,
   apiGateway,
+  ec2,
+  rds,
+  ecr,
+  cognitoIdp,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

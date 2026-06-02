@@ -32,6 +32,9 @@
           devShells.default = pkgs.mkShell {
             packages = with pkgs; [
               bun
+              git
+              gh
+              jq
             ];
           };
         };

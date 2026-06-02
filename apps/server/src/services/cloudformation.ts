@@ -156,11 +156,7 @@ const UpdateStack: OperationHandler = (input, ctx) => {
   const name = requireStackName(input);
   const stack = ctx.store.get<StoredStack>(name);
   if (stack === undefined) {
-    throw awsError(
-      "ValidationError",
-      `Stack [${name}] does not exist`,
-      400,
-    );
+    throw awsError("ValidationError", `Stack [${name}] does not exist`, 400);
   }
   const updated: StoredStack = {
     ...stack,

@@ -112,9 +112,7 @@ test("SNS tag/untag/list lifecycle", async () => {
   const listed = await client.send(
     new ListTagsForResourceCommand({ ResourceArn: topicArn }),
   );
-  const tagMap = new Map(
-    (listed.Tags ?? []).map((t) => [t.Key, t.Value]),
-  );
+  const tagMap = new Map((listed.Tags ?? []).map((t) => [t.Key, t.Value]));
   expect(tagMap.get("env")).toBe("test");
   expect(tagMap.get("team")).toBe("platform");
 

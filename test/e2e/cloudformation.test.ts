@@ -56,8 +56,7 @@ afterAll(() => {
   proc?.kill();
 });
 
-const cfn = () =>
-  new CloudFormationClient({ endpoint, region, credentials });
+const cfn = () => new CloudFormationClient({ endpoint, region, credentials });
 
 const template = JSON.stringify({
   AWSTemplateFormatVersion: "2010-09-09",

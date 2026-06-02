@@ -50,7 +50,9 @@ const stripPrefix = (raw: unknown): string | undefined => {
 const generateId = (): string => {
   let out = "Z";
   for (let i = 0; i < 14; i += 1) {
-    out += "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"[Math.floor(Math.random() * 36)];
+    out += "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"[
+      Math.floor(Math.random() * 36)
+    ];
   }
   return out;
 };
@@ -65,7 +67,11 @@ const nameServers = [
 const getZone = (ctx: ServiceContext, id: string): HostedZone => {
   const zone = ctx.store.get<HostedZone>(id);
   if (zone === undefined) {
-    throw awsError("NoSuchHostedZone", `No hosted zone found with ID: ${id}`, 404);
+    throw awsError(
+      "NoSuchHostedZone",
+      `No hosted zone found with ID: ${id}`,
+      404,
+    );
   }
   return zone;
 };
@@ -92,7 +98,8 @@ const toRecordSet = (raw: unknown): ResourceRecordSet => {
     : undefined;
   const set: ResourceRecordSet = { Name: name, Type: type };
   if (typeof rawTtl === "number") set.TTL = rawTtl;
-  else if (typeof rawTtl === "string" && rawTtl !== "") set.TTL = Number(rawTtl);
+  else if (typeof rawTtl === "string" && rawTtl !== "")
+    set.TTL = Number(rawTtl);
   if (resourceRecords !== undefined) set.ResourceRecords = resourceRecords;
   return set;
 };
@@ -172,7 +179,9 @@ const route53: ServiceDefinition = {
             Type: "SOA",
             TTL: 900,
             ResourceRecords: [
-              { Value: `${nameServers[0]}. hostmaster.bunsai. 1 7200 900 1209600 86400` },
+              {
+                Value: `${nameServers[0]}. hostmaster.bunsai. 1 7200 900 1209600 86400`,
+              },
             ],
           },
         ],

@@ -76,9 +76,7 @@ test("API Gateway rest api, resource and deployment lifecycle", async () => {
   const restApiId = created.id as string;
   const rootResourceId = created.rootResourceId as string;
 
-  const got = await client.send(
-    new GetRestApiCommand({ restApiId }),
-  );
+  const got = await client.send(new GetRestApiCommand({ restApiId }));
   expect(got.id).toBe(restApiId);
   expect(got.name).toBe(apiName);
 
@@ -98,9 +96,7 @@ test("API Gateway rest api, resource and deployment lifecycle", async () => {
   expect(resource.pathPart).toBe("pets");
   expect(resource.path).toBe("/pets");
 
-  const resources = await client.send(
-    new GetResourcesCommand({ restApiId }),
-  );
+  const resources = await client.send(new GetResourcesCommand({ restApiId }));
   const paths = (resources.items ?? []).map((item) => item.path);
   expect(paths).toContain("/");
   expect(paths).toContain("/pets");
@@ -114,9 +110,7 @@ test("API Gateway rest api, resource and deployment lifecycle", async () => {
   expect(deployment.id).toBeDefined();
   expect(deployment.description).toBe("first deploy");
 
-  const deleted = await client.send(
-    new DeleteRestApiCommand({ restApiId }),
-  );
+  const deleted = await client.send(new DeleteRestApiCommand({ restApiId }));
   expect(deleted.$metadata.httpStatusCode).toBe(202);
 
   await expect(

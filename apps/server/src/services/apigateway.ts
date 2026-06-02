@@ -54,7 +54,11 @@ const requireRestApi = (
 ): StoredRestApi => {
   const api = ctx.store.get<StoredRestApi>(restApiKey(restApiId));
   if (api === undefined) {
-    throw awsError("NotFoundException", `Invalid REST API identifier specified`, 404);
+    throw awsError(
+      "NotFoundException",
+      `Invalid REST API identifier specified`,
+      404,
+    );
   }
   return api;
 };
@@ -151,7 +155,11 @@ const CreateResource: OperationHandler = (input, ctx) => {
   const restApiId = stringOrUndefined(input["restApiId"]);
   const parentId = stringOrUndefined(input["parentId"]);
   const pathPart = stringOrUndefined(input["pathPart"]);
-  if (restApiId === undefined || parentId === undefined || pathPart === undefined) {
+  if (
+    restApiId === undefined ||
+    parentId === undefined ||
+    pathPart === undefined
+  ) {
     throw awsError(
       "BadRequestException",
       "restApiId, parentId and pathPart are required.",
@@ -163,7 +171,11 @@ const CreateResource: OperationHandler = (input, ctx) => {
     resourceKey(restApiId, parentId),
   );
   if (parent === undefined) {
-    throw awsError("NotFoundException", `Invalid resource identifier specified`, 404);
+    throw awsError(
+      "NotFoundException",
+      `Invalid resource identifier specified`,
+      404,
+    );
   }
   const id = randomId();
   const base = parent.path === "/" ? "" : parent.path;
@@ -231,7 +243,8 @@ const apigateway = {
       return undefined;
     }
     if (parts[2] === "deployments") {
-      if (parts.length === 3 && req.method === "POST") return "CreateDeployment";
+      if (parts.length === 3 && req.method === "POST")
+        return "CreateDeployment";
       return undefined;
     }
     return undefined;

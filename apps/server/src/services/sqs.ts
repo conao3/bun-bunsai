@@ -1,9 +1,13 @@
 import { awsError } from "../core/framework.ts";
+import { loadServiceModel } from "../core/shapes.ts";
+import sqsModel from "../../../../test/vendor/aws-models/sqs.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
+
+const model = loadServiceModel(sqsModel);
 
 type StoredMessage = {
   MessageId: string;
@@ -244,6 +248,7 @@ const sqs: ServiceDefinition = {
     DeleteMessage,
     GetQueueAttributes,
   },
+  model,
 } as const;
 
 export default sqs;

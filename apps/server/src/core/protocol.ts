@@ -1,4 +1,15 @@
-import type { AwsError, ParsedRequest, Protocol } from "./types.ts";
+import type {
+  AwsError,
+  ParsedRequest,
+  Protocol,
+  Shape,
+  ShapeRegistry,
+  StructureShape,
+} from "./types.ts";
+import { parseShapeInput } from "./codec/parse.ts";
+import { serializeShapeOutput } from "./codec/serialize.ts";
+import { serializeShapeError } from "./codec/error.ts";
+import type { CodecResult } from "./codec/common.ts";
 
 export const contentTypes = {
   query: "text/xml",
@@ -106,7 +117,28 @@ const parseFormBody = (bodyText: string): Record<string, unknown> => {
   return result;
 };
 
-export const parseInput = (req: ParsedRequest): Record<string, unknown> => {
+export type ParseOptions = {
+  registry?: ShapeRegistry;
+  shape?: Shape;
+  requestUri?: string;
+};
+
+export type SerializeOptions = {
+  registry?: ShapeRegistry;
+  shape?: Shape;
+  resultWrapper?: string;
+  xmlNamespace?: string;
+  outputShapeName?: string;
+};
+
+export type SerializeErrorOptions = {
+  registry?: ShapeRegistry;
+  shape?: StructureShape;
+  code?: string;
+  senderFault?: boolean;
+};
+
+const fallbackParseInput = (req: ParsedRequest): Record<string, unknown> => {
   switch (req.protocol) {
     case "query": {
       const form = parseFormBody(req.bodyText);
@@ -134,11 +166,31 @@ export const parseInput = (req: ParsedRequest): Record<string, unknown> => {
   }
 };
 
-export const serializeOutput = (
+export const parseInput = (
+  req: ParsedRequest,
+  opts?: ParseOptions,
+): Record<string, unknown> => {
+  if (opts?.registry !== undefined) {
+    return parseShapeInput({
+      protocol: req.protocol,
+      registry: opts.registry,
+      shape: opts.shape,
+      method: req.method,
+      path: req.path,
+      requestUri: opts.requestUri,
+      query: req.query,
+      headers: req.headers,
+      bodyText: req.bodyText,
+    });
+  }
+  return fallbackParseInput(req);
+};
+
+const fallbackSerializeOutput = (
   protocol: Protocol,
   operation: string,
   result: unknown,
-): { body: string; contentType: string } => {
+): CodecResult => {
   switch (protocol) {
     case "query": {
       const body = (result ?? {}) as Record<string, unknown>;
@@ -177,10 +229,35 @@ export const serializeOutput = (
   }
 };
 
-export const serializeError = (
+export const serializeOutput = (
+  protocol: Protocol,
+  operation: string,
+  result: unknown,
+  opts?: SerializeOptions,
+): CodecResult => {
+  const isXmlEscapeHatch =
+    typeof result === "object" &&
+    result !== null &&
+    "__xml" in (result as Record<string, unknown>);
+  if (opts?.registry !== undefined && !isXmlEscapeHatch) {
+    return serializeShapeOutput({
+      protocol,
+      registry: opts.registry,
+      shape: opts.shape,
+      operation,
+      result,
+      resultWrapper: opts.resultWrapper,
+      xmlNamespace: opts.xmlNamespace,
+      outputShapeName: opts.outputShapeName,
+    });
+  }
+  return fallbackSerializeOutput(protocol, operation, result);
+};
+
+const fallbackSerializeError = (
   protocol: Protocol,
   error: AwsError,
-): { body: string; contentType: string } => {
+): CodecResult => {
   switch (protocol) {
     case "query":
     case "rest-xml":
@@ -189,6 +266,7 @@ export const serializeError = (
           Error: { Code: error.code, Message: error.message },
         }),
         contentType: contentTypes[protocol],
+        statusCode: error.statusCode,
       };
     case "json":
       return {
@@ -197,11 +275,32 @@ export const serializeError = (
           message: error.message,
         }),
         contentType: contentTypes.json,
+        statusCode: error.statusCode,
       };
     case "rest-json":
       return {
         body: JSON.stringify({ code: error.code, message: error.message }),
         contentType: contentTypes["rest-json"],
+        statusCode: error.statusCode,
       };
   }
+};
+
+export const serializeError = (
+  protocol: Protocol,
+  error: AwsError,
+  opts?: SerializeErrorOptions,
+): CodecResult => {
+  if (opts?.registry !== undefined) {
+    return serializeShapeError({
+      protocol,
+      registry: opts.registry,
+      shape: opts.shape,
+      code: opts.code ?? error.code,
+      message: error.message,
+      statusCode: error.statusCode,
+      senderFault: opts.senderFault,
+    });
+  }
+  return fallbackSerializeError(protocol, error);
 };

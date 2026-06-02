@@ -4,6 +4,10 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 import { awsError } from "../core/framework.ts";
+import { loadServiceModel } from "../core/shapes.ts";
+import s3Model from "../../../../test/vendor/aws-models/s3.json" with { type: "json" };
+
+const model = loadServiceModel(s3Model);
 
 type S3Object = {
   key: string;
@@ -11,24 +15,16 @@ type S3Object = {
   contentType: string;
   etag: string;
   size: number;
-  lastModified: string;
+  lastModified: number;
 };
 
 type S3Bucket = {
   name: string;
-  creationDate: string;
+  creationDate: number;
   objects: Record<string, S3Object>;
 };
 
-const xmlns = "http://s3.amazonaws.com/doc/2006-03-01/" as const;
-
-const escapeXml = (value: string): string =>
-  value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
+const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
 const hashBody = (value: string): string => {
   let hash = 0x811c9dc5;
@@ -102,21 +98,20 @@ const s3: ServiceDefinition = {
       }
       ctx.store.set<S3Bucket>(bucket, {
         name: bucket,
-        creationDate: new Date().toISOString(),
+        creationDate: nowSeconds(),
         objects: {},
       });
-      return { __xml: "" };
+      return {};
     },
     ListBuckets: (_input, ctx) => {
       const buckets = ctx.store.list<S3Bucket>();
-      const entries = buckets
-        .map(
-          (b) =>
-            `<Bucket><Name>${escapeXml(b.value.name)}</Name><CreationDate>${b.value.creationDate}</CreationDate></Bucket>`,
-        )
-        .join("");
-      const body = `<?xml version="1.0" encoding="UTF-8"?>\n<ListAllMyBucketsResult xmlns="${xmlns}"><Owner><ID>bunsai</ID><DisplayName>bunsai</DisplayName></Owner><Buckets>${entries}</Buckets></ListAllMyBucketsResult>`;
-      return { __xml: body };
+      return {
+        Owner: { ID: "bunsai", DisplayName: "bunsai" },
+        Buckets: buckets.map((b) => ({
+          Name: b.value.name,
+          CreationDate: b.value.creationDate,
+        })),
+      };
     },
     DeleteBucket: (_input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);
@@ -125,7 +120,7 @@ const s3: ServiceDefinition = {
       }
       getBucket(ctx, bucket);
       ctx.store.delete(bucket);
-      return { __xml: "" };
+      return {};
     },
     HeadBucket: (_input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);
@@ -133,7 +128,7 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidBucketName", "bucket name required", 400);
       }
       getBucket(ctx, bucket);
-      return { __xml: "" };
+      return {};
     },
     PutObject: (_input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
@@ -150,14 +145,14 @@ const s3: ServiceDefinition = {
           req.headers.get("content-type") ?? "application/octet-stream",
         etag,
         size: Buffer.byteLength(body),
-        lastModified: new Date().toISOString(),
+        lastModified: nowSeconds(),
       };
       const next: S3Bucket = {
         ...target,
         objects: { ...target.objects, [key]: object },
       };
       ctx.store.set<S3Bucket>(bucket, next);
-      return { __xml: "" };
+      return { ETag: object.etag };
     },
     GetObject: (_input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
@@ -169,7 +164,12 @@ const s3: ServiceDefinition = {
       if (object === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
-      return { __xml: object.body };
+      return {
+        Body: object.body,
+        ContentLength: object.size,
+        ETag: object.etag,
+        LastModified: object.lastModified,
+      };
     },
     HeadObject: (_input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
@@ -181,7 +181,11 @@ const s3: ServiceDefinition = {
       if (object === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
-      return { __xml: "" };
+      return {
+        ContentLength: object.size,
+        ETag: object.etag,
+        LastModified: object.lastModified,
+      };
     },
     ListObjectsV2: (_input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);
@@ -193,14 +197,20 @@ const s3: ServiceDefinition = {
       const all = Object.values(target.objects)
         .filter((o) => o.key.startsWith(prefix))
         .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-      const contents = all
-        .map(
-          (o) =>
-            `<Contents><Key>${escapeXml(o.key)}</Key><LastModified>${o.lastModified}</LastModified><ETag>${escapeXml(o.etag)}</ETag><Size>${o.size}</Size><StorageClass>STANDARD</StorageClass></Contents>`,
-        )
-        .join("");
-      const body = `<?xml version="1.0" encoding="UTF-8"?>\n<ListBucketResult xmlns="${xmlns}"><Name>${escapeXml(bucket)}</Name><Prefix>${escapeXml(prefix)}</Prefix><KeyCount>${all.length}</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>${contents}</ListBucketResult>`;
-      return { __xml: body };
+      return {
+        Name: bucket,
+        Prefix: prefix,
+        KeyCount: all.length,
+        MaxKeys: 1000,
+        IsTruncated: false,
+        Contents: all.map((o) => ({
+          Key: o.key,
+          LastModified: o.lastModified,
+          ETag: o.etag,
+          Size: o.size,
+          StorageClass: "STANDARD",
+        })),
+      };
     },
     DeleteObject: (_input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
@@ -213,9 +223,10 @@ const s3: ServiceDefinition = {
         delete rest[key];
         ctx.store.set<S3Bucket>(bucket, { ...target, objects: rest });
       }
-      return { __xml: "" };
+      return {};
     },
   },
+  model,
 };
 
 export default s3;

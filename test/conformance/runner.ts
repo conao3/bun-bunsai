@@ -4,10 +4,13 @@ import {
   serializeError,
   serializeOutput,
 } from "../../apps/server/src/core/protocol.ts";
+import { getShape, loadRegistry } from "../../apps/server/src/core/shapes.ts";
 import type {
   AwsError,
   ParsedRequest,
   Protocol,
+  ShapeRegistry,
+  StructureShape,
 } from "../../apps/server/src/core/types.ts";
 import { knownGaps } from "./known-gaps.ts";
 
@@ -197,34 +200,72 @@ const toAwsError = (vcase: VendorCase): AwsError => {
   };
 };
 
-const runInputCase = (protocol: Protocol, vcase: VendorCase): void => {
+const runInputCase = (
+  protocol: Protocol,
+  vcase: VendorCase,
+  registry: ShapeRegistry,
+): void => {
   const serialized = vcase.serialized ?? {};
   const request = buildRequest(protocol, vcase.given, serialized);
-  const actual = parseInput(request);
+  const shapeName = vcase.given.input?.shape;
+  const shape =
+    shapeName === undefined ? undefined : getShape(registry, shapeName);
+  const actual = parseInput(request, {
+    registry,
+    shape,
+    requestUri: vcase.given.http.requestUri,
+  });
   expect(deepEqualNormalized(actual, vcase.params ?? {})).toBe(true);
 };
 
-const runOutputCase = (protocol: Protocol, vcase: VendorCase): void => {
+const runOutputCase = (
+  protocol: Protocol,
+  vcase: VendorCase,
+  registry: ShapeRegistry,
+): void => {
   const response = vcase.response ?? {};
   if (vcase.error !== undefined || vcase.errorCode !== undefined) {
-    const serialized = serializeError(protocol, toAwsError(vcase));
+    const errShapeName = vcase.given.errors?.[0]?.shape;
+    const errShape =
+      errShapeName === undefined ? undefined : getShape(registry, errShapeName);
+    const serialized = serializeError(protocol, toAwsError(vcase), {
+      registry,
+      shape:
+        errShape !== undefined && errShape.type === "structure"
+          ? (errShape as StructureShape)
+          : undefined,
+      code: vcase.errorCode,
+    });
     if (response.body !== undefined)
       compareBody(protocol, serialized.body, response.body);
     compareHeaders(
-      { "Content-Type": serialized.contentType },
+      { "Content-Type": serialized.contentType, ...serialized.headers },
       response.headers,
     );
     return;
   }
-  const serialized = serializeOutput(
-    protocol,
-    vcase.given.name,
-    vcase.result ?? {},
-  );
+  const outShapeName = vcase.given.output?.shape;
+  const outShape =
+    outShapeName === undefined ? undefined : getShape(registry, outShapeName);
+  const serialized = serializeOutput(protocol, vcase.given.name, vcase.result ?? {}, {
+    registry,
+    shape: outShape,
+    outputShapeName: outShapeName,
+  });
   if (response.body !== undefined)
     compareBody(protocol, serialized.body, response.body);
-  compareHeaders({ "Content-Type": serialized.contentType }, response.headers);
+  compareHeaders(
+    { "Content-Type": serialized.contentType, ...serialized.headers },
+    response.headers,
+  );
 };
+
+const isGap = (
+  id: string,
+  direction: "input" | "output",
+): boolean =>
+  knownGaps.includes(id) ||
+  knownGaps.includes(`${id}:${direction}`);
 
 export const runSuites = (
   direction: "input" | "output",
@@ -237,17 +278,20 @@ export const runSuites = (
       continue;
     }
     const protocol = rawProtocol;
+    const registry = loadRegistry(
+      suite.shapes as Parameters<typeof loadRegistry>[0],
+    );
     for (const vcase of suite.cases) {
       const label = `${vcase.id} (${vcase.description ?? vcase.given.name})`;
-      if (knownGaps.includes(vcase.id)) {
+      if (isGap(vcase.id, direction)) {
         it.skip(label, () => {});
         continue;
       }
       it(label, () => {
         if (direction === "input") {
-          runInputCase(protocol, vcase);
+          runInputCase(protocol, vcase, registry);
         } else {
-          runOutputCase(protocol, vcase);
+          runOutputCase(protocol, vcase, registry);
         }
       });
     }

@@ -68,7 +68,7 @@ const awsServer = Bun.serve({
     });
     return new Response(result.body, {
       status: result.statusCode,
-      headers: { "content-type": result.contentType },
+      headers: { "content-type": result.contentType, ...result.headers },
     });
   },
 });

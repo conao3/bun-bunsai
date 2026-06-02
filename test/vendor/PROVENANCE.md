@@ -92,6 +92,10 @@ aws-models/
   elasticache.json     # botocore/data/elasticache/2015-02-02/service-2.json    (protocol query)
   efs.json             # botocore/data/efs/2015-02-01/service-2.json            (protocol rest-json)
   elbv2.json           # botocore/data/elasticloadbalancingv2/2015-12-01/service-2.json (protocol query)
+  kinesis.json         # botocore/data/kinesis/2013-12-02/service-2.json        (protocol json)
+  firehose.json        # botocore/data/firehose/2015-08-04/service-2.json       (protocol json)
+  ecs.json             # botocore/data/ecs/2014-11-13/service-2.json            (protocol json)
+  organizations.json   # botocore/data/organizations/2016-11-28/service-2.json  (protocol json)
 ```
 
 ### Notes

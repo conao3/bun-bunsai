@@ -26,6 +26,10 @@ import glue from "./glue.ts";
 import elasticache from "./elasticache.ts";
 import efs from "./efs.ts";
 import elbv2 from "./elbv2.ts";
+import kinesis from "./kinesis.ts";
+import firehose from "./firehose.ts";
+import ecs from "./ecs.ts";
+import organizations from "./organizations.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -55,6 +59,10 @@ export const services: ServiceDefinition[] = [
   elasticache,
   efs,
   elbv2,
+  kinesis,
+  firehose,
+  ecs,
+  organizations,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

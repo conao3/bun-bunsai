@@ -13,8 +13,13 @@
     "fetch-protocol-tests": "bun scripts/fetch-protocol-tests.ts"
   },
   "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1058.0",
+    "@aws-sdk/client-kms": "^3.1058.0",
     "@aws-sdk/client-s3": "^3.1058.0",
+    "@aws-sdk/client-secrets-manager": "^3.1058.0",
+    "@aws-sdk/client-sns": "^3.1058.0",
     "@aws-sdk/client-sqs": "^3.1058.0",
+    "@aws-sdk/client-ssm": "^3.1058.0",
     "@aws-sdk/client-sts": "^3.1058.0"
   }
 }

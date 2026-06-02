@@ -65,9 +65,14 @@ botocore-protocol-tests/
 
 ```
 aws-models/
-  s3.json    # botocore/data/s3/2006-03-01/service-2.json  (protocol rest-xml)
-  sqs.json   # botocore/data/sqs/2012-11-05/service-2.json (protocol json)
-  sts.json   # botocore/data/sts/2011-06-15/service-2.json (protocol query)
+  s3.json              # botocore/data/s3/2006-03-01/service-2.json             (protocol rest-xml)
+  sqs.json             # botocore/data/sqs/2012-11-05/service-2.json            (protocol json)
+  sts.json             # botocore/data/sts/2011-06-15/service-2.json            (protocol query)
+  dynamodb.json        # botocore/data/dynamodb/2012-08-10/service-2.json       (protocol json)
+  sns.json             # botocore/data/sns/2010-03-31/service-2.json            (protocol query)
+  secretsmanager.json  # botocore/data/secretsmanager/2017-10-17/service-2.json (protocol json)
+  ssm.json             # botocore/data/ssm/2014-11-06/service-2.json            (protocol json)
+  kms.json             # botocore/data/kms/2014-11-01/service-2.json            (protocol json)
 ```
 
 ### Notes

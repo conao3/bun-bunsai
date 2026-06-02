@@ -42,6 +42,64 @@ type StoredSecurityGroup = {
   Description: string;
   VpcId: string | undefined;
   Tags: Tag[];
+  IngressRules: StoredSecurityGroupRule[];
+};
+
+type StoredSecurityGroupRule = {
+  SecurityGroupRuleId: string;
+  IsEgress: boolean;
+  IpProtocol: string;
+  FromPort: number | undefined;
+  ToPort: number | undefined;
+  CidrIpv4: string | undefined;
+};
+
+type StoredSubnet = {
+  SubnetId: string;
+  VpcId: string;
+  CidrBlock: string;
+  AvailabilityZone: string;
+  State: string;
+  AvailableIpAddressCount: number;
+  DefaultForAz: boolean;
+  MapPublicIpOnLaunch: boolean;
+  Tags: Tag[];
+};
+
+type StoredRouteTable = {
+  RouteTableId: string;
+  VpcId: string;
+  Routes: {
+    DestinationCidrBlock: string;
+    GatewayId: string;
+    Origin: string;
+    State: string;
+  }[];
+  Tags: Tag[];
+};
+
+type StoredInternetGateway = {
+  InternetGatewayId: string;
+  Attachments: { State: string; VpcId: string }[];
+  Tags: Tag[];
+};
+
+type StoredAddress = {
+  AllocationId: string;
+  PublicIp: string;
+  Domain: string;
+  PublicIpv4Pool: string;
+  NetworkBorderGroup: string;
+  Tags: Tag[];
+};
+
+type StoredKeyPair = {
+  KeyPairId: string;
+  KeyName: string;
+  KeyType: string;
+  KeyFingerprint: string;
+  KeyMaterial: string;
+  Tags: Tag[];
 };
 
 const hexId = (prefix: string): string => {
@@ -54,6 +112,11 @@ const hexId = (prefix: string): string => {
 const instanceKey = (id: string): string => `instance/${id}`;
 const vpcKey = (id: string): string => `vpc/${id}`;
 const sgKey = (id: string): string => `sg/${id}`;
+const subnetKey = (id: string): string => `subnet/${id}`;
+const routeTableKey = (id: string): string => `rtb/${id}`;
+const igwKey = (id: string): string => `igw/${id}`;
+const addressKey = (id: string): string => `eip/${id}`;
+const keyPairKey = (name: string): string => `keypair/${name}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -72,6 +135,50 @@ const allSecurityGroups = (ctx: ServiceContext): StoredSecurityGroup[] =>
     .list<StoredSecurityGroup>()
     .filter((entry) => entry.key.startsWith("sg/"))
     .map((entry) => entry.value);
+
+const allSubnets = (ctx: ServiceContext): StoredSubnet[] =>
+  ctx.store
+    .list<StoredSubnet>()
+    .filter((entry) => entry.key.startsWith("subnet/"))
+    .map((entry) => entry.value);
+
+const allRouteTables = (ctx: ServiceContext): StoredRouteTable[] =>
+  ctx.store
+    .list<StoredRouteTable>()
+    .filter((entry) => entry.key.startsWith("rtb/"))
+    .map((entry) => entry.value);
+
+const allInternetGateways = (ctx: ServiceContext): StoredInternetGateway[] =>
+  ctx.store
+    .list<StoredInternetGateway>()
+    .filter((entry) => entry.key.startsWith("igw/"))
+    .map((entry) => entry.value);
+
+const allAddresses = (ctx: ServiceContext): StoredAddress[] =>
+  ctx.store
+    .list<StoredAddress>()
+    .filter((entry) => entry.key.startsWith("eip/"))
+    .map((entry) => entry.value);
+
+const allKeyPairs = (ctx: ServiceContext): StoredKeyPair[] =>
+  ctx.store
+    .list<StoredKeyPair>()
+    .filter((entry) => entry.key.startsWith("keypair/"))
+    .map((entry) => entry.value);
+
+const integerOf = (value: unknown): number | undefined => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value !== "") {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+};
+
+const randomIpv4 = (): string => {
+  const bytes = crypto.getRandomValues(new Uint8Array(3));
+  return `52.${bytes[0]}.${bytes[1]}.${bytes[2]}`;
+};
 
 const stringList = (value: unknown): string[] => {
   if (Array.isArray(value)) return value.map((item) => String(item));
@@ -313,6 +420,7 @@ const CreateSecurityGroup: OperationHandler = (input, ctx) => {
     Description: description,
     VpcId: vpcId,
     Tags: [],
+    IngressRules: [],
   };
   ctx.store.set(sgKey(id), group);
   return {
@@ -418,6 +526,470 @@ const DescribeTags: OperationHandler = (input, ctx) => {
   return { Tags: collected };
 };
 
+const subnetView = (subnet: StoredSubnet, ownerId: string): unknown => ({
+  SubnetId: subnet.SubnetId,
+  VpcId: subnet.VpcId,
+  CidrBlock: subnet.CidrBlock,
+  AvailabilityZone: subnet.AvailabilityZone,
+  State: subnet.State,
+  AvailableIpAddressCount: subnet.AvailableIpAddressCount,
+  DefaultForAz: subnet.DefaultForAz,
+  MapPublicIpOnLaunch: subnet.MapPublicIpOnLaunch,
+  OwnerId: ownerId,
+  Tags: subnet.Tags,
+});
+
+const CreateSubnet: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const vpc = ctx.store.get<StoredVpc>(vpcKey(vpcId));
+  if (vpc === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${vpcId}' does not exist`,
+      400,
+    );
+  }
+  const cidrBlock =
+    typeof input["CidrBlock"] === "string" ? input["CidrBlock"] : "10.0.0.0/24";
+  const availabilityZone =
+    typeof input["AvailabilityZone"] === "string"
+      ? input["AvailabilityZone"]
+      : `${ctx.region}a`;
+  const id = hexId("subnet");
+  const subnet: StoredSubnet = {
+    SubnetId: id,
+    VpcId: vpcId,
+    CidrBlock: cidrBlock,
+    AvailabilityZone: availabilityZone,
+    State: "available",
+    AvailableIpAddressCount: 251,
+    DefaultForAz: false,
+    MapPublicIpOnLaunch: false,
+    Tags: [],
+  };
+  ctx.store.set(subnetKey(id), subnet);
+  return { Subnet: subnetView(subnet, ctx.account) };
+};
+
+const DescribeSubnets: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["SubnetIds"]);
+  const subnets = allSubnets(ctx).filter((subnet) =>
+    ids.length === 0 ? true : ids.includes(subnet.SubnetId),
+  );
+  return {
+    Subnets: subnets.map((subnet) => subnetView(subnet, ctx.account)),
+  };
+};
+
+const DeleteSubnet: OperationHandler = (input, ctx) => {
+  const id = typeof input["SubnetId"] === "string" ? input["SubnetId"] : "";
+  const subnet = ctx.store.get<StoredSubnet>(subnetKey(id));
+  if (subnet === undefined) {
+    throw awsError(
+      "InvalidSubnetID.NotFound",
+      `The subnet ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(subnetKey(id));
+  return {};
+};
+
+const routeTableView = (table: StoredRouteTable, ownerId: string): unknown => ({
+  RouteTableId: table.RouteTableId,
+  VpcId: table.VpcId,
+  OwnerId: ownerId,
+  Routes: table.Routes,
+  Associations: [],
+  PropagatingVgws: [],
+  Tags: table.Tags,
+});
+
+const CreateRouteTable: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const vpc = ctx.store.get<StoredVpc>(vpcKey(vpcId));
+  if (vpc === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${vpcId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("rtb");
+  const table: StoredRouteTable = {
+    RouteTableId: id,
+    VpcId: vpcId,
+    Routes: [
+      {
+        DestinationCidrBlock: vpc.CidrBlock,
+        GatewayId: "local",
+        Origin: "CreateRouteTable",
+        State: "active",
+      },
+    ],
+    Tags: [],
+  };
+  ctx.store.set(routeTableKey(id), table);
+  return { RouteTable: routeTableView(table, ctx.account) };
+};
+
+const DescribeRouteTables: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["RouteTableIds"]);
+  const tables = allRouteTables(ctx).filter((table) =>
+    ids.length === 0 ? true : ids.includes(table.RouteTableId),
+  );
+  return {
+    RouteTables: tables.map((table) => routeTableView(table, ctx.account)),
+  };
+};
+
+const internetGatewayView = (
+  gateway: StoredInternetGateway,
+  ownerId: string,
+): unknown => ({
+  InternetGatewayId: gateway.InternetGatewayId,
+  OwnerId: ownerId,
+  Attachments: gateway.Attachments,
+  Tags: gateway.Tags,
+});
+
+const CreateInternetGateway: OperationHandler = (_input, ctx) => {
+  const id = hexId("igw");
+  const gateway: StoredInternetGateway = {
+    InternetGatewayId: id,
+    Attachments: [],
+    Tags: [],
+  };
+  ctx.store.set(igwKey(id), gateway);
+  return { InternetGateway: internetGatewayView(gateway, ctx.account) };
+};
+
+const AttachInternetGateway: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["InternetGatewayId"] === "string"
+      ? input["InternetGatewayId"]
+      : "";
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const gateway = ctx.store.get<StoredInternetGateway>(igwKey(id));
+  if (gateway === undefined) {
+    throw awsError(
+      "InvalidInternetGatewayID.NotFound",
+      `The internet gateway ID '${id}' does not exist`,
+      400,
+    );
+  }
+  if (ctx.store.get<StoredVpc>(vpcKey(vpcId)) === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${vpcId}' does not exist`,
+      400,
+    );
+  }
+  gateway.Attachments = [{ State: "available", VpcId: vpcId }];
+  ctx.store.set(igwKey(id), gateway);
+  return {};
+};
+
+const DescribeInternetGateways: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["InternetGatewayIds"]);
+  const gateways = allInternetGateways(ctx).filter((gateway) =>
+    ids.length === 0 ? true : ids.includes(gateway.InternetGatewayId),
+  );
+  return {
+    InternetGateways: gateways.map((gateway) =>
+      internetGatewayView(gateway, ctx.account),
+    ),
+  };
+};
+
+const addressView = (address: StoredAddress): unknown => ({
+  AllocationId: address.AllocationId,
+  PublicIp: address.PublicIp,
+  Domain: address.Domain,
+  PublicIpv4Pool: address.PublicIpv4Pool,
+  NetworkBorderGroup: address.NetworkBorderGroup,
+  Tags: address.Tags,
+});
+
+const AllocateAddress: OperationHandler = (input, ctx) => {
+  const domain = typeof input["Domain"] === "string" ? input["Domain"] : "vpc";
+  const id = hexId("eipalloc");
+  const address: StoredAddress = {
+    AllocationId: id,
+    PublicIp: randomIpv4(),
+    Domain: domain,
+    PublicIpv4Pool: "amazon",
+    NetworkBorderGroup: ctx.region,
+    Tags: [],
+  };
+  ctx.store.set(addressKey(id), address);
+  return {
+    AllocationId: address.AllocationId,
+    PublicIp: address.PublicIp,
+    Domain: address.Domain,
+    PublicIpv4Pool: address.PublicIpv4Pool,
+    NetworkBorderGroup: address.NetworkBorderGroup,
+  };
+};
+
+const DescribeAddresses: OperationHandler = (input, ctx) => {
+  const allocationIds = stringList(input["AllocationIds"]);
+  const publicIps = stringList(input["PublicIps"]);
+  const addresses = allAddresses(ctx).filter((address) => {
+    if (allocationIds.length === 0 && publicIps.length === 0) return true;
+    return (
+      allocationIds.includes(address.AllocationId) ||
+      publicIps.includes(address.PublicIp)
+    );
+  });
+  return { Addresses: addresses.map((address) => addressView(address)) };
+};
+
+const ReleaseAddress: OperationHandler = (input, ctx) => {
+  const allocationId =
+    typeof input["AllocationId"] === "string" ? input["AllocationId"] : "";
+  const address = ctx.store.get<StoredAddress>(addressKey(allocationId));
+  if (address === undefined) {
+    throw awsError(
+      "InvalidAllocationID.NotFound",
+      `The allocation ID '${allocationId}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(addressKey(allocationId));
+  return {};
+};
+
+const fingerprint = (): string => {
+  const bytes = crypto.getRandomValues(new Uint8Array(20));
+  let result = "";
+  for (const byte of bytes) {
+    result += byte.toString(16).padStart(2, "0");
+    if (result.length % 3 === 2) result += ":";
+  }
+  return result.slice(0, 59);
+};
+
+const keyPairView = (keyPair: StoredKeyPair): unknown => ({
+  KeyPairId: keyPair.KeyPairId,
+  KeyName: keyPair.KeyName,
+  KeyType: keyPair.KeyType,
+  KeyFingerprint: keyPair.KeyFingerprint,
+  Tags: keyPair.Tags,
+});
+
+const CreateKeyPair: OperationHandler = (input, ctx) => {
+  const keyName = typeof input["KeyName"] === "string" ? input["KeyName"] : "";
+  if (keyName === "") {
+    throw awsError(
+      "MissingParameter",
+      "The request must contain the parameter KeyName",
+      400,
+    );
+  }
+  if (ctx.store.get<StoredKeyPair>(keyPairKey(keyName)) !== undefined) {
+    throw awsError(
+      "InvalidKeyPair.Duplicate",
+      `The keypair '${keyName}' already exists.`,
+      400,
+    );
+  }
+  const keyType =
+    typeof input["KeyType"] === "string" ? input["KeyType"] : "rsa";
+  const keyPair: StoredKeyPair = {
+    KeyPairId: hexId("key"),
+    KeyName: keyName,
+    KeyType: keyType,
+    KeyFingerprint: fingerprint(),
+    KeyMaterial: `-----BEGIN RSA PRIVATE KEY-----\nBUNSAI\n-----END RSA PRIVATE KEY-----`,
+    Tags: [],
+  };
+  ctx.store.set(keyPairKey(keyName), keyPair);
+  return {
+    KeyPairId: keyPair.KeyPairId,
+    KeyName: keyPair.KeyName,
+    KeyFingerprint: keyPair.KeyFingerprint,
+    KeyMaterial: keyPair.KeyMaterial,
+    Tags: keyPair.Tags,
+  };
+};
+
+const DescribeKeyPairs: OperationHandler = (input, ctx) => {
+  const names = stringList(input["KeyNames"]);
+  const ids = stringList(input["KeyPairIds"]);
+  const keyPairs = allKeyPairs(ctx).filter((keyPair) => {
+    if (names.length === 0 && ids.length === 0) return true;
+    return names.includes(keyPair.KeyName) || ids.includes(keyPair.KeyPairId);
+  });
+  return { KeyPairs: keyPairs.map((keyPair) => keyPairView(keyPair)) };
+};
+
+const DescribeAvailabilityZones: OperationHandler = (_input, ctx) => {
+  const suffixes = ["a", "b", "c"];
+  return {
+    AvailabilityZones: suffixes.map((suffix, index) => ({
+      State: "available",
+      OptInStatus: "opt-in-not-required",
+      RegionName: ctx.region,
+      ZoneName: `${ctx.region}${suffix}`,
+      ZoneId: `${ctx.region}-az${index + 1}`,
+      ZoneType: "availability-zone",
+      NetworkBorderGroup: ctx.region,
+      Messages: [],
+    })),
+  };
+};
+
+const findSecurityGroup = (
+  ctx: ServiceContext,
+  input: Record<string, unknown>,
+): StoredSecurityGroup => {
+  const groupId =
+    typeof input["GroupId"] === "string" ? input["GroupId"] : undefined;
+  const groupName =
+    typeof input["GroupName"] === "string" ? input["GroupName"] : undefined;
+  const group = allSecurityGroups(ctx).find((item) =>
+    groupId !== undefined
+      ? item.GroupId === groupId
+      : item.GroupName === groupName,
+  );
+  if (group === undefined) {
+    throw awsError(
+      "InvalidGroup.NotFound",
+      `The security group '${groupId ?? groupName ?? ""}' does not exist`,
+      400,
+    );
+  }
+  return group;
+};
+
+const ipPermissionList = (value: unknown): Record<string, unknown>[] => {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item): item is Record<string, unknown> =>
+      typeof item === "object" && item !== null,
+  );
+};
+
+const cidrsOfPermission = (permission: Record<string, unknown>): string[] => {
+  const ranges = permission["IpRanges"];
+  if (!Array.isArray(ranges)) return [];
+  return ranges
+    .filter(
+      (item): item is Record<string, unknown> =>
+        typeof item === "object" && item !== null,
+    )
+    .map((item) => (typeof item["CidrIp"] === "string" ? item["CidrIp"] : ""))
+    .filter((cidr) => cidr !== "");
+};
+
+const securityGroupRuleView = (
+  rule: StoredSecurityGroupRule,
+  group: StoredSecurityGroup,
+  ownerId: string,
+): unknown => ({
+  SecurityGroupRuleId: rule.SecurityGroupRuleId,
+  GroupId: group.GroupId,
+  GroupOwnerId: ownerId,
+  IsEgress: rule.IsEgress,
+  IpProtocol: rule.IpProtocol,
+  FromPort: rule.FromPort,
+  ToPort: rule.ToPort,
+  CidrIpv4: rule.CidrIpv4,
+});
+
+const AuthorizeSecurityGroupIngress: OperationHandler = (input, ctx) => {
+  const group = findSecurityGroup(ctx, input);
+  const permissions = ipPermissionList(input["IpPermissions"]);
+  const created: StoredSecurityGroupRule[] = [];
+  const addRule = (
+    ipProtocol: string,
+    fromPort: number | undefined,
+    toPort: number | undefined,
+    cidr: string | undefined,
+  ): void => {
+    const rule: StoredSecurityGroupRule = {
+      SecurityGroupRuleId: hexId("sgr"),
+      IsEgress: false,
+      IpProtocol: ipProtocol,
+      FromPort: fromPort,
+      ToPort: toPort,
+      CidrIpv4: cidr,
+    };
+    group.IngressRules.push(rule);
+    created.push(rule);
+  };
+  if (permissions.length === 0) {
+    const cidrIp =
+      typeof input["CidrIp"] === "string" ? input["CidrIp"] : "0.0.0.0/0";
+    const ipProtocol =
+      typeof input["IpProtocol"] === "string" ? input["IpProtocol"] : "-1";
+    addRule(
+      ipProtocol,
+      integerOf(input["FromPort"]),
+      integerOf(input["ToPort"]),
+      cidrIp,
+    );
+  } else {
+    for (const permission of permissions) {
+      const ipProtocol =
+        typeof permission["IpProtocol"] === "string"
+          ? permission["IpProtocol"]
+          : "-1";
+      const fromPort = integerOf(permission["FromPort"]);
+      const toPort = integerOf(permission["ToPort"]);
+      const cidrs = cidrsOfPermission(permission);
+      if (cidrs.length === 0) addRule(ipProtocol, fromPort, toPort, undefined);
+      else
+        for (const cidr of cidrs) addRule(ipProtocol, fromPort, toPort, cidr);
+    }
+  }
+  ctx.store.set(sgKey(group.GroupId), group);
+  return {
+    Return: true,
+    SecurityGroupRules: created.map((rule) =>
+      securityGroupRuleView(rule, group, ctx.account),
+    ),
+  };
+};
+
+const RevokeSecurityGroupIngress: OperationHandler = (input, ctx) => {
+  const group = findSecurityGroup(ctx, input);
+  const ruleIds = stringList(input["SecurityGroupRuleIds"]);
+  const permissions = ipPermissionList(input["IpPermissions"]);
+  const matchesPermission = (rule: StoredSecurityGroupRule): boolean => {
+    if (permissions.length === 0) {
+      const cidrIp =
+        typeof input["CidrIp"] === "string" ? input["CidrIp"] : undefined;
+      const ipProtocol =
+        typeof input["IpProtocol"] === "string"
+          ? input["IpProtocol"]
+          : undefined;
+      if (ipProtocol !== undefined && rule.IpProtocol !== ipProtocol)
+        return false;
+      if (cidrIp !== undefined && rule.CidrIpv4 !== cidrIp) return false;
+      return true;
+    }
+    for (const permission of permissions) {
+      const ipProtocol =
+        typeof permission["IpProtocol"] === "string"
+          ? permission["IpProtocol"]
+          : undefined;
+      if (ipProtocol !== undefined && rule.IpProtocol !== ipProtocol) continue;
+      const cidrs = cidrsOfPermission(permission);
+      if (cidrs.length === 0 || cidrs.includes(rule.CidrIpv4 ?? ""))
+        return true;
+    }
+    return false;
+  };
+  group.IngressRules = group.IngressRules.filter((rule) => {
+    if (ruleIds.length > 0) return !ruleIds.includes(rule.SecurityGroupRuleId);
+    return !matchesPermission(rule);
+  });
+  ctx.store.set(sgKey(group.GroupId), group);
+  return { Return: true };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -434,6 +1006,22 @@ const ec2: ServiceDefinition = {
     DescribeSecurityGroups,
     CreateTags,
     DescribeTags,
+    CreateSubnet,
+    DescribeSubnets,
+    DeleteSubnet,
+    CreateRouteTable,
+    DescribeRouteTables,
+    CreateInternetGateway,
+    AttachInternetGateway,
+    DescribeInternetGateways,
+    AllocateAddress,
+    DescribeAddresses,
+    ReleaseAddress,
+    CreateKeyPair,
+    DescribeKeyPairs,
+    DescribeAvailabilityZones,
+    AuthorizeSecurityGroupIngress,
+    RevokeSecurityGroupIngress,
   },
   model,
 } as const;

@@ -50,6 +50,8 @@ import backup from "./backup.ts";
 import fsx from "./fsx.ts";
 import datasync from "./datasync.ts";
 import elasticbeanstalk from "./elasticbeanstalk.ts";
+import apprunner from "./apprunner.ts";
+import servicediscovery from "./servicediscovery.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -103,6 +105,8 @@ export const services: ServiceDefinition[] = [
   fsx,
   datasync,
   elasticbeanstalk,
+  apprunner,
+  servicediscovery,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

@@ -50,6 +50,10 @@ type S3Bucket = {
   mfaDelete: string | undefined;
   policy: string | undefined;
   lifecycleRules: unknown[];
+  corsRules: unknown[];
+  website: Record<string, unknown> | undefined;
+  encryptionRules: unknown[];
+  notification: Record<string, unknown> | undefined;
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
@@ -122,16 +126,26 @@ const s3: ServiceDefinition = {
       const hasPolicy = req.query.has("policy");
       const hasAcl = req.query.has("acl");
       const hasLifecycle = req.query.has("lifecycle");
+      const hasCors = req.query.has("cors");
+      const hasWebsite = req.query.has("website");
+      const hasEncryption = req.query.has("encryption");
+      const hasNotification = req.query.has("notification");
       if (req.method === "PUT") {
         if (hasTagging) return "PutBucketTagging";
         if (hasVersioning) return "PutBucketVersioning";
         if (hasPolicy) return "PutBucketPolicy";
         if (hasLifecycle) return "PutBucketLifecycleConfiguration";
+        if (hasCors) return "PutBucketCors";
+        if (hasWebsite) return "PutBucketWebsite";
+        if (hasEncryption) return "PutBucketEncryption";
+        if (hasNotification) return "PutBucketNotificationConfiguration";
         return "CreateBucket";
       }
       if (req.method === "DELETE") {
         if (hasTagging) return "DeleteBucketTagging";
         if (hasPolicy) return "DeleteBucketPolicy";
+        if (hasCors) return "DeleteBucketCors";
+        if (hasWebsite) return "DeleteBucketWebsite";
         return "DeleteBucket";
       }
       if (req.method === "GET") {
@@ -142,6 +156,10 @@ const s3: ServiceDefinition = {
         if (hasPolicy) return "GetBucketPolicy";
         if (hasAcl) return "GetBucketAcl";
         if (hasLifecycle) return "GetBucketLifecycleConfiguration";
+        if (hasCors) return "GetBucketCors";
+        if (hasWebsite) return "GetBucketWebsite";
+        if (hasEncryption) return "GetBucketEncryption";
+        if (hasNotification) return "GetBucketNotificationConfiguration";
         if (req.query.get("list-type") === "2") return "ListObjectsV2";
         return "ListObjects";
       }
@@ -198,6 +216,10 @@ const s3: ServiceDefinition = {
         mfaDelete: undefined,
         policy: undefined,
         lifecycleRules: [],
+        corsRules: [],
+        website: undefined,
+        encryptionRules: [],
+        notification: undefined,
       });
       return {};
     },
@@ -811,6 +833,137 @@ const s3: ServiceDefinition = {
         );
       }
       return { Rules: target.lifecycleRules };
+    },
+    PutBucketCors: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["CORSConfiguration"];
+      const rawRules =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)["CORSRules"]
+          : undefined;
+      const corsRules = Array.isArray(rawRules) ? rawRules : [];
+      ctx.store.set<S3Bucket>(bucket, { ...target, corsRules });
+      return {};
+    },
+    GetBucketCors: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if ((target.corsRules ?? []).length === 0) {
+        throw awsError(
+          "NoSuchCORSConfiguration",
+          "The CORS configuration does not exist",
+          404,
+        );
+      }
+      return { CORSRules: target.corsRules };
+    },
+    DeleteBucketCors: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      ctx.store.set<S3Bucket>(bucket, { ...target, corsRules: [] });
+      return {};
+    },
+    PutBucketWebsite: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["WebsiteConfiguration"];
+      const website =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)
+          : {};
+      ctx.store.set<S3Bucket>(bucket, { ...target, website });
+      return {};
+    },
+    GetBucketWebsite: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if (target.website === undefined) {
+        throw awsError(
+          "NoSuchWebsiteConfiguration",
+          "The specified bucket does not have a website configuration",
+          404,
+        );
+      }
+      return target.website;
+    },
+    DeleteBucketWebsite: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      ctx.store.set<S3Bucket>(bucket, { ...target, website: undefined });
+      return {};
+    },
+    PutBucketEncryption: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["ServerSideEncryptionConfiguration"];
+      const rawRules =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)["Rules"]
+          : undefined;
+      const encryptionRules = Array.isArray(rawRules) ? rawRules : [];
+      ctx.store.set<S3Bucket>(bucket, { ...target, encryptionRules });
+      return {};
+    },
+    GetBucketEncryption: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if ((target.encryptionRules ?? []).length === 0) {
+        throw awsError(
+          "ServerSideEncryptionConfigurationNotFoundError",
+          "The server side encryption configuration was not found",
+          404,
+        );
+      }
+      return {
+        ServerSideEncryptionConfiguration: { Rules: target.encryptionRules },
+      };
+    },
+    PutBucketNotificationConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["NotificationConfiguration"];
+      const notification =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)
+          : {};
+      ctx.store.set<S3Bucket>(bucket, { ...target, notification });
+      return {};
+    },
+    GetBucketNotificationConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      return target.notification ?? {};
     },
   },
   model,

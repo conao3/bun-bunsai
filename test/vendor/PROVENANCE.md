@@ -116,6 +116,8 @@ aws-models/
   fsx.json             # botocore/data/fsx/2018-03-01/service-2.json             (protocol json)
   datasync.json        # botocore/data/datasync/2018-11-09/service-2.json        (protocol json)
   elasticbeanstalk.json # botocore/data/elasticbeanstalk/2010-12-01/service-2.json (protocol query)
+  apprunner.json        # botocore/data/apprunner/2020-05-15/service-2.json        (protocol json)
+  servicediscovery.json # botocore/data/servicediscovery/2017-03-14/service-2.json (protocol json)
 ```
 
 ### Notes

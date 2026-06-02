@@ -33,6 +33,12 @@ type StoredTtl = {
   AttributeName: string;
 };
 
+type SecondaryIndex = {
+  IndexName: string;
+  KeySchema: KeySchemaElement[];
+  Projection: Record<string, unknown>;
+};
+
 type StoredTable = {
   TableName: string;
   AttributeDefinitions: AttributeDefinition[];
@@ -41,6 +47,8 @@ type StoredTable = {
   items: Record<string, Item>;
   tags?: StoredTag[];
   ttl?: StoredTtl;
+  globalSecondaryIndexes?: SecondaryIndex[];
+  localSecondaryIndexes?: SecondaryIndex[];
 };
 
 const tableArn = (region: string, account: string, name: string): string =>
@@ -106,19 +114,26 @@ const keyFromKeyInput = (table: StoredTable, key: Item): string =>
     return `${element.AttributeName}=${scalarOf(attribute)}`;
   }).join("&");
 
-const tableDescription = (
+const indexArn = (
+  region: string,
+  account: string,
+  table: string,
+  index: string,
+): string =>
+  `arn:aws:dynamodb:${region}:${account}:table/${table}/index/${index}`;
+
+const gsiDescription = (
   ctx: ServiceContext,
   table: StoredTable,
-  status: string,
+  index: SecondaryIndex,
 ): Record<string, unknown> => ({
-  TableName: table.TableName,
-  AttributeDefinitions: table.AttributeDefinitions,
-  KeySchema: table.KeySchema,
-  TableStatus: status,
-  CreationDateTime: table.CreationDateTime,
+  IndexName: index.IndexName,
+  KeySchema: index.KeySchema,
+  Projection: index.Projection,
+  IndexStatus: "ACTIVE",
+  IndexSizeBytes: 0,
   ItemCount: Object.keys(table.items).length,
-  TableSizeBytes: 0,
-  TableArn: tableArn(ctx.region, ctx.account, table.TableName),
+  IndexArn: indexArn(ctx.region, ctx.account, table.TableName, index.IndexName),
   ProvisionedThroughput: {
     ReadCapacityUnits: 0,
     WriteCapacityUnits: 0,
@@ -126,8 +141,69 @@ const tableDescription = (
   },
 });
 
+const lsiDescription = (
+  ctx: ServiceContext,
+  table: StoredTable,
+  index: SecondaryIndex,
+): Record<string, unknown> => ({
+  IndexName: index.IndexName,
+  KeySchema: index.KeySchema,
+  Projection: index.Projection,
+  IndexSizeBytes: 0,
+  ItemCount: Object.keys(table.items).length,
+  IndexArn: indexArn(ctx.region, ctx.account, table.TableName, index.IndexName),
+});
+
+const tableDescription = (
+  ctx: ServiceContext,
+  table: StoredTable,
+  status: string,
+): Record<string, unknown> => {
+  const description: Record<string, unknown> = {
+    TableName: table.TableName,
+    AttributeDefinitions: table.AttributeDefinitions,
+    KeySchema: table.KeySchema,
+    TableStatus: status,
+    CreationDateTime: table.CreationDateTime,
+    ItemCount: Object.keys(table.items).length,
+    TableSizeBytes: 0,
+    TableArn: tableArn(ctx.region, ctx.account, table.TableName),
+    ProvisionedThroughput: {
+      ReadCapacityUnits: 0,
+      WriteCapacityUnits: 0,
+      NumberOfDecreasesToday: 0,
+    },
+  };
+  if (table.globalSecondaryIndexes !== undefined) {
+    description["GlobalSecondaryIndexes"] = table.globalSecondaryIndexes.map(
+      (index) => gsiDescription(ctx, table, index),
+    );
+  }
+  if (table.localSecondaryIndexes !== undefined) {
+    description["LocalSecondaryIndexes"] = table.localSecondaryIndexes.map(
+      (index) => lsiDescription(ctx, table, index),
+    );
+  }
+  return description;
+};
+
 const asItem = (value: unknown): Item =>
   typeof value === "object" && value !== null ? (value as Item) : ({} as Item);
+
+const parseSecondaryIndexes = (value: unknown): SecondaryIndex[] =>
+  (Array.isArray(value) ? (value as Record<string, unknown>[]) : []).map(
+    (entry) => ({
+      IndexName:
+        typeof entry["IndexName"] === "string" ? entry["IndexName"] : "",
+      KeySchema: Array.isArray(entry["KeySchema"])
+        ? (entry["KeySchema"] as KeySchemaElement[])
+        : [],
+      Projection:
+        typeof entry["Projection"] === "object" && entry["Projection"] !== null
+          ? (entry["Projection"] as Record<string, unknown>)
+          : { ProjectionType: "ALL" },
+    }),
+  );
 
 const CreateTable: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
@@ -151,6 +227,10 @@ const CreateTable: OperationHandler = (input, ctx) => {
     CreationDateTime: Math.floor(Date.now() / 1000),
     items: {},
   };
+  const gsi = parseSecondaryIndexes(input["GlobalSecondaryIndexes"]);
+  if (gsi.length > 0) table.globalSecondaryIndexes = gsi;
+  const lsi = parseSecondaryIndexes(input["LocalSecondaryIndexes"]);
+  if (lsi.length > 0) table.localSecondaryIndexes = lsi;
   ctx.store.set(name, table);
   return { TableDescription: tableDescription(ctx, table, "ACTIVE") };
 };
@@ -172,8 +252,17 @@ const ListTables: OperationHandler = (input, ctx) => {
     typeof exclusive === "string"
       ? names.findIndex((value) => value > exclusive)
       : 0;
-  const sliced = start < 0 ? [] : names.slice(start);
-  return { TableNames: sliced };
+  const remaining = start < 0 ? [] : names.slice(start);
+  const limit =
+    typeof input["Limit"] === "number" && input["Limit"] > 0
+      ? input["Limit"]
+      : remaining.length;
+  const sliced = remaining.slice(0, limit);
+  const result: Record<string, unknown> = { TableNames: sliced };
+  if (sliced.length === limit && sliced.length < remaining.length) {
+    result["LastEvaluatedTableName"] = sliced[sliced.length - 1];
+  }
+  return result;
 };
 
 const DescribeTable: OperationHandler = (input, ctx) => {
@@ -381,29 +470,87 @@ const matchesKeyConditions = (
   return true;
 };
 
+const matchesFilterExpression = (
+  item: Item,
+  expression: string,
+  values: Record<string, AttributeValue>,
+  names: Record<string, string>,
+): boolean => {
+  const comparison = /^\s*(\S+)\s*(=|<>)\s*(\S+)\s*$/.exec(expression);
+  if (comparison === null) return true;
+  const attribute = resolveName(names, comparison[1]);
+  const operator = comparison[2];
+  const operand = values[comparison[3]];
+  if (operand === undefined) return true;
+  const actual = item[attribute];
+  const equal = actual !== undefined && scalarOf(actual) === scalarOf(operand);
+  return operator === "=" ? equal : !equal;
+};
+
+const requireIndex = (table: StoredTable, indexName: string): void => {
+  const indexes = [
+    ...(table.globalSecondaryIndexes ?? []),
+    ...(table.localSecondaryIndexes ?? []),
+  ];
+  if (!indexes.some((index) => index.IndexName === indexName)) {
+    throw awsError(
+      "ValidationException",
+      `The table does not have the specified index: ${indexName}`,
+      400,
+    );
+  }
+};
+
+const filterByExpression = (
+  items: Item[],
+  input: Record<string, unknown>,
+): Item[] => {
+  const expression = input["FilterExpression"];
+  if (typeof expression !== "string" || expression === "") return items;
+  const values = asRecord(input["ExpressionAttributeValues"]) as Record<
+    string,
+    AttributeValue
+  >;
+  const names = asRecord(input["ExpressionAttributeNames"]) as Record<
+    string,
+    string
+  >;
+  return items.filter((item) =>
+    matchesFilterExpression(item, expression, values, names),
+  );
+};
+
 const Query: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
+  if (typeof input["IndexName"] === "string") {
+    requireIndex(table, input["IndexName"]);
+  }
   const conditions =
     typeof input["KeyConditions"] === "object" &&
     input["KeyConditions"] !== null
       ? (input["KeyConditions"] as Record<string, Record<string, unknown>>)
       : {};
-  const items = Object.values(table.items).filter((item) =>
+  const matched = Object.values(table.items).filter((item) =>
     matchesKeyConditions(item, conditions),
   );
-  return { Items: items, Count: items.length, ScannedCount: items.length };
+  const items = filterByExpression(matched, input);
+  return { Items: items, Count: items.length, ScannedCount: matched.length };
 };
 
 const Scan: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
+  if (typeof input["IndexName"] === "string") {
+    requireIndex(table, input["IndexName"]);
+  }
   const filter =
     typeof input["ScanFilter"] === "object" && input["ScanFilter"] !== null
       ? (input["ScanFilter"] as Record<string, Record<string, unknown>>)
       : {};
   const all = Object.values(table.items);
-  const items = all.filter((item) => matchesKeyConditions(item, filter));
+  const matched = all.filter((item) => matchesKeyConditions(item, filter));
+  const items = filterByExpression(matched, input);
   return {
     Items: items,
     Count: items.length,

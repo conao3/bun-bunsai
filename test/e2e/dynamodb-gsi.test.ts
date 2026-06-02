@@ -1,0 +1,247 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { spawn } from "bun";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
+import {
+  CreateTableCommand,
+  DeleteTableCommand,
+  DescribeTableCommand,
+  DynamoDBClient,
+  ListTablesCommand,
+  PutItemCommand,
+  QueryCommand,
+  ScanCommand,
+} from "@aws-sdk/client-dynamodb";
+
+const awsPort = 4566;
+const uiPort = 5666;
+const endpoint = `http://localhost:${awsPort}`;
+const region = "us-east-1";
+const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
+
+const serverEntry = new URL("../../apps/server/src/index.ts", import.meta.url)
+  .pathname;
+
+let proc: ReturnType<typeof spawn> | undefined;
+
+const waitForServer = async (): Promise<void> => {
+  for (let i = 0; i < 100; i += 1) {
+    try {
+      const res = await fetch(`http://localhost:${uiPort}/__bunsai/logs`);
+      if (res.ok) {
+        await res.body?.cancel();
+        return;
+      }
+    } catch {
+      void 0;
+    }
+    await Bun.sleep(100);
+  }
+  throw new Error("server did not become ready");
+};
+
+describe("DynamoDB GSI/filter/paging e2e", () => {
+  beforeAll(async () => {
+    proc = spawn({
+      cmd: ["bun", serverEntry],
+      env: {
+        ...process.env,
+        BUNSAI_PORT: String(awsPort),
+        BUNSAI_UI_PORT: String(uiPort),
+        NODE_ENV: "production",
+      },
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    await waitForServer();
+  });
+
+  afterAll(() => {
+    proc?.kill();
+  });
+
+  const ddb = () =>
+    new DynamoDBClient({
+      endpoint,
+      region,
+      credentials,
+      requestHandler: new NodeHttpHandler(),
+    });
+
+  test("secondary indexes are stored and described", async () => {
+    const client = ddb();
+    const table = "bunsai-e2e-ddb-gsi";
+
+    await client.send(
+      new CreateTableCommand({
+        TableName: table,
+        AttributeDefinitions: [
+          { AttributeName: "pk", AttributeType: "S" },
+          { AttributeName: "sk", AttributeType: "S" },
+          { AttributeName: "gsiKey", AttributeType: "S" },
+        ],
+        KeySchema: [
+          { AttributeName: "pk", KeyType: "HASH" },
+          { AttributeName: "sk", KeyType: "RANGE" },
+        ],
+        GlobalSecondaryIndexes: [
+          {
+            IndexName: "gsi-1",
+            KeySchema: [{ AttributeName: "gsiKey", KeyType: "HASH" }],
+            Projection: { ProjectionType: "ALL" },
+            ProvisionedThroughput: {
+              ReadCapacityUnits: 5,
+              WriteCapacityUnits: 5,
+            },
+          },
+        ],
+        LocalSecondaryIndexes: [
+          {
+            IndexName: "lsi-1",
+            KeySchema: [
+              { AttributeName: "pk", KeyType: "HASH" },
+              { AttributeName: "gsiKey", KeyType: "RANGE" },
+            ],
+            Projection: { ProjectionType: "KEYS_ONLY" },
+          },
+        ],
+        ProvisionedThroughput: {
+          ReadCapacityUnits: 5,
+          WriteCapacityUnits: 5,
+        },
+      }),
+    );
+
+    const described = await client.send(
+      new DescribeTableCommand({ TableName: table }),
+    );
+    const gsi = described.Table?.GlobalSecondaryIndexes ?? [];
+    expect(gsi.length).toBe(1);
+    expect(gsi[0]?.IndexName).toBe("gsi-1");
+    expect(gsi[0]?.IndexArn).toContain("/index/gsi-1");
+    const lsi = described.Table?.LocalSecondaryIndexes ?? [];
+    expect(lsi.length).toBe(1);
+    expect(lsi[0]?.IndexName).toBe("lsi-1");
+
+    await client.send(new DeleteTableCommand({ TableName: table }));
+  });
+
+  test("filter expression on Scan and Query", async () => {
+    const client = ddb();
+    const table = "bunsai-e2e-ddb-filter";
+
+    await client.send(
+      new CreateTableCommand({
+        TableName: table,
+        AttributeDefinitions: [{ AttributeName: "pk", AttributeType: "S" }],
+        KeySchema: [{ AttributeName: "pk", KeyType: "HASH" }],
+        ProvisionedThroughput: {
+          ReadCapacityUnits: 5,
+          WriteCapacityUnits: 5,
+        },
+      }),
+    );
+
+    await client.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: { pk: { S: "a" }, status: { S: "active" } },
+      }),
+    );
+    await client.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: { pk: { S: "b" }, status: { S: "inactive" } },
+      }),
+    );
+    await client.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: { pk: { S: "c" }, status: { S: "active" } },
+      }),
+    );
+
+    const scanActive = await client.send(
+      new ScanCommand({
+        TableName: table,
+        FilterExpression: "#s = :v",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: { ":v": { S: "active" } },
+      }),
+    );
+    expect(scanActive.Count).toBe(2);
+    expect(scanActive.ScannedCount).toBe(3);
+
+    const scanNot = await client.send(
+      new ScanCommand({
+        TableName: table,
+        FilterExpression: "#s <> :v",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: { ":v": { S: "active" } },
+      }),
+    );
+    expect(scanNot.Count).toBe(1);
+    expect(scanNot.Items?.[0]?.pk?.S).toBe("b");
+
+    const queryFiltered = await client.send(
+      new QueryCommand({
+        TableName: table,
+        KeyConditions: {
+          pk: {
+            ComparisonOperator: "EQ",
+            AttributeValueList: [{ S: "a" }],
+          },
+        },
+        FilterExpression: "#s = :v",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: { ":v": { S: "active" } },
+      }),
+    );
+    expect(queryFiltered.Count).toBe(1);
+    expect(queryFiltered.Items?.[0]?.pk?.S).toBe("a");
+
+    await client.send(new DeleteTableCommand({ TableName: table }));
+  });
+
+  test("ListTables paging with Limit and ExclusiveStartTableName", async () => {
+    const client = ddb();
+    const names = [
+      "bunsai-e2e-page-1",
+      "bunsai-e2e-page-2",
+      "bunsai-e2e-page-3",
+    ];
+
+    for (const name of names) {
+      await client.send(
+        new CreateTableCommand({
+          TableName: name,
+          AttributeDefinitions: [{ AttributeName: "pk", AttributeType: "S" }],
+          KeySchema: [{ AttributeName: "pk", KeyType: "HASH" }],
+          ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5,
+          },
+        }),
+      );
+    }
+
+    const firstPage = await client.send(new ListTablesCommand({ Limit: 2 }));
+    expect((firstPage.TableNames ?? []).length).toBe(2);
+    expect(firstPage.LastEvaluatedTableName).toBeDefined();
+
+    const secondPage = await client.send(
+      new ListTablesCommand({
+        Limit: 2,
+        ExclusiveStartTableName: firstPage.LastEvaluatedTableName,
+      }),
+    );
+    const firstNames = firstPage.TableNames ?? [];
+    const secondNames = secondPage.TableNames ?? [];
+    for (const name of secondNames) {
+      expect(firstNames).not.toContain(name);
+    }
+
+    for (const name of names) {
+      await client.send(new DeleteTableCommand({ TableName: name }));
+    }
+  });
+});

@@ -14,6 +14,7 @@
   },
   "devDependencies": {
     "@aws-sdk/client-acm": "^3.1058.0",
+    "@aws-sdk/client-apprunner": "^3.1058.0",
     "@aws-sdk/client-appsync": "^3.1058.0",
     "@aws-sdk/client-athena": "^3.1058.0",
     "@aws-sdk/client-backup": "^3.1058.0",
@@ -52,6 +53,7 @@
     "@aws-sdk/client-sagemaker": "^3.1058.0",
     "@aws-sdk/client-scheduler": "^3.1058.0",
     "@aws-sdk/client-secrets-manager": "^3.1058.0",
+    "@aws-sdk/client-servicediscovery": "^3.1058.0",
     "@aws-sdk/client-ses": "^3.1058.0",
     "@aws-sdk/client-sfn": "^3.1058.0",
     "@aws-sdk/client-sns": "^3.1058.0",

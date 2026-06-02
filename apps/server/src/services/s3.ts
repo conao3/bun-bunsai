@@ -18,10 +18,16 @@ type S3Object = {
   lastModified: number;
 };
 
+type S3Tag = {
+  Key: string;
+  Value: string;
+};
+
 type S3Bucket = {
   name: string;
   creationDate: number;
   objects: Record<string, S3Object>;
+  tagSet: S3Tag[];
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
@@ -71,13 +77,29 @@ const s3: ServiceDefinition = {
       return undefined;
     }
     if (key === undefined) {
-      if (req.method === "PUT") return "CreateBucket";
-      if (req.method === "DELETE") return "DeleteBucket";
-      if (req.method === "GET") return "ListObjectsV2";
+      const hasTagging = req.query.has("tagging");
+      const hasLocation = req.query.has("location");
+      if (req.method === "PUT") {
+        if (hasTagging) return "PutBucketTagging";
+        return "CreateBucket";
+      }
+      if (req.method === "DELETE") {
+        if (hasTagging) return "DeleteBucketTagging";
+        return "DeleteBucket";
+      }
+      if (req.method === "GET") {
+        if (hasTagging) return "GetBucketTagging";
+        if (hasLocation) return "GetBucketLocation";
+        if (req.query.get("list-type") === "2") return "ListObjectsV2";
+        return "ListObjects";
+      }
       if (req.method === "HEAD") return "HeadBucket";
       return undefined;
     }
-    if (req.method === "PUT") return "PutObject";
+    if (req.method === "PUT") {
+      if (req.headers.get("x-amz-copy-source") !== null) return "CopyObject";
+      return "PutObject";
+    }
     if (req.method === "GET") return "GetObject";
     if (req.method === "HEAD") return "HeadObject";
     if (req.method === "DELETE") return "DeleteObject";
@@ -100,6 +122,7 @@ const s3: ServiceDefinition = {
         name: bucket,
         creationDate: nowSeconds(),
         objects: {},
+        tagSet: [],
       });
       return {};
     },
@@ -224,6 +247,133 @@ const s3: ServiceDefinition = {
         ctx.store.set<S3Bucket>(bucket, { ...target, objects: rest });
       }
       return {};
+    },
+    ListObjects: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const prefix = req.query.get("prefix") ?? "";
+      const marker = req.query.get("marker") ?? "";
+      const all = Object.values(target.objects)
+        .filter((o) => o.key.startsWith(prefix))
+        .filter((o) => o.key > marker)
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      return {
+        Name: bucket,
+        Prefix: prefix,
+        Marker: marker,
+        MaxKeys: 1000,
+        IsTruncated: false,
+        Contents: all.map((o) => ({
+          Key: o.key,
+          LastModified: o.lastModified,
+          ETag: o.etag,
+          Size: o.size,
+          StorageClass: "STANDARD",
+        })),
+      };
+    },
+    CopyObject: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const copySource = input["CopySource"];
+      if (typeof copySource !== "string" || copySource === "") {
+        throw awsError(
+          "InvalidArgument",
+          "x-amz-copy-source header is required",
+          400,
+        );
+      }
+      const sourceRef = copySource.split("?")[0];
+      const { bucket: srcBucket, key: srcKey } = bucketKeyFromPath(sourceRef);
+      if (srcBucket === undefined || srcKey === undefined) {
+        throw awsError("InvalidArgument", "invalid copy source", 400);
+      }
+      const sourceBucket = getBucket(ctx, srcBucket);
+      const source = sourceBucket.objects[srcKey];
+      if (source === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const lastModified = nowSeconds();
+      const object: S3Object = {
+        key,
+        body: source.body,
+        contentType: source.contentType,
+        etag: source.etag,
+        size: source.size,
+        lastModified,
+      };
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        objects: { ...target.objects, [key]: object },
+      });
+      return {
+        CopyObjectResult: {
+          ETag: object.etag,
+          LastModified: lastModified,
+        },
+      };
+    },
+    PutBucketTagging: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const tagging = input["Tagging"];
+      const rawTagSet =
+        typeof tagging === "object" && tagging !== null
+          ? (tagging as Record<string, unknown>)["TagSet"]
+          : undefined;
+      const tagSet = Array.isArray(rawTagSet)
+        ? rawTagSet.flatMap((tag) => {
+            if (typeof tag !== "object" || tag === null) return [];
+            const record = tag as Record<string, unknown>;
+            const tagKey = record["Key"];
+            const tagValue = record["Value"];
+            if (typeof tagKey !== "string" || typeof tagValue !== "string") {
+              return [];
+            }
+            return [{ Key: tagKey, Value: tagValue }];
+          })
+        : [];
+      ctx.store.set<S3Bucket>(bucket, { ...target, tagSet });
+      return {};
+    },
+    GetBucketTagging: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      return {
+        TagSet: (target.tagSet ?? []).map((tag) => ({
+          Key: tag.Key,
+          Value: tag.Value,
+        })),
+      };
+    },
+    DeleteBucketTagging: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      ctx.store.set<S3Bucket>(bucket, { ...target, tagSet: [] });
+      return {};
+    },
+    GetBucketLocation: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      getBucket(ctx, bucket);
+      return { LocationConstraint: req.region };
     },
   },
   model,

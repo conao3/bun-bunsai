@@ -1,8 +1,4 @@
-import type {
-  Protocol,
-  ShapeRegistry,
-  StructureShape,
-} from "../types.ts";
+import type { Protocol, ShapeRegistry, StructureShape } from "../types.ts";
 import { contentTypes } from "./common.ts";
 import type { CodecResult } from "./common.ts";
 
@@ -97,7 +93,11 @@ export const serializeShapeError = (
     case "rest-xml": {
       const fault = req.senderFault === false ? "Receiver" : "Sender";
       let inner = `<Type>${fault}</Type><Code>${escapeXml(req.code)}</Code>`;
-      if (message !== undefined && data.Message === undefined && data.message === undefined)
+      if (
+        message !== undefined &&
+        data.Message === undefined &&
+        data.message === undefined
+      )
         inner += `<Message>${escapeXml(message)}</Message>`;
       inner += dataMembersBody(req.shape, data);
       const body = `<ErrorResponse><Error>${inner}</Error><RequestId>foo-id</RequestId></ErrorResponse>`;

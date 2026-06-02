@@ -97,7 +97,13 @@ const normalizeTimestampFormat = (
     : undefined;
 };
 
-const locations = ["querystring", "header", "headers", "uri", "statusCode"] as const;
+const locations = [
+  "querystring",
+  "header",
+  "headers",
+  "uri",
+  "statusCode",
+] as const;
 
 const normalizeMember = (raw: RawMember): Member => {
   const member: Member = { shape: raw.shape };
@@ -267,7 +273,9 @@ export const resolveErrorShape = (
   return model.registry.shapes[found.shape];
 };
 
-export const errorTraitCode = (shape: Shape | undefined): string | undefined => {
+export const errorTraitCode = (
+  shape: Shape | undefined,
+): string | undefined => {
   if (shape === undefined || shape.type !== "structure") return undefined;
   return shape.error?.code;
 };

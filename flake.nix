@@ -26,6 +26,7 @@
             projectRootFile = "flake.nix";
             programs.prettier.enable = true;
             programs.nixfmt.enable = true;
+            settings.global.excludes = [ "test/vendor/**" ];
           };
 
           devShells.default = pkgs.mkShell {

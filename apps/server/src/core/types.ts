@@ -67,7 +67,12 @@ export type ShapeType = (typeof shapeTypes)[number];
 
 export type TimestampFormat = "unixTimestamp" | "iso8601" | "rfc822";
 
-export type Location = "querystring" | "header" | "headers" | "uri" | "statusCode";
+export type Location =
+  | "querystring"
+  | "header"
+  | "headers"
+  | "uri"
+  | "statusCode";
 
 export type XmlNamespace = {
   uri: string;

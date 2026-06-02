@@ -132,7 +132,8 @@ export const dispatch = async (
   };
 
   try {
-    const op = model === undefined ? undefined : resolveOperation(model, operation);
+    const op =
+      model === undefined ? undefined : resolveOperation(model, operation);
     const input =
       model === undefined
         ? parseInput(req)

@@ -265,13 +265,17 @@ const runOutputCase = (
   const outShapeName = vcase.given.output?.shape;
   const outShape =
     outShapeName === undefined ? undefined : getShape(registry, outShapeName);
-  const serialized = serializeOutput(protocol, vcase.given.name, vcase.result ?? {}, {
-    registry,
-    shape: outShape,
-    outputShapeName: outShapeName,
-    xmlNamespace:
-      protocol === "query" ? "https://example.com/" : undefined,
-  });
+  const serialized = serializeOutput(
+    protocol,
+    vcase.given.name,
+    vcase.result ?? {},
+    {
+      registry,
+      shape: outShape,
+      outputShapeName: outShapeName,
+      xmlNamespace: protocol === "query" ? "https://example.com/" : undefined,
+    },
+  );
   if (response.body !== undefined)
     compareBody(protocol, "output", serialized.body, response.body);
   compareHeaders(
@@ -280,12 +284,8 @@ const runOutputCase = (
   );
 };
 
-const isGap = (
-  id: string,
-  direction: "input" | "output",
-): boolean =>
-  knownGaps.includes(id) ||
-  knownGaps.includes(`${id}:${direction}`);
+const isGap = (id: string, direction: "input" | "output"): boolean =>
+  knownGaps.includes(id) || knownGaps.includes(`${id}:${direction}`);
 
 export const runSuites = (
   direction: "input" | "output",

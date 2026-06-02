@@ -31,7 +31,11 @@ const parseValueFromString = (
   text: string,
 ): unknown => {
   if (shape === undefined) return text;
-  if (shape.type === "structure" || shape.type === "list" || shape.type === "map")
+  if (
+    shape.type === "structure" ||
+    shape.type === "list" ||
+    shape.type === "map"
+  )
     return text;
   return parseScalar(shape, text);
 };
@@ -84,7 +88,8 @@ const parseJsonStructure = (
   for (const [wire, raw] of Object.entries(source)) {
     const name = byWire[wire] ?? wire;
     const member = shape.members[name];
-    const memberSh = member === undefined ? undefined : memberShape(registry, member);
+    const memberSh =
+      member === undefined ? undefined : memberShape(registry, member);
     out[name] = parseJsonValue(registry, memberSh, raw);
   }
   return out;
@@ -206,9 +211,7 @@ const parseRestStructure = (
   const { registry } = req;
   const out: Record<string, unknown> = {};
   const labels =
-    req.requestUri === undefined
-      ? {}
-      : labelValues(req.requestUri, req.path);
+    req.requestUri === undefined ? {} : labelValues(req.requestUri, req.path);
   let mapAllQueryMember: string | undefined;
   let payloadMember: string | undefined;
   const bodyMembers: Record<string, Member> = {};
@@ -225,8 +228,7 @@ const parseRestStructure = (
     if (member.location === "uri") {
       const wire = member.locationName ?? name;
       const raw = labels[wire];
-      if (raw !== undefined)
-        out[name] = parseValueFromString(memberSh, raw);
+      if (raw !== undefined) out[name] = parseValueFromString(memberSh, raw);
       continue;
     }
     if (member.location === "querystring") {
@@ -235,7 +237,13 @@ const parseRestStructure = (
         continue;
       }
       const wire = member.locationName ?? name;
-      const value = parseQueryMember(registry, member, memberSh, wire, req.query);
+      const value = parseQueryMember(
+        registry,
+        member,
+        memberSh,
+        wire,
+        req.query,
+      );
       if (value !== undefined) out[name] = value;
       continue;
     }
@@ -276,7 +284,9 @@ const parseRestStructure = (
     const member = shape.members[mapAllQueryMember];
     const memberSh = memberShape(registry, member) as MapShape | undefined;
     const valueShape =
-      memberSh === undefined ? undefined : memberShape(registry, memberSh.value);
+      memberSh === undefined
+        ? undefined
+        : memberShape(registry, memberSh.value);
     const valueIsList = valueShape !== undefined && valueShape.type === "list";
     const collected: Record<string, unknown> = {};
     for (const [k, v] of req.query.entries()) {
@@ -326,7 +336,10 @@ const parseRestStructure = (
     } else {
       out[payloadMember] = req.bodyText;
     }
-  } else if (Object.keys(bodyMembers).length > 0 && req.bodyText.trim() !== "") {
+  } else if (
+    Object.keys(bodyMembers).length > 0 &&
+    req.bodyText.trim() !== ""
+  ) {
     const bodyShape: StructureShape = {
       type: "structure",
       members: bodyMembers,
@@ -334,7 +347,12 @@ const parseRestStructure = (
     let parsedBody: Record<string, unknown>;
     if (req.protocol === "rest-xml") {
       const root = parseXmlRoot(req.bodyText);
-      parsedBody = parseXmlStructure(registry, bodyShape, root.children, root.attrs);
+      parsedBody = parseXmlStructure(
+        registry,
+        bodyShape,
+        root.children,
+        root.attrs,
+      );
     } else {
       parsedBody = parseBodyJson(registry, bodyShape, req.bodyText);
     }
@@ -344,7 +362,12 @@ const parseRestStructure = (
   return out;
 };
 
-type XmlNode = { name: string; children: XmlNode[]; text: string; attrs: Record<string, string> };
+type XmlNode = {
+  name: string;
+  children: XmlNode[];
+  text: string;
+  attrs: Record<string, string>;
+};
 
 const parseXmlRoot = (xml: string): XmlNode => {
   const stripped = xml
@@ -444,10 +467,14 @@ const parseXmlValue = (
     return parseXmlStructure(registry, shape, node.children, node.attrs);
   if (shape.type === "list")
     return parseXmlListItems(registry, shape, node.children);
-  if (shape.type === "map") return parseXmlMapEntries(registry, shape, node.children);
+  if (shape.type === "map")
+    return parseXmlMapEntries(registry, shape, node.children);
   if (shape.type === "blob") return blobFromBase64(node.text);
   if (shape.type === "timestamp")
-    return timestampToEpochSeconds(node.text, shape.timestampFormat ?? "iso8601");
+    return timestampToEpochSeconds(
+      node.text,
+      shape.timestampFormat ?? "iso8601",
+    );
   return parseScalar(shape, node.text);
 };
 
@@ -508,7 +535,7 @@ const parseXmlStructure = (
         const wire =
           member.locationName ??
           (memberSh.type === "list"
-            ? memberSh.member.locationName ?? name
+            ? (memberSh.member.locationName ?? name)
             : name);
         byWire[wire] = name;
         flattenedLists.add(name);
@@ -601,8 +628,13 @@ const parseQueryList = (
   }
   const memberName = shape.member.locationName ?? "member";
   const record = node as Record<string, unknown>;
-  const isFlattened = record[memberName] === undefined && record.member === undefined;
-  const container = isFlattened ? undefined : memberName in record ? memberName : "member";
+  const isFlattened =
+    record[memberName] === undefined && record.member === undefined;
+  const container = isFlattened
+    ? undefined
+    : memberName in record
+      ? memberName
+      : "member";
   const items = collectIndexed(record, container);
   const itemShape = memberShape(registry, shape.member);
   return items.map((item) => parseQueryNode(registry, itemShape, item));
@@ -615,7 +647,10 @@ const parseQueryMap = (
 ): Record<string, unknown> => {
   if (typeof node !== "object" || node === null) return {};
   const record = node as Record<string, unknown>;
-  const container = record.entry === undefined ? record : (record.entry as Record<string, unknown>);
+  const container =
+    record.entry === undefined
+      ? record
+      : (record.entry as Record<string, unknown>);
   const keyName = shape.key.locationName ?? "key";
   const valueName = shape.value.locationName ?? "value";
   const valueShape = memberShape(registry, shape.value);
@@ -676,7 +711,10 @@ export const parseShapeInput = (req: ParseRequest): Record<string, unknown> => {
         );
   }
   if (protocol === "json") return parseBodyJson(registry, shape, req.bodyText);
-  const form = formToTree([...req.query.entries(), ...formEntries(req.bodyText)]);
+  const form = formToTree([
+    ...req.query.entries(),
+    ...formEntries(req.bodyText),
+  ]);
   if (shape !== undefined && shape.type === "structure")
     return parseQueryStructure(registry, shape, form);
   return form;

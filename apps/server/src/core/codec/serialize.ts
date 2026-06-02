@@ -113,7 +113,10 @@ const xmlValue = (
   if (shape.type === "list" || shape.type === "map") return "";
   if (shape.type === "timestamp")
     return escapeXml(
-      epochSecondsToTimestamp(value, member?.timestampFormat ?? shape.timestampFormat),
+      epochSecondsToTimestamp(
+        value,
+        member?.timestampFormat ?? shape.timestampFormat,
+      ),
     );
   if (shape.type === "blob") return escapeXml(blobToBase64(value));
   if (shape.type === "boolean") return value === true ? "true" : "false";
@@ -250,7 +253,14 @@ const xmlStructureBody = (
     if (v === undefined || v === null) continue;
     const memberSh = memberShape(registry, member);
     const elName = member.locationName ?? name;
-    body += xmlElement(registry, elName, memberSh, member, v, member.xmlNamespace);
+    body += xmlElement(
+      registry,
+      elName,
+      memberSh,
+      member,
+      v,
+      member.xmlNamespace,
+    );
   }
   return body;
 };
@@ -301,10 +311,14 @@ const headerString = (
       .join(", ");
   }
   if (shape !== undefined && shape.type === "timestamp")
-    return epochSecondsToTimestamp(value, member.timestampFormat ?? shape.timestampFormat ?? "rfc822");
+    return epochSecondsToTimestamp(
+      value,
+      member.timestampFormat ?? shape.timestampFormat ?? "rfc822",
+    );
   if (shape !== undefined && shape.type === "structure") return String(value);
   if (shape !== undefined && shape.type === "map") return String(value);
-  if (shape !== undefined) return scalarToWireString(shape, value, member.timestampFormat);
+  if (shape !== undefined)
+    return scalarToWireString(shape, value, member.timestampFormat);
   return String(value);
 };
 
@@ -332,7 +346,9 @@ const bodyMembersOf = (shape: StructureShape): StructureShape => {
 const serializeRest = (req: SerializeRequest): CodecResult => {
   const { protocol, registry, shape } = req;
   const isXml = protocol === "rest-xml";
-  const contentType = isXml ? contentTypes["rest-xml"] : contentTypes["rest-json"];
+  const contentType = isXml
+    ? contentTypes["rest-xml"]
+    : contentTypes["rest-json"];
   const headers: Record<string, string> = {};
   if (shape === undefined || shape.type !== "structure") {
     const body =
@@ -359,7 +375,12 @@ const serializeRest = (req: SerializeRequest): CodecResult => {
     const memberSh = memberShape(registry, member);
     const v = source[payloadMemberName];
     if (v === undefined || v === null)
-      return { body: "", contentType, headers, ...(statusCode !== undefined ? { statusCode } : {}) };
+      return {
+        body: "",
+        contentType,
+        headers,
+        ...(statusCode !== undefined ? { statusCode } : {}),
+      };
     if (
       memberSh !== undefined &&
       memberSh.type === "structure" &&
@@ -386,7 +407,12 @@ const serializeRest = (req: SerializeRequest): CodecResult => {
           payloadMemberName;
         const attrParts = structureAttributes(registry, memberSh, v);
         const body = `<${rootName}${nsAttr(memberSh.xmlNamespace ?? member.xmlNamespace)}${attrParts}>${xmlStructureBody(registry, memberSh, v)}</${rootName}>`;
-        return { body, contentType, headers, ...(statusCode !== undefined ? { statusCode } : {}) };
+        return {
+          body,
+          contentType,
+          headers,
+          ...(statusCode !== undefined ? { statusCode } : {}),
+        };
       }
       return {
         body: JSON.stringify(jsonStructure(registry, memberSh, v)),
@@ -396,9 +422,19 @@ const serializeRest = (req: SerializeRequest): CodecResult => {
       };
     }
     if (memberSh !== undefined && memberSh.type === "blob")
-      return { body: typeof v === "string" ? v : blobToBase64(v), contentType: "application/octet-stream", headers, ...(statusCode !== undefined ? { statusCode } : {}) };
+      return {
+        body: typeof v === "string" ? v : blobToBase64(v),
+        contentType: "application/octet-stream",
+        headers,
+        ...(statusCode !== undefined ? { statusCode } : {}),
+      };
     if (memberSh !== undefined && memberSh.type === "string")
-      return { body: String(v), contentType: "text/plain", headers, ...(statusCode !== undefined ? { statusCode } : {}) };
+      return {
+        body: String(v),
+        contentType: "text/plain",
+        headers,
+        ...(statusCode !== undefined ? { statusCode } : {}),
+      };
     return {
       body: JSON.stringify(jsonValue(registry, memberSh, v)),
       contentType,
@@ -413,15 +449,32 @@ const serializeRest = (req: SerializeRequest): CodecResult => {
   );
   if (isXml) {
     if (!hasBody)
-      return { body: "", contentType, headers, ...(statusCode !== undefined ? { statusCode } : {}) };
+      return {
+        body: "",
+        contentType,
+        headers,
+        ...(statusCode !== undefined ? { statusCode } : {}),
+      };
     const rootName =
       shape.locationName ?? req.outputShapeName ?? `${req.operation}Response`;
     const attrParts = structureAttributes(registry, shape, source);
     const body = `<${rootName}${nsAttr(shape.xmlNamespace)}${attrParts}>${xmlStructureBody(registry, bodyShape, source)}</${rootName}>`;
-    return { body, contentType, headers, ...(statusCode !== undefined ? { statusCode } : {}) };
+    return {
+      body,
+      contentType,
+      headers,
+      ...(statusCode !== undefined ? { statusCode } : {}),
+    };
   }
-  const body = hasBody ? JSON.stringify(jsonStructure(registry, bodyShape, source)) : "{}";
-  return { body, contentType, headers, ...(statusCode !== undefined ? { statusCode } : {}) };
+  const body = hasBody
+    ? JSON.stringify(jsonStructure(registry, bodyShape, source))
+    : "{}";
+  return {
+    body,
+    contentType,
+    headers,
+    ...(statusCode !== undefined ? { statusCode } : {}),
+  };
 };
 
 const serializeQuery = (req: SerializeRequest): CodecResult => {

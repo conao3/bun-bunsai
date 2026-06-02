@@ -30,6 +30,11 @@ import kinesis from "./kinesis.ts";
 import firehose from "./firehose.ts";
 import ecs from "./ecs.ts";
 import organizations from "./organizations.ts";
+import cloudfront from "./cloudfront.ts";
+import batch from "./batch.ts";
+import redshift from "./redshift.ts";
+import acm from "./acm.ts";
+import cloudtrail from "./cloudtrail.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -63,6 +68,11 @@ export const services: ServiceDefinition[] = [
   firehose,
   ecs,
   organizations,
+  cloudfront,
+  batch,
+  redshift,
+  acm,
+  cloudtrail,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

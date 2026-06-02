@@ -96,6 +96,11 @@ aws-models/
   firehose.json        # botocore/data/firehose/2015-08-04/service-2.json       (protocol json)
   ecs.json             # botocore/data/ecs/2014-11-13/service-2.json            (protocol json)
   organizations.json   # botocore/data/organizations/2016-11-28/service-2.json  (protocol json)
+  cloudfront.json      # botocore/data/cloudfront/2020-05-31/service-2.json     (protocol rest-xml)
+  batch.json           # botocore/data/batch/2016-08-10/service-2.json          (protocol rest-json)
+  redshift.json        # botocore/data/redshift/2012-12-01/service-2.json       (protocol query)
+  acm.json             # botocore/data/acm/2015-12-08/service-2.json            (protocol json)
+  cloudtrail.json      # botocore/data/cloudtrail/2013-11-01/service-2.json     (protocol json)
 ```
 
 ### Notes

@@ -36,7 +36,9 @@ const escapeXml = (value: string): string =>
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
+    .replaceAll("'", "&apos;")
+    .replaceAll("\r", "&#xD;")
+    .replaceAll("\n", "&#10;");
 
 const nsAttr = (ns: XmlNamespace | undefined): string => {
   if (ns === undefined) return "";
@@ -469,7 +471,7 @@ const serializeRest = (req: SerializeRequest): CodecResult => {
     };
   }
   const body = hasBody
-    ? JSON.stringify(jsonStructure(registry, bodyShape, source))
+    ? JSON.stringify(jsonStructure(registry, shape, source))
     : "{}";
   return {
     body,

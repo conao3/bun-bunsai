@@ -70,7 +70,7 @@ export const blobToBase64 = (value: unknown): string => {
   return Buffer.from(String(value), "binary").toString("base64");
 };
 
-const epochFromDate = (date: Date): number => Math.floor(date.getTime() / 1000);
+const epochFromDate = (date: Date): number => date.getTime() / 1000;
 
 export const timestampToEpochSeconds = (
   raw: unknown,
@@ -79,7 +79,7 @@ export const timestampToEpochSeconds = (
   if (typeof raw === "number") return raw;
   if (typeof raw === "string") {
     const trimmed = raw.trim();
-    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Math.floor(Number(trimmed));
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
     const parsed = Date.parse(trimmed);
     if (!Number.isNaN(parsed)) return epochFromDate(new Date(parsed));
   }
@@ -104,6 +104,12 @@ const months = [
   "Dec",
 ] as const;
 
+const fractionalSuffix = (seconds: number): string => {
+  const millis = Math.round((seconds - Math.floor(seconds)) * 1000);
+  if (millis === 0) return "";
+  return `.${String(millis).padStart(3, "0").replace(/0+$/, "")}`;
+};
+
 export const epochSecondsToTimestamp = (
   value: unknown,
   format: TimestampFormat | undefined,
@@ -121,7 +127,7 @@ export const epochSecondsToTimestamp = (
     case "unixTimestamp":
       return String(seconds);
     default:
-      return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}Z`;
+      return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}${fractionalSuffix(seconds)}Z`;
   }
 };
 

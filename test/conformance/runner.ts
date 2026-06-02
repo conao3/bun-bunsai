@@ -127,6 +127,7 @@ const normalizeXml = (text: string): string =>
     .replace(/<\?xml[^?]*\?>/g, "")
     .replace(/>\s+</g, "><")
     .replace(/\s+/g, " ")
+    .replace(/<([\w:.-]+)((?:\s+[\w:.-]+="[^"]*")*)\s*>\s*<\/\1>/g, "<$1$2/>")
     .trim();
 
 const compareBody = (

@@ -21,6 +21,11 @@ import ec2 from "./ec2.ts";
 import rds from "./rds.ts";
 import ecr from "./ecr.ts";
 import cognitoIdp from "./cognito-idp.ts";
+import athena from "./athena.ts";
+import glue from "./glue.ts";
+import elasticache from "./elasticache.ts";
+import efs from "./efs.ts";
+import elbv2 from "./elbv2.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -45,6 +50,11 @@ export const services: ServiceDefinition[] = [
   rds,
   ecr,
   cognitoIdp,
+  athena,
+  glue,
+  elasticache,
+  efs,
+  elbv2,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

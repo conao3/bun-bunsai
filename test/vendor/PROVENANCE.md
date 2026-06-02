@@ -87,6 +87,11 @@ aws-models/
   rds.json             # botocore/data/rds/2014-10-31/service-2.json            (protocol query)
   ecr.json             # botocore/data/ecr/2015-09-21/service-2.json            (protocol json)
   cognito-idp.json     # botocore/data/cognito-idp/2016-04-18/service-2.json    (protocol json)
+  athena.json          # botocore/data/athena/2017-05-18/service-2.json         (protocol json)
+  glue.json            # botocore/data/glue/2017-03-31/service-2.json           (protocol json)
+  elasticache.json     # botocore/data/elasticache/2015-02-02/service-2.json    (protocol query)
+  efs.json             # botocore/data/efs/2015-02-01/service-2.json            (protocol rest-json)
+  elbv2.json           # botocore/data/elasticloadbalancingv2/2015-12-01/service-2.json (protocol query)
 ```
 
 ### Notes

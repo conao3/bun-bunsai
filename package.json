@@ -13,6 +13,7 @@
     "fetch-protocol-tests": "bun scripts/fetch-protocol-tests.ts"
   },
   "devDependencies": {
+    "@aws-sdk/client-athena": "^3.1058.0",
     "@aws-sdk/client-cloudformation": "^3.1058.0",
     "@aws-sdk/client-cloudwatch": "^3.1058.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.1058.0",
@@ -20,7 +21,11 @@
     "@aws-sdk/client-dynamodb": "^3.1058.0",
     "@aws-sdk/client-ec2": "^3.1058.0",
     "@aws-sdk/client-ecr": "^3.1058.0",
+    "@aws-sdk/client-efs": "^3.1058.0",
+    "@aws-sdk/client-elastic-load-balancing-v2": "^3.1058.0",
+    "@aws-sdk/client-elasticache": "^3.1058.0",
     "@aws-sdk/client-eventbridge": "^3.1058.0",
+    "@aws-sdk/client-glue": "^3.1058.0",
     "@aws-sdk/client-iam": "^3.1058.0",
     "@aws-sdk/client-kms": "^3.1058.0",
     "@aws-sdk/client-lambda": "^3.1058.0",

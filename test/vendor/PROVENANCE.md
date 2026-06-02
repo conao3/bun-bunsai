@@ -111,6 +111,11 @@ aws-models/
   codebuild.json       # botocore/data/codebuild/2016-10-06/service-2.json       (protocol json)
   codepipeline.json    # botocore/data/codepipeline/2015-07-09/service-2.json    (protocol json)
   transfer.json        # botocore/data/transfer/2018-11-05/service-2.json        (protocol json)
+  codecommit.json      # botocore/data/codecommit/2015-04-13/service-2.json      (protocol json)
+  backup.json          # botocore/data/backup/2018-11-15/service-2.json          (protocol rest-json)
+  fsx.json             # botocore/data/fsx/2018-03-01/service-2.json             (protocol json)
+  datasync.json        # botocore/data/datasync/2018-11-09/service-2.json        (protocol json)
+  elasticbeanstalk.json # botocore/data/elasticbeanstalk/2010-12-01/service-2.json (protocol query)
 ```
 
 ### Notes

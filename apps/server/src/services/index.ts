@@ -45,6 +45,11 @@ import appsync from "./appsync.ts";
 import codebuild from "./codebuild.ts";
 import codepipeline from "./codepipeline.ts";
 import transfer from "./transfer.ts";
+import codecommit from "./codecommit.ts";
+import backup from "./backup.ts";
+import fsx from "./fsx.ts";
+import datasync from "./datasync.ts";
+import elasticbeanstalk from "./elasticbeanstalk.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -93,6 +98,11 @@ export const services: ServiceDefinition[] = [
   codebuild,
   codepipeline,
   transfer,
+  codecommit,
+  backup,
+  fsx,
+  datasync,
+  elasticbeanstalk,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

@@ -76,6 +76,10 @@ aws-models/
   iam.json             # botocore/data/iam/2010-05-08/service-2.json            (protocol query)
   logs.json            # botocore/data/logs/2014-03-28/service-2.json           (protocol json)
   eventbridge.json     # botocore/data/events/2015-10-07/service-2.json         (protocol json)
+  lambda.json          # botocore/data/lambda/2015-03-31/service-2.json         (protocol rest-json)
+  cloudwatch.json      # botocore/data/cloudwatch/2010-08-01/service-2.json     (protocol json)
+  stepfunctions.json   # botocore/data/stepfunctions/2016-11-23/service-2.json  (protocol json)
+  ses.json             # botocore/data/ses/2010-12-01/service-2.json            (protocol query)
 ```
 
 ### Notes

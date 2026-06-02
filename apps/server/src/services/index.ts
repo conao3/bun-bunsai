@@ -10,6 +10,10 @@ import kms from "./kms.ts";
 import iam from "./iam.ts";
 import logs from "./logs.ts";
 import eventBridge from "./eventbridge.ts";
+import lambda from "./lambda.ts";
+import cloudwatch from "./cloudwatch.ts";
+import stepFunctions from "./stepfunctions.ts";
+import ses from "./ses.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -23,6 +27,10 @@ export const services: ServiceDefinition[] = [
   iam,
   logs,
   eventBridge,
+  lambda,
+  cloudwatch,
+  stepFunctions,
+  ses,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

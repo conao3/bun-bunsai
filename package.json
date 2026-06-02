@@ -1,0 +1,13 @@
+{
+  "name": "bunsai",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "bun --filter '*' dev",
+    "dev:server": "bun --filter @bunsai/server dev",
+    "dev:dashboard": "bun --filter @bunsai/dashboard dev",
+    "build": "bun --filter '*' build"
+  }
+}

@@ -5,9 +5,15 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "bun --filter '*' dev",
+    "dev": "bun --filter @bunsai/server dev",
+    "start": "bun --filter @bunsai/server start",
     "dev:server": "bun --filter @bunsai/server dev",
     "dev:dashboard": "bun --filter @bunsai/dashboard dev",
     "build": "bun --filter '*' build"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1058.0",
+    "@aws-sdk/client-sqs": "^3.1058.0",
+    "@aws-sdk/client-sts": "^3.1058.0"
   }
 }

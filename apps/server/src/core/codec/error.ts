@@ -1,5 +1,5 @@
 import type { Protocol, ShapeRegistry, StructureShape } from "../types.ts";
-import { contentTypes } from "./common.ts";
+import { contentTypes, jsonContentType } from "./common.ts";
 import type { CodecResult } from "./common.ts";
 
 export type SerializeErrorRequest = {
@@ -11,6 +11,7 @@ export type SerializeErrorRequest = {
   statusCode: number;
   data?: Record<string, unknown>;
   senderFault?: boolean;
+  jsonVersion?: string;
 };
 
 const escapeXml = (value: string): string =>
@@ -115,7 +116,7 @@ export const serializeShapeError = (
       Object.assign(payload, dataMembersJson(req.shape, data));
       return {
         body: JSON.stringify(payload),
-        contentType: contentTypes.json,
+        contentType: jsonContentType(req.jsonVersion),
         statusCode: req.statusCode,
       };
     }

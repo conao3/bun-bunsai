@@ -12,6 +12,7 @@ import {
   blobToBase64,
   contentTypes,
   epochSecondsToTimestamp,
+  jsonContentType,
   memberShape,
   scalarToWireString,
 } from "./common.ts";
@@ -26,6 +27,7 @@ export type SerializeRequest = {
   resultWrapper?: string;
   xmlNamespace?: string;
   outputShapeName?: string;
+  jsonVersion?: string;
 };
 
 const escapeXml = (value: string): string =>
@@ -496,7 +498,10 @@ const serializeJson = (req: SerializeRequest): CodecResult => {
     shape !== undefined && shape.type === "structure"
       ? jsonStructure(registry, shape, req.result ?? {})
       : (req.result ?? {});
-  return { body: JSON.stringify(value), contentType: contentTypes.json };
+  return {
+    body: JSON.stringify(value),
+    contentType: jsonContentType(req.jsonVersion),
+  };
 };
 
 export const serializeShapeOutput = (req: SerializeRequest): CodecResult => {

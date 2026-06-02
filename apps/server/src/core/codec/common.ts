@@ -21,6 +21,9 @@ export const contentTypes = {
   "rest-xml": "application/xml",
 } as const satisfies Record<Protocol, string>;
 
+export const jsonContentType = (jsonVersion: string | undefined): string =>
+  `application/x-amz-json-${jsonVersion ?? "1.1"}`;
+
 export const memberShape = (
   registry: ShapeRegistry,
   member: Member,

@@ -129,6 +129,7 @@ export type SerializeOptions = {
   resultWrapper?: string;
   xmlNamespace?: string;
   outputShapeName?: string;
+  jsonVersion?: string;
 };
 
 export type SerializeErrorOptions = {
@@ -137,6 +138,7 @@ export type SerializeErrorOptions = {
   code?: string;
   senderFault?: boolean;
   data?: Record<string, unknown>;
+  jsonVersion?: string;
 };
 
 const fallbackParseInput = (req: ParsedRequest): Record<string, unknown> => {
@@ -250,6 +252,7 @@ export const serializeOutput = (
       resultWrapper: opts.resultWrapper,
       xmlNamespace: opts.xmlNamespace,
       outputShapeName: opts.outputShapeName,
+      jsonVersion: opts.jsonVersion,
     });
   }
   return fallbackSerializeOutput(protocol, operation, result);
@@ -302,6 +305,7 @@ export const serializeError = (
       statusCode: error.statusCode,
       senderFault: opts.senderFault,
       data: opts.data,
+      jsonVersion: opts.jsonVersion,
     });
   }
   return fallbackSerializeError(protocol, error);

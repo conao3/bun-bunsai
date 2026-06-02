@@ -88,6 +88,7 @@ export const dispatch = async (
         registry: model.registry,
         shape: err.shape,
         code: err.wireCode,
+        jsonVersion: model.metadata.jsonVersion,
       });
     }
     return {
@@ -152,6 +153,7 @@ export const dispatch = async (
             resultWrapper: op?.output?.resultWrapper,
             xmlNamespace: model.metadata.xmlNamespace,
             outputShapeName: op?.output?.shape,
+            jsonVersion: model.metadata.jsonVersion,
           });
     return {
       service: service.name,

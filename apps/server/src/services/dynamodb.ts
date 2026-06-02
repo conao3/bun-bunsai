@@ -23,12 +23,24 @@ type AttributeDefinition = {
   AttributeType: string;
 };
 
+type StoredTag = {
+  Key: string;
+  Value: string;
+};
+
+type StoredTtl = {
+  Enabled: boolean;
+  AttributeName: string;
+};
+
 type StoredTable = {
   TableName: string;
   AttributeDefinitions: AttributeDefinition[];
   KeySchema: KeySchemaElement[];
   CreationDateTime: number;
   items: Record<string, Item>;
+  tags?: StoredTag[];
+  ttl?: StoredTtl;
 };
 
 const tableArn = (region: string, account: string, name: string): string =>
@@ -40,6 +52,12 @@ const requireString = (input: Record<string, unknown>, key: string): string => {
     throw awsError("ValidationException", `${key} is required.`, 400);
   }
   return value;
+};
+
+const tableNameFromArn = (value: string): string => {
+  const marker = ":table/";
+  const index = value.indexOf(marker);
+  return index < 0 ? value : value.slice(index + marker.length);
 };
 
 const requireTable = (ctx: ServiceContext, name: string): StoredTable => {
@@ -199,24 +217,137 @@ const DeleteItem: OperationHandler = (input, ctx) => {
     : {};
 };
 
+const resolveName = (names: Record<string, string>, token: string): string =>
+  names[token] ?? token;
+
+const numberOf = (value: AttributeValue): number => {
+  const inner = value["N"];
+  return typeof inner === "string" ? Number(inner) : 0;
+};
+
+const applyAddValue = (
+  current: AttributeValue | undefined,
+  operand: AttributeValue,
+): AttributeValue => {
+  if (operand["N"] !== undefined) {
+    const sum =
+      (current === undefined ? 0 : numberOf(current)) + numberOf(operand);
+    return { N: String(sum) };
+  }
+  if (Array.isArray(operand["SS"])) {
+    const existing = Array.isArray(current?.["SS"])
+      ? (current?.["SS"] as string[])
+      : [];
+    const merged = [...new Set([...existing, ...(operand["SS"] as string[])])];
+    return { SS: merged };
+  }
+  if (Array.isArray(operand["NS"])) {
+    const existing = Array.isArray(current?.["NS"])
+      ? (current?.["NS"] as string[])
+      : [];
+    const merged = [...new Set([...existing, ...(operand["NS"] as string[])])];
+    return { NS: merged };
+  }
+  return operand;
+};
+
+const applyUpdateExpression = (
+  item: Item,
+  expression: string,
+  values: Record<string, AttributeValue>,
+  names: Record<string, string>,
+): void => {
+  const clauses = expression
+    .split(/\s+(?=SET|ADD|REMOVE|DELETE)\b/i)
+    .map((clause) => clause.trim())
+    .filter((clause) => clause !== "");
+  for (const clause of clauses) {
+    const match = /^(SET|ADD|REMOVE|DELETE)\s*(.*)$/is.exec(clause);
+    if (match === null) continue;
+    const verb = match[1].toUpperCase();
+    const body = match[2];
+    const parts = body
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part !== "");
+    for (const part of parts) {
+      if (verb === "SET") {
+        const assign = /^(\S+)\s*=\s*(\S+)$/.exec(part);
+        if (assign === null) continue;
+        const attribute = resolveName(names, assign[1]);
+        const operand = values[assign[2]];
+        if (operand !== undefined) item[attribute] = operand;
+      } else if (verb === "REMOVE") {
+        delete item[resolveName(names, part)];
+      } else if (verb === "ADD") {
+        const tokens = part.split(/\s+/);
+        const attribute = resolveName(names, tokens[0]);
+        const operand = values[tokens[1]];
+        if (operand !== undefined) {
+          item[attribute] = applyAddValue(item[attribute], operand);
+        }
+      } else if (verb === "DELETE") {
+        const tokens = part.split(/\s+/);
+        const attribute = resolveName(names, tokens[0]);
+        const operand = values[tokens[1]];
+        const current = item[attribute];
+        if (
+          operand !== undefined &&
+          current !== undefined &&
+          Array.isArray(operand["SS"]) &&
+          Array.isArray(current["SS"])
+        ) {
+          const remove = new Set(operand["SS"] as string[]);
+          item[attribute] = {
+            SS: (current["SS"] as string[]).filter(
+              (value) => !remove.has(value),
+            ),
+          };
+        }
+      }
+    }
+  }
+};
+
 const UpdateItem: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
   const key = keyFromKeyInput(table, asItem(input["Key"]));
   const existing = table.items[key] ?? { ...asItem(input["Key"]) };
   const updated: Item = { ...existing };
-  const updates = input["AttributeUpdates"];
-  if (typeof updates === "object" && updates !== null) {
-    for (const [attribute, action] of Object.entries(
-      updates as Record<string, Record<string, unknown>>,
-    )) {
-      const operation = action["Action"];
-      if (operation === "DELETE") {
-        delete updated[attribute];
-      } else {
-        const value = action["Value"];
-        if (typeof value === "object" && value !== null) {
-          updated[attribute] = value as AttributeValue;
+  const expression = input["UpdateExpression"];
+  if (typeof expression === "string" && expression !== "") {
+    const values = asRecord(input["ExpressionAttributeValues"]) as Record<
+      string,
+      AttributeValue
+    >;
+    const exprNames = asRecord(input["ExpressionAttributeNames"]) as Record<
+      string,
+      string
+    >;
+    applyUpdateExpression(updated, expression, values, exprNames);
+  } else {
+    const updates = input["AttributeUpdates"];
+    if (typeof updates === "object" && updates !== null) {
+      for (const [attribute, action] of Object.entries(
+        updates as Record<string, Record<string, unknown>>,
+      )) {
+        const operation = action["Action"];
+        if (operation === "DELETE") {
+          delete updated[attribute];
+        } else if (operation === "ADD") {
+          const value = action["Value"];
+          if (typeof value === "object" && value !== null) {
+            updated[attribute] = applyAddValue(
+              updated[attribute],
+              value as AttributeValue,
+            );
+          }
+        } else {
+          const value = action["Value"];
+          if (typeof value === "object" && value !== null) {
+            updated[attribute] = value as AttributeValue;
+          }
         }
       }
     }
@@ -397,6 +528,102 @@ const TransactGetItems: OperationHandler = (input, ctx) => {
   return { Responses: responses };
 };
 
+const UpdateTable: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TableName");
+  const table = requireTable(ctx, name);
+  const additions = Array.isArray(input["AttributeDefinitions"])
+    ? (input["AttributeDefinitions"] as AttributeDefinition[])
+    : [];
+  if (additions.length > 0) {
+    const existing = new Map(
+      table.AttributeDefinitions.map((definition) => [
+        definition.AttributeName,
+        definition,
+      ]),
+    );
+    for (const definition of additions) {
+      existing.set(definition.AttributeName, definition);
+    }
+    table.AttributeDefinitions = [...existing.values()];
+    ctx.store.set(name, table);
+  }
+  return { TableDescription: tableDescription(ctx, table, "ACTIVE") };
+};
+
+const UpdateTimeToLive: OperationHandler = (input, ctx) => {
+  const name = tableNameFromArn(requireString(input, "TableName"));
+  const table = requireTable(ctx, name);
+  const specification = asRecord(input["TimeToLiveSpecification"]);
+  const ttl: StoredTtl = {
+    Enabled: specification["Enabled"] === true,
+    AttributeName:
+      typeof specification["AttributeName"] === "string"
+        ? specification["AttributeName"]
+        : "",
+  };
+  table.ttl = ttl;
+  ctx.store.set(name, table);
+  return {
+    TimeToLiveSpecification: {
+      Enabled: ttl.Enabled,
+      AttributeName: ttl.AttributeName,
+    },
+  };
+};
+
+const DescribeTimeToLive: OperationHandler = (input, ctx) => {
+  const name = tableNameFromArn(requireString(input, "TableName"));
+  const table = requireTable(ctx, name);
+  const ttl = table.ttl;
+  if (ttl === undefined || !ttl.Enabled) {
+    return { TimeToLiveDescription: { TimeToLiveStatus: "DISABLED" } };
+  }
+  return {
+    TimeToLiveDescription: {
+      TimeToLiveStatus: "ENABLED",
+      AttributeName: ttl.AttributeName,
+    },
+  };
+};
+
+const resourceTable = (ctx: ServiceContext, arn: string): StoredTable =>
+  requireTable(ctx, tableNameFromArn(arn));
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const table = resourceTable(ctx, arn);
+  const tags = Array.isArray(input["Tags"])
+    ? (input["Tags"] as StoredTag[])
+    : [];
+  const merged = new Map(
+    (table.tags ?? []).map((tag) => [tag.Key, tag] as const),
+  );
+  for (const tag of tags) {
+    merged.set(tag.Key, { Key: tag.Key, Value: tag.Value });
+  }
+  table.tags = [...merged.values()];
+  ctx.store.set(table.TableName, table);
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const table = resourceTable(ctx, arn);
+  const keys = Array.isArray(input["TagKeys"])
+    ? (input["TagKeys"] as string[])
+    : [];
+  const remove = new Set(keys);
+  table.tags = (table.tags ?? []).filter((tag) => !remove.has(tag.Key));
+  ctx.store.set(table.TableName, table);
+  return {};
+};
+
+const ListTagsOfResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const table = resourceTable(ctx, arn);
+  return { Tags: table.tags ?? [] };
+};
+
 const dynamodb: ServiceDefinition = {
   name: "dynamodb",
   protocol: "json",
@@ -405,6 +632,12 @@ const dynamodb: ServiceDefinition = {
     DeleteTable,
     ListTables,
     DescribeTable,
+    UpdateTable,
+    UpdateTimeToLive,
+    DescribeTimeToLive,
+    TagResource,
+    UntagResource,
+    ListTagsOfResource,
     PutItem,
     GetItem,
     DeleteItem,

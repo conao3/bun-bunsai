@@ -28,11 +28,39 @@ type StoredTags = {
   Tags: Record<string, string>;
 };
 
+type StoredSubscriptionAttributes = {
+  SubscriptionArn: string;
+  Attributes: Record<string, string>;
+};
+
+type StoredPlatformApplication = {
+  PlatformApplicationArn: string;
+  Attributes: Record<string, string>;
+};
+
 const topicKey = (name: string): string => `topic/${name}`;
 
 const subscriptionKey = (arn: string): string => `subscription/${arn}`;
 
 const tagsKey = (arn: string): string => `tags/${arn}`;
+
+const subscriptionAttributesKey = (arn: string): string => `subattrs/${arn}`;
+
+const platformApplicationKey = (arn: string): string => `platform/${arn}`;
+
+const subscriptionListPageSize = 100;
+
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") {
+    return 0;
+  }
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
 
 const topicArnOf = (region: string, account: string, name: string): string =>
   `arn:aws:sns:${region}:${account}:${name}`;
@@ -122,6 +150,45 @@ const Publish: OperationHandler = (input, ctx) => {
   if (typeof topicArn === "string" && topicArn !== "") {
     requireTopic(ctx, topicArn);
   }
+  const messageStructure = input["MessageStructure"];
+  if (typeof messageStructure === "string" && messageStructure === "json") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(message);
+    } catch {
+      throw awsError(
+        "InvalidParameter",
+        "Message must be valid JSON when MessageStructure is json.",
+        400,
+      );
+    }
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>)["default"] !== "string"
+    ) {
+      throw awsError(
+        "InvalidParameter",
+        "JSON message must contain a top-level default key with a string value.",
+        400,
+      );
+    }
+  }
+  const attributes = input["MessageAttributes"];
+  if (typeof attributes === "object" && attributes !== null) {
+    for (const value of Object.values(attributes as Record<string, unknown>)) {
+      if (typeof value === "object" && value !== null) {
+        const dataType = (value as Record<string, unknown>)["DataType"];
+        if (typeof dataType !== "string" || dataType === "") {
+          throw awsError(
+            "InvalidParameter",
+            "Message attribute DataType is required.",
+            400,
+          );
+        }
+      }
+    }
+  }
   return { MessageId: crypto.randomUUID() };
 };
 
@@ -140,17 +207,32 @@ const Subscribe: OperationHandler = (input, ctx) => {
     Owner: ctx.account,
   };
   ctx.store.set(subscriptionKey(subscriptionArn), subscription);
+  const attributes: StoredSubscriptionAttributes = {
+    SubscriptionArn: subscriptionArn,
+    Attributes: {
+      SubscriptionArn: subscriptionArn,
+      TopicArn: topicArn,
+      Protocol: protocol,
+      Endpoint: endpoint,
+      Owner: ctx.account,
+      ConfirmationWasAuthenticated: "false",
+      PendingConfirmation: "false",
+      RawMessageDelivery: "false",
+    },
+  };
+  ctx.store.set(subscriptionAttributesKey(subscriptionArn), attributes);
   return { SubscriptionArn: subscriptionArn };
 };
 
 const Unsubscribe: OperationHandler = (input, ctx) => {
   const subscriptionArn = requireString(input, "SubscriptionArn");
   ctx.store.delete(subscriptionKey(subscriptionArn));
+  ctx.store.delete(subscriptionAttributesKey(subscriptionArn));
   return {};
 };
 
-const ListSubscriptions: OperationHandler = (_input, ctx) => {
-  const subscriptions = ctx.store
+const ListSubscriptions: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredSubscription>()
     .filter((entry) => entry.key.startsWith("subscription/"))
     .map((entry) => ({
@@ -160,7 +242,16 @@ const ListSubscriptions: OperationHandler = (_input, ctx) => {
       Endpoint: entry.value.Endpoint,
       TopicArn: entry.value.TopicArn,
     }));
-  return { Subscriptions: subscriptions };
+  const offset = decodePageToken(input["NextToken"]);
+  const page = all.slice(offset, offset + subscriptionListPageSize);
+  const nextOffset = offset + subscriptionListPageSize;
+  if (nextOffset < all.length) {
+    return {
+      Subscriptions: page,
+      NextToken: encodePageToken(nextOffset),
+    };
+  }
+  return { Subscriptions: page };
 };
 
 const ListSubscriptionsByTopic: OperationHandler = (input, ctx) => {
@@ -279,6 +370,120 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
   return { Tags: tags };
 };
 
+const requireSubscription = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredSubscription => {
+  const subscription = ctx.store.get<StoredSubscription>(subscriptionKey(arn));
+  if (subscription === undefined) {
+    throw awsError("NotFound", "Subscription does not exist.", 404);
+  }
+  return subscription;
+};
+
+const GetSubscriptionAttributes: OperationHandler = (input, ctx) => {
+  const subscriptionArn = requireString(input, "SubscriptionArn");
+  const subscription = requireSubscription(ctx, subscriptionArn);
+  const stored = ctx.store.get<StoredSubscriptionAttributes>(
+    subscriptionAttributesKey(subscriptionArn),
+  );
+  const attributes: Record<string, string> = {
+    ...(stored?.Attributes ?? {}),
+    SubscriptionArn: subscriptionArn,
+    TopicArn: subscription.TopicArn,
+    Protocol: subscription.Protocol,
+    Endpoint: subscription.Endpoint,
+    Owner: subscription.Owner,
+  };
+  return { Attributes: attributes };
+};
+
+const SetSubscriptionAttributes: OperationHandler = (input, ctx) => {
+  const subscriptionArn = requireString(input, "SubscriptionArn");
+  const attributeName = requireString(input, "AttributeName");
+  requireSubscription(ctx, subscriptionArn);
+  const attributeValue =
+    typeof input["AttributeValue"] === "string"
+      ? (input["AttributeValue"] as string)
+      : "";
+  const stored = ctx.store.get<StoredSubscriptionAttributes>(
+    subscriptionAttributesKey(subscriptionArn),
+  );
+  const updated: StoredSubscriptionAttributes = {
+    SubscriptionArn: subscriptionArn,
+    Attributes: {
+      ...(stored?.Attributes ?? {}),
+      [attributeName]: attributeValue,
+    },
+  };
+  ctx.store.set(subscriptionAttributesKey(subscriptionArn), updated);
+  return {};
+};
+
+const ConfirmSubscription: OperationHandler = (input, ctx) => {
+  const topicArn = requireString(input, "TopicArn");
+  const token = requireString(input, "Token");
+  requireTopic(ctx, topicArn);
+  const subscriptionArn = `${topicArn}:${token}`;
+  const endpoint = `confirmed/${token}`;
+  const subscription: StoredSubscription = {
+    SubscriptionArn: subscriptionArn,
+    TopicArn: topicArn,
+    Protocol: "https",
+    Endpoint: endpoint,
+    Owner: ctx.account,
+  };
+  ctx.store.set(subscriptionKey(subscriptionArn), subscription);
+  const attributes: StoredSubscriptionAttributes = {
+    SubscriptionArn: subscriptionArn,
+    Attributes: {
+      SubscriptionArn: subscriptionArn,
+      TopicArn: topicArn,
+      Protocol: "https",
+      Endpoint: endpoint,
+      Owner: ctx.account,
+      ConfirmationWasAuthenticated: "true",
+      PendingConfirmation: "false",
+    },
+  };
+  ctx.store.set(subscriptionAttributesKey(subscriptionArn), attributes);
+  return { SubscriptionArn: subscriptionArn };
+};
+
+const platformApplicationArnOf = (
+  region: string,
+  account: string,
+  platform: string,
+  name: string,
+): string => `arn:aws:sns:${region}:${account}:app/${platform}/${name}`;
+
+const CreatePlatformApplication: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const platform = requireString(input, "Platform");
+  const attributes =
+    typeof input["Attributes"] === "object" && input["Attributes"] !== null
+      ? (input["Attributes"] as Record<string, string>)
+      : {};
+  const arn = platformApplicationArnOf(ctx.region, ctx.account, platform, name);
+  const application: StoredPlatformApplication = {
+    PlatformApplicationArn: arn,
+    Attributes: { ...attributes },
+  };
+  ctx.store.set(platformApplicationKey(arn), application);
+  return { PlatformApplicationArn: arn };
+};
+
+const ListPlatformApplications: OperationHandler = (_input, ctx) => {
+  const applications = ctx.store
+    .list<StoredPlatformApplication>()
+    .filter((entry) => entry.key.startsWith("platform/"))
+    .map((entry) => ({
+      PlatformApplicationArn: entry.value.PlatformApplicationArn,
+      Attributes: { ...entry.value.Attributes },
+    }));
+  return { PlatformApplications: applications };
+};
+
 const sns = {
   name: "sns",
   protocol: "query",
@@ -296,6 +501,11 @@ const sns = {
     TagResource,
     UntagResource,
     ListTagsForResource,
+    GetSubscriptionAttributes,
+    SetSubscriptionAttributes,
+    ConfirmSubscription,
+    CreatePlatformApplication,
+    ListPlatformApplications,
   },
   model,
 } as const satisfies ServiceDefinition;

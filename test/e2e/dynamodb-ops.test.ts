@@ -1,0 +1,213 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { spawn } from "bun";
+import {
+  CreateTableCommand,
+  DeleteTableCommand,
+  DescribeTimeToLiveCommand,
+  DynamoDBClient,
+  GetItemCommand,
+  ListTagsOfResourceCommand,
+  PutItemCommand,
+  TagResourceCommand,
+  UntagResourceCommand,
+  UpdateItemCommand,
+  UpdateTableCommand,
+  UpdateTimeToLiveCommand,
+} from "@aws-sdk/client-dynamodb";
+
+const awsPort = 4566;
+const uiPort = 5666;
+const endpoint = `http://localhost:${awsPort}`;
+const region = "us-east-1";
+const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
+
+const serverEntry = new URL("../../apps/server/src/index.ts", import.meta.url)
+  .pathname;
+
+let proc: ReturnType<typeof spawn> | undefined;
+
+const waitForServer = async (): Promise<void> => {
+  for (let i = 0; i < 100; i += 1) {
+    try {
+      const res = await fetch(`http://localhost:${uiPort}/__bunsai/logs`);
+      if (res.ok) {
+        await res.body?.cancel();
+        return;
+      }
+    } catch {
+      void 0;
+    }
+    await Bun.sleep(100);
+  }
+  throw new Error("server did not become ready");
+};
+
+describe("DynamoDB ops deep-dive e2e", () => {
+  beforeAll(async () => {
+    proc = spawn({
+      cmd: ["bun", serverEntry],
+      env: {
+        ...process.env,
+        BUNSAI_PORT: String(awsPort),
+        BUNSAI_UI_PORT: String(uiPort),
+        NODE_ENV: "production",
+      },
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    await waitForServer();
+  });
+
+  afterAll(() => {
+    proc?.kill();
+  });
+
+  const ddb = () => new DynamoDBClient({ endpoint, region, credentials });
+  const table = "bunsai-e2e-ddb-ops";
+
+  test("update table, ttl, tags, update expressions", async () => {
+    const client = ddb();
+
+    const created = await client.send(
+      new CreateTableCommand({
+        TableName: table,
+        AttributeDefinitions: [{ AttributeName: "pk", AttributeType: "S" }],
+        KeySchema: [{ AttributeName: "pk", KeyType: "HASH" }],
+        ProvisionedThroughput: {
+          ReadCapacityUnits: 5,
+          WriteCapacityUnits: 5,
+        },
+      }),
+    );
+    const arn = created.TableDescription?.TableArn ?? "";
+    expect(arn).toContain(`table/${table}`);
+
+    const updatedTable = await client.send(
+      new UpdateTableCommand({
+        TableName: table,
+        AttributeDefinitions: [{ AttributeName: "gsipk", AttributeType: "S" }],
+      }),
+    );
+    const definitions =
+      updatedTable.TableDescription?.AttributeDefinitions ?? [];
+    const definitionNames = definitions.map(
+      (definition) => definition.AttributeName,
+    );
+    expect(definitionNames).toContain("pk");
+    expect(definitionNames).toContain("gsipk");
+
+    const initialTtl = await client.send(
+      new DescribeTimeToLiveCommand({ TableName: table }),
+    );
+    expect(initialTtl.TimeToLiveDescription?.TimeToLiveStatus).toBe("DISABLED");
+
+    const enabledTtl = await client.send(
+      new UpdateTimeToLiveCommand({
+        TableName: table,
+        TimeToLiveSpecification: { Enabled: true, AttributeName: "expiresAt" },
+      }),
+    );
+    expect(enabledTtl.TimeToLiveSpecification?.Enabled).toBe(true);
+    expect(enabledTtl.TimeToLiveSpecification?.AttributeName).toBe("expiresAt");
+
+    const describedTtl = await client.send(
+      new DescribeTimeToLiveCommand({ TableName: table }),
+    );
+    expect(describedTtl.TimeToLiveDescription?.TimeToLiveStatus).toBe(
+      "ENABLED",
+    );
+    expect(describedTtl.TimeToLiveDescription?.AttributeName).toBe("expiresAt");
+
+    await client.send(
+      new TagResourceCommand({
+        ResourceArn: arn,
+        Tags: [
+          { Key: "env", Value: "test" },
+          { Key: "team", Value: "core" },
+        ],
+      }),
+    );
+
+    const tagged = await client.send(
+      new ListTagsOfResourceCommand({ ResourceArn: arn }),
+    );
+    const tagMap = new Map(
+      (tagged.Tags ?? []).map((tag) => [tag.Key, tag.Value]),
+    );
+    expect(tagMap.get("env")).toBe("test");
+    expect(tagMap.get("team")).toBe("core");
+
+    await client.send(
+      new UntagResourceCommand({ ResourceArn: arn, TagKeys: ["team"] }),
+    );
+    const afterUntag = await client.send(
+      new ListTagsOfResourceCommand({ ResourceArn: arn }),
+    );
+    const remaining = (afterUntag.Tags ?? []).map((tag) => tag.Key);
+    expect(remaining).toContain("env");
+    expect(remaining).not.toContain("team");
+
+    await client.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: { pk: { S: "item1" }, count: { N: "1" }, tags: { SS: ["a"] } },
+      }),
+    );
+
+    const setResult = await client.send(
+      new UpdateItemCommand({
+        TableName: table,
+        Key: { pk: { S: "item1" } },
+        UpdateExpression: "SET label = :label",
+        ExpressionAttributeValues: { ":label": { S: "hello" } },
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    expect(setResult.Attributes?.label?.S).toBe("hello");
+
+    const addResult = await client.send(
+      new UpdateItemCommand({
+        TableName: table,
+        Key: { pk: { S: "item1" } },
+        UpdateExpression: "ADD #c :delta",
+        ExpressionAttributeNames: { "#c": "count" },
+        ExpressionAttributeValues: { ":delta": { N: "4" } },
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    expect(addResult.Attributes?.count?.N).toBe("5");
+
+    const removeResult = await client.send(
+      new UpdateItemCommand({
+        TableName: table,
+        Key: { pk: { S: "item1" } },
+        UpdateExpression: "REMOVE label",
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    expect(removeResult.Attributes?.label).toBeUndefined();
+
+    const addSetResult = await client.send(
+      new UpdateItemCommand({
+        TableName: table,
+        Key: { pk: { S: "item1" } },
+        UpdateExpression: "ADD tags :more",
+        ExpressionAttributeValues: { ":more": { SS: ["b", "c"] } },
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    expect([...(addSetResult.Attributes?.tags?.SS ?? [])].sort()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+
+    const stored = await client.send(
+      new GetItemCommand({ TableName: table, Key: { pk: { S: "item1" } } }),
+    );
+    expect(stored.Item?.count?.N).toBe("5");
+    expect(stored.Item?.label).toBeUndefined();
+
+    await client.send(new DeleteTableCommand({ TableName: table }));
+  });
+});

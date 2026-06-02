@@ -16,6 +16,7 @@ type S3Object = {
   etag: string;
   size: number;
   lastModified: number;
+  tagSet: S3Tag[];
 };
 
 type S3Tag = {
@@ -45,6 +46,10 @@ type S3Bucket = {
   objects: Record<string, S3Object>;
   tagSet: S3Tag[];
   uploads: Record<string, S3Upload>;
+  versioningStatus: string | undefined;
+  mfaDelete: string | undefined;
+  policy: string | undefined;
+  lifecycleRules: unknown[];
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
@@ -84,6 +89,22 @@ const getBucket = (ctx: ServiceContext, name: string): S3Bucket => {
   return bucket;
 };
 
+const parseTagSet = (tagging: unknown): S3Tag[] => {
+  const rawTagSet =
+    typeof tagging === "object" && tagging !== null
+      ? (tagging as Record<string, unknown>)["TagSet"]
+      : undefined;
+  if (!Array.isArray(rawTagSet)) return [];
+  return rawTagSet.flatMap((tag) => {
+    if (typeof tag !== "object" || tag === null) return [];
+    const record = tag as Record<string, unknown>;
+    const tagKey = record["Key"];
+    const tagValue = record["Value"];
+    if (typeof tagKey !== "string" || typeof tagValue !== "string") return [];
+    return [{ Key: tagKey, Value: tagValue }];
+  });
+};
+
 const s3: ServiceDefinition = {
   name: "s3",
   protocol: "rest-xml",
@@ -97,18 +118,30 @@ const s3: ServiceDefinition = {
       const hasTagging = req.query.has("tagging");
       const hasLocation = req.query.has("location");
       const hasUploads = req.query.has("uploads");
+      const hasVersioning = req.query.has("versioning");
+      const hasPolicy = req.query.has("policy");
+      const hasAcl = req.query.has("acl");
+      const hasLifecycle = req.query.has("lifecycle");
       if (req.method === "PUT") {
         if (hasTagging) return "PutBucketTagging";
+        if (hasVersioning) return "PutBucketVersioning";
+        if (hasPolicy) return "PutBucketPolicy";
+        if (hasLifecycle) return "PutBucketLifecycleConfiguration";
         return "CreateBucket";
       }
       if (req.method === "DELETE") {
         if (hasTagging) return "DeleteBucketTagging";
+        if (hasPolicy) return "DeleteBucketPolicy";
         return "DeleteBucket";
       }
       if (req.method === "GET") {
         if (hasTagging) return "GetBucketTagging";
         if (hasLocation) return "GetBucketLocation";
         if (hasUploads) return "ListMultipartUploads";
+        if (hasVersioning) return "GetBucketVersioning";
+        if (hasPolicy) return "GetBucketPolicy";
+        if (hasAcl) return "GetBucketAcl";
+        if (hasLifecycle) return "GetBucketLifecycleConfiguration";
         if (req.query.get("list-type") === "2") return "ListObjectsV2";
         return "ListObjects";
       }
@@ -117,6 +150,7 @@ const s3: ServiceDefinition = {
     }
     const hasUploads = req.query.has("uploads");
     const hasUploadId = req.query.has("uploadId");
+    const hasObjectTagging = req.query.has("tagging");
     if (req.method === "POST") {
       if (hasUploads) return "CreateMultipartUpload";
       if (hasUploadId) return "CompleteMultipartUpload";
@@ -124,16 +158,19 @@ const s3: ServiceDefinition = {
     }
     if (req.method === "PUT") {
       if (hasUploadId) return "UploadPart";
+      if (hasObjectTagging) return "PutObjectTagging";
       if (req.headers.get("x-amz-copy-source") !== null) return "CopyObject";
       return "PutObject";
     }
     if (req.method === "GET") {
       if (hasUploadId) return "ListParts";
+      if (hasObjectTagging) return "GetObjectTagging";
       return "GetObject";
     }
     if (req.method === "HEAD") return "HeadObject";
     if (req.method === "DELETE") {
       if (hasUploadId) return "AbortMultipartUpload";
+      if (hasObjectTagging) return "DeleteObjectTagging";
       return "DeleteObject";
     }
     return undefined;
@@ -157,6 +194,10 @@ const s3: ServiceDefinition = {
         objects: {},
         tagSet: [],
         uploads: {},
+        versioningStatus: undefined,
+        mfaDelete: undefined,
+        policy: undefined,
+        lifecycleRules: [],
       });
       return {};
     },
@@ -203,6 +244,7 @@ const s3: ServiceDefinition = {
         etag,
         size: Buffer.byteLength(body),
         lastModified: nowSeconds(),
+        tagSet: [],
       };
       const next: S3Bucket = {
         ...target,
@@ -341,6 +383,7 @@ const s3: ServiceDefinition = {
         etag: source.etag,
         size: source.size,
         lastModified,
+        tagSet: [],
       };
       ctx.store.set<S3Bucket>(bucket, {
         ...target,
@@ -359,23 +402,7 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidBucketName", "bucket name required", 400);
       }
       const target = getBucket(ctx, bucket);
-      const tagging = input["Tagging"];
-      const rawTagSet =
-        typeof tagging === "object" && tagging !== null
-          ? (tagging as Record<string, unknown>)["TagSet"]
-          : undefined;
-      const tagSet = Array.isArray(rawTagSet)
-        ? rawTagSet.flatMap((tag) => {
-            if (typeof tag !== "object" || tag === null) return [];
-            const record = tag as Record<string, unknown>;
-            const tagKey = record["Key"];
-            const tagValue = record["Value"];
-            if (typeof tagKey !== "string" || typeof tagValue !== "string") {
-              return [];
-            }
-            return [{ Key: tagKey, Value: tagValue }];
-          })
-        : [];
+      const tagSet = parseTagSet(input["Tagging"]);
       ctx.store.set<S3Bucket>(bucket, { ...target, tagSet });
       return {};
     },
@@ -521,6 +548,7 @@ const s3: ServiceDefinition = {
         etag,
         size: Buffer.byteLength(combined),
         lastModified: nowSeconds(),
+        tagSet: [],
       };
       const rest = { ...target.uploads };
       delete rest[uploadId];
@@ -611,6 +639,178 @@ const s3: ServiceDefinition = {
           StorageClass: "STANDARD",
         })),
       };
+    },
+    PutBucketVersioning: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["VersioningConfiguration"];
+      const record =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)
+          : {};
+      const status = record["Status"];
+      const mfaDelete = record["MFADelete"];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        versioningStatus: typeof status === "string" ? status : undefined,
+        mfaDelete: typeof mfaDelete === "string" ? mfaDelete : undefined,
+      });
+      return {};
+    },
+    GetBucketVersioning: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const result: Record<string, string> = {};
+      if (target.versioningStatus !== undefined) {
+        result["Status"] = target.versioningStatus;
+      }
+      if (target.mfaDelete !== undefined) {
+        result["MFADelete"] = target.mfaDelete;
+      }
+      return result;
+    },
+    PutBucketPolicy: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const policy = input["Policy"];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        policy: typeof policy === "string" ? policy : req.bodyText,
+      });
+      return {};
+    },
+    GetBucketPolicy: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if (target.policy === undefined) {
+        throw awsError(
+          "NoSuchBucketPolicy",
+          "The bucket policy does not exist",
+          404,
+        );
+      }
+      return { Policy: target.policy };
+    },
+    DeleteBucketPolicy: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      ctx.store.set<S3Bucket>(bucket, { ...target, policy: undefined });
+      return {};
+    },
+    PutObjectTagging: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const object = target.objects[key];
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const tagSet = parseTagSet(input["Tagging"]);
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        objects: { ...target.objects, [key]: { ...object, tagSet } },
+      });
+      return {};
+    },
+    GetObjectTagging: (_input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const object = target.objects[key];
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      return {
+        TagSet: (object.tagSet ?? []).map((tag) => ({
+          Key: tag.Key,
+          Value: tag.Value,
+        })),
+      };
+    },
+    DeleteObjectTagging: (_input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const object = target.objects[key];
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        objects: { ...target.objects, [key]: { ...object, tagSet: [] } },
+      });
+      return {};
+    },
+    GetBucketAcl: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      getBucket(ctx, bucket);
+      return {
+        Owner: { ID: "bunsai", DisplayName: "bunsai" },
+        Grants: [
+          {
+            Grantee: {
+              ID: "bunsai",
+              DisplayName: "bunsai",
+              Type: "CanonicalUser",
+            },
+            Permission: "FULL_CONTROL",
+          },
+        ],
+      };
+    },
+    PutBucketLifecycleConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["LifecycleConfiguration"];
+      const rawRules =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)["Rules"]
+          : undefined;
+      const lifecycleRules = Array.isArray(rawRules) ? rawRules : [];
+      ctx.store.set<S3Bucket>(bucket, { ...target, lifecycleRules });
+      return {};
+    },
+    GetBucketLifecycleConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if ((target.lifecycleRules ?? []).length === 0) {
+        throw awsError(
+          "NoSuchLifecycleConfiguration",
+          "The lifecycle configuration does not exist",
+          404,
+        );
+      }
+      return { Rules: target.lifecycleRules };
     },
   },
   model,

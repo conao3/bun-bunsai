@@ -56,6 +56,27 @@ type StoredAccessKey = {
   CreateDate: string;
 };
 
+type StoredRolePolicy = {
+  RoleName: string;
+  PolicyName: string;
+  PolicyDocument: string;
+};
+
+type StoredTag = {
+  Key: string;
+  Value: string;
+};
+
+type StoredInstanceProfile = {
+  Path: string;
+  InstanceProfileName: string;
+  InstanceProfileId: string;
+  Arn: string;
+  CreateDate: string;
+  Roles: StoredRole[];
+  Tags: StoredTag[];
+};
+
 const roleKey = (name: string): string => `role/${name}`;
 
 const userKey = (name: string): string => `user/${name}`;
@@ -67,6 +88,14 @@ const attachmentKey = (roleName: string, policyArn: string): string =>
 
 const accessKeyKey = (id: string): string => `accesskey/${id}`;
 
+const rolePolicyKey = (roleName: string, policyName: string): string =>
+  `rolepolicy/${roleName}/${policyName}`;
+
+const roleTagKey = (roleName: string, tagKey: string): string =>
+  `roletag/${roleName}/${tagKey}`;
+
+const instanceProfileKey = (name: string): string => `instanceprofile/${name}`;
+
 const roleArnOf = (account: string, path: string, name: string): string =>
   `arn:aws:iam::${account}:role${path}${name}`;
 
@@ -75,6 +104,12 @@ const userArnOf = (account: string, path: string, name: string): string =>
 
 const policyArnOf = (account: string, path: string, name: string): string =>
   `arn:aws:iam::${account}:policy${path}${name}`;
+
+const instanceProfileArnOf = (
+  account: string,
+  path: string,
+  name: string,
+): string => `arn:aws:iam::${account}:instance-profile${path}${name}`;
 
 const randomHex = (length: number): string => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -335,6 +370,202 @@ const ListAccessKeys: OperationHandler = (input, ctx) => {
   return { AccessKeyMetadata: keys, IsTruncated: false };
 };
 
+const PutRolePolicy: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  const policyName = requireString(input, "PolicyName");
+  const policyDocument = requireString(input, "PolicyDocument");
+  requireRole(ctx, roleName);
+  const rolePolicy: StoredRolePolicy = {
+    RoleName: roleName,
+    PolicyName: policyName,
+    PolicyDocument: policyDocument,
+  };
+  ctx.store.set(rolePolicyKey(roleName, policyName), rolePolicy);
+  return {};
+};
+
+const GetRolePolicy: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  const policyName = requireString(input, "PolicyName");
+  const rolePolicy = ctx.store.get<StoredRolePolicy>(
+    rolePolicyKey(roleName, policyName),
+  );
+  if (rolePolicy === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `The role policy with name ${policyName} cannot be found.`,
+      404,
+    );
+  }
+  return {
+    RoleName: rolePolicy.RoleName,
+    PolicyName: rolePolicy.PolicyName,
+    PolicyDocument: rolePolicy.PolicyDocument,
+  };
+};
+
+const ListRolePolicies: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  requireRole(ctx, roleName);
+  const names = ctx.store
+    .list<StoredRolePolicy>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("rolepolicy/") &&
+        entry.value.RoleName === roleName,
+    )
+    .map((entry) => entry.value.PolicyName);
+  return { PolicyNames: names, IsTruncated: false };
+};
+
+const DeleteRolePolicy: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  const policyName = requireString(input, "PolicyName");
+  const key = rolePolicyKey(roleName, policyName);
+  if (ctx.store.get<StoredRolePolicy>(key) === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `The role policy with name ${policyName} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const requireInstanceProfile = (
+  ctx: ServiceContext,
+  name: string,
+): StoredInstanceProfile => {
+  const profile = ctx.store.get<StoredInstanceProfile>(
+    instanceProfileKey(name),
+  );
+  if (profile === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Instance Profile ${name} cannot be found.`,
+      404,
+    );
+  }
+  return profile;
+};
+
+const toTagList = (input: Record<string, unknown>): StoredTag[] => {
+  const tags = input["Tags"];
+  if (!Array.isArray(tags)) {
+    return [];
+  }
+  return tags
+    .filter(
+      (tag): tag is Record<string, unknown> =>
+        typeof tag === "object" && tag !== null,
+    )
+    .map((tag) => ({
+      Key: typeof tag["Key"] === "string" ? (tag["Key"] as string) : "",
+      Value: typeof tag["Value"] === "string" ? (tag["Value"] as string) : "",
+    }));
+};
+
+const CreateInstanceProfile: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InstanceProfileName");
+  if (
+    ctx.store.get<StoredInstanceProfile>(instanceProfileKey(name)) !== undefined
+  ) {
+    throw awsError(
+      "EntityAlreadyExists",
+      `Instance Profile ${name} already exists.`,
+      409,
+    );
+  }
+  const path = normalizePath(input);
+  const profile: StoredInstanceProfile = {
+    Path: path,
+    InstanceProfileName: name,
+    InstanceProfileId: `AIPA${randomHex(17)}`,
+    Arn: instanceProfileArnOf(ctx.account, path, name),
+    CreateDate: new Date().toISOString(),
+    Roles: [],
+    Tags: toTagList(input),
+  };
+  ctx.store.set(instanceProfileKey(name), profile);
+  return { InstanceProfile: profile };
+};
+
+const AddRoleToInstanceProfile: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InstanceProfileName");
+  const roleName = requireString(input, "RoleName");
+  const profile = requireInstanceProfile(ctx, name);
+  const role = requireRole(ctx, roleName);
+  if (profile.Roles.some((existing) => existing.RoleName === roleName)) {
+    throw awsError(
+      "LimitExceeded",
+      `Cannot exceed quota for InstanceSessionsPerInstanceProfile: 1`,
+      409,
+    );
+  }
+  ctx.store.set(instanceProfileKey(name), {
+    ...profile,
+    Roles: [...profile.Roles, role],
+  });
+  return {};
+};
+
+const GetInstanceProfile: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InstanceProfileName");
+  return { InstanceProfile: requireInstanceProfile(ctx, name) };
+};
+
+const ListEntitiesForPolicy: OperationHandler = (input, ctx) => {
+  const policyArn = requireString(input, "PolicyArn");
+  requirePolicy(ctx, policyArn);
+  const roles = ctx.store
+    .list<StoredAttachment>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("attachment/") &&
+        entry.value.PolicyArn === policyArn,
+    )
+    .map((entry) => entry.value.RoleName)
+    .map((roleName) => {
+      const role = ctx.store.get<StoredRole>(roleKey(roleName));
+      return {
+        RoleName: roleName,
+        RoleId: role === undefined ? `AROA${randomHex(17)}` : role.RoleId,
+      };
+    });
+  return {
+    PolicyGroups: [],
+    PolicyUsers: [],
+    PolicyRoles: roles,
+    IsTruncated: false,
+  };
+};
+
+const TagRole: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  requireRole(ctx, roleName);
+  for (const tag of toTagList(input)) {
+    ctx.store.set(roleTagKey(roleName, tag.Key), {
+      RoleName: roleName,
+      ...tag,
+    });
+  }
+  return {};
+};
+
+const ListRoleTags: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  requireRole(ctx, roleName);
+  const tags = ctx.store
+    .list<StoredTag & { RoleName: string }>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("roletag/") && entry.value.RoleName === roleName,
+    )
+    .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
+  return { Tags: tags, IsTruncated: false };
+};
+
 const iam = {
   name: "iam",
   protocol: "query",
@@ -353,6 +584,16 @@ const iam = {
     ListAttachedRolePolicies,
     CreateAccessKey,
     ListAccessKeys,
+    PutRolePolicy,
+    GetRolePolicy,
+    ListRolePolicies,
+    DeleteRolePolicy,
+    CreateInstanceProfile,
+    AddRoleToInstanceProfile,
+    GetInstanceProfile,
+    ListEntitiesForPolicy,
+    TagRole,
+    ListRoleTags,
   },
   model,
 } as const satisfies ServiceDefinition;

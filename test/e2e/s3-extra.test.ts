@@ -1,18 +1,24 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawn } from "bun";
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
   CopyObjectCommand,
   CreateBucketCommand,
+  CreateMultipartUploadCommand,
   DeleteBucketCommand,
   DeleteBucketTaggingCommand,
   DeleteObjectCommand,
   GetBucketLocationCommand,
   GetBucketTaggingCommand,
   GetObjectCommand,
+  ListMultipartUploadsCommand,
   ListObjectsCommand,
+  ListPartsCommand,
   PutBucketTaggingCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from "@aws-sdk/client-s3";
 
 const awsPort = 4566;
@@ -164,5 +170,128 @@ describe("S3 extra ops e2e", () => {
       new DeleteObjectCommand({ Bucket: bucket, Key: "dst/hello.txt" }),
     );
     await client.send(new DeleteBucketCommand({ Bucket: bucket }));
+  });
+
+  test("multipart upload lifecycle: create, upload, list, complete", async () => {
+    const client = s3();
+    const mpBucket = "bunsai-e2e-s3-mp";
+    const key = "big/object.txt";
+    const part1 = "x".repeat(20);
+    const part2 = "y".repeat(15);
+
+    await client.send(new CreateBucketCommand({ Bucket: mpBucket }));
+
+    const created = await client.send(
+      new CreateMultipartUploadCommand({
+        Bucket: mpBucket,
+        Key: key,
+        ContentType: "text/plain",
+      }),
+    );
+    expect(created.UploadId).toBeDefined();
+    const uploadId = created.UploadId as string;
+
+    const up1 = await client.send(
+      new UploadPartCommand({
+        Bucket: mpBucket,
+        Key: key,
+        UploadId: uploadId,
+        PartNumber: 1,
+        Body: part1,
+      }),
+    );
+    expect(up1.ETag).toBeDefined();
+
+    const up2 = await client.send(
+      new UploadPartCommand({
+        Bucket: mpBucket,
+        Key: key,
+        UploadId: uploadId,
+        PartNumber: 2,
+        Body: part2,
+      }),
+    );
+    expect(up2.ETag).toBeDefined();
+
+    const listedParts = await client.send(
+      new ListPartsCommand({ Bucket: mpBucket, Key: key, UploadId: uploadId }),
+    );
+    expect((listedParts.Parts ?? []).map((p) => p.PartNumber)).toEqual([1, 2]);
+
+    const listedUploads = await client.send(
+      new ListMultipartUploadsCommand({ Bucket: mpBucket }),
+    );
+    expect((listedUploads.Uploads ?? []).map((u) => u.UploadId)).toContain(
+      uploadId,
+    );
+
+    const completed = await client.send(
+      new CompleteMultipartUploadCommand({
+        Bucket: mpBucket,
+        Key: key,
+        UploadId: uploadId,
+        MultipartUpload: {
+          Parts: [
+            { PartNumber: 1, ETag: up1.ETag },
+            { PartNumber: 2, ETag: up2.ETag },
+          ],
+        },
+      }),
+    );
+    expect(completed.Key).toBe(key);
+    expect(completed.ETag).toBeDefined();
+
+    const fetched = await client.send(
+      new GetObjectCommand({ Bucket: mpBucket, Key: key }),
+    );
+    expect(await readBody(fetched.Body as GetObjectCommandOutputBody)).toBe(
+      part1 + part2,
+    );
+
+    const uploadsAfter = await client.send(
+      new ListMultipartUploadsCommand({ Bucket: mpBucket }),
+    );
+    expect((uploadsAfter.Uploads ?? []).length).toBe(0);
+
+    await client.send(new DeleteObjectCommand({ Bucket: mpBucket, Key: key }));
+    await client.send(new DeleteBucketCommand({ Bucket: mpBucket }));
+  });
+
+  test("multipart upload abort", async () => {
+    const client = s3();
+    const abBucket = "bunsai-e2e-s3-mp-abort";
+    const key = "abort/object.txt";
+
+    await client.send(new CreateBucketCommand({ Bucket: abBucket }));
+
+    const created = await client.send(
+      new CreateMultipartUploadCommand({ Bucket: abBucket, Key: key }),
+    );
+    const uploadId = created.UploadId as string;
+
+    await client.send(
+      new UploadPartCommand({
+        Bucket: abBucket,
+        Key: key,
+        UploadId: uploadId,
+        PartNumber: 1,
+        Body: "data",
+      }),
+    );
+
+    await client.send(
+      new AbortMultipartUploadCommand({
+        Bucket: abBucket,
+        Key: key,
+        UploadId: uploadId,
+      }),
+    );
+
+    const uploadsAfter = await client.send(
+      new ListMultipartUploadsCommand({ Bucket: abBucket }),
+    );
+    expect((uploadsAfter.Uploads ?? []).length).toBe(0);
+
+    await client.send(new DeleteBucketCommand({ Bucket: abBucket }));
   });
 });

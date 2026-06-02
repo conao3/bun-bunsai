@@ -80,6 +80,9 @@ aws-models/
   cloudwatch.json      # botocore/data/cloudwatch/2010-08-01/service-2.json     (protocol json)
   stepfunctions.json   # botocore/data/stepfunctions/2016-11-23/service-2.json  (protocol json)
   ses.json             # botocore/data/ses/2010-12-01/service-2.json            (protocol query)
+  route53.json         # botocore/data/route53/2013-04-01/service-2.json        (protocol rest-xml)
+  cloudformation.json  # botocore/data/cloudformation/2010-05-15/service-2.json (protocol query)
+  apigateway.json      # botocore/data/apigateway/2015-07-09/service-2.json     (protocol rest-json)
 ```
 
 ### Notes

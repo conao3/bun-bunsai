@@ -23,6 +23,7 @@ type StoredQueue = {
   QueueName: string;
   QueueUrl: string;
   Attributes: Record<string, string>;
+  Tags: Record<string, string>;
   messages: StoredMessage[];
 };
 
@@ -75,10 +76,15 @@ const CreateQueue: OperationHandler = (input, ctx) => {
   if (existing !== undefined) {
     return { QueueUrl: existing.QueueUrl };
   }
+  const tags =
+    typeof input["tags"] === "object" && input["tags"] !== null
+      ? (input["tags"] as Record<string, string>)
+      : {};
   const queue: StoredQueue = {
     QueueName: name,
     QueueUrl: url,
     Attributes: { ...attributes },
+    Tags: { ...tags },
     messages: [],
   };
   ctx.store.set(name, queue);
@@ -235,6 +241,64 @@ const GetQueueAttributes: OperationHandler = (input, ctx) => {
   return { Attributes: filtered };
 };
 
+const TagQueue: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  const queue = requireQueue(ctx, name);
+  const tags =
+    typeof input["Tags"] === "object" && input["Tags"] !== null
+      ? (input["Tags"] as Record<string, string>)
+      : {};
+  for (const [key, value] of Object.entries(tags)) {
+    queue.Tags[key] = String(value);
+  }
+  ctx.store.set(name, queue);
+  return {};
+};
+
+const UntagQueue: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  const queue = requireQueue(ctx, name);
+  const rawKeys = input["TagKeys"];
+  const keys = Array.isArray(rawKeys)
+    ? (rawKeys as unknown[]).map((value) => String(value))
+    : typeof rawKeys === "string"
+      ? [rawKeys]
+      : [];
+  for (const key of keys) {
+    delete queue.Tags[key];
+  }
+  ctx.store.set(name, queue);
+  return {};
+};
+
+const ListQueueTags: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  const queue = requireQueue(ctx, name);
+  return { Tags: { ...queue.Tags } };
+};
+
+const SetQueueAttributes: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  const queue = requireQueue(ctx, name);
+  const attributes =
+    typeof input["Attributes"] === "object" && input["Attributes"] !== null
+      ? (input["Attributes"] as Record<string, string>)
+      : {};
+  for (const [key, value] of Object.entries(attributes)) {
+    queue.Attributes[key] = String(value);
+  }
+  ctx.store.set(name, queue);
+  return {};
+};
+
+const PurgeQueue: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  const queue = requireQueue(ctx, name);
+  queue.messages = [];
+  ctx.store.set(name, queue);
+  return {};
+};
+
 const sqs: ServiceDefinition = {
   name: "sqs",
   protocol: "json",
@@ -247,6 +311,11 @@ const sqs: ServiceDefinition = {
     ReceiveMessage,
     DeleteMessage,
     GetQueueAttributes,
+    TagQueue,
+    UntagQueue,
+    ListQueueTags,
+    SetQueueAttributes,
+    PurgeQueue,
   },
   model,
 } as const;

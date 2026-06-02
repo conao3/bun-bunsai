@@ -158,7 +158,7 @@ export const dispatch = async (
     return {
       service: service.name,
       operation,
-      statusCode: serialized.statusCode ?? 200,
+      statusCode: serialized.statusCode ?? op?.http?.responseCode ?? 200,
       body: serialized.body,
       contentType: serialized.contentType,
       ...(serialized.headers !== undefined

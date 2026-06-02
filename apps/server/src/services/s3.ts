@@ -23,11 +23,28 @@ type S3Tag = {
   Value: string;
 };
 
+type S3Part = {
+  partNumber: number;
+  body: string;
+  etag: string;
+  size: number;
+  lastModified: number;
+};
+
+type S3Upload = {
+  uploadId: string;
+  key: string;
+  initiated: number;
+  contentType: string;
+  parts: Record<string, S3Part>;
+};
+
 type S3Bucket = {
   name: string;
   creationDate: number;
   objects: Record<string, S3Object>;
   tagSet: S3Tag[];
+  uploads: Record<string, S3Upload>;
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
@@ -79,6 +96,7 @@ const s3: ServiceDefinition = {
     if (key === undefined) {
       const hasTagging = req.query.has("tagging");
       const hasLocation = req.query.has("location");
+      const hasUploads = req.query.has("uploads");
       if (req.method === "PUT") {
         if (hasTagging) return "PutBucketTagging";
         return "CreateBucket";
@@ -90,19 +108,34 @@ const s3: ServiceDefinition = {
       if (req.method === "GET") {
         if (hasTagging) return "GetBucketTagging";
         if (hasLocation) return "GetBucketLocation";
+        if (hasUploads) return "ListMultipartUploads";
         if (req.query.get("list-type") === "2") return "ListObjectsV2";
         return "ListObjects";
       }
       if (req.method === "HEAD") return "HeadBucket";
       return undefined;
     }
+    const hasUploads = req.query.has("uploads");
+    const hasUploadId = req.query.has("uploadId");
+    if (req.method === "POST") {
+      if (hasUploads) return "CreateMultipartUpload";
+      if (hasUploadId) return "CompleteMultipartUpload";
+      return undefined;
+    }
     if (req.method === "PUT") {
+      if (hasUploadId) return "UploadPart";
       if (req.headers.get("x-amz-copy-source") !== null) return "CopyObject";
       return "PutObject";
     }
-    if (req.method === "GET") return "GetObject";
+    if (req.method === "GET") {
+      if (hasUploadId) return "ListParts";
+      return "GetObject";
+    }
     if (req.method === "HEAD") return "HeadObject";
-    if (req.method === "DELETE") return "DeleteObject";
+    if (req.method === "DELETE") {
+      if (hasUploadId) return "AbortMultipartUpload";
+      return "DeleteObject";
+    }
     return undefined;
   },
   operations: {
@@ -123,6 +156,7 @@ const s3: ServiceDefinition = {
         creationDate: nowSeconds(),
         objects: {},
         tagSet: [],
+        uploads: {},
       });
       return {};
     },
@@ -374,6 +408,209 @@ const s3: ServiceDefinition = {
       }
       getBucket(ctx, bucket);
       return { LocationConstraint: req.region };
+    },
+    CreateMultipartUpload: (_input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const uploadId = hashBody(`${key}:${Date.now()}:${Math.random()}`);
+      const upload: S3Upload = {
+        uploadId,
+        key,
+        initiated: nowSeconds(),
+        contentType:
+          req.headers.get("content-type") ?? "application/octet-stream",
+        parts: {},
+      };
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        uploads: { ...target.uploads, [uploadId]: upload },
+      });
+      return { Bucket: bucket, Key: key, UploadId: uploadId };
+    },
+    UploadPart: (_input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const uploadId = req.query.get("uploadId") ?? "";
+      const upload = target.uploads[uploadId];
+      if (upload === undefined) {
+        throw awsError(
+          "NoSuchUpload",
+          "The specified multipart upload does not exist.",
+          404,
+        );
+      }
+      const partNumberRaw = req.query.get("partNumber") ?? "";
+      const partNumber = Number.parseInt(partNumberRaw, 10);
+      if (!Number.isInteger(partNumber) || partNumber < 1) {
+        throw awsError("InvalidArgument", "invalid partNumber", 400);
+      }
+      const body = req.bodyText;
+      const etag = `"${hashBody(`${uploadId}:${partNumber}:${body}`)}"`;
+      const part: S3Part = {
+        partNumber,
+        body,
+        etag,
+        size: Buffer.byteLength(body),
+        lastModified: nowSeconds(),
+      };
+      const nextUpload: S3Upload = {
+        ...upload,
+        parts: { ...upload.parts, [String(partNumber)]: part },
+      };
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        uploads: { ...target.uploads, [uploadId]: nextUpload },
+      });
+      return { ETag: etag };
+    },
+    CompleteMultipartUpload: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const uploadId = req.query.get("uploadId") ?? "";
+      const upload = target.uploads[uploadId];
+      if (upload === undefined) {
+        throw awsError(
+          "NoSuchUpload",
+          "The specified multipart upload does not exist.",
+          404,
+        );
+      }
+      const multipart = input["MultipartUpload"];
+      const rawParts =
+        typeof multipart === "object" && multipart !== null
+          ? (multipart as Record<string, unknown>)["Parts"]
+          : undefined;
+      const requested = Array.isArray(rawParts)
+        ? rawParts.flatMap((entry) => {
+            if (typeof entry !== "object" || entry === null) return [];
+            const record = entry as Record<string, unknown>;
+            const partNumber = Number(record["PartNumber"]);
+            if (!Number.isInteger(partNumber)) return [];
+            return [partNumber];
+          })
+        : Object.values(upload.parts)
+            .map((p) => p.partNumber)
+            .sort((a, b) => a - b);
+      const combined = requested
+        .map((partNumber) => {
+          const part = upload.parts[String(partNumber)];
+          if (part === undefined) {
+            throw awsError(
+              "InvalidPart",
+              "One or more of the specified parts could not be found.",
+              400,
+            );
+          }
+          return part.body;
+        })
+        .join("");
+      const etag = `"${hashBody(`${key}:${combined}`)}-${requested.length}"`;
+      const object: S3Object = {
+        key,
+        body: combined,
+        contentType: upload.contentType,
+        etag,
+        size: Buffer.byteLength(combined),
+        lastModified: nowSeconds(),
+      };
+      const rest = { ...target.uploads };
+      delete rest[uploadId];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        objects: { ...target.objects, [key]: object },
+        uploads: rest,
+      });
+      return {
+        Location: `http://${bucket}.s3.${req.region}.amazonaws.com/${key}`,
+        Bucket: bucket,
+        Key: key,
+        ETag: etag,
+      };
+    },
+    AbortMultipartUpload: (_input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const uploadId = req.query.get("uploadId") ?? "";
+      if (target.uploads[uploadId] === undefined) {
+        throw awsError(
+          "NoSuchUpload",
+          "The specified multipart upload does not exist.",
+          404,
+        );
+      }
+      const rest = { ...target.uploads };
+      delete rest[uploadId];
+      ctx.store.set<S3Bucket>(bucket, { ...target, uploads: rest });
+      return {};
+    },
+    ListParts: (_input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const uploadId = req.query.get("uploadId") ?? "";
+      const upload = target.uploads[uploadId];
+      if (upload === undefined) {
+        throw awsError(
+          "NoSuchUpload",
+          "The specified multipart upload does not exist.",
+          404,
+        );
+      }
+      const parts = Object.values(upload.parts).sort(
+        (a, b) => a.partNumber - b.partNumber,
+      );
+      return {
+        Bucket: bucket,
+        Key: key,
+        UploadId: uploadId,
+        PartNumberMarker: 0,
+        MaxParts: 1000,
+        IsTruncated: false,
+        StorageClass: "STANDARD",
+        Parts: parts.map((p) => ({
+          PartNumber: p.partNumber,
+          LastModified: p.lastModified,
+          ETag: p.etag,
+          Size: p.size,
+        })),
+      };
+    },
+    ListMultipartUploads: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const prefix = req.query.get("prefix") ?? "";
+      const uploads = Object.values(target.uploads)
+        .filter((u) => u.key.startsWith(prefix))
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      return {
+        Bucket: bucket,
+        Prefix: prefix,
+        MaxUploads: 1000,
+        IsTruncated: false,
+        Uploads: uploads.map((u) => ({
+          Key: u.key,
+          UploadId: u.uploadId,
+          Initiated: u.initiated,
+          StorageClass: "STANDARD",
+        })),
+      };
     },
   },
   model,

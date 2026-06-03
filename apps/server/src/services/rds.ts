@@ -53,9 +53,29 @@ type StoredDBSnapshot = {
   PercentProgress: number;
 };
 
+type StoredDBParameterGroup = {
+  DBParameterGroupName: string;
+  DBParameterGroupFamily: string;
+  Description: string;
+  DBParameterGroupArn: string;
+};
+
+type StoredDBSubnetGroup = {
+  DBSubnetGroupName: string;
+  DBSubnetGroupDescription: string;
+  VpcId: string;
+  SubnetGroupStatus: string;
+  Subnets: { SubnetIdentifier: string; SubnetStatus: string }[];
+  DBSubnetGroupArn: string;
+};
+
 const instanceKey = (id: string): string => `instance/${id}`;
 
 const snapshotKey = (id: string): string => `snapshot/${id}`;
+
+const parameterGroupKey = (id: string): string => `parametergroup/${id}`;
+
+const subnetGroupKey = (id: string): string => `subnetgroup/${id}`;
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -120,6 +140,18 @@ const instanceArnOf = (region: string, account: string, id: string): string =>
 const snapshotArnOf = (region: string, account: string, id: string): string =>
   `arn:aws:rds:${region}:${account}:snapshot:${id}`;
 
+const parameterGroupArnOf = (
+  region: string,
+  account: string,
+  id: string,
+): string => `arn:aws:rds:${region}:${account}:pg:${id}`;
+
+const subnetGroupArnOf = (
+  region: string,
+  account: string,
+  id: string,
+): string => `arn:aws:rds:${region}:${account}:subgrp:${id}`;
+
 const presentInstance = (instance: StoredDBInstance) => ({
   DBInstanceIdentifier: instance.DBInstanceIdentifier,
   DBInstanceClass: instance.DBInstanceClass,
@@ -160,6 +192,25 @@ const presentSnapshot = (snapshot: StoredDBSnapshot) => ({
   DBSnapshotArn: snapshot.DBSnapshotArn,
   DbiResourceId: snapshot.DbiResourceId,
   PercentProgress: snapshot.PercentProgress,
+});
+
+const presentParameterGroup = (group: StoredDBParameterGroup) => ({
+  DBParameterGroupName: group.DBParameterGroupName,
+  DBParameterGroupFamily: group.DBParameterGroupFamily,
+  Description: group.Description,
+  DBParameterGroupArn: group.DBParameterGroupArn,
+});
+
+const presentSubnetGroup = (group: StoredDBSubnetGroup) => ({
+  DBSubnetGroupName: group.DBSubnetGroupName,
+  DBSubnetGroupDescription: group.DBSubnetGroupDescription,
+  VpcId: group.VpcId,
+  SubnetGroupStatus: group.SubnetGroupStatus,
+  Subnets: group.Subnets.map((subnet) => ({
+    SubnetIdentifier: subnet.SubnetIdentifier,
+    SubnetStatus: subnet.SubnetStatus,
+  })),
+  DBSubnetGroupArn: group.DBSubnetGroupArn,
 });
 
 const CreateDBInstance: OperationHandler = (input, ctx) => {
@@ -322,6 +373,140 @@ const DescribeDBSnapshots: OperationHandler = (input, ctx) => {
   return { DBSnapshots: snapshots };
 };
 
+const stringList = (input: Record<string, unknown>, key: string): string[] => {
+  const value = input[key];
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string");
+  }
+  return [];
+};
+
+const CreateDBParameterGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "DBParameterGroupName");
+  const existing = ctx.store.get<StoredDBParameterGroup>(
+    parameterGroupKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "DBParameterGroupAlreadyExists",
+      `DBParameterGroup ${name} already exists.`,
+      400,
+    );
+  }
+  const group: StoredDBParameterGroup = {
+    DBParameterGroupName: name,
+    DBParameterGroupFamily: requireString(input, "DBParameterGroupFamily"),
+    Description: requireString(input, "Description"),
+    DBParameterGroupArn: parameterGroupArnOf(ctx.region, ctx.account, name),
+  };
+  ctx.store.set(parameterGroupKey(name), group);
+  return { DBParameterGroup: presentParameterGroup(group) };
+};
+
+const DescribeDBParameterGroups: OperationHandler = (input, ctx) => {
+  const name = optionalString(input, "DBParameterGroupName");
+  if (name !== undefined) {
+    const group = ctx.store.get<StoredDBParameterGroup>(
+      parameterGroupKey(name),
+    );
+    if (group === undefined) {
+      throw awsError(
+        "DBParameterGroupNotFound",
+        `DBParameterGroup ${name} not found.`,
+        404,
+      );
+    }
+    return { DBParameterGroups: [presentParameterGroup(group)] };
+  }
+  const groups = ctx.store
+    .list<StoredDBParameterGroup>()
+    .filter((entry) => entry.key.startsWith("parametergroup/"))
+    .map((entry) => presentParameterGroup(entry.value));
+  return { DBParameterGroups: groups };
+};
+
+const DeleteDBParameterGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "DBParameterGroupName");
+  const group = ctx.store.get<StoredDBParameterGroup>(parameterGroupKey(name));
+  if (group === undefined) {
+    throw awsError(
+      "DBParameterGroupNotFound",
+      `DBParameterGroup ${name} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(parameterGroupKey(name));
+  return {};
+};
+
+const CreateDBSubnetGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "DBSubnetGroupName");
+  const existing = ctx.store.get<StoredDBSubnetGroup>(subnetGroupKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "DBSubnetGroupAlreadyExists",
+      `DBSubnetGroup ${name} already exists.`,
+      400,
+    );
+  }
+  const subnetIds = stringList(input, "SubnetIds");
+  const group: StoredDBSubnetGroup = {
+    DBSubnetGroupName: name,
+    DBSubnetGroupDescription: requireString(input, "DBSubnetGroupDescription"),
+    VpcId: optionalString(input, "VpcId") ?? "vpc-bunsai00000000000",
+    SubnetGroupStatus: "Complete",
+    Subnets: subnetIds.map((subnetId) => ({
+      SubnetIdentifier: subnetId,
+      SubnetStatus: "Active",
+    })),
+    DBSubnetGroupArn: subnetGroupArnOf(ctx.region, ctx.account, name),
+  };
+  ctx.store.set(subnetGroupKey(name), group);
+  return { DBSubnetGroup: presentSubnetGroup(group) };
+};
+
+const DescribeDBSubnetGroups: OperationHandler = (input, ctx) => {
+  const name = optionalString(input, "DBSubnetGroupName");
+  if (name !== undefined) {
+    const group = ctx.store.get<StoredDBSubnetGroup>(subnetGroupKey(name));
+    if (group === undefined) {
+      throw awsError(
+        "DBSubnetGroupNotFoundFault",
+        `DBSubnetGroup ${name} not found.`,
+        404,
+      );
+    }
+    return { DBSubnetGroups: [presentSubnetGroup(group)] };
+  }
+  const groups = ctx.store
+    .list<StoredDBSubnetGroup>()
+    .filter((entry) => entry.key.startsWith("subnetgroup/"))
+    .map((entry) => presentSubnetGroup(entry.value));
+  return { DBSubnetGroups: groups };
+};
+
+const DeleteDBSubnetGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "DBSubnetGroupName");
+  const group = ctx.store.get<StoredDBSubnetGroup>(subnetGroupKey(name));
+  if (group === undefined) {
+    throw awsError(
+      "DBSubnetGroupNotFoundFault",
+      `DBSubnetGroup ${name} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(subnetGroupKey(name));
+  return {};
+};
+
+const RebootDBInstance: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DBInstanceIdentifier");
+  const instance = requireInstance(ctx, id);
+  instance.DBInstanceStatus = "available";
+  ctx.store.set(instanceKey(id), instance);
+  return { DBInstance: presentInstance(instance) };
+};
+
 const rds: ServiceDefinition = {
   name: "rds",
   protocol: "query",
@@ -333,6 +518,13 @@ const rds: ServiceDefinition = {
     DescribeDBSnapshots,
     StartDBInstance,
     StopDBInstance,
+    CreateDBParameterGroup,
+    DescribeDBParameterGroups,
+    DeleteDBParameterGroup,
+    CreateDBSubnetGroup,
+    DescribeDBSubnetGroups,
+    DeleteDBSubnetGroup,
+    RebootDBInstance,
   },
   model,
 } as const;

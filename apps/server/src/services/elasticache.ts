@@ -47,9 +47,34 @@ type StoredReplicationGroup = {
   ARN: string;
 };
 
+type StoredCacheParameterGroup = {
+  CacheParameterGroupName: string;
+  CacheParameterGroupFamily: string;
+  Description: string;
+  IsGlobal: boolean;
+  ARN: string;
+};
+
+type StoredCacheSubnet = {
+  SubnetIdentifier: string;
+  SubnetAvailabilityZone: { Name: string };
+};
+
+type StoredCacheSubnetGroup = {
+  CacheSubnetGroupName: string;
+  CacheSubnetGroupDescription: string;
+  VpcId: string;
+  Subnets: StoredCacheSubnet[];
+  ARN: string;
+};
+
 const clusterKey = (id: string): string => `cluster/${id}`;
 
 const groupKey = (id: string): string => `group/${id}`;
+
+const paramGroupKey = (name: string): string => `paramgroup/${name}`;
+
+const subnetGroupKey = (name: string): string => `subnetgroup/${name}`;
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -106,6 +131,26 @@ const clusterArnOf = (region: string, account: string, id: string): string =>
 const groupArnOf = (region: string, account: string, id: string): string =>
   `arn:aws:elasticache:${region}:${account}:replicationgroup:${id}`;
 
+const paramGroupArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:elasticache:${region}:${account}:parametergroup:${name}`;
+
+const subnetGroupArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:elasticache:${region}:${account}:subnetgroup:${name}`;
+
+const stringList = (input: Record<string, unknown>, key: string): string[] => {
+  const value = input[key];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string");
+};
+
 const requireCluster = (
   ctx: ServiceContext,
   id: string,
@@ -161,6 +206,25 @@ const presentGroup = (group: StoredReplicationGroup) => ({
     Port: group.ConfigurationEndpoint.Port,
   },
   ARN: group.ARN,
+});
+
+const presentParamGroup = (paramGroup: StoredCacheParameterGroup) => ({
+  CacheParameterGroupName: paramGroup.CacheParameterGroupName,
+  CacheParameterGroupFamily: paramGroup.CacheParameterGroupFamily,
+  Description: paramGroup.Description,
+  IsGlobal: paramGroup.IsGlobal,
+  ARN: paramGroup.ARN,
+});
+
+const presentSubnetGroup = (subnetGroup: StoredCacheSubnetGroup) => ({
+  CacheSubnetGroupName: subnetGroup.CacheSubnetGroupName,
+  CacheSubnetGroupDescription: subnetGroup.CacheSubnetGroupDescription,
+  VpcId: subnetGroup.VpcId,
+  Subnets: subnetGroup.Subnets.map((subnet) => ({
+    SubnetIdentifier: subnet.SubnetIdentifier,
+    SubnetAvailabilityZone: { Name: subnet.SubnetAvailabilityZone.Name },
+  })),
+  ARN: subnetGroup.ARN,
 });
 
 const CreateCacheCluster: OperationHandler = (input, ctx) => {
@@ -291,6 +355,136 @@ const DescribeReplicationGroups: OperationHandler = (input, ctx) => {
   return { ReplicationGroups: groups };
 };
 
+const CreateCacheParameterGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheParameterGroupName");
+  const family = requireString(input, "CacheParameterGroupFamily");
+  const description = requireString(input, "Description");
+  const existing = ctx.store.get<StoredCacheParameterGroup>(
+    paramGroupKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "CacheParameterGroupAlreadyExists",
+      `CacheParameterGroup ${name} already exists.`,
+      400,
+    );
+  }
+  const paramGroup: StoredCacheParameterGroup = {
+    CacheParameterGroupName: name,
+    CacheParameterGroupFamily: family,
+    Description: description,
+    IsGlobal: false,
+    ARN: paramGroupArnOf(ctx.region, ctx.account, name),
+  };
+  ctx.store.set(paramGroupKey(name), paramGroup);
+  return { CacheParameterGroup: presentParamGroup(paramGroup) };
+};
+
+const DescribeCacheParameterGroups: OperationHandler = (input, ctx) => {
+  const name = optionalString(input, "CacheParameterGroupName");
+  if (name !== undefined) {
+    const paramGroup = ctx.store.get<StoredCacheParameterGroup>(
+      paramGroupKey(name),
+    );
+    if (paramGroup === undefined) {
+      throw awsError(
+        "CacheParameterGroupNotFound",
+        `CacheParameterGroup ${name} not found.`,
+        404,
+      );
+    }
+    return { CacheParameterGroups: [presentParamGroup(paramGroup)] };
+  }
+  const paramGroups = ctx.store
+    .list<StoredCacheParameterGroup>()
+    .filter((entry) => entry.key.startsWith("paramgroup/"))
+    .map((entry) => presentParamGroup(entry.value));
+  return { CacheParameterGroups: paramGroups };
+};
+
+const DeleteCacheParameterGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheParameterGroupName");
+  const paramGroup = ctx.store.get<StoredCacheParameterGroup>(
+    paramGroupKey(name),
+  );
+  if (paramGroup === undefined) {
+    throw awsError(
+      "CacheParameterGroupNotFound",
+      `CacheParameterGroup ${name} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(paramGroupKey(name));
+  return {};
+};
+
+const CreateCacheSubnetGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheSubnetGroupName");
+  const description = requireString(input, "CacheSubnetGroupDescription");
+  const existing = ctx.store.get<StoredCacheSubnetGroup>(subnetGroupKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "CacheSubnetGroupAlreadyExists",
+      `CacheSubnetGroup ${name} already exists.`,
+      400,
+    );
+  }
+  const subnetIds = stringList(input, "SubnetIds");
+  const subnets: StoredCacheSubnet[] = subnetIds.map((subnetId, index) => ({
+    SubnetIdentifier: subnetId,
+    SubnetAvailabilityZone: {
+      Name: `${ctx.region}${String.fromCharCode(97 + (index % 26))}`,
+    },
+  }));
+  const subnetGroup: StoredCacheSubnetGroup = {
+    CacheSubnetGroupName: name,
+    CacheSubnetGroupDescription: description,
+    VpcId: optionalString(input, "VpcId") ?? "vpc-bunsai",
+    Subnets: subnets,
+    ARN: subnetGroupArnOf(ctx.region, ctx.account, name),
+  };
+  ctx.store.set(subnetGroupKey(name), subnetGroup);
+  return { CacheSubnetGroup: presentSubnetGroup(subnetGroup) };
+};
+
+const DescribeCacheSubnetGroups: OperationHandler = (input, ctx) => {
+  const name = optionalString(input, "CacheSubnetGroupName");
+  if (name !== undefined) {
+    const subnetGroup = ctx.store.get<StoredCacheSubnetGroup>(
+      subnetGroupKey(name),
+    );
+    if (subnetGroup === undefined) {
+      throw awsError(
+        "CacheSubnetGroupNotFoundFault",
+        `CacheSubnetGroup ${name} not found.`,
+        404,
+      );
+    }
+    return { CacheSubnetGroups: [presentSubnetGroup(subnetGroup)] };
+  }
+  const subnetGroups = ctx.store
+    .list<StoredCacheSubnetGroup>()
+    .filter((entry) => entry.key.startsWith("subnetgroup/"))
+    .map((entry) => presentSubnetGroup(entry.value));
+  return { CacheSubnetGroups: subnetGroups };
+};
+
+const DeleteCacheSubnetGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheSubnetGroupName");
+  const subnetGroup = ctx.store.get<StoredCacheSubnetGroup>(
+    subnetGroupKey(name),
+  );
+  if (subnetGroup === undefined) {
+    throw awsError(
+      "CacheSubnetGroupNotFoundFault",
+      `CacheSubnetGroup ${name} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(subnetGroupKey(name));
+  return {};
+};
+
 const elasticache: ServiceDefinition = {
   name: "elasticache",
   protocol: "query",
@@ -300,6 +494,12 @@ const elasticache: ServiceDefinition = {
     DeleteCacheCluster,
     CreateReplicationGroup,
     DescribeReplicationGroups,
+    CreateCacheParameterGroup,
+    DescribeCacheParameterGroups,
+    DeleteCacheParameterGroup,
+    CreateCacheSubnetGroup,
+    DescribeCacheSubnetGroups,
+    DeleteCacheSubnetGroup,
   },
   model,
 } as const;

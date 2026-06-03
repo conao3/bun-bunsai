@@ -202,6 +202,149 @@ const DescribeSecret: OperationHandler = (input, ctx) => {
   };
 };
 
+const TagResource: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const newTags = Array.isArray(input["Tags"])
+    ? (input["Tags"] as unknown[])
+    : [];
+  const existingKeys = new Set(
+    (secret.Tags as { Key?: string }[]).map((t) => t.Key),
+  );
+  for (const tag of newTags as { Key?: string }[]) {
+    if (!existingKeys.has(tag.Key)) secret.Tags.push(tag);
+    else {
+      const idx = (secret.Tags as { Key?: string }[]).findIndex(
+        (t) => t.Key === tag.Key,
+      );
+      if (idx !== -1) secret.Tags[idx] = tag;
+    }
+  }
+  ctx.store.set(secret.Name, secret);
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const keys = Array.isArray(input["TagKeys"])
+    ? new Set((input["TagKeys"] as unknown[]).map(String))
+    : new Set<string>();
+  secret.Tags = (secret.Tags as { Key?: string }[]).filter(
+    (t) => !keys.has(String(t.Key)),
+  );
+  ctx.store.set(secret.Name, secret);
+  return {};
+};
+
+const RestoreSecret: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  if (secret.DeletedDate === undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      "Secrets Manager can't restore a secret that is not scheduled for deletion.",
+      400,
+    );
+  }
+  secret.DeletedDate = undefined;
+  ctx.store.set(secret.Name, secret);
+  return { ARN: secret.ARN, Name: secret.Name };
+};
+
+const DEFAULT_PASSWORD_LENGTH = 32;
+const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const LOWER = "abcdefghijklmnopqrstuvwxyz";
+const DIGITS = "0123456789";
+const PUNCT = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+const SPACE = " ";
+
+const GetRandomPassword: OperationHandler = (input, _ctx) => {
+  const length =
+    typeof input["PasswordLength"] === "number"
+      ? input["PasswordLength"]
+      : DEFAULT_PASSWORD_LENGTH;
+  const excludeChars = stringOrUndefined(input["ExcludeCharacters"]) ?? "";
+  let charset = "";
+  if (input["ExcludeUppercase"] !== true) charset += UPPER;
+  if (input["ExcludeLowercase"] !== true) charset += LOWER;
+  if (input["ExcludeNumbers"] !== true) charset += DIGITS;
+  if (input["ExcludePunctuation"] !== true) charset += PUNCT;
+  if (input["IncludeSpace"] === true) charset += SPACE;
+  charset = charset
+    .split("")
+    .filter((c) => !excludeChars.includes(c))
+    .join("");
+  if (charset.length === 0) {
+    throw awsError(
+      "InvalidParameterException",
+      "You have excluded all characters from the password.",
+      400,
+    );
+  }
+  const bytes = new Uint32Array(length);
+  crypto.getRandomValues(bytes);
+  const password = Array.from(bytes)
+    .map((b) => charset[b % charset.length])
+    .join("");
+  return { RandomPassword: password };
+};
+
+const ListSecretVersionIds: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const includeDeprecated = input["IncludeDeprecated"] === true;
+  const versions = Object.values(secret.versions)
+    .filter((v) => includeDeprecated || v.VersionStages.length > 0)
+    .map((v) => ({
+      VersionId: v.VersionId,
+      VersionStages: v.VersionStages,
+      CreatedDate: v.CreatedDate,
+    }));
+  return { Versions: versions, ARN: secret.ARN, Name: secret.Name };
+};
+
+const UpdateSecretVersionStage: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const stage = String(input["VersionStage"]);
+  const removeFrom = stringOrUndefined(input["RemoveFromVersionId"]);
+  const moveTo = stringOrUndefined(input["MoveToVersionId"]);
+
+  if (removeFrom !== undefined) {
+    const fromVersion = secret.versions[removeFrom];
+    if (fromVersion !== undefined) {
+      fromVersion.VersionStages = fromVersion.VersionStages.filter(
+        (s) => s !== stage,
+      );
+    }
+  }
+
+  if (moveTo !== undefined) {
+    const toVersion = secret.versions[moveTo];
+    if (toVersion === undefined) {
+      throw awsError(
+        "ResourceNotFoundException",
+        "Secrets Manager can't find the specified secret version.",
+        400,
+      );
+    }
+    if (!toVersion.VersionStages.includes(stage)) {
+      toVersion.VersionStages = [...toVersion.VersionStages, stage];
+    }
+    if (stage === "AWSCURRENT") {
+      const prev = secret.versions[secret.currentVersionId];
+      if (prev !== undefined && prev.VersionId !== moveTo) {
+        prev.VersionStages = prev.VersionStages.filter(
+          (s) => s !== "AWSCURRENT",
+        );
+        if (!prev.VersionStages.includes("AWSPREVIOUS")) {
+          prev.VersionStages = [...prev.VersionStages, "AWSPREVIOUS"];
+        }
+      }
+      secret.currentVersionId = moveTo;
+    }
+  }
+
+  ctx.store.set(secret.Name, secret);
+  return { ARN: secret.ARN, Name: secret.Name };
+};
+
 const DeleteSecret: OperationHandler = (input, ctx) => {
   const secret = requireSecret(ctx, secretIdFromInput(input));
   const force = input["ForceDeleteWithoutRecovery"] === true;
@@ -257,6 +400,12 @@ const secretsManager: ServiceDefinition = {
     DescribeSecret,
     DeleteSecret,
     UpdateSecret,
+    TagResource,
+    UntagResource,
+    RestoreSecret,
+    GetRandomPassword,
+    ListSecretVersionIds,
+    UpdateSecretVersionStage,
   },
   model,
 } as const;

@@ -44,9 +44,27 @@ const requireString = (
   throw awsError("ValidationException", `${field} is a required field.`, 400);
 };
 
+type StoredActivity = {
+  activityArn: string;
+  name: string;
+  creationDate: number;
+};
+
+type StoredTags = {
+  resourceArn: string;
+  tags: Record<string, string>;
+};
+
 const stateMachineKey = (arn: string): string => `stateMachine#${arn}`;
 
 const executionKey = (arn: string): string => `execution#${arn}`;
+
+const activityKey = (arn: string): string => `activity#${arn}`;
+
+const tagsKey = (arn: string): string => `tags#${arn}`;
+
+const activityArnOf = (ctx: ServiceContext, name: string): string =>
+  `arn:aws:states:${ctx.region}:${ctx.account}:activity:${name}`;
 
 const stateMachineArnOf = (ctx: ServiceContext, name: string): string =>
   `arn:aws:states:${ctx.region}:${ctx.account}:stateMachine:${name}`;
@@ -241,6 +259,118 @@ const StopExecution: OperationHandler = (input, ctx) => {
   return { stopDate };
 };
 
+const requireActivity = (ctx: ServiceContext, arn: string): StoredActivity => {
+  const activity = ctx.store.get<StoredActivity>(activityKey(arn));
+  if (activity === undefined) {
+    throw awsError(
+      "ActivityDoesNotExist",
+      `Activity Does Not Exist: '${arn}'`,
+      400,
+    );
+  }
+  return activity;
+};
+
+const tagListToRecord = (value: unknown): Record<string, string> => {
+  const record: Record<string, string> = {};
+  if (!Array.isArray(value)) return record;
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const key = (entry as Record<string, unknown>)["key"];
+    const tagValue = (entry as Record<string, unknown>)["value"];
+    if (typeof key === "string" && key !== "") {
+      record[key] = typeof tagValue === "string" ? tagValue : "";
+    }
+  }
+  return record;
+};
+
+const recordToTagList = (
+  record: Record<string, string>,
+): { key: string; value: string }[] =>
+  Object.entries(record).map(([key, value]) => ({ key, value }));
+
+const CreateActivity: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "name");
+  const arn = activityArnOf(ctx, name);
+  const existing = ctx.store.get<StoredActivity>(activityKey(arn));
+  if (existing !== undefined) {
+    throw awsError(
+      "ActivityLimitExceeded",
+      `Activity Already Exists: '${arn}'`,
+      400,
+    );
+  }
+  const creationDate = nowSeconds();
+  const activity: StoredActivity = { activityArn: arn, name, creationDate };
+  ctx.store.set(activityKey(arn), activity);
+  const tags = tagListToRecord(input["tags"]);
+  if (Object.keys(tags).length > 0) {
+    ctx.store.set(tagsKey(arn), { resourceArn: arn, tags });
+  }
+  return { activityArn: arn, creationDate };
+};
+
+const DescribeActivity: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "activityArn");
+  const activity = requireActivity(ctx, arn);
+  return {
+    activityArn: activity.activityArn,
+    name: activity.name,
+    creationDate: activity.creationDate,
+  };
+};
+
+const ListActivities: OperationHandler = (_input, ctx) => {
+  const activities = ctx.store
+    .list<StoredActivity>()
+    .filter((entry) => entry.key.startsWith("activity#"))
+    .map((entry) => entry.value)
+    .map((activity) => ({
+      activityArn: activity.activityArn,
+      name: activity.name,
+      creationDate: activity.creationDate,
+    }));
+  return { activities };
+};
+
+const DeleteActivity: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "activityArn");
+  ctx.store.delete(activityKey(arn));
+  ctx.store.delete(tagsKey(arn));
+  return {};
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const incoming = tagListToRecord(input["tags"]);
+  const existing = ctx.store.get<StoredTags>(tagsKey(resourceArn));
+  const tags = { ...(existing?.tags ?? {}), ...incoming };
+  ctx.store.set(tagsKey(resourceArn), { resourceArn, tags });
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const existing = ctx.store.get<StoredTags>(tagsKey(resourceArn));
+  if (existing === undefined) return {};
+  const keys = input["tagKeys"];
+  const tags = { ...existing.tags };
+  if (Array.isArray(keys)) {
+    for (const key of keys) {
+      if (typeof key === "string") delete tags[key];
+    }
+  }
+  ctx.store.set(tagsKey(resourceArn), { resourceArn, tags });
+  return {};
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const existing = ctx.store.get<StoredTags>(tagsKey(resourceArn));
+  return { tags: recordToTagList(existing?.tags ?? {}) };
+};
+
 const stepFunctions: ServiceDefinition = {
   name: "states",
   protocol: "json",
@@ -253,6 +383,13 @@ const stepFunctions: ServiceDefinition = {
     DescribeExecution,
     ListExecutions,
     StopExecution,
+    CreateActivity,
+    DescribeActivity,
+    ListActivities,
+    DeleteActivity,
+    TagResource,
+    UntagResource,
+    ListTagsForResource,
   },
   model,
 } as const;

@@ -38,6 +38,12 @@ type StoredPlatformApplication = {
   Attributes: Record<string, string>;
 };
 
+type StoredEndpoint = {
+  EndpointArn: string;
+  PlatformApplicationArn: string;
+  Attributes: Record<string, string>;
+};
+
 const topicKey = (name: string): string => `topic/${name}`;
 
 const subscriptionKey = (arn: string): string => `subscription/${arn}`;
@@ -47,6 +53,8 @@ const tagsKey = (arn: string): string => `tags/${arn}`;
 const subscriptionAttributesKey = (arn: string): string => `subattrs/${arn}`;
 
 const platformApplicationKey = (arn: string): string => `platform/${arn}`;
+
+const endpointKey = (arn: string): string => `endpoint/${arn}`;
 
 const subscriptionListPageSize = 100;
 
@@ -484,6 +492,109 @@ const ListPlatformApplications: OperationHandler = (_input, ctx) => {
   return { PlatformApplications: applications };
 };
 
+const requirePlatformApplication = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredPlatformApplication => {
+  const application = ctx.store.get<StoredPlatformApplication>(
+    platformApplicationKey(arn),
+  );
+  if (application === undefined) {
+    throw awsError("NotFound", "PlatformApplication does not exist.", 404);
+  }
+  return application;
+};
+
+const requireEndpoint = (ctx: ServiceContext, arn: string): StoredEndpoint => {
+  const endpoint = ctx.store.get<StoredEndpoint>(endpointKey(arn));
+  if (endpoint === undefined) {
+    throw awsError("NotFound", "Endpoint does not exist.", 404);
+  }
+  return endpoint;
+};
+
+const CreatePlatformEndpoint: OperationHandler = (input, ctx) => {
+  const platformApplicationArn = requireString(input, "PlatformApplicationArn");
+  const token = requireString(input, "Token");
+  requirePlatformApplication(ctx, platformApplicationArn);
+  const attributes =
+    typeof input["Attributes"] === "object" && input["Attributes"] !== null
+      ? (input["Attributes"] as Record<string, string>)
+      : {};
+  const customUserData =
+    typeof input["CustomUserData"] === "string"
+      ? (input["CustomUserData"] as string)
+      : "";
+  const existing = ctx.store
+    .list<StoredEndpoint>()
+    .find(
+      (entry) =>
+        entry.key.startsWith("endpoint/") &&
+        entry.value.PlatformApplicationArn === platformApplicationArn &&
+        entry.value.Attributes["Token"] === token,
+    );
+  if (existing !== undefined) {
+    return { EndpointArn: existing.value.EndpointArn };
+  }
+  const arn = `${platformApplicationArn.replace("app/", "endpoint/")}/${crypto.randomUUID()}`;
+  const endpoint: StoredEndpoint = {
+    EndpointArn: arn,
+    PlatformApplicationArn: platformApplicationArn,
+    Attributes: {
+      Token: token,
+      Enabled: "true",
+      CustomUserData: customUserData,
+      ...attributes,
+    },
+  };
+  ctx.store.set(endpointKey(arn), endpoint);
+  return { EndpointArn: arn };
+};
+
+const DeleteEndpoint: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "EndpointArn");
+  ctx.store.delete(endpointKey(arn));
+  return {};
+};
+
+const ListEndpointsByPlatformApplication: OperationHandler = (input, ctx) => {
+  const platformApplicationArn = requireString(input, "PlatformApplicationArn");
+  requirePlatformApplication(ctx, platformApplicationArn);
+  const endpoints = ctx.store
+    .list<StoredEndpoint>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("endpoint/") &&
+        entry.value.PlatformApplicationArn === platformApplicationArn,
+    )
+    .map((entry) => ({
+      EndpointArn: entry.value.EndpointArn,
+      Attributes: { ...entry.value.Attributes },
+    }));
+  return { Endpoints: endpoints };
+};
+
+const GetEndpointAttributes: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "EndpointArn");
+  const endpoint = requireEndpoint(ctx, arn);
+  return { Attributes: { ...endpoint.Attributes } };
+};
+
+const SetEndpointAttributes: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "EndpointArn");
+  const endpoint = requireEndpoint(ctx, arn);
+  const incoming =
+    typeof input["Attributes"] === "object" && input["Attributes"] !== null
+      ? (input["Attributes"] as Record<string, string>)
+      : {};
+  const updated: StoredEndpoint = {
+    ...endpoint,
+    Attributes: { ...endpoint.Attributes, ...incoming },
+  };
+  ctx.store.set(endpointKey(arn), updated);
+  return {};
+};
+
 const sns = {
   name: "sns",
   protocol: "query",
@@ -506,6 +617,11 @@ const sns = {
     ConfirmSubscription,
     CreatePlatformApplication,
     ListPlatformApplications,
+    CreatePlatformEndpoint,
+    DeleteEndpoint,
+    ListEndpointsByPlatformApplication,
+    GetEndpointAttributes,
+    SetEndpointAttributes,
   },
   model,
 } as const satisfies ServiceDefinition;

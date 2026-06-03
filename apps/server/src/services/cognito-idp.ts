@@ -32,6 +32,17 @@ type StoredClient = {
   LastModifiedDate: number;
 };
 
+type StoredGroup = {
+  GroupName: string;
+  UserPoolId: string;
+  Description?: string;
+  RoleArn?: string;
+  Precedence?: number;
+  CreationDate: number;
+  LastModifiedDate: number;
+  members: string[];
+};
+
 type StoredPool = {
   Id: string;
   Name: string;
@@ -155,7 +166,9 @@ const DescribeUserPool: OperationHandler = (input, ctx) => {
 const ListUserPools: OperationHandler = (input, ctx) => {
   const entries = ctx.store.list<StoredPool>();
   return {
-    UserPools: entries.map((entry) => poolDescription(entry.value)),
+    UserPools: entries
+      .filter((entry) => !entry.key.startsWith("group#"))
+      .map((entry) => poolDescription(entry.value)),
   };
 };
 
@@ -248,6 +261,121 @@ const ListUsers: OperationHandler = (input, ctx) => {
   };
 };
 
+const groupKey = (poolId: string, groupName: string): string =>
+  `group#${poolId}#${groupName}`;
+
+const groupType = (group: StoredGroup): Record<string, unknown> => ({
+  GroupName: group.GroupName,
+  UserPoolId: group.UserPoolId,
+  Description: group.Description,
+  RoleArn: group.RoleArn,
+  Precedence: group.Precedence,
+  CreationDate: group.CreationDate,
+  LastModifiedDate: group.LastModifiedDate,
+});
+
+const requireGroup = (
+  ctx: ServiceContext,
+  poolId: string,
+  groupName: string,
+): StoredGroup => {
+  const group = ctx.store.get<StoredGroup>(groupKey(poolId, groupName));
+  if (group === undefined) {
+    throw awsError("ResourceNotFoundException", `Group not found.`, 400);
+  }
+  return group;
+};
+
+const CreateGroup: OperationHandler = (input, ctx) => {
+  const poolId = requireString(input, "UserPoolId");
+  requirePool(ctx, poolId);
+  const groupName = requireString(input, "GroupName");
+  const key = groupKey(poolId, groupName);
+  if (ctx.store.get<StoredGroup>(key) !== undefined) {
+    throw awsError("GroupExistsException", `Group already exists.`, 400);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const group: StoredGroup = {
+    GroupName: groupName,
+    UserPoolId: poolId,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : undefined,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    Precedence:
+      typeof input["Precedence"] === "number"
+        ? (input["Precedence"] as number)
+        : undefined,
+    CreationDate: now,
+    LastModifiedDate: now,
+    members: [],
+  };
+  ctx.store.set(key, group);
+  return { Group: groupType(group) };
+};
+
+const GetGroup: OperationHandler = (input, ctx) => {
+  const poolId = requireString(input, "UserPoolId");
+  requirePool(ctx, poolId);
+  const groupName = requireString(input, "GroupName");
+  const group = requireGroup(ctx, poolId, groupName);
+  return { Group: groupType(group) };
+};
+
+const ListGroups: OperationHandler = (input, ctx) => {
+  const poolId = requireString(input, "UserPoolId");
+  requirePool(ctx, poolId);
+  const entries = ctx.store.list<StoredGroup>();
+  return {
+    Groups: entries
+      .filter((entry) => entry.value.UserPoolId === poolId)
+      .map((entry) => groupType(entry.value)),
+  };
+};
+
+const DeleteGroup: OperationHandler = (input, ctx) => {
+  const poolId = requireString(input, "UserPoolId");
+  requirePool(ctx, poolId);
+  const groupName = requireString(input, "GroupName");
+  requireGroup(ctx, poolId, groupName);
+  ctx.store.delete(groupKey(poolId, groupName));
+  return {};
+};
+
+const AdminAddUserToGroup: OperationHandler = (input, ctx) => {
+  const poolId = requireString(input, "UserPoolId");
+  const pool = requirePool(ctx, poolId);
+  const username = requireString(input, "Username");
+  const groupName = requireString(input, "GroupName");
+  if (pool.users[username] === undefined) {
+    throw awsError("UserNotFoundException", `User does not exist.`, 400);
+  }
+  const group = requireGroup(ctx, poolId, groupName);
+  if (!group.members.includes(username)) {
+    group.members.push(username);
+    ctx.store.set(groupKey(poolId, groupName), group);
+  }
+  return {};
+};
+
+const AdminRemoveUserFromGroup: OperationHandler = (input, ctx) => {
+  const poolId = requireString(input, "UserPoolId");
+  const pool = requirePool(ctx, poolId);
+  const username = requireString(input, "Username");
+  const groupName = requireString(input, "GroupName");
+  if (pool.users[username] === undefined) {
+    throw awsError("UserNotFoundException", `User does not exist.`, 400);
+  }
+  const group = requireGroup(ctx, poolId, groupName);
+  group.members = group.members.filter((member) => member !== username);
+  ctx.store.set(groupKey(poolId, groupName), group);
+  return {};
+};
+
 const cognitoIdp: ServiceDefinition = {
   name: "cognito-idp",
   protocol: "json",
@@ -260,6 +388,12 @@ const cognitoIdp: ServiceDefinition = {
     AdminCreateUser,
     AdminGetUser,
     ListUsers,
+    CreateGroup,
+    GetGroup,
+    ListGroups,
+    DeleteGroup,
+    AdminAddUserToGroup,
+    AdminRemoveUserFromGroup,
   },
   model,
 } as const;

@@ -299,6 +299,191 @@ const PurgeQueue: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const toVisibilitySeconds = (raw: unknown): number => {
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number.parseInt(raw, 10)
+        : 30;
+  return Number.isFinite(value) ? value : 30;
+};
+
+const ChangeMessageVisibility: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  const queue = requireQueue(ctx, name);
+  const receiptHandle = input["ReceiptHandle"];
+  if (typeof receiptHandle !== "string" || receiptHandle === "") {
+    throw awsError("MissingParameter", "ReceiptHandle is required.", 400);
+  }
+  const message = queue.messages.find(
+    (entry) => entry.ReceiptHandle === receiptHandle,
+  );
+  if (message === undefined) {
+    throw awsError(
+      "ReceiptHandleIsInvalid",
+      `The input receipt handle "${receiptHandle}" is not valid.`,
+      400,
+    );
+  }
+  message.invisibleUntil =
+    Date.now() + toVisibilitySeconds(input["VisibilityTimeout"]) * 1000;
+  ctx.store.set(name, queue);
+  return {};
+};
+
+type BatchEntry = Record<string, unknown>;
+
+const batchEntriesFromInput = (
+  input: Record<string, unknown>,
+): BatchEntry[] => {
+  const entries = input["Entries"];
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw awsError(
+      "AWS.SimpleQueueService.EmptyBatchRequest",
+      "There should be at least one SendMessageBatchRequestEntry in the request.",
+      400,
+    );
+  }
+  return entries as BatchEntry[];
+};
+
+const entryId = (entry: BatchEntry, index: number): string => {
+  const id = entry["Id"];
+  return typeof id === "string" && id !== "" ? id : String(index);
+};
+
+const SendMessageBatch: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  const queue = requireQueue(ctx, name);
+  const entries = batchEntriesFromInput(input);
+  const successful: Record<string, string>[] = [];
+  const failed: Record<string, unknown>[] = [];
+  for (const [index, entry] of entries.entries()) {
+    const id = entryId(entry, index);
+    const body = entry["MessageBody"];
+    if (typeof body !== "string") {
+      failed.push({
+        Id: id,
+        SenderFault: true,
+        Code: "MissingParameter",
+        Message: "MessageBody is required.",
+      });
+      continue;
+    }
+    const messageAttributes =
+      typeof entry["MessageAttributes"] === "object" &&
+      entry["MessageAttributes"] !== null
+        ? (entry["MessageAttributes"] as Record<string, unknown>)
+        : undefined;
+    const messageId = crypto.randomUUID();
+    const message: StoredMessage = {
+      MessageId: messageId,
+      ReceiptHandle: crypto.randomUUID(),
+      Body: body,
+      MD5OfBody: md5Hex(body),
+      MessageAttributes: messageAttributes,
+      invisibleUntil: 0,
+      receiveCount: 0,
+    };
+    queue.messages.push(message);
+    successful.push({
+      Id: id,
+      MessageId: messageId,
+      MD5OfMessageBody: message.MD5OfBody,
+    });
+  }
+  ctx.store.set(name, queue);
+  return { Successful: successful, Failed: failed };
+};
+
+const DeleteMessageBatch: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  const queue = requireQueue(ctx, name);
+  const entries = batchEntriesFromInput(input);
+  const successful: Record<string, string>[] = [];
+  const failed: Record<string, unknown>[] = [];
+  for (const [index, entry] of entries.entries()) {
+    const id = entryId(entry, index);
+    const receiptHandle = entry["ReceiptHandle"];
+    const messageIndex =
+      typeof receiptHandle === "string"
+        ? queue.messages.findIndex(
+            (message) => message.ReceiptHandle === receiptHandle,
+          )
+        : -1;
+    if (messageIndex < 0) {
+      failed.push({
+        Id: id,
+        SenderFault: true,
+        Code: "ReceiptHandleIsInvalid",
+        Message: "The specified receipt handle is not valid.",
+      });
+      continue;
+    }
+    queue.messages.splice(messageIndex, 1);
+    successful.push({ Id: id });
+  }
+  ctx.store.set(name, queue);
+  return { Successful: successful, Failed: failed };
+};
+
+const ChangeMessageVisibilityBatch: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  const queue = requireQueue(ctx, name);
+  const entries = batchEntriesFromInput(input);
+  const successful: Record<string, string>[] = [];
+  const failed: Record<string, unknown>[] = [];
+  const now = Date.now();
+  for (const [index, entry] of entries.entries()) {
+    const id = entryId(entry, index);
+    const receiptHandle = entry["ReceiptHandle"];
+    const message =
+      typeof receiptHandle === "string"
+        ? queue.messages.find(
+            (candidate) => candidate.ReceiptHandle === receiptHandle,
+          )
+        : undefined;
+    if (message === undefined) {
+      failed.push({
+        Id: id,
+        SenderFault: true,
+        Code: "ReceiptHandleIsInvalid",
+        Message: "The specified receipt handle is not valid.",
+      });
+      continue;
+    }
+    message.invisibleUntil =
+      now + toVisibilitySeconds(entry["VisibilityTimeout"]) * 1000;
+    successful.push({ Id: id });
+  }
+  ctx.store.set(name, queue);
+  return { Successful: successful, Failed: failed };
+};
+
+const redriveTargetArn = (queue: StoredQueue): string | undefined => {
+  const policy = queue.Attributes["RedrivePolicy"];
+  if (typeof policy !== "string" || policy === "") return undefined;
+  try {
+    const parsed = JSON.parse(policy) as Record<string, unknown>;
+    const target = parsed["deadLetterTargetArn"];
+    return typeof target === "string" ? target : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const ListDeadLetterSourceQueues: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  requireQueue(ctx, name);
+  const targetArn = `arn:aws:sqs:${ctx.region}:${ctx.account}:${name}`;
+  const queueUrls = ctx.store
+    .list<StoredQueue>()
+    .filter((entry) => redriveTargetArn(entry.value) === targetArn)
+    .map((entry) => entry.value.QueueUrl);
+  return { queueUrls };
+};
+
 const sqs: ServiceDefinition = {
   name: "sqs",
   protocol: "json",
@@ -316,6 +501,11 @@ const sqs: ServiceDefinition = {
     ListQueueTags,
     SetQueueAttributes,
     PurgeQueue,
+    ChangeMessageVisibility,
+    SendMessageBatch,
+    DeleteMessageBatch,
+    ChangeMessageVisibilityBatch,
+    ListDeadLetterSourceQueues,
   },
   model,
 } as const;

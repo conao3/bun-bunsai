@@ -246,6 +246,90 @@ const UpdateSecret: OperationHandler = (input, ctx) => {
   return { ARN: secret.ARN, Name: secret.Name, VersionId: versionId };
 };
 
+const GetRandomPassword: OperationHandler = (input) => {
+  const length =
+    typeof input["PasswordLength"] === "number"
+      ? Math.max(1, Math.floor(input["PasswordLength"] as number))
+      : 32;
+  const excludeNumbers = input["ExcludeNumbers"] === true;
+  const excludePunctuation = input["ExcludePunctuation"] === true;
+  const excludeUppercase = input["ExcludeUppercase"] === true;
+  const excludeLowercase = input["ExcludeLowercase"] === true;
+  const includeSpace = input["IncludeSpace"] === true;
+  const excludeCharacters =
+    typeof input["ExcludeCharacters"] === "string"
+      ? (input["ExcludeCharacters"] as string)
+      : "";
+  let pool = "";
+  if (!excludeLowercase) pool += "abcdefghijklmnopqrstuvwxyz";
+  if (!excludeUppercase) pool += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  if (!excludeNumbers) pool += "0123456789";
+  if (!excludePunctuation) pool += "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+  if (includeSpace) pool += " ";
+  const allowed = [...pool].filter(
+    (character) => !excludeCharacters.includes(character),
+  );
+  if (allowed.length === 0) {
+    throw awsError(
+      "InvalidParameterException",
+      "No characters available for password generation.",
+      400,
+    );
+  }
+  const bytes = crypto.getRandomValues(new Uint32Array(length));
+  let password = "";
+  for (let index = 0; index < length; index += 1)
+    password += allowed[bytes[index] % allowed.length];
+  return { RandomPassword: password };
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const incoming = Array.isArray(input["Tags"])
+    ? (input["Tags"] as Record<string, unknown>[])
+    : [];
+  const existing = secret.Tags as Record<string, unknown>[];
+  const byKey = new Map<string, Record<string, unknown>>();
+  for (const tag of existing)
+    if (typeof tag["Key"] === "string") byKey.set(tag["Key"], tag);
+  for (const tag of incoming)
+    if (typeof tag["Key"] === "string") byKey.set(tag["Key"], tag);
+  secret.Tags = [...byKey.values()];
+  ctx.store.set(secret.Name, secret);
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const keys = Array.isArray(input["TagKeys"])
+    ? (input["TagKeys"] as unknown[]).map((value) => String(value))
+    : [];
+  const existing = secret.Tags as Record<string, unknown>[];
+  secret.Tags = existing.filter(
+    (tag) => typeof tag["Key"] !== "string" || !keys.includes(tag["Key"]),
+  );
+  ctx.store.set(secret.Name, secret);
+  return {};
+};
+
+const ListSecretVersionIds: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const versions = Object.values(secret.versions).map((version) => ({
+    VersionId: version.VersionId,
+    VersionStages: version.VersionStages,
+    CreatedDate: version.CreatedDate,
+  }));
+  return { Versions: versions, ARN: secret.ARN, Name: secret.Name };
+};
+
+const RestoreSecret: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  secret.DeletedDate = undefined;
+  secret.LastChangedDate = nowSeconds();
+  ctx.store.set(secret.Name, secret);
+  return { ARN: secret.ARN, Name: secret.Name };
+};
+
 const secretsManager: ServiceDefinition = {
   name: "secretsmanager",
   protocol: "json",
@@ -257,6 +341,11 @@ const secretsManager: ServiceDefinition = {
     DescribeSecret,
     DeleteSecret,
     UpdateSecret,
+    GetRandomPassword,
+    TagResource,
+    UntagResource,
+    ListSecretVersionIds,
+    RestoreSecret,
   },
   model,
 } as const;

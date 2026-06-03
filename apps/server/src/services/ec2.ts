@@ -102,6 +102,48 @@ type StoredKeyPair = {
   Tags: Tag[];
 };
 
+type StoredVolume = {
+  VolumeId: string;
+  Size: number;
+  VolumeType: string;
+  AvailabilityZone: string;
+  State: string;
+  SnapshotId: string;
+  Iops: number;
+  Encrypted: boolean;
+  CreateTime: string;
+  Tags: Tag[];
+};
+
+type StoredSnapshot = {
+  SnapshotId: string;
+  VolumeId: string;
+  VolumeSize: number;
+  State: string;
+  Progress: string;
+  StartTime: string;
+  Description: string;
+  Encrypted: boolean;
+  OwnerId: string;
+  Tags: Tag[];
+};
+
+type StoredNatGateway = {
+  NatGatewayId: string;
+  SubnetId: string;
+  VpcId: string;
+  State: string;
+  ConnectivityType: string;
+  CreateTime: string;
+  NatGatewayAddresses: {
+    AllocationId: string | undefined;
+    PublicIp: string;
+    PrivateIp: string;
+    NetworkInterfaceId: string;
+  }[];
+  Tags: Tag[];
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -117,6 +159,9 @@ const routeTableKey = (id: string): string => `rtb/${id}`;
 const igwKey = (id: string): string => `igw/${id}`;
 const addressKey = (id: string): string => `eip/${id}`;
 const keyPairKey = (name: string): string => `keypair/${name}`;
+const volumeKey = (id: string): string => `volume/${id}`;
+const snapshotKey = (id: string): string => `snapshot/${id}`;
+const natGatewayKey = (id: string): string => `natgw/${id}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -164,6 +209,24 @@ const allKeyPairs = (ctx: ServiceContext): StoredKeyPair[] =>
   ctx.store
     .list<StoredKeyPair>()
     .filter((entry) => entry.key.startsWith("keypair/"))
+    .map((entry) => entry.value);
+
+const allVolumes = (ctx: ServiceContext): StoredVolume[] =>
+  ctx.store
+    .list<StoredVolume>()
+    .filter((entry) => entry.key.startsWith("volume/"))
+    .map((entry) => entry.value);
+
+const allSnapshots = (ctx: ServiceContext): StoredSnapshot[] =>
+  ctx.store
+    .list<StoredSnapshot>()
+    .filter((entry) => entry.key.startsWith("snapshot/"))
+    .map((entry) => entry.value);
+
+const allNatGateways = (ctx: ServiceContext): StoredNatGateway[] =>
+  ctx.store
+    .list<StoredNatGateway>()
+    .filter((entry) => entry.key.startsWith("natgw/"))
     .map((entry) => entry.value);
 
 const integerOf = (value: unknown): number | undefined => {
@@ -990,6 +1053,210 @@ const RevokeSecurityGroupIngress: OperationHandler = (input, ctx) => {
   return { Return: true };
 };
 
+const volumeView = (volume: StoredVolume): unknown => ({
+  VolumeId: volume.VolumeId,
+  Size: volume.Size,
+  VolumeType: volume.VolumeType,
+  AvailabilityZone: volume.AvailabilityZone,
+  State: volume.State,
+  SnapshotId: volume.SnapshotId,
+  Iops: volume.Iops,
+  Encrypted: volume.Encrypted,
+  CreateTime: volume.CreateTime,
+  Attachments: [],
+  Tags: volume.Tags,
+});
+
+const CreateVolume: OperationHandler = (input, ctx) => {
+  const availabilityZone =
+    typeof input["AvailabilityZone"] === "string"
+      ? input["AvailabilityZone"]
+      : `${ctx.region}a`;
+  const size = integerOf(input["Size"]) ?? 8;
+  const volumeType =
+    typeof input["VolumeType"] === "string" ? input["VolumeType"] : "gp3";
+  const snapshotId =
+    typeof input["SnapshotId"] === "string" ? input["SnapshotId"] : "";
+  const id = hexId("vol");
+  const volume: StoredVolume = {
+    VolumeId: id,
+    Size: size,
+    VolumeType: volumeType,
+    AvailabilityZone: availabilityZone,
+    State: "available",
+    SnapshotId: snapshotId,
+    Iops: 3000,
+    Encrypted: input["Encrypted"] === true,
+    CreateTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(volumeKey(id), volume);
+  return volumeView(volume);
+};
+
+const DescribeVolumes: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VolumeIds"]);
+  const volumes = allVolumes(ctx).filter((volume) =>
+    ids.length === 0 ? true : ids.includes(volume.VolumeId),
+  );
+  return { Volumes: volumes.map((volume) => volumeView(volume)) };
+};
+
+const DeleteVolume: OperationHandler = (input, ctx) => {
+  const id = typeof input["VolumeId"] === "string" ? input["VolumeId"] : "";
+  const volume = ctx.store.get<StoredVolume>(volumeKey(id));
+  if (volume === undefined) {
+    throw awsError(
+      "InvalidVolume.NotFound",
+      `The volume '${id}' does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(volumeKey(id));
+  return {};
+};
+
+const snapshotView = (snapshot: StoredSnapshot): unknown => ({
+  SnapshotId: snapshot.SnapshotId,
+  VolumeId: snapshot.VolumeId,
+  VolumeSize: snapshot.VolumeSize,
+  State: snapshot.State,
+  Progress: snapshot.Progress,
+  StartTime: snapshot.StartTime,
+  Description: snapshot.Description,
+  Encrypted: snapshot.Encrypted,
+  OwnerId: snapshot.OwnerId,
+  Tags: snapshot.Tags,
+});
+
+const CreateSnapshot: OperationHandler = (input, ctx) => {
+  const volumeId =
+    typeof input["VolumeId"] === "string" ? input["VolumeId"] : "";
+  const volume = ctx.store.get<StoredVolume>(volumeKey(volumeId));
+  if (volume === undefined) {
+    throw awsError(
+      "InvalidVolume.NotFound",
+      `The volume '${volumeId}' does not exist.`,
+      400,
+    );
+  }
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const id = hexId("snap");
+  const snapshot: StoredSnapshot = {
+    SnapshotId: id,
+    VolumeId: volumeId,
+    VolumeSize: volume.Size,
+    State: "completed",
+    Progress: "100%",
+    StartTime: new Date().toISOString(),
+    Description: description,
+    Encrypted: volume.Encrypted,
+    OwnerId: ctx.account,
+    Tags: [],
+  };
+  ctx.store.set(snapshotKey(id), snapshot);
+  return snapshotView(snapshot);
+};
+
+const DescribeSnapshots: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["SnapshotIds"]);
+  const snapshots = allSnapshots(ctx).filter((snapshot) =>
+    ids.length === 0 ? true : ids.includes(snapshot.SnapshotId),
+  );
+  return { Snapshots: snapshots.map((snapshot) => snapshotView(snapshot)) };
+};
+
+const DeleteSnapshot: OperationHandler = (input, ctx) => {
+  const id = typeof input["SnapshotId"] === "string" ? input["SnapshotId"] : "";
+  const snapshot = ctx.store.get<StoredSnapshot>(snapshotKey(id));
+  if (snapshot === undefined) {
+    throw awsError(
+      "InvalidSnapshot.NotFound",
+      `The snapshot '${id}' does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(snapshotKey(id));
+  return {};
+};
+
+const natGatewayView = (gateway: StoredNatGateway): unknown => ({
+  NatGatewayId: gateway.NatGatewayId,
+  SubnetId: gateway.SubnetId,
+  VpcId: gateway.VpcId,
+  State: gateway.State,
+  ConnectivityType: gateway.ConnectivityType,
+  CreateTime: gateway.CreateTime,
+  NatGatewayAddresses: gateway.NatGatewayAddresses,
+  Tags: gateway.Tags,
+});
+
+const CreateNatGateway: OperationHandler = (input, ctx) => {
+  const subnetId =
+    typeof input["SubnetId"] === "string" ? input["SubnetId"] : "";
+  const subnet = ctx.store.get<StoredSubnet>(subnetKey(subnetId));
+  if (subnet === undefined) {
+    throw awsError(
+      "InvalidSubnetID.NotFound",
+      `The subnet ID '${subnetId}' does not exist`,
+      400,
+    );
+  }
+  const connectivityType =
+    typeof input["ConnectivityType"] === "string"
+      ? input["ConnectivityType"]
+      : "public";
+  const allocationId =
+    typeof input["AllocationId"] === "string"
+      ? input["AllocationId"]
+      : undefined;
+  const id = hexId("nat");
+  const gateway: StoredNatGateway = {
+    NatGatewayId: id,
+    SubnetId: subnetId,
+    VpcId: subnet.VpcId,
+    State: "available",
+    ConnectivityType: connectivityType,
+    CreateTime: new Date().toISOString(),
+    NatGatewayAddresses: [
+      {
+        AllocationId: allocationId,
+        PublicIp: randomIpv4(),
+        PrivateIp: "10.0.0.10",
+        NetworkInterfaceId: hexId("eni"),
+      },
+    ],
+    Tags: [],
+  };
+  ctx.store.set(natGatewayKey(id), gateway);
+  return { NatGateway: natGatewayView(gateway) };
+};
+
+const DescribeNatGateways: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["NatGatewayIds"]);
+  const gateways = allNatGateways(ctx).filter((gateway) =>
+    ids.length === 0 ? true : ids.includes(gateway.NatGatewayId),
+  );
+  return { NatGateways: gateways.map((gateway) => natGatewayView(gateway)) };
+};
+
+const DeleteNatGateway: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["NatGatewayId"] === "string" ? input["NatGatewayId"] : "";
+  const gateway = ctx.store.get<StoredNatGateway>(natGatewayKey(id));
+  if (gateway === undefined) {
+    throw awsError(
+      "NatGatewayNotFound",
+      `The Nat Gateway '${id}' does not exist`,
+      400,
+    );
+  }
+  gateway.State = "deleted";
+  ctx.store.set(natGatewayKey(id), gateway);
+  return { NatGatewayId: id };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -1022,6 +1289,15 @@ const ec2: ServiceDefinition = {
     DescribeAvailabilityZones,
     AuthorizeSecurityGroupIngress,
     RevokeSecurityGroupIngress,
+    CreateVolume,
+    DescribeVolumes,
+    DeleteVolume,
+    CreateSnapshot,
+    DescribeSnapshots,
+    DeleteSnapshot,
+    CreateNatGateway,
+    DescribeNatGateways,
+    DeleteNatGateway,
   },
   model,
 } as const;

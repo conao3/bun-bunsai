@@ -428,6 +428,278 @@ const ListTags: OperationHandler = (input, ctx) => {
   return { Tags: tags };
 };
 
+const concurrencyKey = (name: string): string => `concurrency:${name}`;
+
+const PutFunctionConcurrency: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const reserved = input["ReservedConcurrentExecutions"];
+  if (typeof reserved !== "number") {
+    throw awsError(
+      "InvalidParameterValueException",
+      "ReservedConcurrentExecutions is required.",
+      400,
+    );
+  }
+  ctx.store.set(concurrencyKey(fn.FunctionName), { value: reserved });
+  return { ReservedConcurrentExecutions: reserved };
+};
+
+const GetFunctionConcurrency: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const stored = ctx.store.get<{ value: number }>(
+    concurrencyKey(fn.FunctionName),
+  );
+  return { ReservedConcurrentExecutions: stored?.value };
+};
+
+const DeleteFunctionConcurrency: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  ctx.store.delete(concurrencyKey(fn.FunctionName));
+  return {};
+};
+
+type StoredCors = {
+  AllowCredentials: boolean | undefined;
+  AllowHeaders: string[] | undefined;
+  AllowMethods: string[] | undefined;
+  AllowOrigins: string[] | undefined;
+  ExposeHeaders: string[] | undefined;
+  MaxAge: number | undefined;
+};
+
+type StoredUrlConfig = {
+  FunctionUrl: string;
+  FunctionArn: string;
+  AuthType: string;
+  Cors: StoredCors | undefined;
+  InvokeMode: string;
+  CreationTime: string;
+  LastModifiedTime: string;
+};
+
+const urlConfigKey = (name: string): string => `url:${name}`;
+
+const corsFromInput = (value: unknown): StoredCors | undefined => {
+  if (typeof value !== "object" || value === null) return undefined;
+  const cors = value as Record<string, unknown>;
+  const stringList = (raw: unknown): string[] | undefined =>
+    Array.isArray(raw)
+      ? raw.filter((item): item is string => typeof item === "string")
+      : undefined;
+  return {
+    AllowCredentials:
+      typeof cors["AllowCredentials"] === "boolean"
+        ? cors["AllowCredentials"]
+        : undefined,
+    AllowHeaders: stringList(cors["AllowHeaders"]),
+    AllowMethods: stringList(cors["AllowMethods"]),
+    AllowOrigins: stringList(cors["AllowOrigins"]),
+    ExposeHeaders: stringList(cors["ExposeHeaders"]),
+    MaxAge: typeof cors["MaxAge"] === "number" ? cors["MaxAge"] : undefined,
+  };
+};
+
+const urlConfigResponse = (
+  config: StoredUrlConfig,
+): Record<string, unknown> => ({
+  FunctionUrl: config.FunctionUrl,
+  FunctionArn: config.FunctionArn,
+  AuthType: config.AuthType,
+  Cors: config.Cors,
+  CreationTime: config.CreationTime,
+  LastModifiedTime: config.LastModifiedTime,
+  InvokeMode: config.InvokeMode,
+});
+
+const CreateFunctionUrlConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const key = urlConfigKey(fn.FunctionName);
+  if (ctx.store.get<StoredUrlConfig>(key) !== undefined) {
+    throw awsError(
+      "ResourceConflictException",
+      `Function url config already exists: ${fn.FunctionName}`,
+      409,
+    );
+  }
+  const now = nowIso();
+  const config: StoredUrlConfig = {
+    FunctionUrl: `https://bunsai-${fn.FunctionName}.lambda-url.${ctx.region}.on.aws/`,
+    FunctionArn: fn.FunctionArn,
+    AuthType: stringOrUndefined(input["AuthType"]) ?? "NONE",
+    Cors: corsFromInput(input["Cors"]),
+    InvokeMode: stringOrUndefined(input["InvokeMode"]) ?? "BUFFERED",
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(key, config);
+  return urlConfigResponse(config);
+};
+
+const GetFunctionUrlConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const config = ctx.store.get<StoredUrlConfig>(urlConfigKey(fn.FunctionName));
+  if (config === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Function url config not found: ${fn.FunctionName}`,
+      404,
+    );
+  }
+  return urlConfigResponse(config);
+};
+
+const DeleteFunctionUrlConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  ctx.store.delete(urlConfigKey(fn.FunctionName));
+  return {};
+};
+
+type StoredLayerVersion = {
+  LayerName: string;
+  LayerArn: string;
+  LayerVersionArn: string;
+  Version: number;
+  Description: string | undefined;
+  CreatedDate: string;
+  CompatibleRuntimes: string[];
+  CompatibleArchitectures: string[];
+  LicenseInfo: string | undefined;
+  CodeSize: number;
+  CodeSha256: string;
+};
+
+const layerNameFromInput = (input: Record<string, unknown>): string => {
+  const name = input["LayerName"];
+  if (typeof name === "string" && name !== "") {
+    const parts = name.split(":");
+    return parts[parts.length - 1];
+  }
+  throw awsError(
+    "InvalidParameterValueException",
+    "LayerName is required.",
+    400,
+  );
+};
+
+const layerArnOf = (ctx: ServiceContext, name: string): string =>
+  `arn:aws:lambda:${ctx.region}:${ctx.account}:layer:${name}`;
+
+const layerCounterKey = (name: string): string => `layer-counter:${name}`;
+
+const layerVersionKey = (name: string, version: number): string =>
+  `layer:${name}:${version}`;
+
+const stringListOf = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+
+const layerVersionResponse = (
+  layer: StoredLayerVersion,
+): Record<string, unknown> => ({
+  Content: {
+    Location: `https://bunsai-layers.local/${layer.LayerName}/${layer.Version}`,
+    CodeSha256: layer.CodeSha256,
+    CodeSize: layer.CodeSize,
+  },
+  LayerArn: layer.LayerArn,
+  LayerVersionArn: layer.LayerVersionArn,
+  Description: layer.Description,
+  CreatedDate: layer.CreatedDate,
+  Version: layer.Version,
+  CompatibleRuntimes: layer.CompatibleRuntimes,
+  CompatibleArchitectures: layer.CompatibleArchitectures,
+  LicenseInfo: layer.LicenseInfo,
+});
+
+const layerContentSize = (input: Record<string, unknown>): number => {
+  const content = input["Content"];
+  if (typeof content === "object" && content !== null) {
+    const zip = (content as Record<string, unknown>)["ZipFile"];
+    if (typeof zip === "string") return zip.length;
+    if (zip instanceof Uint8Array) return zip.byteLength;
+  }
+  return 0;
+};
+
+const PublishLayerVersion: OperationHandler = (input, ctx) => {
+  const name = layerNameFromInput(input);
+  const counterKey = layerCounterKey(name);
+  const existing = ctx.store.get<{ value: number }>(counterKey);
+  const version = (existing?.value ?? 0) + 1;
+  ctx.store.set(counterKey, { value: version });
+  const layerArn = layerArnOf(ctx, name);
+  const layer: StoredLayerVersion = {
+    LayerName: name,
+    LayerArn: layerArn,
+    LayerVersionArn: `${layerArn}:${version}`,
+    Version: version,
+    Description: stringOrUndefined(input["Description"]),
+    CreatedDate: nowIso(),
+    CompatibleRuntimes: stringListOf(input["CompatibleRuntimes"]),
+    CompatibleArchitectures: stringListOf(input["CompatibleArchitectures"]),
+    LicenseInfo: stringOrUndefined(input["LicenseInfo"]),
+    CodeSize: layerContentSize(input),
+    CodeSha256: sha256Of(`${name}:${version}:${nowIso()}`),
+  };
+  ctx.store.set(layerVersionKey(name, version), layer);
+  return layerVersionResponse(layer);
+};
+
+const ListLayers: OperationHandler = (input, ctx) => {
+  const latest = new Map<string, StoredLayerVersion>();
+  for (const entry of ctx.store.list<StoredLayerVersion>()) {
+    if (!entry.key.startsWith("layer:")) continue;
+    const current = latest.get(entry.value.LayerName);
+    if (current === undefined || entry.value.Version > current.Version) {
+      latest.set(entry.value.LayerName, entry.value);
+    }
+  }
+  const layers = [...latest.values()].map((layer) => ({
+    LayerName: layer.LayerName,
+    LayerArn: layer.LayerArn,
+    LatestMatchingVersion: {
+      LayerVersionArn: layer.LayerVersionArn,
+      Version: layer.Version,
+      Description: layer.Description,
+      CreatedDate: layer.CreatedDate,
+      CompatibleRuntimes: layer.CompatibleRuntimes,
+      CompatibleArchitectures: layer.CompatibleArchitectures,
+      LicenseInfo: layer.LicenseInfo,
+    },
+  }));
+  return { Layers: layers };
+};
+
+const GetLayerVersion: OperationHandler = (input, ctx) => {
+  const name = layerNameFromInput(input);
+  const versionRaw = input["VersionNumber"];
+  const version =
+    typeof versionRaw === "number"
+      ? versionRaw
+      : typeof versionRaw === "string"
+        ? Number(versionRaw)
+        : Number.NaN;
+  if (!Number.isFinite(version)) {
+    throw awsError(
+      "InvalidParameterValueException",
+      "VersionNumber is required.",
+      400,
+    );
+  }
+  const layer = ctx.store.get<StoredLayerVersion>(
+    layerVersionKey(name, version),
+  );
+  if (layer === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Layer version not found: ${name}:${version}`,
+      404,
+    );
+  }
+  return layerVersionResponse(layer);
+};
+
 const segmentsAfterFunctions = (path: string): string[] => {
   const idx = path.indexOf("/functions");
   if (idx === -1) return [];
@@ -446,6 +718,28 @@ const lambda: ServiceDefinition = {
       if (req.method === "GET") return "ListTags";
       return undefined;
     }
+    if (req.path.includes("/layers")) {
+      const idx = req.path.indexOf("/layers");
+      const layerParts = req.path
+        .slice(idx + "/layers".length)
+        .split("/")
+        .filter((part) => part !== "");
+      if (layerParts.length === 0) {
+        if (req.method === "GET") return "ListLayers";
+        return undefined;
+      }
+      const layerTail = layerParts[layerParts.length - 1];
+      if (layerTail === "versions" && req.method === "POST")
+        return "PublishLayerVersion";
+      if (
+        layerParts.length >= 2 &&
+        layerParts[layerParts.length - 2] === "versions" &&
+        req.method === "GET"
+      ) {
+        return "GetLayerVersion";
+      }
+      return undefined;
+    }
     const parts = segmentsAfterFunctions(req.path);
     if (parts.length === 0) {
       if (req.method === "POST") return "CreateFunction";
@@ -455,6 +749,18 @@ const lambda: ServiceDefinition = {
     const tail = parts[parts.length - 1];
     if (tail === "invocations" && req.method === "POST") return "Invoke";
     if (tail === "code" && req.method === "PUT") return "UpdateFunctionCode";
+    if (tail === "concurrency") {
+      if (req.method === "PUT") return "PutFunctionConcurrency";
+      if (req.method === "GET") return "GetFunctionConcurrency";
+      if (req.method === "DELETE") return "DeleteFunctionConcurrency";
+      return undefined;
+    }
+    if (tail === "url") {
+      if (req.method === "POST") return "CreateFunctionUrlConfig";
+      if (req.method === "GET") return "GetFunctionUrlConfig";
+      if (req.method === "DELETE") return "DeleteFunctionUrlConfig";
+      return undefined;
+    }
     if (tail === "configuration") {
       if (req.method === "GET") return "GetFunctionConfiguration";
       if (req.method === "PUT") return "UpdateFunctionConfiguration";
@@ -501,6 +807,15 @@ const lambda: ServiceDefinition = {
     RemovePermission,
     TagResource,
     ListTags,
+    PutFunctionConcurrency,
+    GetFunctionConcurrency,
+    DeleteFunctionConcurrency,
+    CreateFunctionUrlConfig,
+    GetFunctionUrlConfig,
+    DeleteFunctionUrlConfig,
+    PublishLayerVersion,
+    ListLayers,
+    GetLayerVersion,
   },
   model,
 } as const;

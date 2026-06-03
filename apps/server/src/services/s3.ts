@@ -54,6 +54,10 @@ type S3Bucket = {
   website: Record<string, unknown> | undefined;
   encryptionRules: unknown[];
   notification: Record<string, unknown> | undefined;
+  publicAccessBlock: Record<string, unknown> | undefined;
+  logging: Record<string, unknown> | undefined;
+  accelerateStatus: string | undefined;
+  objectLock: Record<string, unknown> | undefined;
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
@@ -130,6 +134,10 @@ const s3: ServiceDefinition = {
       const hasWebsite = req.query.has("website");
       const hasEncryption = req.query.has("encryption");
       const hasNotification = req.query.has("notification");
+      const hasPublicAccessBlock = req.query.has("publicAccessBlock");
+      const hasLogging = req.query.has("logging");
+      const hasAccelerate = req.query.has("accelerate");
+      const hasObjectLock = req.query.has("object-lock");
       if (req.method === "PUT") {
         if (hasTagging) return "PutBucketTagging";
         if (hasVersioning) return "PutBucketVersioning";
@@ -139,6 +147,10 @@ const s3: ServiceDefinition = {
         if (hasWebsite) return "PutBucketWebsite";
         if (hasEncryption) return "PutBucketEncryption";
         if (hasNotification) return "PutBucketNotificationConfiguration";
+        if (hasPublicAccessBlock) return "PutPublicAccessBlock";
+        if (hasLogging) return "PutBucketLogging";
+        if (hasAccelerate) return "PutBucketAccelerateConfiguration";
+        if (hasObjectLock) return "PutObjectLockConfiguration";
         return "CreateBucket";
       }
       if (req.method === "DELETE") {
@@ -146,6 +158,7 @@ const s3: ServiceDefinition = {
         if (hasPolicy) return "DeleteBucketPolicy";
         if (hasCors) return "DeleteBucketCors";
         if (hasWebsite) return "DeleteBucketWebsite";
+        if (hasPublicAccessBlock) return "DeletePublicAccessBlock";
         return "DeleteBucket";
       }
       if (req.method === "GET") {
@@ -160,6 +173,10 @@ const s3: ServiceDefinition = {
         if (hasWebsite) return "GetBucketWebsite";
         if (hasEncryption) return "GetBucketEncryption";
         if (hasNotification) return "GetBucketNotificationConfiguration";
+        if (hasPublicAccessBlock) return "GetPublicAccessBlock";
+        if (hasLogging) return "GetBucketLogging";
+        if (hasAccelerate) return "GetBucketAccelerateConfiguration";
+        if (hasObjectLock) return "GetObjectLockConfiguration";
         if (req.query.get("list-type") === "2") return "ListObjectsV2";
         return "ListObjects";
       }
@@ -220,6 +237,10 @@ const s3: ServiceDefinition = {
         website: undefined,
         encryptionRules: [],
         notification: undefined,
+        publicAccessBlock: undefined,
+        logging: undefined,
+        accelerateStatus: undefined,
+        objectLock: undefined,
       });
       return {};
     },
@@ -964,6 +985,130 @@ const s3: ServiceDefinition = {
       }
       const target = getBucket(ctx, bucket);
       return target.notification ?? {};
+    },
+    PutPublicAccessBlock: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["PublicAccessBlockConfiguration"];
+      const publicAccessBlock =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)
+          : {};
+      ctx.store.set<S3Bucket>(bucket, { ...target, publicAccessBlock });
+      return {};
+    },
+    GetPublicAccessBlock: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if (target.publicAccessBlock === undefined) {
+        throw awsError(
+          "NoSuchPublicAccessBlockConfiguration",
+          "The public access block configuration was not found",
+          404,
+        );
+      }
+      return { PublicAccessBlockConfiguration: target.publicAccessBlock };
+    },
+    DeletePublicAccessBlock: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        publicAccessBlock: undefined,
+      });
+      return {};
+    },
+    PutBucketLogging: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["BucketLoggingStatus"];
+      const record =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)
+          : {};
+      const loggingEnabled = record["LoggingEnabled"];
+      const logging =
+        typeof loggingEnabled === "object" && loggingEnabled !== null
+          ? (loggingEnabled as Record<string, unknown>)
+          : undefined;
+      ctx.store.set<S3Bucket>(bucket, { ...target, logging });
+      return {};
+    },
+    GetBucketLogging: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if (target.logging === undefined) return {};
+      return { LoggingEnabled: target.logging };
+    },
+    PutBucketAccelerateConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["AccelerateConfiguration"];
+      const status =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)["Status"]
+          : undefined;
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        accelerateStatus: typeof status === "string" ? status : undefined,
+      });
+      return {};
+    },
+    GetBucketAccelerateConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if (target.accelerateStatus === undefined) return {};
+      return { Status: target.accelerateStatus };
+    },
+    PutObjectLockConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["ObjectLockConfiguration"];
+      const objectLock =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)
+          : {};
+      ctx.store.set<S3Bucket>(bucket, { ...target, objectLock });
+      return {};
+    },
+    GetObjectLockConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if (target.objectLock === undefined) {
+        throw awsError(
+          "ObjectLockConfigurationNotFoundError",
+          "Object Lock configuration does not exist for this bucket",
+          404,
+        );
+      }
+      return { ObjectLockConfiguration: target.objectLock };
     },
   },
   model,

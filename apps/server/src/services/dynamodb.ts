@@ -47,8 +47,26 @@ type StoredTable = {
   items: Record<string, Item>;
   tags?: StoredTag[];
   ttl?: StoredTtl;
+  pointInTimeRecovery?: boolean;
   globalSecondaryIndexes?: SecondaryIndex[];
   localSecondaryIndexes?: SecondaryIndex[];
+};
+
+type StoredBackup = {
+  kind: "backup";
+  BackupArn: string;
+  BackupName: string;
+  BackupStatus: string;
+  BackupType: string;
+  BackupCreationDateTime: number;
+  BackupSizeBytes: number;
+  TableName: string;
+  TableId: string;
+  TableArn: string;
+  TableSizeBytes: number;
+  KeySchema: KeySchemaElement[];
+  TableCreationDateTime: number;
+  ItemCount: number;
 };
 
 const tableArn = (region: string, account: string, name: string): string =>
@@ -68,9 +86,28 @@ const tableNameFromArn = (value: string): string => {
   return index < 0 ? value : value.slice(index + marker.length);
 };
 
+const backupKey = (backupArn: string): string => `backup:${backupArn}`;
+
+const isBackupEntry = (value: unknown): value is StoredBackup =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as Record<string, unknown>)["kind"] === "backup";
+
+const listTables = (ctx: ServiceContext): StoredTable[] =>
+  ctx.store
+    .list<StoredTable>()
+    .filter((entry) => !isBackupEntry(entry.value))
+    .map((entry) => entry.value);
+
+const listBackups = (ctx: ServiceContext): StoredBackup[] =>
+  ctx.store
+    .list<StoredBackup>()
+    .map((entry) => entry.value)
+    .filter((value): value is StoredBackup => isBackupEntry(value));
+
 const requireTable = (ctx: ServiceContext, name: string): StoredTable => {
   const table = ctx.store.get<StoredTable>(name);
-  if (table === undefined) {
+  if (table === undefined || isBackupEntry(table)) {
     throw awsError(
       "ResourceNotFoundException",
       `Requested resource not found: Table: ${name} not found`,
@@ -243,9 +280,8 @@ const DeleteTable: OperationHandler = (input, ctx) => {
 };
 
 const ListTables: OperationHandler = (input, ctx) => {
-  const names = ctx.store
-    .list<StoredTable>()
-    .map((entry) => entry.value.TableName)
+  const names = listTables(ctx)
+    .map((table) => table.TableName)
     .sort();
   const exclusive = input["ExclusiveStartTableName"];
   const start =
@@ -771,6 +807,153 @@ const ListTagsOfResource: OperationHandler = (input, ctx) => {
   return { Tags: table.tags ?? [] };
 };
 
+const backupArnOf = (
+  region: string,
+  account: string,
+  table: string,
+  timestamp: number,
+): string =>
+  `arn:aws:dynamodb:${region}:${account}:table/${table}/backup/${timestamp}`;
+
+const tableIdOf = (region: string, account: string, name: string): string =>
+  `${region}-${account}-${name}`;
+
+const backupDetails = (backup: StoredBackup): Record<string, unknown> => ({
+  BackupArn: backup.BackupArn,
+  BackupName: backup.BackupName,
+  BackupSizeBytes: backup.BackupSizeBytes,
+  BackupStatus: backup.BackupStatus,
+  BackupType: backup.BackupType,
+  BackupCreationDateTime: backup.BackupCreationDateTime,
+});
+
+const backupSummary = (backup: StoredBackup): Record<string, unknown> => ({
+  TableName: backup.TableName,
+  TableId: backup.TableId,
+  TableArn: backup.TableArn,
+  BackupArn: backup.BackupArn,
+  BackupName: backup.BackupName,
+  BackupCreationDateTime: backup.BackupCreationDateTime,
+  BackupStatus: backup.BackupStatus,
+  BackupType: backup.BackupType,
+  BackupSizeBytes: backup.BackupSizeBytes,
+});
+
+const backupDescription = (backup: StoredBackup): Record<string, unknown> => ({
+  BackupDetails: backupDetails(backup),
+  SourceTableDetails: {
+    TableName: backup.TableName,
+    TableId: backup.TableId,
+    TableArn: backup.TableArn,
+    TableSizeBytes: backup.TableSizeBytes,
+    KeySchema: backup.KeySchema,
+    TableCreationDateTime: backup.TableCreationDateTime,
+    ProvisionedThroughput: {
+      ReadCapacityUnits: 0,
+      WriteCapacityUnits: 0,
+    },
+    ItemCount: backup.ItemCount,
+    BillingMode: "PROVISIONED",
+  },
+});
+
+const requireBackup = (ctx: ServiceContext, arn: string): StoredBackup => {
+  const backup = ctx.store.get<StoredBackup>(backupKey(arn));
+  if (backup === undefined || !isBackupEntry(backup)) {
+    throw awsError("BackupNotFoundException", `Backup not found: ${arn}`, 400);
+  }
+  return backup;
+};
+
+const CreateBackup: OperationHandler = (input, ctx) => {
+  const tableName = tableNameFromArn(requireString(input, "TableName"));
+  const backupName = requireString(input, "BackupName");
+  const table = requireTable(ctx, tableName);
+  const timestamp = Date.now();
+  const backup: StoredBackup = {
+    kind: "backup",
+    BackupArn: backupArnOf(ctx.region, ctx.account, tableName, timestamp),
+    BackupName: backupName,
+    BackupStatus: "AVAILABLE",
+    BackupType: "USER",
+    BackupCreationDateTime: Math.floor(timestamp / 1000),
+    BackupSizeBytes: 0,
+    TableName: tableName,
+    TableId: tableIdOf(ctx.region, ctx.account, tableName),
+    TableArn: tableArn(ctx.region, ctx.account, tableName),
+    TableSizeBytes: 0,
+    KeySchema: table.KeySchema,
+    TableCreationDateTime: table.CreationDateTime,
+    ItemCount: Object.keys(table.items).length,
+  };
+  ctx.store.set(backupKey(backup.BackupArn), backup);
+  return { BackupDetails: backupDetails(backup) };
+};
+
+const ListBackups: OperationHandler = (input, ctx) => {
+  const filter = input["TableName"];
+  const tableName =
+    typeof filter === "string" && filter !== ""
+      ? tableNameFromArn(filter)
+      : undefined;
+  const summaries = listBackups(ctx)
+    .filter(
+      (backup) => tableName === undefined || backup.TableName === tableName,
+    )
+    .sort((left, right) => left.BackupArn.localeCompare(right.BackupArn))
+    .map((backup) => backupSummary(backup));
+  return { BackupSummaries: summaries };
+};
+
+const DescribeBackup: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "BackupArn");
+  const backup = requireBackup(ctx, arn);
+  return { BackupDescription: backupDescription(backup) };
+};
+
+const DeleteBackup: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "BackupArn");
+  const backup = requireBackup(ctx, arn);
+  ctx.store.delete(backupKey(arn));
+  return {
+    BackupDescription: backupDescription({
+      ...backup,
+      BackupStatus: "DELETED",
+    }),
+  };
+};
+
+const continuousBackupsDescription = (
+  enabled: boolean,
+): Record<string, unknown> => ({
+  ContinuousBackupsStatus: "ENABLED",
+  PointInTimeRecoveryDescription: {
+    PointInTimeRecoveryStatus: enabled ? "ENABLED" : "DISABLED",
+  },
+});
+
+const UpdateContinuousBackups: OperationHandler = (input, ctx) => {
+  const tableName = tableNameFromArn(requireString(input, "TableName"));
+  const table = requireTable(ctx, tableName);
+  const specification = asRecord(input["PointInTimeRecoverySpecification"]);
+  const enabled = specification["PointInTimeRecoveryEnabled"] === true;
+  table.pointInTimeRecovery = enabled;
+  ctx.store.set(tableName, table);
+  return {
+    ContinuousBackupsDescription: continuousBackupsDescription(enabled),
+  };
+};
+
+const DescribeContinuousBackups: OperationHandler = (input, ctx) => {
+  const tableName = tableNameFromArn(requireString(input, "TableName"));
+  const table = requireTable(ctx, tableName);
+  return {
+    ContinuousBackupsDescription: continuousBackupsDescription(
+      table.pointInTimeRecovery === true,
+    ),
+  };
+};
+
 const dynamodb: ServiceDefinition = {
   name: "dynamodb",
   protocol: "json",
@@ -795,6 +978,12 @@ const dynamodb: ServiceDefinition = {
     BatchGetItem,
     TransactWriteItems,
     TransactGetItems,
+    CreateBackup,
+    ListBackups,
+    DescribeBackup,
+    DeleteBackup,
+    UpdateContinuousBackups,
+    DescribeContinuousBackups,
   },
   model,
 } as const;

@@ -143,6 +143,8 @@ aws-models/
   transcribe.json       # botocore/data/transcribe/2017-10-26/service-2.json       (protocol json, targetPrefix Transcribe)
   forecast.json         # botocore/data/forecast/2018-06-26/service-2.json         (protocol json, targetPrefix AmazonForecast)
   kendra.json           # botocore/data/kendra/2019-02-03/service-2.json           (protocol json, targetPrefix AWSKendraFrontendService)
+  personalize.json      # botocore/data/personalize/2018-05-22/service-2.json      (protocol json, targetPrefix AmazonPersonalize)
+  budgets.json          # botocore/data/budgets/2016-10-20/service-2.json          (protocol json, targetPrefix AWSBudgetServiceGateway)
 ```
 
 ### Notes

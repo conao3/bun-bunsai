@@ -77,6 +77,8 @@ import storagegateway from "./storagegateway.ts";
 import transcribe from "./transcribe.ts";
 import forecast from "./forecast.ts";
 import kendra from "./kendra.ts";
+import personalize from "./personalize.ts";
+import budgets from "./budgets.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -157,6 +159,8 @@ export const services: ServiceDefinition[] = [
   transcribe,
   forecast,
   kendra,
+  personalize,
+  budgets,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

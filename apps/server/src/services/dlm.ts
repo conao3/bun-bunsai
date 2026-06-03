@@ -128,6 +128,57 @@ const DeleteLifecyclePolicy: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const tagKey = (arn: string): string => `tag:${arn}`;
+
+const UpdateLifecyclePolicy: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "PolicyId");
+  const policy = requirePolicy(ctx, id);
+  const now = new Date().toISOString();
+  const executionRoleArn = stringOrUndefined(input["ExecutionRoleArn"]);
+  const state = stringOrUndefined(input["State"]);
+  const description = stringOrUndefined(input["Description"]);
+  const updated: StoredPolicy = {
+    ...policy,
+    DateModified: now,
+    ...(executionRoleArn !== undefined
+      ? { ExecutionRoleArn: executionRoleArn }
+      : {}),
+    ...(state !== undefined ? { State: state } : {}),
+    ...(description !== undefined ? { Description: description } : {}),
+    ...(input["PolicyDetails"] !== undefined
+      ? { PolicyDetails: input["PolicyDetails"] }
+      : {}),
+  };
+  ctx.store.set(policyKey(id), updated);
+  return {};
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const newTags = recordOrEmpty(input["Tags"]) as Record<string, string>;
+  const existing = ctx.store.get<Record<string, string>>(tagKey(arn)) ?? {};
+  ctx.store.set(tagKey(arn), { ...existing, ...newTags });
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const keys = Array.isArray(input["TagKeys"])
+    ? input["TagKeys"].filter((k): k is string => typeof k === "string")
+    : [];
+  const existing = ctx.store.get<Record<string, string>>(tagKey(arn)) ?? {};
+  const updated = { ...existing };
+  for (const k of keys) delete updated[k];
+  ctx.store.set(tagKey(arn), updated);
+  return {};
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const tags = ctx.store.get<Record<string, string>>(tagKey(arn)) ?? {};
+  return { Tags: tags };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -136,15 +187,24 @@ const dlm = {
   protocol: "rest-json",
   resolveOperation: (req: ParsedRequest): string | undefined => {
     const parts = pathSegments(req.path);
-    if (parts[0] !== "policies") return undefined;
-    if (parts.length === 1) {
-      if (req.method === "POST") return "CreateLifecyclePolicy";
-      if (req.method === "GET") return "GetLifecyclePolicies";
+    if (parts[0] === "policies") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateLifecyclePolicy";
+        if (req.method === "GET") return "GetLifecyclePolicies";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetLifecyclePolicy";
+        if (req.method === "DELETE") return "DeleteLifecyclePolicy";
+        if (req.method === "PATCH") return "UpdateLifecyclePolicy";
+        return undefined;
+      }
       return undefined;
     }
-    if (parts.length === 2) {
-      if (req.method === "GET") return "GetLifecyclePolicy";
-      if (req.method === "DELETE") return "DeleteLifecyclePolicy";
+    if (parts[0] === "tags" && parts.length >= 2) {
+      if (req.method === "GET") return "ListTagsForResource";
+      if (req.method === "POST") return "TagResource";
+      if (req.method === "DELETE") return "UntagResource";
       return undefined;
     }
     return undefined;
@@ -154,6 +214,10 @@ const dlm = {
     GetLifecyclePolicy,
     GetLifecyclePolicies,
     DeleteLifecyclePolicy,
+    UpdateLifecyclePolicy,
+    TagResource,
+    UntagResource,
+    ListTagsForResource,
   },
   model,
 } as const satisfies ServiceDefinition;

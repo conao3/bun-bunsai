@@ -100,6 +100,9 @@ import mediatailor from "./mediatailor.ts";
 import dataexchange from "./dataexchange.ts";
 import groundstation from "./groundstation.ts";
 import wisdom from "./wisdom.ts";
+import mwaa from "./mwaa.ts";
+import voiceid from "./voiceid.ts";
+import ssmIncidents from "./ssm-incidents.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -203,6 +206,9 @@ export const services: ServiceDefinition[] = [
   dataexchange,
   groundstation,
   wisdom,
+  mwaa,
+  voiceid,
+  ssmIncidents,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

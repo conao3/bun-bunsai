@@ -57,10 +57,98 @@ type StoredBranch = {
   tags: Record<string, string>;
 };
 
+type StoredBackendEnvironment = {
+  appId: string;
+  backendEnvironmentArn: string;
+  environmentName: string;
+  stackName: string | undefined;
+  deploymentArtifacts: string | undefined;
+  createTime: number;
+  updateTime: number;
+};
+
+type StoredSubDomain = {
+  prefix: string;
+  branchName: string;
+  verified: boolean;
+  dnsRecord: string;
+};
+
+type StoredDomainAssociation = {
+  appId: string;
+  domainAssociationArn: string;
+  domainName: string;
+  enableAutoSubDomain: boolean;
+  autoSubDomainCreationPatterns: string[];
+  autoSubDomainIAMRole: string | undefined;
+  domainStatus: string;
+  updateStatus: string | undefined;
+  statusReason: string;
+  certificateVerificationDNSRecord: string | undefined;
+  subDomains: StoredSubDomain[];
+  createTime: number;
+  updateTime: number;
+};
+
+type StoredWebhook = {
+  webhookId: string;
+  webhookArn: string;
+  webhookUrl: string;
+  appId: string;
+  branchName: string;
+  description: string;
+  createTime: number;
+  updateTime: number;
+};
+
+type StoredJob = {
+  appId: string;
+  branchName: string;
+  jobId: string;
+  jobArn: string;
+  commitId: string;
+  commitMessage: string;
+  commitTime: number;
+  startTime: number;
+  status: string;
+  endTime: number | undefined;
+  jobType: string;
+  sourceUrl: string | undefined;
+  sourceUrlType: string | undefined;
+};
+
+type StoredArtifact = {
+  appId: string;
+  branchName: string;
+  jobId: string;
+  artifactId: string;
+  artifactFileName: string;
+};
+
 const appKey = (appId: string): string => `app/${appId}`;
 
 const branchKey = (appId: string, branchName: string): string =>
   `branch/${appId}/${branchName}`;
+
+const backendEnvKey = (appId: string, environmentName: string): string =>
+  `backendenvironment/${appId}/${environmentName}`;
+
+const domainKey = (appId: string, domainName: string): string =>
+  `domain/${appId}/${domainName}`;
+
+const webhookKey = (webhookId: string): string => `webhook/${webhookId}`;
+
+const jobKey = (appId: string, branchName: string, jobId: string): string =>
+  `job/${appId}/${branchName}/${jobId}`;
+
+const artifactKey = (
+  appId: string,
+  branchName: string,
+  jobId: string,
+  artifactId: string,
+): string => `artifact/${appId}/${branchName}/${jobId}/${artifactId}`;
+
+const tagKey = (resourceArn: string): string => `tags/${resourceArn}`;
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
@@ -106,8 +194,36 @@ const branchArnOf = (
 ): string =>
   `arn:aws:amplify:${ctx.region}:${ctx.account}:apps/${appId}/branches/${branchName}`;
 
+const backendEnvArnOf = (
+  ctx: ServiceContext,
+  appId: string,
+  environmentName: string,
+): string =>
+  `arn:aws:amplify:${ctx.region}:${ctx.account}:apps/${appId}/backendenvironments/${environmentName}`;
+
+const domainArnOf = (
+  ctx: ServiceContext,
+  appId: string,
+  domainName: string,
+): string =>
+  `arn:aws:amplify:${ctx.region}:${ctx.account}:apps/${appId}/domains/${domainName}`;
+
+const webhookArnOf = (ctx: ServiceContext, webhookId: string): string =>
+  `arn:aws:amplify:${ctx.region}:${ctx.account}:webhooks/${webhookId}`;
+
+const jobArnOf = (
+  ctx: ServiceContext,
+  appId: string,
+  branchName: string,
+  jobId: string,
+): string =>
+  `arn:aws:amplify:${ctx.region}:${ctx.account}:apps/${appId}/branches/${branchName}/jobs/${jobId}`;
+
 const defaultDomainOf = (ctx: ServiceContext, appId: string): string =>
   `${appId}.amplifyapp.com.${ctx.region}`;
+
+const newShortId = (): string =>
+  crypto.randomUUID().replaceAll("-", "").slice(0, 14);
 
 const appView = (app: StoredApp): Record<string, unknown> => ({
   appId: app.appId,
@@ -155,6 +271,80 @@ const branchView = (branch: StoredBranch): Record<string, unknown> => ({
   enablePullRequestPreview: branch.enablePullRequestPreview,
 });
 
+const backendEnvView = (
+  env: StoredBackendEnvironment,
+): Record<string, unknown> => ({
+  backendEnvironmentArn: env.backendEnvironmentArn,
+  environmentName: env.environmentName,
+  stackName: env.stackName,
+  deploymentArtifacts: env.deploymentArtifacts,
+  createTime: env.createTime,
+  updateTime: env.updateTime,
+});
+
+const subDomainView = (sd: StoredSubDomain): Record<string, unknown> => ({
+  subDomainSetting: { prefix: sd.prefix, branchName: sd.branchName },
+  verified: sd.verified,
+  dnsRecord: sd.dnsRecord,
+});
+
+const domainAssociationView = (
+  domain: StoredDomainAssociation,
+): Record<string, unknown> => ({
+  domainAssociationArn: domain.domainAssociationArn,
+  domainName: domain.domainName,
+  enableAutoSubDomain: domain.enableAutoSubDomain,
+  autoSubDomainCreationPatterns: domain.autoSubDomainCreationPatterns,
+  autoSubDomainIAMRole: domain.autoSubDomainIAMRole,
+  domainStatus: domain.domainStatus,
+  updateStatus: domain.updateStatus,
+  statusReason: domain.statusReason,
+  certificateVerificationDNSRecord: domain.certificateVerificationDNSRecord,
+  subDomains: domain.subDomains.map(subDomainView),
+});
+
+const webhookView = (webhook: StoredWebhook): Record<string, unknown> => ({
+  webhookArn: webhook.webhookArn,
+  webhookId: webhook.webhookId,
+  webhookUrl: webhook.webhookUrl,
+  appId: webhook.appId,
+  branchName: webhook.branchName,
+  description: webhook.description,
+  createTime: webhook.createTime,
+  updateTime: webhook.updateTime,
+});
+
+const jobSummaryView = (job: StoredJob): Record<string, unknown> => ({
+  jobArn: job.jobArn,
+  jobId: job.jobId,
+  commitId: job.commitId,
+  commitMessage: job.commitMessage,
+  commitTime: job.commitTime,
+  startTime: job.startTime,
+  status: job.status,
+  endTime: job.endTime,
+  jobType: job.jobType,
+  sourceUrl: job.sourceUrl,
+  sourceUrlType: job.sourceUrlType,
+});
+
+const jobView = (job: StoredJob): Record<string, unknown> => ({
+  summary: jobSummaryView(job),
+  steps: [
+    {
+      stepName: "BUILD",
+      startTime: job.startTime,
+      status: job.status === "RUNNING" ? "RUNNING" : job.status,
+      endTime: job.endTime ?? job.startTime,
+    },
+  ],
+});
+
+const artifactView = (artifact: StoredArtifact): Record<string, unknown> => ({
+  artifactFileName: artifact.artifactFileName,
+  artifactId: artifact.artifactId,
+});
+
 const requireApp = (ctx: ServiceContext, appId: string): StoredApp => {
   const stored = ctx.store.get<StoredApp>(appKey(appId));
   if (stored === undefined) {
@@ -167,9 +357,107 @@ const requireApp = (ctx: ServiceContext, appId: string): StoredApp => {
   return stored;
 };
 
+const requireBranch = (
+  ctx: ServiceContext,
+  appId: string,
+  branchName: string,
+): StoredBranch => {
+  const stored = ctx.store.get<StoredBranch>(branchKey(appId, branchName));
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Branch ${branchName} could not be found.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireBackendEnv = (
+  ctx: ServiceContext,
+  appId: string,
+  environmentName: string,
+): StoredBackendEnvironment => {
+  const stored = ctx.store.get<StoredBackendEnvironment>(
+    backendEnvKey(appId, environmentName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `BackendEnvironment ${environmentName} could not be found.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireDomain = (
+  ctx: ServiceContext,
+  appId: string,
+  domainName: string,
+): StoredDomainAssociation => {
+  const stored = ctx.store.get<StoredDomainAssociation>(
+    domainKey(appId, domainName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `DomainAssociation ${domainName} could not be found.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireWebhook = (
+  ctx: ServiceContext,
+  webhookId: string,
+): StoredWebhook => {
+  const stored = ctx.store.get<StoredWebhook>(webhookKey(webhookId));
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Webhook ${webhookId} could not be found.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireJob = (
+  ctx: ServiceContext,
+  appId: string,
+  branchName: string,
+  jobId: string,
+): StoredJob => {
+  const stored = ctx.store.get<StoredJob>(jobKey(appId, branchName, jobId));
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Job ${jobId} could not be found.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const parseSubDomainSettings = (value: unknown): StoredSubDomain[] => {
+  if (!Array.isArray(value)) return [];
+  return (value as unknown[]).map((item) => {
+    const rec = asRecord(item) ?? {};
+    return {
+      prefix: typeof rec["prefix"] === "string" ? rec["prefix"] : "",
+      branchName:
+        typeof rec["branchName"] === "string" ? rec["branchName"] : "",
+      verified: false,
+      dnsRecord: "",
+    };
+  });
+};
+
 const CreateApp: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
-  const appId = crypto.randomUUID().replaceAll("-", "").slice(0, 14);
+  const appId = newShortId();
   const at = nowSeconds();
   const app: StoredApp = {
     appId,
@@ -343,6 +631,496 @@ const ListBranches: OperationHandler = (input, ctx) => {
   return { branches: branches.map((branch) => branchView(branch)) };
 };
 
+const DeleteBranch: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const branchName = requireString(input, "branchName");
+  const branch = requireBranch(ctx, appId, branchName);
+  ctx.store.delete(branchKey(appId, branchName));
+  return { branch: branchView(branch) };
+};
+
+const UpdateBranch: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const branchName = requireString(input, "branchName");
+  const existing = requireBranch(ctx, appId, branchName);
+  const updated: StoredBranch = {
+    ...existing,
+    description:
+      stringOrUndefined(input["description"]) ?? existing.description,
+    framework: stringOrUndefined(input["framework"]) ?? existing.framework,
+    stage: stringOrUndefined(input["stage"]) ?? existing.stage,
+    displayName:
+      stringOrUndefined(input["displayName"]) ?? existing.displayName,
+    enableNotification: booleanOr(
+      input["enableNotification"],
+      existing.enableNotification,
+    ),
+    enableAutoBuild: booleanOr(
+      input["enableAutoBuild"],
+      existing.enableAutoBuild,
+    ),
+    environmentVariables:
+      asRecord(input["environmentVariables"]) === undefined
+        ? existing.environmentVariables
+        : stringMapFrom(input["environmentVariables"]),
+    basicAuthCredentials:
+      stringOrUndefined(input["basicAuthCredentials"]) ??
+      existing.basicAuthCredentials,
+    enableBasicAuth: booleanOr(
+      input["enableBasicAuth"],
+      existing.enableBasicAuth,
+    ),
+    buildSpec: stringOrUndefined(input["buildSpec"]) ?? existing.buildSpec,
+    ttl: stringOrUndefined(input["ttl"]) ?? existing.ttl,
+    enablePullRequestPreview: booleanOr(
+      input["enablePullRequestPreview"],
+      existing.enablePullRequestPreview,
+    ),
+    updateTime: nowSeconds(),
+  };
+  ctx.store.set(branchKey(appId, branchName), updated);
+  return { branch: branchView(updated) };
+};
+
+const CreateBackendEnvironment: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  requireApp(ctx, appId);
+  const environmentName = requireString(input, "environmentName");
+  if (
+    ctx.store.get<StoredBackendEnvironment>(
+      backendEnvKey(appId, environmentName),
+    ) !== undefined
+  ) {
+    throw awsError(
+      "BadRequestException",
+      `BackendEnvironment ${environmentName} already exists.`,
+      400,
+    );
+  }
+  const at = nowSeconds();
+  const env: StoredBackendEnvironment = {
+    appId,
+    backendEnvironmentArn: backendEnvArnOf(ctx, appId, environmentName),
+    environmentName,
+    stackName: stringOrUndefined(input["stackName"]),
+    deploymentArtifacts: stringOrUndefined(input["deploymentArtifacts"]),
+    createTime: at,
+    updateTime: at,
+  };
+  ctx.store.set(backendEnvKey(appId, environmentName), env);
+  return { backendEnvironment: backendEnvView(env) };
+};
+
+const GetBackendEnvironment: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const environmentName = requireString(input, "environmentName");
+  return {
+    backendEnvironment: backendEnvView(
+      requireBackendEnv(ctx, appId, environmentName),
+    ),
+  };
+};
+
+const ListBackendEnvironments: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  requireApp(ctx, appId);
+  const envNameFilter = stringOrUndefined(input["environmentName"]);
+  const envs = ctx.store
+    .list<StoredBackendEnvironment>()
+    .filter((entry) => entry.key.startsWith(`backendenvironment/${appId}/`))
+    .map((entry) => entry.value)
+    .filter(
+      (env) =>
+        envNameFilter === undefined || env.environmentName === envNameFilter,
+    )
+    .sort((a, b) => a.createTime - b.createTime);
+  return { backendEnvironments: envs.map(backendEnvView) };
+};
+
+const DeleteBackendEnvironment: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const environmentName = requireString(input, "environmentName");
+  const env = requireBackendEnv(ctx, appId, environmentName);
+  ctx.store.delete(backendEnvKey(appId, environmentName));
+  return { backendEnvironment: backendEnvView(env) };
+};
+
+const CreateDomainAssociation: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  requireApp(ctx, appId);
+  const domainName = requireString(input, "domainName");
+  if (
+    ctx.store.get<StoredDomainAssociation>(domainKey(appId, domainName)) !==
+    undefined
+  ) {
+    throw awsError(
+      "BadRequestException",
+      `DomainAssociation ${domainName} already exists.`,
+      400,
+    );
+  }
+  const at = nowSeconds();
+  const rawPatterns = input["autoSubDomainCreationPatterns"];
+  const autoSubDomainCreationPatterns = Array.isArray(rawPatterns)
+    ? (rawPatterns as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : [];
+  const domain: StoredDomainAssociation = {
+    appId,
+    domainAssociationArn: domainArnOf(ctx, appId, domainName),
+    domainName,
+    enableAutoSubDomain: booleanOr(input["enableAutoSubDomain"], false),
+    autoSubDomainCreationPatterns,
+    autoSubDomainIAMRole: stringOrUndefined(input["autoSubDomainIAMRole"]),
+    domainStatus: "PENDING_VERIFICATION",
+    updateStatus: undefined,
+    statusReason: "",
+    certificateVerificationDNSRecord: undefined,
+    subDomains: parseSubDomainSettings(input["subDomainSettings"]),
+    createTime: at,
+    updateTime: at,
+  };
+  ctx.store.set(domainKey(appId, domainName), domain);
+  return { domainAssociation: domainAssociationView(domain) };
+};
+
+const GetDomainAssociation: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const domainName = requireString(input, "domainName");
+  return {
+    domainAssociation: domainAssociationView(
+      requireDomain(ctx, appId, domainName),
+    ),
+  };
+};
+
+const ListDomainAssociations: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  requireApp(ctx, appId);
+  const domains = ctx.store
+    .list<StoredDomainAssociation>()
+    .filter((entry) => entry.key.startsWith(`domain/${appId}/`))
+    .map((entry) => entry.value)
+    .sort((a, b) => a.createTime - b.createTime);
+  return { domainAssociations: domains.map(domainAssociationView) };
+};
+
+const DeleteDomainAssociation: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const domainName = requireString(input, "domainName");
+  const domain = requireDomain(ctx, appId, domainName);
+  ctx.store.delete(domainKey(appId, domainName));
+  return { domainAssociation: domainAssociationView(domain) };
+};
+
+const UpdateDomainAssociation: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const domainName = requireString(input, "domainName");
+  const existing = requireDomain(ctx, appId, domainName);
+  const rawPatterns = input["autoSubDomainCreationPatterns"];
+  const autoSubDomainCreationPatterns = Array.isArray(rawPatterns)
+    ? (rawPatterns as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : existing.autoSubDomainCreationPatterns;
+  const updated: StoredDomainAssociation = {
+    ...existing,
+    enableAutoSubDomain: booleanOr(
+      input["enableAutoSubDomain"],
+      existing.enableAutoSubDomain,
+    ),
+    autoSubDomainCreationPatterns,
+    autoSubDomainIAMRole:
+      stringOrUndefined(input["autoSubDomainIAMRole"]) ??
+      existing.autoSubDomainIAMRole,
+    subDomains: Array.isArray(input["subDomainSettings"])
+      ? parseSubDomainSettings(input["subDomainSettings"])
+      : existing.subDomains,
+    updateTime: nowSeconds(),
+  };
+  ctx.store.set(domainKey(appId, domainName), updated);
+  return { domainAssociation: domainAssociationView(updated) };
+};
+
+const CreateWebhook: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  requireApp(ctx, appId);
+  const branchName = requireString(input, "branchName");
+  const webhookId = newShortId();
+  const at = nowSeconds();
+  const webhook: StoredWebhook = {
+    webhookId,
+    webhookArn: webhookArnOf(ctx, webhookId),
+    webhookUrl: `https://webhooks.amplify.${ctx.region}.amazonaws.com/prod/${webhookId}`,
+    appId,
+    branchName,
+    description: stringOrUndefined(input["description"]) ?? "",
+    createTime: at,
+    updateTime: at,
+  };
+  ctx.store.set(webhookKey(webhookId), webhook);
+  return { webhook: webhookView(webhook) };
+};
+
+const GetWebhook: OperationHandler = (input, ctx) => {
+  const webhookId = requireString(input, "webhookId");
+  return { webhook: webhookView(requireWebhook(ctx, webhookId)) };
+};
+
+const ListWebhooks: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  requireApp(ctx, appId);
+  const webhooks = ctx.store
+    .list<StoredWebhook>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("webhook/") && entry.value.appId === appId,
+    )
+    .map((entry) => entry.value)
+    .sort((a, b) => a.createTime - b.createTime);
+  return { webhooks: webhooks.map(webhookView) };
+};
+
+const DeleteWebhook: OperationHandler = (input, ctx) => {
+  const webhookId = requireString(input, "webhookId");
+  const webhook = requireWebhook(ctx, webhookId);
+  ctx.store.delete(webhookKey(webhookId));
+  return { webhook: webhookView(webhook) };
+};
+
+const UpdateWebhook: OperationHandler = (input, ctx) => {
+  const webhookId = requireString(input, "webhookId");
+  const existing = requireWebhook(ctx, webhookId);
+  const updated: StoredWebhook = {
+    ...existing,
+    branchName: stringOrUndefined(input["branchName"]) ?? existing.branchName,
+    description:
+      stringOrUndefined(input["description"]) ?? existing.description,
+    updateTime: nowSeconds(),
+  };
+  ctx.store.set(webhookKey(webhookId), updated);
+  return { webhook: webhookView(updated) };
+};
+
+const StartJob: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const branchName = requireString(input, "branchName");
+  requireApp(ctx, appId);
+  requireBranch(ctx, appId, branchName);
+  const jobType = requireString(input, "jobType");
+  const jobId = newShortId();
+  const at = nowSeconds();
+  const job: StoredJob = {
+    appId,
+    branchName,
+    jobId,
+    jobArn: jobArnOf(ctx, appId, branchName, jobId),
+    commitId: stringOrUndefined(input["commitId"]) ?? "HEAD",
+    commitMessage: stringOrUndefined(input["commitMessage"]) ?? "",
+    commitTime:
+      typeof input["commitTime"] === "number" ? input["commitTime"] : at,
+    startTime: at,
+    status: "RUNNING",
+    endTime: undefined,
+    jobType,
+    sourceUrl: stringOrUndefined(input["sourceUrl"]),
+    sourceUrlType: stringOrUndefined(input["sourceUrlType"]),
+  };
+  ctx.store.set(jobKey(appId, branchName, jobId), job);
+  const artifactId = newShortId();
+  const artifact: StoredArtifact = {
+    appId,
+    branchName,
+    jobId,
+    artifactId,
+    artifactFileName: "build.zip",
+  };
+  ctx.store.set(artifactKey(appId, branchName, jobId, artifactId), artifact);
+  const branch = requireBranch(ctx, appId, branchName);
+  const updatedBranch: StoredBranch = {
+    ...branch,
+    activeJobId: jobId,
+    totalNumberOfJobs: String(Number(branch.totalNumberOfJobs) + 1),
+    updateTime: at,
+  };
+  ctx.store.set(branchKey(appId, branchName), updatedBranch);
+  return { jobSummary: jobSummaryView(job) };
+};
+
+const GetJob: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const branchName = requireString(input, "branchName");
+  const jobId = requireString(input, "jobId");
+  return { job: jobView(requireJob(ctx, appId, branchName, jobId)) };
+};
+
+const ListJobs: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const branchName = requireString(input, "branchName");
+  requireApp(ctx, appId);
+  requireBranch(ctx, appId, branchName);
+  const prefix = `job/${appId}/${branchName}/`;
+  const jobs = ctx.store
+    .list<StoredJob>()
+    .filter((entry) => entry.key.startsWith(prefix))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.startTime - a.startTime);
+  return { jobSummaries: jobs.map(jobSummaryView) };
+};
+
+const DeleteJob: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const branchName = requireString(input, "branchName");
+  const jobId = requireString(input, "jobId");
+  const job = requireJob(ctx, appId, branchName, jobId);
+  ctx.store.delete(jobKey(appId, branchName, jobId));
+  return { jobSummary: jobSummaryView(job) };
+};
+
+const StopJob: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const branchName = requireString(input, "branchName");
+  const jobId = requireString(input, "jobId");
+  const job = requireJob(ctx, appId, branchName, jobId);
+  const at = nowSeconds();
+  const stopped: StoredJob = {
+    ...job,
+    status: "CANCELLED",
+    endTime: at,
+  };
+  ctx.store.set(jobKey(appId, branchName, jobId), stopped);
+  return { jobSummary: jobSummaryView(stopped) };
+};
+
+const ListArtifacts: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const branchName = requireString(input, "branchName");
+  const jobId = requireString(input, "jobId");
+  requireJob(ctx, appId, branchName, jobId);
+  const prefix = `artifact/${appId}/${branchName}/${jobId}/`;
+  const artifacts = ctx.store
+    .list<StoredArtifact>()
+    .filter((entry) => entry.key.startsWith(prefix))
+    .map((entry) => entry.value);
+  return { artifacts: artifacts.map(artifactView) };
+};
+
+const CreateDeployment: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const branchName = requireString(input, "branchName");
+  requireApp(ctx, appId);
+  requireBranch(ctx, appId, branchName);
+  const jobId = newShortId();
+  const at = nowSeconds();
+  const fileMap = stringMapFrom(input["fileMap"]);
+  const fileUploadUrls: Record<string, string> = {};
+  for (const fileName of Object.keys(fileMap)) {
+    fileUploadUrls[fileName] =
+      `https://artifacts.amplify.${ctx.region}.amazonaws.com/upload/${jobId}/${fileName}`;
+  }
+  const zipUploadUrl = `https://artifacts.amplify.${ctx.region}.amazonaws.com/upload/${jobId}/deployment.zip`;
+  const job: StoredJob = {
+    appId,
+    branchName,
+    jobId,
+    jobArn: jobArnOf(ctx, appId, branchName, jobId),
+    commitId: "DEPLOYMENT",
+    commitMessage: "manual deployment",
+    commitTime: at,
+    startTime: at,
+    status: "PENDING",
+    endTime: undefined,
+    jobType: "MANUAL",
+    sourceUrl: undefined,
+    sourceUrlType: undefined,
+  };
+  ctx.store.set(jobKey(appId, branchName, jobId), job);
+  return { jobId, fileUploadUrls, zipUploadUrl };
+};
+
+const StartDeployment: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  const branchName = requireString(input, "branchName");
+  requireApp(ctx, appId);
+  requireBranch(ctx, appId, branchName);
+  const inputJobId = stringOrUndefined(input["jobId"]);
+  const at = nowSeconds();
+  if (inputJobId !== undefined) {
+    const job = requireJob(ctx, appId, branchName, inputJobId);
+    const started: StoredJob = {
+      ...job,
+      status: "RUNNING",
+      startTime: at,
+    };
+    ctx.store.set(jobKey(appId, branchName, inputJobId), started);
+    return { jobSummary: jobSummaryView(started) };
+  }
+  const jobId = newShortId();
+  const sourceUrl = stringOrUndefined(input["sourceUrl"]) ?? "";
+  const job: StoredJob = {
+    appId,
+    branchName,
+    jobId,
+    jobArn: jobArnOf(ctx, appId, branchName, jobId),
+    commitId: "DEPLOYMENT",
+    commitMessage: "manual deployment",
+    commitTime: at,
+    startTime: at,
+    status: "RUNNING",
+    endTime: undefined,
+    jobType: "MANUAL",
+    sourceUrl,
+    sourceUrlType: stringOrUndefined(input["sourceUrlType"]),
+  };
+  ctx.store.set(jobKey(appId, branchName, jobId), job);
+  return { jobSummary: jobSummaryView(job) };
+};
+
+const GenerateAccessLogs: OperationHandler = (input, ctx) => {
+  const appId = requireString(input, "appId");
+  requireApp(ctx, appId);
+  const domainName = requireString(input, "domainName");
+  const logUrl = `https://logs.amplify.${ctx.region}.amazonaws.com/${appId}/${domainName}/access.log`;
+  return { logUrl };
+};
+
+const GetArtifactUrl: OperationHandler = (input, ctx) => {
+  const artifactId = requireString(input, "artifactId");
+  const artifactUrl = `https://artifacts.amplify.${ctx.region}.amazonaws.com/${artifactId}`;
+  return { artifactId, artifactUrl };
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const tags = ctx.store.get<Record<string, string>>(tagKey(resourceArn)) ?? {};
+  return { tags };
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const newTags = stringMapFrom(input["tags"]);
+  const existing =
+    ctx.store.get<Record<string, string>>(tagKey(resourceArn)) ?? {};
+  ctx.store.set(tagKey(resourceArn), { ...existing, ...newTags });
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const tagKeys = Array.isArray(input["tagKeys"])
+    ? (input["tagKeys"] as unknown[]).filter(
+        (k): k is string => typeof k === "string",
+      )
+    : [];
+  const existing =
+    ctx.store.get<Record<string, string>>(tagKey(resourceArn)) ?? {};
+  const updated = { ...existing };
+  for (const key of tagKeys) delete updated[key];
+  ctx.store.set(tagKey(resourceArn), updated);
+  return {};
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -351,27 +1129,132 @@ const amplify = {
   protocol: "rest-json",
   resolveOperation: (req: ParsedRequest): string | undefined => {
     const parts = pathSegments(req.path);
+
+    if (parts[0] === "webhooks") {
+      if (parts.length !== 2) return undefined;
+      if (req.method === "GET") return "GetWebhook";
+      if (req.method === "POST") return "UpdateWebhook";
+      if (req.method === "DELETE") return "DeleteWebhook";
+      return undefined;
+    }
+
+    if (parts[0] === "artifacts") {
+      if (parts.length === 2 && req.method === "GET") return "GetArtifactUrl";
+      return undefined;
+    }
+
+    if (parts[0] === "tags") {
+      if (parts.length < 2) return undefined;
+      if (req.method === "GET") return "ListTagsForResource";
+      if (req.method === "POST") return "TagResource";
+      if (req.method === "DELETE") return "UntagResource";
+      return undefined;
+    }
+
     if (parts[0] !== "apps") return undefined;
+
     if (parts.length === 1) {
       if (req.method === "POST") return "CreateApp";
       if (req.method === "GET") return "ListApps";
       return undefined;
     }
+
     if (parts.length === 2) {
       if (req.method === "GET") return "GetApp";
       if (req.method === "POST") return "UpdateApp";
       if (req.method === "DELETE") return "DeleteApp";
       return undefined;
     }
+
     if (parts[2] === "branches") {
       if (parts.length === 3) {
         if (req.method === "POST") return "CreateBranch";
         if (req.method === "GET") return "ListBranches";
         return undefined;
       }
-      if (parts.length === 4 && req.method === "GET") return "GetBranch";
+      if (parts.length === 4) {
+        if (req.method === "GET") return "GetBranch";
+        if (req.method === "POST") return "UpdateBranch";
+        if (req.method === "DELETE") return "DeleteBranch";
+        return undefined;
+      }
+      if (parts.length === 5) {
+        if (parts[4] === "jobs") {
+          if (req.method === "POST") return "StartJob";
+          if (req.method === "GET") return "ListJobs";
+        }
+        if (parts[4] === "deployments" && req.method === "POST")
+          return "CreateDeployment";
+        return undefined;
+      }
+      if (parts.length === 6) {
+        if (parts[4] === "jobs") {
+          if (req.method === "GET") return "GetJob";
+          if (req.method === "DELETE") return "DeleteJob";
+        }
+        if (
+          parts[4] === "deployments" &&
+          parts[5] === "start" &&
+          req.method === "POST"
+        )
+          return "StartDeployment";
+        return undefined;
+      }
+      if (parts.length === 7) {
+        if (parts[4] === "jobs") {
+          if (parts[6] === "stop" && req.method === "DELETE") return "StopJob";
+          if (parts[6] === "artifacts" && req.method === "GET")
+            return "ListArtifacts";
+        }
+        return undefined;
+      }
       return undefined;
     }
+
+    if (parts[2] === "backendenvironments") {
+      if (parts.length === 3) {
+        if (req.method === "POST") return "CreateBackendEnvironment";
+        if (req.method === "GET") return "ListBackendEnvironments";
+        return undefined;
+      }
+      if (parts.length === 4) {
+        if (req.method === "GET") return "GetBackendEnvironment";
+        if (req.method === "DELETE") return "DeleteBackendEnvironment";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[2] === "domains") {
+      if (parts.length === 3) {
+        if (req.method === "POST") return "CreateDomainAssociation";
+        if (req.method === "GET") return "ListDomainAssociations";
+        return undefined;
+      }
+      if (parts.length === 4) {
+        if (req.method === "GET") return "GetDomainAssociation";
+        if (req.method === "DELETE") return "DeleteDomainAssociation";
+        if (req.method === "POST") return "UpdateDomainAssociation";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[2] === "webhooks") {
+      if (parts.length === 3) {
+        if (req.method === "POST") return "CreateWebhook";
+        if (req.method === "GET") return "ListWebhooks";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[2] === "accesslogs") {
+      if (parts.length === 3 && req.method === "POST")
+        return "GenerateAccessLogs";
+      return undefined;
+    }
+
     return undefined;
   },
   operations: {
@@ -383,6 +1266,35 @@ const amplify = {
     CreateBranch,
     GetBranch,
     ListBranches,
+    DeleteBranch,
+    UpdateBranch,
+    CreateBackendEnvironment,
+    GetBackendEnvironment,
+    ListBackendEnvironments,
+    DeleteBackendEnvironment,
+    CreateDomainAssociation,
+    GetDomainAssociation,
+    ListDomainAssociations,
+    DeleteDomainAssociation,
+    UpdateDomainAssociation,
+    CreateWebhook,
+    GetWebhook,
+    ListWebhooks,
+    DeleteWebhook,
+    UpdateWebhook,
+    StartJob,
+    GetJob,
+    ListJobs,
+    DeleteJob,
+    StopJob,
+    ListArtifacts,
+    CreateDeployment,
+    StartDeployment,
+    GenerateAccessLogs,
+    GetArtifactUrl,
+    ListTagsForResource,
+    TagResource,
+    UntagResource,
   },
   model,
 } as const satisfies ServiceDefinition;

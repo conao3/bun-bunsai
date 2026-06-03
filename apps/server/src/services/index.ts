@@ -62,6 +62,9 @@ import pinpoint from "./pinpoint.ts";
 import config from "./config.ts";
 import guardduty from "./guardduty.ts";
 import resourcegroups from "./resourcegroups.ts";
+import globalaccelerator from "./globalaccelerator.ts";
+import directconnect from "./directconnect.ts";
+import swf from "./swf.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -127,6 +130,9 @@ export const services: ServiceDefinition[] = [
   config,
   guardduty,
   resourcegroups,
+  globalaccelerator,
+  directconnect,
+  swf,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

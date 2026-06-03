@@ -128,6 +128,9 @@ aws-models/
   config.json           # botocore/data/config/2014-11-12/service-2.json           (protocol json, endpointPrefix config, targetPrefix StarlingDoveService)
   guardduty.json        # botocore/data/guardduty/2017-11-28/service-2.json        (protocol rest-json)
   resourcegroups.json   # botocore/data/resource-groups/2017-11-27/service-2.json  (protocol rest-json, signingName resource-groups)
+  globalaccelerator.json # botocore/data/globalaccelerator/2018-08-08/service-2.json (protocol json, targetPrefix GlobalAccelerator_V20180706)
+  directconnect.json    # botocore/data/directconnect/2012-10-25/service-2.json    (protocol json, targetPrefix OvertureService)
+  swf.json              # botocore/data/swf/2012-01-25/service-2.json              (protocol json, targetPrefix SimpleWorkflowService)
 ```
 
 ### Notes

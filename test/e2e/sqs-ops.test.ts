@@ -19,8 +19,8 @@ import {
   StartMessageMoveTaskCommand,
 } from "@aws-sdk/client-sqs";
 
-const awsPort = 4566;
-const uiPort = 5666;
+const awsPort = 4567;
+const uiPort = 5567;
 const endpoint = `http://localhost:${awsPort}`;
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;

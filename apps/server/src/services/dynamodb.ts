@@ -69,6 +69,72 @@ type StoredBackup = {
   ItemCount: number;
 };
 
+type StoredGlobalTable = {
+  kind: "global-table";
+  GlobalTableName: string;
+  ReplicationGroup: { RegionName: string }[];
+  CreationDateTime: number;
+  GlobalTableStatus: string;
+};
+
+type StoredExport = {
+  kind: "export";
+  ExportArn: string;
+  ExportStatus: string;
+  StartTime: number;
+  EndTime: number;
+  TableArn: string;
+  TableId: string;
+  S3Bucket: string;
+  S3Prefix: string;
+  ExportFormat: string;
+  ExportType: string;
+  BilledSizeBytes: number;
+  ItemCount: number;
+};
+
+type StoredImport = {
+  kind: "import";
+  ImportArn: string;
+  ImportStatus: string;
+  TableArn: string;
+  TableId: string;
+  TableName: string;
+  S3BucketSource: Record<string, unknown>;
+  InputFormat: string;
+  StartTime: number;
+  EndTime: number;
+  ProcessedItemCount: number;
+  ImportedItemCount: number;
+};
+
+type KinesisDestinationEntry = {
+  StreamArn: string;
+  DestinationStatus: string;
+  ApproximateCreationDateTimePrecision?: string;
+};
+
+type StoredKinesisDestinations = {
+  kind: "kinesis";
+  TableName: string;
+  destinations: KinesisDestinationEntry[];
+};
+
+type StoredContributorInsights = {
+  kind: "contributor-insights";
+  TableName: string;
+  IndexName?: string;
+  ContributorInsightsStatus: string;
+  ContributorInsightsMode: string;
+};
+
+type StoredResourcePolicy = {
+  kind: "resource-policy";
+  ResourceArn: string;
+  Policy: string;
+  RevisionId: string;
+};
+
 const tableArn = (region: string, account: string, name: string): string =>
   `arn:aws:dynamodb:${region}:${account}:table/${name}`;
 
@@ -93,10 +159,15 @@ const isBackupEntry = (value: unknown): value is StoredBackup =>
   value !== null &&
   (value as Record<string, unknown>)["kind"] === "backup";
 
+const hasKind = (value: unknown): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as Record<string, unknown>)["kind"] === "string";
+
 const listTables = (ctx: ServiceContext): StoredTable[] =>
   ctx.store
     .list<StoredTable>()
-    .filter((entry) => !isBackupEntry(entry.value))
+    .filter((entry) => !hasKind(entry.value))
     .map((entry) => entry.value);
 
 const listBackups = (ctx: ServiceContext): StoredBackup[] =>
@@ -954,36 +1025,872 @@ const DescribeContinuousBackups: OperationHandler = (input, ctx) => {
   };
 };
 
+const globalTableKey = (name: string): string => `global-table:${name}`;
+const exportKey = (arn: string): string => `export:${arn}`;
+const importKey = (arn: string): string => `import:${arn}`;
+const kinesisKey = (tableName: string): string => `kinesis:${tableName}`;
+const contributorInsightsKey = (
+  tableName: string,
+  indexName?: string,
+): string => `contributor:${tableName}:${indexName ?? ""}`;
+const resourcePolicyKey = (arn: string): string => `resource-policy:${arn}`;
+
+const isGlobalTableEntry = (value: unknown): value is StoredGlobalTable =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as Record<string, unknown>)["kind"] === "global-table";
+
+const isExportEntry = (value: unknown): value is StoredExport =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as Record<string, unknown>)["kind"] === "export";
+
+const isImportEntry = (value: unknown): value is StoredImport =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as Record<string, unknown>)["kind"] === "import";
+
+const isContributorInsightsEntry = (
+  value: unknown,
+): value is StoredContributorInsights =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as Record<string, unknown>)["kind"] === "contributor-insights";
+
+const exportArn = (
+  region: string,
+  account: string,
+  tableName: string,
+  timestamp: number,
+): string =>
+  `arn:aws:dynamodb:${region}:${account}:table/${tableName}/export/${timestamp}`;
+
+const importArn = (
+  region: string,
+  account: string,
+  timestamp: number,
+): string => `arn:aws:dynamodb:${region}:${account}:import/${timestamp}`;
+
+const globalTableDescription = (
+  gt: StoredGlobalTable,
+): Record<string, unknown> => ({
+  GlobalTableName: gt.GlobalTableName,
+  ReplicationGroup: gt.ReplicationGroup.map((r) => ({
+    RegionName: r.RegionName,
+    ReplicaStatus: "ACTIVE",
+  })),
+  GlobalTableArn: `arn:aws:dynamodb::${gt.GlobalTableName}:global-table/${gt.GlobalTableName}`,
+  CreationDateTime: gt.CreationDateTime,
+  GlobalTableStatus: gt.GlobalTableStatus,
+});
+
+const exportDescription = (e: StoredExport): Record<string, unknown> => ({
+  ExportArn: e.ExportArn,
+  ExportStatus: e.ExportStatus,
+  StartTime: e.StartTime,
+  EndTime: e.EndTime,
+  TableArn: e.TableArn,
+  TableId: e.TableId,
+  S3Bucket: e.S3Bucket,
+  S3Prefix: e.S3Prefix,
+  ExportFormat: e.ExportFormat,
+  ExportType: e.ExportType,
+  BilledSizeBytes: e.BilledSizeBytes,
+  ItemCount: e.ItemCount,
+});
+
+const importDescription = (i: StoredImport): Record<string, unknown> => ({
+  ImportArn: i.ImportArn,
+  ImportStatus: i.ImportStatus,
+  TableArn: i.TableArn,
+  TableId: i.TableId,
+  S3BucketSource: i.S3BucketSource,
+  InputFormat: i.InputFormat,
+  StartTime: i.StartTime,
+  EndTime: i.EndTime,
+  ProcessedItemCount: i.ProcessedItemCount,
+  ImportedItemCount: i.ImportedItemCount,
+  ErrorCount: 0,
+});
+
+const requireGlobalTable = (
+  ctx: ServiceContext,
+  name: string,
+): StoredGlobalTable => {
+  const gt = ctx.store.get<StoredGlobalTable>(globalTableKey(name));
+  if (gt === undefined || !isGlobalTableEntry(gt)) {
+    throw awsError(
+      "GlobalTableNotFoundException",
+      `Global table: ${name} not found`,
+      400,
+    );
+  }
+  return gt;
+};
+
+const partiQLWhereMatch = (
+  item: Item,
+  whereClause: string,
+  params: AttributeValue[],
+): boolean => {
+  let paramIdx = 0;
+  const conditions = whereClause.trim().split(/\s+AND\s+/i);
+  for (const condition of conditions) {
+    const m = /^"?(\w+)"?\s*(=|<>)\s*\?/.exec(condition.trim());
+    if (m === null) continue;
+    const attrName = m[1];
+    const op = m[2];
+    const param = params[paramIdx++] ?? {};
+    const actual = item[attrName];
+    if (actual === undefined) {
+      if (op === "=") return false;
+      continue;
+    }
+    const equal = scalarOf(actual) === scalarOf(param);
+    if (op === "=" && !equal) return false;
+    if (op === "<>" && equal) return false;
+  }
+  return true;
+};
+
+const parsePartiQLValue = (expr: string, params: AttributeValue[]): Item => {
+  const item: Item = {};
+  let paramIdx = 0;
+  const inner = expr.slice(1, -1);
+  const pattern = /'([^']+)'\s*:\s*(\?|'[^']*'|-?\d+(?:\.\d+)?)/g;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(inner)) !== null) {
+    const fieldName = m[1];
+    const valueToken = m[2];
+    if (valueToken === "?") {
+      const param = params[paramIdx++];
+      if (param !== undefined) item[fieldName] = param;
+    } else if (valueToken.startsWith("'")) {
+      item[fieldName] = { S: valueToken.slice(1, -1) };
+    } else {
+      item[fieldName] = { N: valueToken };
+    }
+  }
+  return item;
+};
+
+const parsePartiQLSets = (
+  setClause: string,
+  params: AttributeValue[],
+): Item => {
+  const result: Item = {};
+  let paramIdx = 0;
+  for (const assignment of setClause.split(",").map((s) => s.trim())) {
+    const m = /^"?(\w+)"?\s*=\s*\?/.exec(assignment);
+    if (m !== null) {
+      const param = params[paramIdx++];
+      if (param !== undefined) result[m[1]] = param;
+    }
+  }
+  return result;
+};
+
+const countParams = (s: string): number => (s.match(/\?/g) ?? []).length;
+
+const executePartiQL = (
+  statement: string,
+  parameters: AttributeValue[],
+  ctx: ServiceContext,
+): Item[] => {
+  const stmt = statement.trim();
+
+  const selectMatch =
+    /^SELECT\s+.*?\s+FROM\s+"?([^"\s]+)"?(?:\s+WHERE\s+(.+))?$/is.exec(stmt);
+  if (selectMatch !== null) {
+    const tableName = selectMatch[1];
+    const whereClause = selectMatch[2];
+    const table = requireTable(ctx, tableName);
+    const allItems = Object.values(table.items);
+    if (whereClause === undefined) return allItems;
+    return allItems.filter((item) =>
+      partiQLWhereMatch(item, whereClause, parameters),
+    );
+  }
+
+  const insertMatch =
+    /^INSERT\s+INTO\s+"?([^"\s]+)"?\s+VALUE\s+(\{.+\})\s*$/is.exec(stmt);
+  if (insertMatch !== null) {
+    const tableName = insertMatch[1];
+    const valueExpr = insertMatch[2];
+    const table = requireTable(ctx, tableName);
+    const item = parsePartiQLValue(valueExpr, parameters);
+    if (Object.keys(item).length > 0) {
+      table.items[keyOf(table, item)] = item;
+      ctx.store.set(tableName, table);
+    }
+    return [];
+  }
+
+  const updateMatch =
+    /^UPDATE\s+"?([^"\s]+)"?\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$/is.exec(stmt);
+  if (updateMatch !== null) {
+    const tableName = updateMatch[1];
+    const setClause = updateMatch[2].trim();
+    const whereClause = updateMatch[3];
+    const table = requireTable(ctx, tableName);
+    const setParamCount = countParams(setClause);
+    const setValues = parsePartiQLSets(setClause, parameters);
+    const whereParams = parameters.slice(setParamCount);
+    const allItems = Object.values(table.items);
+    const matched =
+      whereClause !== undefined
+        ? allItems.filter((item) =>
+            partiQLWhereMatch(item, whereClause, whereParams),
+          )
+        : allItems;
+    for (const item of matched) {
+      const key = keyFromKeyInput(table, item);
+      table.items[key] = { ...item, ...setValues };
+    }
+    if (matched.length > 0) ctx.store.set(tableName, table);
+    return matched.map((item) => ({ ...item, ...setValues }));
+  }
+
+  const deleteMatch =
+    /^DELETE\s+FROM\s+"?([^"\s]+)"?(?:\s+WHERE\s+(.+))?$/is.exec(stmt);
+  if (deleteMatch !== null) {
+    const tableName = deleteMatch[1];
+    const whereClause = deleteMatch[2];
+    const table = requireTable(ctx, tableName);
+    const allItems = Object.values(table.items);
+    const matched =
+      whereClause !== undefined
+        ? allItems.filter((item) =>
+            partiQLWhereMatch(item, whereClause, parameters),
+          )
+        : allItems;
+    for (const item of matched) {
+      delete table.items[keyFromKeyInput(table, item)];
+    }
+    if (matched.length > 0) ctx.store.set(tableName, table);
+    return [];
+  }
+
+  return [];
+};
+
+const DescribeLimits: OperationHandler = (_input, _ctx) => ({
+  AccountMaxReadCapacityUnits: 80000,
+  AccountMaxWriteCapacityUnits: 80000,
+  TableMaxReadCapacityUnits: 40000,
+  TableMaxWriteCapacityUnits: 40000,
+});
+
+const DescribeEndpoints: OperationHandler = (_input, ctx) => ({
+  Endpoints: [
+    {
+      Address: `dynamodb.${ctx.region}.amazonaws.com`,
+      CachePeriodInMinutes: 1440,
+    },
+  ],
+});
+
+const CreateGlobalTable: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "GlobalTableName");
+  if (ctx.store.get(globalTableKey(name)) !== undefined) {
+    throw awsError(
+      "GlobalTableAlreadyExistsException",
+      `Global table: ${name} already exists`,
+      400,
+    );
+  }
+  const replicationGroup = Array.isArray(input["ReplicationGroup"])
+    ? (input["ReplicationGroup"] as { RegionName: string }[])
+    : [];
+  const gt: StoredGlobalTable = {
+    kind: "global-table",
+    GlobalTableName: name,
+    ReplicationGroup: replicationGroup,
+    CreationDateTime: Math.floor(Date.now() / 1000),
+    GlobalTableStatus: "ACTIVE",
+  };
+  ctx.store.set(globalTableKey(name), gt);
+  return { GlobalTableDescription: globalTableDescription(gt) };
+};
+
+const DescribeGlobalTable: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "GlobalTableName");
+  const gt = requireGlobalTable(ctx, name);
+  return { GlobalTableDescription: globalTableDescription(gt) };
+};
+
+const DescribeGlobalTableSettings: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "GlobalTableName");
+  const gt = requireGlobalTable(ctx, name);
+  return {
+    GlobalTableName: gt.GlobalTableName,
+    ReplicaSettings: gt.ReplicationGroup.map((r) => ({
+      RegionName: r.RegionName,
+      ReplicaStatus: "ACTIVE",
+      ReplicaProvisionedReadCapacityUnits: 0,
+      ReplicaProvisionedWriteCapacityUnits: 0,
+    })),
+  };
+};
+
+const UpdateGlobalTable: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "GlobalTableName");
+  const gt = requireGlobalTable(ctx, name);
+  const updates = Array.isArray(input["ReplicaUpdates"])
+    ? (input["ReplicaUpdates"] as Record<string, unknown>[])
+    : [];
+  for (const update of updates) {
+    const create = asRecord(update["Create"]);
+    const del = asRecord(update["Delete"]);
+    if (typeof create["RegionName"] === "string") {
+      const region = create["RegionName"];
+      if (!gt.ReplicationGroup.some((r) => r.RegionName === region)) {
+        gt.ReplicationGroup.push({ RegionName: region });
+      }
+    } else if (typeof del["RegionName"] === "string") {
+      const region = del["RegionName"];
+      gt.ReplicationGroup = gt.ReplicationGroup.filter(
+        (r) => r.RegionName !== region,
+      );
+    }
+  }
+  ctx.store.set(globalTableKey(name), gt);
+  return { GlobalTableDescription: globalTableDescription(gt) };
+};
+
+const UpdateGlobalTableSettings: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "GlobalTableName");
+  const gt = requireGlobalTable(ctx, name);
+  return {
+    GlobalTableName: gt.GlobalTableName,
+    ReplicaSettings: gt.ReplicationGroup.map((r) => ({
+      RegionName: r.RegionName,
+      ReplicaStatus: "ACTIVE",
+      ReplicaProvisionedReadCapacityUnits: 0,
+      ReplicaProvisionedWriteCapacityUnits: 0,
+    })),
+  };
+};
+
+const ListGlobalTables: OperationHandler = (_input, ctx) => {
+  const tables = ctx.store
+    .list<StoredGlobalTable>()
+    .filter((entry) => isGlobalTableEntry(entry.value))
+    .map((entry) => entry.value);
+  return {
+    GlobalTables: tables.map((gt) => ({
+      GlobalTableName: gt.GlobalTableName,
+      ReplicationGroup: gt.ReplicationGroup,
+    })),
+  };
+};
+
+const ExportTableToPointInTime: OperationHandler = (input, ctx) => {
+  const tArn = requireString(input, "TableArn");
+  const tableName = tableNameFromArn(tArn);
+  const table = requireTable(ctx, tableName);
+  const s3Bucket = requireString(input, "S3Bucket");
+  const timestamp = Date.now();
+  const arn = exportArn(ctx.region, ctx.account, tableName, timestamp);
+  const stored: StoredExport = {
+    kind: "export",
+    ExportArn: arn,
+    ExportStatus: "COMPLETED",
+    StartTime: Math.floor(timestamp / 1000),
+    EndTime: Math.floor(timestamp / 1000),
+    TableArn: tArn,
+    TableId: tableIdOf(ctx.region, ctx.account, tableName),
+    S3Bucket: s3Bucket,
+    S3Prefix: typeof input["S3Prefix"] === "string" ? input["S3Prefix"] : "",
+    ExportFormat:
+      typeof input["ExportFormat"] === "string"
+        ? input["ExportFormat"]
+        : "DYNAMODB_JSON",
+    ExportType:
+      typeof input["ExportType"] === "string"
+        ? input["ExportType"]
+        : "FULL_EXPORT",
+    BilledSizeBytes: 0,
+    ItemCount: Object.keys(table.items).length,
+  };
+  ctx.store.set(exportKey(arn), stored);
+  return { ExportDescription: exportDescription(stored) };
+};
+
+const DescribeExport: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ExportArn");
+  const stored = ctx.store.get<StoredExport>(exportKey(arn));
+  if (stored === undefined || !isExportEntry(stored)) {
+    throw awsError("ExportNotFoundException", `Export not found: ${arn}`, 400);
+  }
+  return { ExportDescription: exportDescription(stored) };
+};
+
+const ListExports: OperationHandler = (input, ctx) => {
+  const filterArn = input["TableArn"];
+  const exports = ctx.store
+    .list<StoredExport>()
+    .filter((e) => isExportEntry(e.value))
+    .map((e) => e.value)
+    .filter((e) => typeof filterArn !== "string" || e.TableArn === filterArn);
+  return {
+    ExportSummaries: exports.map((e) => ({
+      ExportArn: e.ExportArn,
+      ExportStatus: e.ExportStatus,
+      ExportType: e.ExportType,
+    })),
+  };
+};
+
+const ImportTable: OperationHandler = (input, ctx) => {
+  const s3Source = asRecord(input["S3BucketSource"]);
+  const tableCreationParams = asRecord(input["TableCreationParameters"]);
+  const tableName = requireString(tableCreationParams, "TableName");
+  const timestamp = Date.now();
+  const arn = importArn(ctx.region, ctx.account, timestamp);
+  const attrDefs = Array.isArray(tableCreationParams["AttributeDefinitions"])
+    ? (tableCreationParams["AttributeDefinitions"] as AttributeDefinition[])
+    : [];
+  const keySchema = Array.isArray(tableCreationParams["KeySchema"])
+    ? (tableCreationParams["KeySchema"] as KeySchemaElement[])
+    : [];
+  if (ctx.store.get(tableName) === undefined) {
+    const newTable: StoredTable = {
+      TableName: tableName,
+      AttributeDefinitions: attrDefs,
+      KeySchema: keySchema,
+      CreationDateTime: Math.floor(timestamp / 1000),
+      items: {},
+    };
+    ctx.store.set(tableName, newTable);
+  }
+  const tArn = tableArn(ctx.region, ctx.account, tableName);
+  const stored: StoredImport = {
+    kind: "import",
+    ImportArn: arn,
+    ImportStatus: "COMPLETED",
+    TableArn: tArn,
+    TableId: tableIdOf(ctx.region, ctx.account, tableName),
+    TableName: tableName,
+    S3BucketSource: s3Source,
+    InputFormat:
+      typeof input["InputFormat"] === "string"
+        ? input["InputFormat"]
+        : "DYNAMODB_JSON",
+    StartTime: Math.floor(timestamp / 1000),
+    EndTime: Math.floor(timestamp / 1000),
+    ProcessedItemCount: 0,
+    ImportedItemCount: 0,
+  };
+  ctx.store.set(importKey(arn), stored);
+  return { ImportTableDescription: importDescription(stored) };
+};
+
+const DescribeImport: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ImportArn");
+  const stored = ctx.store.get<StoredImport>(importKey(arn));
+  if (stored === undefined || !isImportEntry(stored)) {
+    throw awsError("ImportNotFoundException", `Import not found: ${arn}`, 400);
+  }
+  return { ImportTableDescription: importDescription(stored) };
+};
+
+const ListImports: OperationHandler = (input, ctx) => {
+  const filterArn = input["TableArn"];
+  const imports = ctx.store
+    .list<StoredImport>()
+    .filter((e) => isImportEntry(e.value))
+    .map((e) => e.value)
+    .filter((i) => typeof filterArn !== "string" || i.TableArn === filterArn);
+  return {
+    ImportSummaryList: imports.map((i) => ({
+      ImportArn: i.ImportArn,
+      ImportStatus: i.ImportStatus,
+      TableArn: i.TableArn,
+      S3BucketSource: i.S3BucketSource,
+      InputFormat: i.InputFormat,
+      StartTime: i.StartTime,
+      EndTime: i.EndTime,
+    })),
+  };
+};
+
+const EnableKinesisStreamingDestination: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TableName");
+  const streamArn = requireString(input, "StreamArn");
+  requireTable(ctx, name);
+  const key = kinesisKey(name);
+  const stored: StoredKinesisDestinations =
+    ctx.store.get<StoredKinesisDestinations>(key) ?? {
+      kind: "kinesis" as const,
+      TableName: name,
+      destinations: [],
+    };
+  if (!stored.destinations.some((d) => d.StreamArn === streamArn)) {
+    stored.destinations.push({
+      StreamArn: streamArn,
+      DestinationStatus: "ACTIVE",
+    });
+    ctx.store.set(key, stored);
+  }
+  return {
+    TableName: name,
+    StreamArn: streamArn,
+    DestinationStatus: "ENABLING",
+    EnableKinesisStreamingConfiguration: asRecord(
+      input["EnableKinesisStreamingConfiguration"],
+    ),
+  };
+};
+
+const DisableKinesisStreamingDestination: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TableName");
+  const streamArn = requireString(input, "StreamArn");
+  requireTable(ctx, name);
+  const key = kinesisKey(name);
+  const stored = ctx.store.get<StoredKinesisDestinations>(key);
+  if (stored !== undefined) {
+    stored.destinations = stored.destinations.filter(
+      (d) => d.StreamArn !== streamArn,
+    );
+    ctx.store.set(key, stored);
+  }
+  return {
+    TableName: name,
+    StreamArn: streamArn,
+    DestinationStatus: "DISABLING",
+    EnableKinesisStreamingConfiguration: {},
+  };
+};
+
+const DescribeKinesisStreamingDestination: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TableName");
+  requireTable(ctx, name);
+  const stored = ctx.store.get<StoredKinesisDestinations>(kinesisKey(name));
+  return {
+    TableName: name,
+    KinesisDataStreamDestinations: stored?.destinations ?? [],
+  };
+};
+
+const UpdateKinesisStreamingDestination: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TableName");
+  const streamArn = requireString(input, "StreamArn");
+  requireTable(ctx, name);
+  const key = kinesisKey(name);
+  const stored = ctx.store.get<StoredKinesisDestinations>(key);
+  if (stored !== undefined) {
+    const dest = stored.destinations.find((d) => d.StreamArn === streamArn);
+    if (dest !== undefined) {
+      const config = asRecord(input["UpdateKinesisStreamingConfiguration"]);
+      if (typeof config["ApproximateCreationDateTimePrecision"] === "string") {
+        dest.ApproximateCreationDateTimePrecision =
+          config["ApproximateCreationDateTimePrecision"];
+      }
+      ctx.store.set(key, stored);
+    }
+  }
+  return {
+    TableName: name,
+    StreamArn: streamArn,
+    DestinationStatus: "UPDATING",
+    UpdateKinesisStreamingConfiguration: asRecord(
+      input["UpdateKinesisStreamingConfiguration"],
+    ),
+  };
+};
+
+const DescribeContributorInsights: OperationHandler = (input, ctx) => {
+  const tableName = requireString(input, "TableName");
+  const indexName =
+    typeof input["IndexName"] === "string" ? input["IndexName"] : undefined;
+  requireTable(ctx, tableName);
+  const key = contributorInsightsKey(tableName, indexName);
+  const stored = ctx.store.get<StoredContributorInsights>(key) ?? {
+    kind: "contributor-insights" as const,
+    TableName: tableName,
+    IndexName: indexName,
+    ContributorInsightsStatus: "DISABLED",
+    ContributorInsightsMode: "PAY_PER_REQUEST",
+  };
+  const result: Record<string, unknown> = {
+    TableName: stored.TableName,
+    ContributorInsightsRuleList: [],
+    ContributorInsightsStatus: stored.ContributorInsightsStatus,
+    ContributorInsightsMode: stored.ContributorInsightsMode,
+  };
+  if (indexName !== undefined) result["IndexName"] = indexName;
+  return result;
+};
+
+const UpdateContributorInsights: OperationHandler = (input, ctx) => {
+  const tableName = requireString(input, "TableName");
+  const indexName =
+    typeof input["IndexName"] === "string" ? input["IndexName"] : undefined;
+  const action =
+    typeof input["ContributorInsightsAction"] === "string"
+      ? input["ContributorInsightsAction"]
+      : "DISABLE";
+  requireTable(ctx, tableName);
+  const key = contributorInsightsKey(tableName, indexName);
+  const stored: StoredContributorInsights = {
+    kind: "contributor-insights",
+    TableName: tableName,
+    IndexName: indexName,
+    ContributorInsightsStatus: action === "ENABLE" ? "ENABLED" : "DISABLED",
+    ContributorInsightsMode: "PAY_PER_REQUEST",
+  };
+  ctx.store.set(key, stored);
+  const result: Record<string, unknown> = {
+    TableName: tableName,
+    ContributorInsightsStatus: stored.ContributorInsightsStatus,
+    ContributorInsightsMode: stored.ContributorInsightsMode,
+  };
+  if (indexName !== undefined) result["IndexName"] = indexName;
+  return result;
+};
+
+const ListContributorInsights: OperationHandler = (input, ctx) => {
+  const filterTable =
+    typeof input["TableName"] === "string" ? input["TableName"] : undefined;
+  const entries = ctx.store
+    .list<StoredContributorInsights>()
+    .filter((e) => isContributorInsightsEntry(e.value))
+    .map((e) => e.value)
+    .filter((e) => filterTable === undefined || e.TableName === filterTable);
+  return {
+    ContributorInsightsSummaries: entries.map((e) => ({
+      TableName: e.TableName,
+      IndexName: e.IndexName,
+      ContributorInsightsStatus: e.ContributorInsightsStatus,
+      ContributorInsightsMode: e.ContributorInsightsMode,
+    })),
+  };
+};
+
+const GetResourcePolicy: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "ResourceArn");
+  const stored = ctx.store.get<StoredResourcePolicy>(
+    resourcePolicyKey(resourceArn),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "PolicyNotFoundException",
+      `No resource-based policy found for the resource: ${resourceArn}`,
+      400,
+    );
+  }
+  return { Policy: stored.Policy, RevisionId: stored.RevisionId };
+};
+
+const PutResourcePolicy: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "ResourceArn");
+  const policy = requireString(input, "Policy");
+  const revisionId = String(Date.now());
+  const stored: StoredResourcePolicy = {
+    kind: "resource-policy",
+    ResourceArn: resourceArn,
+    Policy: policy,
+    RevisionId: revisionId,
+  };
+  ctx.store.set(resourcePolicyKey(resourceArn), stored);
+  return { RevisionId: revisionId };
+};
+
+const DeleteResourcePolicy: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "ResourceArn");
+  const stored = ctx.store.get<StoredResourcePolicy>(
+    resourcePolicyKey(resourceArn),
+  );
+  const revisionId = stored?.RevisionId ?? "";
+  ctx.store.delete(resourcePolicyKey(resourceArn));
+  return { RevisionId: revisionId };
+};
+
+const RestoreTableFromBackup: OperationHandler = (input, ctx) => {
+  const targetName = requireString(input, "TargetTableName");
+  const backupArn = requireString(input, "BackupArn");
+  const backup = requireBackup(ctx, backupArn);
+  if (ctx.store.get(targetName) !== undefined) {
+    throw awsError(
+      "TableAlreadyExistsException",
+      `Table already exists: ${targetName}`,
+      400,
+    );
+  }
+  const restored: StoredTable = {
+    TableName: targetName,
+    AttributeDefinitions: [],
+    KeySchema: backup.KeySchema,
+    CreationDateTime: Math.floor(Date.now() / 1000),
+    items: {},
+  };
+  ctx.store.set(targetName, restored);
+  return { TableDescription: tableDescription(ctx, restored, "ACTIVE") };
+};
+
+const RestoreTableToPointInTime: OperationHandler = (input, ctx) => {
+  const sourceName = requireString(input, "SourceTableName");
+  const targetName = requireString(input, "TargetTableName");
+  const source = requireTable(ctx, sourceName);
+  if (ctx.store.get(targetName) !== undefined) {
+    throw awsError(
+      "TableAlreadyExistsException",
+      `Table already exists: ${targetName}`,
+      400,
+    );
+  }
+  const restored: StoredTable = {
+    TableName: targetName,
+    AttributeDefinitions: [...source.AttributeDefinitions],
+    KeySchema: [...source.KeySchema],
+    CreationDateTime: Math.floor(Date.now() / 1000),
+    items: { ...source.items },
+    globalSecondaryIndexes: source.globalSecondaryIndexes,
+    localSecondaryIndexes: source.localSecondaryIndexes,
+  };
+  ctx.store.set(targetName, restored);
+  return { TableDescription: tableDescription(ctx, restored, "ACTIVE") };
+};
+
+const DescribeTableReplicaAutoScaling: OperationHandler = (input, ctx) => {
+  const tableName = requireString(input, "TableName");
+  requireTable(ctx, tableName);
+  return {
+    TableAutoScalingDescription: {
+      TableName: tableName,
+      TableStatus: "ACTIVE",
+      Replicas: [],
+    },
+  };
+};
+
+const UpdateTableReplicaAutoScaling: OperationHandler = (input, ctx) => {
+  const tableName = requireString(input, "TableName");
+  requireTable(ctx, tableName);
+  return {
+    TableAutoScalingDescription: {
+      TableName: tableName,
+      TableStatus: "ACTIVE",
+      Replicas: [],
+    },
+  };
+};
+
+const ExecuteStatement: OperationHandler = (input, ctx) => {
+  const statement = requireString(input, "Statement");
+  const parameters = Array.isArray(input["Parameters"])
+    ? (input["Parameters"] as AttributeValue[])
+    : [];
+  const items = executePartiQL(statement, parameters, ctx);
+  return { Items: items };
+};
+
+const BatchExecuteStatement: OperationHandler = (input, ctx) => {
+  const statements = Array.isArray(input["Statements"])
+    ? (input["Statements"] as Record<string, unknown>[])
+    : [];
+  const responses: Record<string, unknown>[] = [];
+  for (const stmt of statements) {
+    const statement =
+      typeof stmt["Statement"] === "string" ? stmt["Statement"] : "";
+    const parameters = Array.isArray(stmt["Parameters"])
+      ? (stmt["Parameters"] as AttributeValue[])
+      : [];
+    try {
+      const items = executePartiQL(statement, parameters, ctx);
+      responses.push(items[0] !== undefined ? { Item: items[0] } : {});
+    } catch (err) {
+      const e = err as Record<string, unknown>;
+      responses.push({
+        Error: {
+          Code: String(e["code"] ?? "InternalServerError"),
+          Message: String(e["message"] ?? ""),
+        },
+      });
+    }
+  }
+  return { Responses: responses };
+};
+
+const ExecuteTransaction: OperationHandler = (input, ctx) => {
+  const transactStatements = Array.isArray(input["TransactStatements"])
+    ? (input["TransactStatements"] as Record<string, unknown>[])
+    : [];
+  const responses: Record<string, unknown>[] = [];
+  for (const stmt of transactStatements) {
+    const statement =
+      typeof stmt["Statement"] === "string" ? stmt["Statement"] : "";
+    const parameters = Array.isArray(stmt["Parameters"])
+      ? (stmt["Parameters"] as AttributeValue[])
+      : [];
+    const items = executePartiQL(statement, parameters, ctx);
+    responses.push(items[0] !== undefined ? { Item: items[0] } : {});
+  }
+  return { Responses: responses };
+};
+
 const dynamodb: ServiceDefinition = {
   name: "dynamodb",
   protocol: "json",
   operations: {
+    BatchExecuteStatement,
+    BatchGetItem,
+    BatchWriteItem,
+    CreateBackup,
+    CreateGlobalTable,
     CreateTable,
+    DeleteBackup,
+    DeleteItem,
+    DeleteResourcePolicy,
     DeleteTable,
-    ListTables,
+    DescribeBackup,
+    DescribeContinuousBackups,
+    DescribeContributorInsights,
+    DescribeEndpoints,
+    DescribeExport,
+    DescribeGlobalTable,
+    DescribeGlobalTableSettings,
+    DescribeImport,
+    DescribeKinesisStreamingDestination,
+    DescribeLimits,
     DescribeTable,
-    UpdateTable,
-    UpdateTimeToLive,
+    DescribeTableReplicaAutoScaling,
     DescribeTimeToLive,
-    TagResource,
-    UntagResource,
+    DisableKinesisStreamingDestination,
+    EnableKinesisStreamingDestination,
+    ExecuteStatement,
+    ExecuteTransaction,
+    ExportTableToPointInTime,
+    GetItem,
+    GetResourcePolicy,
+    ImportTable,
+    ListBackups,
+    ListContributorInsights,
+    ListExports,
+    ListGlobalTables,
+    ListImports,
+    ListTables,
     ListTagsOfResource,
     PutItem,
-    GetItem,
-    DeleteItem,
-    UpdateItem,
+    PutResourcePolicy,
     Query,
+    RestoreTableFromBackup,
+    RestoreTableToPointInTime,
     Scan,
-    BatchWriteItem,
-    BatchGetItem,
-    TransactWriteItems,
+    TagResource,
     TransactGetItems,
-    CreateBackup,
-    ListBackups,
-    DescribeBackup,
-    DeleteBackup,
+    TransactWriteItems,
+    UntagResource,
     UpdateContinuousBackups,
-    DescribeContinuousBackups,
+    UpdateContributorInsights,
+    UpdateGlobalTable,
+    UpdateGlobalTableSettings,
+    UpdateItem,
+    UpdateKinesisStreamingDestination,
+    UpdateTable,
+    UpdateTableReplicaAutoScaling,
+    UpdateTimeToLive,
   },
   model,
 } as const;

@@ -56,6 +56,9 @@ import memorydb from "./memorydb.ts";
 import dax from "./dax.ts";
 import keyspaces from "./keyspaces.ts";
 import emr from "./emr.ts";
+import amplify from "./amplify.ts";
+import appconfig from "./appconfig.ts";
+import pinpoint from "./pinpoint.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -115,6 +118,9 @@ export const services: ServiceDefinition[] = [
   dax,
   keyspaces,
   emr,
+  amplify,
+  appconfig,
+  pinpoint,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

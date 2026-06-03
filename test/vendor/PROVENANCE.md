@@ -122,6 +122,9 @@ aws-models/
   dax.json              # botocore/data/dax/2017-04-19/service-2.json              (protocol json)
   keyspaces.json        # botocore/data/keyspaces/2022-02-10/service-2.json        (protocol json, signingName cassandra)
   emr.json              # botocore/data/emr/2009-03-31/service-2.json              (protocol json, signingName elasticmapreduce)
+  amplify.json          # botocore/data/amplify/2017-07-25/service-2.json          (protocol rest-json)
+  appconfig.json        # botocore/data/appconfig/2019-10-09/service-2.json        (protocol rest-json)
+  pinpoint.json         # botocore/data/pinpoint/2016-12-01/service-2.json         (protocol rest-json, signingName mobiletargeting)
 ```
 
 ### Notes

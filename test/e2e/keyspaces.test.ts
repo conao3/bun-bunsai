@@ -83,9 +83,9 @@ test("Keyspaces keyspace and table lifecycle", async () => {
   expect(fetchedKs.keyspaceName).toBe(ks);
 
   const listedKs = await client.send(new ListKeyspacesCommand({}));
-  expect(
-    (listedKs.keyspaces ?? []).some((k) => k.keyspaceName === ks),
-  ).toBe(true);
+  expect((listedKs.keyspaces ?? []).some((k) => k.keyspaceName === ks)).toBe(
+    true,
+  );
 
   await client.send(
     new CreateTableCommand({

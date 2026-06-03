@@ -82,6 +82,9 @@ import budgets from "./budgets.ts";
 import accessanalyzer from "./accessanalyzer.ts";
 import networkmanager from "./networkmanager.ts";
 import imagebuilder from "./imagebuilder.ts";
+import detective from "./detective.ts";
+import signer from "./signer.ts";
+import dlm from "./dlm.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -167,6 +170,9 @@ export const services: ServiceDefinition[] = [
   accessanalyzer,
   networkmanager,
   imagebuilder,
+  detective,
+  signer,
+  dlm,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

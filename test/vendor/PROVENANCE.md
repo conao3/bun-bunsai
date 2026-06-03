@@ -148,6 +148,9 @@ aws-models/
   accessanalyzer.json   # botocore/data/accessanalyzer/2019-11-01/service-2.json   (protocol rest-json, endpointPrefix access-analyzer, signingName access-analyzer)
   networkmanager.json   # botocore/data/networkmanager/2019-07-05/service-2.json   (protocol rest-json, endpointPrefix networkmanager, signingName networkmanager)
   imagebuilder.json     # botocore/data/imagebuilder/2019-12-02/service-2.json     (protocol rest-json, endpointPrefix imagebuilder, signingName imagebuilder)
+  detective.json        # botocore/data/detective/2018-10-26/service-2.json        (protocol rest-json, endpointPrefix api.detective, signingName detective)
+  signer.json           # botocore/data/signer/2017-08-25/service-2.json           (protocol rest-json, endpointPrefix signer, signingName signer)
+  dlm.json              # botocore/data/dlm/2018-01-12/service-2.json              (protocol rest-json, endpointPrefix dlm, signingName dlm)
 ```
 
 ### Notes

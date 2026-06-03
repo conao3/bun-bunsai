@@ -14,14 +14,14 @@ tracker:
     - Duplicate
     - Done
 polling:
-  interval_ms: 15000
+  interval_ms: 5000
 workspace:
   root: ~/code/symphony-workspaces
 hooks:
   after_create: |
     gh repo clone conao3/bun-bunsai . -- --depth 1
 agent:
-  max_concurrent_agents: 3
+  max_concurrent_agents: 5
   max_turns: 10
 codex:
   command: ANTHROPIC_MODEL=claude-sonnet-4-6 claude-app-server

@@ -65,6 +65,9 @@ import resourcegroups from "./resourcegroups.ts";
 import globalaccelerator from "./globalaccelerator.ts";
 import directconnect from "./directconnect.ts";
 import swf from "./swf.ts";
+import datapipeline from "./datapipeline.ts";
+import servicecatalog from "./servicecatalog.ts";
+import mediastore from "./mediastore.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -133,6 +136,9 @@ export const services: ServiceDefinition[] = [
   globalaccelerator,
   directconnect,
   swf,
+  datapipeline,
+  servicecatalog,
+  mediastore,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

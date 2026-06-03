@@ -131,6 +131,9 @@ aws-models/
   globalaccelerator.json # botocore/data/globalaccelerator/2018-08-08/service-2.json (protocol json, targetPrefix GlobalAccelerator_V20180706)
   directconnect.json    # botocore/data/directconnect/2012-10-25/service-2.json    (protocol json, targetPrefix OvertureService)
   swf.json              # botocore/data/swf/2012-01-25/service-2.json              (protocol json, targetPrefix SimpleWorkflowService)
+  datapipeline.json     # botocore/data/datapipeline/2012-10-29/service-2.json     (protocol json, targetPrefix DataPipeline)
+  servicecatalog.json   # botocore/data/servicecatalog/2015-12-10/service-2.json   (protocol json, targetPrefix AWS242ServiceCatalogService)
+  mediastore.json       # botocore/data/mediastore/2017-09-01/service-2.json       (protocol json, targetPrefix MediaStore_20170901)
 ```
 
 ### Notes

@@ -11,8 +11,15 @@ import type {
 const model = loadServiceModel(appconfigModel);
 
 const applicationPrefix = "application:" as const;
-
 const environmentPrefix = "environment:" as const;
+const configProfilePrefix = "configprofile:" as const;
+const deploymentStrategyPrefix = "deploymentstrategy:" as const;
+const extensionPrefix = "extension:" as const;
+const extensionAssocPrefix = "extensionassoc:" as const;
+const hostedConfigVersionPrefix = "hostedconfigversion:" as const;
+const deploymentPrefix = "deployment:" as const;
+const tagsPrefix = "tags:" as const;
+const accountSettingsKey = "accountsettings" as const;
 
 type StoredApplication = {
   Id: string;
@@ -27,6 +34,89 @@ type StoredEnvironment = {
   Description: string | undefined;
   State: string;
   Monitors: unknown[];
+};
+
+type StoredConfigurationProfile = {
+  ApplicationId: string;
+  Id: string;
+  Name: string;
+  Description: string | undefined;
+  LocationUri: string;
+  RetrievalRoleArn: string | undefined;
+  Validators: unknown[];
+  Type: string | undefined;
+  KmsKeyArn: string | undefined;
+  KmsKeyIdentifier: string | undefined;
+};
+
+type StoredDeploymentStrategy = {
+  Id: string;
+  Name: string;
+  Description: string | undefined;
+  DeploymentDurationInMinutes: number;
+  GrowthType: string;
+  GrowthFactor: number;
+  FinalBakeTimeInMinutes: number;
+  ReplicateTo: string;
+};
+
+type StoredExtension = {
+  Id: string;
+  Name: string;
+  VersionNumber: number;
+  Arn: string;
+  Description: string | undefined;
+  Actions: unknown;
+  Parameters: unknown;
+};
+
+type StoredExtensionAssociation = {
+  Id: string;
+  ExtensionArn: string;
+  ResourceArn: string;
+  Arn: string;
+  Parameters: unknown;
+  ExtensionVersionNumber: number;
+};
+
+type StoredHostedConfigurationVersion = {
+  ApplicationId: string;
+  ConfigurationProfileId: string;
+  VersionNumber: number;
+  Description: string | undefined;
+  Content: string;
+  ContentType: string;
+  VersionLabel: string | undefined;
+  KmsKeyArn: string | undefined;
+};
+
+type StoredDeployment = {
+  ApplicationId: string;
+  EnvironmentId: string;
+  DeploymentStrategyId: string;
+  ConfigurationProfileId: string;
+  DeploymentNumber: number;
+  ConfigurationName: string;
+  ConfigurationLocationUri: string;
+  ConfigurationVersion: string;
+  Description: string | undefined;
+  DeploymentDurationInMinutes: number;
+  GrowthType: string;
+  GrowthFactor: number;
+  FinalBakeTimeInMinutes: number;
+  State: string;
+  EventLog: unknown[];
+  PercentageComplete: number;
+  StartedAt: string;
+  CompletedAt: string | undefined;
+  AppliedExtensions: unknown[];
+  KmsKeyArn: string | undefined;
+  KmsKeyIdentifier: string | undefined;
+  VersionLabel: string | undefined;
+};
+
+type StoredAccountSettings = {
+  DeletionProtection: unknown;
 };
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -49,12 +139,57 @@ const requireString = (
   return value;
 };
 
+const requireNumber = (
+  input: Record<string, unknown>,
+  field: string,
+): number => {
+  const value = numberOrUndefined(input[field]);
+  if (value === undefined) {
+    throw awsError("BadRequestException", `${field} is required.`, 400);
+  }
+  return value;
+};
+
 const newId = (): string => crypto.randomUUID().replaceAll("-", "").slice(0, 7);
 
 const applicationKey = (id: string): string => `${applicationPrefix}${id}`;
 
 const environmentKey = (applicationId: string, id: string): string =>
   `${environmentPrefix}${applicationId}/${id}`;
+
+const configProfileKey = (applicationId: string, id: string): string =>
+  `${configProfilePrefix}${applicationId}/${id}`;
+
+const deploymentStrategyKey = (id: string): string =>
+  `${deploymentStrategyPrefix}${id}`;
+
+const extensionKey = (id: string): string => `${extensionPrefix}${id}`;
+
+const extensionAssocKey = (id: string): string =>
+  `${extensionAssocPrefix}${id}`;
+
+const hostedConfigVersionKey = (
+  applicationId: string,
+  profileId: string,
+  versionNumber: number,
+): string =>
+  `${hostedConfigVersionPrefix}${applicationId}/${profileId}/${versionNumber}`;
+
+const deploymentKey = (
+  applicationId: string,
+  environmentId: string,
+  deploymentNumber: number,
+): string =>
+  `${deploymentPrefix}${applicationId}/${environmentId}/${deploymentNumber}`;
+
+const tagsKey = (resourceArn: string): string => `${tagsPrefix}${resourceArn}`;
+
+const makeArn = (
+  ctx: ServiceContext,
+  resourceType: string,
+  ...parts: string[]
+): string =>
+  `arn:aws:appconfig:${ctx.region}:${ctx.account}:${resourceType}/${parts.join("/")}`;
 
 const applicationView = (
   application: StoredApplication,
@@ -75,6 +210,96 @@ const environmentView = (
   Monitors: environment.Monitors,
 });
 
+const configProfileView = (
+  profile: StoredConfigurationProfile,
+): Record<string, unknown> => ({
+  ApplicationId: profile.ApplicationId,
+  Id: profile.Id,
+  Name: profile.Name,
+  Description: profile.Description,
+  LocationUri: profile.LocationUri,
+  RetrievalRoleArn: profile.RetrievalRoleArn,
+  Validators: profile.Validators,
+  Type: profile.Type,
+  KmsKeyArn: profile.KmsKeyArn,
+});
+
+const deploymentStrategyView = (
+  strategy: StoredDeploymentStrategy,
+): Record<string, unknown> => ({
+  Id: strategy.Id,
+  Name: strategy.Name,
+  Description: strategy.Description,
+  DeploymentDurationInMinutes: strategy.DeploymentDurationInMinutes,
+  GrowthType: strategy.GrowthType,
+  GrowthFactor: strategy.GrowthFactor,
+  FinalBakeTimeInMinutes: strategy.FinalBakeTimeInMinutes,
+  ReplicateTo: strategy.ReplicateTo,
+});
+
+const extensionView = (
+  extension: StoredExtension,
+): Record<string, unknown> => ({
+  Id: extension.Id,
+  Name: extension.Name,
+  VersionNumber: extension.VersionNumber,
+  Arn: extension.Arn,
+  Description: extension.Description,
+  Actions: extension.Actions,
+  Parameters: extension.Parameters,
+});
+
+const extensionAssocView = (
+  assoc: StoredExtensionAssociation,
+): Record<string, unknown> => ({
+  Id: assoc.Id,
+  ExtensionArn: assoc.ExtensionArn,
+  ResourceArn: assoc.ResourceArn,
+  Arn: assoc.Arn,
+  Parameters: assoc.Parameters,
+  ExtensionVersionNumber: assoc.ExtensionVersionNumber,
+});
+
+const hostedConfigVersionView = (
+  hcv: StoredHostedConfigurationVersion,
+): Record<string, unknown> => ({
+  ApplicationId: hcv.ApplicationId,
+  ConfigurationProfileId: hcv.ConfigurationProfileId,
+  VersionNumber: hcv.VersionNumber,
+  Description: hcv.Description,
+  Content: hcv.Content,
+  ContentType: hcv.ContentType,
+  VersionLabel: hcv.VersionLabel,
+  KmsKeyArn: hcv.KmsKeyArn,
+});
+
+const deploymentView = (
+  deployment: StoredDeployment,
+): Record<string, unknown> => ({
+  ApplicationId: deployment.ApplicationId,
+  EnvironmentId: deployment.EnvironmentId,
+  DeploymentStrategyId: deployment.DeploymentStrategyId,
+  ConfigurationProfileId: deployment.ConfigurationProfileId,
+  DeploymentNumber: deployment.DeploymentNumber,
+  ConfigurationName: deployment.ConfigurationName,
+  ConfigurationLocationUri: deployment.ConfigurationLocationUri,
+  ConfigurationVersion: deployment.ConfigurationVersion,
+  Description: deployment.Description,
+  DeploymentDurationInMinutes: deployment.DeploymentDurationInMinutes,
+  GrowthType: deployment.GrowthType,
+  GrowthFactor: deployment.GrowthFactor,
+  FinalBakeTimeInMinutes: deployment.FinalBakeTimeInMinutes,
+  State: deployment.State,
+  EventLog: deployment.EventLog,
+  PercentageComplete: deployment.PercentageComplete,
+  StartedAt: deployment.StartedAt,
+  CompletedAt: deployment.CompletedAt,
+  AppliedExtensions: deployment.AppliedExtensions,
+  KmsKeyArn: deployment.KmsKeyArn,
+  KmsKeyIdentifier: deployment.KmsKeyIdentifier,
+  VersionLabel: deployment.VersionLabel,
+});
+
 const requireApplication = (
   ctx: ServiceContext,
   id: string,
@@ -84,6 +309,126 @@ const requireApplication = (
     throw awsError(
       "ResourceNotFoundException",
       `Application not found for ID ${id}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireEnvironment = (
+  ctx: ServiceContext,
+  applicationId: string,
+  id: string,
+): StoredEnvironment => {
+  const stored = ctx.store.get<StoredEnvironment>(
+    environmentKey(applicationId, id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Environment not found for ID ${id}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireConfigProfile = (
+  ctx: ServiceContext,
+  applicationId: string,
+  id: string,
+): StoredConfigurationProfile => {
+  const stored = ctx.store.get<StoredConfigurationProfile>(
+    configProfileKey(applicationId, id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Configuration Profile not found for ID ${id}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireDeploymentStrategy = (
+  ctx: ServiceContext,
+  id: string,
+): StoredDeploymentStrategy => {
+  const stored = ctx.store.get<StoredDeploymentStrategy>(
+    deploymentStrategyKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Deployment Strategy not found for ID ${id}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireExtension = (ctx: ServiceContext, id: string): StoredExtension => {
+  const stored = ctx.store.get<StoredExtension>(extensionKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Extension not found for identifier ${id}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireExtensionAssoc = (
+  ctx: ServiceContext,
+  id: string,
+): StoredExtensionAssociation => {
+  const stored = ctx.store.get<StoredExtensionAssociation>(
+    extensionAssocKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Extension Association not found for ID ${id}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireHostedConfigVersion = (
+  ctx: ServiceContext,
+  applicationId: string,
+  profileId: string,
+  versionNumber: number,
+): StoredHostedConfigurationVersion => {
+  const stored = ctx.store.get<StoredHostedConfigurationVersion>(
+    hostedConfigVersionKey(applicationId, profileId, versionNumber),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Hosted Configuration Version not found for version ${versionNumber}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireDeployment = (
+  ctx: ServiceContext,
+  applicationId: string,
+  environmentId: string,
+  deploymentNumber: number,
+): StoredDeployment => {
+  const stored = ctx.store.get<StoredDeployment>(
+    deploymentKey(applicationId, environmentId, deploymentNumber),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Deployment not found for deployment number ${deploymentNumber}.`,
       404,
     );
   }
@@ -154,6 +499,12 @@ const CreateEnvironment: OperationHandler = (input, ctx) => {
   return environmentView(environment);
 };
 
+const GetEnvironment: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const id = requireString(input, "EnvironmentId");
+  return environmentView(requireEnvironment(ctx, applicationId, id));
+};
+
 const ListEnvironments: OperationHandler = (input, ctx) => {
   const applicationId = requireString(input, "ApplicationId");
   requireApplication(ctx, applicationId);
@@ -168,6 +519,533 @@ const ListEnvironments: OperationHandler = (input, ctx) => {
   return { Items: environments.slice(0, max).map(environmentView) };
 };
 
+const UpdateEnvironment: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const id = requireString(input, "EnvironmentId");
+  const existing = requireEnvironment(ctx, applicationId, id);
+  const environment: StoredEnvironment = {
+    ApplicationId: existing.ApplicationId,
+    Id: existing.Id,
+    Name: stringOrUndefined(input["Name"]) ?? existing.Name,
+    Description:
+      stringOrUndefined(input["Description"]) ?? existing.Description,
+    State: existing.State,
+    Monitors: Array.isArray(input["Monitors"])
+      ? input["Monitors"]
+      : existing.Monitors,
+  };
+  ctx.store.set(environmentKey(applicationId, id), environment);
+  return environmentView(environment);
+};
+
+const DeleteEnvironment: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const id = requireString(input, "EnvironmentId");
+  requireEnvironment(ctx, applicationId, id);
+  ctx.store.delete(environmentKey(applicationId, id));
+  return {};
+};
+
+const CreateConfigurationProfile: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const name = requireString(input, "Name");
+  const locationUri = requireString(input, "LocationUri");
+  requireApplication(ctx, applicationId);
+  const id = newId();
+  const profile: StoredConfigurationProfile = {
+    ApplicationId: applicationId,
+    Id: id,
+    Name: name,
+    Description: stringOrUndefined(input["Description"]),
+    LocationUri: locationUri,
+    RetrievalRoleArn: stringOrUndefined(input["RetrievalRoleArn"]),
+    Validators: arrayOrEmpty(input["Validators"]),
+    Type: stringOrUndefined(input["Type"]),
+    KmsKeyArn: undefined,
+    KmsKeyIdentifier: stringOrUndefined(input["KmsKeyIdentifier"]),
+  };
+  ctx.store.set(configProfileKey(applicationId, id), profile);
+  return configProfileView(profile);
+};
+
+const GetConfigurationProfile: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const id = requireString(input, "ConfigurationProfileId");
+  return configProfileView(requireConfigProfile(ctx, applicationId, id));
+};
+
+const ListConfigurationProfiles: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  requireApplication(ctx, applicationId);
+  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
+  const profiles = ctx.store
+    .list<StoredConfigurationProfile>()
+    .filter((entry) =>
+      entry.key.startsWith(`${configProfilePrefix}${applicationId}/`),
+    )
+    .map((entry) => entry.value)
+    .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
+  return { Items: profiles.slice(0, max).map(configProfileView) };
+};
+
+const UpdateConfigurationProfile: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const id = requireString(input, "ConfigurationProfileId");
+  const existing = requireConfigProfile(ctx, applicationId, id);
+  const profile: StoredConfigurationProfile = {
+    ApplicationId: existing.ApplicationId,
+    Id: existing.Id,
+    Name: stringOrUndefined(input["Name"]) ?? existing.Name,
+    Description:
+      stringOrUndefined(input["Description"]) ?? existing.Description,
+    LocationUri: existing.LocationUri,
+    RetrievalRoleArn:
+      stringOrUndefined(input["RetrievalRoleArn"]) ?? existing.RetrievalRoleArn,
+    Validators: Array.isArray(input["Validators"])
+      ? input["Validators"]
+      : existing.Validators,
+    Type: existing.Type,
+    KmsKeyArn: existing.KmsKeyArn,
+    KmsKeyIdentifier:
+      stringOrUndefined(input["KmsKeyIdentifier"]) ?? existing.KmsKeyIdentifier,
+  };
+  ctx.store.set(configProfileKey(applicationId, id), profile);
+  return configProfileView(profile);
+};
+
+const DeleteConfigurationProfile: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const id = requireString(input, "ConfigurationProfileId");
+  requireConfigProfile(ctx, applicationId, id);
+  ctx.store.delete(configProfileKey(applicationId, id));
+  return {};
+};
+
+const CreateDeploymentStrategy: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const duration = requireNumber(input, "DeploymentDurationInMinutes");
+  const growthFactor = requireNumber(input, "GrowthFactor");
+  const id = newId();
+  const strategy: StoredDeploymentStrategy = {
+    Id: id,
+    Name: name,
+    Description: stringOrUndefined(input["Description"]),
+    DeploymentDurationInMinutes: duration,
+    GrowthType: stringOrUndefined(input["GrowthType"]) ?? "LINEAR",
+    GrowthFactor: growthFactor,
+    FinalBakeTimeInMinutes:
+      numberOrUndefined(input["FinalBakeTimeInMinutes"]) ?? 0,
+    ReplicateTo: stringOrUndefined(input["ReplicateTo"]) ?? "NONE",
+  };
+  ctx.store.set(deploymentStrategyKey(id), strategy);
+  return deploymentStrategyView(strategy);
+};
+
+const GetDeploymentStrategy: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DeploymentStrategyId");
+  return deploymentStrategyView(requireDeploymentStrategy(ctx, id));
+};
+
+const ListDeploymentStrategies: OperationHandler = (input, ctx) => {
+  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
+  const strategies = ctx.store
+    .list<StoredDeploymentStrategy>()
+    .filter((entry) => entry.key.startsWith(deploymentStrategyPrefix))
+    .map((entry) => entry.value)
+    .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
+  return { Items: strategies.slice(0, max).map(deploymentStrategyView) };
+};
+
+const UpdateDeploymentStrategy: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DeploymentStrategyId");
+  const existing = requireDeploymentStrategy(ctx, id);
+  const strategy: StoredDeploymentStrategy = {
+    Id: existing.Id,
+    Name: existing.Name,
+    Description:
+      stringOrUndefined(input["Description"]) ?? existing.Description,
+    DeploymentDurationInMinutes:
+      numberOrUndefined(input["DeploymentDurationInMinutes"]) ??
+      existing.DeploymentDurationInMinutes,
+    GrowthType: stringOrUndefined(input["GrowthType"]) ?? existing.GrowthType,
+    GrowthFactor:
+      numberOrUndefined(input["GrowthFactor"]) ?? existing.GrowthFactor,
+    FinalBakeTimeInMinutes:
+      numberOrUndefined(input["FinalBakeTimeInMinutes"]) ??
+      existing.FinalBakeTimeInMinutes,
+    ReplicateTo: existing.ReplicateTo,
+  };
+  ctx.store.set(deploymentStrategyKey(id), strategy);
+  return deploymentStrategyView(strategy);
+};
+
+const DeleteDeploymentStrategy: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DeploymentStrategyId");
+  requireDeploymentStrategy(ctx, id);
+  ctx.store.delete(deploymentStrategyKey(id));
+  return {};
+};
+
+const CreateExtension: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const id = newId();
+  const extension: StoredExtension = {
+    Id: id,
+    Name: name,
+    VersionNumber: 1,
+    Arn: makeArn(ctx, "extension", id),
+    Description: stringOrUndefined(input["Description"]),
+    Actions: input["Actions"] ?? {},
+    Parameters: input["Parameters"] ?? {},
+  };
+  ctx.store.set(extensionKey(id), extension);
+  return extensionView(extension);
+};
+
+const GetExtension: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ExtensionIdentifier");
+  return extensionView(requireExtension(ctx, id));
+};
+
+const ListExtensions: OperationHandler = (input, ctx) => {
+  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
+  const extensions = ctx.store
+    .list<StoredExtension>()
+    .filter((entry) => entry.key.startsWith(extensionPrefix))
+    .map((entry) => entry.value)
+    .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
+  return { Items: extensions.slice(0, max).map(extensionView) };
+};
+
+const UpdateExtension: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ExtensionIdentifier");
+  const existing = requireExtension(ctx, id);
+  const extension: StoredExtension = {
+    Id: existing.Id,
+    Name: existing.Name,
+    VersionNumber: existing.VersionNumber + 1,
+    Arn: existing.Arn,
+    Description:
+      stringOrUndefined(input["Description"]) ?? existing.Description,
+    Actions: input["Actions"] ?? existing.Actions,
+    Parameters: input["Parameters"] ?? existing.Parameters,
+  };
+  ctx.store.set(extensionKey(id), extension);
+  return extensionView(extension);
+};
+
+const DeleteExtension: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ExtensionIdentifier");
+  requireExtension(ctx, id);
+  ctx.store.delete(extensionKey(id));
+  return {};
+};
+
+const CreateExtensionAssociation: OperationHandler = (input, ctx) => {
+  const extensionId = requireString(input, "ExtensionIdentifier");
+  const resourceIdentifier = requireString(input, "ResourceIdentifier");
+  const extension = requireExtension(ctx, extensionId);
+  const id = newId();
+  const assoc: StoredExtensionAssociation = {
+    Id: id,
+    ExtensionArn: extension.Arn,
+    ResourceArn: resourceIdentifier,
+    Arn: makeArn(ctx, "extensionassociation", id),
+    Parameters: input["Parameters"] ?? {},
+    ExtensionVersionNumber:
+      numberOrUndefined(input["ExtensionVersionNumber"]) ??
+      extension.VersionNumber,
+  };
+  ctx.store.set(extensionAssocKey(id), assoc);
+  return extensionAssocView(assoc);
+};
+
+const GetExtensionAssociation: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ExtensionAssociationId");
+  return extensionAssocView(requireExtensionAssoc(ctx, id));
+};
+
+const ListExtensionAssociations: OperationHandler = (input, ctx) => {
+  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
+  const assocs = ctx.store
+    .list<StoredExtensionAssociation>()
+    .filter((entry) => entry.key.startsWith(extensionAssocPrefix))
+    .map((entry) => entry.value);
+  return { Items: assocs.slice(0, max).map(extensionAssocView) };
+};
+
+const UpdateExtensionAssociation: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ExtensionAssociationId");
+  const existing = requireExtensionAssoc(ctx, id);
+  const assoc: StoredExtensionAssociation = {
+    Id: existing.Id,
+    ExtensionArn: existing.ExtensionArn,
+    ResourceArn: existing.ResourceArn,
+    Arn: existing.Arn,
+    Parameters: input["Parameters"] ?? existing.Parameters,
+    ExtensionVersionNumber: existing.ExtensionVersionNumber,
+  };
+  ctx.store.set(extensionAssocKey(id), assoc);
+  return extensionAssocView(assoc);
+};
+
+const DeleteExtensionAssociation: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ExtensionAssociationId");
+  requireExtensionAssoc(ctx, id);
+  ctx.store.delete(extensionAssocKey(id));
+  return {};
+};
+
+const CreateHostedConfigurationVersion: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const profileId = requireString(input, "ConfigurationProfileId");
+  const contentType = requireString(input, "ContentType");
+  requireConfigProfile(ctx, applicationId, profileId);
+  const existingVersions = ctx.store
+    .list<StoredHostedConfigurationVersion>()
+    .filter((entry) =>
+      entry.key.startsWith(
+        `${hostedConfigVersionPrefix}${applicationId}/${profileId}/`,
+      ),
+    );
+  const nextVersion = existingVersions.length + 1;
+  const content = typeof input["Content"] === "string" ? input["Content"] : "";
+  const hcv: StoredHostedConfigurationVersion = {
+    ApplicationId: applicationId,
+    ConfigurationProfileId: profileId,
+    VersionNumber: nextVersion,
+    Description: stringOrUndefined(input["Description"]),
+    Content: content,
+    ContentType: contentType,
+    VersionLabel: stringOrUndefined(input["VersionLabel"]),
+    KmsKeyArn: undefined,
+  };
+  ctx.store.set(
+    hostedConfigVersionKey(applicationId, profileId, nextVersion),
+    hcv,
+  );
+  return hostedConfigVersionView(hcv);
+};
+
+const GetHostedConfigurationVersion: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const profileId = requireString(input, "ConfigurationProfileId");
+  const versionNumber = requireNumber(input, "VersionNumber");
+  return hostedConfigVersionView(
+    requireHostedConfigVersion(ctx, applicationId, profileId, versionNumber),
+  );
+};
+
+const ListHostedConfigurationVersions: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const profileId = requireString(input, "ConfigurationProfileId");
+  requireConfigProfile(ctx, applicationId, profileId);
+  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
+  const versions = ctx.store
+    .list<StoredHostedConfigurationVersion>()
+    .filter((entry) =>
+      entry.key.startsWith(
+        `${hostedConfigVersionPrefix}${applicationId}/${profileId}/`,
+      ),
+    )
+    .map((entry) => entry.value)
+    .sort((a, b) => a.VersionNumber - b.VersionNumber);
+  return {
+    Items: versions.slice(0, max).map((v) => ({
+      ApplicationId: v.ApplicationId,
+      ConfigurationProfileId: v.ConfigurationProfileId,
+      VersionNumber: v.VersionNumber,
+      Description: v.Description,
+      ContentType: v.ContentType,
+      VersionLabel: v.VersionLabel,
+      KmsKeyArn: v.KmsKeyArn,
+    })),
+  };
+};
+
+const DeleteHostedConfigurationVersion: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const profileId = requireString(input, "ConfigurationProfileId");
+  const versionNumber = requireNumber(input, "VersionNumber");
+  requireHostedConfigVersion(ctx, applicationId, profileId, versionNumber);
+  ctx.store.delete(
+    hostedConfigVersionKey(applicationId, profileId, versionNumber),
+  );
+  return {};
+};
+
+const StartDeployment: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const environmentId = requireString(input, "EnvironmentId");
+  const strategyId = requireString(input, "DeploymentStrategyId");
+  const profileId = requireString(input, "ConfigurationProfileId");
+  const configVersion = requireString(input, "ConfigurationVersion");
+  requireEnvironment(ctx, applicationId, environmentId);
+  const strategy = requireDeploymentStrategy(ctx, strategyId);
+  const profile = requireConfigProfile(ctx, applicationId, profileId);
+  const existingDeployments = ctx.store
+    .list<StoredDeployment>()
+    .filter((entry) =>
+      entry.key.startsWith(
+        `${deploymentPrefix}${applicationId}/${environmentId}/`,
+      ),
+    );
+  const nextNumber = existingDeployments.length + 1;
+  const now = new Date().toISOString();
+  const deployment: StoredDeployment = {
+    ApplicationId: applicationId,
+    EnvironmentId: environmentId,
+    DeploymentStrategyId: strategyId,
+    ConfigurationProfileId: profileId,
+    DeploymentNumber: nextNumber,
+    ConfigurationName: profile.Name,
+    ConfigurationLocationUri: profile.LocationUri,
+    ConfigurationVersion: configVersion,
+    Description: stringOrUndefined(input["Description"]),
+    DeploymentDurationInMinutes: strategy.DeploymentDurationInMinutes,
+    GrowthType: strategy.GrowthType,
+    GrowthFactor: strategy.GrowthFactor,
+    FinalBakeTimeInMinutes: strategy.FinalBakeTimeInMinutes,
+    State: "COMPLETE",
+    EventLog: [],
+    PercentageComplete: 100.0,
+    StartedAt: now,
+    CompletedAt: now,
+    AppliedExtensions: [],
+    KmsKeyArn: undefined,
+    KmsKeyIdentifier: stringOrUndefined(input["KmsKeyIdentifier"]),
+    VersionLabel: undefined,
+  };
+  ctx.store.set(
+    deploymentKey(applicationId, environmentId, nextNumber),
+    deployment,
+  );
+  return deploymentView(deployment);
+};
+
+const GetDeployment: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const environmentId = requireString(input, "EnvironmentId");
+  const deploymentNumber = requireNumber(input, "DeploymentNumber");
+  return deploymentView(
+    requireDeployment(ctx, applicationId, environmentId, deploymentNumber),
+  );
+};
+
+const ListDeployments: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const environmentId = requireString(input, "EnvironmentId");
+  requireEnvironment(ctx, applicationId, environmentId);
+  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
+  const deployments = ctx.store
+    .list<StoredDeployment>()
+    .filter((entry) =>
+      entry.key.startsWith(
+        `${deploymentPrefix}${applicationId}/${environmentId}/`,
+      ),
+    )
+    .map((entry) => entry.value)
+    .sort((a, b) => b.DeploymentNumber - a.DeploymentNumber);
+  return { Items: deployments.slice(0, max).map(deploymentView) };
+};
+
+const StopDeployment: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const environmentId = requireString(input, "EnvironmentId");
+  const deploymentNumber = requireNumber(input, "DeploymentNumber");
+  const existing = requireDeployment(
+    ctx,
+    applicationId,
+    environmentId,
+    deploymentNumber,
+  );
+  const deployment: StoredDeployment = {
+    ApplicationId: existing.ApplicationId,
+    EnvironmentId: existing.EnvironmentId,
+    DeploymentStrategyId: existing.DeploymentStrategyId,
+    ConfigurationProfileId: existing.ConfigurationProfileId,
+    DeploymentNumber: existing.DeploymentNumber,
+    ConfigurationName: existing.ConfigurationName,
+    ConfigurationLocationUri: existing.ConfigurationLocationUri,
+    ConfigurationVersion: existing.ConfigurationVersion,
+    Description: existing.Description,
+    DeploymentDurationInMinutes: existing.DeploymentDurationInMinutes,
+    GrowthType: existing.GrowthType,
+    GrowthFactor: existing.GrowthFactor,
+    FinalBakeTimeInMinutes: existing.FinalBakeTimeInMinutes,
+    State: "ROLLED_BACK",
+    EventLog: existing.EventLog,
+    PercentageComplete: existing.PercentageComplete,
+    StartedAt: existing.StartedAt,
+    CompletedAt: new Date().toISOString(),
+    AppliedExtensions: existing.AppliedExtensions,
+    KmsKeyArn: existing.KmsKeyArn,
+    KmsKeyIdentifier: existing.KmsKeyIdentifier,
+    VersionLabel: existing.VersionLabel,
+  };
+  ctx.store.set(
+    deploymentKey(applicationId, environmentId, deploymentNumber),
+    deployment,
+  );
+  return deploymentView(deployment);
+};
+
+const GetAccountSettings: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<StoredAccountSettings>(accountSettingsKey) ?? {
+    DeletionProtection: { Enabled: false, ProtectionPeriodInMinutes: 60 },
+  };
+  return { DeletionProtection: stored.DeletionProtection };
+};
+
+const UpdateAccountSettings: OperationHandler = (input, ctx) => {
+  const existing = ctx.store.get<StoredAccountSettings>(accountSettingsKey) ?? {
+    DeletionProtection: { Enabled: false, ProtectionPeriodInMinutes: 60 },
+  };
+  const settings: StoredAccountSettings = {
+    DeletionProtection:
+      input["DeletionProtection"] ?? existing.DeletionProtection,
+  };
+  ctx.store.set(accountSettingsKey, settings);
+  return { DeletionProtection: settings.DeletionProtection };
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "ResourceArn");
+  const tags =
+    ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
+  return { Tags: tags };
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "ResourceArn");
+  const newTags = (input["Tags"] ?? {}) as Record<string, string>;
+  const existing =
+    ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
+  ctx.store.set(tagsKey(resourceArn), { ...existing, ...newTags });
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "ResourceArn");
+  const tagKeys = arrayOrEmpty(input["TagKeys"]) as string[];
+  const existing =
+    ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
+  const updated: Record<string, string> = {};
+  for (const [k, v] of Object.entries(existing)) {
+    if (!tagKeys.includes(k)) updated[k] = v;
+  }
+  ctx.store.set(tagsKey(resourceArn), updated);
+  return {};
+};
+
+const GetConfiguration: OperationHandler = (_input, _ctx) => ({
+  Content: "",
+  ConfigurationVersion: "1",
+  ContentType: "application/json",
+});
+
+const ValidateConfiguration: OperationHandler = (_input, _ctx) => ({});
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -176,23 +1054,152 @@ const appconfig = {
   protocol: "rest-json",
   resolveOperation: (req: ParsedRequest): string | undefined => {
     const parts = pathSegments(req.path);
+
+    if (parts.length === 1 && parts[0] === "settings") {
+      if (req.method === "GET") return "GetAccountSettings";
+      if (req.method === "PATCH") return "UpdateAccountSettings";
+      return undefined;
+    }
+
+    if (parts[0] === "tags") {
+      if (parts.length >= 2) {
+        if (req.method === "GET") return "ListTagsForResource";
+        if (req.method === "POST") return "TagResource";
+        if (req.method === "DELETE") return "UntagResource";
+      }
+      return undefined;
+    }
+
+    if (
+      parts[0] === "deploymentstrategies" ||
+      parts[0] === "deployementstrategies"
+    ) {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateDeploymentStrategy";
+        if (req.method === "GET") return "ListDeploymentStrategies";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetDeploymentStrategy";
+        if (req.method === "PATCH") return "UpdateDeploymentStrategy";
+        if (req.method === "DELETE") return "DeleteDeploymentStrategy";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "extensions") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateExtension";
+        if (req.method === "GET") return "ListExtensions";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetExtension";
+        if (req.method === "PATCH") return "UpdateExtension";
+        if (req.method === "DELETE") return "DeleteExtension";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "extensionassociations") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateExtensionAssociation";
+        if (req.method === "GET") return "ListExtensionAssociations";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetExtensionAssociation";
+        if (req.method === "PATCH") return "UpdateExtensionAssociation";
+        if (req.method === "DELETE") return "DeleteExtensionAssociation";
+        return undefined;
+      }
+      return undefined;
+    }
+
     if (parts[0] !== "applications") return undefined;
+
     if (parts.length === 1) {
       if (req.method === "POST") return "CreateApplication";
       if (req.method === "GET") return "ListApplications";
       return undefined;
     }
+
     if (parts.length === 2) {
       if (req.method === "GET") return "GetApplication";
       if (req.method === "PATCH") return "UpdateApplication";
       if (req.method === "DELETE") return "DeleteApplication";
       return undefined;
     }
-    if (parts.length === 3 && parts[2] === "environments") {
-      if (req.method === "POST") return "CreateEnvironment";
-      if (req.method === "GET") return "ListEnvironments";
+
+    const sub2 = parts[2];
+
+    if (sub2 === "environments") {
+      if (parts.length === 3) {
+        if (req.method === "POST") return "CreateEnvironment";
+        if (req.method === "GET") return "ListEnvironments";
+        return undefined;
+      }
+      if (parts.length === 4) {
+        if (req.method === "GET") return "GetEnvironment";
+        if (req.method === "PATCH") return "UpdateEnvironment";
+        if (req.method === "DELETE") return "DeleteEnvironment";
+        return undefined;
+      }
+      const sub4 = parts[4];
+      if (sub4 === "deployments") {
+        if (parts.length === 5) {
+          if (req.method === "POST") return "StartDeployment";
+          if (req.method === "GET") return "ListDeployments";
+          return undefined;
+        }
+        if (parts.length === 6) {
+          if (req.method === "GET") return "GetDeployment";
+          if (req.method === "DELETE") return "StopDeployment";
+          return undefined;
+        }
+      }
+      if (sub4 === "configurations" && parts.length === 6) {
+        if (req.method === "GET") return "GetConfiguration";
+        return undefined;
+      }
       return undefined;
     }
+
+    if (sub2 === "configurationprofiles") {
+      if (parts.length === 3) {
+        if (req.method === "POST") return "CreateConfigurationProfile";
+        if (req.method === "GET") return "ListConfigurationProfiles";
+        return undefined;
+      }
+      if (parts.length === 4) {
+        if (req.method === "GET") return "GetConfigurationProfile";
+        if (req.method === "PATCH") return "UpdateConfigurationProfile";
+        if (req.method === "DELETE") return "DeleteConfigurationProfile";
+        return undefined;
+      }
+      const sub4 = parts[4];
+      if (sub4 === "hostedconfigurationversions") {
+        if (parts.length === 5) {
+          if (req.method === "POST") return "CreateHostedConfigurationVersion";
+          if (req.method === "GET") return "ListHostedConfigurationVersions";
+          return undefined;
+        }
+        if (parts.length === 6) {
+          if (req.method === "GET") return "GetHostedConfigurationVersion";
+          if (req.method === "DELETE")
+            return "DeleteHostedConfigurationVersion";
+          return undefined;
+        }
+      }
+      if (sub4 === "validators" && parts.length === 5) {
+        if (req.method === "POST") return "ValidateConfiguration";
+        return undefined;
+      }
+      return undefined;
+    }
+
     return undefined;
   },
   operations: {
@@ -202,7 +1209,45 @@ const appconfig = {
     UpdateApplication,
     DeleteApplication,
     CreateEnvironment,
+    GetEnvironment,
     ListEnvironments,
+    UpdateEnvironment,
+    DeleteEnvironment,
+    CreateConfigurationProfile,
+    GetConfigurationProfile,
+    ListConfigurationProfiles,
+    UpdateConfigurationProfile,
+    DeleteConfigurationProfile,
+    CreateDeploymentStrategy,
+    GetDeploymentStrategy,
+    ListDeploymentStrategies,
+    UpdateDeploymentStrategy,
+    DeleteDeploymentStrategy,
+    CreateExtension,
+    GetExtension,
+    ListExtensions,
+    UpdateExtension,
+    DeleteExtension,
+    CreateExtensionAssociation,
+    GetExtensionAssociation,
+    ListExtensionAssociations,
+    UpdateExtensionAssociation,
+    DeleteExtensionAssociation,
+    CreateHostedConfigurationVersion,
+    GetHostedConfigurationVersion,
+    ListHostedConfigurationVersions,
+    DeleteHostedConfigurationVersion,
+    StartDeployment,
+    GetDeployment,
+    ListDeployments,
+    StopDeployment,
+    GetAccountSettings,
+    UpdateAccountSettings,
+    ListTagsForResource,
+    TagResource,
+    UntagResource,
+    GetConfiguration,
+    ValidateConfiguration,
   },
   model,
 } as const satisfies ServiceDefinition;

@@ -4,10 +4,15 @@ import {
   CreateScheduleCommand,
   CreateScheduleGroupCommand,
   DeleteScheduleCommand,
+  DeleteScheduleGroupCommand,
   GetScheduleCommand,
+  GetScheduleGroupCommand,
   ListScheduleGroupsCommand,
   ListSchedulesCommand,
+  ListTagsForResourceCommand,
   SchedulerClient,
+  TagResourceCommand,
+  UntagResourceCommand,
   UpdateScheduleCommand,
 } from "@aws-sdk/client-scheduler";
 
@@ -119,4 +124,73 @@ test("Scheduler schedule and schedule group roundtrip", async () => {
   await expect(
     client.send(new GetScheduleCommand({ Name: name })),
   ).rejects.toThrow();
+});
+
+test("Scheduler schedule group get and delete", async () => {
+  const client = scheduler();
+  const groupName = `bunsai-grp-getdel-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateScheduleGroupCommand({ Name: groupName }),
+  );
+  expect(created.ScheduleGroupArn).toContain(`schedule-group/${groupName}`);
+
+  const got = await client.send(
+    new GetScheduleGroupCommand({ Name: groupName }),
+  );
+  expect(got.Name).toBe(groupName);
+  expect(got.State).toBe("ACTIVE");
+  expect(got.Arn).toContain(`schedule-group/${groupName}`);
+
+  await client.send(new DeleteScheduleGroupCommand({ Name: groupName }));
+  await expect(
+    client.send(new GetScheduleGroupCommand({ Name: groupName })),
+  ).rejects.toThrow();
+});
+
+test("Scheduler tag, list tags, and untag roundtrip", async () => {
+  const client = scheduler();
+  const groupName = `bunsai-grp-tags-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateScheduleGroupCommand({ Name: groupName }),
+  );
+  const resourceArn = created.ScheduleGroupArn!;
+
+  await client.send(
+    new TagResourceCommand({
+      ResourceArn: resourceArn,
+      Tags: [
+        { Key: "env", Value: "test" },
+        { Key: "team", Value: "platform" },
+      ],
+    }),
+  );
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: resourceArn }),
+  );
+  const tagMap = Object.fromEntries(
+    (listed.Tags ?? []).map((t) => [t.Key, t.Value]),
+  );
+  expect(tagMap["env"]).toBe("test");
+  expect(tagMap["team"]).toBe("platform");
+
+  await client.send(
+    new UntagResourceCommand({
+      ResourceArn: resourceArn,
+      TagKeys: ["env"],
+    }),
+  );
+
+  const afterUntag = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: resourceArn }),
+  );
+  const afterTagMap = Object.fromEntries(
+    (afterUntag.Tags ?? []).map((t) => [t.Key, t.Value]),
+  );
+  expect(afterTagMap["env"]).toBeUndefined();
+  expect(afterTagMap["team"]).toBe("platform");
+
+  await client.send(new DeleteScheduleGroupCommand({ Name: groupName }));
 });

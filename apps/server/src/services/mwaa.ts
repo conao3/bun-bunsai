@@ -189,6 +189,125 @@ const DeleteEnvironment: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const UpdateEnvironment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const environment = requireEnvironment(ctx, name);
+  const updated: StoredEnvironment = { ...environment };
+  const executionRoleArn = stringOrUndefined(input["ExecutionRoleArn"]);
+  if (executionRoleArn !== undefined)
+    updated.ExecutionRoleArn = executionRoleArn;
+  const airflowVersion = stringOrUndefined(input["AirflowVersion"]);
+  if (airflowVersion !== undefined) updated.AirflowVersion = airflowVersion;
+  const dagS3Path = stringOrUndefined(input["DagS3Path"]);
+  if (dagS3Path !== undefined) updated.DagS3Path = dagS3Path;
+  const environmentClass = stringOrUndefined(input["EnvironmentClass"]);
+  if (environmentClass !== undefined)
+    updated.EnvironmentClass = environmentClass;
+  const maxWorkers = input["MaxWorkers"];
+  if (typeof maxWorkers === "number" && Number.isFinite(maxWorkers))
+    updated.MaxWorkers = maxWorkers;
+  const minWorkers = input["MinWorkers"];
+  if (typeof minWorkers === "number" && Number.isFinite(minWorkers))
+    updated.MinWorkers = minWorkers;
+  const schedulers = input["Schedulers"];
+  if (typeof schedulers === "number" && Number.isFinite(schedulers))
+    updated.Schedulers = schedulers;
+  const sourceBucketArn = stringOrUndefined(input["SourceBucketArn"]);
+  if (sourceBucketArn !== undefined) updated.SourceBucketArn = sourceBucketArn;
+  const webserverAccessMode = stringOrUndefined(input["WebserverAccessMode"]);
+  if (webserverAccessMode !== undefined)
+    updated.WebserverAccessMode = webserverAccessMode;
+  const weeklyMaintenanceWindowStart = stringOrUndefined(
+    input["WeeklyMaintenanceWindowStart"],
+  );
+  if (weeklyMaintenanceWindowStart !== undefined)
+    updated.WeeklyMaintenanceWindowStart = weeklyMaintenanceWindowStart;
+  const network = asRecord(input["NetworkConfiguration"]);
+  if (network !== undefined) {
+    updated.NetworkConfiguration = {
+      SubnetIds: Array.isArray(network["SubnetIds"])
+        ? (network["SubnetIds"] as unknown[])
+        : environment.NetworkConfiguration["SubnetIds"],
+      SecurityGroupIds: Array.isArray(network["SecurityGroupIds"])
+        ? (network["SecurityGroupIds"] as unknown[])
+        : environment.NetworkConfiguration["SecurityGroupIds"],
+    };
+  }
+  ctx.store.set(environmentKey(name), updated);
+  return { Arn: updated.Arn };
+};
+
+const CreateCliToken: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const environment = requireEnvironment(ctx, name);
+  return {
+    CliToken: "dummy-cli-token",
+    WebServerHostname: environment.WebserverUrl,
+  };
+};
+
+const CreateWebLoginToken: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const environment = requireEnvironment(ctx, name);
+  return {
+    WebToken: "dummy-web-login-token",
+    WebServerHostname: environment.WebserverUrl,
+    IamIdentity: "assumed-role/Admin/test",
+    AirflowIdentity: "admin",
+  };
+};
+
+const InvokeRestApi: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  requireEnvironment(ctx, name);
+  return {
+    RestApiStatusCode: 200,
+    RestApiResponse: {},
+  };
+};
+
+const PublishMetrics: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
+const tagsKey = (arn: string): string => `tags:${arn}`;
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const key = tagsKey(arn);
+  const existing = ctx.store.get<Record<string, string>>(key) ?? {};
+  const tags = { ...existing };
+  const incoming = asRecord(input["Tags"]);
+  if (incoming !== undefined) {
+    for (const [k, v] of Object.entries(incoming)) {
+      if (typeof v === "string") tags[k] = v;
+    }
+  }
+  ctx.store.set(key, tags);
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const key = tagsKey(arn);
+  const existing = ctx.store.get<Record<string, string>>(key) ?? {};
+  const tags = { ...existing };
+  const keys = input["tagKeys"];
+  if (Array.isArray(keys)) {
+    for (const k of keys) {
+      if (typeof k === "string") delete tags[k];
+    }
+  }
+  ctx.store.set(key, tags);
+  return {};
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const tags = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
+  return { Tags: tags };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -197,16 +316,38 @@ const mwaa = {
   protocol: "rest-json",
   resolveOperation: (req: ParsedRequest): string | undefined => {
     const parts = pathSegments(req.path);
-    if (parts[0] !== "environments") return undefined;
-    if (parts.length === 1) {
-      if (req.method === "GET") return "ListEnvironments";
+    const first = parts[0];
+    if (first === "environments") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListEnvironments";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "PUT") return "CreateEnvironment";
+        if (req.method === "GET") return "GetEnvironment";
+        if (req.method === "DELETE") return "DeleteEnvironment";
+        if (req.method === "PATCH") return "UpdateEnvironment";
+        return undefined;
+      }
       return undefined;
     }
-    if (parts.length === 2) {
-      if (req.method === "PUT") return "CreateEnvironment";
-      if (req.method === "GET") return "GetEnvironment";
-      if (req.method === "DELETE") return "DeleteEnvironment";
-      return undefined;
+    if (first === "clitoken" && parts.length === 2 && req.method === "POST")
+      return "CreateCliToken";
+    if (first === "webtoken" && parts.length === 2 && req.method === "POST")
+      return "CreateWebLoginToken";
+    if (first === "restapi" && parts.length === 2 && req.method === "POST")
+      return "InvokeRestApi";
+    if (
+      first === "metrics" &&
+      parts[1] === "environments" &&
+      parts.length === 3 &&
+      req.method === "POST"
+    )
+      return "PublishMetrics";
+    if (first === "tags") {
+      if (req.method === "POST") return "TagResource";
+      if (req.method === "DELETE") return "UntagResource";
+      if (req.method === "GET") return "ListTagsForResource";
     }
     return undefined;
   },
@@ -215,6 +356,14 @@ const mwaa = {
     GetEnvironment,
     ListEnvironments,
     DeleteEnvironment,
+    UpdateEnvironment,
+    CreateCliToken,
+    CreateWebLoginToken,
+    InvokeRestApi,
+    PublishMetrics,
+    TagResource,
+    UntagResource,
+    ListTagsForResource,
   },
   model,
 } as const satisfies ServiceDefinition;

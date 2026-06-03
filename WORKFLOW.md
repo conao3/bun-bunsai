@@ -21,8 +21,8 @@ hooks:
   after_create: |
     gh repo clone conao3/bun-bunsai . -- --depth 1
 agent:
-  max_concurrent_agents: 4
-  max_turns: 16
+  max_concurrent_agents: 5
+  max_turns: 10
 codex:
   command: ANTHROPIC_MODEL=claude-sonnet-4-6 claude-app-server
   approval_policy: never
@@ -40,7 +40,7 @@ Continuation context:
 - Resume from the current workspace state instead of restarting from scratch.
 - Do not repeat already-completed investigation or validation unless needed for new code changes.
 - Do not end the turn while the issue remains in an active state unless you are blocked by missing required permissions/secrets.
-{% endif %}
+  {% endif %}
 
 Issue context:
 Identifier: {{ issue.identifier }}
@@ -188,6 +188,7 @@ Before transitioning to `Merging`, confirm CI on the latest pushed commit:
    ```
 
    Every entry must have `status: "COMPLETED"` and `conclusion: "SUCCESS"`. Record any `SKIPPED` / `NEUTRAL` results explicitly in the workpad with a one-line justification before proceeding.
+
 5. Only when every check on the latest pushed commit is green may the issue transition to `Merging`.
 
 ## Blocked-access escape hatch (required behavior)

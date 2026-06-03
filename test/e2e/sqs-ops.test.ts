@@ -1,20 +1,26 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawn } from "bun";
 import {
+  AddPermissionCommand,
+  CancelMessageMoveTaskCommand,
   ChangeMessageVisibilityBatchCommand,
   ChangeMessageVisibilityCommand,
   CreateQueueCommand,
   DeleteMessageBatchCommand,
   DeleteQueueCommand,
+  GetQueueAttributesCommand,
   ListDeadLetterSourceQueuesCommand,
+  ListMessageMoveTasksCommand,
   ReceiveMessageCommand,
+  RemovePermissionCommand,
   SendMessageBatchCommand,
   SetQueueAttributesCommand,
   SQSClient,
+  StartMessageMoveTaskCommand,
 } from "@aws-sdk/client-sqs";
 
-const awsPort = 4566;
-const uiPort = 5666;
+const awsPort = 4567;
+const uiPort = 5567;
 const endpoint = `http://localhost:${awsPort}`;
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
@@ -163,5 +169,98 @@ describe("SQS batch ops e2e", () => {
 
     await client.send(new DeleteQueueCommand({ QueueUrl: sourceUrl }));
     await client.send(new DeleteQueueCommand({ QueueUrl: dlqUrl }));
+  });
+
+  test("add and remove permission", async () => {
+    const client = sqs();
+    const created = await client.send(
+      new CreateQueueCommand({ QueueName: "bunsai-e2e-sqs-perm" }),
+    );
+    const queueUrl = created.QueueUrl ?? "";
+    expect(queueUrl).not.toBe("");
+
+    await client.send(
+      new AddPermissionCommand({
+        QueueUrl: queueUrl,
+        Label: "AllowAlice",
+        AWSAccountIds: ["123456789012"],
+        Actions: ["SendMessage", "ReceiveMessage"],
+      }),
+    );
+
+    const withPerm = await client.send(
+      new GetQueueAttributesCommand({
+        QueueUrl: queueUrl,
+        AttributeNames: ["Policy"],
+      }),
+    );
+    const policy = JSON.parse(withPerm.Attributes?.Policy ?? "{}") as {
+      Statement: { Sid: string }[];
+    };
+    expect(policy.Statement.some((s) => s.Sid === "AllowAlice")).toBe(true);
+
+    await client.send(
+      new RemovePermissionCommand({ QueueUrl: queueUrl, Label: "AllowAlice" }),
+    );
+
+    const withoutPerm = await client.send(
+      new GetQueueAttributesCommand({
+        QueueUrl: queueUrl,
+        AttributeNames: ["Policy"],
+      }),
+    );
+    const policyAfter = JSON.parse(withoutPerm.Attributes?.Policy ?? "{}") as {
+      Statement: { Sid: string }[];
+    };
+    expect(policyAfter.Statement.some((s) => s.Sid === "AllowAlice")).toBe(
+      false,
+    );
+
+    await client.send(new DeleteQueueCommand({ QueueUrl: queueUrl }));
+  });
+
+  test("start, list, and cancel message move task", async () => {
+    const client = sqs();
+    const created = await client.send(
+      new CreateQueueCommand({ QueueName: "bunsai-e2e-sqs-movetask" }),
+    );
+    const queueUrl = created.QueueUrl ?? "";
+    const sourceArn = `arn:aws:sqs:${region}:000000000000:bunsai-e2e-sqs-movetask`;
+
+    const started = await client.send(
+      new StartMessageMoveTaskCommand({ SourceArn: sourceArn }),
+    );
+    const taskHandle = started.TaskHandle ?? "";
+    expect(taskHandle).not.toBe("");
+
+    const listed = await client.send(
+      new ListMessageMoveTasksCommand({
+        SourceArn: sourceArn,
+        MaxResults: 10,
+      }),
+    );
+    expect(listed.Results?.length).toBeGreaterThanOrEqual(1);
+    const entry = listed.Results?.find((r) => r.TaskHandle === taskHandle);
+    expect(entry).toBeDefined();
+    expect(entry?.Status).toBe("RUNNING");
+    expect(entry?.SourceArn).toBe(sourceArn);
+
+    const cancelled = await client.send(
+      new CancelMessageMoveTaskCommand({ TaskHandle: taskHandle }),
+    );
+    expect(cancelled.ApproximateNumberOfMessagesMoved).toBeDefined();
+
+    const listedAfter = await client.send(
+      new ListMessageMoveTasksCommand({
+        SourceArn: sourceArn,
+        MaxResults: 10,
+      }),
+    );
+    const entryAfter = listedAfter.Results?.find(
+      (r) => r.Status === "CANCELLED",
+    );
+    expect(entryAfter).toBeDefined();
+
+    await client.send(new DeleteQueueCommand({ QueueUrl: queueUrl }));
   });
 });

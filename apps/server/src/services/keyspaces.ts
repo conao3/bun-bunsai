@@ -24,9 +24,23 @@ type StoredTable = {
   schemaDefinition: unknown;
 };
 
+type StoredType = {
+  keyspaceName: string;
+  typeName: string;
+  keyspaceArn: string;
+  fieldDefinitions: unknown;
+  lastModifiedTimestamp: number;
+  status: string;
+};
+
+type StoredTag = { key: string; value: string };
+
 const keyspaceKey = (name: string): string => `keyspace/${name}`;
 const tableKey = (keyspace: string, table: string): string =>
   `table/${keyspace}/${table}`;
+const typeKey = (keyspace: string, type: string): string =>
+  `type/${keyspace}/${type}`;
+const tagsKey = (arn: string): string => `tags/${arn}`;
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -56,6 +70,38 @@ const requireKeyspace = (ctx: ServiceContext, name: string): StoredKeyspace => {
     );
   }
   return keyspace;
+};
+
+const requireTable = (
+  ctx: ServiceContext,
+  keyspaceName: string,
+  tableName: string,
+): StoredTable => {
+  const table = ctx.store.get<StoredTable>(tableKey(keyspaceName, tableName));
+  if (table === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Table not found: ${tableName}`,
+      400,
+    );
+  }
+  return table;
+};
+
+const requireType = (
+  ctx: ServiceContext,
+  keyspaceName: string,
+  typeName: string,
+): StoredType => {
+  const stored = ctx.store.get<StoredType>(typeKey(keyspaceName, typeName));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Type not found: ${typeName}`,
+      400,
+    );
+  }
+  return stored;
 };
 
 const CreateKeyspace: OperationHandler = (input, ctx) => {
@@ -171,6 +217,154 @@ const DeleteTable: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const UpdateKeyspace: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "keyspaceName");
+  const keyspace = requireKeyspace(ctx, name);
+  const spec = input["replicationSpecification"] as
+    | Record<string, unknown>
+    | undefined;
+  const updated: StoredKeyspace = {
+    ...keyspace,
+    replicationStrategy:
+      typeof spec?.["replicationStrategy"] === "string"
+        ? spec["replicationStrategy"]
+        : keyspace.replicationStrategy,
+  };
+  ctx.store.set(keyspaceKey(name), updated);
+  return { resourceArn: updated.resourceArn };
+};
+
+const UpdateTable: OperationHandler = (input, ctx) => {
+  const keyspaceName = requireString(input, "keyspaceName");
+  const tableName = requireString(input, "tableName");
+  const table = requireTable(ctx, keyspaceName, tableName);
+  ctx.store.set(tableKey(keyspaceName, tableName), table);
+  return { resourceArn: table.resourceArn };
+};
+
+const RestoreTable: OperationHandler = (input, ctx) => {
+  const sourceKeyspaceName = requireString(input, "sourceKeyspaceName");
+  const sourceTableName = requireString(input, "sourceTableName");
+  const targetKeyspaceName = requireString(input, "targetKeyspaceName");
+  const targetTableName = requireString(input, "targetTableName");
+  requireKeyspace(ctx, targetKeyspaceName);
+  const source = requireTable(ctx, sourceKeyspaceName, sourceTableName);
+  const restored: StoredTable = {
+    keyspaceName: targetKeyspaceName,
+    tableName: targetTableName,
+    resourceArn: tableArn(ctx, targetKeyspaceName, targetTableName),
+    creationTimestamp: Date.now(),
+    status: "RESTORING",
+    schemaDefinition: source.schemaDefinition,
+  };
+  ctx.store.set(tableKey(targetKeyspaceName, targetTableName), restored);
+  return { restoredTableARN: restored.resourceArn };
+};
+
+const GetTableAutoScalingSettings: OperationHandler = (input, ctx) => {
+  const keyspaceName = requireString(input, "keyspaceName");
+  const tableName = requireString(input, "tableName");
+  const table = requireTable(ctx, keyspaceName, tableName);
+  return {
+    keyspaceName: table.keyspaceName,
+    tableName: table.tableName,
+    resourceArn: table.resourceArn,
+  };
+};
+
+const CreateType: OperationHandler = (input, ctx) => {
+  const keyspaceName = requireString(input, "keyspaceName");
+  const typeName = requireString(input, "typeName");
+  requireKeyspace(ctx, keyspaceName);
+  if (ctx.store.get(typeKey(keyspaceName, typeName)) !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `Type already exists: ${typeName}`,
+      400,
+    );
+  }
+  const ksArn = keyspaceArn(ctx, keyspaceName);
+  const stored: StoredType = {
+    keyspaceName,
+    typeName,
+    keyspaceArn: ksArn,
+    fieldDefinitions: input["fieldDefinitions"],
+    lastModifiedTimestamp: Date.now(),
+    status: "ACTIVE",
+  };
+  ctx.store.set(typeKey(keyspaceName, typeName), stored);
+  return { keyspaceArn: ksArn, typeName };
+};
+
+const GetType: OperationHandler = (input, ctx) => {
+  const keyspaceName = requireString(input, "keyspaceName");
+  const typeName = requireString(input, "typeName");
+  const stored = requireType(ctx, keyspaceName, typeName);
+  return {
+    keyspaceName: stored.keyspaceName,
+    typeName: stored.typeName,
+    keyspaceArn: stored.keyspaceArn,
+    fieldDefinitions: stored.fieldDefinitions,
+    lastModifiedTimestamp: stored.lastModifiedTimestamp,
+    status: stored.status,
+    directReferringTables: [],
+    directParentTypes: [],
+    maxNestingDepth: 0,
+  };
+};
+
+const ListTypes: OperationHandler = (input, ctx) => {
+  const keyspaceName = requireString(input, "keyspaceName");
+  requireKeyspace(ctx, keyspaceName);
+  const types = ctx.store
+    .list<StoredType>()
+    .filter((entry) => entry.key.startsWith(`type/${keyspaceName}/`))
+    .map((entry) => entry.value.typeName);
+  return { types };
+};
+
+const DeleteType: OperationHandler = (input, ctx) => {
+  const keyspaceName = requireString(input, "keyspaceName");
+  const typeName = requireString(input, "typeName");
+  const stored = requireType(ctx, keyspaceName, typeName);
+  ctx.store.delete(typeKey(keyspaceName, typeName));
+  return { keyspaceArn: stored.keyspaceArn, typeName };
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const incoming = (input["tags"] as StoredTag[] | undefined) ?? [];
+  const existing = ctx.store.get<StoredTag[]>(tagsKey(resourceArn)) ?? [];
+  const merged = new Map<string, string>(existing.map((t) => [t.key, t.value]));
+  for (const tag of incoming) {
+    merged.set(tag.key, tag.value);
+  }
+  ctx.store.set(
+    tagsKey(resourceArn),
+    Array.from(merged.entries()).map(([key, value]) => ({ key, value })),
+  );
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const toRemove = new Set(
+    ((input["tags"] as StoredTag[] | undefined) ?? []).map((t) => t.key),
+  );
+  const existing = ctx.store.get<StoredTag[]>(tagsKey(resourceArn)) ?? [];
+  ctx.store.set(
+    tagsKey(resourceArn),
+    existing.filter((t) => !toRemove.has(t.key)),
+  );
+  return {};
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const tags = ctx.store.get<StoredTag[]>(tagsKey(resourceArn)) ?? [];
+  return { tags };
+};
+
 const keyspaces = {
   name: "cassandra",
   protocol: "json",
@@ -179,10 +373,21 @@ const keyspaces = {
     GetKeyspace,
     ListKeyspaces,
     DeleteKeyspace,
+    UpdateKeyspace,
     CreateTable,
     GetTable,
     ListTables,
     DeleteTable,
+    UpdateTable,
+    RestoreTable,
+    GetTableAutoScalingSettings,
+    CreateType,
+    GetType,
+    ListTypes,
+    DeleteType,
+    TagResource,
+    UntagResource,
+    ListTagsForResource,
   },
   model,
 } as const satisfies ServiceDefinition;

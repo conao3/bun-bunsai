@@ -17,6 +17,14 @@ type StoredVersion = {
   CreatedDate: number;
 };
 
+type ReplicationStatusEntry = {
+  Region: string;
+  KmsKeyId: string | undefined;
+  Status: string;
+  StatusMessage: string | undefined;
+  LastAccessedDate: number | undefined;
+};
+
 type StoredSecret = {
   ARN: string;
   Name: string;
@@ -28,6 +36,10 @@ type StoredSecret = {
   DeletedDate: number | undefined;
   currentVersionId: string;
   versions: Record<string, StoredVersion>;
+  RotationEnabled: boolean;
+  RotationLambdaARN: string | undefined;
+  ResourcePolicy: string | undefined;
+  ReplicationStatus: ReplicationStatusEntry[];
 } & { Type?: string };
 
 const arnOf = (ctx: ServiceContext, name: string, suffix: string): string =>
@@ -104,6 +116,10 @@ const CreateSecret: OperationHandler = (input, ctx) => {
     DeletedDate: undefined,
     currentVersionId: versionId,
     versions: { [versionId]: version },
+    RotationEnabled: false,
+    RotationLambdaARN: undefined,
+    ResourcePolicy: undefined,
+    ReplicationStatus: [],
   };
   ctx.store.set(name, secret);
   return { ARN: secret.ARN, Name: name, VersionId: versionId };
@@ -312,6 +328,188 @@ const UntagResource: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const RotateSecret: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const lambdaArn = stringOrUndefined(input["RotationLambdaARN"]);
+  if (lambdaArn !== undefined) secret.RotationLambdaARN = lambdaArn;
+  secret.RotationEnabled = true;
+  ctx.store.set(secret.Name, secret);
+  return {
+    ARN: secret.ARN,
+    Name: secret.Name,
+    VersionId: secret.currentVersionId,
+  };
+};
+
+const CancelRotateSecret: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  secret.RotationEnabled = false;
+  ctx.store.set(secret.Name, secret);
+  return {
+    ARN: secret.ARN,
+    Name: secret.Name,
+    VersionId: secret.currentVersionId,
+  };
+};
+
+const BatchGetSecretValue: OperationHandler = (input, ctx) => {
+  const secretIdList = Array.isArray(input["SecretIdList"])
+    ? (input["SecretIdList"] as unknown[]).map((v) => String(v))
+    : [];
+  const filters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as Record<string, unknown>[])
+    : [];
+
+  let candidates: StoredSecret[];
+  if (secretIdList.length > 0) {
+    candidates = secretIdList
+      .map((id) => findByIdentifier(ctx, id))
+      .filter((s): s is StoredSecret => s !== undefined);
+  } else if (filters.length > 0) {
+    candidates = ctx.store
+      .list<StoredSecret>()
+      .filter((entry) => entry.value.DeletedDate === undefined)
+      .map((entry) => entry.value);
+    for (const filter of filters) {
+      const key = String(filter["Key"] ?? "");
+      const values = Array.isArray(filter["Values"])
+        ? (filter["Values"] as unknown[]).map((v) => String(v))
+        : [];
+      if (key === "name" && values.length > 0)
+        candidates = candidates.filter((s) =>
+          values.some((v) => s.Name.includes(v)),
+        );
+    }
+  } else {
+    candidates = ctx.store
+      .list<StoredSecret>()
+      .filter((entry) => entry.value.DeletedDate === undefined)
+      .map((entry) => entry.value);
+  }
+
+  const secretValues = candidates.map((s) => {
+    const version = s.versions[s.currentVersionId];
+    return {
+      ARN: s.ARN,
+      Name: s.Name,
+      VersionId: version?.VersionId,
+      SecretString: version?.SecretString,
+      SecretBinary: version?.SecretBinary,
+      VersionStages: version?.VersionStages,
+      CreatedDate: version?.CreatedDate,
+    };
+  });
+  return { SecretValues: secretValues, Errors: [] };
+};
+
+const UpdateSecretVersionStage: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const stage = String(input["VersionStage"] ?? "");
+  const moveToId = stringOrUndefined(input["MoveToVersionId"]);
+  const removeFromId = stringOrUndefined(input["RemoveFromVersionId"]);
+
+  if (removeFromId !== undefined) {
+    const fromVersion = secret.versions[removeFromId];
+    if (fromVersion !== undefined)
+      fromVersion.VersionStages = fromVersion.VersionStages.filter(
+        (s) => s !== stage,
+      );
+  }
+
+  if (moveToId !== undefined) {
+    const toVersion = secret.versions[moveToId];
+    if (toVersion !== undefined && !toVersion.VersionStages.includes(stage))
+      toVersion.VersionStages.push(stage);
+    if (stage === "AWSCURRENT") {
+      secret.currentVersionId = moveToId;
+      const previous = Object.values(secret.versions).find(
+        (v) =>
+          v.VersionId !== moveToId && v.VersionStages.includes("AWSPREVIOUS"),
+      );
+      if (previous !== undefined)
+        previous.VersionStages = previous.VersionStages.filter(
+          (s) => s !== "AWSPREVIOUS",
+        );
+      const old = secret.versions[removeFromId ?? ""];
+      if (old !== undefined && !old.VersionStages.includes("AWSPREVIOUS"))
+        old.VersionStages.push("AWSPREVIOUS");
+    }
+  }
+
+  ctx.store.set(secret.Name, secret);
+  return { ARN: secret.ARN, Name: secret.Name };
+};
+
+const PutResourcePolicy: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const policy = String(input["ResourcePolicy"] ?? "");
+  secret.ResourcePolicy = policy;
+  ctx.store.set(secret.Name, secret);
+  return { ARN: secret.ARN, Name: secret.Name };
+};
+
+const GetResourcePolicy: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  return {
+    ARN: secret.ARN,
+    Name: secret.Name,
+    ResourcePolicy: secret.ResourcePolicy,
+  };
+};
+
+const DeleteResourcePolicy: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  secret.ResourcePolicy = undefined;
+  ctx.store.set(secret.Name, secret);
+  return { ARN: secret.ARN, Name: secret.Name };
+};
+
+const ValidateResourcePolicy: OperationHandler = () => {
+  return { PolicyValidationPassed: true, ValidationErrors: [] };
+};
+
+const ReplicateSecretToRegions: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const addRegions = Array.isArray(input["AddReplicaRegions"])
+    ? (input["AddReplicaRegions"] as Record<string, unknown>[])
+    : [];
+  for (const replica of addRegions) {
+    const region = String(replica["Region"] ?? "");
+    const kmsKeyId = stringOrUndefined(replica["KmsKeyId"]);
+    const existing = secret.ReplicationStatus.find((r) => r.Region === region);
+    if (existing === undefined) {
+      secret.ReplicationStatus.push({
+        Region: region,
+        KmsKeyId: kmsKeyId,
+        Status: "InProgress",
+        StatusMessage: undefined,
+        LastAccessedDate: undefined,
+      });
+    }
+  }
+  ctx.store.set(secret.Name, secret);
+  return { ARN: secret.ARN, ReplicationStatus: secret.ReplicationStatus };
+};
+
+const RemoveRegionsFromReplication: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  const removeRegions = Array.isArray(input["RemoveReplicaRegions"])
+    ? (input["RemoveReplicaRegions"] as unknown[]).map((v) => String(v))
+    : [];
+  secret.ReplicationStatus = secret.ReplicationStatus.filter(
+    (r) => !removeRegions.includes(r.Region),
+  );
+  ctx.store.set(secret.Name, secret);
+  return { ARN: secret.ARN, ReplicationStatus: secret.ReplicationStatus };
+};
+
+const StopReplicationToReplica: OperationHandler = (input, ctx) => {
+  const secret = requireSecret(ctx, secretIdFromInput(input));
+  secret.ReplicationStatus = [];
+  ctx.store.set(secret.Name, secret);
+  return { ARN: secret.ARN };
+};
+
 const ListSecretVersionIds: OperationHandler = (input, ctx) => {
   const secret = requireSecret(ctx, secretIdFromInput(input));
   const versions = Object.values(secret.versions).map((version) => ({
@@ -344,6 +542,17 @@ const secretsManager: ServiceDefinition = {
     GetRandomPassword,
     TagResource,
     UntagResource,
+    RotateSecret,
+    CancelRotateSecret,
+    BatchGetSecretValue,
+    UpdateSecretVersionStage,
+    PutResourcePolicy,
+    GetResourcePolicy,
+    DeleteResourcePolicy,
+    ValidateResourcePolicy,
+    ReplicateSecretToRegions,
+    RemoveRegionsFromReplication,
+    StopReplicationToReplica,
     ListSecretVersionIds,
     RestoreSecret,
   },

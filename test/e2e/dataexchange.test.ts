@@ -2,12 +2,43 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn } from "bun";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import {
+  AcceptDataGrantCommand,
+  CancelJobCommand,
+  CreateDataGrantCommand,
   CreateDataSetCommand,
+  CreateEventActionCommand,
+  CreateJobCommand,
+  CreateRevisionCommand,
   DataExchangeClient,
+  DeleteAssetCommand,
+  DeleteDataGrantCommand,
   DeleteDataSetCommand,
+  DeleteEventActionCommand,
+  DeleteRevisionCommand,
+  GetAssetCommand,
+  GetDataGrantCommand,
   GetDataSetCommand,
+  GetEventActionCommand,
+  GetJobCommand,
+  GetReceivedDataGrantCommand,
+  GetRevisionCommand,
+  ListDataGrantsCommand,
+  ListDataSetRevisionsCommand,
   ListDataSetsCommand,
+  ListEventActionsCommand,
+  ListJobsCommand,
+  ListReceivedDataGrantsCommand,
+  ListRevisionAssetsCommand,
+  ListTagsForResourceCommand,
+  RevokeRevisionCommand,
+  SendDataSetNotificationCommand,
+  StartJobCommand,
+  TagResourceCommand,
+  UntagResourceCommand,
+  UpdateAssetCommand,
   UpdateDataSetCommand,
+  UpdateEventActionCommand,
+  UpdateRevisionCommand,
 } from "@aws-sdk/client-dataexchange";
 
 const awsPort = 4566;
@@ -104,4 +135,376 @@ test("DataExchange data set roundtrip", async () => {
   await expect(
     client.send(new GetDataSetCommand({ DataSetId: dataSetId })),
   ).rejects.toThrow();
+});
+
+test("DataExchange revision roundtrip", async () => {
+  const client = dataexchange();
+
+  const ds = await client.send(
+    new CreateDataSetCommand({
+      AssetType: "S3_SNAPSHOT",
+      Description: "revision test",
+      Name: `revision-test-${Date.now()}`,
+    }),
+  );
+  const dataSetId = ds.Id ?? "";
+
+  const rev = await client.send(
+    new CreateRevisionCommand({
+      DataSetId: dataSetId,
+      Comment: "first revision",
+    }),
+  );
+  expect(rev.Id).toBeDefined();
+  expect(rev.DataSetId).toBe(dataSetId);
+  expect(rev.Comment).toBe("first revision");
+  expect(rev.Finalized).toBe(false);
+  const revisionId = rev.Id ?? "";
+
+  const got = await client.send(
+    new GetRevisionCommand({ DataSetId: dataSetId, RevisionId: revisionId }),
+  );
+  expect(got.Id).toBe(revisionId);
+  expect(got.Comment).toBe("first revision");
+
+  const listed = await client.send(
+    new ListDataSetRevisionsCommand({ DataSetId: dataSetId }),
+  );
+  expect((listed.Revisions ?? []).map((r) => r.Id)).toContain(revisionId);
+
+  const updated = await client.send(
+    new UpdateRevisionCommand({
+      DataSetId: dataSetId,
+      RevisionId: revisionId,
+      Comment: "updated comment",
+      Finalized: true,
+    }),
+  );
+  expect(updated.Comment).toBe("updated comment");
+  expect(updated.Finalized).toBe(true);
+
+  await client.send(
+    new DeleteRevisionCommand({ DataSetId: dataSetId, RevisionId: revisionId }),
+  );
+  await expect(
+    client.send(
+      new GetRevisionCommand({ DataSetId: dataSetId, RevisionId: revisionId }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteDataSetCommand({ DataSetId: dataSetId }));
+});
+
+test("DataExchange revision revoke", async () => {
+  const client = dataexchange();
+
+  const ds = await client.send(
+    new CreateDataSetCommand({
+      AssetType: "S3_SNAPSHOT",
+      Description: "revoke test",
+      Name: `revoke-test-${Date.now()}`,
+    }),
+  );
+  const dataSetId = ds.Id ?? "";
+
+  const rev = await client.send(
+    new CreateRevisionCommand({ DataSetId: dataSetId }),
+  );
+  const revisionId = rev.Id ?? "";
+
+  const revoked = await client.send(
+    new RevokeRevisionCommand({
+      DataSetId: dataSetId,
+      RevisionId: revisionId,
+      RevocationComment: "revoked for testing purposes",
+    }),
+  );
+  expect(revoked.Revoked).toBe(true);
+  expect(revoked.RevocationComment).toBe("revoked for testing purposes");
+  expect(revoked.RevokedAt).toBeDefined();
+
+  await client.send(new DeleteDataSetCommand({ DataSetId: dataSetId }));
+});
+
+test("DataExchange asset operations (empty list and not-found errors)", async () => {
+  const client = dataexchange();
+
+  const ds = await client.send(
+    new CreateDataSetCommand({
+      AssetType: "S3_SNAPSHOT",
+      Description: "asset test",
+      Name: `asset-test-${Date.now()}`,
+    }),
+  );
+  const dataSetId = ds.Id ?? "";
+
+  const rev = await client.send(
+    new CreateRevisionCommand({ DataSetId: dataSetId }),
+  );
+  const revisionId = rev.Id ?? "";
+
+  const listed = await client.send(
+    new ListRevisionAssetsCommand({
+      DataSetId: dataSetId,
+      RevisionId: revisionId,
+    }),
+  );
+  expect(listed.Assets ?? []).toEqual([]);
+
+  await expect(
+    client.send(
+      new GetAssetCommand({
+        DataSetId: dataSetId,
+        RevisionId: revisionId,
+        AssetId: "nonexistent",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new UpdateAssetCommand({
+        DataSetId: dataSetId,
+        RevisionId: revisionId,
+        AssetId: "nonexistent",
+        Name: "new-name",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new DeleteAssetCommand({
+        DataSetId: dataSetId,
+        RevisionId: revisionId,
+        AssetId: "nonexistent",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteDataSetCommand({ DataSetId: dataSetId }));
+});
+
+test("DataExchange job roundtrip", async () => {
+  const client = dataexchange();
+
+  const job = await client.send(
+    new CreateJobCommand({
+      Type: "IMPORT_ASSETS_FROM_S3",
+      Details: {
+        ImportAssetsFromS3: {
+          AssetSources: [{ Bucket: "my-bucket", Key: "my-key" }],
+          DataSetId: "fake-dataset-id",
+          RevisionId: "fake-revision-id",
+        },
+      },
+    }),
+  );
+  expect(job.Id).toBeDefined();
+  expect(job.State).toBe("WAITING");
+  expect(job.Type).toBe("IMPORT_ASSETS_FROM_S3");
+  const jobId = job.Id ?? "";
+
+  const got = await client.send(new GetJobCommand({ JobId: jobId }));
+  expect(got.Id).toBe(jobId);
+  expect(got.State).toBe("WAITING");
+
+  const listed = await client.send(new ListJobsCommand({}));
+  expect((listed.Jobs ?? []).map((j) => j.Id)).toContain(jobId);
+
+  await client.send(new StartJobCommand({ JobId: jobId }));
+  const started = await client.send(new GetJobCommand({ JobId: jobId }));
+  expect(started.State).toBe("IN_PROGRESS");
+
+  const job2 = await client.send(
+    new CreateJobCommand({
+      Type: "IMPORT_ASSETS_FROM_S3",
+      Details: {
+        ImportAssetsFromS3: {
+          AssetSources: [{ Bucket: "my-bucket", Key: "my-key2" }],
+          DataSetId: "fake-dataset-id",
+          RevisionId: "fake-revision-id",
+        },
+      },
+    }),
+  );
+  const job2Id = job2.Id ?? "";
+  await client.send(new CancelJobCommand({ JobId: job2Id }));
+  const cancelled = await client.send(new GetJobCommand({ JobId: job2Id }));
+  expect(cancelled.State).toBe("CANCELLED");
+});
+
+test("DataExchange event action roundtrip", async () => {
+  const client = dataexchange();
+
+  const ea = await client.send(
+    new CreateEventActionCommand({
+      Action: {
+        ExportRevisionToS3: {
+          RevisionDestination: { Bucket: "my-bucket" },
+        },
+      },
+      Event: {
+        RevisionPublished: { DataSetId: "fake-dataset-id" },
+      },
+    }),
+  );
+  expect(ea.Id).toBeDefined();
+  expect(ea.Arn).toBeDefined();
+  const eventActionId = ea.Id ?? "";
+
+  const got = await client.send(
+    new GetEventActionCommand({ EventActionId: eventActionId }),
+  );
+  expect(got.Id).toBe(eventActionId);
+
+  const listed = await client.send(new ListEventActionsCommand({}));
+  expect((listed.EventActions ?? []).map((e) => e.Id)).toContain(eventActionId);
+
+  const updated = await client.send(
+    new UpdateEventActionCommand({
+      EventActionId: eventActionId,
+      Action: {
+        ExportRevisionToS3: {
+          RevisionDestination: { Bucket: "updated-bucket" },
+        },
+      },
+    }),
+  );
+  expect(updated.Id).toBe(eventActionId);
+
+  await client.send(
+    new DeleteEventActionCommand({ EventActionId: eventActionId }),
+  );
+  await expect(
+    client.send(new GetEventActionCommand({ EventActionId: eventActionId })),
+  ).rejects.toThrow();
+});
+
+test("DataExchange data grant roundtrip", async () => {
+  const client = dataexchange();
+
+  const ds = await client.send(
+    new CreateDataSetCommand({
+      AssetType: "S3_SNAPSHOT",
+      Description: "grant test dataset",
+      Name: `grant-test-${Date.now()}`,
+    }),
+  );
+  const dataSetId = ds.Id ?? "";
+
+  const grant = await client.send(
+    new CreateDataGrantCommand({
+      Name: "test-grant",
+      GrantDistributionScope: "AWS_ORGANIZATION",
+      ReceiverPrincipal: "123456789012",
+      SourceDataSetId: dataSetId,
+      Description: "test grant description",
+    }),
+  );
+  expect(grant.Id).toBeDefined();
+  expect(grant.Arn).toBeDefined();
+  expect(grant.Name).toBe("test-grant");
+  expect(grant.AcceptanceState).toBe("PENDING_RECEIVER_ACCEPTANCE");
+  const grantId = grant.Id ?? "";
+  const grantArn = grant.Arn ?? "";
+
+  const got = await client.send(
+    new GetDataGrantCommand({ DataGrantId: grantId }),
+  );
+  expect(got.Id).toBe(grantId);
+  expect(got.Name).toBe("test-grant");
+
+  const listed = await client.send(new ListDataGrantsCommand({}));
+  expect((listed.DataGrantSummaries ?? []).map((g) => g.Id)).toContain(grantId);
+
+  const received = await client.send(
+    new GetReceivedDataGrantCommand({ DataGrantArn: grantArn }),
+  );
+  expect(received.Arn).toBe(grantArn);
+  expect(received.AcceptanceState).toBe("PENDING_RECEIVER_ACCEPTANCE");
+
+  const receivedList = await client.send(new ListReceivedDataGrantsCommand({}));
+  expect((receivedList.DataGrantSummaries ?? []).map((g) => g.Arn)).toContain(
+    grantArn,
+  );
+
+  const accepted = await client.send(
+    new AcceptDataGrantCommand({ DataGrantArn: grantArn }),
+  );
+  expect(accepted.AcceptanceState).toBe("GRANTED");
+  expect(accepted.AcceptedAt).toBeDefined();
+
+  await client.send(new DeleteDataGrantCommand({ DataGrantId: grantId }));
+  await expect(
+    client.send(new GetDataGrantCommand({ DataGrantId: grantId })),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteDataSetCommand({ DataSetId: dataSetId }));
+});
+
+test("DataExchange tags roundtrip", async () => {
+  const client = dataexchange();
+
+  const ds = await client.send(
+    new CreateDataSetCommand({
+      AssetType: "S3_SNAPSHOT",
+      Description: "tags test",
+      Name: `tags-test-${Date.now()}`,
+    }),
+  );
+  const resourceArn = ds.Arn ?? "";
+  const dataSetId = ds.Id ?? "";
+
+  await client.send(
+    new TagResourceCommand({
+      ResourceArn: resourceArn,
+      Tags: { env: "test", project: "bunsai" },
+    }),
+  );
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: resourceArn }),
+  );
+  expect(listed.Tags?.env).toBe("test");
+  expect(listed.Tags?.project).toBe("bunsai");
+
+  await client.send(
+    new UntagResourceCommand({
+      ResourceArn: resourceArn,
+      TagKeys: ["env"],
+    }),
+  );
+
+  const afterUntag = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: resourceArn }),
+  );
+  expect(afterUntag.Tags?.env).toBeUndefined();
+  expect(afterUntag.Tags?.project).toBe("bunsai");
+
+  await client.send(new DeleteDataSetCommand({ DataSetId: dataSetId }));
+});
+
+test("DataExchange SendDataSetNotification", async () => {
+  const client = dataexchange();
+
+  const ds = await client.send(
+    new CreateDataSetCommand({
+      AssetType: "S3_SNAPSHOT",
+      Description: "notification test",
+      Name: `notification-test-${Date.now()}`,
+    }),
+  );
+  const dataSetId = ds.Id ?? "";
+
+  await expect(
+    client.send(
+      new SendDataSetNotificationCommand({
+        DataSetId: dataSetId,
+        Type: "DATA_DELAY",
+      }),
+    ),
+  ).resolves.toBeDefined();
+
+  await client.send(new DeleteDataSetCommand({ DataSetId: dataSetId }));
 });

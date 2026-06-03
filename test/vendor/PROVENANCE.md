@@ -125,6 +125,9 @@ aws-models/
   amplify.json          # botocore/data/amplify/2017-07-25/service-2.json          (protocol rest-json)
   appconfig.json        # botocore/data/appconfig/2019-10-09/service-2.json        (protocol rest-json)
   pinpoint.json         # botocore/data/pinpoint/2016-12-01/service-2.json         (protocol rest-json, signingName mobiletargeting)
+  config.json           # botocore/data/config/2014-11-12/service-2.json           (protocol json, endpointPrefix config, targetPrefix StarlingDoveService)
+  guardduty.json        # botocore/data/guardduty/2017-11-28/service-2.json        (protocol rest-json)
+  resourcegroups.json   # botocore/data/resource-groups/2017-11-27/service-2.json  (protocol rest-json, signingName resource-groups)
 ```
 
 ### Notes

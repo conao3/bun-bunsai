@@ -59,6 +59,9 @@ import emr from "./emr.ts";
 import amplify from "./amplify.ts";
 import appconfig from "./appconfig.ts";
 import pinpoint from "./pinpoint.ts";
+import config from "./config.ts";
+import guardduty from "./guardduty.ts";
+import resourcegroups from "./resourcegroups.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -121,6 +124,9 @@ export const services: ServiceDefinition[] = [
   amplify,
   appconfig,
   pinpoint,
+  config,
+  guardduty,
+  resourcegroups,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

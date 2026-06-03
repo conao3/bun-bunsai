@@ -98,6 +98,8 @@ import frauddetector from "./frauddetector.ts";
 import comprehend from "./comprehend.ts";
 import mediatailor from "./mediatailor.ts";
 import dataexchange from "./dataexchange.ts";
+import groundstation from "./groundstation.ts";
+import wisdom from "./wisdom.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -199,6 +201,8 @@ export const services: ServiceDefinition[] = [
   comprehend,
   mediatailor,
   dataexchange,
+  groundstation,
+  wisdom,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

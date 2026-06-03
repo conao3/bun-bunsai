@@ -164,6 +164,8 @@ aws-models/
   comprehend.json       # botocore/data/comprehend/2017-11-27/service-2.json       (protocol json, endpointPrefix comprehend, signingName comprehend, targetPrefix Comprehend_20171127)
   mediatailor.json      # botocore/data/mediatailor/2018-04-23/service-2.json      (protocol rest-json, endpointPrefix api.mediatailor, signingName mediatailor)
   dataexchange.json     # botocore/data/dataexchange/2017-07-25/service-2.json     (protocol rest-json, endpointPrefix dataexchange, signingName dataexchange)
+  groundstation.json    # botocore/data/groundstation/2019-05-23/service-2.json    (protocol rest-json, endpointPrefix groundstation, signingName groundstation)
+  wisdom.json           # botocore/data/wisdom/2020-10-19/service-2.json           (protocol rest-json, endpointPrefix wisdom, signingName wisdom)
 ```
 
 ### Notes

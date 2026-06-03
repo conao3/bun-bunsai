@@ -461,6 +461,204 @@ const ChangeMessageVisibilityBatch: OperationHandler = (input, ctx) => {
   return { Successful: successful, Failed: failed };
 };
 
+type StoredMoveTask = {
+  TaskHandle: string;
+  Status: string;
+  SourceArn: string;
+  DestinationArn: string | undefined;
+  MaxNumberOfMessagesPerSecond: number | undefined;
+  ApproximateNumberOfMessagesMoved: number;
+  ApproximateNumberOfMessagesToMove: number | undefined;
+  StartedTimestamp: number;
+};
+
+const MOVE_TASKS_KEY = "__moveTasks";
+
+const nameFromArn = (arn: string): string => {
+  const parts = arn.split(":");
+  return parts[parts.length - 1] ?? "";
+};
+
+type PolicyStatement = {
+  Sid: string;
+  Effect: string;
+  Principal: { AWS: string[] };
+  Action: string[];
+  Resource: string;
+};
+
+type PolicyDoc = {
+  Version: string;
+  Statement: PolicyStatement[];
+};
+
+const readPolicy = (queue: StoredQueue): PolicyDoc => {
+  const raw = queue.Attributes["Policy"];
+  if (typeof raw === "string" && raw !== "") {
+    try {
+      return JSON.parse(raw) as PolicyDoc;
+    } catch {
+      void 0;
+    }
+  }
+  return { Version: "2012-10-17", Statement: [] };
+};
+
+const AddPermission: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  const queue = requireQueue(ctx, name);
+  const label = input["Label"];
+  if (typeof label !== "string" || label === "") {
+    throw awsError("MissingParameter", "Label is required.", 400);
+  }
+  const rawIds = input["AWSAccountIds"];
+  const accountIds = Array.isArray(rawIds)
+    ? (rawIds as unknown[]).map((v) => String(v))
+    : [];
+  const rawActions = input["Actions"];
+  const actions = Array.isArray(rawActions)
+    ? (rawActions as unknown[]).map((v) => {
+        const s = String(v);
+        return s === "*" || s.includes(":") ? s : `sqs:${s}`;
+      })
+    : [];
+  const queueArn = `arn:aws:sqs:${ctx.region}:${ctx.account}:${name}`;
+  const policy = readPolicy(queue);
+  policy.Statement = policy.Statement.filter((stmt) => stmt.Sid !== label);
+  policy.Statement.push({
+    Sid: label,
+    Effect: "Allow",
+    Principal: { AWS: accountIds },
+    Action: actions,
+    Resource: queueArn,
+  });
+  queue.Attributes["Policy"] = JSON.stringify(policy);
+  ctx.store.set(name, queue);
+  return {};
+};
+
+const RemovePermission: OperationHandler = (input, ctx) => {
+  const name = queueNameFromInput(input);
+  const queue = requireQueue(ctx, name);
+  const label = input["Label"];
+  if (typeof label !== "string" || label === "") {
+    throw awsError("MissingParameter", "Label is required.", 400);
+  }
+  const policy = readPolicy(queue);
+  policy.Statement = policy.Statement.filter((stmt) => stmt.Sid !== label);
+  queue.Attributes["Policy"] = JSON.stringify(policy);
+  ctx.store.set(name, queue);
+  return {};
+};
+
+const requireSourceQueue = (
+  ctx: ServiceContext,
+  sourceArn: string,
+): StoredQueue => {
+  const name = nameFromArn(sourceArn);
+  const queue = ctx.store.get<StoredQueue>(name);
+  if (queue === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      "The specified resource does not exist.",
+      400,
+    );
+  }
+  return queue;
+};
+
+const StartMessageMoveTask: OperationHandler = (input, ctx) => {
+  const sourceArn = input["SourceArn"];
+  if (typeof sourceArn !== "string" || sourceArn === "") {
+    throw awsError("MissingParameter", "SourceArn is required.", 400);
+  }
+  const queue = requireSourceQueue(ctx, sourceArn);
+  const destinationArn =
+    typeof input["DestinationArn"] === "string" &&
+    input["DestinationArn"] !== ""
+      ? (input["DestinationArn"] as string)
+      : undefined;
+  const rawMax = input["MaxNumberOfMessagesPerSecond"];
+  const parsedMax =
+    typeof rawMax === "number"
+      ? rawMax
+      : typeof rawMax === "string"
+        ? Number.parseInt(rawMax, 10)
+        : undefined;
+  const maxPerSecond =
+    parsedMax !== undefined && Number.isFinite(parsedMax)
+      ? parsedMax
+      : undefined;
+  const taskHandle = crypto.randomUUID();
+  const task: StoredMoveTask = {
+    TaskHandle: taskHandle,
+    Status: "RUNNING",
+    SourceArn: sourceArn,
+    DestinationArn: destinationArn,
+    MaxNumberOfMessagesPerSecond: maxPerSecond,
+    ApproximateNumberOfMessagesMoved: 0,
+    ApproximateNumberOfMessagesToMove: queue.messages.length,
+    StartedTimestamp: Date.now(),
+  };
+  const tasks = ctx.store.get<StoredMoveTask[]>(MOVE_TASKS_KEY) ?? [];
+  tasks.unshift(task);
+  ctx.store.set(MOVE_TASKS_KEY, tasks);
+  return { TaskHandle: taskHandle };
+};
+
+const ListMessageMoveTasks: OperationHandler = (input, ctx) => {
+  const sourceArn = input["SourceArn"];
+  if (typeof sourceArn !== "string" || sourceArn === "") {
+    throw awsError("MissingParameter", "SourceArn is required.", 400);
+  }
+  requireSourceQueue(ctx, sourceArn);
+  const rawMax = input["MaxResults"];
+  const parsedMax =
+    typeof rawMax === "number"
+      ? rawMax
+      : typeof rawMax === "string"
+        ? Number.parseInt(rawMax, 10)
+        : 1;
+  const limit =
+    Number.isFinite(parsedMax) && parsedMax > 0 ? Math.min(parsedMax, 10) : 1;
+  const allTasks = ctx.store.get<StoredMoveTask[]>(MOVE_TASKS_KEY) ?? [];
+  const results = allTasks
+    .filter((task) => task.SourceArn === sourceArn)
+    .slice(0, limit)
+    .map((task) => ({
+      TaskHandle: task.Status === "RUNNING" ? task.TaskHandle : undefined,
+      Status: task.Status,
+      SourceArn: task.SourceArn,
+      DestinationArn: task.DestinationArn,
+      MaxNumberOfMessagesPerSecond: task.MaxNumberOfMessagesPerSecond,
+      ApproximateNumberOfMessagesMoved: task.ApproximateNumberOfMessagesMoved,
+      ApproximateNumberOfMessagesToMove: task.ApproximateNumberOfMessagesToMove,
+      StartedTimestamp: task.StartedTimestamp,
+    }));
+  return { Results: results };
+};
+
+const CancelMessageMoveTask: OperationHandler = (input, ctx) => {
+  const taskHandle = input["TaskHandle"];
+  if (typeof taskHandle !== "string" || taskHandle === "") {
+    throw awsError("MissingParameter", "TaskHandle is required.", 400);
+  }
+  const tasks = ctx.store.get<StoredMoveTask[]>(MOVE_TASKS_KEY) ?? [];
+  const task = tasks.find((t) => t.TaskHandle === taskHandle);
+  if (task === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      "The specified resource does not exist.",
+      400,
+    );
+  }
+  task.Status = "CANCELLED";
+  ctx.store.set(MOVE_TASKS_KEY, tasks);
+  return {
+    ApproximateNumberOfMessagesMoved: task.ApproximateNumberOfMessagesMoved,
+  };
+};
+
 const redriveTargetArn = (queue: StoredQueue): string | undefined => {
   const policy = queue.Attributes["RedrivePolicy"];
   if (typeof policy !== "string" || policy === "") return undefined;
@@ -506,6 +704,11 @@ const sqs: ServiceDefinition = {
     DeleteMessageBatch,
     ChangeMessageVisibilityBatch,
     ListDeadLetterSourceQueues,
+    AddPermission,
+    RemovePermission,
+    StartMessageMoveTask,
+    ListMessageMoveTasks,
+    CancelMessageMoveTask,
   },
   model,
 } as const;

@@ -90,6 +90,9 @@ import greengrass from "./greengrass.ts";
 import medialive from "./medialive.ts";
 import appmesh from "./appmesh.ts";
 import codeartifact from "./codeartifact.ts";
+import iotevents from "./iotevents.ts";
+import iotsitewise from "./iotsitewise.ts";
+import ssmContacts from "./ssm-contacts.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -183,6 +186,9 @@ export const services: ServiceDefinition[] = [
   medialive,
   appmesh,
   codeartifact,
+  iotevents,
+  iotsitewise,
+  ssmContacts,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

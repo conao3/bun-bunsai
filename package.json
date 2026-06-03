@@ -61,6 +61,8 @@
     "@aws-sdk/client-guardduty": "^3.1059.0",
     "@aws-sdk/client-iam": "^3.1058.0",
     "@aws-sdk/client-imagebuilder": "^3.1059.0",
+    "@aws-sdk/client-iot-events": "^3.1059.0",
+    "@aws-sdk/client-iotsitewise": "^3.1059.0",
     "@aws-sdk/client-kendra": "^3.1059.0",
     "@aws-sdk/client-keyspaces": "^3.1059.0",
     "@aws-sdk/client-kinesis": "^3.1058.0",

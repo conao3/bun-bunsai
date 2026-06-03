@@ -156,6 +156,9 @@ aws-models/
   medialive.json        # botocore/data/medialive/2017-10-14/service-2.json        (protocol rest-json, endpointPrefix medialive, signingName medialive)
   appmesh.json          # botocore/data/appmesh/2019-01-25/service-2.json          (protocol rest-json, endpointPrefix appmesh, signingName appmesh)
   codeartifact.json     # botocore/data/codeartifact/2018-09-22/service-2.json     (protocol rest-json, endpointPrefix codeartifact, signingName codeartifact)
+  iotevents.json        # botocore/data/iotevents/2018-07-27/service-2.json        (protocol rest-json, endpointPrefix iotevents, signingName iotevents)
+  iotsitewise.json      # botocore/data/iotsitewise/2019-12-02/service-2.json      (protocol rest-json, endpointPrefix iotsitewise, signingName iotsitewise)
+  ssm-contacts.json     # botocore/data/ssm-contacts/2021-05-03/service-2.json     (protocol json, endpointPrefix ssm-contacts, signingName ssm-contacts, targetPrefix SSMContacts)
 ```
 
 ### Notes

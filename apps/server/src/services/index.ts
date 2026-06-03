@@ -68,6 +68,9 @@ import swf from "./swf.ts";
 import datapipeline from "./datapipeline.ts";
 import servicecatalog from "./servicecatalog.ts";
 import mediastore from "./mediastore.ts";
+import shield from "./shield.ts";
+import fms from "./fms.ts";
+import licensemanager from "./licensemanager.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -139,6 +142,9 @@ export const services: ServiceDefinition[] = [
   datapipeline,
   servicecatalog,
   mediastore,
+  shield,
+  fms,
+  licensemanager,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

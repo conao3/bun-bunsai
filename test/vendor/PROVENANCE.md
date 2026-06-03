@@ -134,6 +134,9 @@ aws-models/
   datapipeline.json     # botocore/data/datapipeline/2012-10-29/service-2.json     (protocol json, targetPrefix DataPipeline)
   servicecatalog.json   # botocore/data/servicecatalog/2015-12-10/service-2.json   (protocol json, targetPrefix AWS242ServiceCatalogService)
   mediastore.json       # botocore/data/mediastore/2017-09-01/service-2.json       (protocol json, targetPrefix MediaStore_20170901)
+  shield.json           # botocore/data/shield/2016-06-02/service-2.json           (protocol json, targetPrefix AWSShield_20160616)
+  fms.json              # botocore/data/fms/2018-01-01/service-2.json              (protocol json, targetPrefix AWSFMS_20180101)
+  licensemanager.json   # botocore/data/license-manager/2018-08-01/service-2.json  (protocol json, signingName license-manager, targetPrefix AWSLicenseManager)
 ```
 
 ### Notes

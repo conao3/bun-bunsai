@@ -68,6 +68,115 @@ type StoredCacheSubnetGroup = {
   ARN: string;
 };
 
+type StoredSnapshot = {
+  SnapshotName: string;
+  ReplicationGroupId: string | undefined;
+  CacheClusterId: string | undefined;
+  SnapshotStatus: string;
+  SnapshotSource: string;
+  CacheNodeType: string | undefined;
+  Engine: string | undefined;
+  EngineVersion: string | undefined;
+  ARN: string;
+};
+
+type StoredServerlessCache = {
+  ServerlessCacheName: string;
+  Description: string | undefined;
+  Status: string;
+  Engine: string;
+  MajorEngineVersion: string | undefined;
+  FullEngineVersion: string | undefined;
+  KmsKeyId: string | undefined;
+  SecurityGroupIds: string[];
+  UserGroupId: string | undefined;
+  SubnetIds: string[];
+  SnapshotRetentionLimit: number | undefined;
+  DailySnapshotTime: string | undefined;
+  CreateTime: string;
+  ARN: string;
+};
+
+type StoredServerlessCacheSnapshot = {
+  ServerlessCacheSnapshotName: string;
+  ARN: string;
+  KmsKeyId: string | undefined;
+  SnapshotType: string;
+  Status: string;
+  CreateTime: string;
+  ServerlessCacheConfiguration: {
+    ServerlessCacheName: string;
+    Engine: string;
+    MajorEngineVersion: string | undefined;
+  };
+};
+
+type StoredUser = {
+  UserId: string;
+  UserName: string;
+  Status: string;
+  Engine: string;
+  AccessString: string | undefined;
+  UserGroupIds: string[];
+  ARN: string;
+};
+
+type StoredUserGroup = {
+  UserGroupId: string;
+  Status: string;
+  Engine: string;
+  UserIds: string[];
+  ReplicationGroups: string[];
+  ServerlessCaches: string[];
+  ARN: string;
+};
+
+type StoredCacheSecurityGroup = {
+  OwnerId: string;
+  CacheSecurityGroupName: string;
+  Description: string;
+  EC2SecurityGroups: {
+    Status: string;
+    EC2SecurityGroupName: string;
+    EC2SecurityGroupOwnerId: string;
+  }[];
+  ARN: string;
+};
+
+type StoredGlobalReplicationGroup = {
+  GlobalReplicationGroupId: string;
+  GlobalReplicationGroupDescription: string;
+  Status: string;
+  CacheNodeType: string | undefined;
+  Engine: string | undefined;
+  EngineVersion: string | undefined;
+  Members: {
+    ReplicationGroupId: string;
+    ReplicationGroupRegion: string;
+    Role: string;
+    AutomaticFailover: string;
+    Status: string;
+  }[];
+  ClusterEnabled: boolean;
+  GlobalNodeGroups: { GlobalNodeGroupId: string; Slots: string }[];
+  ARN: string;
+};
+
+type StoredReservedCacheNode = {
+  ReservedCacheNodeId: string;
+  ReservedCacheNodesOfferingId: string;
+  CacheNodeType: string;
+  StartTime: string;
+  Duration: number;
+  FixedPrice: number;
+  UsagePrice: number;
+  CacheNodeCount: number;
+  ProductDescription: string;
+  OfferingType: string;
+  State: string;
+  ReservationARN: string;
+};
+
 const clusterKey = (id: string): string => `cluster/${id}`;
 
 const groupKey = (id: string): string => `group/${id}`;
@@ -75,6 +184,26 @@ const groupKey = (id: string): string => `group/${id}`;
 const paramGroupKey = (name: string): string => `paramgroup/${name}`;
 
 const subnetGroupKey = (name: string): string => `subnetgroup/${name}`;
+
+const snapshotKey = (name: string): string => `snapshot/${name}`;
+
+const serverlessCacheKey = (name: string): string => `serverlesscache/${name}`;
+
+const serverlessCacheSnapshotKey = (name: string): string =>
+  `serverlesscachesnapshot/${name}`;
+
+const userKey = (id: string): string => `user/${id}`;
+
+const userGroupKey = (id: string): string => `usergroup/${id}`;
+
+const cacheSecurityGroupKey = (name: string): string =>
+  `cachesecuritygroup/${name}`;
+
+const globalRepGroupKey = (id: string): string => `globalrepgroup/${id}`;
+
+const reservedCacheNodeKey = (id: string): string => `reservedcachenode/${id}`;
+
+const tagKey = (arn: string): string => `tags/${arn}`;
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -143,12 +272,70 @@ const subnetGroupArnOf = (
   name: string,
 ): string => `arn:aws:elasticache:${region}:${account}:subnetgroup:${name}`;
 
+const snapshotArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:elasticache:${region}:${account}:snapshot:${name}`;
+
+const serverlessCacheArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:elasticache:${region}:${account}:serverlesscache:${name}`;
+
+const serverlessCacheSnapshotArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:elasticache:${region}:${account}:serverlesscachesnapshot:${name}`;
+
+const userArnOf = (region: string, account: string, id: string): string =>
+  `arn:aws:elasticache:${region}:${account}:user:${id}`;
+
+const userGroupArnOf = (region: string, account: string, id: string): string =>
+  `arn:aws:elasticache:${region}:${account}:usergroup:${id}`;
+
+const cacheSecurityGroupArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:elasticache:${region}:${account}:securitygroup:${name}`;
+
+const globalRepGroupArnOf = (
+  region: string,
+  account: string,
+  id: string,
+): string =>
+  `arn:aws:elasticache:${region}:${account}:globalreplicationgroup:${id}`;
+
+const reservedCacheNodeArnOf = (
+  region: string,
+  account: string,
+  id: string,
+): string => `arn:aws:elasticache:${region}:${account}:reserved-instance:${id}`;
+
 const stringList = (input: Record<string, unknown>, key: string): string[] => {
   const value = input[key];
   if (!Array.isArray(value)) {
     return [];
   }
   return value.filter((item): item is string => typeof item === "string");
+};
+
+const tagList = (
+  input: Record<string, unknown>,
+): { Key: string; Value: string }[] => {
+  const tags = input["Tags"];
+  if (!Array.isArray(tags)) {
+    return [];
+  }
+  return tags
+    .filter(
+      (t): t is Record<string, unknown> => t !== null && typeof t === "object",
+    )
+    .map((t) => ({
+      Key: String(t["Key"] ?? ""),
+      Value: String(t["Value"] ?? ""),
+    }));
 };
 
 const requireCluster = (
@@ -164,6 +351,111 @@ const requireCluster = (
     );
   }
   return cluster;
+};
+
+const requireReplicationGroup = (
+  ctx: ServiceContext,
+  id: string,
+): StoredReplicationGroup => {
+  const group = ctx.store.get<StoredReplicationGroup>(groupKey(id));
+  if (group === undefined) {
+    throw awsError(
+      "ReplicationGroupNotFoundFault",
+      `ReplicationGroup ${id} not found.`,
+      404,
+    );
+  }
+  return group;
+};
+
+const requireSnapshot = (ctx: ServiceContext, name: string): StoredSnapshot => {
+  const snapshot = ctx.store.get<StoredSnapshot>(snapshotKey(name));
+  if (snapshot === undefined) {
+    throw awsError("SnapshotNotFoundFault", `Snapshot ${name} not found.`, 404);
+  }
+  return snapshot;
+};
+
+const requireServerlessCache = (
+  ctx: ServiceContext,
+  name: string,
+): StoredServerlessCache => {
+  const cache = ctx.store.get<StoredServerlessCache>(serverlessCacheKey(name));
+  if (cache === undefined) {
+    throw awsError(
+      "ServerlessCacheNotFoundFault",
+      `ServerlessCache ${name} not found.`,
+      404,
+    );
+  }
+  return cache;
+};
+
+const requireServerlessCacheSnapshot = (
+  ctx: ServiceContext,
+  name: string,
+): StoredServerlessCacheSnapshot => {
+  const snap = ctx.store.get<StoredServerlessCacheSnapshot>(
+    serverlessCacheSnapshotKey(name),
+  );
+  if (snap === undefined) {
+    throw awsError(
+      "ServerlessCacheSnapshotNotFoundFault",
+      `ServerlessCacheSnapshot ${name} not found.`,
+      404,
+    );
+  }
+  return snap;
+};
+
+const requireUser = (ctx: ServiceContext, id: string): StoredUser => {
+  const user = ctx.store.get<StoredUser>(userKey(id));
+  if (user === undefined) {
+    throw awsError("UserNotFoundFault", `User ${id} not found.`, 404);
+  }
+  return user;
+};
+
+const requireUserGroup = (ctx: ServiceContext, id: string): StoredUserGroup => {
+  const group = ctx.store.get<StoredUserGroup>(userGroupKey(id));
+  if (group === undefined) {
+    throw awsError("UserGroupNotFoundFault", `UserGroup ${id} not found.`, 404);
+  }
+  return group;
+};
+
+const requireCacheSecurityGroup = (
+  ctx: ServiceContext,
+  name: string,
+): StoredCacheSecurityGroup => {
+  const group = ctx.store.get<StoredCacheSecurityGroup>(
+    cacheSecurityGroupKey(name),
+  );
+  if (group === undefined) {
+    throw awsError(
+      "CacheSecurityGroupNotFound",
+      `CacheSecurityGroup ${name} not found.`,
+      404,
+    );
+  }
+  return group;
+};
+
+const requireGlobalReplicationGroup = (
+  ctx: ServiceContext,
+  id: string,
+): StoredGlobalReplicationGroup => {
+  const group = ctx.store.get<StoredGlobalReplicationGroup>(
+    globalRepGroupKey(id),
+  );
+  if (group === undefined) {
+    throw awsError(
+      "GlobalReplicationGroupNotFoundFault",
+      `GlobalReplicationGroup ${id} not found.`,
+      404,
+    );
+  }
+  return group;
 };
 
 const presentCluster = (cluster: StoredCacheCluster) => ({
@@ -225,6 +517,102 @@ const presentSubnetGroup = (subnetGroup: StoredCacheSubnetGroup) => ({
     SubnetAvailabilityZone: { Name: subnet.SubnetAvailabilityZone.Name },
   })),
   ARN: subnetGroup.ARN,
+});
+
+const presentSnapshot = (snapshot: StoredSnapshot) => ({
+  SnapshotName: snapshot.SnapshotName,
+  ReplicationGroupId: snapshot.ReplicationGroupId,
+  CacheClusterId: snapshot.CacheClusterId,
+  SnapshotStatus: snapshot.SnapshotStatus,
+  SnapshotSource: snapshot.SnapshotSource,
+  CacheNodeType: snapshot.CacheNodeType,
+  Engine: snapshot.Engine,
+  EngineVersion: snapshot.EngineVersion,
+  ARN: snapshot.ARN,
+});
+
+const presentServerlessCache = (cache: StoredServerlessCache) => ({
+  ServerlessCacheName: cache.ServerlessCacheName,
+  Description: cache.Description,
+  Status: cache.Status,
+  Engine: cache.Engine,
+  MajorEngineVersion: cache.MajorEngineVersion,
+  FullEngineVersion: cache.FullEngineVersion,
+  KmsKeyId: cache.KmsKeyId,
+  SecurityGroupIds: cache.SecurityGroupIds,
+  UserGroupId: cache.UserGroupId,
+  SubnetIds: cache.SubnetIds,
+  SnapshotRetentionLimit: cache.SnapshotRetentionLimit,
+  DailySnapshotTime: cache.DailySnapshotTime,
+  CreateTime: cache.CreateTime,
+  Endpoint: {
+    Address: `${cache.ServerlessCacheName}.serverless.${cache.Engine}.bunsai.cache.amazonaws.com`,
+    Port: 6379,
+  },
+  ReaderEndpoint: {
+    Address: `${cache.ServerlessCacheName}.reader.serverless.${cache.Engine}.bunsai.cache.amazonaws.com`,
+    Port: 6379,
+  },
+  ARN: cache.ARN,
+});
+
+const presentServerlessCacheSnapshot = (
+  snap: StoredServerlessCacheSnapshot,
+) => ({
+  ServerlessCacheSnapshotName: snap.ServerlessCacheSnapshotName,
+  ARN: snap.ARN,
+  KmsKeyId: snap.KmsKeyId,
+  SnapshotType: snap.SnapshotType,
+  Status: snap.Status,
+  CreateTime: snap.CreateTime,
+  ServerlessCacheConfiguration: snap.ServerlessCacheConfiguration,
+});
+
+const presentUser = (user: StoredUser) => ({
+  UserId: user.UserId,
+  UserName: user.UserName,
+  Status: user.Status,
+  Engine: user.Engine,
+  MinimumEngineVersion: "6.0",
+  AccessString: user.AccessString,
+  UserGroupIds: user.UserGroupIds,
+  Authentication: { Type: "no-password", PasswordCount: 0 },
+  ARN: user.ARN,
+});
+
+const presentUserGroup = (group: StoredUserGroup) => ({
+  UserGroupId: group.UserGroupId,
+  Status: group.Status,
+  Engine: group.Engine,
+  UserIds: group.UserIds,
+  MinimumEngineVersion: "6.0",
+  PendingChanges: { UserIdsToRemove: [], UserIdsToAdd: [] },
+  ReplicationGroups: group.ReplicationGroups,
+  ServerlessCaches: group.ServerlessCaches,
+  ARN: group.ARN,
+});
+
+const presentCacheSecurityGroup = (group: StoredCacheSecurityGroup) => ({
+  OwnerId: group.OwnerId,
+  CacheSecurityGroupName: group.CacheSecurityGroupName,
+  Description: group.Description,
+  EC2SecurityGroups: group.EC2SecurityGroups,
+  ARN: group.ARN,
+});
+
+const presentGlobalReplicationGroup = (
+  group: StoredGlobalReplicationGroup,
+) => ({
+  GlobalReplicationGroupId: group.GlobalReplicationGroupId,
+  GlobalReplicationGroupDescription: group.GlobalReplicationGroupDescription,
+  Status: group.Status,
+  CacheNodeType: group.CacheNodeType,
+  Engine: group.Engine,
+  EngineVersion: group.EngineVersion,
+  Members: group.Members,
+  ClusterEnabled: group.ClusterEnabled,
+  GlobalNodeGroups: group.GlobalNodeGroups,
+  ARN: group.ARN,
 });
 
 const CreateCacheCluster: OperationHandler = (input, ctx) => {
@@ -295,6 +683,27 @@ const DeleteCacheCluster: OperationHandler = (input, ctx) => {
   return { CacheCluster: { ...presented, CacheClusterStatus: "deleting" } };
 };
 
+const ModifyCacheCluster: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "CacheClusterId");
+  const cluster = requireCluster(ctx, id);
+  const updated: StoredCacheCluster = {
+    ...cluster,
+    CacheNodeType:
+      optionalString(input, "CacheNodeType") ?? cluster.CacheNodeType,
+    EngineVersion:
+      optionalString(input, "EngineVersion") ?? cluster.EngineVersion,
+    NumCacheNodes: numberOr(input, "NumCacheNodes", cluster.NumCacheNodes),
+  };
+  ctx.store.set(clusterKey(id), updated);
+  return { CacheCluster: presentCluster(updated) };
+};
+
+const RebootCacheCluster: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "CacheClusterId");
+  const cluster = requireCluster(ctx, id);
+  return { CacheCluster: presentCluster(cluster) };
+};
+
 const CreateReplicationGroup: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ReplicationGroupId");
   const description = requireString(input, "ReplicationGroupDescription");
@@ -353,6 +762,80 @@ const DescribeReplicationGroups: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith("group/"))
     .map((entry) => presentGroup(entry.value));
   return { ReplicationGroups: groups };
+};
+
+const DeleteReplicationGroup: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ReplicationGroupId");
+  const group = requireReplicationGroup(ctx, id);
+  const presented = presentGroup(group);
+  ctx.store.delete(groupKey(id));
+  return { ReplicationGroup: { ...presented, Status: "deleting" } };
+};
+
+const ModifyReplicationGroup: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ReplicationGroupId");
+  const group = requireReplicationGroup(ctx, id);
+  const updated: StoredReplicationGroup = {
+    ...group,
+    Description:
+      optionalString(input, "ReplicationGroupDescription") ?? group.Description,
+    CacheNodeType:
+      optionalString(input, "CacheNodeType") ?? group.CacheNodeType,
+    AutomaticFailover: booleanOr(
+      input,
+      "AutomaticFailoverEnabled",
+      group.AutomaticFailover === "enabled",
+    )
+      ? "enabled"
+      : "disabled",
+  };
+  ctx.store.set(groupKey(id), updated);
+  return { ReplicationGroup: presentGroup(updated) };
+};
+
+const ModifyReplicationGroupShardConfiguration: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id = requireString(input, "ReplicationGroupId");
+  const group = requireReplicationGroup(ctx, id);
+  return { ReplicationGroup: presentGroup(group) };
+};
+
+const IncreaseReplicaCount: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ReplicationGroupId");
+  const group = requireReplicationGroup(ctx, id);
+  return { ReplicationGroup: presentGroup(group) };
+};
+
+const DecreaseReplicaCount: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ReplicationGroupId");
+  const group = requireReplicationGroup(ctx, id);
+  return { ReplicationGroup: presentGroup(group) };
+};
+
+const TestFailover: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ReplicationGroupId");
+  const group = requireReplicationGroup(ctx, id);
+  return { ReplicationGroup: presentGroup(group) };
+};
+
+const StartMigration: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ReplicationGroupId");
+  const group = requireReplicationGroup(ctx, id);
+  return { ReplicationGroup: presentGroup(group) };
+};
+
+const CompleteMigration: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ReplicationGroupId");
+  const group = requireReplicationGroup(ctx, id);
+  return { ReplicationGroup: presentGroup(group) };
+};
+
+const TestMigration: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ReplicationGroupId");
+  const group = requireReplicationGroup(ctx, id);
+  return { ReplicationGroup: presentGroup(group) };
 };
 
 const CreateCacheParameterGroup: OperationHandler = (input, ctx) => {
@@ -416,6 +899,66 @@ const DeleteCacheParameterGroup: OperationHandler = (input, ctx) => {
   }
   ctx.store.delete(paramGroupKey(name));
   return {};
+};
+
+const ModifyCacheParameterGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheParameterGroupName");
+  const paramGroup = ctx.store.get<StoredCacheParameterGroup>(
+    paramGroupKey(name),
+  );
+  if (paramGroup === undefined) {
+    throw awsError(
+      "CacheParameterGroupNotFound",
+      `CacheParameterGroup ${name} not found.`,
+      404,
+    );
+  }
+  return { CacheParameterGroupName: name };
+};
+
+const ResetCacheParameterGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheParameterGroupName");
+  const paramGroup = ctx.store.get<StoredCacheParameterGroup>(
+    paramGroupKey(name),
+  );
+  if (paramGroup === undefined) {
+    throw awsError(
+      "CacheParameterGroupNotFound",
+      `CacheParameterGroup ${name} not found.`,
+      404,
+    );
+  }
+  return { CacheParameterGroupName: name };
+};
+
+const DescribeCacheParameters: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheParameterGroupName");
+  const paramGroup = ctx.store.get<StoredCacheParameterGroup>(
+    paramGroupKey(name),
+  );
+  if (paramGroup === undefined) {
+    throw awsError(
+      "CacheParameterGroupNotFound",
+      `CacheParameterGroup ${name} not found.`,
+      404,
+    );
+  }
+  return {
+    Parameters: [],
+    CacheNodeTypeSpecificParameters: [],
+  };
+};
+
+const DescribeEngineDefaultParameters: OperationHandler = (input, _ctx) => {
+  const family = requireString(input, "CacheParameterGroupFamily");
+  return {
+    EngineDefaults: {
+      CacheParameterGroupFamily: family,
+      Marker: undefined,
+      Parameters: [],
+      CacheNodeTypeSpecificParameters: [],
+    },
+  };
 };
 
 const CreateCacheSubnetGroup: OperationHandler = (input, ctx) => {
@@ -485,21 +1028,884 @@ const DeleteCacheSubnetGroup: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const ModifyCacheSubnetGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheSubnetGroupName");
+  const subnetGroup = ctx.store.get<StoredCacheSubnetGroup>(
+    subnetGroupKey(name),
+  );
+  if (subnetGroup === undefined) {
+    throw awsError(
+      "CacheSubnetGroupNotFoundFault",
+      `CacheSubnetGroup ${name} not found.`,
+      404,
+    );
+  }
+  const newDescription =
+    optionalString(input, "CacheSubnetGroupDescription") ??
+    subnetGroup.CacheSubnetGroupDescription;
+  const subnetIds = stringList(input, "SubnetIds");
+  const subnets =
+    subnetIds.length > 0
+      ? subnetIds.map((subnetId, index) => ({
+          SubnetIdentifier: subnetId,
+          SubnetAvailabilityZone: {
+            Name: `${ctx.region}${String.fromCharCode(97 + (index % 26))}`,
+          },
+        }))
+      : subnetGroup.Subnets;
+  const updated: StoredCacheSubnetGroup = {
+    ...subnetGroup,
+    CacheSubnetGroupDescription: newDescription,
+    Subnets: subnets,
+  };
+  ctx.store.set(subnetGroupKey(name), updated);
+  return { CacheSubnetGroup: presentSubnetGroup(updated) };
+};
+
+const CreateSnapshot: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "SnapshotName");
+  const existing = ctx.store.get<StoredSnapshot>(snapshotKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "SnapshotAlreadyExistsFault",
+      `Snapshot ${name} already exists.`,
+      400,
+    );
+  }
+  const replicationGroupId = optionalString(input, "ReplicationGroupId");
+  const cacheClusterId = optionalString(input, "CacheClusterId");
+  let engine: string | undefined;
+  let engineVersion: string | undefined;
+  let cacheNodeType: string | undefined;
+  if (replicationGroupId !== undefined) {
+    const group = requireReplicationGroup(ctx, replicationGroupId);
+    engine = group.Engine;
+    cacheNodeType = group.CacheNodeType;
+  } else if (cacheClusterId !== undefined) {
+    const cluster = requireCluster(ctx, cacheClusterId);
+    engine = cluster.Engine;
+    engineVersion = cluster.EngineVersion;
+    cacheNodeType = cluster.CacheNodeType;
+  }
+  const snapshot: StoredSnapshot = {
+    SnapshotName: name,
+    ReplicationGroupId: replicationGroupId,
+    CacheClusterId: cacheClusterId,
+    SnapshotStatus: "available",
+    SnapshotSource: "manual",
+    CacheNodeType: cacheNodeType,
+    Engine: engine,
+    EngineVersion: engineVersion,
+    ARN: snapshotArnOf(ctx.region, ctx.account, name),
+  };
+  ctx.store.set(snapshotKey(name), snapshot);
+  return { Snapshot: presentSnapshot(snapshot) };
+};
+
+const CopySnapshot: OperationHandler = (input, ctx) => {
+  const sourceName = requireString(input, "SourceSnapshotName");
+  const targetName = requireString(input, "TargetSnapshotName");
+  const source = requireSnapshot(ctx, sourceName);
+  const existing = ctx.store.get<StoredSnapshot>(snapshotKey(targetName));
+  if (existing !== undefined) {
+    throw awsError(
+      "SnapshotAlreadyExistsFault",
+      `Snapshot ${targetName} already exists.`,
+      400,
+    );
+  }
+  const snapshot: StoredSnapshot = {
+    ...source,
+    SnapshotName: targetName,
+    SnapshotSource: "manual",
+    ARN: snapshotArnOf(ctx.region, ctx.account, targetName),
+  };
+  ctx.store.set(snapshotKey(targetName), snapshot);
+  return { Snapshot: presentSnapshot(snapshot) };
+};
+
+const DescribeSnapshots: OperationHandler = (input, ctx) => {
+  const name = optionalString(input, "SnapshotName");
+  if (name !== undefined) {
+    const snapshot = requireSnapshot(ctx, name);
+    return { Snapshots: [presentSnapshot(snapshot)] };
+  }
+  const replicationGroupId = optionalString(input, "ReplicationGroupId");
+  const cacheClusterId = optionalString(input, "CacheClusterId");
+  const snapshots = ctx.store
+    .list<StoredSnapshot>()
+    .filter((entry) => entry.key.startsWith("snapshot/"))
+    .filter((entry) => {
+      if (
+        replicationGroupId !== undefined &&
+        entry.value.ReplicationGroupId !== replicationGroupId
+      ) {
+        return false;
+      }
+      if (
+        cacheClusterId !== undefined &&
+        entry.value.CacheClusterId !== cacheClusterId
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .map((entry) => presentSnapshot(entry.value));
+  return { Snapshots: snapshots };
+};
+
+const DeleteSnapshot: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "SnapshotName");
+  const snapshot = requireSnapshot(ctx, name);
+  const presented = presentSnapshot(snapshot);
+  ctx.store.delete(snapshotKey(name));
+  return { Snapshot: { ...presented, SnapshotStatus: "deleting" } };
+};
+
+const CreateServerlessCache: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ServerlessCacheName");
+  const existing = ctx.store.get<StoredServerlessCache>(
+    serverlessCacheKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ServerlessCacheAlreadyExistsFault",
+      `ServerlessCache ${name} already exists.`,
+      400,
+    );
+  }
+  const engine = optionalString(input, "Engine") ?? "redis";
+  const cache: StoredServerlessCache = {
+    ServerlessCacheName: name,
+    Description: optionalString(input, "Description"),
+    Status: "available",
+    Engine: engine,
+    MajorEngineVersion: optionalString(input, "MajorEngineVersion"),
+    FullEngineVersion: optionalString(input, "MajorEngineVersion") ?? "7.0.7",
+    KmsKeyId: optionalString(input, "KmsKeyId"),
+    SecurityGroupIds: stringList(input, "SecurityGroupIds"),
+    UserGroupId: optionalString(input, "UserGroupId"),
+    SubnetIds: stringList(input, "SubnetIds"),
+    SnapshotRetentionLimit:
+      input["SnapshotRetentionLimit"] !== undefined
+        ? numberOr(input, "SnapshotRetentionLimit", 0)
+        : undefined,
+    DailySnapshotTime: optionalString(input, "DailySnapshotTime"),
+    CreateTime: new Date().toISOString(),
+    ARN: serverlessCacheArnOf(ctx.region, ctx.account, name),
+  };
+  ctx.store.set(serverlessCacheKey(name), cache);
+  return { ServerlessCache: presentServerlessCache(cache) };
+};
+
+const DescribeServerlessCaches: OperationHandler = (input, ctx) => {
+  const name = optionalString(input, "ServerlessCacheName");
+  if (name !== undefined) {
+    const cache = requireServerlessCache(ctx, name);
+    return { ServerlessCaches: [presentServerlessCache(cache)] };
+  }
+  const caches = ctx.store
+    .list<StoredServerlessCache>()
+    .filter((entry) => entry.key.startsWith("serverlesscache/"))
+    .map((entry) => presentServerlessCache(entry.value));
+  return { ServerlessCaches: caches };
+};
+
+const DeleteServerlessCache: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ServerlessCacheName");
+  const cache = requireServerlessCache(ctx, name);
+  const presented = presentServerlessCache(cache);
+  ctx.store.delete(serverlessCacheKey(name));
+  return { ServerlessCache: { ...presented, Status: "deleting" } };
+};
+
+const ModifyServerlessCache: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ServerlessCacheName");
+  const cache = requireServerlessCache(ctx, name);
+  const updated: StoredServerlessCache = {
+    ...cache,
+    Description: optionalString(input, "Description") ?? cache.Description,
+    UserGroupId: booleanOr(input, "RemoveUserGroup", false)
+      ? undefined
+      : (optionalString(input, "UserGroupId") ?? cache.UserGroupId),
+    SecurityGroupIds:
+      stringList(input, "SecurityGroupIds").length > 0
+        ? stringList(input, "SecurityGroupIds")
+        : cache.SecurityGroupIds,
+    SnapshotRetentionLimit:
+      input["SnapshotRetentionLimit"] !== undefined
+        ? numberOr(
+            input,
+            "SnapshotRetentionLimit",
+            cache.SnapshotRetentionLimit ?? 0,
+          )
+        : cache.SnapshotRetentionLimit,
+    DailySnapshotTime:
+      optionalString(input, "DailySnapshotTime") ?? cache.DailySnapshotTime,
+  };
+  ctx.store.set(serverlessCacheKey(name), updated);
+  return { ServerlessCache: presentServerlessCache(updated) };
+};
+
+const CreateServerlessCacheSnapshot: OperationHandler = (input, ctx) => {
+  const snapshotName = requireString(input, "ServerlessCacheSnapshotName");
+  const cacheName = requireString(input, "ServerlessCacheName");
+  const cache = requireServerlessCache(ctx, cacheName);
+  const existing = ctx.store.get<StoredServerlessCacheSnapshot>(
+    serverlessCacheSnapshotKey(snapshotName),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ServerlessCacheSnapshotAlreadyExistsFault",
+      `ServerlessCacheSnapshot ${snapshotName} already exists.`,
+      400,
+    );
+  }
+  const snap: StoredServerlessCacheSnapshot = {
+    ServerlessCacheSnapshotName: snapshotName,
+    ARN: serverlessCacheSnapshotArnOf(ctx.region, ctx.account, snapshotName),
+    KmsKeyId: optionalString(input, "KmsKeyId"),
+    SnapshotType: "manual",
+    Status: "available",
+    CreateTime: new Date().toISOString(),
+    ServerlessCacheConfiguration: {
+      ServerlessCacheName: cacheName,
+      Engine: cache.Engine,
+      MajorEngineVersion: cache.MajorEngineVersion,
+    },
+  };
+  ctx.store.set(serverlessCacheSnapshotKey(snapshotName), snap);
+  return { ServerlessCacheSnapshot: presentServerlessCacheSnapshot(snap) };
+};
+
+const CopyServerlessCacheSnapshot: OperationHandler = (input, ctx) => {
+  const sourceName = requireString(input, "SourceServerlessCacheSnapshotName");
+  const targetName = requireString(input, "TargetServerlessCacheSnapshotName");
+  const source = requireServerlessCacheSnapshot(ctx, sourceName);
+  const existing = ctx.store.get<StoredServerlessCacheSnapshot>(
+    serverlessCacheSnapshotKey(targetName),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ServerlessCacheSnapshotAlreadyExistsFault",
+      `ServerlessCacheSnapshot ${targetName} already exists.`,
+      400,
+    );
+  }
+  const snap: StoredServerlessCacheSnapshot = {
+    ...source,
+    ServerlessCacheSnapshotName: targetName,
+    ARN: serverlessCacheSnapshotArnOf(ctx.region, ctx.account, targetName),
+    KmsKeyId: optionalString(input, "KmsKeyId") ?? source.KmsKeyId,
+    SnapshotType: "manual",
+  };
+  ctx.store.set(serverlessCacheSnapshotKey(targetName), snap);
+  return { ServerlessCacheSnapshot: presentServerlessCacheSnapshot(snap) };
+};
+
+const ExportServerlessCacheSnapshot: OperationHandler = (input, ctx) => {
+  const snapshotName = requireString(input, "ServerlessCacheSnapshotName");
+  const snap = requireServerlessCacheSnapshot(ctx, snapshotName);
+  return { ServerlessCacheSnapshot: presentServerlessCacheSnapshot(snap) };
+};
+
+const DeleteServerlessCacheSnapshot: OperationHandler = (input, ctx) => {
+  const snapshotName = requireString(input, "ServerlessCacheSnapshotName");
+  const snap = requireServerlessCacheSnapshot(ctx, snapshotName);
+  const presented = presentServerlessCacheSnapshot(snap);
+  ctx.store.delete(serverlessCacheSnapshotKey(snapshotName));
+  return { ServerlessCacheSnapshot: { ...presented, Status: "deleting" } };
+};
+
+const DescribeServerlessCacheSnapshots: OperationHandler = (input, ctx) => {
+  const snapshotName = optionalString(input, "ServerlessCacheSnapshotName");
+  if (snapshotName !== undefined) {
+    const snap = requireServerlessCacheSnapshot(ctx, snapshotName);
+    return { ServerlessCacheSnapshots: [presentServerlessCacheSnapshot(snap)] };
+  }
+  const cacheName = optionalString(input, "ServerlessCacheName");
+  const snapshots = ctx.store
+    .list<StoredServerlessCacheSnapshot>()
+    .filter((entry) => entry.key.startsWith("serverlesscachesnapshot/"))
+    .filter((entry) => {
+      if (
+        cacheName !== undefined &&
+        entry.value.ServerlessCacheConfiguration.ServerlessCacheName !==
+          cacheName
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .map((entry) => presentServerlessCacheSnapshot(entry.value));
+  return { ServerlessCacheSnapshots: snapshots };
+};
+
+const CreateUser: OperationHandler = (input, ctx) => {
+  const userId = requireString(input, "UserId");
+  const userName = requireString(input, "UserName");
+  const engine = requireString(input, "Engine");
+  const existing = ctx.store.get<StoredUser>(userKey(userId));
+  if (existing !== undefined) {
+    throw awsError(
+      "UserAlreadyExistsFault",
+      `User ${userId} already exists.`,
+      400,
+    );
+  }
+  const user: StoredUser = {
+    UserId: userId,
+    UserName: userName,
+    Status: "active",
+    Engine: engine,
+    AccessString: optionalString(input, "AccessString"),
+    UserGroupIds: [],
+    ARN: userArnOf(ctx.region, ctx.account, userId),
+  };
+  ctx.store.set(userKey(userId), user);
+  return presentUser(user);
+};
+
+const DescribeUsers: OperationHandler = (input, ctx) => {
+  const userId = optionalString(input, "UserId");
+  if (userId !== undefined) {
+    const user = requireUser(ctx, userId);
+    return { Users: [presentUser(user)] };
+  }
+  const users = ctx.store
+    .list<StoredUser>()
+    .filter((entry) => entry.key.startsWith("user/"))
+    .map((entry) => presentUser(entry.value));
+  return { Users: users };
+};
+
+const DeleteUser: OperationHandler = (input, ctx) => {
+  const userId = requireString(input, "UserId");
+  const user = requireUser(ctx, userId);
+  const presented = presentUser(user);
+  ctx.store.delete(userKey(userId));
+  return { ...presented, Status: "deleting" };
+};
+
+const ModifyUser: OperationHandler = (input, ctx) => {
+  const userId = requireString(input, "UserId");
+  const user = requireUser(ctx, userId);
+  const updated: StoredUser = {
+    ...user,
+    AccessString: optionalString(input, "AccessString") ?? user.AccessString,
+  };
+  ctx.store.set(userKey(userId), updated);
+  return presentUser(updated);
+};
+
+const CreateUserGroup: OperationHandler = (input, ctx) => {
+  const groupId = requireString(input, "UserGroupId");
+  const engine = requireString(input, "Engine");
+  const existing = ctx.store.get<StoredUserGroup>(userGroupKey(groupId));
+  if (existing !== undefined) {
+    throw awsError(
+      "UserGroupAlreadyExistsFault",
+      `UserGroup ${groupId} already exists.`,
+      400,
+    );
+  }
+  const userIds = stringList(input, "UserIds");
+  const group: StoredUserGroup = {
+    UserGroupId: groupId,
+    Status: "active",
+    Engine: engine,
+    UserIds: userIds,
+    ReplicationGroups: [],
+    ServerlessCaches: [],
+    ARN: userGroupArnOf(ctx.region, ctx.account, groupId),
+  };
+  ctx.store.set(userGroupKey(groupId), group);
+  return presentUserGroup(group);
+};
+
+const DescribeUserGroups: OperationHandler = (input, ctx) => {
+  const groupId = optionalString(input, "UserGroupId");
+  if (groupId !== undefined) {
+    const group = requireUserGroup(ctx, groupId);
+    return { UserGroups: [presentUserGroup(group)] };
+  }
+  const groups = ctx.store
+    .list<StoredUserGroup>()
+    .filter((entry) => entry.key.startsWith("usergroup/"))
+    .map((entry) => presentUserGroup(entry.value));
+  return { UserGroups: groups };
+};
+
+const DeleteUserGroup: OperationHandler = (input, ctx) => {
+  const groupId = requireString(input, "UserGroupId");
+  const group = requireUserGroup(ctx, groupId);
+  const presented = presentUserGroup(group);
+  ctx.store.delete(userGroupKey(groupId));
+  return { ...presented, Status: "deleting" };
+};
+
+const ModifyUserGroup: OperationHandler = (input, ctx) => {
+  const groupId = requireString(input, "UserGroupId");
+  const group = requireUserGroup(ctx, groupId);
+  const toAdd = stringList(input, "UserIdsToAdd");
+  const toRemove = stringList(input, "UserIdsToRemove");
+  const newUserIds = [
+    ...group.UserIds.filter((id) => !toRemove.includes(id)),
+    ...toAdd,
+  ];
+  const updated: StoredUserGroup = { ...group, UserIds: newUserIds };
+  ctx.store.set(userGroupKey(groupId), updated);
+  return presentUserGroup(updated);
+};
+
+const CreateCacheSecurityGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheSecurityGroupName");
+  const description = requireString(input, "Description");
+  const existing = ctx.store.get<StoredCacheSecurityGroup>(
+    cacheSecurityGroupKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "CacheSecurityGroupAlreadyExists",
+      `CacheSecurityGroup ${name} already exists.`,
+      400,
+    );
+  }
+  const group: StoredCacheSecurityGroup = {
+    OwnerId: ctx.account,
+    CacheSecurityGroupName: name,
+    Description: description,
+    EC2SecurityGroups: [],
+    ARN: cacheSecurityGroupArnOf(ctx.region, ctx.account, name),
+  };
+  ctx.store.set(cacheSecurityGroupKey(name), group);
+  return { CacheSecurityGroup: presentCacheSecurityGroup(group) };
+};
+
+const DescribeCacheSecurityGroups: OperationHandler = (input, ctx) => {
+  const name = optionalString(input, "CacheSecurityGroupName");
+  if (name !== undefined) {
+    const group = requireCacheSecurityGroup(ctx, name);
+    return { CacheSecurityGroups: [presentCacheSecurityGroup(group)] };
+  }
+  const groups = ctx.store
+    .list<StoredCacheSecurityGroup>()
+    .filter((entry) => entry.key.startsWith("cachesecuritygroup/"))
+    .map((entry) => presentCacheSecurityGroup(entry.value));
+  return { CacheSecurityGroups: groups };
+};
+
+const DeleteCacheSecurityGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheSecurityGroupName");
+  requireCacheSecurityGroup(ctx, name);
+  ctx.store.delete(cacheSecurityGroupKey(name));
+  return {};
+};
+
+const AuthorizeCacheSecurityGroupIngress: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheSecurityGroupName");
+  const ec2GroupName = requireString(input, "EC2SecurityGroupName");
+  const ec2GroupOwner = requireString(input, "EC2SecurityGroupOwnerId");
+  const group = requireCacheSecurityGroup(ctx, name);
+  const updated: StoredCacheSecurityGroup = {
+    ...group,
+    EC2SecurityGroups: [
+      ...group.EC2SecurityGroups,
+      {
+        Status: "authorizing",
+        EC2SecurityGroupName: ec2GroupName,
+        EC2SecurityGroupOwnerId: ec2GroupOwner,
+      },
+    ],
+  };
+  ctx.store.set(cacheSecurityGroupKey(name), updated);
+  return { CacheSecurityGroup: presentCacheSecurityGroup(updated) };
+};
+
+const RevokeCacheSecurityGroupIngress: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CacheSecurityGroupName");
+  const ec2GroupName = requireString(input, "EC2SecurityGroupName");
+  const group = requireCacheSecurityGroup(ctx, name);
+  const updated: StoredCacheSecurityGroup = {
+    ...group,
+    EC2SecurityGroups: group.EC2SecurityGroups.filter(
+      (g) => g.EC2SecurityGroupName !== ec2GroupName,
+    ),
+  };
+  ctx.store.set(cacheSecurityGroupKey(name), updated);
+  return { CacheSecurityGroup: presentCacheSecurityGroup(updated) };
+};
+
+const CreateGlobalReplicationGroup: OperationHandler = (input, ctx) => {
+  const suffix = requireString(input, "GlobalReplicationGroupIdSuffix");
+  const description =
+    optionalString(input, "GlobalReplicationGroupDescription") ?? "";
+  const primaryId = requireString(input, "PrimaryReplicationGroupId");
+  const primaryGroup = requireReplicationGroup(ctx, primaryId);
+  const globalId = `ldgnf-${suffix}`;
+  const existing = ctx.store.get<StoredGlobalReplicationGroup>(
+    globalRepGroupKey(globalId),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "GlobalReplicationGroupAlreadyExistsFault",
+      `GlobalReplicationGroup ${globalId} already exists.`,
+      400,
+    );
+  }
+  const group: StoredGlobalReplicationGroup = {
+    GlobalReplicationGroupId: globalId,
+    GlobalReplicationGroupDescription: description,
+    Status: "available",
+    CacheNodeType: primaryGroup.CacheNodeType,
+    Engine: primaryGroup.Engine,
+    EngineVersion: undefined,
+    Members: [
+      {
+        ReplicationGroupId: primaryId,
+        ReplicationGroupRegion: ctx.region,
+        Role: "PRIMARY",
+        AutomaticFailover: primaryGroup.AutomaticFailover,
+        Status: "associated",
+      },
+    ],
+    ClusterEnabled: primaryGroup.ClusterEnabled,
+    GlobalNodeGroups: [],
+    ARN: globalRepGroupArnOf(ctx.region, ctx.account, globalId),
+  };
+  ctx.store.set(globalRepGroupKey(globalId), group);
+  return { GlobalReplicationGroup: presentGlobalReplicationGroup(group) };
+};
+
+const DescribeGlobalReplicationGroups: OperationHandler = (input, ctx) => {
+  const id = optionalString(input, "GlobalReplicationGroupId");
+  if (id !== undefined) {
+    const group = requireGlobalReplicationGroup(ctx, id);
+    return { GlobalReplicationGroups: [presentGlobalReplicationGroup(group)] };
+  }
+  const groups = ctx.store
+    .list<StoredGlobalReplicationGroup>()
+    .filter((entry) => entry.key.startsWith("globalrepgroup/"))
+    .map((entry) => presentGlobalReplicationGroup(entry.value));
+  return { GlobalReplicationGroups: groups };
+};
+
+const DeleteGlobalReplicationGroup: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "GlobalReplicationGroupId");
+  const group = requireGlobalReplicationGroup(ctx, id);
+  const presented = presentGlobalReplicationGroup(group);
+  ctx.store.delete(globalRepGroupKey(id));
+  return { GlobalReplicationGroup: { ...presented, Status: "deleting" } };
+};
+
+const DisassociateGlobalReplicationGroup: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "GlobalReplicationGroupId");
+  const replicationGroupId = requireString(input, "ReplicationGroupId");
+  const group = requireGlobalReplicationGroup(ctx, id);
+  const updated: StoredGlobalReplicationGroup = {
+    ...group,
+    Members: group.Members.filter(
+      (m) => m.ReplicationGroupId !== replicationGroupId,
+    ),
+  };
+  ctx.store.set(globalRepGroupKey(id), updated);
+  return { GlobalReplicationGroup: presentGlobalReplicationGroup(updated) };
+};
+
+const IncreaseNodeGroupsInGlobalReplicationGroup: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id = requireString(input, "GlobalReplicationGroupId");
+  const group = requireGlobalReplicationGroup(ctx, id);
+  return { GlobalReplicationGroup: presentGlobalReplicationGroup(group) };
+};
+
+const DecreaseNodeGroupsInGlobalReplicationGroup: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id = requireString(input, "GlobalReplicationGroupId");
+  const group = requireGlobalReplicationGroup(ctx, id);
+  return { GlobalReplicationGroup: presentGlobalReplicationGroup(group) };
+};
+
+const FailoverGlobalReplicationGroup: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "GlobalReplicationGroupId");
+  const group = requireGlobalReplicationGroup(ctx, id);
+  return { GlobalReplicationGroup: presentGlobalReplicationGroup(group) };
+};
+
+const RebalanceSlotsInGlobalReplicationGroup: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id = requireString(input, "GlobalReplicationGroupId");
+  const group = requireGlobalReplicationGroup(ctx, id);
+  return { GlobalReplicationGroup: presentGlobalReplicationGroup(group) };
+};
+
+const ModifyGlobalReplicationGroup: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "GlobalReplicationGroupId");
+  const group = requireGlobalReplicationGroup(ctx, id);
+  const updated: StoredGlobalReplicationGroup = {
+    ...group,
+    GlobalReplicationGroupDescription:
+      optionalString(input, "GlobalReplicationGroupDescription") ??
+      group.GlobalReplicationGroupDescription,
+    CacheNodeType:
+      optionalString(input, "CacheNodeType") ?? group.CacheNodeType,
+    EngineVersion:
+      optionalString(input, "EngineVersion") ?? group.EngineVersion,
+  };
+  ctx.store.set(globalRepGroupKey(id), updated);
+  return { GlobalReplicationGroup: presentGlobalReplicationGroup(updated) };
+};
+
+const AddTagsToResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceName");
+  const newTags = tagList(input);
+  const existing =
+    ctx.store.get<{ Key: string; Value: string }[]>(tagKey(arn)) ?? [];
+  const keySet = new Map(newTags.map((t) => [t.Key, t.Value]));
+  const merged = [...existing.filter((t) => !keySet.has(t.Key)), ...newTags];
+  ctx.store.set(tagKey(arn), merged);
+  return { TagList: merged };
+};
+
+const RemoveTagsFromResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceName");
+  const keys = stringList(input, "TagKeys");
+  const existing =
+    ctx.store.get<{ Key: string; Value: string }[]>(tagKey(arn)) ?? [];
+  const updated = existing.filter((t) => !keys.includes(t.Key));
+  ctx.store.set(tagKey(arn), updated);
+  return { TagList: updated };
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceName");
+  const tags =
+    ctx.store.get<{ Key: string; Value: string }[]>(tagKey(arn)) ?? [];
+  return { TagList: tags };
+};
+
+const DescribeCacheEngineVersions: OperationHandler = (_input, _ctx) => {
+  return {
+    CacheEngineVersions: [
+      {
+        Engine: "redis",
+        EngineVersion: "7.0.7",
+        CacheParameterGroupFamily: "redis7",
+        CacheEngineDescription: "Redis",
+        CacheEngineVersionDescription: "redis version 7.0.7",
+      },
+      {
+        Engine: "redis",
+        EngineVersion: "6.2.6",
+        CacheParameterGroupFamily: "redis6.x",
+        CacheEngineDescription: "Redis",
+        CacheEngineVersionDescription: "redis version 6.2.6",
+      },
+      {
+        Engine: "memcached",
+        EngineVersion: "1.6.17",
+        CacheParameterGroupFamily: "memcached1.6",
+        CacheEngineDescription: "Memcached",
+        CacheEngineVersionDescription: "memcached version 1.6.17",
+      },
+    ],
+  };
+};
+
+const DescribeEvents: OperationHandler = (_input, _ctx) => {
+  return { Events: [] };
+};
+
+const DescribeServiceUpdates: OperationHandler = (_input, _ctx) => {
+  return { ServiceUpdates: [] };
+};
+
+const DescribeUpdateActions: OperationHandler = (_input, _ctx) => {
+  return { UpdateActions: [] };
+};
+
+const DescribeReservedCacheNodes: OperationHandler = (input, ctx) => {
+  const id = optionalString(input, "ReservedCacheNodeId");
+  const entries = ctx.store
+    .list<StoredReservedCacheNode>()
+    .filter((entry) => entry.key.startsWith("reservedcachenode/"));
+  if (id !== undefined) {
+    const found = entries.find((e) => e.value.ReservedCacheNodeId === id);
+    if (found === undefined) {
+      throw awsError(
+        "ReservedCacheNodeNotFound",
+        `ReservedCacheNode ${id} not found.`,
+        404,
+      );
+    }
+    return { ReservedCacheNodes: [found.value] };
+  }
+  return { ReservedCacheNodes: entries.map((e) => e.value) };
+};
+
+const DescribeReservedCacheNodesOfferings: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return {
+    ReservedCacheNodesOfferings: [
+      {
+        ReservedCacheNodesOfferingId: "bns-r7g-large-1yr-noupfront",
+        CacheNodeType: "cache.r7g.large",
+        Duration: 31536000,
+        FixedPrice: 0.0,
+        UsagePrice: 0.123,
+        ProductDescription: "redis",
+        OfferingType: "No Upfront",
+        RecurringCharges: [],
+      },
+    ],
+  };
+};
+
+const PurchaseReservedCacheNodesOffering: OperationHandler = (input, ctx) => {
+  const offeringId = requireString(input, "ReservedCacheNodesOfferingId");
+  const nodeId =
+    optionalString(input, "ReservedCacheNodeId") ??
+    `ri-${offeringId}-${Date.now()}`;
+  const existing = ctx.store.get<StoredReservedCacheNode>(
+    reservedCacheNodeKey(nodeId),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ReservedCacheNodeAlreadyExists",
+      `ReservedCacheNode ${nodeId} already exists.`,
+      400,
+    );
+  }
+  const node: StoredReservedCacheNode = {
+    ReservedCacheNodeId: nodeId,
+    ReservedCacheNodesOfferingId: offeringId,
+    CacheNodeType: "cache.r7g.large",
+    StartTime: new Date().toISOString(),
+    Duration: 31536000,
+    FixedPrice: 0.0,
+    UsagePrice: 0.123,
+    CacheNodeCount: numberOr(input, "CacheNodeCount", 1),
+    ProductDescription: "redis",
+    OfferingType: "No Upfront",
+    State: "active",
+    ReservationARN: reservedCacheNodeArnOf(ctx.region, ctx.account, nodeId),
+  };
+  ctx.store.set(reservedCacheNodeKey(nodeId), node);
+  return { ReservedCacheNode: node };
+};
+
+const ListAllowedNodeTypeModifications: OperationHandler = (_input, _ctx) => {
+  return {
+    ScaleUpModifications: [
+      "cache.r7g.large",
+      "cache.r7g.xlarge",
+      "cache.r7g.2xlarge",
+    ],
+    ScaleDownModifications: [],
+  };
+};
+
+const BatchApplyUpdateAction: OperationHandler = (_input, _ctx) => {
+  return {
+    ProcessedUpdateActions: [],
+    UnprocessedUpdateActions: [],
+  };
+};
+
+const BatchStopUpdateAction: OperationHandler = (_input, _ctx) => {
+  return {
+    ProcessedUpdateActions: [],
+    UnprocessedUpdateActions: [],
+  };
+};
+
 const elasticache: ServiceDefinition = {
   name: "elasticache",
   protocol: "query",
   operations: {
+    AddTagsToResource,
+    AuthorizeCacheSecurityGroupIngress,
+    BatchApplyUpdateAction,
+    BatchStopUpdateAction,
+    CompleteMigration,
+    CopyServerlessCacheSnapshot,
+    CopySnapshot,
     CreateCacheCluster,
-    DescribeCacheClusters,
-    DeleteCacheCluster,
-    CreateReplicationGroup,
-    DescribeReplicationGroups,
     CreateCacheParameterGroup,
-    DescribeCacheParameterGroups,
-    DeleteCacheParameterGroup,
+    CreateCacheSecurityGroup,
     CreateCacheSubnetGroup,
-    DescribeCacheSubnetGroups,
+    CreateGlobalReplicationGroup,
+    CreateReplicationGroup,
+    CreateServerlessCache,
+    CreateServerlessCacheSnapshot,
+    CreateSnapshot,
+    CreateUser,
+    CreateUserGroup,
+    DecreaseNodeGroupsInGlobalReplicationGroup,
+    DecreaseReplicaCount,
+    DeleteCacheCluster,
+    DeleteCacheParameterGroup,
+    DeleteCacheSecurityGroup,
     DeleteCacheSubnetGroup,
+    DeleteGlobalReplicationGroup,
+    DeleteReplicationGroup,
+    DeleteServerlessCache,
+    DeleteServerlessCacheSnapshot,
+    DeleteSnapshot,
+    DeleteUser,
+    DeleteUserGroup,
+    DescribeCacheClusters,
+    DescribeCacheEngineVersions,
+    DescribeCacheParameterGroups,
+    DescribeCacheParameters,
+    DescribeCacheSecurityGroups,
+    DescribeCacheSubnetGroups,
+    DescribeEngineDefaultParameters,
+    DescribeEvents,
+    DescribeGlobalReplicationGroups,
+    DescribeReplicationGroups,
+    DescribeReservedCacheNodes,
+    DescribeReservedCacheNodesOfferings,
+    DescribeServerlessCacheSnapshots,
+    DescribeServerlessCaches,
+    DescribeServiceUpdates,
+    DescribeSnapshots,
+    DescribeUpdateActions,
+    DescribeUserGroups,
+    DescribeUsers,
+    DisassociateGlobalReplicationGroup,
+    ExportServerlessCacheSnapshot,
+    FailoverGlobalReplicationGroup,
+    IncreaseNodeGroupsInGlobalReplicationGroup,
+    IncreaseReplicaCount,
+    ListAllowedNodeTypeModifications,
+    ListTagsForResource,
+    ModifyCacheCluster,
+    ModifyCacheParameterGroup,
+    ModifyCacheSubnetGroup,
+    ModifyGlobalReplicationGroup,
+    ModifyReplicationGroup,
+    ModifyReplicationGroupShardConfiguration,
+    ModifyServerlessCache,
+    ModifyUser,
+    ModifyUserGroup,
+    PurchaseReservedCacheNodesOffering,
+    RebalanceSlotsInGlobalReplicationGroup,
+    RebootCacheCluster,
+    RemoveTagsFromResource,
+    ResetCacheParameterGroup,
+    RevokeCacheSecurityGroupIngress,
+    StartMigration,
+    TestFailover,
+    TestMigration,
   },
   model,
 } as const;

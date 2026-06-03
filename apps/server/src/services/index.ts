@@ -85,6 +85,8 @@ import imagebuilder from "./imagebuilder.ts";
 import detective from "./detective.ts";
 import signer from "./signer.ts";
 import dlm from "./dlm.ts";
+import mediapackage from "./mediapackage.ts";
+import greengrass from "./greengrass.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -173,6 +175,8 @@ export const services: ServiceDefinition[] = [
   detective,
   signer,
   dlm,
+  mediapackage,
+  greengrass,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

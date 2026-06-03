@@ -151,6 +151,8 @@ aws-models/
   detective.json        # botocore/data/detective/2018-10-26/service-2.json        (protocol rest-json, endpointPrefix api.detective, signingName detective)
   signer.json           # botocore/data/signer/2017-08-25/service-2.json           (protocol rest-json, endpointPrefix signer, signingName signer)
   dlm.json              # botocore/data/dlm/2018-01-12/service-2.json              (protocol rest-json, endpointPrefix dlm, signingName dlm)
+  mediapackage.json     # botocore/data/mediapackage/2017-10-12/service-2.json     (protocol rest-json, endpointPrefix mediapackage, signingName mediapackage)
+  greengrass.json       # botocore/data/greengrass/2017-06-07/service-2.json       (protocol rest-json, endpointPrefix greengrass, signingName greengrass)
 ```
 
 ### Notes

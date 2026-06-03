@@ -175,6 +175,9 @@ aws-models/
   connect.json          # botocore/data/connect/2017-08-08/service-2.json          (protocol rest-json, endpointPrefix connect, signingName connect)
   lexv2.json            # botocore/data/lex-models-v2/2020-08-07/service-2.json    (protocol rest-json, endpointPrefix models-v2-lex, signingName lex)
   pinpoint-sms-voice-v2.json # botocore/data/pinpoint-sms-voice-v2/2022-03-31/service-2.json (protocol json, endpointPrefix sms-voice, signingName sms-voice, targetPrefix PinpointSMSVoiceV2)
+  ram.json              # botocore/data/ram/2018-01-04/service-2.json              (protocol rest-json, endpointPrefix ram, signingName ram)
+  network-firewall.json # botocore/data/network-firewall/2020-11-12/service-2.json (protocol json, endpointPrefix network-firewall, signingName network-firewall, targetPrefix NetworkFirewall_20201112)
+  schemas.json          # botocore/data/schemas/2019-12-02/service-2.json          (protocol rest-json, endpointPrefix schemas, signingName schemas)
 ```
 
 ### Notes

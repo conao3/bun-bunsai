@@ -109,6 +109,9 @@ import emrServerless from "./emr-serverless.ts";
 import connect from "./connect.ts";
 import lexv2 from "./lexv2.ts";
 import smsVoice from "./pinpoint-sms-voice-v2.ts";
+import ram from "./ram.ts";
+import networkFirewall from "./network-firewall.ts";
+import schemas from "./schemas.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -221,6 +224,9 @@ export const services: ServiceDefinition[] = [
   connect,
   lexv2,
   smsVoice,
+  ram,
+  networkFirewall,
+  schemas,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

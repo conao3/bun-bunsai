@@ -103,6 +103,9 @@ import wisdom from "./wisdom.ts";
 import mwaa from "./mwaa.ts";
 import voiceid from "./voiceid.ts";
 import ssmIncidents from "./ssm-incidents.ts";
+import outposts from "./outposts.ts";
+import lakeformation from "./lakeformation.ts";
+import emrServerless from "./emr-serverless.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -209,6 +212,9 @@ export const services: ServiceDefinition[] = [
   mwaa,
   voiceid,
   ssmIncidents,
+  outposts,
+  lakeformation,
+  emrServerless,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

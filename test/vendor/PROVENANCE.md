@@ -169,6 +169,9 @@ aws-models/
   mwaa.json             # botocore/data/mwaa/2020-07-01/service-2.json             (protocol rest-json, endpointPrefix airflow, signingName airflow)
   voiceid.json          # botocore/data/voice-id/2021-09-27/service-2.json         (protocol json, endpointPrefix voiceid, signingName voiceid, targetPrefix VoiceID)
   ssm-incidents.json    # botocore/data/ssm-incidents/2018-05-10/service-2.json    (protocol rest-json, endpointPrefix ssm-incidents, signingName ssm-incidents)
+  outposts.json         # botocore/data/outposts/2019-12-03/service-2.json         (protocol rest-json, endpointPrefix outposts, signingName outposts)
+  lakeformation.json    # botocore/data/lakeformation/2017-03-31/service-2.json    (protocol rest-json, endpointPrefix lakeformation, signingName lakeformation)
+  emr-serverless.json   # botocore/data/emr-serverless/2021-07-13/service-2.json   (protocol rest-json, endpointPrefix emr-serverless, signingName emr-serverless)
 ```
 
 ### Notes

@@ -175,6 +175,8 @@ When a ticket has an attached PR, run this protocol before moving to `Merging`:
 
 ## CI green confirmation protocol (required)
 
+Shared-host test note (important for efficiency): multiple sandboxed agents run on one machine and the e2e tests start a server on a fixed local port (4566). When you run the full `bun test` locally you may see failures like `Failed to start server. Is port 4566 in use?` or `ECONNREFUSED` that are caused by a sibling agent's concurrent test run, not by your code. These are environmental. Do NOT loop re-running the whole suite trying to make them disappear — that wastes turns. Validate your own change by running only your service's e2e file (the harness lets you give it a unique port if needed), then rely on GitHub CI (which runs in an isolated runner and serializes tests) as the authoritative signal. Once your own test passes and CI is green, move straight to `Merging`.
+
 Before transitioning to `Merging`, confirm CI on the latest pushed commit:
 
 1. List checks with `gh pr checks <pr-number>`.

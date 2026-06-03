@@ -14,6 +14,8 @@ const schedulePrefix = "schedule:" as const;
 
 const groupPrefix = "group:" as const;
 
+const tagPrefix = "tag:" as const;
+
 const defaultGroup = "default" as const;
 
 type StoredSchedule = {
@@ -71,6 +73,8 @@ const scheduleKey = (group: string, name: string): string =>
   `${schedulePrefix}${group}/${name}`;
 
 const groupKey = (name: string): string => `${groupPrefix}${name}`;
+
+const tagKey = (arn: string): string => `${tagPrefix}${arn}`;
 
 const scheduleArn = (
   ctx: ServiceContext,
@@ -271,6 +275,69 @@ const CreateScheduleGroup: OperationHandler = (input, ctx) => {
   return { ScheduleGroupArn: arn };
 };
 
+const GetScheduleGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const group = ctx.store.get<StoredGroup>(groupKey(name));
+  if (group === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Schedule group ${name} not found.`,
+      404,
+    );
+  }
+  return groupView(group);
+};
+
+const DeleteScheduleGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  if (ctx.store.get<StoredGroup>(groupKey(name)) === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Schedule group ${name} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(groupKey(name));
+  return {};
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const tags = Array.isArray(input["Tags"])
+    ? (input["Tags"] as Record<string, unknown>[])
+    : [];
+  const existing = ctx.store.get<Record<string, string>>(tagKey(arn)) ?? {};
+  for (const tag of tags) {
+    const key = typeof tag["Key"] === "string" ? tag["Key"] : undefined;
+    const value = typeof tag["Value"] === "string" ? tag["Value"] : undefined;
+    if (key !== undefined && value !== undefined) {
+      existing[key] = value;
+    }
+  }
+  ctx.store.set(tagKey(arn), existing);
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const tagKeys = Array.isArray(input["TagKeys"])
+    ? (input["TagKeys"] as string[])
+    : [];
+  const existing = ctx.store.get<Record<string, string>>(tagKey(arn)) ?? {};
+  for (const key of tagKeys) {
+    delete existing[key];
+  }
+  ctx.store.set(tagKey(arn), existing);
+  return {};
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const existing = ctx.store.get<Record<string, string>>(tagKey(arn)) ?? {};
+  const tags = Object.entries(existing).map(([Key, Value]) => ({ Key, Value }));
+  return { Tags: tags };
+};
+
 const ListScheduleGroups: OperationHandler = (input, ctx) => {
   const prefix = stringOrUndefined(input["NamePrefix"]);
   const max =
@@ -314,8 +381,20 @@ const scheduler = {
         if (req.method === "GET") return "ListScheduleGroups";
         return undefined;
       }
-      if (parts.length === 2 && req.method === "POST") {
-        return "CreateScheduleGroup";
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateScheduleGroup";
+        if (req.method === "GET") return "GetScheduleGroup";
+        if (req.method === "DELETE") return "DeleteScheduleGroup";
+        return undefined;
+      }
+      return undefined;
+    }
+    if (parts[0] === "tags") {
+      if (parts.length >= 2) {
+        if (req.method === "GET") return "ListTagsForResource";
+        if (req.method === "POST") return "TagResource";
+        if (req.method === "DELETE") return "UntagResource";
+        return undefined;
       }
       return undefined;
     }
@@ -328,7 +407,12 @@ const scheduler = {
     UpdateSchedule,
     DeleteSchedule,
     CreateScheduleGroup,
+    GetScheduleGroup,
+    DeleteScheduleGroup,
     ListScheduleGroups,
+    TagResource,
+    UntagResource,
+    ListTagsForResource,
   },
   model,
 } as const satisfies ServiceDefinition;

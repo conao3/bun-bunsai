@@ -93,6 +93,9 @@ import codeartifact from "./codeartifact.ts";
 import iotevents from "./iotevents.ts";
 import iotsitewise from "./iotsitewise.ts";
 import ssmContacts from "./ssm-contacts.ts";
+import ivs from "./ivs.ts";
+import frauddetector from "./frauddetector.ts";
+import comprehend from "./comprehend.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -189,6 +192,9 @@ export const services: ServiceDefinition[] = [
   iotevents,
   iotsitewise,
   ssmContacts,
+  ivs,
+  frauddetector,
+  comprehend,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

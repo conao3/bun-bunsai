@@ -159,6 +159,9 @@ aws-models/
   iotevents.json        # botocore/data/iotevents/2018-07-27/service-2.json        (protocol rest-json, endpointPrefix iotevents, signingName iotevents)
   iotsitewise.json      # botocore/data/iotsitewise/2019-12-02/service-2.json      (protocol rest-json, endpointPrefix iotsitewise, signingName iotsitewise)
   ssm-contacts.json     # botocore/data/ssm-contacts/2021-05-03/service-2.json     (protocol json, endpointPrefix ssm-contacts, signingName ssm-contacts, targetPrefix SSMContacts)
+  ivs.json              # botocore/data/ivs/2020-07-14/service-2.json              (protocol rest-json, endpointPrefix ivs, signingName ivs)
+  frauddetector.json    # botocore/data/frauddetector/2019-11-15/service-2.json    (protocol json, endpointPrefix frauddetector, targetPrefix AWSHawksNestServiceFacade)
+  comprehend.json       # botocore/data/comprehend/2017-11-27/service-2.json       (protocol json, endpointPrefix comprehend, signingName comprehend, targetPrefix Comprehend_20171127)
 ```
 
 ### Notes

@@ -280,6 +280,47 @@ const StopDeliveryStreamEncryption: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const UpdateDestination: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "DeliveryStreamName");
+  const stream = requireStream(ctx, name);
+  const currentVersionId = requireString(
+    input,
+    "CurrentDeliveryStreamVersionId",
+  );
+  if (currentVersionId !== stream.VersionId) {
+    throw awsError(
+      "ConcurrentModificationException",
+      `Firehose ${name} version mismatch.`,
+      400,
+    );
+  }
+  const destinationId = requireString(input, "DestinationId");
+  const updateKey = Object.keys(input).find((k) =>
+    k.endsWith("DestinationUpdate"),
+  );
+  const updateData = updateKey !== undefined ? asRecord(input[updateKey]) : {};
+  const existingIdx = stream.Destinations.findIndex(
+    (d) => asRecord(d)["DestinationId"] === destinationId,
+  );
+  const destinations = [...stream.Destinations];
+  if (existingIdx >= 0) {
+    destinations[existingIdx] = {
+      ...asRecord(destinations[existingIdx]),
+      ...updateData,
+      DestinationId: destinationId,
+    };
+  } else {
+    destinations.push({ DestinationId: destinationId, ...updateData });
+  }
+  ctx.store.set(`${streamPrefix}${name}`, {
+    ...stream,
+    Destinations: destinations,
+    VersionId: String(Number(stream.VersionId) + 1),
+    LastUpdateTimestamp: Math.floor(Date.now() / 1000),
+  });
+  return {};
+};
+
 const firehose: ServiceDefinition = {
   name: "firehose",
   protocol: "json",
@@ -295,6 +336,7 @@ const firehose: ServiceDefinition = {
     UntagDeliveryStream,
     StartDeliveryStreamEncryption,
     StopDeliveryStreamEncryption,
+    UpdateDestination,
   },
   model,
 } as const;

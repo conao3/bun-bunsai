@@ -21,8 +21,8 @@ hooks:
   after_create: |
     gh repo clone conao3/bun-bunsai . -- --depth 1
 agent:
-  max_concurrent_agents: 4
-  max_turns: 16
+  max_concurrent_agents: 5
+  max_turns: 10
 codex:
   command: ANTHROPIC_MODEL=claude-sonnet-4-6 claude-app-server
   approval_policy: never

@@ -40,6 +40,7 @@
     "@aws-sdk/client-elastic-beanstalk": "^3.1058.0",
     "@aws-sdk/client-elastic-load-balancing-v2": "^3.1058.0",
     "@aws-sdk/client-elasticache": "^3.1058.0",
+    "@aws-sdk/client-emr": "^3.1059.0",
     "@aws-sdk/client-eventbridge": "^3.1058.0",
     "@aws-sdk/client-firehose": "^3.1058.0",
     "@aws-sdk/client-fsx": "^3.1058.0",

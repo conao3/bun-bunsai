@@ -55,6 +55,7 @@ import servicediscovery from "./servicediscovery.ts";
 import memorydb from "./memorydb.ts";
 import dax from "./dax.ts";
 import keyspaces from "./keyspaces.ts";
+import emr from "./emr.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -113,6 +114,7 @@ export const services: ServiceDefinition[] = [
   memorydb,
   dax,
   keyspaces,
+  emr,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

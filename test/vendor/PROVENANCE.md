@@ -121,6 +121,7 @@ aws-models/
   memorydb.json         # botocore/data/memorydb/2021-01-01/service-2.json         (protocol json)
   dax.json              # botocore/data/dax/2017-04-19/service-2.json              (protocol json)
   keyspaces.json        # botocore/data/keyspaces/2022-02-10/service-2.json        (protocol json, signingName cassandra)
+  emr.json              # botocore/data/emr/2009-03-31/service-2.json              (protocol json, signingName elasticmapreduce)
 ```
 
 ### Notes

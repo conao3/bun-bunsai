@@ -106,6 +106,9 @@ import ssmIncidents from "./ssm-incidents.ts";
 import outposts from "./outposts.ts";
 import lakeformation from "./lakeformation.ts";
 import emrServerless from "./emr-serverless.ts";
+import connect from "./connect.ts";
+import lexv2 from "./lexv2.ts";
+import smsVoice from "./pinpoint-sms-voice-v2.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -215,6 +218,9 @@ export const services: ServiceDefinition[] = [
   outposts,
   lakeformation,
   emrServerless,
+  connect,
+  lexv2,
+  smsVoice,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

@@ -172,6 +172,9 @@ aws-models/
   outposts.json         # botocore/data/outposts/2019-12-03/service-2.json         (protocol rest-json, endpointPrefix outposts, signingName outposts)
   lakeformation.json    # botocore/data/lakeformation/2017-03-31/service-2.json    (protocol rest-json, endpointPrefix lakeformation, signingName lakeformation)
   emr-serverless.json   # botocore/data/emr-serverless/2021-07-13/service-2.json   (protocol rest-json, endpointPrefix emr-serverless, signingName emr-serverless)
+  connect.json          # botocore/data/connect/2017-08-08/service-2.json          (protocol rest-json, endpointPrefix connect, signingName connect)
+  lexv2.json            # botocore/data/lex-models-v2/2020-08-07/service-2.json    (protocol rest-json, endpointPrefix models-v2-lex, signingName lex)
+  pinpoint-sms-voice-v2.json # botocore/data/pinpoint-sms-voice-v2/2022-03-31/service-2.json (protocol json, endpointPrefix sms-voice, signingName sms-voice, targetPrefix PinpointSMSVoiceV2)
 ```
 
 ### Notes

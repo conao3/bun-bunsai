@@ -29,7 +29,17 @@ type HostedZone = {
   recordSets: ResourceRecordSet[];
 };
 
+type HealthCheck = {
+  id: string;
+  callerReference: string;
+  version: number;
+  config: Record<string, unknown>;
+};
+
 const apiPrefix = "/2013-04-01/hostedzone";
+const countPath = "/2013-04-01/hostedzonecount";
+const healthPrefix = "/2013-04-01/healthcheck";
+const healthKeyPrefix = "hc-";
 
 const zoneIdFromPath = (path: string): string | undefined => {
   if (!path.startsWith(apiPrefix)) return undefined;
@@ -121,10 +131,63 @@ const hostedZoneView = (zone: HostedZone) => ({
   ResourceRecordSetCount: zone.recordSets.length,
 });
 
+const listZones = (ctx: ServiceContext): HostedZone[] =>
+  ctx.store
+    .list<HostedZone>()
+    .filter((entry) => !entry.key.startsWith(healthKeyPrefix))
+    .map((entry) => entry.value);
+
+const generateHealthCheckId = (): string => {
+  let out = "";
+  for (let i = 0; i < 36; i += 1) {
+    if (i === 8 || i === 13 || i === 18 || i === 23) {
+      out += "-";
+      continue;
+    }
+    out += "0123456789abcdef"[Math.floor(Math.random() * 16)];
+  }
+  return out;
+};
+
+const getHealthCheck = (ctx: ServiceContext, id: string): HealthCheck => {
+  const check = ctx.store.get<HealthCheck>(`${healthKeyPrefix}${id}`);
+  if (check === undefined) {
+    throw awsError(
+      "NoSuchHealthCheck",
+      `No health check exists with ID ${id}`,
+      404,
+    );
+  }
+  return check;
+};
+
+const healthCheckView = (check: HealthCheck) => ({
+  Id: check.id,
+  CallerReference: check.callerReference,
+  HealthCheckVersion: check.version,
+  HealthCheckConfig: check.config,
+});
+
 const route53: ServiceDefinition = {
   name: "route53",
   protocol: "rest-xml",
   resolveOperation: (req: ParsedRequest): string | undefined => {
+    if (req.path.replace(/\/$/, "") === countPath) {
+      if (req.method === "GET") return "GetHostedZoneCount";
+      return undefined;
+    }
+    if (req.path.startsWith(healthPrefix)) {
+      const rest = req.path.slice(healthPrefix.length).replace(/\/$/, "");
+      const isCollection = rest === "";
+      if (isCollection) {
+        if (req.method === "POST") return "CreateHealthCheck";
+        if (req.method === "GET") return "ListHealthChecks";
+        return undefined;
+      }
+      if (req.method === "GET") return "GetHealthCheck";
+      if (req.method === "DELETE") return "DeleteHealthCheck";
+      return undefined;
+    }
     if (!req.path.startsWith(apiPrefix)) return undefined;
     const rest = req.path.slice(apiPrefix.length).replace(/\/$/, "");
     const isCollection = rest === "";
@@ -206,9 +269,9 @@ const route53: ServiceDefinition = {
       };
     },
     ListHostedZones: (_input, ctx) => {
-      const zones = ctx.store.list<HostedZone>();
+      const zones = listZones(ctx);
       return {
-        HostedZones: zones.map((entry) => hostedZoneView(entry.value)),
+        HostedZones: zones.map((zone) => hostedZoneView(zone)),
         Marker: "",
         IsTruncated: false,
         MaxItems: "100",
@@ -277,6 +340,79 @@ const route53: ServiceDefinition = {
         IsTruncated: false,
         MaxItems: "100",
       };
+    },
+    GetHostedZoneCount: (_input, ctx) => ({
+      HostedZoneCount: listZones(ctx).length,
+    }),
+    CreateHealthCheck: (input, ctx) => {
+      const callerReference = input["CallerReference"];
+      if (typeof callerReference !== "string" || callerReference === "") {
+        throw awsError("InvalidInput", "CallerReference is required", 400);
+      }
+      const rawConfig = input["HealthCheckConfig"];
+      if (typeof rawConfig !== "object" || rawConfig === null) {
+        throw awsError("InvalidInput", "HealthCheckConfig is required", 400);
+      }
+      const config = rawConfig as Record<string, unknown>;
+      if (typeof config["Type"] !== "string" || config["Type"] === "") {
+        throw awsError(
+          "InvalidInput",
+          "HealthCheckConfig.Type is required",
+          400,
+        );
+      }
+      const existing = ctx.store
+        .list<HealthCheck>()
+        .filter((entry) => entry.key.startsWith(healthKeyPrefix))
+        .find((entry) => entry.value.callerReference === callerReference);
+      if (existing !== undefined) {
+        throw awsError(
+          "HealthCheckAlreadyExists",
+          `A health check with CallerReference ${callerReference} already exists`,
+          409,
+        );
+      }
+      const id = generateHealthCheckId();
+      const check: HealthCheck = {
+        id,
+        callerReference,
+        version: 1,
+        config,
+      };
+      ctx.store.set<HealthCheck>(`${healthKeyPrefix}${id}`, check);
+      return {
+        HealthCheck: healthCheckView(check),
+        Location: `https://route53.amazonaws.com${healthPrefix}/${id}`,
+      };
+    },
+    GetHealthCheck: (input, ctx) => {
+      const id = input["HealthCheckId"];
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidInput", "HealthCheckId is required", 400);
+      }
+      const check = getHealthCheck(ctx, id);
+      return { HealthCheck: healthCheckView(check) };
+    },
+    ListHealthChecks: (_input, ctx) => {
+      const checks = ctx.store
+        .list<HealthCheck>()
+        .filter((entry) => entry.key.startsWith(healthKeyPrefix))
+        .map((entry) => entry.value);
+      return {
+        HealthChecks: checks.map((check) => healthCheckView(check)),
+        Marker: "",
+        IsTruncated: false,
+        MaxItems: "100",
+      };
+    },
+    DeleteHealthCheck: (input, ctx) => {
+      const id = input["HealthCheckId"];
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidInput", "HealthCheckId is required", 400);
+      }
+      getHealthCheck(ctx, id);
+      ctx.store.delete(`${healthKeyPrefix}${id}`);
+      return {};
     },
   },
   model,

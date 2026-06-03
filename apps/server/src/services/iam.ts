@@ -77,6 +77,27 @@ type StoredInstanceProfile = {
   Tags: StoredTag[];
 };
 
+type StoredGroup = {
+  Path: string;
+  GroupName: string;
+  GroupId: string;
+  Arn: string;
+  CreateDate: string;
+};
+
+type StoredGroupMember = {
+  GroupName: string;
+  UserName: string;
+};
+
+type StoredPolicyVersion = {
+  PolicyArn: string;
+  VersionId: string;
+  Document: string;
+  IsDefaultVersion: boolean;
+  CreateDate: string;
+};
+
 const roleKey = (name: string): string => `role/${name}`;
 
 const userKey = (name: string): string => `user/${name}`;
@@ -96,6 +117,14 @@ const roleTagKey = (roleName: string, tagKey: string): string =>
 
 const instanceProfileKey = (name: string): string => `instanceprofile/${name}`;
 
+const groupKey = (name: string): string => `group/${name}`;
+
+const groupMemberKey = (groupName: string, userName: string): string =>
+  `groupmember/${groupName}/${userName}`;
+
+const policyVersionKey = (arn: string, versionId: string): string =>
+  `policyversion/${arn}/${versionId}`;
+
 const roleArnOf = (account: string, path: string, name: string): string =>
   `arn:aws:iam::${account}:role${path}${name}`;
 
@@ -110,6 +139,15 @@ const instanceProfileArnOf = (
   path: string,
   name: string,
 ): string => `arn:aws:iam::${account}:instance-profile${path}${name}`;
+
+const groupArnOf = (account: string, path: string, name: string): string =>
+  `arn:aws:iam::${account}:group${path}${name}`;
+
+const serviceLinkedRoleArnOf = (
+  account: string,
+  service: string,
+  name: string,
+): string => `arn:aws:iam::${account}:role/aws-service-role/${service}/${name}`;
 
 const randomHex = (length: number): string => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -566,6 +604,230 @@ const ListRoleTags: OperationHandler = (input, ctx) => {
   return { Tags: tags, IsTruncated: false };
 };
 
+const requireGroup = (ctx: ServiceContext, name: string): StoredGroup => {
+  const group = ctx.store.get<StoredGroup>(groupKey(name));
+  if (group === undefined) {
+    throw awsError("NoSuchEntity", `Group ${name} cannot be found.`, 404);
+  }
+  return group;
+};
+
+const CreateGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "GroupName");
+  if (ctx.store.get<StoredGroup>(groupKey(name)) !== undefined) {
+    throw awsError(
+      "EntityAlreadyExists",
+      `Group with name ${name} already exists.`,
+      409,
+    );
+  }
+  const path = normalizePath(input);
+  const group: StoredGroup = {
+    Path: path,
+    GroupName: name,
+    GroupId: `AGPA${randomHex(17)}`,
+    Arn: groupArnOf(ctx.account, path, name),
+    CreateDate: new Date().toISOString(),
+  };
+  ctx.store.set(groupKey(name), group);
+  return { Group: group };
+};
+
+const GetGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "GroupName");
+  const group = requireGroup(ctx, name);
+  const users = ctx.store
+    .list<StoredGroupMember>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("groupmember/") && entry.value.GroupName === name,
+    )
+    .map((entry) => ctx.store.get<StoredUser>(userKey(entry.value.UserName)))
+    .filter((user): user is StoredUser => user !== undefined);
+  return { Group: group, Users: users, IsTruncated: false };
+};
+
+const ListGroups: OperationHandler = (input, ctx) => {
+  const prefix = optionalString(input, "PathPrefix") ?? "/";
+  const groups = ctx.store
+    .list<StoredGroup>()
+    .filter((entry) => entry.key.startsWith("group/"))
+    .map((entry) => entry.value)
+    .filter((group) => group.Path.startsWith(prefix));
+  return { Groups: groups, IsTruncated: false };
+};
+
+const DeleteGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "GroupName");
+  requireGroup(ctx, name);
+  ctx.store.delete(groupKey(name));
+  for (const entry of ctx.store.list<StoredGroupMember>()) {
+    if (
+      entry.key.startsWith("groupmember/") &&
+      entry.value.GroupName === name
+    ) {
+      ctx.store.delete(entry.key);
+    }
+  }
+  return {};
+};
+
+const AddUserToGroup: OperationHandler = (input, ctx) => {
+  const groupName = requireString(input, "GroupName");
+  const userName = requireString(input, "UserName");
+  requireGroup(ctx, groupName);
+  requireUser(ctx, userName);
+  const member: StoredGroupMember = {
+    GroupName: groupName,
+    UserName: userName,
+  };
+  ctx.store.set(groupMemberKey(groupName, userName), member);
+  return {};
+};
+
+const RemoveUserFromGroup: OperationHandler = (input, ctx) => {
+  const groupName = requireString(input, "GroupName");
+  const userName = requireString(input, "UserName");
+  requireGroup(ctx, groupName);
+  ctx.store.delete(groupMemberKey(groupName, userName));
+  return {};
+};
+
+const policyVersionsOf = (
+  ctx: ServiceContext,
+  policyArn: string,
+): StoredPolicyVersion[] =>
+  ctx.store
+    .list<StoredPolicyVersion>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("policyversion/") &&
+        entry.value.PolicyArn === policyArn,
+    )
+    .map((entry) => entry.value);
+
+const CreatePolicyVersion: OperationHandler = (input, ctx) => {
+  const policyArn = requireString(input, "PolicyArn");
+  const document = requireString(input, "PolicyDocument");
+  const policy = requirePolicy(ctx, policyArn);
+  const setAsDefault = input["SetAsDefault"] === true;
+  const existing = policyVersionsOf(ctx, policyArn);
+  const maxVersion = existing.reduce((max, version) => {
+    const num = Number.parseInt(version.VersionId.slice(1), 10);
+    return num > max ? num : max;
+  }, 1);
+  const versionId = `v${maxVersion + 1}`;
+  const now = new Date().toISOString();
+  if (setAsDefault) {
+    for (const version of existing) {
+      if (version.IsDefaultVersion) {
+        ctx.store.set(policyVersionKey(policyArn, version.VersionId), {
+          ...version,
+          IsDefaultVersion: false,
+        });
+      }
+    }
+  }
+  const created: StoredPolicyVersion = {
+    PolicyArn: policyArn,
+    VersionId: versionId,
+    Document: document,
+    IsDefaultVersion: setAsDefault,
+    CreateDate: now,
+  };
+  ctx.store.set(policyVersionKey(policyArn, versionId), created);
+  if (setAsDefault) {
+    ctx.store.set(policyKey(policyArn), {
+      ...policy,
+      DefaultVersionId: versionId,
+      UpdateDate: now,
+    });
+  }
+  return {
+    PolicyVersion: {
+      Document: created.Document,
+      VersionId: created.VersionId,
+      IsDefaultVersion: created.IsDefaultVersion,
+      CreateDate: created.CreateDate,
+    },
+  };
+};
+
+const defaultPolicyVersionOf = (policy: StoredPolicy): StoredPolicyVersion => ({
+  PolicyArn: policy.Arn,
+  VersionId: "v1",
+  Document: policy.PolicyDocument ?? "",
+  IsDefaultVersion: policy.DefaultVersionId === "v1",
+  CreateDate: policy.CreateDate,
+});
+
+const ListPolicyVersions: OperationHandler = (input, ctx) => {
+  const policyArn = requireString(input, "PolicyArn");
+  const policy = requirePolicy(ctx, policyArn);
+  const stored = policyVersionsOf(ctx, policyArn);
+  const hasV1 = stored.some((version) => version.VersionId === "v1");
+  const versions = (
+    hasV1 ? stored : [defaultPolicyVersionOf(policy), ...stored]
+  ).map((version) => ({
+    VersionId: version.VersionId,
+    IsDefaultVersion: version.VersionId === policy.DefaultVersionId,
+    CreateDate: version.CreateDate,
+  }));
+  return { Versions: versions, IsTruncated: false };
+};
+
+const GetPolicyVersion: OperationHandler = (input, ctx) => {
+  const policyArn = requireString(input, "PolicyArn");
+  const versionId = requireString(input, "VersionId");
+  const policy = requirePolicy(ctx, policyArn);
+  const stored = ctx.store.get<StoredPolicyVersion>(
+    policyVersionKey(policyArn, versionId),
+  );
+  const version =
+    stored ?? (versionId === "v1" ? defaultPolicyVersionOf(policy) : undefined);
+  if (version === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Policy version ${versionId} does not exist.`,
+      404,
+    );
+  }
+  return {
+    PolicyVersion: {
+      Document: version.Document,
+      VersionId: version.VersionId,
+      IsDefaultVersion: version.IsDefaultVersion,
+      CreateDate: version.CreateDate,
+    },
+  };
+};
+
+const CreateServiceLinkedRole: OperationHandler = (input, ctx) => {
+  const awsServiceName = requireString(input, "AWSServiceName");
+  const suffix = optionalString(input, "CustomSuffix");
+  const baseName = `AWSServiceRoleFor${awsServiceName.split(".")[0]}`;
+  const name = suffix === undefined ? baseName : `${baseName}_${suffix}`;
+  if (ctx.store.get<StoredRole>(roleKey(name)) !== undefined) {
+    throw awsError(
+      "EntityAlreadyExists",
+      `Role with name ${name} already exists.`,
+      409,
+    );
+  }
+  const path = `/aws-service-role/${awsServiceName}/`;
+  const role: StoredRole = {
+    Path: path,
+    RoleName: name,
+    RoleId: `AROA${randomHex(17)}`,
+    Arn: serviceLinkedRoleArnOf(ctx.account, awsServiceName, name),
+    CreateDate: new Date().toISOString(),
+    Description: optionalString(input, "Description"),
+    MaxSessionDuration: 3600,
+  };
+  ctx.store.set(roleKey(name), role);
+  return { Role: role };
+};
+
 const iam = {
   name: "iam",
   protocol: "query",
@@ -594,6 +856,16 @@ const iam = {
     ListEntitiesForPolicy,
     TagRole,
     ListRoleTags,
+    CreateGroup,
+    GetGroup,
+    ListGroups,
+    DeleteGroup,
+    AddUserToGroup,
+    RemoveUserFromGroup,
+    CreatePolicyVersion,
+    ListPolicyVersions,
+    GetPolicyVersion,
+    CreateServiceLinkedRole,
   },
   model,
 } as const satisfies ServiceDefinition;

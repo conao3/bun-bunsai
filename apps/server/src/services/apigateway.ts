@@ -34,6 +34,28 @@ type StoredDeployment = {
   createdDate: Date;
 };
 
+type StoredModel = {
+  id: string;
+  name: string;
+  description: string | undefined;
+  schema: string | undefined;
+  contentType: string;
+};
+
+type StoredStage = {
+  stageName: string;
+  deploymentId: string | undefined;
+  description: string | undefined;
+  cacheClusterEnabled: boolean;
+  cacheClusterSize: string | undefined;
+  cacheClusterStatus: string;
+  variables: Record<string, string> | undefined;
+  documentationVersion: string | undefined;
+  tracingEnabled: boolean;
+  createdDate: Date;
+  lastUpdatedDate: Date;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -47,6 +69,12 @@ const resourceKey = (restApiId: string, id: string): string =>
 
 const deploymentKey = (restApiId: string, id: string): string =>
   `deployment/${restApiId}/${id}`;
+
+const modelKey = (restApiId: string, name: string): string =>
+  `model/${restApiId}/${name}`;
+
+const stageKey = (restApiId: string, stageName: string): string =>
+  `stage/${restApiId}/${stageName}`;
 
 const requireRestApi = (
   ctx: ServiceContext,
@@ -87,6 +115,28 @@ const deploymentView = (
   id: deployment.id,
   description: deployment.description,
   createdDate: deployment.createdDate,
+});
+
+const modelView = (m: StoredModel): Record<string, unknown> => ({
+  id: m.id,
+  name: m.name,
+  description: m.description,
+  schema: m.schema,
+  contentType: m.contentType,
+});
+
+const stageView = (s: StoredStage): Record<string, unknown> => ({
+  stageName: s.stageName,
+  deploymentId: s.deploymentId,
+  description: s.description,
+  cacheClusterEnabled: s.cacheClusterEnabled,
+  cacheClusterSize: s.cacheClusterSize,
+  cacheClusterStatus: s.cacheClusterStatus,
+  variables: s.variables,
+  documentationVersion: s.documentationVersion,
+  tracingEnabled: s.tracingEnabled,
+  createdDate: s.createdDate,
+  lastUpdatedDate: s.lastUpdatedDate,
 });
 
 const CreateRestApi: OperationHandler = (input, ctx) => {
@@ -143,7 +193,9 @@ const DeleteRestApi: OperationHandler = (input, ctx) => {
     if (
       entry.key === restApiKey(restApiId) ||
       entry.key.startsWith(`resource/${restApiId}/`) ||
-      entry.key.startsWith(`deployment/${restApiId}/`)
+      entry.key.startsWith(`deployment/${restApiId}/`) ||
+      entry.key.startsWith(`model/${restApiId}/`) ||
+      entry.key.startsWith(`stage/${restApiId}/`)
     ) {
       ctx.store.delete(entry.key);
     }
@@ -218,6 +270,167 @@ const CreateDeployment: OperationHandler = (input, ctx) => {
   return deploymentView(deployment);
 };
 
+const CreateModel: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  const name = stringOrUndefined(input["name"]);
+  if (restApiId === undefined || name === undefined) {
+    throw awsError(
+      "BadRequestException",
+      "restApiId and name are required.",
+      400,
+    );
+  }
+  requireRestApi(ctx, restApiId);
+  if (ctx.store.get<StoredModel>(modelKey(restApiId, name)) !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `Model name already exists for this REST API`,
+      409,
+    );
+  }
+  const m: StoredModel = {
+    id: randomId(),
+    name,
+    description: stringOrUndefined(input["description"]),
+    schema: stringOrUndefined(input["schema"]),
+    contentType: stringOrUndefined(input["contentType"]) ?? "application/json",
+  };
+  ctx.store.set(modelKey(restApiId, name), m);
+  return modelView(m);
+};
+
+const GetModels: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  if (restApiId === undefined) {
+    throw awsError("BadRequestException", "restApiId is required.", 400);
+  }
+  requireRestApi(ctx, restApiId);
+  const items = ctx.store
+    .list<StoredModel>()
+    .filter((entry) => entry.key.startsWith(`model/${restApiId}/`))
+    .map((entry) => modelView(entry.value));
+  return { items };
+};
+
+const requireModel = (
+  ctx: ServiceContext,
+  restApiId: string,
+  modelName: string,
+): StoredModel => {
+  const m = ctx.store.get<StoredModel>(modelKey(restApiId, modelName));
+  if (m === undefined) {
+    throw awsError("NotFoundException", `Invalid model name specified`, 404);
+  }
+  return m;
+};
+
+const GetModel: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  const modelName = stringOrUndefined(input["modelName"]);
+  if (restApiId === undefined || modelName === undefined) {
+    throw awsError(
+      "BadRequestException",
+      "restApiId and modelName are required.",
+      400,
+    );
+  }
+  requireRestApi(ctx, restApiId);
+  return modelView(requireModel(ctx, restApiId, modelName));
+};
+
+const DeleteModel: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  const modelName = stringOrUndefined(input["modelName"]);
+  if (restApiId === undefined || modelName === undefined) {
+    throw awsError(
+      "BadRequestException",
+      "restApiId and modelName are required.",
+      400,
+    );
+  }
+  requireRestApi(ctx, restApiId);
+  requireModel(ctx, restApiId, modelName);
+  ctx.store.delete(modelKey(restApiId, modelName));
+  return {};
+};
+
+const CreateStage: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  const stageName = stringOrUndefined(input["stageName"]);
+  if (restApiId === undefined || stageName === undefined) {
+    throw awsError(
+      "BadRequestException",
+      "restApiId and stageName are required.",
+      400,
+    );
+  }
+  requireRestApi(ctx, restApiId);
+  if (
+    ctx.store.get<StoredStage>(stageKey(restApiId, stageName)) !== undefined
+  ) {
+    throw awsError(
+      "ConflictException",
+      `Stage already exists for this REST API`,
+      409,
+    );
+  }
+  const variables = input["variables"];
+  const now = new Date();
+  const stage: StoredStage = {
+    stageName,
+    deploymentId: stringOrUndefined(input["deploymentId"]),
+    description: stringOrUndefined(input["description"]),
+    cacheClusterEnabled: input["cacheClusterEnabled"] === true,
+    cacheClusterSize: stringOrUndefined(input["cacheClusterSize"]),
+    cacheClusterStatus: "NOT_AVAILABLE",
+    variables:
+      variables !== null && typeof variables === "object"
+        ? (variables as Record<string, string>)
+        : undefined,
+    documentationVersion: stringOrUndefined(input["documentationVersion"]),
+    tracingEnabled: input["tracingEnabled"] === true,
+    createdDate: now,
+    lastUpdatedDate: now,
+  };
+  ctx.store.set(stageKey(restApiId, stageName), stage);
+  return stageView(stage);
+};
+
+const GetStage: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  const stageName = stringOrUndefined(input["stageName"]);
+  if (restApiId === undefined || stageName === undefined) {
+    throw awsError(
+      "BadRequestException",
+      "restApiId and stageName are required.",
+      400,
+    );
+  }
+  requireRestApi(ctx, restApiId);
+  const stage = ctx.store.get<StoredStage>(stageKey(restApiId, stageName));
+  if (stage === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Invalid stage identifier specified`,
+      404,
+    );
+  }
+  return stageView(stage);
+};
+
+const GetStages: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  if (restApiId === undefined) {
+    throw awsError("BadRequestException", "restApiId is required.", 400);
+  }
+  requireRestApi(ctx, restApiId);
+  const item = ctx.store
+    .list<StoredStage>()
+    .filter((entry) => entry.key.startsWith(`stage/${restApiId}/`))
+    .map((entry) => stageView(entry.value));
+  return { item };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -247,6 +460,28 @@ const apigateway = {
         return "CreateDeployment";
       return undefined;
     }
+    if (parts[2] === "models") {
+      if (parts.length === 3) {
+        if (req.method === "GET") return "GetModels";
+        if (req.method === "POST") return "CreateModel";
+        return undefined;
+      }
+      if (parts.length === 4) {
+        if (req.method === "GET") return "GetModel";
+        if (req.method === "DELETE") return "DeleteModel";
+        return undefined;
+      }
+      return undefined;
+    }
+    if (parts[2] === "stages") {
+      if (parts.length === 3) {
+        if (req.method === "GET") return "GetStages";
+        if (req.method === "POST") return "CreateStage";
+        return undefined;
+      }
+      if (parts.length === 4 && req.method === "GET") return "GetStage";
+      return undefined;
+    }
     return undefined;
   },
   operations: {
@@ -257,6 +492,13 @@ const apigateway = {
     CreateResource,
     GetResources,
     CreateDeployment,
+    CreateModel,
+    GetModels,
+    GetModel,
+    DeleteModel,
+    CreateStage,
+    GetStage,
+    GetStages,
   },
   model,
 } as const satisfies ServiceDefinition;

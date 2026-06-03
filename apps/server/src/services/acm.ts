@@ -22,6 +22,17 @@ type StoredCertificate = {
   pem: string;
   tags: { Key: string; Value?: string }[];
   renewalSummary?: { RenewalStatus: string; UpdatedAt: number };
+  ImportedAt?: number;
+  RevocationReason?: string;
+  RevokedAt?: number;
+  options?: {
+    CertificateTransparencyLoggingPreference?: string;
+    Export?: string;
+  };
+};
+
+type AccountConfig = {
+  ExpiryEvents?: { DaysBeforeExpiry?: number };
 };
 
 const certificateKey = (id: string): string => `certificate/${id}`;
@@ -64,6 +75,11 @@ const requireCertificate = (
 
 const pemOf = (id: string): string =>
   `-----BEGIN CERTIFICATE-----\n${Buffer.from(id, "utf8").toString("base64")}\n-----END CERTIFICATE-----`;
+
+const privateKeyPemOf = (id: string): string =>
+  `-----BEGIN ENCRYPTED PRIVATE KEY-----\n${Buffer.from(`key:${id}`, "utf8").toString("base64")}\n-----END ENCRYPTED PRIVATE KEY-----`;
+
+const accountConfigKey = "account-config";
 
 const RequestCertificate: OperationHandler = (input, ctx) => {
   const domainName = requireString(input, "DomainName");
@@ -267,6 +283,243 @@ const ResendValidationEmail: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const ImportCertificate: OperationHandler = (input, ctx) => {
+  const existingArn =
+    typeof input["CertificateArn"] === "string"
+      ? (input["CertificateArn"] as string)
+      : undefined;
+  const now = Math.floor(Date.now() / 1000);
+  if (existingArn !== undefined) {
+    const existing = requireCertificate(ctx, existingArn);
+    const updated: StoredCertificate = {
+      ...existing,
+      Type: "IMPORTED",
+      ImportedAt: now,
+      Status: "ISSUED",
+    };
+    ctx.store.set(certificateKey(idFromArn(existingArn)), updated);
+    return { CertificateArn: existingArn };
+  }
+  const id = crypto.randomUUID();
+  const arn = certificateArnOf(ctx.region, ctx.account, id);
+  const tags = Array.isArray(input["Tags"]) ? normalizeTags(input["Tags"]) : [];
+  const certificate: StoredCertificate = {
+    CertificateArn: arn,
+    DomainName: "imported.example.com",
+    SubjectAlternativeNames: ["imported.example.com"],
+    Status: "ISSUED",
+    Type: "IMPORTED",
+    KeyAlgorithm: "RSA_2048",
+    CreatedAt: now,
+    IssuedAt: now,
+    ImportedAt: now,
+    ValidationMethod: "NONE",
+    pem: pemOf(id),
+    tags,
+  };
+  ctx.store.set(certificateKey(id), certificate);
+  return { CertificateArn: arn };
+};
+
+const ExportCertificate: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "CertificateArn");
+  const certificate = requireCertificate(ctx, arn);
+  return {
+    Certificate: certificate.pem,
+    CertificateChain: certificate.pem,
+    PrivateKey: privateKeyPemOf(idFromArn(arn)),
+  };
+};
+
+const RevokeCertificate: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "CertificateArn");
+  const revocationReason = requireString(input, "RevocationReason");
+  const certificate = requireCertificate(ctx, arn);
+  const now = Math.floor(Date.now() / 1000);
+  const updated: StoredCertificate = {
+    ...certificate,
+    Status: "REVOKED",
+    RevocationReason: revocationReason,
+    RevokedAt: now,
+  };
+  ctx.store.set(certificateKey(idFromArn(arn)), updated);
+  return { CertificateArn: arn };
+};
+
+const UpdateCertificateOptions: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "CertificateArn");
+  const certificate = requireCertificate(ctx, arn);
+  const optionsInput = input["Options"] as Record<string, unknown> | undefined;
+  const options = {
+    CertificateTransparencyLoggingPreference:
+      typeof optionsInput?.["CertificateTransparencyLoggingPreference"] ===
+      "string"
+        ? (optionsInput["CertificateTransparencyLoggingPreference"] as string)
+        : certificate.options?.CertificateTransparencyLoggingPreference,
+    Export:
+      typeof optionsInput?.["Export"] === "string"
+        ? (optionsInput["Export"] as string)
+        : certificate.options?.Export,
+  };
+  const updated: StoredCertificate = { ...certificate, options };
+  ctx.store.set(certificateKey(idFromArn(arn)), updated);
+  return {};
+};
+
+const GetAccountConfiguration: OperationHandler = (_input, ctx) => {
+  const config = ctx.store.get<AccountConfig>(accountConfigKey) ?? {};
+  return { ExpiryEvents: config.ExpiryEvents };
+};
+
+const PutAccountConfiguration: OperationHandler = (input, ctx) => {
+  const expiryEvents = input["ExpiryEvents"] as
+    | { DaysBeforeExpiry?: number }
+    | undefined;
+  const config: AccountConfig = { ExpiryEvents: expiryEvents };
+  ctx.store.set(accountConfigKey, config);
+  return {};
+};
+
+const matchesCertificateFilter = (
+  cert: StoredCertificate,
+  filter: Record<string, unknown>,
+): boolean => {
+  if (filter["CertificateArn"] !== undefined) {
+    return cert.CertificateArn === filter["CertificateArn"];
+  }
+  if (filter["AcmCertificateMetadataFilter"] !== undefined) {
+    const metaFilter = filter["AcmCertificateMetadataFilter"] as Record<
+      string,
+      unknown
+    >;
+    if (
+      metaFilter["Status"] !== undefined &&
+      cert.Status !== metaFilter["Status"]
+    ) {
+      return false;
+    }
+    if (metaFilter["Type"] !== undefined && cert.Type !== metaFilter["Type"]) {
+      return false;
+    }
+    return true;
+  }
+  if (filter["X509AttributeFilter"] !== undefined) {
+    const x509Filter = filter["X509AttributeFilter"] as Record<string, unknown>;
+    if (
+      x509Filter["KeyAlgorithm"] !== undefined &&
+      cert.KeyAlgorithm !== x509Filter["KeyAlgorithm"]
+    ) {
+      return false;
+    }
+    return true;
+  }
+  return true;
+};
+
+const matchesFilterStatement = (
+  cert: StoredCertificate,
+  statement: Record<string, unknown>,
+): boolean => {
+  if (statement["Filter"] !== undefined) {
+    return matchesCertificateFilter(
+      cert,
+      statement["Filter"] as Record<string, unknown>,
+    );
+  }
+  if (statement["And"] !== undefined) {
+    const ands = statement["And"] as Record<string, unknown>[];
+    return ands.every((s) => matchesFilterStatement(cert, s));
+  }
+  if (statement["Or"] !== undefined) {
+    const ors = statement["Or"] as Record<string, unknown>[];
+    return ors.some((s) => matchesFilterStatement(cert, s));
+  }
+  if (statement["Not"] !== undefined) {
+    return !matchesFilterStatement(
+      cert,
+      statement["Not"] as Record<string, unknown>,
+    );
+  }
+  return true;
+};
+
+const certToSearchResult = (
+  cert: StoredCertificate,
+): Record<string, unknown> => ({
+  CertificateArn: cert.CertificateArn,
+  X509Attributes: {
+    Subject: `CN=${cert.DomainName}`,
+    Issuer: "Amazon",
+    SubjectAlternativeNames: cert.SubjectAlternativeNames,
+    KeyAlgorithm: cert.KeyAlgorithm,
+  },
+  CertificateMetadata: {
+    AcmCertificateMetadata: {
+      CreatedAt: cert.CreatedAt,
+      IssuedAt: cert.IssuedAt,
+      Status: cert.Status,
+      Type: cert.Type,
+      RenewalEligibility: "INELIGIBLE",
+      InUse: false,
+      Exported: false,
+    },
+  },
+});
+
+const SearchCertificates: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 100;
+  const filterStatement = input["FilterStatement"] as
+    | Record<string, unknown>
+    | undefined;
+  const sortBy =
+    typeof input["SortBy"] === "string"
+      ? (input["SortBy"] as string)
+      : "CERTIFICATE_ARN";
+  const sortOrder =
+    typeof input["SortOrder"] === "string"
+      ? (input["SortOrder"] as string)
+      : "ASCENDING";
+
+  let certificates = ctx.store
+    .list<StoredCertificate>()
+    .filter((entry) => entry.key.startsWith("certificate/"))
+    .map((entry) => entry.value);
+
+  if (filterStatement !== undefined) {
+    certificates = certificates.filter((cert) =>
+      matchesFilterStatement(cert, filterStatement),
+    );
+  }
+
+  const multiplier = sortOrder === "DESCENDING" ? -1 : 1;
+  certificates = [...certificates].sort((a, b) => {
+    let cmp = 0;
+    switch (sortBy) {
+      case "CREATED_AT":
+        cmp = a.CreatedAt - b.CreatedAt;
+        break;
+      case "STATUS":
+        cmp = a.Status.localeCompare(b.Status);
+        break;
+      case "TYPE":
+        cmp = a.Type.localeCompare(b.Type);
+        break;
+      case "COMMON_NAME":
+        cmp = a.DomainName.localeCompare(b.DomainName);
+        break;
+      default:
+        cmp = a.CertificateArn.localeCompare(b.CertificateArn);
+    }
+    return cmp * multiplier;
+  });
+
+  const results = certificates.slice(0, maxResults).map(certToSearchResult);
+  return { Results: results };
+};
+
 const acm = {
   name: "acm",
   protocol: "json",
@@ -281,6 +534,13 @@ const acm = {
     RemoveTagsFromCertificate,
     RenewCertificate,
     ResendValidationEmail,
+    ImportCertificate,
+    ExportCertificate,
+    RevokeCertificate,
+    UpdateCertificateOptions,
+    GetAccountConfiguration,
+    PutAccountConfiguration,
+    SearchCertificates,
   },
   model,
 } as const satisfies ServiceDefinition;

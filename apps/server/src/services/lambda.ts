@@ -700,6 +700,1042 @@ const GetLayerVersion: OperationHandler = (input, ctx) => {
   return layerVersionResponse(layer);
 };
 
+const DeleteAlias: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const aliasName = aliasNameFromInput(input);
+  const key = aliasKey(fn.FunctionName, aliasName);
+  if (ctx.store.get<StoredAlias>(key) === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Alias not found: ${aliasName}`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const UpdateAlias: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const aliasName = aliasNameFromInput(input);
+  const key = aliasKey(fn.FunctionName, aliasName);
+  const alias = ctx.store.get<StoredAlias>(key);
+  if (alias === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Alias not found: ${aliasName}`,
+      404,
+    );
+  }
+  const version = stringOrUndefined(input["FunctionVersion"]);
+  if (version !== undefined) alias.FunctionVersion = version;
+  const description = stringOrUndefined(input["Description"]);
+  if (description !== undefined) alias.Description = description;
+  alias.RevisionId = crypto.randomUUID();
+  ctx.store.set(key, alias);
+  return aliasConfigurationOf(ctx, fn.FunctionName, alias);
+};
+
+type StoredEventSourceMapping = {
+  UUID: string;
+  EventSourceArn: string | undefined;
+  FunctionArn: string;
+  State: string;
+  BatchSize: number;
+  LastModified: string;
+  StartingPosition: string | undefined;
+  Enabled: boolean;
+  FilterCriteria: unknown;
+  EventSourceMappingArn: string;
+};
+
+const esmKey = (uuid: string): string => `esm:${uuid}`;
+
+const esmResponse = (
+  esm: StoredEventSourceMapping,
+): Record<string, unknown> => ({
+  UUID: esm.UUID,
+  EventSourceArn: esm.EventSourceArn,
+  FunctionArn: esm.FunctionArn,
+  State: esm.State,
+  BatchSize: esm.BatchSize,
+  LastModified: esm.LastModified,
+  StartingPosition: esm.StartingPosition,
+  StateTransitionReason: "User action",
+  EventSourceMappingArn: esm.EventSourceMappingArn,
+});
+
+const CreateEventSourceMapping: OperationHandler = (input, ctx) => {
+  const fnName = functionNameFromInput(input);
+  const fn = requireFunction(ctx, fnName);
+  const uuid = crypto.randomUUID();
+  const esm: StoredEventSourceMapping = {
+    UUID: uuid,
+    EventSourceArn: stringOrUndefined(input["EventSourceArn"]),
+    FunctionArn: fn.FunctionArn,
+    State: "Enabled",
+    BatchSize: typeof input["BatchSize"] === "number" ? input["BatchSize"] : 10,
+    LastModified: nowIso(),
+    StartingPosition: stringOrUndefined(input["StartingPosition"]),
+    Enabled: input["Enabled"] !== false,
+    FilterCriteria: input["FilterCriteria"],
+    EventSourceMappingArn: `arn:aws:lambda:${ctx.region}:${ctx.account}:event-source-mapping:${uuid}`,
+  };
+  ctx.store.set(esmKey(uuid), esm);
+  return esmResponse(esm);
+};
+
+const uuidFromInput = (input: Record<string, unknown>): string => {
+  const uuid = input["UUID"];
+  if (typeof uuid === "string" && uuid !== "") return uuid;
+  throw awsError("InvalidParameterValueException", "UUID is required.", 400);
+};
+
+const requireEsm = (
+  ctx: ServiceContext,
+  uuid: string,
+): StoredEventSourceMapping => {
+  const esm = ctx.store.get<StoredEventSourceMapping>(esmKey(uuid));
+  if (esm === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Event source mapping not found: ${uuid}`,
+      404,
+    );
+  }
+  return esm;
+};
+
+const GetEventSourceMapping: OperationHandler = (input, ctx) => {
+  return esmResponse(requireEsm(ctx, uuidFromInput(input)));
+};
+
+const DeleteEventSourceMapping: OperationHandler = (input, ctx) => {
+  const esm = requireEsm(ctx, uuidFromInput(input));
+  ctx.store.delete(esmKey(esm.UUID));
+  return esmResponse({ ...esm, State: "Deleting" });
+};
+
+const UpdateEventSourceMapping: OperationHandler = (input, ctx) => {
+  const esm = requireEsm(ctx, uuidFromInput(input));
+  if (typeof input["BatchSize"] === "number")
+    esm.BatchSize = input["BatchSize"];
+  if (input["Enabled"] === false) esm.State = "Disabled";
+  else if (input["Enabled"] === true) esm.State = "Enabled";
+  esm.LastModified = nowIso();
+  ctx.store.set(esmKey(esm.UUID), esm);
+  return esmResponse(esm);
+};
+
+const ListEventSourceMappings: OperationHandler = (input, ctx) => {
+  const functionName = stringOrUndefined(input["FunctionName"] as unknown);
+  const mappings = ctx.store
+    .list<StoredEventSourceMapping>()
+    .filter((entry) => entry.key.startsWith("esm:"))
+    .filter(
+      (entry) =>
+        functionName === undefined ||
+        entry.value.FunctionArn.includes(functionName),
+    )
+    .map((entry) => esmResponse(entry.value));
+  return { EventSourceMappings: mappings };
+};
+
+type StoredCodeSigningConfig = {
+  CodeSigningConfigId: string;
+  CodeSigningConfigArn: string;
+  Description: string | undefined;
+  AllowedPublishers: { SigningProfileVersionArns: string[] };
+  CodeSigningPolicies: { UntrustedArtifactOnDeployment: string };
+  LastModified: string;
+};
+
+const cscKey = (arn: string): string => `csc:${arn}`;
+
+const cscResponse = (
+  csc: StoredCodeSigningConfig,
+): Record<string, unknown> => ({
+  CodeSigningConfigId: csc.CodeSigningConfigId,
+  CodeSigningConfigArn: csc.CodeSigningConfigArn,
+  Description: csc.Description,
+  AllowedPublishers: csc.AllowedPublishers,
+  CodeSigningPolicies: csc.CodeSigningPolicies,
+  LastModified: csc.LastModified,
+});
+
+const CreateCodeSigningConfig: OperationHandler = (input, ctx) => {
+  const id = `csc-${crypto.randomUUID().replace(/-/g, "").slice(0, 17)}`;
+  const arn = `arn:aws:lambda:${ctx.region}:${ctx.account}:code-signing-config:${id}`;
+  const allowedPublishers =
+    (input["AllowedPublishers"] as Record<string, unknown>) ?? {};
+  const policies =
+    (input["CodeSigningPolicies"] as Record<string, unknown>) ?? {};
+  const csc: StoredCodeSigningConfig = {
+    CodeSigningConfigId: id,
+    CodeSigningConfigArn: arn,
+    Description: stringOrUndefined(input["Description"]),
+    AllowedPublishers: {
+      SigningProfileVersionArns: stringListOf(
+        allowedPublishers["SigningProfileVersionArns"],
+      ),
+    },
+    CodeSigningPolicies: {
+      UntrustedArtifactOnDeployment:
+        stringOrUndefined(policies["UntrustedArtifactOnDeployment"]) ?? "Warn",
+    },
+    LastModified: nowIso(),
+  };
+  ctx.store.set(cscKey(arn), csc);
+  return { CodeSigningConfig: cscResponse(csc) };
+};
+
+const cscArnFromInput = (input: Record<string, unknown>): string => {
+  const arn = input["CodeSigningConfigArn"];
+  if (typeof arn === "string" && arn !== "") return arn;
+  throw awsError(
+    "InvalidParameterValueException",
+    "CodeSigningConfigArn is required.",
+    400,
+  );
+};
+
+const requireCsc = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredCodeSigningConfig => {
+  const csc = ctx.store.get<StoredCodeSigningConfig>(cscKey(arn));
+  if (csc === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Code signing config not found: ${arn}`,
+      404,
+    );
+  }
+  return csc;
+};
+
+const GetCodeSigningConfig: OperationHandler = (input, ctx) => {
+  const csc = requireCsc(ctx, cscArnFromInput(input));
+  return { CodeSigningConfig: cscResponse(csc) };
+};
+
+const DeleteCodeSigningConfig: OperationHandler = (input, ctx) => {
+  const arn = cscArnFromInput(input);
+  requireCsc(ctx, arn);
+  ctx.store.delete(cscKey(arn));
+  return {};
+};
+
+const UpdateCodeSigningConfig: OperationHandler = (input, ctx) => {
+  const arn = cscArnFromInput(input);
+  const csc = requireCsc(ctx, arn);
+  const description = stringOrUndefined(input["Description"]);
+  if (description !== undefined) csc.Description = description;
+  const allowedPublishers = input["AllowedPublishers"] as
+    | Record<string, unknown>
+    | undefined;
+  if (allowedPublishers !== undefined) {
+    csc.AllowedPublishers = {
+      SigningProfileVersionArns: stringListOf(
+        allowedPublishers["SigningProfileVersionArns"],
+      ),
+    };
+  }
+  const policies = input["CodeSigningPolicies"] as
+    | Record<string, unknown>
+    | undefined;
+  if (policies !== undefined) {
+    const policy = stringOrUndefined(policies["UntrustedArtifactOnDeployment"]);
+    if (policy !== undefined)
+      csc.CodeSigningPolicies.UntrustedArtifactOnDeployment = policy;
+  }
+  csc.LastModified = nowIso();
+  ctx.store.set(cscKey(arn), csc);
+  return { CodeSigningConfig: cscResponse(csc) };
+};
+
+const ListCodeSigningConfigs: OperationHandler = (input, ctx) => {
+  const configs = ctx.store
+    .list<StoredCodeSigningConfig>()
+    .filter((entry) => entry.key.startsWith("csc:"))
+    .map((entry) => cscResponse(entry.value));
+  return { CodeSigningConfigs: configs };
+};
+
+const fnCscKey = (name: string): string => `fn-csc:${name}`;
+
+const PutFunctionCodeSigningConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const arn = cscArnFromInput(input);
+  requireCsc(ctx, arn);
+  ctx.store.set(fnCscKey(fn.FunctionName), { arn });
+  return { CodeSigningConfigArn: arn, FunctionName: fn.FunctionName };
+};
+
+const GetFunctionCodeSigningConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const stored = ctx.store.get<{ arn: string }>(fnCscKey(fn.FunctionName));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `No code signing config for function: ${fn.FunctionName}`,
+      404,
+    );
+  }
+  return { CodeSigningConfigArn: stored.arn, FunctionName: fn.FunctionName };
+};
+
+const DeleteFunctionCodeSigningConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  ctx.store.delete(fnCscKey(fn.FunctionName));
+  return {};
+};
+
+const ListFunctionsByCodeSigningConfig: OperationHandler = (input, ctx) => {
+  const arn = cscArnFromInput(input);
+  const functions = ctx.store
+    .list<{ arn: string }>()
+    .filter(
+      (entry) => entry.key.startsWith("fn-csc:") && entry.value.arn === arn,
+    )
+    .map((entry) => {
+      const name = entry.key.slice("fn-csc:".length);
+      return arnOf(ctx, name);
+    });
+  return { FunctionArns: functions };
+};
+
+type StoredEventInvokeConfig = {
+  FunctionArn: string;
+  MaximumRetryAttempts: number | undefined;
+  MaximumEventAgeInSeconds: number | undefined;
+  DestinationConfig: unknown;
+  LastModified: string;
+};
+
+const fnEicKey = (name: string): string => `fn-eic:${name}`;
+
+const eicResponse = (
+  eic: StoredEventInvokeConfig,
+): Record<string, unknown> => ({
+  FunctionArn: eic.FunctionArn,
+  MaximumRetryAttempts: eic.MaximumRetryAttempts,
+  MaximumEventAgeInSeconds: eic.MaximumEventAgeInSeconds,
+  DestinationConfig: eic.DestinationConfig,
+  LastModified: eic.LastModified,
+});
+
+const upsertEic = (
+  input: Record<string, unknown>,
+  ctx: ServiceContext,
+): StoredEventInvokeConfig => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const key = fnEicKey(fn.FunctionName);
+  const existing = ctx.store.get<StoredEventInvokeConfig>(key);
+  const eic: StoredEventInvokeConfig = existing ?? {
+    FunctionArn: fn.FunctionArn,
+    MaximumRetryAttempts: undefined,
+    MaximumEventAgeInSeconds: undefined,
+    DestinationConfig: undefined,
+    LastModified: nowIso(),
+  };
+  if (typeof input["MaximumRetryAttempts"] === "number")
+    eic.MaximumRetryAttempts = input["MaximumRetryAttempts"];
+  if (typeof input["MaximumEventAgeInSeconds"] === "number")
+    eic.MaximumEventAgeInSeconds = input["MaximumEventAgeInSeconds"];
+  if (input["DestinationConfig"] !== undefined)
+    eic.DestinationConfig = input["DestinationConfig"];
+  eic.LastModified = nowIso();
+  ctx.store.set(key, eic);
+  return eic;
+};
+
+const PutFunctionEventInvokeConfig: OperationHandler = (input, ctx) => {
+  return eicResponse(upsertEic(input, ctx));
+};
+
+const UpdateFunctionEventInvokeConfig: OperationHandler = (input, ctx) => {
+  return eicResponse(upsertEic(input, ctx));
+};
+
+const GetFunctionEventInvokeConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const eic = ctx.store.get<StoredEventInvokeConfig>(fnEicKey(fn.FunctionName));
+  if (eic === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Event invoke config not found for function: ${fn.FunctionName}`,
+      404,
+    );
+  }
+  return eicResponse(eic);
+};
+
+const DeleteFunctionEventInvokeConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  ctx.store.delete(fnEicKey(fn.FunctionName));
+  return {};
+};
+
+const ListFunctionEventInvokeConfigs: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const eic = ctx.store.get<StoredEventInvokeConfig>(fnEicKey(fn.FunctionName));
+  return { FunctionEventInvokeConfigs: eic ? [eicResponse(eic)] : [] };
+};
+
+type StoredLayerPolicy = {
+  Statement: StoredStatement[];
+  RevisionId: string;
+};
+
+const layerPolicyKey = (name: string, version: number): string =>
+  `layer-policy:${name}:${version}`;
+
+const requireLayerVersion = (
+  ctx: ServiceContext,
+  name: string,
+  version: number,
+): StoredLayerVersion => {
+  const layer = ctx.store.get<StoredLayerVersion>(
+    layerVersionKey(name, version),
+  );
+  if (layer === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Layer version not found: ${name}:${version}`,
+      404,
+    );
+  }
+  return layer;
+};
+
+const versionNumberFromInput = (input: Record<string, unknown>): number => {
+  const raw = input["VersionNumber"];
+  const v =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number(raw)
+        : Number.NaN;
+  if (!Number.isFinite(v)) {
+    throw awsError(
+      "InvalidParameterValueException",
+      "VersionNumber is required.",
+      400,
+    );
+  }
+  return v;
+};
+
+const AddLayerVersionPermission: OperationHandler = (input, ctx) => {
+  const name = layerNameFromInput(input);
+  const version = versionNumberFromInput(input);
+  requireLayerVersion(ctx, name, version);
+  const statementId = stringOrUndefined(input["StatementId"]);
+  if (statementId === undefined) {
+    throw awsError(
+      "InvalidParameterValueException",
+      "StatementId is required.",
+      400,
+    );
+  }
+  const key = layerPolicyKey(name, version);
+  const existing = ctx.store.get<StoredLayerPolicy>(key) ?? {
+    Statement: [],
+    RevisionId: crypto.randomUUID(),
+  };
+  if (existing.Statement.some((s) => s.Sid === statementId)) {
+    throw awsError(
+      "ResourceConflictException",
+      `Statement already exists: ${statementId}`,
+      409,
+    );
+  }
+  const statement: StoredStatement = {
+    Sid: statementId,
+    Effect: "Allow",
+    Principal: { Service: stringOrUndefined(input["Principal"]) ?? "" },
+    Action: "lambda:GetLayerVersion",
+    Resource: `arn:aws:lambda:${ctx.region}:${ctx.account}:layer:${name}:${version}`,
+  };
+  existing.Statement.push(statement);
+  existing.RevisionId = crypto.randomUUID();
+  ctx.store.set(key, existing);
+  return {
+    Statement: JSON.stringify(statement),
+    RevisionId: existing.RevisionId,
+  };
+};
+
+const GetLayerVersionPolicy: OperationHandler = (input, ctx) => {
+  const name = layerNameFromInput(input);
+  const version = versionNumberFromInput(input);
+  requireLayerVersion(ctx, name, version);
+  const policy = ctx.store.get<StoredLayerPolicy>(
+    layerPolicyKey(name, version),
+  );
+  if (policy === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `No policy found for layer: ${name}:${version}`,
+      404,
+    );
+  }
+  return { Policy: JSON.stringify(policy), RevisionId: policy.RevisionId };
+};
+
+const RemoveLayerVersionPermission: OperationHandler = (input, ctx) => {
+  const name = layerNameFromInput(input);
+  const version = versionNumberFromInput(input);
+  requireLayerVersion(ctx, name, version);
+  const statementId = stringOrUndefined(input["StatementId"]);
+  const key = layerPolicyKey(name, version);
+  const policy = ctx.store.get<StoredLayerPolicy>(key);
+  if (policy === undefined || statementId === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `No policy statement found: ${statementId}`,
+      404,
+    );
+  }
+  const next = policy.Statement.filter((s) => s.Sid !== statementId);
+  if (next.length === policy.Statement.length) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `No policy statement found: ${statementId}`,
+      404,
+    );
+  }
+  if (next.length === 0) {
+    ctx.store.delete(key);
+  } else {
+    policy.Statement = next;
+    policy.RevisionId = crypto.randomUUID();
+    ctx.store.set(key, policy);
+  }
+  return {};
+};
+
+const DeleteLayerVersion: OperationHandler = (input, ctx) => {
+  const name = layerNameFromInput(input);
+  const version = versionNumberFromInput(input);
+  requireLayerVersion(ctx, name, version);
+  ctx.store.delete(layerVersionKey(name, version));
+  ctx.store.delete(layerPolicyKey(name, version));
+  return {};
+};
+
+const ListLayerVersions: OperationHandler = (input, ctx) => {
+  const name = layerNameFromInput(input);
+  const versions = ctx.store
+    .list<StoredLayerVersion>()
+    .filter((entry) => entry.key.startsWith(`layer:${name}:`))
+    .map((entry) => ({
+      LayerVersionArn: entry.value.LayerVersionArn,
+      Version: entry.value.Version,
+      Description: entry.value.Description,
+      CreatedDate: entry.value.CreatedDate,
+      CompatibleRuntimes: entry.value.CompatibleRuntimes,
+      CompatibleArchitectures: entry.value.CompatibleArchitectures,
+      LicenseInfo: entry.value.LicenseInfo,
+    }));
+  return { LayerVersions: versions };
+};
+
+const GetLayerVersionByArn: OperationHandler = (input, ctx) => {
+  const arn = input["Arn"];
+  if (typeof arn !== "string" || arn === "") {
+    throw awsError("InvalidParameterValueException", "Arn is required.", 400);
+  }
+  const layer = ctx.store
+    .list<StoredLayerVersion>()
+    .find(
+      (entry) =>
+        entry.key.startsWith("layer:") && entry.value.LayerVersionArn === arn,
+    )?.value;
+  if (layer === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Layer version not found: ${arn}`,
+      404,
+    );
+  }
+  return layerVersionResponse(layer);
+};
+
+type StoredProvisionedConcurrency = {
+  FunctionArn: string;
+  RequestedProvisionedConcurrentExecutions: number;
+  Status: string;
+  LastModified: string;
+};
+
+const pcKey = (name: string): string => `pc:${name}`;
+
+const pcResponse = (
+  pc: StoredProvisionedConcurrency,
+): Record<string, unknown> => ({
+  RequestedProvisionedConcurrentExecutions:
+    pc.RequestedProvisionedConcurrentExecutions,
+  AvailableProvisionedConcurrentExecutions:
+    pc.RequestedProvisionedConcurrentExecutions,
+  AllocatedProvisionedConcurrentExecutions:
+    pc.RequestedProvisionedConcurrentExecutions,
+  Status: pc.Status,
+  LastModified: pc.LastModified,
+});
+
+const PutProvisionedConcurrencyConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const requested = input["ProvisionedConcurrentExecutions"];
+  if (typeof requested !== "number") {
+    throw awsError(
+      "InvalidParameterValueException",
+      "ProvisionedConcurrentExecutions is required.",
+      400,
+    );
+  }
+  const pc: StoredProvisionedConcurrency = {
+    FunctionArn: fn.FunctionArn,
+    RequestedProvisionedConcurrentExecutions: requested,
+    Status: "READY",
+    LastModified: nowIso(),
+  };
+  ctx.store.set(pcKey(fn.FunctionName), pc);
+  return pcResponse(pc);
+};
+
+const GetProvisionedConcurrencyConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const pc = ctx.store.get<StoredProvisionedConcurrency>(
+    pcKey(fn.FunctionName),
+  );
+  if (pc === undefined) {
+    throw awsError(
+      "ProvisionedConcurrencyConfigNotFoundException",
+      `No provisioned concurrency config for function: ${fn.FunctionName}`,
+      404,
+    );
+  }
+  return pcResponse(pc);
+};
+
+const DeleteProvisionedConcurrencyConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  ctx.store.delete(pcKey(fn.FunctionName));
+  return {};
+};
+
+const ListProvisionedConcurrencyConfigs: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const configs = ctx.store
+    .list<StoredProvisionedConcurrency>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("pc:") &&
+        entry.value.FunctionArn === fn.FunctionArn,
+    )
+    .map((entry) => ({
+      ...pcResponse(entry.value),
+      FunctionArn: entry.value.FunctionArn,
+    }));
+  return { ProvisionedConcurrencyConfigs: configs };
+};
+
+const fnRecursionKey = (name: string): string => `fn-recursion:${name}`;
+
+const GetFunctionRecursionConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const stored = ctx.store.get<{ RecursiveLoop: string }>(
+    fnRecursionKey(fn.FunctionName),
+  );
+  return { RecursiveLoop: stored?.RecursiveLoop ?? "Terminate" };
+};
+
+const PutFunctionRecursionConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const recursiveLoop =
+    stringOrUndefined(input["RecursiveLoop"]) ?? "Terminate";
+  ctx.store.set(fnRecursionKey(fn.FunctionName), {
+    RecursiveLoop: recursiveLoop,
+  });
+  return { RecursiveLoop: recursiveLoop };
+};
+
+const fnScalingKey = (name: string): string => `fn-scaling:${name}`;
+
+const GetFunctionScalingConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const stored = ctx.store.get<Record<string, unknown>>(
+    fnScalingKey(fn.FunctionName),
+  );
+  return {
+    FunctionArn: fn.FunctionArn,
+    AppliedFunctionScalingConfig: stored ?? {},
+    RequestedFunctionScalingConfig: stored ?? {},
+  };
+};
+
+const PutFunctionScalingConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const cfg = (input["FunctionScalingConfig"] as Record<string, unknown>) ?? {};
+  ctx.store.set(fnScalingKey(fn.FunctionName), cfg);
+  return { FunctionState: fn.State };
+};
+
+const fnRuntimeKey = (name: string): string => `fn-runtime:${name}`;
+
+const GetRuntimeManagementConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const stored = ctx.store.get<{
+    UpdateRuntimeOn: string;
+    RuntimeVersionArn?: string;
+  }>(fnRuntimeKey(fn.FunctionName));
+  return {
+    UpdateRuntimeOn: stored?.UpdateRuntimeOn ?? "Auto",
+    RuntimeVersionArn: stored?.RuntimeVersionArn,
+    FunctionArn: fn.FunctionArn,
+  };
+};
+
+const PutRuntimeManagementConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const updateRuntimeOn = stringOrUndefined(input["UpdateRuntimeOn"]) ?? "Auto";
+  const runtimeVersionArn = stringOrUndefined(input["RuntimeVersionArn"]);
+  ctx.store.set(fnRuntimeKey(fn.FunctionName), {
+    UpdateRuntimeOn: updateRuntimeOn,
+    RuntimeVersionArn: runtimeVersionArn,
+  });
+  return {
+    UpdateRuntimeOn: updateRuntimeOn,
+    FunctionArn: fn.FunctionArn,
+    RuntimeVersionArn: runtimeVersionArn,
+  };
+};
+
+const GetAccountSettings: OperationHandler = () => ({
+  AccountLimit: {
+    TotalCodeSize: 80530636800,
+    CodeSizeUnzipped: 262144000,
+    CodeSizeZipped: 52428800,
+    ConcurrentExecutions: 1000,
+    UnreservedConcurrentExecutions: 1000,
+  },
+  AccountUsage: {
+    TotalCodeSize: 0,
+    FunctionCount: 0,
+  },
+});
+
+const ListVersionsByFunction: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const key = versionKey(fn.FunctionName);
+  const stored = ctx.store.get<StoredVersion>(key);
+  const versions: Record<string, unknown>[] = [
+    { ...configurationOf(fn), Version: "$LATEST" },
+  ];
+  if (stored !== undefined) {
+    for (let i = 1; i <= stored.number; i++) {
+      versions.push({
+        ...configurationOf(fn),
+        Version: String(i),
+        FunctionArn: `${fn.FunctionArn}:${i}`,
+      });
+    }
+  }
+  return { Versions: versions };
+};
+
+const ListFunctionUrlConfigs: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const config = ctx.store.get<StoredUrlConfig>(urlConfigKey(fn.FunctionName));
+  return { FunctionUrlConfigs: config ? [urlConfigResponse(config)] : [] };
+};
+
+const UpdateFunctionUrlConfig: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const key = urlConfigKey(fn.FunctionName);
+  const config = ctx.store.get<StoredUrlConfig>(key);
+  if (config === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Function url config not found: ${fn.FunctionName}`,
+      404,
+    );
+  }
+  const authType = stringOrUndefined(input["AuthType"]);
+  if (authType !== undefined) config.AuthType = authType;
+  const cors = corsFromInput(input["Cors"]);
+  if (cors !== undefined) config.Cors = cors;
+  const invokeMode = stringOrUndefined(input["InvokeMode"]);
+  if (invokeMode !== undefined) config.InvokeMode = invokeMode;
+  config.LastModifiedTime = nowIso();
+  ctx.store.set(key, config);
+  return urlConfigResponse(config);
+};
+
+const InvokeAsync: OperationHandler = (input, ctx) => {
+  requireFunction(ctx, functionNameFromInput(input));
+  return { Status: 202 };
+};
+
+const InvokeWithResponseStream: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const payload = input["Payload"];
+  return {
+    StatusCode: 200,
+    ExecutedVersion: fn.Version,
+    ResponseStreamContentType: "application/vnd.amazon.eventstream",
+    Payload: typeof payload === "string" ? payload : "",
+  };
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const arn = resourceArnFromInput(input);
+  const key = tagsKey(arn);
+  const tags = ctx.store.get<Record<string, string>>(key) ?? {};
+  const tagKeys = input["TagKeys"];
+  if (Array.isArray(tagKeys)) {
+    for (const k of tagKeys) {
+      if (typeof k === "string") delete tags[k];
+    }
+  }
+  ctx.store.set(key, tags);
+  return {};
+};
+
+type StoredCapacityProvider = {
+  CapacityProviderName: string;
+  CapacityProviderArn: string;
+  State: string;
+  LastModified: string;
+};
+
+const cpProviderKey = (name: string): string => `capacity-provider:${name}`;
+
+const cpProviderResponse = (
+  cp: StoredCapacityProvider,
+): Record<string, unknown> => ({
+  CapacityProviderArn: cp.CapacityProviderArn,
+  State: cp.State,
+  LastModified: cp.LastModified,
+});
+
+const cpNameFromInput = (input: Record<string, unknown>): string => {
+  const name = input["CapacityProviderName"];
+  if (typeof name === "string" && name !== "") return name;
+  throw awsError(
+    "InvalidParameterValueException",
+    "CapacityProviderName is required.",
+    400,
+  );
+};
+
+const requireCapacityProvider = (
+  ctx: ServiceContext,
+  name: string,
+): StoredCapacityProvider => {
+  const cp = ctx.store.get<StoredCapacityProvider>(cpProviderKey(name));
+  if (cp === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Capacity provider not found: ${name}`,
+      404,
+    );
+  }
+  return cp;
+};
+
+const CreateCapacityProvider: OperationHandler = (input, ctx) => {
+  const name = cpNameFromInput(input);
+  if (
+    ctx.store.get<StoredCapacityProvider>(cpProviderKey(name)) !== undefined
+  ) {
+    throw awsError(
+      "ResourceConflictException",
+      `Capacity provider already exists: ${name}`,
+      409,
+    );
+  }
+  const arn = `arn:aws:lambda:${ctx.region}:${ctx.account}:capacity-provider:${name}`;
+  const cp: StoredCapacityProvider = {
+    CapacityProviderName: name,
+    CapacityProviderArn: arn,
+    State: "Active",
+    LastModified: nowIso(),
+  };
+  ctx.store.set(cpProviderKey(name), cp);
+  return { CapacityProvider: cpProviderResponse(cp) };
+};
+
+const GetCapacityProvider: OperationHandler = (input, ctx) => {
+  const cp = requireCapacityProvider(ctx, cpNameFromInput(input));
+  return { CapacityProvider: cpProviderResponse(cp) };
+};
+
+const DeleteCapacityProvider: OperationHandler = (input, ctx) => {
+  const name = cpNameFromInput(input);
+  requireCapacityProvider(ctx, name);
+  ctx.store.delete(cpProviderKey(name));
+  return {};
+};
+
+const UpdateCapacityProvider: OperationHandler = (input, ctx) => {
+  const name = cpNameFromInput(input);
+  const cp = requireCapacityProvider(ctx, name);
+  cp.LastModified = nowIso();
+  ctx.store.set(cpProviderKey(name), cp);
+  return { CapacityProvider: cpProviderResponse(cp) };
+};
+
+const ListCapacityProviders: OperationHandler = (input, ctx) => {
+  const providers = ctx.store
+    .list<StoredCapacityProvider>()
+    .filter((entry) => entry.key.startsWith("capacity-provider:"))
+    .map((entry) => cpProviderResponse(entry.value));
+  return { CapacityProviders: providers };
+};
+
+const ListFunctionVersionsByCapacityProvider: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const name = cpNameFromInput(input);
+  requireCapacityProvider(ctx, name);
+  return { FunctionVersions: [] };
+};
+
+type StoredDurableExecution = {
+  DurableExecutionArn: string;
+  DurableExecutionName: string;
+  FunctionArn: string;
+  Status: string;
+  StartTimestamp: string;
+  EndTimestamp: string | undefined;
+  Version: string;
+};
+
+const deKey = (arn: string): string => `durable-execution:${arn}`;
+
+const deResponse = (de: StoredDurableExecution): Record<string, unknown> => ({
+  DurableExecutionArn: de.DurableExecutionArn,
+  DurableExecutionName: de.DurableExecutionName,
+  FunctionArn: de.FunctionArn,
+  Status: de.Status,
+  StartTimestamp: de.StartTimestamp,
+  EndTimestamp: de.EndTimestamp,
+  Version: de.Version,
+  InputPayload: undefined,
+  Result: undefined,
+  Error: undefined,
+  TraceHeader: undefined,
+});
+
+const durableArnFromInput = (input: Record<string, unknown>): string => {
+  const arn = input["DurableExecutionArn"];
+  if (typeof arn === "string" && arn !== "") return arn;
+  throw awsError(
+    "InvalidParameterValueException",
+    "DurableExecutionArn is required.",
+    400,
+  );
+};
+
+const requireDurableExecution = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredDurableExecution => {
+  const de = ctx.store.get<StoredDurableExecution>(deKey(arn));
+  if (de === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Durable execution not found: ${arn}`,
+      404,
+    );
+  }
+  return de;
+};
+
+const GetDurableExecution: OperationHandler = (input, ctx) => {
+  return deResponse(requireDurableExecution(ctx, durableArnFromInput(input)));
+};
+
+const GetDurableExecutionHistory: OperationHandler = (input, ctx) => {
+  requireDurableExecution(ctx, durableArnFromInput(input));
+  return { Events: [], NextMarker: undefined };
+};
+
+const GetDurableExecutionState: OperationHandler = (input, ctx) => {
+  requireDurableExecution(ctx, durableArnFromInput(input));
+  return { Operations: [], NextMarker: undefined };
+};
+
+const ListDurableExecutionsByFunction: OperationHandler = (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const executions = ctx.store
+    .list<StoredDurableExecution>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("durable-execution:") &&
+        entry.value.FunctionArn === fn.FunctionArn,
+    )
+    .map((entry) => deResponse(entry.value));
+  return { DurableExecutions: executions };
+};
+
+const CheckpointDurableExecution: OperationHandler = (input, ctx) => {
+  const de = requireDurableExecution(ctx, durableArnFromInput(input));
+  return deResponse(de);
+};
+
+const StopDurableExecution: OperationHandler = (input, ctx) => {
+  const arn = durableArnFromInput(input);
+  const de = requireDurableExecution(ctx, arn);
+  de.Status = "Stopped";
+  de.EndTimestamp = nowIso();
+  ctx.store.set(deKey(arn), de);
+  return deResponse(de);
+};
+
+const SendDurableExecutionCallbackSuccess: OperationHandler = (input, _ctx) => {
+  const id = input["CallbackId"];
+  if (typeof id !== "string" || id === "") {
+    throw awsError(
+      "InvalidParameterValueException",
+      "CallbackId is required.",
+      400,
+    );
+  }
+  return {};
+};
+
+const SendDurableExecutionCallbackFailure: OperationHandler = (input, _ctx) => {
+  const id = input["CallbackId"];
+  if (typeof id !== "string" || id === "") {
+    throw awsError(
+      "InvalidParameterValueException",
+      "CallbackId is required.",
+      400,
+    );
+  }
+  return {};
+};
+
+const SendDurableExecutionCallbackHeartbeat: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const id = input["CallbackId"];
+  if (typeof id !== "string" || id === "") {
+    throw awsError(
+      "InvalidParameterValueException",
+      "CallbackId is required.",
+      400,
+    );
+  }
+  return {};
+};
+
 const segmentsAfterFunctions = (path: string): string[] => {
   const idx = path.indexOf("/functions");
   if (idx === -1) return [];
@@ -713,9 +1749,111 @@ const lambda: ServiceDefinition = {
   name: "lambda",
   protocol: "rest-json",
   resolveOperation: (req: ParsedRequest): string | undefined => {
-    if (req.path.includes("/tags/")) {
+    if (req.path.includes("/2016-08-19/account-settings")) {
+      if (req.method === "GET") return "GetAccountSettings";
+      return undefined;
+    }
+    if (req.path.includes("/2015-03-31/event-source-mappings")) {
+      const idx = req.path.indexOf("/2015-03-31/event-source-mappings");
+      const tail = req.path.slice(
+        idx + "/2015-03-31/event-source-mappings".length,
+      );
+      if (tail === "" || tail === "/") {
+        if (req.method === "POST") return "CreateEventSourceMapping";
+        if (req.method === "GET") return "ListEventSourceMappings";
+        return undefined;
+      }
+      if (req.method === "GET") return "GetEventSourceMapping";
+      if (req.method === "PUT") return "UpdateEventSourceMapping";
+      if (req.method === "DELETE") return "DeleteEventSourceMapping";
+      return undefined;
+    }
+    if (req.path.includes("/2020-04-22/code-signing-configs")) {
+      const idx = req.path.indexOf("/2020-04-22/code-signing-configs");
+      const rest = req.path.slice(
+        idx + "/2020-04-22/code-signing-configs".length,
+      );
+      const restParts = rest.split("/").filter((p) => p !== "");
+      if (restParts.length === 0) {
+        if (req.method === "POST") return "CreateCodeSigningConfig";
+        if (req.method === "GET") return "ListCodeSigningConfigs";
+        return undefined;
+      }
+      if (restParts[restParts.length - 1] === "functions") {
+        if (req.method === "GET") return "ListFunctionsByCodeSigningConfig";
+        return undefined;
+      }
+      if (restParts.length === 1) {
+        if (req.method === "GET") return "GetCodeSigningConfig";
+        if (req.method === "DELETE") return "DeleteCodeSigningConfig";
+        if (req.method === "PUT") return "UpdateCodeSigningConfig";
+        return undefined;
+      }
+      return undefined;
+    }
+    if (req.path.includes("/2025-11-30/capacity-providers")) {
+      const idx = req.path.indexOf("/2025-11-30/capacity-providers");
+      const rest = req.path.slice(
+        idx + "/2025-11-30/capacity-providers".length,
+      );
+      const restParts = rest.split("/").filter((p) => p !== "");
+      if (restParts.length === 0) {
+        if (req.method === "POST") return "CreateCapacityProvider";
+        if (req.method === "GET") return "ListCapacityProviders";
+        return undefined;
+      }
+      if (restParts[restParts.length - 1] === "function-versions") {
+        if (req.method === "GET")
+          return "ListFunctionVersionsByCapacityProvider";
+        return undefined;
+      }
+      if (restParts.length === 1) {
+        if (req.method === "GET") return "GetCapacityProvider";
+        if (req.method === "DELETE") return "DeleteCapacityProvider";
+        if (req.method === "PUT") return "UpdateCapacityProvider";
+        return undefined;
+      }
+      return undefined;
+    }
+    if (req.path.includes("/2025-12-01/durable-executions")) {
+      const idx = req.path.indexOf("/2025-12-01/durable-executions");
+      const rest = req.path.slice(
+        idx + "/2025-12-01/durable-executions".length,
+      );
+      const restParts = rest.split("/").filter((p) => p !== "");
+      if (
+        restParts[restParts.length - 1] === "checkpoint" &&
+        req.method === "POST"
+      )
+        return "CheckpointDurableExecution";
+      if (restParts[restParts.length - 1] === "history" && req.method === "GET")
+        return "GetDurableExecutionHistory";
+      if (restParts[restParts.length - 1] === "state" && req.method === "GET")
+        return "GetDurableExecutionState";
+      if (restParts[restParts.length - 1] === "stop" && req.method === "POST")
+        return "StopDurableExecution";
+      if (req.method === "GET") return "GetDurableExecution";
+      return undefined;
+    }
+    if (req.path.includes("/2025-12-01/durable-execution-callbacks")) {
+      const idx = req.path.indexOf("/2025-12-01/durable-execution-callbacks");
+      const rest = req.path.slice(
+        idx + "/2025-12-01/durable-execution-callbacks".length,
+      );
+      const restParts = rest.split("/").filter((p) => p !== "");
+      const callbackAction = restParts[restParts.length - 1];
+      if (callbackAction === "succeed" && req.method === "POST")
+        return "SendDurableExecutionCallbackSuccess";
+      if (callbackAction === "fail" && req.method === "POST")
+        return "SendDurableExecutionCallbackFailure";
+      if (callbackAction === "heartbeat" && req.method === "POST")
+        return "SendDurableExecutionCallbackHeartbeat";
+      return undefined;
+    }
+    if (req.path.includes("/tags/") || req.path.includes("/2017-03-31/tags/")) {
       if (req.method === "POST") return "TagResource";
       if (req.method === "GET") return "ListTags";
+      if (req.method === "DELETE") return "UntagResource";
       return undefined;
     }
     if (req.path.includes("/layers")) {
@@ -725,18 +1863,36 @@ const lambda: ServiceDefinition = {
         .split("/")
         .filter((part) => part !== "");
       if (layerParts.length === 0) {
-        if (req.method === "GET") return "ListLayers";
+        if (req.method === "GET") {
+          if (req.query.has("find")) return "GetLayerVersionByArn";
+          return "ListLayers";
+        }
         return undefined;
       }
       const layerTail = layerParts[layerParts.length - 1];
       if (layerTail === "versions" && req.method === "POST")
         return "PublishLayerVersion";
+      if (layerTail === "versions" && req.method === "GET")
+        return "ListLayerVersions";
       if (
         layerParts.length >= 2 &&
-        layerParts[layerParts.length - 2] === "versions" &&
-        req.method === "GET"
+        layerParts[layerParts.length - 2] === "policy"
       ) {
-        return "GetLayerVersion";
+        if (req.method === "DELETE") return "RemoveLayerVersionPermission";
+        return undefined;
+      }
+      if (layerTail === "policy") {
+        if (req.method === "POST") return "AddLayerVersionPermission";
+        if (req.method === "GET") return "GetLayerVersionPolicy";
+        return undefined;
+      }
+      if (
+        layerParts.length >= 2 &&
+        layerParts[layerParts.length - 2] === "versions"
+      ) {
+        if (req.method === "GET") return "GetLayerVersion";
+        if (req.method === "DELETE") return "DeleteLayerVersion";
+        return undefined;
       }
       return undefined;
     }
@@ -748,6 +1904,9 @@ const lambda: ServiceDefinition = {
     }
     const tail = parts[parts.length - 1];
     if (tail === "invocations" && req.method === "POST") return "Invoke";
+    if (tail === "response-streaming-invocations" && req.method === "POST")
+      return "InvokeWithResponseStream";
+    if (tail === "invoke-async" && req.method === "POST") return "InvokeAsync";
     if (tail === "code" && req.method === "PUT") return "UpdateFunctionCode";
     if (tail === "concurrency") {
       if (req.method === "PUT") return "PutFunctionConcurrency";
@@ -758,7 +1917,12 @@ const lambda: ServiceDefinition = {
     if (tail === "url") {
       if (req.method === "POST") return "CreateFunctionUrlConfig";
       if (req.method === "GET") return "GetFunctionUrlConfig";
+      if (req.method === "PUT") return "UpdateFunctionUrlConfig";
       if (req.method === "DELETE") return "DeleteFunctionUrlConfig";
+      return undefined;
+    }
+    if (tail === "urls") {
+      if (req.method === "GET") return "ListFunctionUrlConfigs";
       return undefined;
     }
     if (tail === "configuration") {
@@ -766,7 +1930,59 @@ const lambda: ServiceDefinition = {
       if (req.method === "PUT") return "UpdateFunctionConfiguration";
       return undefined;
     }
-    if (tail === "versions" && req.method === "POST") return "PublishVersion";
+    if (tail === "code-signing-config") {
+      if (req.method === "PUT") return "PutFunctionCodeSigningConfig";
+      if (req.method === "GET") return "GetFunctionCodeSigningConfig";
+      if (req.method === "DELETE") return "DeleteFunctionCodeSigningConfig";
+      return undefined;
+    }
+    if (tail === "event-invoke-config") {
+      if (req.method === "PUT") return "PutFunctionEventInvokeConfig";
+      if (req.method === "GET") return "GetFunctionEventInvokeConfig";
+      if (req.method === "DELETE") return "DeleteFunctionEventInvokeConfig";
+      if (req.method === "POST") return "UpdateFunctionEventInvokeConfig";
+      return undefined;
+    }
+    if (
+      tail === "list" &&
+      parts.length >= 2 &&
+      parts[parts.length - 2] === "event-invoke-config"
+    ) {
+      if (req.method === "GET") return "ListFunctionEventInvokeConfigs";
+      return undefined;
+    }
+    if (tail === "provisioned-concurrency") {
+      if (req.method === "PUT") return "PutProvisionedConcurrencyConfig";
+      if (req.method === "GET" && req.query.has("List"))
+        return "ListProvisionedConcurrencyConfigs";
+      if (req.method === "GET") return "GetProvisionedConcurrencyConfig";
+      if (req.method === "DELETE") return "DeleteProvisionedConcurrencyConfig";
+      return undefined;
+    }
+    if (tail === "recursion-config") {
+      if (req.method === "GET") return "GetFunctionRecursionConfig";
+      if (req.method === "PUT") return "PutFunctionRecursionConfig";
+      return undefined;
+    }
+    if (tail === "function-scaling-config") {
+      if (req.method === "GET") return "GetFunctionScalingConfig";
+      if (req.method === "PUT") return "PutFunctionScalingConfig";
+      return undefined;
+    }
+    if (tail === "runtime-management-config") {
+      if (req.method === "GET") return "GetRuntimeManagementConfig";
+      if (req.method === "PUT") return "PutRuntimeManagementConfig";
+      return undefined;
+    }
+    if (tail === "versions") {
+      if (req.method === "POST") return "PublishVersion";
+      if (req.method === "GET") return "ListVersionsByFunction";
+      return undefined;
+    }
+    if (tail === "durable-executions") {
+      if (req.method === "GET") return "ListDurableExecutionsByFunction";
+      return undefined;
+    }
     if (tail === "policy") {
       if (req.method === "POST") return "AddPermission";
       if (req.method === "GET") return "GetPolicy";
@@ -783,6 +1999,8 @@ const lambda: ServiceDefinition = {
     }
     if (parts.length >= 2 && parts[parts.length - 2] === "aliases") {
       if (req.method === "GET") return "GetAlias";
+      if (req.method === "PUT") return "UpdateAlias";
+      if (req.method === "DELETE") return "DeleteAlias";
       return undefined;
     }
     if (req.method === "GET") return "GetFunction";
@@ -802,20 +2020,79 @@ const lambda: ServiceDefinition = {
     CreateAlias,
     GetAlias,
     ListAliases,
+    DeleteAlias,
+    UpdateAlias,
     AddPermission,
     GetPolicy,
     RemovePermission,
     TagResource,
     ListTags,
+    UntagResource,
     PutFunctionConcurrency,
     GetFunctionConcurrency,
     DeleteFunctionConcurrency,
     CreateFunctionUrlConfig,
     GetFunctionUrlConfig,
+    UpdateFunctionUrlConfig,
     DeleteFunctionUrlConfig,
+    ListFunctionUrlConfigs,
     PublishLayerVersion,
     ListLayers,
     GetLayerVersion,
+    ListLayerVersions,
+    GetLayerVersionByArn,
+    DeleteLayerVersion,
+    AddLayerVersionPermission,
+    GetLayerVersionPolicy,
+    RemoveLayerVersionPermission,
+    CreateEventSourceMapping,
+    GetEventSourceMapping,
+    DeleteEventSourceMapping,
+    UpdateEventSourceMapping,
+    ListEventSourceMappings,
+    CreateCodeSigningConfig,
+    GetCodeSigningConfig,
+    DeleteCodeSigningConfig,
+    UpdateCodeSigningConfig,
+    ListCodeSigningConfigs,
+    PutFunctionCodeSigningConfig,
+    GetFunctionCodeSigningConfig,
+    DeleteFunctionCodeSigningConfig,
+    ListFunctionsByCodeSigningConfig,
+    PutFunctionEventInvokeConfig,
+    UpdateFunctionEventInvokeConfig,
+    GetFunctionEventInvokeConfig,
+    DeleteFunctionEventInvokeConfig,
+    ListFunctionEventInvokeConfigs,
+    PutProvisionedConcurrencyConfig,
+    GetProvisionedConcurrencyConfig,
+    DeleteProvisionedConcurrencyConfig,
+    ListProvisionedConcurrencyConfigs,
+    GetFunctionRecursionConfig,
+    PutFunctionRecursionConfig,
+    GetFunctionScalingConfig,
+    PutFunctionScalingConfig,
+    GetRuntimeManagementConfig,
+    PutRuntimeManagementConfig,
+    GetAccountSettings,
+    ListVersionsByFunction,
+    InvokeAsync,
+    InvokeWithResponseStream,
+    CreateCapacityProvider,
+    GetCapacityProvider,
+    DeleteCapacityProvider,
+    UpdateCapacityProvider,
+    ListCapacityProviders,
+    ListFunctionVersionsByCapacityProvider,
+    GetDurableExecution,
+    GetDurableExecutionHistory,
+    GetDurableExecutionState,
+    ListDurableExecutionsByFunction,
+    CheckpointDurableExecution,
+    StopDurableExecution,
+    SendDurableExecutionCallbackSuccess,
+    SendDurableExecutionCallbackFailure,
+    SendDurableExecutionCallbackHeartbeat,
   },
   model,
 } as const;

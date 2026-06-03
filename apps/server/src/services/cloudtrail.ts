@@ -33,6 +33,20 @@ type StoredTrail = {
 
 const trailKey = (name: string): string => `trail/${name}`;
 
+const selectorsKey = (name: string): string => `selectors/${name}`;
+
+const tagsKey = (arn: string): string => `tags/${arn}`;
+
+type StoredSelectors = {
+  EventSelectors?: unknown[];
+  AdvancedEventSelectors?: unknown[];
+};
+
+type StoredTag = {
+  Key: string;
+  Value?: string;
+};
+
 const trailArnOf = (region: string, account: string, name: string): string =>
   `arn:aws:cloudtrail:${region}:${account}:trail/${name}`;
 
@@ -255,6 +269,159 @@ const GetTrailStatus: OperationHandler = (input, ctx) => {
   };
 };
 
+const UpdateTrail: OperationHandler = (input, ctx) => {
+  const name = resolveName(input);
+  const trail = requireTrail(ctx, name);
+  if (typeof input["S3BucketName"] === "string") {
+    trail.S3BucketName = input["S3BucketName"] as string;
+  }
+  if (typeof input["S3KeyPrefix"] === "string") {
+    trail.S3KeyPrefix = input["S3KeyPrefix"] as string;
+  }
+  if (typeof input["SnsTopicName"] === "string") {
+    trail.SnsTopicName = input["SnsTopicName"] as string;
+    trail.SnsTopicARN = snsTopicArnOf(
+      ctx.region,
+      ctx.account,
+      input["SnsTopicName"] as string,
+    );
+  }
+  if (typeof input["IncludeGlobalServiceEvents"] === "boolean") {
+    trail.IncludeGlobalServiceEvents = input[
+      "IncludeGlobalServiceEvents"
+    ] as boolean;
+  }
+  if (typeof input["IsMultiRegionTrail"] === "boolean") {
+    trail.IsMultiRegionTrail = input["IsMultiRegionTrail"] as boolean;
+  }
+  if (typeof input["EnableLogFileValidation"] === "boolean") {
+    trail.LogFileValidationEnabled = input[
+      "EnableLogFileValidation"
+    ] as boolean;
+  }
+  if (typeof input["CloudWatchLogsLogGroupArn"] === "string") {
+    trail.CloudWatchLogsLogGroupArn = input[
+      "CloudWatchLogsLogGroupArn"
+    ] as string;
+  }
+  if (typeof input["CloudWatchLogsRoleArn"] === "string") {
+    trail.CloudWatchLogsRoleArn = input["CloudWatchLogsRoleArn"] as string;
+  }
+  if (typeof input["KmsKeyId"] === "string") {
+    trail.KmsKeyId = input["KmsKeyId"] as string;
+  }
+  if (typeof input["IsOrganizationTrail"] === "boolean") {
+    trail.IsOrganizationTrail = input["IsOrganizationTrail"] as boolean;
+  }
+  ctx.store.set(trailKey(name), trail);
+  return {
+    Name: trail.Name,
+    S3BucketName: trail.S3BucketName,
+    S3KeyPrefix: trail.S3KeyPrefix,
+    SnsTopicName: trail.SnsTopicName,
+    SnsTopicARN: trail.SnsTopicARN,
+    IncludeGlobalServiceEvents: trail.IncludeGlobalServiceEvents,
+    IsMultiRegionTrail: trail.IsMultiRegionTrail,
+    TrailARN: trail.TrailARN,
+    LogFileValidationEnabled: trail.LogFileValidationEnabled,
+    CloudWatchLogsLogGroupArn: trail.CloudWatchLogsLogGroupArn,
+    CloudWatchLogsRoleArn: trail.CloudWatchLogsRoleArn,
+    KmsKeyId: trail.KmsKeyId,
+    IsOrganizationTrail: trail.IsOrganizationTrail,
+  };
+};
+
+const PutEventSelectors: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrailName").startsWith("arn:")
+    ? nameFromArn(input["TrailName"] as string)
+    : (input["TrailName"] as string);
+  const trail = requireTrail(ctx, name);
+  const eventSelectors = Array.isArray(input["EventSelectors"])
+    ? (input["EventSelectors"] as unknown[])
+    : undefined;
+  const advancedEventSelectors = Array.isArray(input["AdvancedEventSelectors"])
+    ? (input["AdvancedEventSelectors"] as unknown[])
+    : undefined;
+  const selectors: StoredSelectors = {
+    EventSelectors: eventSelectors,
+    AdvancedEventSelectors: advancedEventSelectors,
+  };
+  ctx.store.set(selectorsKey(name), selectors);
+  trail.HasCustomEventSelectors = true;
+  ctx.store.set(trailKey(name), trail);
+  return {
+    TrailARN: trail.TrailARN,
+    EventSelectors: eventSelectors,
+    AdvancedEventSelectors: advancedEventSelectors,
+  };
+};
+
+const GetEventSelectors: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrailName").startsWith("arn:")
+    ? nameFromArn(input["TrailName"] as string)
+    : (input["TrailName"] as string);
+  const trail = requireTrail(ctx, name);
+  const selectors = ctx.store.get<StoredSelectors>(selectorsKey(name));
+  return {
+    TrailARN: trail.TrailARN,
+    EventSelectors: selectors?.EventSelectors,
+    AdvancedEventSelectors: selectors?.AdvancedEventSelectors,
+  };
+};
+
+const normalizeTags = (value: unknown): StoredTag[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => {
+      const tag = entry as Record<string, unknown>;
+      const key = tag["Key"];
+      if (typeof key !== "string") {
+        return undefined;
+      }
+      return {
+        Key: key,
+        Value: typeof tag["Value"] === "string" ? tag["Value"] : undefined,
+      };
+    })
+    .filter((tag): tag is StoredTag => tag !== undefined);
+};
+
+const AddTags: OperationHandler = (input, ctx) => {
+  const resourceId = requireString(input, "ResourceId");
+  const incoming = normalizeTags(input["TagsList"]);
+  const existing = ctx.store.get<StoredTag[]>(tagsKey(resourceId)) ?? [];
+  const merged = existing.filter(
+    (tag) => !incoming.some((next) => next.Key === tag.Key),
+  );
+  ctx.store.set(tagsKey(resourceId), [...merged, ...incoming]);
+  return {};
+};
+
+const RemoveTags: OperationHandler = (input, ctx) => {
+  const resourceId = requireString(input, "ResourceId");
+  const removing = normalizeTags(input["TagsList"]);
+  const existing = ctx.store.get<StoredTag[]>(tagsKey(resourceId)) ?? [];
+  const remaining = existing.filter(
+    (tag) => !removing.some((next) => next.Key === tag.Key),
+  );
+  ctx.store.set(tagsKey(resourceId), remaining);
+  return {};
+};
+
+const ListTags: OperationHandler = (input, ctx) => {
+  const resourceIds = Array.isArray(input["ResourceIdList"])
+    ? (input["ResourceIdList"] as unknown[]).map((value) => String(value))
+    : [];
+  return {
+    ResourceTagList: resourceIds.map((resourceId) => ({
+      ResourceId: resourceId,
+      TagsList: ctx.store.get<StoredTag[]>(tagsKey(resourceId)) ?? [],
+    })),
+  };
+};
+
 const cloudtrail = {
   name: "cloudtrail",
   protocol: "json",
@@ -267,6 +434,12 @@ const cloudtrail = {
     StartLogging,
     StopLogging,
     GetTrailStatus,
+    UpdateTrail,
+    PutEventSelectors,
+    GetEventSelectors,
+    AddTags,
+    ListTags,
+    RemoveTags,
   },
   model,
 } as const satisfies ServiceDefinition;

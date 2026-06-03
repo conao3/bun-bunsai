@@ -20,6 +20,8 @@ type StoredCertificate = {
   IssuedAt: number;
   ValidationMethod: string;
   pem: string;
+  tags: { Key: string; Value?: string }[];
+  renewalSummary?: { RenewalStatus: string; UpdatedAt: number };
 };
 
 const certificateKey = (id: string): string => `certificate/${id}`;
@@ -91,6 +93,7 @@ const RequestCertificate: OperationHandler = (input, ctx) => {
     IssuedAt: now,
     ValidationMethod: validationMethod,
     pem: pemOf(id),
+    tags: [],
   };
   ctx.store.set(certificateKey(id), certificate);
   return { CertificateArn: arn };
@@ -113,6 +116,21 @@ const certificateDetail = (
   KeyAlgorithm: certificate.KeyAlgorithm,
   CreatedAt: certificate.CreatedAt,
   IssuedAt: certificate.IssuedAt,
+  RenewalSummary:
+    certificate.renewalSummary === undefined
+      ? undefined
+      : {
+          RenewalStatus: certificate.renewalSummary.RenewalStatus,
+          UpdatedAt: certificate.renewalSummary.UpdatedAt,
+          DomainValidationOptions: certificate.SubjectAlternativeNames.map(
+            (name) => ({
+              DomainName: name,
+              ValidationDomain: name,
+              ValidationStatus: "SUCCESS",
+              ValidationMethod: certificate.ValidationMethod,
+            }),
+          ),
+        },
   Subject: `CN=${certificate.DomainName}`,
   Issuer: "Amazon",
   RenewalEligibility: "INELIGIBLE",
@@ -173,6 +191,82 @@ const GetCertificate: OperationHandler = (input, ctx) => {
   };
 };
 
+const normalizeTags = (value: unknown): { Key: string; Value?: string }[] => {
+  if (!Array.isArray(value)) {
+    throw awsError("ValidationException", "Tags is required.", 400);
+  }
+  return value.map((entry) => {
+    const tag = entry as Record<string, unknown>;
+    const key = tag["Key"];
+    if (typeof key !== "string" || key === "") {
+      throw awsError("ValidationException", "Tag Key is required.", 400);
+    }
+    return typeof tag["Value"] === "string"
+      ? { Key: key, Value: tag["Value"] }
+      : { Key: key };
+  });
+};
+
+const AddTagsToCertificate: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "CertificateArn");
+  const certificate = requireCertificate(ctx, arn);
+  const tags = normalizeTags(input["Tags"]);
+  const merged = certificate.tags.filter(
+    (existing) => !tags.some((tag) => tag.Key === existing.Key),
+  );
+  const updated: StoredCertificate = {
+    ...certificate,
+    tags: [...merged, ...tags],
+  };
+  ctx.store.set(certificateKey(idFromArn(arn)), updated);
+  return {};
+};
+
+const ListTagsForCertificate: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "CertificateArn");
+  const certificate = requireCertificate(ctx, arn);
+  return { Tags: certificate.tags };
+};
+
+const RemoveTagsFromCertificate: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "CertificateArn");
+  const certificate = requireCertificate(ctx, arn);
+  const tags = normalizeTags(input["Tags"]);
+  const remaining = certificate.tags.filter(
+    (existing) =>
+      !tags.some(
+        (tag) =>
+          tag.Key === existing.Key &&
+          (tag.Value === undefined || tag.Value === existing.Value),
+      ),
+  );
+  const updated: StoredCertificate = { ...certificate, tags: remaining };
+  ctx.store.set(certificateKey(idFromArn(arn)), updated);
+  return {};
+};
+
+const RenewCertificate: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "CertificateArn");
+  const certificate = requireCertificate(ctx, arn);
+  const updated: StoredCertificate = {
+    ...certificate,
+    renewalSummary: {
+      RenewalStatus: "SUCCESS",
+      UpdatedAt: Math.floor(Date.now() / 1000),
+    },
+  };
+  ctx.store.set(certificateKey(idFromArn(arn)), updated);
+  return {};
+};
+
+const ResendValidationEmail: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "CertificateArn");
+  requireString(input, "Domain");
+  requireString(input, "ValidationDomain");
+  requireCertificate(ctx, arn);
+  return {};
+};
+
 const acm = {
   name: "acm",
   protocol: "json",
@@ -182,6 +276,11 @@ const acm = {
     ListCertificates,
     DeleteCertificate,
     GetCertificate,
+    AddTagsToCertificate,
+    ListTagsForCertificate,
+    RemoveTagsFromCertificate,
+    RenewCertificate,
+    ResendValidationEmail,
   },
   model,
 } as const satisfies ServiceDefinition;

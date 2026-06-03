@@ -10,6 +10,10 @@ import cloudfrontModel from "../../../../test/vendor/aws-models/cloudfront.json"
 const model = loadServiceModel(cloudfrontModel);
 
 const apiPrefix = "/2020-05-31/distribution";
+const cachePolicyPrefix = "/2020-05-31/cache-policy";
+const publicKeyPrefix = "/2020-05-31/public-key";
+const cachePolicyKey = "cachepolicy#";
+const publicKeyKey = "publickey#";
 
 type StoredDistribution = {
   id: string;
@@ -47,6 +51,62 @@ const asRecord = (raw: unknown): Record<string, unknown> =>
   typeof raw === "object" && raw !== null
     ? (raw as Record<string, unknown>)
     : {};
+
+type StoredCachePolicy = {
+  id: string;
+  lastModifiedTime: string;
+  etag: string;
+  config: Record<string, unknown>;
+};
+
+type StoredPublicKey = {
+  id: string;
+  createdTime: string;
+  etag: string;
+  config: Record<string, unknown>;
+};
+
+const cachePolicyView = (entry: StoredCachePolicy) => ({
+  Id: entry.id,
+  LastModifiedTime: entry.lastModifiedTime,
+  CachePolicyConfig: entry.config,
+});
+
+const publicKeyView = (entry: StoredPublicKey) => ({
+  Id: entry.id,
+  CreatedTime: entry.createdTime,
+  PublicKeyConfig: entry.config,
+});
+
+const getCachePolicyEntry = (
+  ctx: ServiceContext,
+  id: string,
+): StoredCachePolicy => {
+  const found = ctx.store.get<StoredCachePolicy>(cachePolicyKey + id);
+  if (found === undefined) {
+    throw awsError(
+      "NoSuchCachePolicy",
+      `The specified cache policy does not exist: ${id}`,
+      404,
+    );
+  }
+  return found;
+};
+
+const getPublicKeyEntry = (
+  ctx: ServiceContext,
+  id: string,
+): StoredPublicKey => {
+  const found = ctx.store.get<StoredPublicKey>(publicKeyKey + id);
+  if (found === undefined) {
+    throw awsError(
+      "NoSuchPublicKey",
+      `The specified public key does not exist: ${id}`,
+      404,
+    );
+  }
+  return found;
+};
 
 const getDistribution = (
   ctx: ServiceContext,
@@ -108,6 +168,28 @@ const cloudfront: ServiceDefinition = {
   name: "cloudfront",
   protocol: "rest-xml",
   resolveOperation: (req: ParsedRequest): string | undefined => {
+    if (req.path.startsWith(cachePolicyPrefix)) {
+      const rest = req.path.slice(cachePolicyPrefix.length).replace(/\/$/, "");
+      if (rest === "") {
+        if (req.method === "POST") return "CreateCachePolicy";
+        if (req.method === "GET") return "ListCachePolicies";
+        return undefined;
+      }
+      if (req.method === "GET") return "GetCachePolicy";
+      if (req.method === "DELETE") return "DeleteCachePolicy";
+      return undefined;
+    }
+    if (req.path.startsWith(publicKeyPrefix)) {
+      const rest = req.path.slice(publicKeyPrefix.length).replace(/\/$/, "");
+      if (rest === "") {
+        if (req.method === "POST") return "CreatePublicKey";
+        if (req.method === "GET") return "ListPublicKeys";
+        return undefined;
+      }
+      if (req.method === "GET") return "GetPublicKey";
+      if (req.method === "DELETE") return "DeletePublicKey";
+      return undefined;
+    }
     if (!req.path.startsWith(apiPrefix)) return undefined;
     const rest = req.path.slice(apiPrefix.length).replace(/\/$/, "");
     if (rest === "") {
@@ -164,7 +246,13 @@ const cloudfront: ServiceDefinition = {
       };
     },
     ListDistributions: (_input, ctx) => {
-      const entries = ctx.store.list<StoredDistribution>();
+      const entries = ctx.store
+        .list<StoredDistribution>()
+        .filter(
+          (e) =>
+            !e.key.startsWith(cachePolicyKey) &&
+            !e.key.startsWith(publicKeyKey),
+        );
       return {
         DistributionList: {
           Marker: "",
@@ -229,6 +317,126 @@ const cloudfront: ServiceDefinition = {
           },
         },
       };
+    },
+    CreateCachePolicy: (input, ctx) => {
+      const config = asRecord(input["CachePolicyConfig"]);
+      const name = config["Name"];
+      if (typeof name !== "string" || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      const id = generateId("");
+      const entry: StoredCachePolicy = {
+        id,
+        lastModifiedTime: new Date().toISOString(),
+        etag: generateId("ETAG"),
+        config,
+      };
+      ctx.store.set<StoredCachePolicy>(cachePolicyKey + id, entry);
+      return {
+        CachePolicy: cachePolicyView(entry),
+        Location: `https://cloudfront.amazonaws.com${cachePolicyPrefix}/${id}`,
+        ETag: entry.etag,
+      };
+    },
+    GetCachePolicy: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getCachePolicyEntry(ctx, id);
+      return {
+        CachePolicy: cachePolicyView(entry),
+        ETag: entry.etag,
+      };
+    },
+    ListCachePolicies: (_input, ctx) => {
+      const entries = ctx.store
+        .list<StoredCachePolicy>()
+        .filter((e) => e.key.startsWith(cachePolicyKey));
+      return {
+        CachePolicyList: {
+          MaxItems: 100,
+          Quantity: entries.length,
+          Items: entries.map((e) => ({
+            Type: "custom",
+            CachePolicy: cachePolicyView(e.value),
+          })),
+        },
+      };
+    },
+    DeleteCachePolicy: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      getCachePolicyEntry(ctx, id);
+      ctx.store.delete(cachePolicyKey + id);
+      return undefined;
+    },
+    CreatePublicKey: (input, ctx) => {
+      const config = asRecord(input["PublicKeyConfig"]);
+      const name = config["Name"];
+      const encodedKey = config["EncodedKey"];
+      if (typeof name !== "string" || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      if (typeof encodedKey !== "string" || encodedKey === "") {
+        throw awsError("InvalidArgument", "EncodedKey is required", 400);
+      }
+      const id = generateId("K");
+      const entry: StoredPublicKey = {
+        id,
+        createdTime: new Date().toISOString(),
+        etag: generateId("ETAG"),
+        config,
+      };
+      ctx.store.set<StoredPublicKey>(publicKeyKey + id, entry);
+      return {
+        PublicKey: publicKeyView(entry),
+        Location: `https://cloudfront.amazonaws.com${publicKeyPrefix}/${id}`,
+        ETag: entry.etag,
+      };
+    },
+    GetPublicKey: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getPublicKeyEntry(ctx, id);
+      return {
+        PublicKey: publicKeyView(entry),
+        ETag: entry.etag,
+      };
+    },
+    ListPublicKeys: (_input, ctx) => {
+      const entries = ctx.store
+        .list<StoredPublicKey>()
+        .filter((e) => e.key.startsWith(publicKeyKey));
+      return {
+        PublicKeyList: {
+          MaxItems: 100,
+          Quantity: entries.length,
+          Items: entries.map((e) => {
+            const config = e.value.config;
+            return {
+              Id: e.value.id,
+              Name: config["Name"] ?? "",
+              CreatedTime: e.value.createdTime,
+              EncodedKey: config["EncodedKey"] ?? "",
+              Comment: config["Comment"] ?? "",
+            };
+          }),
+        },
+      };
+    },
+    DeletePublicKey: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      getPublicKeyEntry(ctx, id);
+      ctx.store.delete(publicKeyKey + id);
+      return undefined;
     },
   },
   model,

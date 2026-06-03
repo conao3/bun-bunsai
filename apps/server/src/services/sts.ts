@@ -67,6 +67,65 @@ const sts = {
         PackedPolicySize: 6,
       };
     },
+    AssumeRoleWithWebIdentity: (input, ctx) => {
+      const acct = accountOf(ctx);
+      const params = input as {
+        RoleArn?: string;
+        RoleSessionName?: string;
+        ProviderId?: string;
+        DurationSeconds?: number;
+      };
+      const roleArn = params.RoleArn ?? `arn:aws:iam::${acct}:role/bunsai`;
+      const sessionName = params.RoleSessionName ?? "bunsai-session";
+      const roleName = roleArn.split("/").pop() ?? "bunsai";
+      const duration = params.DurationSeconds ?? 3600;
+      return {
+        Credentials: issueCredentials(duration),
+        AssumedRoleUser: {
+          AssumedRoleId: `AROABUNSAIEXAMPLEID:${sessionName}`,
+          Arn: `arn:aws:sts::${acct}:assumed-role/${roleName}/${sessionName}`,
+        },
+        PackedPolicySize: 6,
+        SubjectFromWebIdentityToken: "bunsai-web-identity-subject",
+        Provider: params.ProviderId ?? "accounts.google.com",
+        Audience: "bunsai-client-id",
+      };
+    },
+    AssumeRoleWithSAML: (input, ctx) => {
+      const acct = accountOf(ctx);
+      const params = input as {
+        RoleArn?: string;
+        DurationSeconds?: number;
+      };
+      const roleArn = params.RoleArn ?? `arn:aws:iam::${acct}:role/bunsai`;
+      const sessionName = "bunsai-saml-session";
+      const roleName = roleArn.split("/").pop() ?? "bunsai";
+      const duration = params.DurationSeconds ?? 3600;
+      return {
+        Credentials: issueCredentials(duration),
+        AssumedRoleUser: {
+          AssumedRoleId: `AROABUNSAIEXAMPLEID:${sessionName}`,
+          Arn: `arn:aws:sts::${acct}:assumed-role/${roleName}/${sessionName}`,
+        },
+        PackedPolicySize: 6,
+        Subject: "bunsai-saml-subject",
+        SubjectType: "transient",
+        Issuer: "https://idp.bunsai.example.com/saml",
+        Audience: "https://signin.aws.amazon.com/saml",
+        NameQualifier: "bunsai-name-qualifier",
+      };
+    },
+    DecodeAuthorizationMessage: (input) => {
+      const params = input as { EncodedMessage?: string };
+      return {
+        DecodedMessage: JSON.stringify({
+          message: params.EncodedMessage ?? "access-denied",
+        }),
+      };
+    },
+    GetAccessKeyInfo: (_input, ctx) => ({
+      Account: accountOf(ctx),
+    }),
   },
   model,
 } as const satisfies ServiceDefinition;

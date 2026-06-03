@@ -96,6 +96,8 @@ import ssmContacts from "./ssm-contacts.ts";
 import ivs from "./ivs.ts";
 import frauddetector from "./frauddetector.ts";
 import comprehend from "./comprehend.ts";
+import mediatailor from "./mediatailor.ts";
+import dataexchange from "./dataexchange.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -195,6 +197,8 @@ export const services: ServiceDefinition[] = [
   ivs,
   frauddetector,
   comprehend,
+  mediatailor,
+  dataexchange,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

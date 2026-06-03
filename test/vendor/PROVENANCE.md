@@ -162,6 +162,8 @@ aws-models/
   ivs.json              # botocore/data/ivs/2020-07-14/service-2.json              (protocol rest-json, endpointPrefix ivs, signingName ivs)
   frauddetector.json    # botocore/data/frauddetector/2019-11-15/service-2.json    (protocol json, endpointPrefix frauddetector, targetPrefix AWSHawksNestServiceFacade)
   comprehend.json       # botocore/data/comprehend/2017-11-27/service-2.json       (protocol json, endpointPrefix comprehend, signingName comprehend, targetPrefix Comprehend_20171127)
+  mediatailor.json      # botocore/data/mediatailor/2018-04-23/service-2.json      (protocol rest-json, endpointPrefix api.mediatailor, signingName mediatailor)
+  dataexchange.json     # botocore/data/dataexchange/2017-07-25/service-2.json     (protocol rest-json, endpointPrefix dataexchange, signingName dataexchange)
 ```
 
 ### Notes

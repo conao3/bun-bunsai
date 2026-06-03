@@ -9,15 +9,65 @@ import type {
 
 const model = loadServiceModel(datasyncModel);
 
+type StoredAgent = {
+  AgentArn: string;
+  Name: string | undefined;
+  Status: string;
+  CreationTime: number;
+  LastConnectionTime: number;
+  EndpointType: string;
+  PrivateLinkConfig: unknown;
+  Platform: unknown;
+};
+
 type StoredLocation = {
   LocationArn: string;
   LocationUri: string;
-  S3BucketArn: string;
-  S3StorageClass: string;
-  S3Config: Record<string, unknown>;
+  LocationType: string;
+  CreationTime: number;
+  Tags: unknown[];
   Subdirectory: string | undefined;
   AgentArns: unknown[];
-  Tags: unknown[];
+  S3BucketArn: string | undefined;
+  S3StorageClass: string | undefined;
+  S3Config: Record<string, unknown> | undefined;
+  ServerHostname: string | undefined;
+  OnPremConfig: unknown;
+  MountOptions: unknown;
+  User: string | undefined;
+  Domain: string | undefined;
+  Password: string | undefined;
+  AuthenticationType: string | undefined;
+  DnsIpAddresses: unknown[];
+  KerberosPrincipal: string | undefined;
+  CmkSecretConfig: unknown;
+  CustomSecretConfig: unknown;
+  NameNodes: unknown[];
+  BlockSize: number | undefined;
+  ReplicationFactor: number | undefined;
+  KmsKeyProviderUri: string | undefined;
+  QopConfiguration: unknown;
+  SimpleUser: string | undefined;
+  EfsFilesystemArn: string | undefined;
+  Ec2Config: unknown;
+  AccessPointArn: string | undefined;
+  FileSystemAccessRoleArn: string | undefined;
+  InTransitEncryption: string | undefined;
+  FsxFilesystemArn: string | undefined;
+  SecurityGroupArns: unknown[];
+  Protocol: unknown;
+  StorageVirtualMachineArn: string | undefined;
+  ContainerUrl: string | undefined;
+  SasConfiguration: unknown;
+  BlobType: string | undefined;
+  AccessTier: string | undefined;
+  ServerPort: number | undefined;
+  ServerProtocol: string | undefined;
+  BucketName: string | undefined;
+  AccessKey: string | undefined;
+  SecretKey: string | undefined;
+  ServerCertificate: unknown;
+  ManagedSecretConfig: unknown;
 };
 
 type StoredTask = {
@@ -38,8 +88,27 @@ type StoredTask = {
   executions: string[];
 };
 
+type StoredTaskExecution = {
+  TaskExecutionArn: string;
+  Status: string;
+  Options: unknown;
+  Excludes: unknown[];
+  Includes: unknown[];
+  StartTime: number;
+  EstimatedFilesToTransfer: number;
+  EstimatedBytesToTransfer: number;
+  FilesTransferred: number;
+  BytesWritten: number;
+  BytesTransferred: number;
+  BytesCompressed: number;
+  TaskMode: string;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
+
+const numberOrUndefined = (value: unknown): number | undefined =>
+  typeof value === "number" ? value : undefined;
 
 const arrayOrEmpty = (value: unknown): unknown[] =>
   Array.isArray(value) ? (value as unknown[]) : [];
@@ -68,9 +137,30 @@ const locationArn = (ctx: ServiceContext, id: string): string =>
 const taskArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:datasync:${ctx.region}:${ctx.account}:task/task-${id}`;
 
+const agentArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:datasync:${ctx.region}:${ctx.account}:agent/agent-${id}`;
+
 const locationKey = (arn: string): string => `location/${arn}`;
 
 const taskKey = (arn: string): string => `task/${arn}`;
+
+const agentKey = (arn: string): string => `agent/${arn}`;
+
+const executionKey = (arn: string): string => `execution/${arn}`;
+
+const tagsKey = (arn: string): string => `tags/${arn}`;
+
+const requireLocation = (ctx: ServiceContext, arn: string): StoredLocation => {
+  const location = ctx.store.get<StoredLocation>(locationKey(arn));
+  if (location === undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      `Location ${arn} could not be found.`,
+      400,
+    );
+  }
+  return location;
+};
 
 const requireTask = (ctx: ServiceContext, arn: string): StoredTask => {
   const task = ctx.store.get<StoredTask>(taskKey(arn));
@@ -84,6 +174,223 @@ const requireTask = (ctx: ServiceContext, arn: string): StoredTask => {
   return task;
 };
 
+const requireAgent = (ctx: ServiceContext, arn: string): StoredAgent => {
+  const agent = ctx.store.get<StoredAgent>(agentKey(arn));
+  if (agent === undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      `Agent ${arn} could not be found.`,
+      400,
+    );
+  }
+  return agent;
+};
+
+const requireTaskExecution = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredTaskExecution => {
+  const execution = ctx.store.get<StoredTaskExecution>(executionKey(arn));
+  if (execution === undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      `TaskExecution ${arn} could not be found.`,
+      400,
+    );
+  }
+  return execution;
+};
+
+const buildLocationUri = (
+  locationType: string,
+  input: Record<string, unknown>,
+): string => {
+  const sub = stringOrUndefined(input["Subdirectory"]) ?? "";
+  const suffix = sub.startsWith("/") ? sub : sub ? `/${sub}` : "";
+  switch (locationType) {
+    case "S3": {
+      const s3BucketArn = stringOrUndefined(input["S3BucketArn"]) ?? "";
+      const bucketName = s3BucketArn.split(":").pop() ?? s3BucketArn;
+      return `s3://${bucketName}${suffix}`;
+    }
+    case "NFS":
+    case "SMB": {
+      const host = stringOrUndefined(input["ServerHostname"]) ?? "";
+      return `${locationType.toLowerCase()}://${host}${suffix}`;
+    }
+    case "HDFS": {
+      const nameNodes = arrayOrEmpty(input["NameNodes"]);
+      const firstNode = asRecord(nameNodes[0]);
+      const host = stringOrUndefined(firstNode["Hostname"]) ?? "hdfs";
+      return `hdfs://${host}${suffix}`;
+    }
+    case "EFS": {
+      const efsArn = stringOrUndefined(input["EfsFilesystemArn"]) ?? "";
+      const efsId = efsArn.split("/").pop() ?? efsArn;
+      return `efs://${efsId}${suffix}`;
+    }
+    case "FsxWindows": {
+      const fsxArn = stringOrUndefined(input["FsxFilesystemArn"]) ?? "";
+      const fsxId = fsxArn.split("/").pop() ?? fsxArn;
+      return `fsxw://${fsxId}${suffix}`;
+    }
+    case "FsxLustre": {
+      const fsxArn = stringOrUndefined(input["FsxFilesystemArn"]) ?? "";
+      const fsxId = fsxArn.split("/").pop() ?? fsxArn;
+      return `fsxl://${fsxId}${suffix}`;
+    }
+    case "FsxOpenZfs": {
+      const fsxArn = stringOrUndefined(input["FsxFilesystemArn"]) ?? "";
+      const fsxId = fsxArn.split("/").pop() ?? fsxArn;
+      return `fsxz://${fsxId}${suffix}`;
+    }
+    case "FsxOntap": {
+      const svmArn = stringOrUndefined(input["StorageVirtualMachineArn"]) ?? "";
+      const svmId = svmArn.split("/").pop() ?? svmArn;
+      return `fsxo://${svmId}${suffix}`;
+    }
+    case "AzureBlob": {
+      const containerUrl = stringOrUndefined(input["ContainerUrl"]) ?? "";
+      return `${containerUrl}${suffix}`;
+    }
+    case "ObjectStorage": {
+      const host = stringOrUndefined(input["ServerHostname"]) ?? "";
+      const bucket = stringOrUndefined(input["BucketName"]) ?? "";
+      return `object-storage://${host}/${bucket}${suffix}`;
+    }
+    default:
+      return `unknown://${locationType}${suffix}`;
+  }
+};
+
+const makeLocation = (
+  arn: string,
+  locationType: string,
+  input: Record<string, unknown>,
+): StoredLocation => ({
+  LocationArn: arn,
+  LocationUri: buildLocationUri(locationType, input),
+  LocationType: locationType,
+  CreationTime: nowSeconds(),
+  Tags: arrayOrEmpty(input["Tags"]),
+  Subdirectory: stringOrUndefined(input["Subdirectory"]),
+  AgentArns: arrayOrEmpty(input["AgentArns"]),
+  S3BucketArn: stringOrUndefined(input["S3BucketArn"]),
+  S3StorageClass: stringOrUndefined(input["S3StorageClass"]),
+  S3Config:
+    input["S3Config"] !== undefined ? asRecord(input["S3Config"]) : undefined,
+  ServerHostname: stringOrUndefined(input["ServerHostname"]),
+  OnPremConfig: input["OnPremConfig"],
+  MountOptions: input["MountOptions"],
+  User: stringOrUndefined(input["User"]),
+  Domain: stringOrUndefined(input["Domain"]),
+  Password: stringOrUndefined(input["Password"]),
+  AuthenticationType: stringOrUndefined(input["AuthenticationType"]),
+  DnsIpAddresses: arrayOrEmpty(input["DnsIpAddresses"]),
+  KerberosPrincipal: stringOrUndefined(input["KerberosPrincipal"]),
+  CmkSecretConfig: input["CmkSecretConfig"],
+  CustomSecretConfig: input["CustomSecretConfig"],
+  NameNodes: arrayOrEmpty(input["NameNodes"]),
+  BlockSize: numberOrUndefined(input["BlockSize"]),
+  ReplicationFactor: numberOrUndefined(input["ReplicationFactor"]),
+  KmsKeyProviderUri: stringOrUndefined(input["KmsKeyProviderUri"]),
+  QopConfiguration: input["QopConfiguration"],
+  SimpleUser: stringOrUndefined(input["SimpleUser"]),
+  EfsFilesystemArn: stringOrUndefined(input["EfsFilesystemArn"]),
+  Ec2Config: input["Ec2Config"],
+  AccessPointArn: stringOrUndefined(input["AccessPointArn"]),
+  FileSystemAccessRoleArn: stringOrUndefined(input["FileSystemAccessRoleArn"]),
+  InTransitEncryption: stringOrUndefined(input["InTransitEncryption"]),
+  FsxFilesystemArn: stringOrUndefined(input["FsxFilesystemArn"]),
+  SecurityGroupArns: arrayOrEmpty(input["SecurityGroupArns"]),
+  Protocol: input["Protocol"],
+  StorageVirtualMachineArn: stringOrUndefined(
+    input["StorageVirtualMachineArn"],
+  ),
+  ContainerUrl: stringOrUndefined(input["ContainerUrl"]),
+  SasConfiguration: input["SasConfiguration"],
+  BlobType: stringOrUndefined(input["BlobType"]),
+  AccessTier: stringOrUndefined(input["AccessTier"]),
+  ServerPort: numberOrUndefined(input["ServerPort"]),
+  ServerProtocol: stringOrUndefined(input["ServerProtocol"]),
+  BucketName: stringOrUndefined(input["BucketName"]),
+  AccessKey: stringOrUndefined(input["AccessKey"]),
+  SecretKey: stringOrUndefined(input["SecretKey"]),
+  ServerCertificate: input["ServerCertificate"],
+  ManagedSecretConfig: undefined,
+});
+
+const storeLocation = (
+  locationType: string,
+  input: Record<string, unknown>,
+  ctx: ServiceContext,
+): string => {
+  const id = hex17();
+  const arn = locationArn(ctx, id);
+  ctx.store.set(locationKey(arn), makeLocation(arn, locationType, input));
+  return arn;
+};
+
+const CreateAgent: OperationHandler = (input, ctx) => {
+  const id = hex17();
+  const arn = agentArn(ctx, id);
+  const agent: StoredAgent = {
+    AgentArn: arn,
+    Name: stringOrUndefined(input["AgentName"]),
+    Status: "ONLINE",
+    CreationTime: nowSeconds(),
+    LastConnectionTime: nowSeconds(),
+    EndpointType: "PUBLIC",
+    PrivateLinkConfig: undefined,
+    Platform: undefined,
+  };
+  ctx.store.set(agentKey(arn), agent);
+  return { AgentArn: arn };
+};
+
+const DeleteAgent: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "AgentArn");
+  requireAgent(ctx, arn);
+  ctx.store.delete(agentKey(arn));
+  return {};
+};
+
+const DescribeAgent: OperationHandler = (input, ctx) => {
+  const agent = requireAgent(ctx, requireString(input, "AgentArn"));
+  return {
+    AgentArn: agent.AgentArn,
+    Name: agent.Name,
+    Status: agent.Status,
+    LastConnectionTime: agent.LastConnectionTime,
+    CreationTime: agent.CreationTime,
+    EndpointType: agent.EndpointType,
+    PrivateLinkConfig: agent.PrivateLinkConfig,
+    Platform: agent.Platform,
+  };
+};
+
+const ListAgents: OperationHandler = (_input, ctx) => {
+  const agents = ctx.store
+    .list<StoredAgent>()
+    .filter((entry) => entry.key.startsWith("agent/"))
+    .map((entry) => ({
+      AgentArn: entry.value.AgentArn,
+      Name: entry.value.Name,
+      Status: entry.value.Status,
+    }));
+  return { Agents: agents };
+};
+
+const UpdateAgent: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "AgentArn");
+  const agent = requireAgent(ctx, arn);
+  ctx.store.set(agentKey(arn), {
+    ...agent,
+    Name: stringOrUndefined(input["Name"]) ?? agent.Name,
+  });
+  return {};
+};
+
 const CreateLocationS3: OperationHandler = (input, ctx) => {
   const s3BucketArn = requireString(input, "S3BucketArn");
   const s3Config = asRecord(input["S3Config"]);
@@ -94,28 +401,478 @@ const CreateLocationS3: OperationHandler = (input, ctx) => {
       400,
     );
   }
-  const id = hex17();
-  const arn = locationArn(ctx, id);
-  const subdirectory = stringOrUndefined(input["Subdirectory"]);
-  const bucketName = s3BucketArn.split(":").pop() ?? s3BucketArn;
-  const suffix =
-    subdirectory === undefined
-      ? ""
-      : subdirectory.startsWith("/")
-        ? subdirectory
-        : `/${subdirectory}`;
-  const location: StoredLocation = {
-    LocationArn: arn,
-    LocationUri: `s3://${bucketName}${suffix}`,
-    S3BucketArn: s3BucketArn,
-    S3StorageClass: stringOrUndefined(input["S3StorageClass"]) ?? "STANDARD",
-    S3Config: s3Config,
-    Subdirectory: subdirectory,
-    AgentArns: arrayOrEmpty(input["AgentArns"]),
-    Tags: arrayOrEmpty(input["Tags"]),
-  };
-  ctx.store.set(locationKey(arn), location);
+  const arn = storeLocation(
+    "S3",
+    {
+      ...input,
+      S3BucketArn: s3BucketArn,
+      S3StorageClass: stringOrUndefined(input["S3StorageClass"]) ?? "STANDARD",
+      S3Config: s3Config,
+    },
+    ctx,
+  );
   return { LocationArn: arn };
+};
+
+const DescribeLocationS3: OperationHandler = (input, ctx) => {
+  const loc = requireLocation(ctx, requireString(input, "LocationArn"));
+  return {
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+    S3StorageClass: loc.S3StorageClass,
+    S3Config: loc.S3Config,
+    AgentArns: loc.AgentArns,
+    CreationTime: loc.CreationTime,
+  };
+};
+
+const UpdateLocationS3: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  const loc = requireLocation(ctx, arn);
+  ctx.store.set(locationKey(arn), {
+    ...loc,
+    Subdirectory: stringOrUndefined(input["Subdirectory"]) ?? loc.Subdirectory,
+    S3StorageClass:
+      stringOrUndefined(input["S3StorageClass"]) ?? loc.S3StorageClass,
+    S3Config:
+      input["S3Config"] !== undefined
+        ? asRecord(input["S3Config"])
+        : loc.S3Config,
+  });
+  return {};
+};
+
+const CreateLocationNfs: OperationHandler = (input, ctx) => {
+  requireString(input, "ServerHostname");
+  return { LocationArn: storeLocation("NFS", input, ctx) };
+};
+
+const DescribeLocationNfs: OperationHandler = (input, ctx) => {
+  const loc = requireLocation(ctx, requireString(input, "LocationArn"));
+  return {
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+    OnPremConfig: loc.OnPremConfig,
+    MountOptions: loc.MountOptions,
+    CreationTime: loc.CreationTime,
+  };
+};
+
+const UpdateLocationNfs: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  const loc = requireLocation(ctx, arn);
+  ctx.store.set(locationKey(arn), {
+    ...loc,
+    Subdirectory: stringOrUndefined(input["Subdirectory"]) ?? loc.Subdirectory,
+    ServerHostname:
+      stringOrUndefined(input["ServerHostname"]) ?? loc.ServerHostname,
+    OnPremConfig:
+      input["OnPremConfig"] !== undefined
+        ? input["OnPremConfig"]
+        : loc.OnPremConfig,
+    MountOptions:
+      input["MountOptions"] !== undefined
+        ? input["MountOptions"]
+        : loc.MountOptions,
+  });
+  return {};
+};
+
+const CreateLocationSmb: OperationHandler = (input, ctx) => {
+  requireString(input, "ServerHostname");
+  return { LocationArn: storeLocation("SMB", input, ctx) };
+};
+
+const DescribeLocationSmb: OperationHandler = (input, ctx) => {
+  const loc = requireLocation(ctx, requireString(input, "LocationArn"));
+  return {
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+    AgentArns: loc.AgentArns,
+    User: loc.User,
+    Domain: loc.Domain,
+    MountOptions: loc.MountOptions,
+    CreationTime: loc.CreationTime,
+    DnsIpAddresses: loc.DnsIpAddresses,
+    KerberosPrincipal: loc.KerberosPrincipal,
+    AuthenticationType: loc.AuthenticationType,
+    ManagedSecretConfig: loc.ManagedSecretConfig,
+    CmkSecretConfig: loc.CmkSecretConfig,
+    CustomSecretConfig: loc.CustomSecretConfig,
+  };
+};
+
+const UpdateLocationSmb: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  const loc = requireLocation(ctx, arn);
+  ctx.store.set(locationKey(arn), {
+    ...loc,
+    Subdirectory: stringOrUndefined(input["Subdirectory"]) ?? loc.Subdirectory,
+    ServerHostname:
+      stringOrUndefined(input["ServerHostname"]) ?? loc.ServerHostname,
+    User: stringOrUndefined(input["User"]) ?? loc.User,
+    Domain: stringOrUndefined(input["Domain"]) ?? loc.Domain,
+    Password: stringOrUndefined(input["Password"]) ?? loc.Password,
+    AgentArns:
+      input["AgentArns"] !== undefined
+        ? arrayOrEmpty(input["AgentArns"])
+        : loc.AgentArns,
+    MountOptions:
+      input["MountOptions"] !== undefined
+        ? input["MountOptions"]
+        : loc.MountOptions,
+    AuthenticationType:
+      stringOrUndefined(input["AuthenticationType"]) ?? loc.AuthenticationType,
+    DnsIpAddresses:
+      input["DnsIpAddresses"] !== undefined
+        ? arrayOrEmpty(input["DnsIpAddresses"])
+        : loc.DnsIpAddresses,
+    KerberosPrincipal:
+      stringOrUndefined(input["KerberosPrincipal"]) ?? loc.KerberosPrincipal,
+    CmkSecretConfig:
+      input["CmkSecretConfig"] !== undefined
+        ? input["CmkSecretConfig"]
+        : loc.CmkSecretConfig,
+    CustomSecretConfig:
+      input["CustomSecretConfig"] !== undefined
+        ? input["CustomSecretConfig"]
+        : loc.CustomSecretConfig,
+  });
+  return {};
+};
+
+const CreateLocationHdfs: OperationHandler = (input, ctx) => {
+  requireString(input, "AuthenticationType");
+  return { LocationArn: storeLocation("HDFS", input, ctx) };
+};
+
+const DescribeLocationHdfs: OperationHandler = (input, ctx) => {
+  const loc = requireLocation(ctx, requireString(input, "LocationArn"));
+  return {
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+    NameNodes: loc.NameNodes,
+    BlockSize: loc.BlockSize,
+    ReplicationFactor: loc.ReplicationFactor,
+    KmsKeyProviderUri: loc.KmsKeyProviderUri,
+    QopConfiguration: loc.QopConfiguration,
+    AuthenticationType: loc.AuthenticationType,
+    SimpleUser: loc.SimpleUser,
+    KerberosPrincipal: loc.KerberosPrincipal,
+    AgentArns: loc.AgentArns,
+    CreationTime: loc.CreationTime,
+    ManagedSecretConfig: loc.ManagedSecretConfig,
+    CmkSecretConfig: loc.CmkSecretConfig,
+    CustomSecretConfig: loc.CustomSecretConfig,
+  };
+};
+
+const UpdateLocationHdfs: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  const loc = requireLocation(ctx, arn);
+  ctx.store.set(locationKey(arn), {
+    ...loc,
+    Subdirectory: stringOrUndefined(input["Subdirectory"]) ?? loc.Subdirectory,
+    NameNodes:
+      input["NameNodes"] !== undefined
+        ? arrayOrEmpty(input["NameNodes"])
+        : loc.NameNodes,
+    BlockSize: numberOrUndefined(input["BlockSize"]) ?? loc.BlockSize,
+    ReplicationFactor:
+      numberOrUndefined(input["ReplicationFactor"]) ?? loc.ReplicationFactor,
+    KmsKeyProviderUri:
+      stringOrUndefined(input["KmsKeyProviderUri"]) ?? loc.KmsKeyProviderUri,
+    QopConfiguration:
+      input["QopConfiguration"] !== undefined
+        ? input["QopConfiguration"]
+        : loc.QopConfiguration,
+    AuthenticationType:
+      stringOrUndefined(input["AuthenticationType"]) ?? loc.AuthenticationType,
+    SimpleUser: stringOrUndefined(input["SimpleUser"]) ?? loc.SimpleUser,
+    KerberosPrincipal:
+      stringOrUndefined(input["KerberosPrincipal"]) ?? loc.KerberosPrincipal,
+    AgentArns:
+      input["AgentArns"] !== undefined
+        ? arrayOrEmpty(input["AgentArns"])
+        : loc.AgentArns,
+    CmkSecretConfig:
+      input["CmkSecretConfig"] !== undefined
+        ? input["CmkSecretConfig"]
+        : loc.CmkSecretConfig,
+    CustomSecretConfig:
+      input["CustomSecretConfig"] !== undefined
+        ? input["CustomSecretConfig"]
+        : loc.CustomSecretConfig,
+  });
+  return {};
+};
+
+const CreateLocationEfs: OperationHandler = (input, ctx) => {
+  requireString(input, "EfsFilesystemArn");
+  return { LocationArn: storeLocation("EFS", input, ctx) };
+};
+
+const DescribeLocationEfs: OperationHandler = (input, ctx) => {
+  const loc = requireLocation(ctx, requireString(input, "LocationArn"));
+  return {
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+    Ec2Config: loc.Ec2Config,
+    CreationTime: loc.CreationTime,
+    AccessPointArn: loc.AccessPointArn,
+    FileSystemAccessRoleArn: loc.FileSystemAccessRoleArn,
+    InTransitEncryption: loc.InTransitEncryption,
+  };
+};
+
+const UpdateLocationEfs: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  const loc = requireLocation(ctx, arn);
+  ctx.store.set(locationKey(arn), {
+    ...loc,
+    Subdirectory: stringOrUndefined(input["Subdirectory"]) ?? loc.Subdirectory,
+    AccessPointArn:
+      stringOrUndefined(input["AccessPointArn"]) ?? loc.AccessPointArn,
+    FileSystemAccessRoleArn:
+      stringOrUndefined(input["FileSystemAccessRoleArn"]) ??
+      loc.FileSystemAccessRoleArn,
+    InTransitEncryption:
+      stringOrUndefined(input["InTransitEncryption"]) ??
+      loc.InTransitEncryption,
+  });
+  return {};
+};
+
+const CreateLocationFsxWindows: OperationHandler = (input, ctx) => {
+  requireString(input, "FsxFilesystemArn");
+  return { LocationArn: storeLocation("FsxWindows", input, ctx) };
+};
+
+const DescribeLocationFsxWindows: OperationHandler = (input, ctx) => {
+  const loc = requireLocation(ctx, requireString(input, "LocationArn"));
+  return {
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+    SecurityGroupArns: loc.SecurityGroupArns,
+    CreationTime: loc.CreationTime,
+    User: loc.User,
+    Domain: loc.Domain,
+    ManagedSecretConfig: loc.ManagedSecretConfig,
+    CmkSecretConfig: loc.CmkSecretConfig,
+    CustomSecretConfig: loc.CustomSecretConfig,
+  };
+};
+
+const UpdateLocationFsxWindows: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  const loc = requireLocation(ctx, arn);
+  ctx.store.set(locationKey(arn), {
+    ...loc,
+    Subdirectory: stringOrUndefined(input["Subdirectory"]) ?? loc.Subdirectory,
+    Domain: stringOrUndefined(input["Domain"]) ?? loc.Domain,
+    User: stringOrUndefined(input["User"]) ?? loc.User,
+    Password: stringOrUndefined(input["Password"]) ?? loc.Password,
+    CmkSecretConfig:
+      input["CmkSecretConfig"] !== undefined
+        ? input["CmkSecretConfig"]
+        : loc.CmkSecretConfig,
+    CustomSecretConfig:
+      input["CustomSecretConfig"] !== undefined
+        ? input["CustomSecretConfig"]
+        : loc.CustomSecretConfig,
+  });
+  return {};
+};
+
+const CreateLocationFsxLustre: OperationHandler = (input, ctx) => {
+  requireString(input, "FsxFilesystemArn");
+  return { LocationArn: storeLocation("FsxLustre", input, ctx) };
+};
+
+const DescribeLocationFsxLustre: OperationHandler = (input, ctx) => {
+  const loc = requireLocation(ctx, requireString(input, "LocationArn"));
+  return {
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+    SecurityGroupArns: loc.SecurityGroupArns,
+    CreationTime: loc.CreationTime,
+  };
+};
+
+const UpdateLocationFsxLustre: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  const loc = requireLocation(ctx, arn);
+  ctx.store.set(locationKey(arn), {
+    ...loc,
+    Subdirectory: stringOrUndefined(input["Subdirectory"]) ?? loc.Subdirectory,
+  });
+  return {};
+};
+
+const CreateLocationFsxOpenZfs: OperationHandler = (input, ctx) => {
+  requireString(input, "FsxFilesystemArn");
+  return { LocationArn: storeLocation("FsxOpenZfs", input, ctx) };
+};
+
+const DescribeLocationFsxOpenZfs: OperationHandler = (input, ctx) => {
+  const loc = requireLocation(ctx, requireString(input, "LocationArn"));
+  return {
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+    SecurityGroupArns: loc.SecurityGroupArns,
+    Protocol: loc.Protocol,
+    CreationTime: loc.CreationTime,
+  };
+};
+
+const UpdateLocationFsxOpenZfs: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  const loc = requireLocation(ctx, arn);
+  ctx.store.set(locationKey(arn), {
+    ...loc,
+    Subdirectory: stringOrUndefined(input["Subdirectory"]) ?? loc.Subdirectory,
+    Protocol:
+      input["Protocol"] !== undefined ? input["Protocol"] : loc.Protocol,
+  });
+  return {};
+};
+
+const CreateLocationFsxOntap: OperationHandler = (input, ctx) => {
+  requireString(input, "StorageVirtualMachineArn");
+  return { LocationArn: storeLocation("FsxOntap", input, ctx) };
+};
+
+const DescribeLocationFsxOntap: OperationHandler = (input, ctx) => {
+  const loc = requireLocation(ctx, requireString(input, "LocationArn"));
+  return {
+    CreationTime: loc.CreationTime,
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+    Protocol: loc.Protocol,
+    SecurityGroupArns: loc.SecurityGroupArns,
+    StorageVirtualMachineArn: loc.StorageVirtualMachineArn,
+    FsxFilesystemArn: loc.FsxFilesystemArn,
+  };
+};
+
+const UpdateLocationFsxOntap: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  const loc = requireLocation(ctx, arn);
+  ctx.store.set(locationKey(arn), {
+    ...loc,
+    Subdirectory: stringOrUndefined(input["Subdirectory"]) ?? loc.Subdirectory,
+    Protocol:
+      input["Protocol"] !== undefined ? input["Protocol"] : loc.Protocol,
+  });
+  return {};
+};
+
+const CreateLocationAzureBlob: OperationHandler = (input, ctx) => {
+  requireString(input, "ContainerUrl");
+  requireString(input, "AuthenticationType");
+  return { LocationArn: storeLocation("AzureBlob", input, ctx) };
+};
+
+const DescribeLocationAzureBlob: OperationHandler = (input, ctx) => {
+  const loc = requireLocation(ctx, requireString(input, "LocationArn"));
+  return {
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+    AuthenticationType: loc.AuthenticationType,
+    BlobType: loc.BlobType,
+    AccessTier: loc.AccessTier,
+    AgentArns: loc.AgentArns,
+    CreationTime: loc.CreationTime,
+    ManagedSecretConfig: loc.ManagedSecretConfig,
+    CmkSecretConfig: loc.CmkSecretConfig,
+    CustomSecretConfig: loc.CustomSecretConfig,
+  };
+};
+
+const UpdateLocationAzureBlob: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  const loc = requireLocation(ctx, arn);
+  ctx.store.set(locationKey(arn), {
+    ...loc,
+    Subdirectory: stringOrUndefined(input["Subdirectory"]) ?? loc.Subdirectory,
+    AuthenticationType:
+      stringOrUndefined(input["AuthenticationType"]) ?? loc.AuthenticationType,
+    SasConfiguration:
+      input["SasConfiguration"] !== undefined
+        ? input["SasConfiguration"]
+        : loc.SasConfiguration,
+    BlobType: stringOrUndefined(input["BlobType"]) ?? loc.BlobType,
+    AccessTier: stringOrUndefined(input["AccessTier"]) ?? loc.AccessTier,
+    AgentArns:
+      input["AgentArns"] !== undefined
+        ? arrayOrEmpty(input["AgentArns"])
+        : loc.AgentArns,
+    CmkSecretConfig:
+      input["CmkSecretConfig"] !== undefined
+        ? input["CmkSecretConfig"]
+        : loc.CmkSecretConfig,
+    CustomSecretConfig:
+      input["CustomSecretConfig"] !== undefined
+        ? input["CustomSecretConfig"]
+        : loc.CustomSecretConfig,
+  });
+  return {};
+};
+
+const CreateLocationObjectStorage: OperationHandler = (input, ctx) => {
+  requireString(input, "ServerHostname");
+  requireString(input, "BucketName");
+  return { LocationArn: storeLocation("ObjectStorage", input, ctx) };
+};
+
+const DescribeLocationObjectStorage: OperationHandler = (input, ctx) => {
+  const loc = requireLocation(ctx, requireString(input, "LocationArn"));
+  return {
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+    AccessKey: loc.AccessKey,
+    ServerPort: loc.ServerPort,
+    ServerProtocol: loc.ServerProtocol,
+    AgentArns: loc.AgentArns,
+    CreationTime: loc.CreationTime,
+    ServerCertificate: loc.ServerCertificate,
+    ManagedSecretConfig: loc.ManagedSecretConfig,
+    CmkSecretConfig: loc.CmkSecretConfig,
+    CustomSecretConfig: loc.CustomSecretConfig,
+  };
+};
+
+const UpdateLocationObjectStorage: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  const loc = requireLocation(ctx, arn);
+  ctx.store.set(locationKey(arn), {
+    ...loc,
+    ServerPort: numberOrUndefined(input["ServerPort"]) ?? loc.ServerPort,
+    ServerProtocol:
+      stringOrUndefined(input["ServerProtocol"]) ?? loc.ServerProtocol,
+    Subdirectory: stringOrUndefined(input["Subdirectory"]) ?? loc.Subdirectory,
+    ServerHostname:
+      stringOrUndefined(input["ServerHostname"]) ?? loc.ServerHostname,
+    AccessKey: stringOrUndefined(input["AccessKey"]) ?? loc.AccessKey,
+    SecretKey: stringOrUndefined(input["SecretKey"]) ?? loc.SecretKey,
+    AgentArns:
+      input["AgentArns"] !== undefined
+        ? arrayOrEmpty(input["AgentArns"])
+        : loc.AgentArns,
+    ServerCertificate:
+      input["ServerCertificate"] !== undefined
+        ? input["ServerCertificate"]
+        : loc.ServerCertificate,
+    CmkSecretConfig:
+      input["CmkSecretConfig"] !== undefined
+        ? input["CmkSecretConfig"]
+        : loc.CmkSecretConfig,
+    CustomSecretConfig:
+      input["CustomSecretConfig"] !== undefined
+        ? input["CustomSecretConfig"]
+        : loc.CustomSecretConfig,
+  });
+  return {};
 };
 
 const ListLocations: OperationHandler = (_input, ctx) => {
@@ -127,6 +884,13 @@ const ListLocations: OperationHandler = (_input, ctx) => {
       LocationUri: entry.value.LocationUri,
     }));
   return { Locations: locations };
+};
+
+const DeleteLocation: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "LocationArn");
+  requireLocation(ctx, arn);
+  ctx.store.delete(locationKey(arn));
+  return {};
 };
 
 const CreateTask: OperationHandler = (input, ctx) => {
@@ -196,10 +960,56 @@ const DeleteTask: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const UpdateTask: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "TaskArn");
+  const task = requireTask(ctx, arn);
+  ctx.store.set(taskKey(arn), {
+    ...task,
+    Name: stringOrUndefined(input["Name"]) ?? task.Name,
+    CloudWatchLogGroupArn:
+      stringOrUndefined(input["CloudWatchLogGroupArn"]) ??
+      task.CloudWatchLogGroupArn,
+    Options: input["Options"] !== undefined ? input["Options"] : task.Options,
+    Excludes:
+      input["Excludes"] !== undefined
+        ? arrayOrEmpty(input["Excludes"])
+        : task.Excludes,
+    Includes:
+      input["Includes"] !== undefined
+        ? arrayOrEmpty(input["Includes"])
+        : task.Includes,
+    Schedule:
+      input["Schedule"] !== undefined ? input["Schedule"] : task.Schedule,
+  });
+  return {};
+};
+
 const StartTaskExecution: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "TaskArn");
   const task = requireTask(ctx, arn);
   const executionArn = `${arn}/execution/exec-${hex17()}`;
+  const execution: StoredTaskExecution = {
+    TaskExecutionArn: executionArn,
+    Status: "LAUNCHING",
+    Options: input["OverrideOptions"] ?? task.Options,
+    Excludes:
+      input["Excludes"] !== undefined
+        ? arrayOrEmpty(input["Excludes"])
+        : task.Excludes,
+    Includes:
+      input["Includes"] !== undefined
+        ? arrayOrEmpty(input["Includes"])
+        : task.Includes,
+    StartTime: nowSeconds(),
+    EstimatedFilesToTransfer: 0,
+    EstimatedBytesToTransfer: 0,
+    FilesTransferred: 0,
+    BytesWritten: 0,
+    BytesTransferred: 0,
+    BytesCompressed: 0,
+    TaskMode: task.TaskMode,
+  };
+  ctx.store.set(executionKey(executionArn), execution);
   task.executions.push(executionArn);
   task.CurrentTaskExecutionArn = executionArn;
   task.Status = "RUNNING";
@@ -207,17 +1017,151 @@ const StartTaskExecution: OperationHandler = (input, ctx) => {
   return { TaskExecutionArn: executionArn };
 };
 
+const CancelTaskExecution: OperationHandler = (input, ctx) => {
+  const executionArn = requireString(input, "TaskExecutionArn");
+  const execution = requireTaskExecution(ctx, executionArn);
+  ctx.store.set(executionKey(executionArn), {
+    ...execution,
+    Status: "ERROR",
+  });
+  return {};
+};
+
+const DescribeTaskExecution: OperationHandler = (input, ctx) => {
+  const execution = requireTaskExecution(
+    ctx,
+    requireString(input, "TaskExecutionArn"),
+  );
+  return {
+    TaskExecutionArn: execution.TaskExecutionArn,
+    Status: execution.Status,
+    Options: execution.Options,
+    Excludes: execution.Excludes,
+    Includes: execution.Includes,
+    StartTime: execution.StartTime,
+    EstimatedFilesToTransfer: execution.EstimatedFilesToTransfer,
+    EstimatedBytesToTransfer: execution.EstimatedBytesToTransfer,
+    FilesTransferred: execution.FilesTransferred,
+    BytesWritten: execution.BytesWritten,
+    BytesTransferred: execution.BytesTransferred,
+    BytesCompressed: execution.BytesCompressed,
+    TaskMode: execution.TaskMode,
+  };
+};
+
+const ListTaskExecutions: OperationHandler = (input, ctx) => {
+  const filterTaskArn = stringOrUndefined(input["TaskArn"]);
+  const executions = ctx.store
+    .list<StoredTaskExecution>()
+    .filter((entry) => entry.key.startsWith("execution/"))
+    .filter(
+      (entry) =>
+        filterTaskArn === undefined ||
+        entry.value.TaskExecutionArn.startsWith(filterTaskArn),
+    )
+    .map((entry) => ({
+      TaskExecutionArn: entry.value.TaskExecutionArn,
+      Status: entry.value.Status,
+    }));
+  return { TaskExecutions: executions };
+};
+
+const UpdateTaskExecution: OperationHandler = (input, ctx) => {
+  const executionArn = requireString(input, "TaskExecutionArn");
+  const execution = requireTaskExecution(ctx, executionArn);
+  ctx.store.set(executionKey(executionArn), {
+    ...execution,
+    Options:
+      input["Options"] !== undefined ? input["Options"] : execution.Options,
+  });
+  return {};
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const newTags = arrayOrEmpty(input["Tags"]);
+  const existing = ctx.store.get<unknown[]>(tagsKey(arn)) ?? [];
+  ctx.store.set(tagsKey(arn), [...existing, ...newTags]);
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const keys = arrayOrEmpty(input["Keys"]) as string[];
+  const existing = (ctx.store.get<unknown[]>(tagsKey(arn)) ?? []) as Record<
+    string,
+    unknown
+  >[];
+  ctx.store.set(
+    tagsKey(arn),
+    existing.filter((tag) => !keys.includes(tag["Key"] as string)),
+  );
+  return {};
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const tags = ctx.store.get<unknown[]>(tagsKey(arn)) ?? [];
+  return { Tags: tags };
+};
+
 const datasync: ServiceDefinition = {
   name: "datasync",
   protocol: "json",
   operations: {
+    CancelTaskExecution,
+    CreateAgent,
+    CreateLocationAzureBlob,
+    CreateLocationEfs,
+    CreateLocationFsxLustre,
+    CreateLocationFsxOntap,
+    CreateLocationFsxOpenZfs,
+    CreateLocationFsxWindows,
+    CreateLocationHdfs,
+    CreateLocationNfs,
+    CreateLocationObjectStorage,
     CreateLocationS3,
-    ListLocations,
+    CreateLocationSmb,
     CreateTask,
-    DescribeTask,
-    ListTasks,
+    DeleteAgent,
+    DeleteLocation,
     DeleteTask,
+    DescribeAgent,
+    DescribeLocationAzureBlob,
+    DescribeLocationEfs,
+    DescribeLocationFsxLustre,
+    DescribeLocationFsxOntap,
+    DescribeLocationFsxOpenZfs,
+    DescribeLocationFsxWindows,
+    DescribeLocationHdfs,
+    DescribeLocationNfs,
+    DescribeLocationObjectStorage,
+    DescribeLocationS3,
+    DescribeLocationSmb,
+    DescribeTask,
+    DescribeTaskExecution,
+    ListAgents,
+    ListLocations,
+    ListTagsForResource,
+    ListTaskExecutions,
+    ListTasks,
     StartTaskExecution,
+    TagResource,
+    UntagResource,
+    UpdateAgent,
+    UpdateLocationAzureBlob,
+    UpdateLocationEfs,
+    UpdateLocationFsxLustre,
+    UpdateLocationFsxOntap,
+    UpdateLocationFsxOpenZfs,
+    UpdateLocationFsxWindows,
+    UpdateLocationHdfs,
+    UpdateLocationNfs,
+    UpdateLocationObjectStorage,
+    UpdateLocationS3,
+    UpdateLocationSmb,
+    UpdateTask,
+    UpdateTaskExecution,
   },
   model,
 } as const;

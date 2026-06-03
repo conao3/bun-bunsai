@@ -15,12 +15,42 @@ type StoredField = {
   refValue: string | undefined;
 };
 
+type StoredPipelineObject = {
+  id: string;
+  name: string;
+  fields: StoredField[];
+};
+
+type StoredParameterAttribute = {
+  key: string;
+  stringValue: string;
+};
+
+type StoredParameterObject = {
+  id: string;
+  attributes: StoredParameterAttribute[];
+};
+
+type StoredParameterValue = {
+  id: string;
+  stringValue: string;
+};
+
+type StoredTag = {
+  key: string;
+  value: string;
+};
+
 type StoredPipeline = {
   pipelineId: string;
   name: string;
   uniqueId: string;
   description: string | undefined;
   fields: StoredField[];
+  pipelineObjects: StoredPipelineObject[];
+  parameterObjects: StoredParameterObject[];
+  parameterValues: StoredParameterValue[];
+  tags: StoredTag[];
 };
 
 const requireString = (
@@ -57,6 +87,88 @@ const requirePipeline = (ctx: ServiceContext, id: string): StoredPipeline => {
   return pipeline;
 };
 
+const parsePipelineObjects = (value: unknown): StoredPipelineObject[] => {
+  if (!Array.isArray(value)) return [];
+  const result: StoredPipelineObject[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    const obj = item as Record<string, unknown>;
+    const id = stringOrUndefined(obj["id"]);
+    const name = stringOrUndefined(obj["name"]);
+    if (!id || !name) continue;
+    const fields: StoredField[] = [];
+    if (Array.isArray(obj["fields"])) {
+      for (const f of obj["fields"]) {
+        if (typeof f !== "object" || f === null) continue;
+        const field = f as Record<string, unknown>;
+        const key = stringOrUndefined(field["key"]);
+        if (!key) continue;
+        fields.push({
+          key,
+          stringValue: stringOrUndefined(field["stringValue"]),
+          refValue: stringOrUndefined(field["refValue"]),
+        });
+      }
+    }
+    result.push({ id, name, fields });
+  }
+  return result;
+};
+
+const parseParameterObjects = (value: unknown): StoredParameterObject[] => {
+  if (!Array.isArray(value)) return [];
+  const result: StoredParameterObject[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    const obj = item as Record<string, unknown>;
+    const id = stringOrUndefined(obj["id"]);
+    if (!id) continue;
+    const attributes: StoredParameterAttribute[] = [];
+    if (Array.isArray(obj["attributes"])) {
+      for (const a of obj["attributes"]) {
+        if (typeof a !== "object" || a === null) continue;
+        const attr = a as Record<string, unknown>;
+        const key = stringOrUndefined(attr["key"]);
+        const sv =
+          typeof attr["stringValue"] === "string" ? attr["stringValue"] : "";
+        if (!key) continue;
+        attributes.push({ key, stringValue: sv });
+      }
+    }
+    result.push({ id, attributes });
+  }
+  return result;
+};
+
+const parseParameterValues = (value: unknown): StoredParameterValue[] => {
+  if (!Array.isArray(value)) return [];
+  const result: StoredParameterValue[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    const obj = item as Record<string, unknown>;
+    const id = stringOrUndefined(obj["id"]);
+    const sv =
+      typeof obj["stringValue"] === "string" ? obj["stringValue"] : undefined;
+    if (!id || sv === undefined) continue;
+    result.push({ id, stringValue: sv });
+  }
+  return result;
+};
+
+const parseTags = (value: unknown): StoredTag[] => {
+  if (!Array.isArray(value)) return [];
+  const result: StoredTag[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    const obj = item as Record<string, unknown>;
+    const key = stringOrUndefined(obj["key"]);
+    const val = typeof obj["value"] === "string" ? obj["value"] : undefined;
+    if (!key || val === undefined) continue;
+    result.push({ key, value: val });
+  }
+  return result;
+};
+
 const CreatePipeline: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const uniqueId = requireString(input, "uniqueId");
@@ -78,6 +190,10 @@ const CreatePipeline: OperationHandler = (input, ctx) => {
     fields: [
       { key: "@pipelineState", stringValue: "PENDING", refValue: undefined },
     ],
+    pipelineObjects: [],
+    parameterObjects: [],
+    parameterValues: [],
+    tags: [],
   };
   ctx.store.set(pipelineKey(pipelineId), pipeline);
   return { pipelineId };
@@ -112,6 +228,125 @@ const DeletePipeline: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const PutPipelineDefinition: OperationHandler = (input, ctx) => {
+  const pipelineId = requireString(input, "pipelineId");
+  const pipeline = requirePipeline(ctx, pipelineId);
+  pipeline.pipelineObjects = parsePipelineObjects(input["pipelineObjects"]);
+  pipeline.parameterObjects = parseParameterObjects(input["parameterObjects"]);
+  pipeline.parameterValues = parseParameterValues(input["parameterValues"]);
+  ctx.store.set(pipelineKey(pipelineId), pipeline);
+  return { validationErrors: [], validationWarnings: [], errored: false };
+};
+
+const GetPipelineDefinition: OperationHandler = (input, ctx) => {
+  const pipelineId = requireString(input, "pipelineId");
+  const pipeline = requirePipeline(ctx, pipelineId);
+  return {
+    pipelineObjects: pipeline.pipelineObjects,
+    parameterObjects: pipeline.parameterObjects,
+    parameterValues: pipeline.parameterValues,
+  };
+};
+
+const ValidatePipelineDefinition: OperationHandler = (input, ctx) => {
+  const pipelineId = requireString(input, "pipelineId");
+  requirePipeline(ctx, pipelineId);
+  return { validationErrors: [], validationWarnings: [], errored: false };
+};
+
+const ActivatePipeline: OperationHandler = (input, ctx) => {
+  const pipelineId = requireString(input, "pipelineId");
+  const pipeline = requirePipeline(ctx, pipelineId);
+  const stateField = pipeline.fields.find((f) => f.key === "@pipelineState");
+  if (stateField) {
+    stateField.stringValue = "SCHEDULED";
+  }
+  ctx.store.set(pipelineKey(pipelineId), pipeline);
+  return {};
+};
+
+const DeactivatePipeline: OperationHandler = (input, ctx) => {
+  const pipelineId = requireString(input, "pipelineId");
+  const pipeline = requirePipeline(ctx, pipelineId);
+  const stateField = pipeline.fields.find((f) => f.key === "@pipelineState");
+  if (stateField) {
+    stateField.stringValue = "DEACTIVATING";
+  }
+  ctx.store.set(pipelineKey(pipelineId), pipeline);
+  return {};
+};
+
+const SetStatus: OperationHandler = (input, ctx) => {
+  const pipelineId = requireString(input, "pipelineId");
+  requirePipeline(ctx, pipelineId);
+  return {};
+};
+
+const DescribeObjects: OperationHandler = (input, ctx) => {
+  const pipelineId = requireString(input, "pipelineId");
+  const pipeline = requirePipeline(ctx, pipelineId);
+  const objectIds = stringList(input["objectIds"]);
+  const pipelineObjects = pipeline.pipelineObjects.filter((obj) =>
+    objectIds.includes(obj.id),
+  );
+  return { pipelineObjects, marker: undefined, hasMoreResults: false };
+};
+
+const QueryObjects: OperationHandler = (input, ctx) => {
+  const pipelineId = requireString(input, "pipelineId");
+  const pipeline = requirePipeline(ctx, pipelineId);
+  const ids = pipeline.pipelineObjects.map((obj) => obj.id);
+  return { ids, marker: undefined, hasMoreResults: false };
+};
+
+const EvaluateExpression: OperationHandler = (input, ctx) => {
+  const pipelineId = requireString(input, "pipelineId");
+  requirePipeline(ctx, pipelineId);
+  const expression = requireString(input, "expression");
+  return { evaluatedExpression: expression };
+};
+
+const AddTags: OperationHandler = (input, ctx) => {
+  const pipelineId = requireString(input, "pipelineId");
+  const pipeline = requirePipeline(ctx, pipelineId);
+  const newTags = parseTags(input["tags"]);
+  for (const tag of newTags) {
+    const existing = pipeline.tags.find((t) => t.key === tag.key);
+    if (existing) {
+      existing.value = tag.value;
+    } else {
+      pipeline.tags.push(tag);
+    }
+  }
+  ctx.store.set(pipelineKey(pipelineId), pipeline);
+  return {};
+};
+
+const RemoveTags: OperationHandler = (input, ctx) => {
+  const pipelineId = requireString(input, "pipelineId");
+  const pipeline = requirePipeline(ctx, pipelineId);
+  const tagKeys = stringList(input["tagKeys"]);
+  pipeline.tags = pipeline.tags.filter((t) => !tagKeys.includes(t.key));
+  ctx.store.set(pipelineKey(pipelineId), pipeline);
+  return {};
+};
+
+const PollForTask: OperationHandler = (_input, _ctx) => {
+  return { taskObject: undefined };
+};
+
+const ReportTaskProgress: OperationHandler = (_input, _ctx) => {
+  return { canceled: false };
+};
+
+const ReportTaskRunnerHeartbeat: OperationHandler = (_input, _ctx) => {
+  return { terminate: false };
+};
+
+const SetTaskStatus: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
 const datapipeline = {
   name: "datapipeline",
   protocol: "json",
@@ -120,6 +355,21 @@ const datapipeline = {
     ListPipelines,
     DescribePipelines,
     DeletePipeline,
+    PutPipelineDefinition,
+    GetPipelineDefinition,
+    ValidatePipelineDefinition,
+    ActivatePipeline,
+    DeactivatePipeline,
+    SetStatus,
+    DescribeObjects,
+    QueryObjects,
+    EvaluateExpression,
+    AddTags,
+    RemoveTags,
+    PollForTask,
+    ReportTaskProgress,
+    ReportTaskRunnerHeartbeat,
+    SetTaskStatus,
   },
   model,
 } as const satisfies ServiceDefinition;

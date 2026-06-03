@@ -71,6 +71,9 @@ import mediastore from "./mediastore.ts";
 import shield from "./shield.ts";
 import fms from "./fms.ts";
 import licensemanager from "./licensemanager.ts";
+import workspaces from "./workspaces.ts";
+import appstream from "./appstream.ts";
+import storagegateway from "./storagegateway.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -145,6 +148,9 @@ export const services: ServiceDefinition[] = [
   shield,
   fms,
   licensemanager,
+  workspaces,
+  appstream,
+  storagegateway,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

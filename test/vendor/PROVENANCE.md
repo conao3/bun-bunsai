@@ -137,6 +137,9 @@ aws-models/
   shield.json           # botocore/data/shield/2016-06-02/service-2.json           (protocol json, targetPrefix AWSShield_20160616)
   fms.json              # botocore/data/fms/2018-01-01/service-2.json              (protocol json, targetPrefix AWSFMS_20180101)
   licensemanager.json   # botocore/data/license-manager/2018-08-01/service-2.json  (protocol json, signingName license-manager, targetPrefix AWSLicenseManager)
+  workspaces.json       # botocore/data/workspaces/2015-04-08/service-2.json       (protocol json, targetPrefix WorkspacesService)
+  appstream.json        # botocore/data/appstream/2016-12-01/service-2.json        (protocol json, signingName appstream, endpointPrefix appstream2, targetPrefix PhotonAdminProxyService)
+  storagegateway.json   # botocore/data/storagegateway/2013-06-30/service-2.json   (protocol json, targetPrefix StorageGateway_20130630)
 ```
 
 ### Notes

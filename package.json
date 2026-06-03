@@ -45,6 +45,7 @@
     "@aws-sdk/client-fsx": "^3.1058.0",
     "@aws-sdk/client-glue": "^3.1058.0",
     "@aws-sdk/client-iam": "^3.1058.0",
+    "@aws-sdk/client-keyspaces": "^3.1059.0",
     "@aws-sdk/client-kinesis": "^3.1058.0",
     "@aws-sdk/client-kms": "^3.1058.0",
     "@aws-sdk/client-lambda": "^3.1058.0",

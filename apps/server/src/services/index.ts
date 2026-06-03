@@ -54,6 +54,7 @@ import apprunner from "./apprunner.ts";
 import servicediscovery from "./servicediscovery.ts";
 import memorydb from "./memorydb.ts";
 import dax from "./dax.ts";
+import keyspaces from "./keyspaces.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -111,6 +112,7 @@ export const services: ServiceDefinition[] = [
   servicediscovery,
   memorydb,
   dax,
+  keyspaces,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

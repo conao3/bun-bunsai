@@ -11,6 +11,11 @@ import type {
 const model = loadServiceModel(groundstationModel);
 
 const missionProfilePrefix = "missionProfile:" as const;
+const configPrefix = "config:" as const;
+const dataflowEndpointGroupPrefix = "dataflowEndpointGroup:" as const;
+const ephemerisPrefix = "ephemeris:" as const;
+const contactPrefix = "contact:" as const;
+const agentPrefix = "agent:" as const;
 
 type StoredMissionProfile = {
   missionProfileId: string;
@@ -28,11 +33,83 @@ type StoredMissionProfile = {
   streamsKmsRole: string | undefined;
 };
 
+type StoredConfig = {
+  configId: string;
+  configType: string;
+  configArn: string;
+  name: string;
+  configData: unknown;
+  tags: Record<string, unknown>;
+};
+
+type StoredDataflowEndpointGroup = {
+  dataflowEndpointGroupId: string;
+  dataflowEndpointGroupArn: string;
+  endpointsDetails: unknown[];
+  tags: Record<string, unknown>;
+  contactPrePassDurationSeconds: number | undefined;
+  contactPostPassDurationSeconds: number | undefined;
+};
+
+type ContactVersionEntry = {
+  versionId: string;
+  created: number;
+  activated: number | undefined;
+  superseded: number | undefined;
+  lastUpdated: number;
+  status: string;
+};
+
+type StoredContact = {
+  contactId: string;
+  versionId: string;
+  versions: ContactVersionEntry[];
+  missionProfileArn: string;
+  satelliteArn: string;
+  startTime: number;
+  endTime: number;
+  prePassStartTime: number;
+  postPassEndTime: number;
+  groundStation: string;
+  contactStatus: string;
+  errorMessage: string | undefined;
+  maximumElevation: { value: number; unit: string } | undefined;
+  tags: Record<string, unknown>;
+  region: string;
+  dataflowList: unknown[];
+  visibilityStartTime: number;
+  visibilityEndTime: number;
+  trackingOverrides: unknown;
+  ephemeris: { ephemerisId: string; ephemerisType: string } | undefined;
+};
+
+type StoredEphemeris = {
+  ephemerisId: string;
+  satelliteId: string;
+  status: string;
+  priority: number;
+  creationTime: number;
+  enabled: boolean;
+  name: string;
+  tags: Record<string, unknown>;
+  suppliedData: unknown;
+  invalidReason: string | undefined;
+  errorReasons: unknown[] | undefined;
+};
+
+type StoredAgent = {
+  agentId: string;
+  taskingDocument: string;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
 const numberOrUndefined = (value: unknown): number | undefined =>
   typeof value === "number" ? value : undefined;
+
+const booleanOrDefault = (value: unknown, def: boolean): boolean =>
+  typeof value === "boolean" ? value : def;
 
 const arrayOrEmpty = (value: unknown): unknown[] =>
   Array.isArray(value) ? value : [];
@@ -67,8 +144,32 @@ const requireNumber = (
 const missionProfileKey = (id: string): string =>
   `${missionProfilePrefix}${id}`;
 
+const configKey = (configType: string, configId: string): string =>
+  `${configPrefix}${configType}:${configId}`;
+
+const dataflowEndpointGroupKey = (id: string): string =>
+  `${dataflowEndpointGroupPrefix}${id}`;
+
+const ephemerisKey = (id: string): string => `${ephemerisPrefix}${id}`;
+
+const contactKey = (id: string): string => `${contactPrefix}${id}`;
+
+const agentKey = (id: string): string => `${agentPrefix}${id}`;
+
+const tagsKey = (resourceArn: string): string => `tags:${resourceArn}`;
+
 const profileArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:groundstation:${ctx.region}:${ctx.account}:mission-profile/${id}`;
+
+const configArn = (
+  ctx: ServiceContext,
+  configType: string,
+  configId: string,
+): string =>
+  `arn:aws:groundstation:${ctx.region}:${ctx.account}:config/${configType}/${configId}`;
+
+const dataflowEndpointGroupArnFor = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:groundstation:${ctx.region}:${ctx.account}:dataflow-endpoint-group/${id}`;
 
 const requireProfile = (
   ctx: ServiceContext,
@@ -83,6 +184,63 @@ const requireProfile = (
     );
   }
   return profile;
+};
+
+const requireConfig = (
+  ctx: ServiceContext,
+  configType: string,
+  configId: string,
+): StoredConfig => {
+  const config = ctx.store.get<StoredConfig>(configKey(configType, configId));
+  if (config === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Config ${configId} not found.`,
+      404,
+    );
+  }
+  return config;
+};
+
+const requireDataflowEndpointGroup = (
+  ctx: ServiceContext,
+  id: string,
+): StoredDataflowEndpointGroup => {
+  const group = ctx.store.get<StoredDataflowEndpointGroup>(
+    dataflowEndpointGroupKey(id),
+  );
+  if (group === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Dataflow endpoint group ${id} not found.`,
+      404,
+    );
+  }
+  return group;
+};
+
+const requireEphemeris = (ctx: ServiceContext, id: string): StoredEphemeris => {
+  const eph = ctx.store.get<StoredEphemeris>(ephemerisKey(id));
+  if (eph === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Ephemeris ${id} not found.`,
+      404,
+    );
+  }
+  return eph;
+};
+
+const requireContact = (ctx: ServiceContext, id: string): StoredContact => {
+  const contact = ctx.store.get<StoredContact>(contactKey(id));
+  if (contact === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${id} not found.`,
+      404,
+    );
+  }
+  return contact;
 };
 
 const profileView = (
@@ -104,7 +262,7 @@ const profileView = (
   streamsKmsRole: profile.streamsKmsRole,
 });
 
-const listItemView = (
+const profileListItemView = (
   profile: StoredMissionProfile,
 ): Record<string, unknown> => ({
   missionProfileId: profile.missionProfileId,
@@ -112,6 +270,34 @@ const listItemView = (
   region: profile.region,
   name: profile.name,
 });
+
+const contactView = (contact: StoredContact): Record<string, unknown> => ({
+  contactId: contact.contactId,
+  missionProfileArn: contact.missionProfileArn,
+  satelliteArn: contact.satelliteArn,
+  startTime: contact.startTime,
+  endTime: contact.endTime,
+  prePassStartTime: contact.prePassStartTime,
+  postPassEndTime: contact.postPassEndTime,
+  groundStation: contact.groundStation,
+  contactStatus: contact.contactStatus,
+  errorMessage: contact.errorMessage,
+  maximumElevation: contact.maximumElevation,
+  tags: contact.tags,
+  region: contact.region,
+  dataflowList: contact.dataflowList,
+  visibilityStartTime: contact.visibilityStartTime,
+  visibilityEndTime: contact.visibilityEndTime,
+  trackingOverrides: contact.trackingOverrides,
+  ephemeris: contact.ephemeris,
+  version: contact.versionId,
+});
+
+const pathSegments = (path: string): string[] =>
+  path.split("/").filter((part) => part !== "");
+
+const staticSatelliteId = "sat-bunsai-0001";
+const staticGroundStationId = "gs-bunsai-0001";
 
 const CreateMissionProfile: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
@@ -157,7 +343,9 @@ const ListMissionProfiles: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(missionProfilePrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { missionProfileList: profiles.slice(0, max).map(listItemView) };
+  return {
+    missionProfileList: profiles.slice(0, max).map(profileListItemView),
+  };
 };
 
 const DeleteMissionProfile: OperationHandler = (input, ctx) => {
@@ -167,25 +355,725 @@ const DeleteMissionProfile: OperationHandler = (input, ctx) => {
   return { missionProfileId: id };
 };
 
-const pathSegments = (path: string): string[] =>
-  path.split("/").filter((part) => part !== "");
+const UpdateMissionProfile: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "missionProfileId");
+  const profile = requireProfile(ctx, id);
+  const updated: StoredMissionProfile = {
+    ...profile,
+    name: stringOrUndefined(input["name"]) ?? profile.name,
+    contactPrePassDurationSeconds:
+      numberOrUndefined(input["contactPrePassDurationSeconds"]) ??
+      profile.contactPrePassDurationSeconds,
+    contactPostPassDurationSeconds:
+      numberOrUndefined(input["contactPostPassDurationSeconds"]) ??
+      profile.contactPostPassDurationSeconds,
+    minimumViableContactDurationSeconds:
+      numberOrUndefined(input["minimumViableContactDurationSeconds"]) ??
+      profile.minimumViableContactDurationSeconds,
+    dataflowEdges: Array.isArray(input["dataflowEdges"])
+      ? input["dataflowEdges"]
+      : profile.dataflowEdges,
+    trackingConfigArn:
+      stringOrUndefined(input["trackingConfigArn"]) ??
+      profile.trackingConfigArn,
+    telemetrySinkConfigArn:
+      stringOrUndefined(input["telemetrySinkConfigArn"]) ??
+      profile.telemetrySinkConfigArn,
+    streamsKmsKey: input["streamsKmsKey"] ?? profile.streamsKmsKey,
+    streamsKmsRole:
+      stringOrUndefined(input["streamsKmsRole"]) ?? profile.streamsKmsRole,
+  };
+  ctx.store.set(missionProfileKey(id), updated);
+  return { missionProfileId: id };
+};
+
+const CreateConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "name");
+  const configData = input["configData"];
+  const configType = determineConfigType(configData);
+  const id = crypto.randomUUID();
+  const config: StoredConfig = {
+    configId: id,
+    configType,
+    configArn: configArn(ctx, configType, id),
+    name,
+    configData,
+    tags: recordOrEmpty(input["tags"]),
+  };
+  ctx.store.set(configKey(configType, id), config);
+  return { configId: id, configType, configArn: config.configArn };
+};
+
+const determineConfigType = (configData: unknown): string => {
+  if (typeof configData !== "object" || configData === null)
+    return "dataflow-endpoint";
+  const keys = Object.keys(configData as Record<string, unknown>);
+  if (keys.includes("antennaDownlinkConfig")) return "antenna-downlink";
+  if (keys.includes("antennaDownlinkDemodDecodeConfig"))
+    return "antenna-downlink-demod-decode";
+  if (keys.includes("antennaUplinkConfig")) return "antenna-uplink";
+  if (keys.includes("dataflowEndpointConfig")) return "dataflow-endpoint";
+  if (keys.includes("trackingConfig")) return "tracking";
+  if (keys.includes("uplinkEchoConfig")) return "uplink-echo";
+  if (keys.includes("s3RecordingConfig")) return "s3-recording";
+  if (keys.includes("telemetrySinkConfig")) return "telemetry-sink";
+  return "dataflow-endpoint";
+};
+
+const GetConfig: OperationHandler = (input, ctx) => {
+  const configId = requireString(input, "configId");
+  const configType = requireString(input, "configType");
+  const config = requireConfig(ctx, configType, configId);
+  return {
+    configId: config.configId,
+    configArn: config.configArn,
+    name: config.name,
+    configType: config.configType,
+    configData: config.configData,
+    tags: config.tags,
+  };
+};
+
+const ListConfigs: OperationHandler = (input, ctx) => {
+  const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const configs = ctx.store
+    .list<StoredConfig>()
+    .filter((entry) => entry.key.startsWith(configPrefix))
+    .map((entry) => entry.value)
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return {
+    configList: configs.slice(0, max).map((c) => ({
+      configId: c.configId,
+      configType: c.configType,
+      configArn: c.configArn,
+      name: c.name,
+    })),
+  };
+};
+
+const UpdateConfig: OperationHandler = (input, ctx) => {
+  const configId = requireString(input, "configId");
+  const configType = requireString(input, "configType");
+  const config = requireConfig(ctx, configType, configId);
+  const updated: StoredConfig = {
+    ...config,
+    name: stringOrUndefined(input["name"]) ?? config.name,
+    configData: input["configData"] ?? config.configData,
+  };
+  ctx.store.set(configKey(configType, configId), updated);
+  return {
+    configId: config.configId,
+    configType: config.configType,
+    configArn: config.configArn,
+  };
+};
+
+const DeleteConfig: OperationHandler = (input, ctx) => {
+  const configId = requireString(input, "configId");
+  const configType = requireString(input, "configType");
+  const config = requireConfig(ctx, configType, configId);
+  ctx.store.delete(configKey(configType, configId));
+  return {
+    configId: config.configId,
+    configType: config.configType,
+    configArn: config.configArn,
+  };
+};
+
+const CreateDataflowEndpointGroup: OperationHandler = (input, ctx) => {
+  const id = crypto.randomUUID();
+  const group: StoredDataflowEndpointGroup = {
+    dataflowEndpointGroupId: id,
+    dataflowEndpointGroupArn: dataflowEndpointGroupArnFor(ctx, id),
+    endpointsDetails: arrayOrEmpty(input["endpointDetails"]),
+    tags: recordOrEmpty(input["tags"]),
+    contactPrePassDurationSeconds: numberOrUndefined(
+      input["contactPrePassDurationSeconds"],
+    ),
+    contactPostPassDurationSeconds: numberOrUndefined(
+      input["contactPostPassDurationSeconds"],
+    ),
+  };
+  ctx.store.set(dataflowEndpointGroupKey(id), group);
+  return { dataflowEndpointGroupId: id };
+};
+
+const CreateDataflowEndpointGroupV2: OperationHandler = (input, ctx) => {
+  const id = crypto.randomUUID();
+  const group: StoredDataflowEndpointGroup = {
+    dataflowEndpointGroupId: id,
+    dataflowEndpointGroupArn: dataflowEndpointGroupArnFor(ctx, id),
+    endpointsDetails: arrayOrEmpty(input["endpoints"]),
+    tags: recordOrEmpty(input["tags"]),
+    contactPrePassDurationSeconds: numberOrUndefined(
+      input["contactPrePassDurationSeconds"],
+    ),
+    contactPostPassDurationSeconds: numberOrUndefined(
+      input["contactPostPassDurationSeconds"],
+    ),
+  };
+  ctx.store.set(dataflowEndpointGroupKey(id), group);
+  return { dataflowEndpointGroupId: id };
+};
+
+const GetDataflowEndpointGroup: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "dataflowEndpointGroupId");
+  const group = requireDataflowEndpointGroup(ctx, id);
+  return {
+    dataflowEndpointGroupId: group.dataflowEndpointGroupId,
+    dataflowEndpointGroupArn: group.dataflowEndpointGroupArn,
+    endpointsDetails: group.endpointsDetails,
+    tags: group.tags,
+    contactPrePassDurationSeconds: group.contactPrePassDurationSeconds,
+    contactPostPassDurationSeconds: group.contactPostPassDurationSeconds,
+  };
+};
+
+const ListDataflowEndpointGroups: OperationHandler = (input, ctx) => {
+  const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const groups = ctx.store
+    .list<StoredDataflowEndpointGroup>()
+    .filter((entry) => entry.key.startsWith(dataflowEndpointGroupPrefix))
+    .map((entry) => entry.value);
+  return {
+    dataflowEndpointGroupList: groups.slice(0, max).map((g) => ({
+      dataflowEndpointGroupId: g.dataflowEndpointGroupId,
+      dataflowEndpointGroupArn: g.dataflowEndpointGroupArn,
+    })),
+  };
+};
+
+const DeleteDataflowEndpointGroup: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "dataflowEndpointGroupId");
+  requireDataflowEndpointGroup(ctx, id);
+  ctx.store.delete(dataflowEndpointGroupKey(id));
+  return { dataflowEndpointGroupId: id };
+};
+
+const CreateEphemeris: OperationHandler = (input, ctx) => {
+  const satelliteId = requireString(input, "satelliteId");
+  const name = stringOrUndefined(input["name"]) ?? "";
+  const id = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  const eph: StoredEphemeris = {
+    ephemerisId: id,
+    satelliteId,
+    status: "VALIDATING",
+    priority: numberOrUndefined(input["priority"]) ?? 0,
+    creationTime: now,
+    enabled: booleanOrDefault(input["enabled"], true),
+    name,
+    tags: recordOrEmpty(input["tags"]),
+    suppliedData: input["ephemeris"],
+    invalidReason: undefined,
+    errorReasons: undefined,
+  };
+  ctx.store.set(ephemerisKey(id), eph);
+  return { ephemerisId: id };
+};
+
+const DescribeEphemeris: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ephemerisId");
+  const eph = requireEphemeris(ctx, id);
+  return {
+    ephemerisId: eph.ephemerisId,
+    satelliteId: eph.satelliteId,
+    status: eph.status,
+    priority: eph.priority,
+    creationTime: eph.creationTime,
+    enabled: eph.enabled,
+    name: eph.name,
+    tags: eph.tags,
+    suppliedData: eph.suppliedData,
+    invalidReason: eph.invalidReason,
+    errorReasons: eph.errorReasons,
+  };
+};
+
+const UpdateEphemeris: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ephemerisId");
+  const eph = requireEphemeris(ctx, id);
+  const updated: StoredEphemeris = {
+    ...eph,
+    enabled:
+      typeof input["enabled"] === "boolean" ? input["enabled"] : eph.enabled,
+    name: stringOrUndefined(input["name"]) ?? eph.name,
+    priority: numberOrUndefined(input["priority"]) ?? eph.priority,
+  };
+  ctx.store.set(ephemerisKey(id), updated);
+  return { ephemerisId: id };
+};
+
+const DeleteEphemeris: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ephemerisId");
+  requireEphemeris(ctx, id);
+  ctx.store.delete(ephemerisKey(id));
+  return { ephemerisId: id };
+};
+
+const ListEphemerides: OperationHandler = (input, ctx) => {
+  const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const satelliteId = stringOrUndefined(input["satelliteId"]);
+  const statusList = Array.isArray(input["statusList"])
+    ? (input["statusList"] as string[])
+    : undefined;
+  let ephs = ctx.store
+    .list<StoredEphemeris>()
+    .filter((entry) => entry.key.startsWith(ephemerisPrefix))
+    .map((entry) => entry.value);
+  if (satelliteId !== undefined) {
+    ephs = ephs.filter((e) => e.satelliteId === satelliteId);
+  }
+  if (statusList !== undefined && statusList.length > 0) {
+    ephs = ephs.filter((e) => statusList.includes(e.status));
+  }
+  return {
+    ephemerides: ephs.slice(0, max).map((e) => ({
+      ephemerisId: e.ephemerisId,
+      ephemerisType: "OEM",
+      status: e.status,
+      priority: e.priority,
+      enabled: e.enabled,
+      creationTime: e.creationTime,
+      name: e.name,
+    })),
+  };
+};
+
+const ReserveContact: OperationHandler = (input, ctx) => {
+  const missionProfileArn = requireString(input, "missionProfileArn");
+  const satelliteArn = requireString(input, "satelliteArn");
+  const startTime = requireNumber(input, "startTime");
+  const endTime = requireNumber(input, "endTime");
+  const groundStation = requireString(input, "groundStation");
+  const id = crypto.randomUUID();
+  const versionId = crypto.randomUUID();
+  const prePassStartTime = startTime - 120;
+  const postPassEndTime = endTime + 120;
+  const now = Math.floor(Date.now() / 1000);
+  const initialVersion: ContactVersionEntry = {
+    versionId,
+    created: now,
+    activated: undefined,
+    superseded: undefined,
+    lastUpdated: now,
+    status: "ACTIVE",
+  };
+  const contact: StoredContact = {
+    contactId: id,
+    versionId,
+    versions: [initialVersion],
+    missionProfileArn,
+    satelliteArn,
+    startTime,
+    endTime,
+    prePassStartTime,
+    postPassEndTime,
+    groundStation,
+    contactStatus: "SCHEDULED",
+    errorMessage: undefined,
+    maximumElevation: { value: 45.0, unit: "DEGREE_ANGLE" },
+    tags: recordOrEmpty(input["tags"]),
+    region: ctx.region,
+    dataflowList: [],
+    visibilityStartTime: startTime,
+    visibilityEndTime: endTime,
+    trackingOverrides: input["trackingOverrides"],
+    ephemeris: undefined,
+  };
+  ctx.store.set(contactKey(id), contact);
+  return { contactId: id, versionId };
+};
+
+const DescribeContact: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "contactId");
+  return contactView(requireContact(ctx, id));
+};
+
+const DescribeContactVersion: OperationHandler = (input, ctx) => {
+  const contactId = requireString(input, "contactId");
+  const versionId = requireString(input, "versionId");
+  const contact = requireContact(ctx, contactId);
+  const version = contact.versions.find((v) => v.versionId === versionId);
+  if (version === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact version ${versionId} not found.`,
+      404,
+    );
+  }
+  return { ...contactView(contact), version: versionId };
+};
+
+const CancelContact: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "contactId");
+  const contact = requireContact(ctx, id);
+  const updated: StoredContact = { ...contact, contactStatus: "CANCELLED" };
+  ctx.store.set(contactKey(id), updated);
+  return { contactId: id, versionId: contact.versionId };
+};
+
+const ListContacts: OperationHandler = (input, ctx) => {
+  const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const statusList = Array.isArray(input["statusList"])
+    ? (input["statusList"] as string[])
+    : undefined;
+  const groundStation = stringOrUndefined(input["groundStation"]);
+  const satelliteArnFilter = stringOrUndefined(input["satelliteArn"]);
+  const missionProfileArnFilter = stringOrUndefined(input["missionProfileArn"]);
+  let contacts = ctx.store
+    .list<StoredContact>()
+    .filter((entry) => entry.key.startsWith(contactPrefix))
+    .map((entry) => entry.value);
+  if (statusList !== undefined && statusList.length > 0) {
+    contacts = contacts.filter((c) => statusList.includes(c.contactStatus));
+  }
+  if (groundStation !== undefined) {
+    contacts = contacts.filter((c) => c.groundStation === groundStation);
+  }
+  if (satelliteArnFilter !== undefined) {
+    contacts = contacts.filter((c) => c.satelliteArn === satelliteArnFilter);
+  }
+  if (missionProfileArnFilter !== undefined) {
+    contacts = contacts.filter(
+      (c) => c.missionProfileArn === missionProfileArnFilter,
+    );
+  }
+  return {
+    contactList: contacts.slice(0, max).map((c) => ({
+      contactId: c.contactId,
+      missionProfileArn: c.missionProfileArn,
+      satelliteArn: c.satelliteArn,
+      startTime: c.startTime,
+      endTime: c.endTime,
+      prePassStartTime: c.prePassStartTime,
+      postPassEndTime: c.postPassEndTime,
+      groundStation: c.groundStation,
+      contactStatus: c.contactStatus,
+      errorMessage: c.errorMessage,
+      maximumElevation: c.maximumElevation,
+      region: c.region,
+      tags: c.tags,
+      visibilityStartTime: c.visibilityStartTime,
+      visibilityEndTime: c.visibilityEndTime,
+      ephemeris: c.ephemeris,
+      version: c.versionId,
+    })),
+  };
+};
+
+const ListContactVersions: OperationHandler = (input, ctx) => {
+  const contactId = requireString(input, "contactId");
+  const contact = requireContact(ctx, contactId);
+  const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  return {
+    contactVersionsList: contact.versions.slice(0, max).map((v) => ({
+      versionId: v.versionId,
+      created: v.created,
+      activated: v.activated,
+      superseded: v.superseded,
+      lastUpdated: v.lastUpdated,
+      status: v.status,
+      failureCodes: [],
+    })),
+  };
+};
+
+const UpdateContact: OperationHandler = (input, ctx) => {
+  const contactId = requireString(input, "contactId");
+  const contact = requireContact(ctx, contactId);
+  const newVersionId = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  const newVersion: ContactVersionEntry = {
+    versionId: newVersionId,
+    created: now,
+    activated: undefined,
+    superseded: undefined,
+    lastUpdated: now,
+    status: "ACTIVE",
+  };
+  const updated: StoredContact = {
+    ...contact,
+    versionId: newVersionId,
+    versions: [...contact.versions, newVersion],
+    trackingOverrides: input["trackingOverrides"] ?? contact.trackingOverrides,
+    satelliteArn:
+      stringOrUndefined(input["satelliteArn"]) ?? contact.satelliteArn,
+  };
+  ctx.store.set(contactKey(contactId), updated);
+  return { contactId, versionId: newVersionId };
+};
+
+const GetSatellite: OperationHandler = (input, _ctx) => {
+  const satelliteId = requireString(input, "satelliteId");
+  if (satelliteId !== staticSatelliteId) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Satellite ${satelliteId} not found.`,
+      404,
+    );
+  }
+  return {
+    satelliteId: staticSatelliteId,
+    satelliteArn: `arn:aws:groundstation:us-east-1:000000000000:satellite/${staticSatelliteId}`,
+    noradSatelliteID: 25544,
+    groundStations: [staticGroundStationId],
+    currentEphemeris: undefined,
+  };
+};
+
+const ListSatellites: OperationHandler = (_input, _ctx) => ({
+  satellites: [
+    {
+      satelliteId: staticSatelliteId,
+      satelliteArn: `arn:aws:groundstation:us-east-1:000000000000:satellite/${staticSatelliteId}`,
+      noradSatelliteID: 25544,
+      groundStations: [staticGroundStationId],
+      currentEphemeris: undefined,
+    },
+  ],
+});
+
+const ListGroundStations: OperationHandler = (_input, _ctx) => ({
+  groundStationList: [
+    {
+      groundStationId: staticGroundStationId,
+      groundStationName: staticGroundStationId,
+      region: "us-east-1",
+    },
+  ],
+});
+
+const GetMinuteUsage: OperationHandler = (_input, _ctx) => ({
+  isReservedMinutesCustomer: false,
+  totalReservedMinuteAllocation: 0,
+  upcomingMinutesScheduled: 0,
+  totalScheduledMinutes: 0,
+  estimatedMinutesRemaining: 0,
+});
+
+const ListAntennas: OperationHandler = (_input, _ctx) => ({
+  antennaList: [
+    {
+      groundStationName: staticGroundStationId,
+      antennaName: "ant-bunsai-0001",
+      region: "us-east-1",
+    },
+  ],
+});
+
+const ListGroundStationReservations: OperationHandler = (_input, _ctx) => ({
+  reservationList: [],
+});
+
+const RegisterAgent: OperationHandler = (input, ctx) => {
+  const id = crypto.randomUUID();
+  const agent: StoredAgent = {
+    agentId: id,
+    taskingDocument: JSON.stringify({
+      agentId: id,
+      taskingDocument: input["agentDetails"],
+    }),
+  };
+  ctx.store.set(agentKey(id), agent);
+  return { agentId: id };
+};
+
+const GetAgentConfiguration: OperationHandler = (input, ctx) => {
+  const agentId = requireString(input, "agentId");
+  const agent = ctx.store.get<StoredAgent>(agentKey(agentId));
+  if (agent === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Agent ${agentId} not found.`,
+      404,
+    );
+  }
+  return { agentId: agent.agentId, taskingDocument: agent.taskingDocument };
+};
+
+const UpdateAgentStatus: OperationHandler = (input, ctx) => {
+  const agentId = requireString(input, "agentId");
+  const agent = ctx.store.get<StoredAgent>(agentKey(agentId));
+  if (agent === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Agent ${agentId} not found.`,
+      404,
+    );
+  }
+  return { agentId };
+};
+
+const GetAgentTaskResponseUrl: OperationHandler = (input, _ctx) => {
+  const agentId = requireString(input, "agentId");
+  const taskId = requireString(input, "taskId");
+  return {
+    agentId,
+    taskId,
+    presignedLogUrl: `https://s3.amazonaws.com/bunsai-groundstation-logs/${agentId}/${taskId}`,
+  };
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const tags = ctx.store.get<Record<string, unknown>>(tagsKey(resourceArn));
+  return { tags: tags ?? {} };
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const newTags = recordOrEmpty(input["tags"]);
+  const existing =
+    ctx.store.get<Record<string, unknown>>(tagsKey(resourceArn)) ?? {};
+  ctx.store.set(tagsKey(resourceArn), { ...existing, ...newTags });
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const tagKeys = arrayOrEmpty(input["tagKeys"]) as string[];
+  const existing =
+    ctx.store.get<Record<string, unknown>>(tagsKey(resourceArn)) ?? {};
+  const updated = Object.fromEntries(
+    Object.entries(existing).filter(([k]) => !tagKeys.includes(k)),
+  );
+  ctx.store.set(tagsKey(resourceArn), updated);
+  return {};
+};
 
 const groundstation = {
   name: "groundstation",
   protocol: "rest-json",
   resolveOperation: (req: ParsedRequest): string | undefined => {
     const parts = pathSegments(req.path);
-    if (parts[0] !== "missionprofile") return undefined;
-    if (parts.length === 1) {
-      if (req.method === "POST") return "CreateMissionProfile";
-      if (req.method === "GET") return "ListMissionProfiles";
+    const [p0, , p2] = parts;
+
+    if (p0 === "missionprofile") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateMissionProfile";
+        if (req.method === "GET") return "ListMissionProfiles";
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetMissionProfile";
+        if (req.method === "DELETE") return "DeleteMissionProfile";
+        if (req.method === "PUT") return "UpdateMissionProfile";
+      }
       return undefined;
     }
-    if (parts.length === 2) {
-      if (req.method === "GET") return "GetMissionProfile";
-      if (req.method === "DELETE") return "DeleteMissionProfile";
+
+    if (p0 === "config") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateConfig";
+        if (req.method === "GET") return "ListConfigs";
+      }
+      if (parts.length === 3) {
+        if (req.method === "GET") return "GetConfig";
+        if (req.method === "PUT") return "UpdateConfig";
+        if (req.method === "DELETE") return "DeleteConfig";
+      }
       return undefined;
     }
+
+    if (p0 === "dataflowEndpointGroup") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateDataflowEndpointGroup";
+        if (req.method === "GET") return "ListDataflowEndpointGroups";
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetDataflowEndpointGroup";
+        if (req.method === "DELETE") return "DeleteDataflowEndpointGroup";
+      }
+      return undefined;
+    }
+
+    if (p0 === "dataflowEndpointGroupV2") {
+      if (parts.length === 1 && req.method === "POST")
+        return "CreateDataflowEndpointGroupV2";
+      return undefined;
+    }
+
+    if (p0 === "ephemeris") {
+      if (parts.length === 1 && req.method === "POST") return "CreateEphemeris";
+      if (parts.length === 2) {
+        if (req.method === "GET") return "DescribeEphemeris";
+        if (req.method === "PUT") return "UpdateEphemeris";
+        if (req.method === "DELETE") return "DeleteEphemeris";
+      }
+      return undefined;
+    }
+
+    if (p0 === "ephemerides") {
+      if (parts.length === 1 && req.method === "POST") return "ListEphemerides";
+      return undefined;
+    }
+
+    if (p0 === "contact") {
+      if (parts.length === 1 && req.method === "POST") return "ReserveContact";
+      if (parts.length === 2) {
+        if (req.method === "GET") return "DescribeContact";
+        if (req.method === "DELETE") return "CancelContact";
+      }
+      if (parts.length === 3 && p2 === "versions") {
+        if (req.method === "GET") return "ListContactVersions";
+        if (req.method === "POST") return "UpdateContact";
+      }
+      if (parts.length === 4 && p2 === "versions") {
+        if (req.method === "GET") return "DescribeContactVersion";
+      }
+      return undefined;
+    }
+
+    if (p0 === "contacts") {
+      if (parts.length === 1 && req.method === "POST") return "ListContacts";
+      return undefined;
+    }
+
+    if (p0 === "satellite") {
+      if (parts.length === 1 && req.method === "GET") return "ListSatellites";
+      if (parts.length === 2 && req.method === "GET") return "GetSatellite";
+      return undefined;
+    }
+
+    if (p0 === "groundstation") {
+      if (parts.length === 1 && req.method === "GET")
+        return "ListGroundStations";
+      if (parts.length === 3 && p2 === "antenna" && req.method === "GET")
+        return "ListAntennas";
+      if (parts.length === 3 && p2 === "reservation" && req.method === "GET")
+        return "ListGroundStationReservations";
+      return undefined;
+    }
+
+    if (p0 === "minute-usage") {
+      if (parts.length === 1 && req.method === "POST") return "GetMinuteUsage";
+      return undefined;
+    }
+
+    if (p0 === "tags") {
+      if (parts.length >= 2) {
+        if (req.method === "GET") return "ListTagsForResource";
+        if (req.method === "POST") return "TagResource";
+        if (req.method === "DELETE") return "UntagResource";
+      }
+      return undefined;
+    }
+
+    if (p0 === "agent") {
+      if (parts.length === 1 && req.method === "POST") return "RegisterAgent";
+      if (parts.length === 2 && req.method === "PUT")
+        return "UpdateAgentStatus";
+      if (parts.length === 3 && p2 === "configuration" && req.method === "GET")
+        return "GetAgentConfiguration";
+      return undefined;
+    }
+
+    if (p0 === "agentResponseUrl") {
+      if (parts.length === 3 && req.method === "GET")
+        return "GetAgentTaskResponseUrl";
+      return undefined;
+    }
+
     return undefined;
   },
   operations: {
@@ -193,6 +1081,42 @@ const groundstation = {
     GetMissionProfile,
     ListMissionProfiles,
     DeleteMissionProfile,
+    UpdateMissionProfile,
+    CreateConfig,
+    GetConfig,
+    ListConfigs,
+    UpdateConfig,
+    DeleteConfig,
+    CreateDataflowEndpointGroup,
+    CreateDataflowEndpointGroupV2,
+    GetDataflowEndpointGroup,
+    ListDataflowEndpointGroups,
+    DeleteDataflowEndpointGroup,
+    CreateEphemeris,
+    DescribeEphemeris,
+    UpdateEphemeris,
+    DeleteEphemeris,
+    ListEphemerides,
+    ReserveContact,
+    DescribeContact,
+    DescribeContactVersion,
+    CancelContact,
+    ListContacts,
+    ListContactVersions,
+    UpdateContact,
+    GetSatellite,
+    ListSatellites,
+    ListGroundStations,
+    GetMinuteUsage,
+    ListAntennas,
+    ListGroundStationReservations,
+    RegisterAgent,
+    GetAgentConfiguration,
+    UpdateAgentStatus,
+    GetAgentTaskResponseUrl,
+    ListTagsForResource,
+    TagResource,
+    UntagResource,
   },
   model,
 } as const satisfies ServiceDefinition;

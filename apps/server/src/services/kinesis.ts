@@ -25,6 +25,8 @@ type StoredStream = {
   ShardId: string;
   nextSequence: number;
   records: StoredRecord[];
+  tags: Record<string, string>;
+  shardLevelMetrics: string[];
 };
 
 const shardId = "shardId-000000000000" as const;
@@ -122,6 +124,8 @@ const CreateStream: OperationHandler = (input, ctx) => {
     ShardId: shardId,
     nextSequence: 0,
     records: [],
+    tags: {},
+    shardLevelMetrics: [],
   };
   ctx.store.set(streamKey(name), stream);
   return {};
@@ -164,7 +168,7 @@ const DescribeStream: OperationHandler = (input, ctx) => {
       HasMoreShards: false,
       RetentionPeriodHours: stream.RetentionPeriodHours,
       StreamCreationTimestamp: stream.StreamCreationTimestamp,
-      EnhancedMonitoring: [{ ShardLevelMetrics: [] }],
+      EnhancedMonitoring: [{ ShardLevelMetrics: stream.shardLevelMetrics }],
       EncryptionType: "NONE",
     },
   };
@@ -180,7 +184,7 @@ const DescribeStreamSummary: OperationHandler = (input, ctx) => {
       StreamStatus: stream.StreamStatus,
       RetentionPeriodHours: stream.RetentionPeriodHours,
       StreamCreationTimestamp: stream.StreamCreationTimestamp,
-      EnhancedMonitoring: [{ ShardLevelMetrics: [] }],
+      EnhancedMonitoring: [{ ShardLevelMetrics: stream.shardLevelMetrics }],
       EncryptionType: "NONE",
       OpenShardCount: 1,
       ConsumerCount: 0,
@@ -298,6 +302,131 @@ const GetRecords: OperationHandler = (input, ctx) => {
   };
 };
 
+const requireNumber = (input: Record<string, unknown>, key: string): number => {
+  const value = input[key];
+  if (typeof value !== "number") {
+    throw awsError("InvalidArgumentException", `${key} is required.`, 400);
+  }
+  return value;
+};
+
+const IncreaseStreamRetentionPeriod: OperationHandler = (input, ctx) => {
+  const name = resolveStreamName(input);
+  const stream = requireStream(ctx, name);
+  const hours = requireNumber(input, "RetentionPeriodHours");
+  if (hours <= stream.RetentionPeriodHours) {
+    throw awsError(
+      "InvalidArgumentException",
+      `Requested retention period (${hours} hours) for stream ${name} must be longer than existing retention period (${stream.RetentionPeriodHours} hours).`,
+      400,
+    );
+  }
+  stream.RetentionPeriodHours = hours;
+  ctx.store.set(streamKey(name), stream);
+  return {};
+};
+
+const DecreaseStreamRetentionPeriod: OperationHandler = (input, ctx) => {
+  const name = resolveStreamName(input);
+  const stream = requireStream(ctx, name);
+  const hours = requireNumber(input, "RetentionPeriodHours");
+  if (hours >= stream.RetentionPeriodHours) {
+    throw awsError(
+      "InvalidArgumentException",
+      `Requested retention period (${hours} hours) for stream ${name} must be shorter than existing retention period (${stream.RetentionPeriodHours} hours).`,
+      400,
+    );
+  }
+  stream.RetentionPeriodHours = hours;
+  ctx.store.set(streamKey(name), stream);
+  return {};
+};
+
+const AddTagsToStream: OperationHandler = (input, ctx) => {
+  const name = resolveStreamName(input);
+  const stream = requireStream(ctx, name);
+  const tags =
+    typeof input["Tags"] === "object" && input["Tags"] !== null
+      ? (input["Tags"] as Record<string, unknown>)
+      : {};
+  for (const [key, value] of Object.entries(tags)) {
+    stream.tags[key] = typeof value === "string" ? value : String(value);
+  }
+  ctx.store.set(streamKey(name), stream);
+  return {};
+};
+
+const ListTagsForStream: OperationHandler = (input, ctx) => {
+  const name = resolveStreamName(input);
+  const stream = requireStream(ctx, name);
+  const tags = Object.entries(stream.tags)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([Key, Value]) => ({ Key, Value }));
+  return {
+    Tags: tags,
+    HasMoreTags: false,
+  };
+};
+
+const RemoveTagsFromStream: OperationHandler = (input, ctx) => {
+  const name = resolveStreamName(input);
+  const stream = requireStream(ctx, name);
+  const keys = Array.isArray(input["TagKeys"])
+    ? (input["TagKeys"] as unknown[])
+    : [];
+  for (const key of keys) {
+    if (typeof key === "string") {
+      delete stream.tags[key];
+    }
+  }
+  ctx.store.set(streamKey(name), stream);
+  return {};
+};
+
+const metricsFrom = (input: Record<string, unknown>): string[] => {
+  const list = Array.isArray(input["ShardLevelMetrics"])
+    ? (input["ShardLevelMetrics"] as unknown[])
+    : [];
+  return list.filter((item): item is string => typeof item === "string");
+};
+
+const EnableEnhancedMonitoring: OperationHandler = (input, ctx) => {
+  const name = resolveStreamName(input);
+  const stream = requireStream(ctx, name);
+  const current = [...stream.shardLevelMetrics];
+  const requested = metricsFrom(input);
+  const enabled = requested.includes("ALL") ? ["ALL"] : requested;
+  const merged = enabled.includes("ALL")
+    ? ["ALL"]
+    : Array.from(new Set([...current, ...enabled]));
+  stream.shardLevelMetrics = merged;
+  ctx.store.set(streamKey(name), stream);
+  return {
+    StreamName: stream.StreamName,
+    StreamARN: stream.StreamARN,
+    CurrentShardLevelMetrics: current,
+    DesiredShardLevelMetrics: merged,
+  };
+};
+
+const DisableEnhancedMonitoring: OperationHandler = (input, ctx) => {
+  const name = resolveStreamName(input);
+  const stream = requireStream(ctx, name);
+  const current = [...stream.shardLevelMetrics];
+  const requested = metricsFrom(input);
+  const remaining = requested.includes("ALL")
+    ? []
+    : current.filter((metric) => !requested.includes(metric));
+  stream.shardLevelMetrics = remaining;
+  ctx.store.set(streamKey(name), stream);
+  return {
+    StreamName: stream.StreamName,
+    StreamARN: stream.StreamARN,
+    CurrentShardLevelMetrics: current,
+    DesiredShardLevelMetrics: remaining,
+  };
+};
+
 const kinesis = {
   name: "kinesis",
   protocol: "json",
@@ -311,6 +440,13 @@ const kinesis = {
     PutRecords,
     GetShardIterator,
     GetRecords,
+    IncreaseStreamRetentionPeriod,
+    DecreaseStreamRetentionPeriod,
+    AddTagsToStream,
+    ListTagsForStream,
+    RemoveTagsFromStream,
+    EnableEnhancedMonitoring,
+    DisableEnhancedMonitoring,
   },
   model,
 } as const satisfies ServiceDefinition;

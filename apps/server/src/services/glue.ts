@@ -22,6 +22,21 @@ type StoredDatabase = {
   tables: Record<string, StoredTable>;
 };
 
+const crawlerPrefix = "crawler:";
+const jobPrefix = "job:";
+
+type StoredCrawler = {
+  input: Record<string, unknown>;
+  creationTime: number;
+  lastUpdated: number;
+};
+
+type StoredJob = {
+  input: Record<string, unknown>;
+  createdOn: number;
+  lastModifiedOn: number;
+};
+
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
@@ -135,6 +150,11 @@ const GetDatabases: OperationHandler = (input, ctx) => {
       : ctx.account;
   const list = ctx.store
     .list<StoredDatabase>()
+    .filter(
+      (entry) =>
+        !entry.key.startsWith(crawlerPrefix) &&
+        !entry.key.startsWith(jobPrefix),
+    )
     .map((entry) => databaseView(entry.key, entry.value, catalogId));
   return { DatabaseList: list };
 };
@@ -230,6 +250,191 @@ const DeleteTable: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const crawlerView = (
+  name: string,
+  crawler: StoredCrawler,
+): Record<string, unknown> => ({
+  Name: name,
+  ...(typeof crawler.input["Role"] === "string"
+    ? { Role: crawler.input["Role"] }
+    : {}),
+  ...(typeof crawler.input["DatabaseName"] === "string"
+    ? { DatabaseName: crawler.input["DatabaseName"] }
+    : {}),
+  ...(typeof crawler.input["Description"] === "string"
+    ? { Description: crawler.input["Description"] }
+    : {}),
+  ...(typeof crawler.input["Targets"] === "object" &&
+  crawler.input["Targets"] !== null
+    ? { Targets: crawler.input["Targets"] }
+    : {}),
+  ...(Array.isArray(crawler.input["Classifiers"])
+    ? { Classifiers: crawler.input["Classifiers"] }
+    : {}),
+  ...(typeof crawler.input["TablePrefix"] === "string"
+    ? { TablePrefix: crawler.input["TablePrefix"] }
+    : {}),
+  ...(typeof crawler.input["Schedule"] === "string"
+    ? { Schedule: { ScheduleExpression: crawler.input["Schedule"] } }
+    : {}),
+  ...(typeof crawler.input["Configuration"] === "string"
+    ? { Configuration: crawler.input["Configuration"] }
+    : {}),
+  State: "READY",
+  CreationTime: crawler.creationTime,
+  LastUpdated: crawler.lastUpdated,
+});
+
+const requireCrawler = (ctx: ServiceContext, name: string): StoredCrawler => {
+  const crawler = ctx.store.get<StoredCrawler>(`${crawlerPrefix}${name}`);
+  if (crawler === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Crawler ${name} not found.`,
+      400,
+    );
+  }
+  return crawler;
+};
+
+const CreateCrawler: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const name = requireName(record);
+  if (ctx.store.get<StoredCrawler>(`${crawlerPrefix}${name}`) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Crawler already exists. Crawler name:${name}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const crawler: StoredCrawler = {
+    input: record,
+    creationTime: now,
+    lastUpdated: now,
+  };
+  ctx.store.set(`${crawlerPrefix}${name}`, crawler);
+  return {};
+};
+
+const GetCrawler: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const crawler = requireCrawler(ctx, name);
+  return { Crawler: crawlerView(name, crawler) };
+};
+
+const GetCrawlers: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredCrawler>()
+    .filter((entry) => entry.key.startsWith(crawlerPrefix))
+    .map((entry) =>
+      crawlerView(entry.key.slice(crawlerPrefix.length), entry.value),
+    );
+  return { Crawlers: list };
+};
+
+const DeleteCrawler: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  requireCrawler(ctx, name);
+  ctx.store.delete(`${crawlerPrefix}${name}`);
+  return {};
+};
+
+const jobView = (name: string, job: StoredJob): Record<string, unknown> => ({
+  Name: name,
+  ...(typeof job.input["JobMode"] === "string"
+    ? { JobMode: job.input["JobMode"] }
+    : {}),
+  ...(typeof job.input["Description"] === "string"
+    ? { Description: job.input["Description"] }
+    : {}),
+  ...(typeof job.input["LogUri"] === "string"
+    ? { LogUri: job.input["LogUri"] }
+    : {}),
+  ...(typeof job.input["Role"] === "string" ? { Role: job.input["Role"] } : {}),
+  ...(typeof job.input["Command"] === "object" && job.input["Command"] !== null
+    ? { Command: job.input["Command"] }
+    : {}),
+  ...(typeof job.input["DefaultArguments"] === "object" &&
+  job.input["DefaultArguments"] !== null
+    ? { DefaultArguments: job.input["DefaultArguments"] }
+    : {}),
+  ...(typeof job.input["GlueVersion"] === "string"
+    ? { GlueVersion: job.input["GlueVersion"] }
+    : {}),
+  ...(typeof job.input["WorkerType"] === "string"
+    ? { WorkerType: job.input["WorkerType"] }
+    : {}),
+  ...(typeof job.input["NumberOfWorkers"] === "number"
+    ? { NumberOfWorkers: job.input["NumberOfWorkers"] }
+    : {}),
+  ...(typeof job.input["MaxRetries"] === "number"
+    ? { MaxRetries: job.input["MaxRetries"] }
+    : {}),
+  ...(typeof job.input["Timeout"] === "number"
+    ? { Timeout: job.input["Timeout"] }
+    : {}),
+  CreatedOn: job.createdOn,
+  LastModifiedOn: job.lastModifiedOn,
+});
+
+const requireJob = (ctx: ServiceContext, name: string): StoredJob => {
+  const job = ctx.store.get<StoredJob>(`${jobPrefix}${name}`);
+  if (job === undefined) {
+    throw awsError("EntityNotFoundException", `Job ${name} not found.`, 400);
+  }
+  return job;
+};
+
+const requireJobName = (input: Record<string, unknown>): string => {
+  const value = input["JobName"];
+  if (typeof value !== "string" || value === "") {
+    throw awsError("InvalidInputException", "JobName is required.", 400);
+  }
+  return value;
+};
+
+const CreateJob: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const name = requireName(record);
+  if (ctx.store.get<StoredJob>(`${jobPrefix}${name}`) !== undefined) {
+    throw awsError(
+      "IdempotentParameterMismatchException",
+      `Job already exists. Job name:${name}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const job: StoredJob = {
+    input: record,
+    createdOn: now,
+    lastModifiedOn: now,
+  };
+  ctx.store.set(`${jobPrefix}${name}`, job);
+  return { Name: name };
+};
+
+const GetJob: OperationHandler = (input, ctx) => {
+  const name = requireJobName(input);
+  const job = requireJob(ctx, name);
+  return { Job: jobView(name, job) };
+};
+
+const GetJobs: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredJob>()
+    .filter((entry) => entry.key.startsWith(jobPrefix))
+    .map((entry) => jobView(entry.key.slice(jobPrefix.length), entry.value));
+  return { Jobs: list };
+};
+
+const DeleteJob: OperationHandler = (input, ctx) => {
+  const name = requireJobName(input);
+  requireJob(ctx, name);
+  ctx.store.delete(`${jobPrefix}${name}`);
+  return { JobName: name };
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -242,6 +447,14 @@ const glue: ServiceDefinition = {
     GetTable,
     GetTables,
     DeleteTable,
+    CreateCrawler,
+    GetCrawler,
+    GetCrawlers,
+    DeleteCrawler,
+    CreateJob,
+    GetJob,
+    GetJobs,
+    DeleteJob,
   },
   model,
 } as const;

@@ -13,6 +13,10 @@ const executionPrefix = "qe:" as const;
 
 const workGroupPrefix = "wg:" as const;
 
+const dataCatalogPrefix = "dc:" as const;
+
+const namedQueryPrefix = "nq:" as const;
+
 type StoredQueryExecution = {
   QueryExecutionId: string;
   Query: string;
@@ -31,6 +35,22 @@ type StoredWorkGroup = {
   Description: string;
   Configuration: Record<string, unknown>;
   CreationTime: number;
+};
+
+type StoredDataCatalog = {
+  Name: string;
+  Type: string;
+  Description: string;
+  Parameters: Record<string, unknown>;
+};
+
+type StoredNamedQuery = {
+  NamedQueryId: string;
+  Name: string;
+  Description: string;
+  Database: string;
+  QueryString: string;
+  WorkGroup: string;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -189,6 +209,158 @@ const ListWorkGroups: OperationHandler = (input, ctx) => {
   return { WorkGroups: workGroups };
 };
 
+const dataCatalogView = (
+  catalog: StoredDataCatalog,
+): Record<string, unknown> => ({
+  Name: catalog.Name,
+  Type: catalog.Type,
+  Description: catalog.Description,
+  Parameters: catalog.Parameters,
+});
+
+const CreateDataCatalog: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const type = requireString(input, "Type");
+  if (
+    ctx.store.get<StoredDataCatalog>(`${dataCatalogPrefix}${name}`) !==
+    undefined
+  ) {
+    throw awsError(
+      "InvalidRequestException",
+      `DataCatalog ${name} already exists`,
+      400,
+    );
+  }
+  const catalog: StoredDataCatalog = {
+    Name: name,
+    Type: type,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : "",
+    Parameters: asRecord(input["Parameters"]),
+  };
+  ctx.store.set(`${dataCatalogPrefix}${name}`, catalog);
+  return {};
+};
+
+const GetDataCatalog: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const catalog = ctx.store.get<StoredDataCatalog>(
+    `${dataCatalogPrefix}${name}`,
+  );
+  if (catalog === undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      `DataCatalog ${name} was not found`,
+      400,
+    );
+  }
+  return { DataCatalog: dataCatalogView(catalog) };
+};
+
+const ListDataCatalogs: OperationHandler = (input, ctx) => {
+  const summary = ctx.store
+    .list<StoredDataCatalog>()
+    .filter((entry) => entry.key.startsWith(dataCatalogPrefix))
+    .map((entry) => ({
+      CatalogName: entry.value.Name,
+      Type: entry.value.Type,
+    }));
+  return { DataCatalogsSummary: summary };
+};
+
+const DeleteDataCatalog: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const catalog = ctx.store.get<StoredDataCatalog>(
+    `${dataCatalogPrefix}${name}`,
+  );
+  if (catalog === undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      `DataCatalog ${name} was not found`,
+      400,
+    );
+  }
+  ctx.store.delete(`${dataCatalogPrefix}${name}`);
+  return {};
+};
+
+const namedQueryView = (query: StoredNamedQuery): Record<string, unknown> => ({
+  NamedQueryId: query.NamedQueryId,
+  Name: query.Name,
+  Description: query.Description,
+  Database: query.Database,
+  QueryString: query.QueryString,
+  WorkGroup: query.WorkGroup,
+});
+
+const requireNamedQuery = (
+  ctx: ServiceContext,
+  id: string,
+): StoredNamedQuery => {
+  const query = ctx.store.get<StoredNamedQuery>(`${namedQueryPrefix}${id}`);
+  if (query === undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      `NamedQuery ${id} was not found`,
+      400,
+    );
+  }
+  return query;
+};
+
+const CreateNamedQuery: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const database = requireString(input, "Database");
+  const queryString = requireString(input, "QueryString");
+  const id = crypto.randomUUID();
+  const query: StoredNamedQuery = {
+    NamedQueryId: id,
+    Name: name,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : "",
+    Database: database,
+    QueryString: queryString,
+    WorkGroup:
+      typeof input["WorkGroup"] === "string"
+        ? (input["WorkGroup"] as string)
+        : "primary",
+  };
+  ctx.store.set(`${namedQueryPrefix}${id}`, query);
+  return { NamedQueryId: id };
+};
+
+const GetNamedQuery: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "NamedQueryId");
+  const query = requireNamedQuery(ctx, id);
+  return { NamedQuery: namedQueryView(query) };
+};
+
+const ListNamedQueries: OperationHandler = (input, ctx) => {
+  const workGroup =
+    typeof input["WorkGroup"] === "string"
+      ? (input["WorkGroup"] as string)
+      : undefined;
+  const ids = ctx.store
+    .list<StoredNamedQuery>()
+    .filter((entry) => entry.key.startsWith(namedQueryPrefix))
+    .filter(
+      (entry) => workGroup === undefined || entry.value.WorkGroup === workGroup,
+    )
+    .map((entry) => entry.value.NamedQueryId);
+  return { NamedQueryIds: ids };
+};
+
+const DeleteNamedQuery: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "NamedQueryId");
+  requireNamedQuery(ctx, id);
+  ctx.store.delete(`${namedQueryPrefix}${id}`);
+  return {};
+};
+
 const athena: ServiceDefinition = {
   name: "athena",
   protocol: "json",
@@ -200,6 +372,14 @@ const athena: ServiceDefinition = {
     GetQueryResults,
     CreateWorkGroup,
     ListWorkGroups,
+    CreateDataCatalog,
+    GetDataCatalog,
+    ListDataCatalogs,
+    DeleteDataCatalog,
+    CreateNamedQuery,
+    GetNamedQuery,
+    ListNamedQueries,
+    DeleteNamedQuery,
   },
   model,
 } as const;

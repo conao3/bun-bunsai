@@ -30,6 +30,7 @@ import {
   GetKeyRotationStatusCommand,
   GetParametersForImportCommand,
   GetPublicKeyCommand,
+  ImportKeyMaterialCommand,
   KMSClient,
   ListAliasesCommand,
   ListGrantsCommand,

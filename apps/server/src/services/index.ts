@@ -74,6 +74,9 @@ import licensemanager from "./licensemanager.ts";
 import workspaces from "./workspaces.ts";
 import appstream from "./appstream.ts";
 import storagegateway from "./storagegateway.ts";
+import transcribe from "./transcribe.ts";
+import forecast from "./forecast.ts";
+import kendra from "./kendra.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -151,6 +154,9 @@ export const services: ServiceDefinition[] = [
   workspaces,
   appstream,
   storagegateway,
+  transcribe,
+  forecast,
+  kendra,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

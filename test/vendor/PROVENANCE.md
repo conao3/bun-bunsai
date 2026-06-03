@@ -140,6 +140,9 @@ aws-models/
   workspaces.json       # botocore/data/workspaces/2015-04-08/service-2.json       (protocol json, targetPrefix WorkspacesService)
   appstream.json        # botocore/data/appstream/2016-12-01/service-2.json        (protocol json, signingName appstream, endpointPrefix appstream2, targetPrefix PhotonAdminProxyService)
   storagegateway.json   # botocore/data/storagegateway/2013-06-30/service-2.json   (protocol json, targetPrefix StorageGateway_20130630)
+  transcribe.json       # botocore/data/transcribe/2017-10-26/service-2.json       (protocol json, targetPrefix Transcribe)
+  forecast.json         # botocore/data/forecast/2018-06-26/service-2.json         (protocol json, targetPrefix AmazonForecast)
+  kendra.json           # botocore/data/kendra/2019-02-03/service-2.json           (protocol json, targetPrefix AWSKendraFrontendService)
 ```
 
 ### Notes

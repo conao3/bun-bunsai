@@ -44,6 +44,15 @@ type StoredEndpoint = {
   Attributes: Record<string, string>;
 };
 
+type StoredSMSAttributes = {
+  attributes: Record<string, string>;
+};
+
+type StoredSandboxPhoneNumber = {
+  phoneNumber: string;
+  status: string;
+};
+
 const topicKey = (name: string): string => `topic/${name}`;
 
 const subscriptionKey = (arn: string): string => `subscription/${arn}`;
@@ -55,6 +64,12 @@ const subscriptionAttributesKey = (arn: string): string => `subattrs/${arn}`;
 const platformApplicationKey = (arn: string): string => `platform/${arn}`;
 
 const endpointKey = (arn: string): string => `endpoint/${arn}`;
+
+const smsAttrsKey = (): string => "sms_attrs";
+
+const optedOutKey = (phone: string): string => `opted_out/${phone}`;
+
+const sandboxPhoneKey = (phone: string): string => `sandbox/${phone}`;
 
 const subscriptionListPageSize = 100;
 
@@ -595,6 +610,282 @@ const SetEndpointAttributes: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const PublishBatch: OperationHandler = (input, ctx) => {
+  const topicArn = requireString(input, "TopicArn");
+  requireTopic(ctx, topicArn);
+  const entries = input["PublishBatchRequestEntries"];
+  if (!Array.isArray(entries)) {
+    throw awsError(
+      "InvalidParameter",
+      "PublishBatchRequestEntries is required.",
+      400,
+    );
+  }
+  const successful: Array<{ Id: string; MessageId: string }> = [];
+  const failed: Array<{
+    Id: string;
+    Code: string;
+    Message: string;
+    SenderFault: boolean;
+  }> = [];
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as Record<string, unknown>;
+    const id = e["Id"];
+    const message = e["Message"];
+    if (typeof id !== "string" || id === "") continue;
+    if (typeof message !== "string" || message === "") {
+      failed.push({
+        Id: id,
+        Code: "InvalidParameter",
+        Message: "Message is required.",
+        SenderFault: true,
+      });
+      continue;
+    }
+    successful.push({ Id: id, MessageId: crypto.randomUUID() });
+  }
+  return { Successful: successful, Failed: failed };
+};
+
+const AddPermission: OperationHandler = (input, ctx) => {
+  const topicArn = requireString(input, "TopicArn");
+  const label = requireString(input, "Label");
+  const topic = requireTopic(ctx, topicArn);
+  const accounts = Array.isArray(input["AWSAccountId"])
+    ? (input["AWSAccountId"] as string[])
+    : [];
+  const actions = Array.isArray(input["ActionName"])
+    ? (input["ActionName"] as string[])
+    : [];
+  let policy: { Statement?: Array<Record<string, unknown>> };
+  try {
+    policy = JSON.parse(topic.Attributes["Policy"] ?? "{}") as typeof policy;
+  } catch {
+    policy = {};
+  }
+  const statements = Array.isArray(policy.Statement)
+    ? [...policy.Statement]
+    : [];
+  statements.push({
+    Sid: label,
+    Effect: "Allow",
+    Principal: { AWS: accounts },
+    Action: actions.map((a) => `SNS:${a}`),
+    Resource: topicArn,
+  });
+  const updated: StoredTopic = {
+    ...topic,
+    Attributes: {
+      ...topic.Attributes,
+      Policy: JSON.stringify({ Statement: statements }),
+    },
+  };
+  ctx.store.set(topicKey(topic.Name), updated);
+  return {};
+};
+
+const RemovePermission: OperationHandler = (input, ctx) => {
+  const topicArn = requireString(input, "TopicArn");
+  const label = requireString(input, "Label");
+  const topic = requireTopic(ctx, topicArn);
+  let policy: { Statement?: Array<Record<string, unknown>> };
+  try {
+    policy = JSON.parse(topic.Attributes["Policy"] ?? "{}") as typeof policy;
+  } catch {
+    policy = {};
+  }
+  const statements = (
+    Array.isArray(policy.Statement) ? policy.Statement : []
+  ).filter((s) => s["Sid"] !== label);
+  const updated: StoredTopic = {
+    ...topic,
+    Attributes: {
+      ...topic.Attributes,
+      Policy: JSON.stringify({ Statement: statements }),
+    },
+  };
+  ctx.store.set(topicKey(topic.Name), updated);
+  return {};
+};
+
+const GetPlatformApplicationAttributes: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "PlatformApplicationArn");
+  const application = requirePlatformApplication(ctx, arn);
+  return { Attributes: { ...application.Attributes } };
+};
+
+const SetPlatformApplicationAttributes: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "PlatformApplicationArn");
+  const application = requirePlatformApplication(ctx, arn);
+  const incoming =
+    typeof input["Attributes"] === "object" && input["Attributes"] !== null
+      ? (input["Attributes"] as Record<string, string>)
+      : {};
+  const updated: StoredPlatformApplication = {
+    ...application,
+    Attributes: { ...application.Attributes, ...incoming },
+  };
+  ctx.store.set(platformApplicationKey(arn), updated);
+  return {};
+};
+
+const DeletePlatformApplication: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "PlatformApplicationArn");
+  requirePlatformApplication(ctx, arn);
+  ctx.store.delete(platformApplicationKey(arn));
+  for (const entry of ctx.store.list<StoredEndpoint>()) {
+    if (
+      entry.key.startsWith("endpoint/") &&
+      entry.value.PlatformApplicationArn === arn
+    ) {
+      ctx.store.delete(entry.key);
+    }
+  }
+  return {};
+};
+
+const GetDataProtectionPolicy: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "ResourceArn");
+  const topic = requireTopic(ctx, resourceArn);
+  return {
+    DataProtectionPolicy: topic.Attributes["DataProtectionPolicy"] ?? "",
+  };
+};
+
+const PutDataProtectionPolicy: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "ResourceArn");
+  const policy = requireString(input, "DataProtectionPolicy");
+  const topic = requireTopic(ctx, resourceArn);
+  const updated: StoredTopic = {
+    ...topic,
+    Attributes: { ...topic.Attributes, DataProtectionPolicy: policy },
+  };
+  ctx.store.set(topicKey(topic.Name), updated);
+  return {};
+};
+
+const GetSMSAttributes: OperationHandler = (input, ctx) => {
+  const stored = ctx.store.get<StoredSMSAttributes>(smsAttrsKey());
+  const all = stored?.attributes ?? {};
+  const filter = input["attributes"];
+  if (Array.isArray(filter) && filter.length > 0) {
+    const filtered: Record<string, string> = {};
+    for (const key of filter) {
+      if (typeof key === "string" && all[key] !== undefined) {
+        filtered[key] = all[key] as string;
+      }
+    }
+    return { attributes: filtered };
+  }
+  return { attributes: all };
+};
+
+const SetSMSAttributes: OperationHandler = (input, ctx) => {
+  const incoming =
+    typeof input["attributes"] === "object" && input["attributes"] !== null
+      ? (input["attributes"] as Record<string, string>)
+      : {};
+  const existing = ctx.store.get<StoredSMSAttributes>(smsAttrsKey());
+  ctx.store.set(smsAttrsKey(), {
+    attributes: { ...(existing?.attributes ?? {}), ...incoming },
+  });
+  return {};
+};
+
+const CheckIfPhoneNumberIsOptedOut: OperationHandler = (input, ctx) => {
+  const phone = requireString(input, "phoneNumber");
+  const isOptedOut = ctx.store.get(optedOutKey(phone)) !== undefined;
+  return { isOptedOut };
+};
+
+const OptInPhoneNumber: OperationHandler = (input, ctx) => {
+  const phone = requireString(input, "phoneNumber");
+  ctx.store.delete(optedOutKey(phone));
+  return {};
+};
+
+const ListPhoneNumbersOptedOut: OperationHandler = (input, ctx) => {
+  const all = ctx.store
+    .list<string>()
+    .filter((entry) => entry.key.startsWith("opted_out/"))
+    .map((entry) => entry.key.slice("opted_out/".length));
+  const offset = decodePageToken(input["nextToken"]);
+  const page = all.slice(offset, offset + subscriptionListPageSize);
+  const nextOffset = offset + subscriptionListPageSize;
+  if (nextOffset < all.length) {
+    return { phoneNumbers: page, nextToken: encodePageToken(nextOffset) };
+  }
+  return { phoneNumbers: page };
+};
+
+const ListOriginationNumbers: OperationHandler = (_input, _ctx) => {
+  return { PhoneNumbers: [] };
+};
+
+const GetSMSSandboxAccountStatus: OperationHandler = (_input, _ctx) => {
+  return { IsInSandbox: true };
+};
+
+const CreateSMSSandboxPhoneNumber: OperationHandler = (input, ctx) => {
+  const phone = requireString(input, "PhoneNumber");
+  const existing = ctx.store.get<StoredSandboxPhoneNumber>(
+    sandboxPhoneKey(phone),
+  );
+  if (existing === undefined) {
+    ctx.store.set(sandboxPhoneKey(phone), {
+      phoneNumber: phone,
+      status: "Pending",
+    });
+  }
+  return {};
+};
+
+const VerifySMSSandboxPhoneNumber: OperationHandler = (input, ctx) => {
+  const phone = requireString(input, "PhoneNumber");
+  requireString(input, "OneTimePassword");
+  const existing = ctx.store.get<StoredSandboxPhoneNumber>(
+    sandboxPhoneKey(phone),
+  );
+  if (existing === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      "PhoneNumber does not exist.",
+      404,
+    );
+  }
+  ctx.store.set(sandboxPhoneKey(phone), {
+    phoneNumber: phone,
+    status: "Verified",
+  });
+  return {};
+};
+
+const DeleteSMSSandboxPhoneNumber: OperationHandler = (input, ctx) => {
+  const phone = requireString(input, "PhoneNumber");
+  ctx.store.delete(sandboxPhoneKey(phone));
+  return {};
+};
+
+const ListSMSSandboxPhoneNumbers: OperationHandler = (input, ctx) => {
+  const all = ctx.store
+    .list<StoredSandboxPhoneNumber>()
+    .filter((entry) => entry.key.startsWith("sandbox/"))
+    .map((entry) => ({
+      PhoneNumber: entry.value.phoneNumber,
+      Status: entry.value.status,
+    }));
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : 100;
+  const offset = decodePageToken(input["NextToken"]);
+  const page = all.slice(offset, offset + maxResults);
+  const nextOffset = offset + maxResults;
+  if (nextOffset < all.length) {
+    return { PhoneNumbers: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { PhoneNumbers: page };
+};
+
 const sns = {
   name: "sns",
   protocol: "query",
@@ -603,6 +894,7 @@ const sns = {
     DeleteTopic,
     ListTopics,
     Publish,
+    PublishBatch,
     Subscribe,
     Unsubscribe,
     ListSubscriptions,
@@ -615,13 +907,31 @@ const sns = {
     GetSubscriptionAttributes,
     SetSubscriptionAttributes,
     ConfirmSubscription,
+    AddPermission,
+    RemovePermission,
     CreatePlatformApplication,
     ListPlatformApplications,
+    GetPlatformApplicationAttributes,
+    SetPlatformApplicationAttributes,
+    DeletePlatformApplication,
     CreatePlatformEndpoint,
     DeleteEndpoint,
     ListEndpointsByPlatformApplication,
     GetEndpointAttributes,
     SetEndpointAttributes,
+    GetDataProtectionPolicy,
+    PutDataProtectionPolicy,
+    GetSMSAttributes,
+    SetSMSAttributes,
+    CheckIfPhoneNumberIsOptedOut,
+    OptInPhoneNumber,
+    ListPhoneNumbersOptedOut,
+    ListOriginationNumbers,
+    GetSMSSandboxAccountStatus,
+    CreateSMSSandboxPhoneNumber,
+    VerifySMSSandboxPhoneNumber,
+    DeleteSMSSandboxPhoneNumber,
+    ListSMSSandboxPhoneNumbers,
   },
   model,
 } as const satisfies ServiceDefinition;

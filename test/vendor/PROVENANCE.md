@@ -118,6 +118,7 @@ aws-models/
   elasticbeanstalk.json # botocore/data/elasticbeanstalk/2010-12-01/service-2.json (protocol query)
   apprunner.json        # botocore/data/apprunner/2020-05-15/service-2.json        (protocol json)
   servicediscovery.json # botocore/data/servicediscovery/2017-03-14/service-2.json (protocol json)
+  memorydb.json         # botocore/data/memorydb/2021-01-01/service-2.json         (protocol json)
 ```
 
 ### Notes

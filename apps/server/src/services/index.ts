@@ -52,6 +52,7 @@ import datasync from "./datasync.ts";
 import elasticbeanstalk from "./elasticbeanstalk.ts";
 import apprunner from "./apprunner.ts";
 import servicediscovery from "./servicediscovery.ts";
+import memorydb from "./memorydb.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -107,6 +108,7 @@ export const services: ServiceDefinition[] = [
   elasticbeanstalk,
   apprunner,
   servicediscovery,
+  memorydb,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

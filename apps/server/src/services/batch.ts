@@ -184,6 +184,17 @@ const jobView = (job: StoredJob): Record<string, unknown> => ({
   tags: job.tags,
 });
 
+const jobSummaryView = (job: StoredJob): Record<string, unknown> => ({
+  jobArn: job.jobArn,
+  jobId: job.jobId,
+  jobName: job.jobName,
+  status: job.status,
+  jobDefinition: job.jobDefinition,
+  createdAt: job.createdAt,
+  startedAt: job.startedAt,
+  container: job.container,
+});
+
 const listComputeEnvironments = (
   ctx: ServiceContext,
 ): StoredComputeEnvironment[] =>
@@ -405,6 +416,136 @@ const DescribeJobs: OperationHandler = (input, ctx) => {
   };
 };
 
+const ListJobs: OperationHandler = (input, ctx) => {
+  const jobQueue = stringOrUndefined(input["jobQueue"]);
+  const jobStatus = stringOrUndefined(input["jobStatus"]);
+  const matches = (job: StoredJob): boolean => {
+    if (jobQueue !== undefined && job.jobQueue !== jobQueue) return false;
+    if (jobStatus !== undefined && job.status !== jobStatus) return false;
+    return true;
+  };
+  return {
+    jobSummaryList: listJobs(ctx).filter(matches).map(jobSummaryView),
+  };
+};
+
+const CancelJob: OperationHandler = (input, ctx) => {
+  const jobId = requireString(input, "jobId");
+  requireString(input, "reason");
+  const job = ctx.store.get<StoredJob>(jobKey(jobId));
+  if (
+    job !== undefined &&
+    job.status !== "SUCCEEDED" &&
+    job.status !== "FAILED"
+  ) {
+    ctx.store.set(jobKey(jobId), { ...job, status: "CANCELLED" });
+  }
+  return {};
+};
+
+const TerminateJob: OperationHandler = (input, ctx) => {
+  const jobId = requireString(input, "jobId");
+  requireString(input, "reason");
+  const job = ctx.store.get<StoredJob>(jobKey(jobId));
+  if (job !== undefined) {
+    ctx.store.set(jobKey(jobId), { ...job, status: "FAILED" });
+  }
+  return {};
+};
+
+const findJobQueue = (
+  ctx: ServiceContext,
+  identifier: string,
+): StoredJobQueue | undefined =>
+  listJobQueues(ctx).find(
+    (jobQueue) =>
+      jobQueue.jobQueueName === identifier ||
+      jobQueue.jobQueueArn === identifier,
+  );
+
+const UpdateJobQueue: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "jobQueue");
+  const existing = findJobQueue(ctx, identifier);
+  if (existing === undefined) {
+    throw awsError("ClientException", `jobQueue ${identifier} not found.`, 400);
+  }
+  const updated: StoredJobQueue = {
+    ...existing,
+    state: stringOrUndefined(input["state"]) ?? existing.state,
+    schedulingPolicyArn:
+      stringOrUndefined(input["schedulingPolicyArn"]) ??
+      existing.schedulingPolicyArn,
+    priority:
+      typeof input["priority"] === "number"
+        ? (input["priority"] as number)
+        : existing.priority,
+    computeEnvironmentOrder: Array.isArray(input["computeEnvironmentOrder"])
+      ? (input["computeEnvironmentOrder"] as unknown[])
+      : existing.computeEnvironmentOrder,
+  };
+  ctx.store.set(jobQueueKey(existing.jobQueueName), updated);
+  return {
+    jobQueueName: updated.jobQueueName,
+    jobQueueArn: updated.jobQueueArn,
+  };
+};
+
+const DeleteJobQueue: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "jobQueue");
+  const existing = findJobQueue(ctx, identifier);
+  if (existing !== undefined) {
+    ctx.store.delete(jobQueueKey(existing.jobQueueName));
+  }
+  return {};
+};
+
+const findComputeEnvironment = (
+  ctx: ServiceContext,
+  identifier: string,
+): StoredComputeEnvironment | undefined =>
+  listComputeEnvironments(ctx).find(
+    (computeEnvironment) =>
+      computeEnvironment.computeEnvironmentName === identifier ||
+      computeEnvironment.computeEnvironmentArn === identifier,
+  );
+
+const UpdateComputeEnvironment: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "computeEnvironment");
+  const existing = findComputeEnvironment(ctx, identifier);
+  if (existing === undefined) {
+    throw awsError(
+      "ClientException",
+      `computeEnvironment ${identifier} not found.`,
+      400,
+    );
+  }
+  const updated: StoredComputeEnvironment = {
+    ...existing,
+    state: stringOrUndefined(input["state"]) ?? existing.state,
+    serviceRole:
+      stringOrUndefined(input["serviceRole"]) ?? existing.serviceRole,
+    computeResources:
+      recordOrUndefined(input["computeResources"]) ?? existing.computeResources,
+  };
+  ctx.store.set(
+    computeEnvironmentKey(existing.computeEnvironmentName),
+    updated,
+  );
+  return {
+    computeEnvironmentName: updated.computeEnvironmentName,
+    computeEnvironmentArn: updated.computeEnvironmentArn,
+  };
+};
+
+const DeleteComputeEnvironment: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "computeEnvironment");
+  const existing = findComputeEnvironment(ctx, identifier);
+  if (existing !== undefined) {
+    ctx.store.delete(computeEnvironmentKey(existing.computeEnvironmentName));
+  }
+  return {};
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -417,6 +558,13 @@ const operationByPath: Record<string, string> = {
   describejobdefinitions: "DescribeJobDefinitions",
   submitjob: "SubmitJob",
   describejobs: "DescribeJobs",
+  listjobs: "ListJobs",
+  canceljob: "CancelJob",
+  terminatejob: "TerminateJob",
+  updatejobqueue: "UpdateJobQueue",
+  deletejobqueue: "DeleteJobQueue",
+  updatecomputeenvironment: "UpdateComputeEnvironment",
+  deletecomputeenvironment: "DeleteComputeEnvironment",
 };
 
 const batch = {
@@ -437,6 +585,13 @@ const batch = {
     DescribeJobDefinitions,
     SubmitJob,
     DescribeJobs,
+    ListJobs,
+    CancelJob,
+    TerminateJob,
+    UpdateJobQueue,
+    DeleteJobQueue,
+    UpdateComputeEnvironment,
+    DeleteComputeEnvironment,
   },
   model,
 } as const satisfies ServiceDefinition;

@@ -29,6 +29,21 @@ type StoredTaskDefinition = {
   registeredAt: number;
 };
 
+type StoredService = {
+  serviceName: string;
+  serviceArn: string;
+  clusterArn: string;
+  clusterName: string;
+  taskDefinitionArn: string;
+  desiredCount: number;
+  status: string;
+  launchType?: string;
+  schedulingStrategy: string;
+  roleArn?: string;
+  platformVersion?: string;
+  createdAt: number;
+};
+
 type StoredTask = {
   taskId: string;
   taskArn: string;
@@ -52,6 +67,9 @@ const taskDefKey = (family: string, revision: number): string =>
 
 const taskKey = (id: string): string => `task#${id}`;
 
+const serviceKey = (cluster: string, name: string): string =>
+  `service#${cluster}/${name}`;
+
 const clusterArn = (region: string, account: string, name: string): string =>
   `arn:aws:ecs:${region}:${account}:cluster/${name}`;
 
@@ -65,6 +83,13 @@ const taskDefArn = (
 
 const taskArn = (region: string, account: string, id: string): string =>
   `arn:aws:ecs:${region}:${account}:task/${id}`;
+
+const serviceArn = (
+  region: string,
+  account: string,
+  cluster: string,
+  name: string,
+): string => `arn:aws:ecs:${region}:${account}:service/${cluster}/${name}`;
 
 const randomId = (): string => {
   const bytes = new Uint8Array(16);
@@ -158,6 +183,36 @@ const taskView = (task: StoredTask): Record<string, unknown> => ({
   tags: [],
   attachments: [],
   attributes: [],
+});
+
+const serviceView = (service: StoredService): Record<string, unknown> => ({
+  serviceArn: service.serviceArn,
+  serviceName: service.serviceName,
+  clusterArn: service.clusterArn,
+  status: service.status,
+  desiredCount: service.desiredCount,
+  runningCount: 0,
+  pendingCount: 0,
+  taskDefinition: service.taskDefinitionArn,
+  schedulingStrategy: service.schedulingStrategy,
+  createdAt: service.createdAt,
+  ...(service.launchType === undefined
+    ? {}
+    : { launchType: service.launchType }),
+  ...(service.roleArn === undefined ? {} : { roleArn: service.roleArn }),
+  ...(service.platformVersion === undefined
+    ? {}
+    : { platformVersion: service.platformVersion }),
+  loadBalancers: [],
+  serviceRegistries: [],
+  capacityProviderStrategy: [],
+  deployments: [],
+  events: [],
+  placementConstraints: [],
+  placementStrategy: [],
+  tags: [],
+  enableECSManagedTags: false,
+  enableExecuteCommand: false,
 });
 
 const resolveTaskDefinition = (
@@ -396,6 +451,168 @@ const StopTask: OperationHandler = (input, ctx) => {
   return { task: taskView(stopped) };
 };
 
+const serviceNameFromIdentifier = (identifier: string): string =>
+  identifier.includes("/")
+    ? identifier.slice(identifier.lastIndexOf("/") + 1)
+    : identifier;
+
+const CreateService: OperationHandler = (input, ctx) => {
+  const serviceName = requireString(input, "serviceName");
+  const clusterName = clusterNameFromInput(input);
+  const taskDefIdentifier = optionalString(input, "taskDefinition");
+  const taskDefinitionArn =
+    taskDefIdentifier === undefined
+      ? ""
+      : resolveTaskDefinition(ctx, taskDefIdentifier).taskDefinitionArn;
+  const desiredCount =
+    typeof input["desiredCount"] === "number"
+      ? (input["desiredCount"] as number)
+      : 0;
+  const service: StoredService = {
+    serviceName,
+    serviceArn: serviceArn(ctx.region, ctx.account, clusterName, serviceName),
+    clusterArn: clusterArn(ctx.region, ctx.account, clusterName),
+    clusterName,
+    taskDefinitionArn,
+    desiredCount,
+    status: "ACTIVE",
+    launchType: optionalString(input, "launchType"),
+    schedulingStrategy:
+      optionalString(input, "schedulingStrategy") ?? "REPLICA",
+    roleArn: optionalString(input, "role"),
+    platformVersion: optionalString(input, "platformVersion"),
+    createdAt: Math.floor(Date.now() / 1000),
+  };
+  ctx.store.set(serviceKey(clusterName, serviceName), service);
+  return { service: serviceView(service) };
+};
+
+const DescribeServices: OperationHandler = (input, ctx) => {
+  const clusterName = clusterNameFromInput(input);
+  const identifiers = Array.isArray(input["services"])
+    ? (input["services"] as string[])
+    : [];
+  const services: Record<string, unknown>[] = [];
+  const failures: Record<string, unknown>[] = [];
+  for (const identifier of identifiers) {
+    const name = serviceNameFromIdentifier(identifier);
+    const service = ctx.store.get<StoredService>(serviceKey(clusterName, name));
+    if (service === undefined) {
+      failures.push({
+        arn: serviceArn(ctx.region, ctx.account, clusterName, name),
+        reason: "MISSING",
+      });
+      continue;
+    }
+    services.push(serviceView(service));
+  }
+  return { services, failures };
+};
+
+const UpdateService: OperationHandler = (input, ctx) => {
+  const clusterName = clusterNameFromInput(input);
+  const identifier = requireString(input, "service");
+  const name = serviceNameFromIdentifier(identifier);
+  const service = ctx.store.get<StoredService>(serviceKey(clusterName, name));
+  if (service === undefined) {
+    throw awsError(
+      "ServiceNotFoundException",
+      `Service not found: ${identifier}`,
+      400,
+    );
+  }
+  const taskDefIdentifier = optionalString(input, "taskDefinition");
+  const updated: StoredService = {
+    ...service,
+    desiredCount:
+      typeof input["desiredCount"] === "number"
+        ? (input["desiredCount"] as number)
+        : service.desiredCount,
+    taskDefinitionArn:
+      taskDefIdentifier === undefined
+        ? service.taskDefinitionArn
+        : resolveTaskDefinition(ctx, taskDefIdentifier).taskDefinitionArn,
+    platformVersion:
+      optionalString(input, "platformVersion") ?? service.platformVersion,
+  };
+  ctx.store.set(serviceKey(clusterName, name), updated);
+  return { service: serviceView(updated) };
+};
+
+const DeleteService: OperationHandler = (input, ctx) => {
+  const clusterName = clusterNameFromInput(input);
+  const identifier = requireString(input, "service");
+  const name = serviceNameFromIdentifier(identifier);
+  const service = ctx.store.get<StoredService>(serviceKey(clusterName, name));
+  if (service === undefined) {
+    throw awsError(
+      "ServiceNotFoundException",
+      `Service not found: ${identifier}`,
+      400,
+    );
+  }
+  ctx.store.delete(serviceKey(clusterName, name));
+  return {
+    service: { ...serviceView(service), status: "DRAINING" },
+  };
+};
+
+const ListServices: OperationHandler = (input, ctx) => {
+  const filterCluster = optionalString(input, "cluster");
+  const filterName =
+    filterCluster === undefined
+      ? undefined
+      : serviceNameFromIdentifier(filterCluster);
+  const serviceArns = ctx.store
+    .list<StoredService>()
+    .filter((entry) => entry.key.startsWith("service#"))
+    .map((entry) => entry.value)
+    .filter(
+      (service) =>
+        filterName === undefined || service.clusterName === filterName,
+    )
+    .map((service) => service.serviceArn)
+    .sort();
+  return { serviceArns };
+};
+
+const ListTaskDefinitions: OperationHandler = (input, ctx) => {
+  const familyPrefix = optionalString(input, "familyPrefix");
+  const filterStatus = optionalString(input, "status");
+  const sort = optionalString(input, "sort");
+  const taskDefinitionArns = ctx.store
+    .list<StoredTaskDefinition>()
+    .filter((entry) => entry.key.startsWith("taskdef#"))
+    .map((entry) => entry.value)
+    .filter((value) => {
+      if (
+        familyPrefix !== undefined &&
+        !value.family.startsWith(familyPrefix)
+      ) {
+        return false;
+      }
+      if (filterStatus !== undefined && value.status !== filterStatus) {
+        return false;
+      }
+      return true;
+    })
+    .sort((left, right) =>
+      sort === "DESC"
+        ? right.revision - left.revision
+        : left.revision - right.revision,
+    )
+    .map((value) => value.taskDefinitionArn);
+  return { taskDefinitionArns };
+};
+
+const DeregisterTaskDefinition: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "taskDefinition");
+  const taskDef = resolveTaskDefinition(ctx, identifier);
+  const inactive: StoredTaskDefinition = { ...taskDef, status: "INACTIVE" };
+  ctx.store.set(taskDefKey(taskDef.family, taskDef.revision), inactive);
+  return { taskDefinition: taskDefinitionView(inactive) };
+};
+
 const ecs: ServiceDefinition = {
   name: "ecs",
   protocol: "json",
@@ -409,6 +626,13 @@ const ecs: ServiceDefinition = {
     RunTask,
     ListTasks,
     StopTask,
+    CreateService,
+    DescribeServices,
+    UpdateService,
+    DeleteService,
+    ListServices,
+    ListTaskDefinitions,
+    DeregisterTaskDefinition,
   },
   model,
 } as const;

@@ -47,10 +47,43 @@ type StoredNodegroup = {
   tags: Record<string, string>;
 };
 
+type StoredFargateProfile = {
+  fargateProfileName: string;
+  fargateProfileArn: string;
+  clusterName: string;
+  createdAt: number;
+  podExecutionRoleArn: string;
+  subnets: string[];
+  selectors: Record<string, unknown>[];
+  status: string;
+  tags: Record<string, string>;
+  health: Record<string, unknown>;
+};
+
+type StoredAddon = {
+  addonName: string;
+  clusterName: string;
+  status: string;
+  addonVersion: string;
+  health: Record<string, unknown>;
+  addonArn: string;
+  createdAt: number;
+  modifiedAt: number;
+  serviceAccountRoleArn: string | undefined;
+  tags: Record<string, string>;
+  configurationValues: string | undefined;
+};
+
 const clusterKey = (name: string): string => `cluster/${name}`;
 
 const nodegroupKey = (cluster: string, nodegroup: string): string =>
   `nodegroup/${cluster}/${nodegroup}`;
+
+const fargateKey = (cluster: string, profile: string): string =>
+  `fargate/${cluster}/${profile}`;
+
+const addonKey = (cluster: string, addon: string): string =>
+  `addon/${cluster}/${addon}`;
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
@@ -278,6 +311,209 @@ const ListNodegroups: OperationHandler = (input, ctx) => {
   return { nodegroups: nodegroups.map((nodegroup) => nodegroup.nodegroupName) };
 };
 
+const recordListFrom = (value: unknown): Record<string, unknown>[] =>
+  Array.isArray(value)
+    ? value.filter(
+        (entry): entry is Record<string, unknown> =>
+          typeof entry === "object" && entry !== null && !Array.isArray(entry),
+      )
+    : [];
+
+const fargateArnOf = (
+  ctx: ServiceContext,
+  cluster: string,
+  profile: string,
+): string =>
+  `arn:aws:eks:${ctx.region}:${ctx.account}:fargateprofile/${cluster}/${profile}/${crypto.randomUUID()}`;
+
+const addonArnOf = (
+  ctx: ServiceContext,
+  cluster: string,
+  addon: string,
+): string =>
+  `arn:aws:eks:${ctx.region}:${ctx.account}:addon/${cluster}/${addon}/${crypto.randomUUID()}`;
+
+const fargateProfileView = (
+  profile: StoredFargateProfile,
+): Record<string, unknown> => ({
+  fargateProfileName: profile.fargateProfileName,
+  fargateProfileArn: profile.fargateProfileArn,
+  clusterName: profile.clusterName,
+  createdAt: profile.createdAt,
+  podExecutionRoleArn: profile.podExecutionRoleArn,
+  subnets: profile.subnets,
+  selectors: profile.selectors,
+  status: profile.status,
+  tags: profile.tags,
+  health: profile.health,
+});
+
+const addonView = (addon: StoredAddon): Record<string, unknown> => ({
+  addonName: addon.addonName,
+  clusterName: addon.clusterName,
+  status: addon.status,
+  addonVersion: addon.addonVersion,
+  health: addon.health,
+  addonArn: addon.addonArn,
+  createdAt: addon.createdAt,
+  modifiedAt: addon.modifiedAt,
+  serviceAccountRoleArn: addon.serviceAccountRoleArn,
+  tags: addon.tags,
+  configurationValues: addon.configurationValues,
+});
+
+const CreateFargateProfile: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "clusterName");
+  const fargateProfileName = requireString(input, "fargateProfileName");
+  const podExecutionRoleArn = requireString(input, "podExecutionRoleArn");
+  requireCluster(ctx, clusterName);
+  if (
+    ctx.store.get<StoredFargateProfile>(
+      fargateKey(clusterName, fargateProfileName),
+    ) !== undefined
+  ) {
+    throw awsError(
+      "ResourceInUseException",
+      `FargateProfile already exists with name ${fargateProfileName} and cluster name ${clusterName}.`,
+      409,
+    );
+  }
+  const profile: StoredFargateProfile = {
+    fargateProfileName,
+    fargateProfileArn: fargateArnOf(ctx, clusterName, fargateProfileName),
+    clusterName,
+    createdAt: nowSeconds(),
+    podExecutionRoleArn,
+    subnets: stringListFrom(input["subnets"]),
+    selectors: recordListFrom(input["selectors"]),
+    status: "ACTIVE",
+    tags: stringMapFrom(input["tags"]),
+    health: { issues: [] },
+  };
+  ctx.store.set(fargateKey(clusterName, fargateProfileName), profile);
+  return { fargateProfile: fargateProfileView(profile) };
+};
+
+const DescribeFargateProfile: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "clusterName");
+  const fargateProfileName = requireString(input, "fargateProfileName");
+  const stored = ctx.store.get<StoredFargateProfile>(
+    fargateKey(clusterName, fargateProfileName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `No Fargate Profile found with name: ${fargateProfileName}.`,
+      404,
+    );
+  }
+  return { fargateProfile: fargateProfileView(stored) };
+};
+
+const ListFargateProfiles: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "clusterName");
+  requireCluster(ctx, clusterName);
+  const profiles = ctx.store
+    .list<StoredFargateProfile>()
+    .filter((entry) => entry.key.startsWith(`fargate/${clusterName}/`))
+    .map((entry) => entry.value)
+    .sort((a, b) => a.fargateProfileName.localeCompare(b.fargateProfileName));
+  return {
+    fargateProfileNames: profiles.map((profile) => profile.fargateProfileName),
+  };
+};
+
+const DeleteFargateProfile: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "clusterName");
+  const fargateProfileName = requireString(input, "fargateProfileName");
+  const stored = ctx.store.get<StoredFargateProfile>(
+    fargateKey(clusterName, fargateProfileName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `No Fargate Profile found with name: ${fargateProfileName}.`,
+      404,
+    );
+  }
+  ctx.store.delete(fargateKey(clusterName, fargateProfileName));
+  return {
+    fargateProfile: fargateProfileView({ ...stored, status: "DELETING" }),
+  };
+};
+
+const CreateAddon: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "clusterName");
+  const addonName = requireString(input, "addonName");
+  requireCluster(ctx, clusterName);
+  if (
+    ctx.store.get<StoredAddon>(addonKey(clusterName, addonName)) !== undefined
+  ) {
+    throw awsError(
+      "ResourceInUseException",
+      `Addon already exists with name ${addonName} and cluster name ${clusterName}.`,
+      409,
+    );
+  }
+  const at = nowSeconds();
+  const addon: StoredAddon = {
+    addonName,
+    clusterName,
+    status: "ACTIVE",
+    addonVersion:
+      stringOrUndefined(input["addonVersion"]) ?? "v1.0.0-eksbuild.1",
+    health: { issues: [] },
+    addonArn: addonArnOf(ctx, clusterName, addonName),
+    createdAt: at,
+    modifiedAt: at,
+    serviceAccountRoleArn: stringOrUndefined(input["serviceAccountRoleArn"]),
+    tags: stringMapFrom(input["tags"]),
+    configurationValues: stringOrUndefined(input["configurationValues"]),
+  };
+  ctx.store.set(addonKey(clusterName, addonName), addon);
+  return { addon: addonView(addon) };
+};
+
+const DescribeAddon: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "clusterName");
+  const addonName = requireString(input, "addonName");
+  const stored = ctx.store.get<StoredAddon>(addonKey(clusterName, addonName));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `No addon found with name: ${addonName}.`,
+      404,
+    );
+  }
+  return { addon: addonView(stored) };
+};
+
+const ListAddons: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "clusterName");
+  requireCluster(ctx, clusterName);
+  const addons = ctx.store
+    .list<StoredAddon>()
+    .filter((entry) => entry.key.startsWith(`addon/${clusterName}/`))
+    .map((entry) => entry.value)
+    .sort((a, b) => a.addonName.localeCompare(b.addonName));
+  return { addons: addons.map((addon) => addon.addonName) };
+};
+
+const DeleteAddon: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "clusterName");
+  const addonName = requireString(input, "addonName");
+  const stored = ctx.store.get<StoredAddon>(addonKey(clusterName, addonName));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `No addon found with name: ${addonName}.`,
+      404,
+    );
+  }
+  ctx.store.delete(addonKey(clusterName, addonName));
+  return { addon: addonView({ ...stored, status: "DELETING" }) };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -306,6 +542,26 @@ const eks = {
       if (req.method === "GET") return "DescribeNodegroup";
       return undefined;
     }
+    if (parts.length === 3 && parts[2] === "fargate-profiles") {
+      if (req.method === "POST") return "CreateFargateProfile";
+      if (req.method === "GET") return "ListFargateProfiles";
+      return undefined;
+    }
+    if (parts.length === 4 && parts[2] === "fargate-profiles") {
+      if (req.method === "GET") return "DescribeFargateProfile";
+      if (req.method === "DELETE") return "DeleteFargateProfile";
+      return undefined;
+    }
+    if (parts.length === 3 && parts[2] === "addons") {
+      if (req.method === "POST") return "CreateAddon";
+      if (req.method === "GET") return "ListAddons";
+      return undefined;
+    }
+    if (parts.length === 4 && parts[2] === "addons") {
+      if (req.method === "GET") return "DescribeAddon";
+      if (req.method === "DELETE") return "DeleteAddon";
+      return undefined;
+    }
     return undefined;
   },
   operations: {
@@ -316,6 +572,14 @@ const eks = {
     CreateNodegroup,
     DescribeNodegroup,
     ListNodegroups,
+    CreateFargateProfile,
+    DescribeFargateProfile,
+    ListFargateProfiles,
+    DeleteFargateProfile,
+    CreateAddon,
+    DescribeAddon,
+    ListAddons,
+    DeleteAddon,
   },
   model,
 } as const satisfies ServiceDefinition;

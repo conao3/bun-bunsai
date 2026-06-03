@@ -38,11 +38,57 @@ type StoredEndpoint = {
   LastModifiedTime: number;
 };
 
+type StoredTrainingJob = {
+  TrainingJobName: string;
+  TrainingJobArn: string;
+  TrainingJobStatus: string;
+  SecondaryStatus: string;
+  RoleArn?: string;
+  AlgorithmSpecification?: unknown;
+  HyperParameters?: unknown;
+  InputDataConfig?: unknown;
+  OutputDataConfig?: unknown;
+  ResourceConfig?: unknown;
+  StoppingCondition?: unknown;
+  ModelArtifacts: { S3ModelArtifacts: string };
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredNotebookInstance = {
+  NotebookInstanceName: string;
+  NotebookInstanceArn: string;
+  NotebookInstanceStatus: string;
+  InstanceType?: string;
+  RoleArn?: string;
+  SubnetId?: string;
+  Url: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
 const modelKey = (name: string): string => `model/${name}`;
 
 const configKey = (name: string): string => `endpoint-config/${name}`;
 
 const endpointKey = (name: string): string => `endpoint/${name}`;
+
+const trainingJobKey = (name: string): string => `training-job/${name}`;
+
+const notebookInstanceKey = (name: string): string =>
+  `notebook-instance/${name}`;
+
+const trainingJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:training-job/${name}`;
+
+const notebookInstanceArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:notebook-instance/${name}`;
 
 const modelArnOf = (region: string, account: string, name: string): string =>
   `arn:aws:sagemaker:${region}:${account}:model/${name}`;
@@ -238,6 +284,192 @@ const ListEndpoints: OperationHandler = (_input, ctx) => {
   };
 };
 
+const CreateTrainingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrainingJobName");
+  const existing = ctx.store.get<StoredTrainingJob>(trainingJobKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create TrainingJob ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = trainingJobArnOf(ctx.region, ctx.account, name);
+  const at = nowSeconds();
+  const stored: StoredTrainingJob = {
+    TrainingJobName: name,
+    TrainingJobArn: arn,
+    TrainingJobStatus: "InProgress",
+    SecondaryStatus: "Starting",
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    AlgorithmSpecification: input["AlgorithmSpecification"],
+    HyperParameters: input["HyperParameters"],
+    InputDataConfig: input["InputDataConfig"],
+    OutputDataConfig: input["OutputDataConfig"],
+    ResourceConfig: input["ResourceConfig"],
+    StoppingCondition: input["StoppingCondition"],
+    ModelArtifacts: {
+      S3ModelArtifacts: `s3://bunsai-sagemaker/${name}/output/model.tar.gz`,
+    },
+    CreationTime: at,
+    LastModifiedTime: at,
+  };
+  ctx.store.set(trainingJobKey(name), stored);
+  return { TrainingJobArn: arn };
+};
+
+const requireTrainingJob = (
+  ctx: ServiceContext,
+  name: string,
+): StoredTrainingJob => {
+  const stored = ctx.store.get<StoredTrainingJob>(trainingJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ValidationException",
+      `Requested resource not found: training job "${name}".`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DescribeTrainingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrainingJobName");
+  const stored = requireTrainingJob(ctx, name);
+  return {
+    TrainingJobName: stored.TrainingJobName,
+    TrainingJobArn: stored.TrainingJobArn,
+    TrainingJobStatus: stored.TrainingJobStatus,
+    SecondaryStatus: stored.SecondaryStatus,
+    RoleArn: stored.RoleArn,
+    AlgorithmSpecification: stored.AlgorithmSpecification,
+    HyperParameters: stored.HyperParameters,
+    InputDataConfig: stored.InputDataConfig,
+    OutputDataConfig: stored.OutputDataConfig,
+    ResourceConfig: stored.ResourceConfig,
+    StoppingCondition: stored.StoppingCondition,
+    ModelArtifacts: stored.ModelArtifacts,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const ListTrainingJobs: OperationHandler = (_input, ctx) => {
+  const jobs = ctx.store
+    .list<StoredTrainingJob>()
+    .filter((entry) => entry.key.startsWith("training-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => a.TrainingJobName.localeCompare(b.TrainingJobName));
+  return {
+    TrainingJobSummaries: jobs.map((stored) => ({
+      TrainingJobName: stored.TrainingJobName,
+      TrainingJobArn: stored.TrainingJobArn,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+      TrainingJobStatus: stored.TrainingJobStatus,
+    })),
+  };
+};
+
+const StopTrainingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrainingJobName");
+  const stored = requireTrainingJob(ctx, name);
+  const updated: StoredTrainingJob = {
+    ...stored,
+    TrainingJobStatus: "Stopping",
+    SecondaryStatus: "Stopping",
+    LastModifiedTime: nowSeconds(),
+  };
+  ctx.store.set(trainingJobKey(name), updated);
+  return {};
+};
+
+const CreateNotebookInstance: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "NotebookInstanceName");
+  const existing = ctx.store.get<StoredNotebookInstance>(
+    notebookInstanceKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create NotebookInstance ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = notebookInstanceArnOf(ctx.region, ctx.account, name);
+  const at = nowSeconds();
+  const stored: StoredNotebookInstance = {
+    NotebookInstanceName: name,
+    NotebookInstanceArn: arn,
+    NotebookInstanceStatus: "InService",
+    InstanceType:
+      typeof input["InstanceType"] === "string"
+        ? (input["InstanceType"] as string)
+        : undefined,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    SubnetId:
+      typeof input["SubnetId"] === "string"
+        ? (input["SubnetId"] as string)
+        : undefined,
+    Url: `${name}.notebook.${ctx.region}.sagemaker.aws`,
+    CreationTime: at,
+    LastModifiedTime: at,
+  };
+  ctx.store.set(notebookInstanceKey(name), stored);
+  return { NotebookInstanceArn: arn };
+};
+
+const DescribeNotebookInstance: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "NotebookInstanceName");
+  const stored = ctx.store.get<StoredNotebookInstance>(
+    notebookInstanceKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ValidationException",
+      `RecordNotFound: notebook instance "${name}".`,
+      400,
+    );
+  }
+  return {
+    NotebookInstanceArn: stored.NotebookInstanceArn,
+    NotebookInstanceName: stored.NotebookInstanceName,
+    NotebookInstanceStatus: stored.NotebookInstanceStatus,
+    Url: stored.Url,
+    InstanceType: stored.InstanceType,
+    RoleArn: stored.RoleArn,
+    SubnetId: stored.SubnetId,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const ListNotebookInstances: OperationHandler = (_input, ctx) => {
+  const instances = ctx.store
+    .list<StoredNotebookInstance>()
+    .filter((entry) => entry.key.startsWith("notebook-instance/"))
+    .map((entry) => entry.value)
+    .sort((a, b) =>
+      a.NotebookInstanceName.localeCompare(b.NotebookInstanceName),
+    );
+  return {
+    NotebookInstances: instances.map((stored) => ({
+      NotebookInstanceName: stored.NotebookInstanceName,
+      NotebookInstanceArn: stored.NotebookInstanceArn,
+      NotebookInstanceStatus: stored.NotebookInstanceStatus,
+      InstanceType: stored.InstanceType,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -250,6 +482,13 @@ const sagemaker = {
     CreateEndpoint,
     DescribeEndpoint,
     ListEndpoints,
+    CreateTrainingJob,
+    DescribeTrainingJob,
+    ListTrainingJobs,
+    StopTrainingJob,
+    CreateNotebookInstance,
+    DescribeNotebookInstance,
+    ListNotebookInstances,
   },
   model,
 } as const satisfies ServiceDefinition;

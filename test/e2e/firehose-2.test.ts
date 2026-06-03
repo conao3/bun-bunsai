@@ -10,6 +10,7 @@ import {
   StopDeliveryStreamEncryptionCommand,
   TagDeliveryStreamCommand,
   UntagDeliveryStreamCommand,
+  UpdateDestinationCommand,
 } from "@aws-sdk/client-firehose";
 
 const awsPort = 4621;
@@ -148,6 +149,48 @@ describe("firehose tagging and encryption e2e", () => {
       disabled.DeliveryStreamDescription?.DeliveryStreamEncryptionConfiguration
         ?.Status,
     ).toBe("DISABLED");
+
+    await client.send(
+      new DeleteDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+  });
+
+  test("update destination bumps version id", async () => {
+    const client = firehose();
+    const name = `bunsai-upd-${Date.now()}`;
+
+    await client.send(
+      new CreateDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+
+    const described = await client.send(
+      new DescribeDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+    const versionId = described.DeliveryStreamDescription?.VersionId ?? "1";
+    expect(versionId).toBe("1");
+
+    await client.send(
+      new UpdateDestinationCommand({
+        DeliveryStreamName: name,
+        CurrentDeliveryStreamVersionId: versionId,
+        DestinationId: "destinationId-000000000001",
+      }),
+    );
+
+    const afterUpdate = await client.send(
+      new DescribeDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+    expect(afterUpdate.DeliveryStreamDescription?.VersionId).toBe("2");
+
+    await expect(
+      client.send(
+        new UpdateDestinationCommand({
+          DeliveryStreamName: name,
+          CurrentDeliveryStreamVersionId: "1",
+          DestinationId: "destinationId-000000000001",
+        }),
+      ),
+    ).rejects.toThrow();
 
     await client.send(
       new DeleteDeliveryStreamCommand({ DeliveryStreamName: name }),

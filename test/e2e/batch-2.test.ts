@@ -4,17 +4,48 @@ import {
   BatchClient,
   CancelJobCommand,
   CreateComputeEnvironmentCommand,
+  CreateConsumableResourceCommand,
   CreateJobQueueCommand,
+  CreateQuotaShareCommand,
+  CreateSchedulingPolicyCommand,
+  CreateServiceEnvironmentCommand,
   DeleteComputeEnvironmentCommand,
+  DeleteConsumableResourceCommand,
   DeleteJobQueueCommand,
+  DeleteQuotaShareCommand,
+  DeleteSchedulingPolicyCommand,
+  DeleteServiceEnvironmentCommand,
+  DeregisterJobDefinitionCommand,
   DescribeComputeEnvironmentsCommand,
+  DescribeConsumableResourceCommand,
+  DescribeJobDefinitionsCommand,
   DescribeJobQueuesCommand,
+  DescribeQuotaShareCommand,
+  DescribeSchedulingPoliciesCommand,
+  DescribeServiceEnvironmentsCommand,
+  DescribeServiceJobCommand,
+  GetJobQueueSnapshotCommand,
+  ListConsumableResourcesCommand,
   ListJobsCommand,
+  ListJobsByConsumableResourceCommand,
+  ListQuotaSharesCommand,
+  ListSchedulingPoliciesCommand,
+  ListServiceJobsCommand,
+  ListTagsForResourceCommand,
   RegisterJobDefinitionCommand,
   SubmitJobCommand,
+  SubmitServiceJobCommand,
+  TagResourceCommand,
   TerminateJobCommand,
+  TerminateServiceJobCommand,
+  UntagResourceCommand,
   UpdateComputeEnvironmentCommand,
+  UpdateConsumableResourceCommand,
   UpdateJobQueueCommand,
+  UpdateQuotaShareCommand,
+  UpdateSchedulingPolicyCommand,
+  UpdateServiceEnvironmentCommand,
+  UpdateServiceJobCommand,
 } from "@aws-sdk/client-batch";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 
@@ -232,4 +263,340 @@ test("Batch job queue and compute environment update and delete", async () => {
     }),
   );
   expect(afterDeleteCe.computeEnvironments ?? []).toHaveLength(0);
+});
+
+test("Scheduling policy CRUD", async () => {
+  const client = batch();
+  const name = "bunsai-e2e2-sp";
+
+  const created = await client.send(
+    new CreateSchedulingPolicyCommand({
+      name,
+      fairsharePolicy: { shareDecaySeconds: 300, computeReservation: 0 },
+      tags: { env: "test" },
+    }),
+  );
+  expect(created.name).toBe(name);
+  expect(created.arn).toContain(`scheduling-policy/${name}`);
+
+  const arn = created.arn ?? "";
+
+  const described = await client.send(
+    new DescribeSchedulingPoliciesCommand({ arns: [arn] }),
+  );
+  const sp = (described.schedulingPolicies ?? [])[0];
+  expect(sp?.name).toBe(name);
+  expect(sp?.arn).toBe(arn);
+
+  const listed = await client.send(new ListSchedulingPoliciesCommand({}));
+  const arns = (listed.schedulingPolicies ?? []).map((p) => p.arn);
+  expect(arns).toContain(arn);
+
+  await client.send(new UpdateSchedulingPolicyCommand({ arn }));
+
+  const deleted = await client.send(new DeleteSchedulingPolicyCommand({ arn }));
+  expect(deleted.$metadata.httpStatusCode).toBe(200);
+
+  const afterDelete = await client.send(
+    new DescribeSchedulingPoliciesCommand({ arns: [arn] }),
+  );
+  expect(afterDelete.schedulingPolicies ?? []).toHaveLength(0);
+});
+
+test("Consumable resource CRUD", async () => {
+  const client = batch();
+  const consumableResourceName = "bunsai-e2e2-cr";
+
+  const created = await client.send(
+    new CreateConsumableResourceCommand({
+      consumableResourceName,
+      totalQuantity: 100,
+      resourceType: "NON_REPLENISHABLE",
+    }),
+  );
+  expect(created.consumableResourceName).toBe(consumableResourceName);
+  expect(created.consumableResourceArn).toContain(
+    `consumable-resource/${consumableResourceName}`,
+  );
+
+  const arn = created.consumableResourceArn ?? "";
+
+  const described = await client.send(
+    new DescribeConsumableResourceCommand({ consumableResource: arn }),
+  );
+  expect(described.consumableResourceName).toBe(consumableResourceName);
+  expect(described.totalQuantity).toBe(100);
+
+  const listed = await client.send(new ListConsumableResourcesCommand({}));
+  const names = (listed.consumableResources ?? []).map(
+    (r) => r.consumableResourceName,
+  );
+  expect(names).toContain(consumableResourceName);
+
+  const updated = await client.send(
+    new UpdateConsumableResourceCommand({
+      consumableResource: arn,
+      operation: "ADD",
+      quantity: 50,
+    }),
+  );
+  expect(updated.totalQuantity).toBe(150);
+
+  const listedJobs = await client.send(
+    new ListJobsByConsumableResourceCommand({ consumableResource: arn }),
+  );
+  expect(listedJobs.jobs ?? []).toHaveLength(0);
+
+  await client.send(
+    new DeleteConsumableResourceCommand({ consumableResource: arn }),
+  );
+  await expect(
+    client.send(
+      new DescribeConsumableResourceCommand({ consumableResource: arn }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("Service environment CRUD", async () => {
+  const client = batch();
+  const serviceEnvironmentName = "bunsai-e2e2-se";
+
+  const created = await client.send(
+    new CreateServiceEnvironmentCommand({
+      serviceEnvironmentName,
+      serviceEnvironmentType: "SAGEMAKER_TRAINING",
+      capacityLimits: [],
+    }),
+  );
+  expect(created.serviceEnvironmentName).toBe(serviceEnvironmentName);
+  expect(created.serviceEnvironmentArn).toContain(
+    `service-environment/${serviceEnvironmentName}`,
+  );
+
+  const arn = created.serviceEnvironmentArn ?? "";
+
+  const described = await client.send(
+    new DescribeServiceEnvironmentsCommand({
+      serviceEnvironments: [serviceEnvironmentName],
+    }),
+  );
+  const se = (described.serviceEnvironments ?? [])[0];
+  expect(se?.serviceEnvironmentName).toBe(serviceEnvironmentName);
+  expect(se?.status).toBe("VALID");
+
+  const updated = await client.send(
+    new UpdateServiceEnvironmentCommand({
+      serviceEnvironment: arn,
+      state: "DISABLED",
+    }),
+  );
+  expect(updated.serviceEnvironmentName).toBe(serviceEnvironmentName);
+
+  await client.send(
+    new DeleteServiceEnvironmentCommand({ serviceEnvironment: arn }),
+  );
+  const afterDelete = await client.send(
+    new DescribeServiceEnvironmentsCommand({
+      serviceEnvironments: [serviceEnvironmentName],
+    }),
+  );
+  expect(afterDelete.serviceEnvironments ?? []).toHaveLength(0);
+});
+
+test("Quota share CRUD", async () => {
+  const client = batch();
+  const jobQueueName = "bunsai-e2e2-jq-qs";
+  const quotaShareName = "bunsai-e2e2-qs";
+
+  await client.send(
+    new CreateJobQueueCommand({
+      jobQueueName,
+      priority: 1,
+      computeEnvironmentOrder: [],
+    }),
+  );
+
+  const created = await client.send(
+    new CreateQuotaShareCommand({
+      quotaShareName,
+      jobQueue: jobQueueName,
+      capacityLimits: [],
+      resourceSharingConfiguration: {},
+      preemptionConfiguration: {},
+    }),
+  );
+  expect(created.quotaShareName).toBe(quotaShareName);
+  expect(created.quotaShareArn).toContain(`quota-share/${quotaShareName}`);
+
+  const arn = created.quotaShareArn ?? "";
+
+  const described = await client.send(
+    new DescribeQuotaShareCommand({ quotaShareArn: arn }),
+  );
+  expect(described.quotaShareName).toBe(quotaShareName);
+  expect(described.state).toBe("ENABLED");
+
+  const listed = await client.send(
+    new ListQuotaSharesCommand({ jobQueue: jobQueueName }),
+  );
+  const arns = (listed.quotaShares ?? []).map((q) => q.quotaShareArn);
+  expect(arns).toContain(arn);
+
+  const updated = await client.send(
+    new UpdateQuotaShareCommand({ quotaShareArn: arn, state: "DISABLED" }),
+  );
+  expect(updated.quotaShareName).toBe(quotaShareName);
+
+  await client.send(new DeleteQuotaShareCommand({ quotaShareArn: arn }));
+  await expect(
+    client.send(new DescribeQuotaShareCommand({ quotaShareArn: arn })),
+  ).rejects.toThrow();
+});
+
+test("Service job lifecycle", async () => {
+  const client = batch();
+  const jobQueueName = "bunsai-e2e2-jq-sj";
+
+  await client.send(
+    new CreateJobQueueCommand({
+      jobQueueName,
+      priority: 1,
+      computeEnvironmentOrder: [],
+    }),
+  );
+
+  const submitted = await client.send(
+    new SubmitServiceJobCommand({
+      jobName: "bunsai-e2e2-sj-1",
+      jobQueue: jobQueueName,
+      serviceJobType: "SAGEMAKER_TRAINING",
+      serviceRequestPayload: {},
+    }),
+  );
+  expect(submitted.jobName).toBe("bunsai-e2e2-sj-1");
+  expect(submitted.jobId).toBeDefined();
+  expect(submitted.jobArn).toBeDefined();
+
+  const jobId = submitted.jobId ?? "";
+  const jobArn = submitted.jobArn ?? "";
+
+  const described = await client.send(new DescribeServiceJobCommand({ jobId }));
+  expect(described.jobId).toBe(jobId);
+  expect(described.status).toBe("SUBMITTED");
+
+  const listed = await client.send(
+    new ListServiceJobsCommand({ jobQueue: jobQueueName }),
+  );
+  const ids = (listed.jobSummaryList ?? []).map((j) => j.jobId);
+  expect(ids).toContain(jobId);
+
+  const updated = await client.send(
+    new UpdateServiceJobCommand({ jobId, schedulingPriority: 5 }),
+  );
+  expect(updated.jobId).toBe(jobId);
+  expect(updated.jobArn).toBe(jobArn);
+
+  await client.send(
+    new TerminateServiceJobCommand({ jobId, reason: "test done" }),
+  );
+  const afterTerminate = await client.send(
+    new DescribeServiceJobCommand({ jobId }),
+  );
+  expect(afterTerminate.status).toBe("FAILED");
+});
+
+test("DeregisterJobDefinition", async () => {
+  const client = batch();
+  const jobDefinitionName = "bunsai-e2e2-jd-dereg";
+
+  await client.send(
+    new RegisterJobDefinitionCommand({
+      jobDefinitionName,
+      type: "container",
+      containerProperties: {
+        image: "busybox",
+        command: ["echo"],
+        resourceRequirements: [
+          { type: "VCPU", value: "0.25" },
+          { type: "MEMORY", value: "512" },
+        ],
+      },
+    }),
+  );
+
+  const before = await client.send(
+    new DescribeJobDefinitionsCommand({ jobDefinitionName }),
+  );
+  expect((before.jobDefinitions ?? [])[0]?.status).toBe("ACTIVE");
+
+  await client.send(
+    new DeregisterJobDefinitionCommand({
+      jobDefinition: `${jobDefinitionName}:1`,
+    }),
+  );
+
+  const after = await client.send(
+    new DescribeJobDefinitionsCommand({
+      jobDefinitionName,
+      status: "INACTIVE",
+    }),
+  );
+  expect((after.jobDefinitions ?? [])[0]?.status).toBe("INACTIVE");
+});
+
+test("GetJobQueueSnapshot", async () => {
+  const client = batch();
+  const jobQueueName = "bunsai-e2e2-jq-snapshot";
+
+  await client.send(
+    new CreateJobQueueCommand({
+      jobQueueName,
+      priority: 1,
+      computeEnvironmentOrder: [],
+    }),
+  );
+
+  const snapshot = await client.send(
+    new GetJobQueueSnapshotCommand({ jobQueue: jobQueueName }),
+  );
+  expect(snapshot.$metadata.httpStatusCode).toBe(200);
+  expect(snapshot.frontOfQueue).toBeDefined();
+});
+
+test("TagResource, ListTagsForResource, UntagResource", async () => {
+  const client = batch();
+  const spName = "bunsai-e2e2-sp-tags";
+
+  const created = await client.send(
+    new CreateSchedulingPolicyCommand({
+      name: spName,
+      tags: { initial: "v1" },
+    }),
+  );
+  const arn = created.arn ?? "";
+
+  const beforeTag = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: arn }),
+  );
+  expect(beforeTag.tags?.["initial"]).toBe("v1");
+
+  await client.send(
+    new TagResourceCommand({ resourceArn: arn, tags: { added: "v2" } }),
+  );
+  const afterTag = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: arn }),
+  );
+  expect(afterTag.tags?.["added"]).toBe("v2");
+  expect(afterTag.tags?.["initial"]).toBe("v1");
+
+  await client.send(
+    new UntagResourceCommand({ resourceArn: arn, tagKeys: ["initial"] }),
+  );
+  const afterUntag = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: arn }),
+  );
+  expect(afterUntag.tags?.["initial"]).toBeUndefined();
+  expect(afterUntag.tags?.["added"]).toBe("v2");
+
+  await client.send(new DeleteSchedulingPolicyCommand({ arn }));
 });

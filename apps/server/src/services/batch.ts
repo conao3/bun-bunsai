@@ -69,6 +69,66 @@ type StoredJob = {
   tags: Record<string, string>;
 };
 
+type StoredSchedulingPolicy = {
+  name: string;
+  arn: string;
+  fairsharePolicy: Record<string, unknown> | undefined;
+  quotaSharePolicy: Record<string, unknown> | undefined;
+  tags: Record<string, string>;
+};
+
+type StoredConsumableResource = {
+  consumableResourceName: string;
+  consumableResourceArn: string;
+  totalQuantity: number;
+  inUseQuantity: number;
+  resourceType: string | undefined;
+  tags: Record<string, string>;
+  createdAt: number;
+};
+
+type StoredServiceEnvironment = {
+  serviceEnvironmentName: string;
+  serviceEnvironmentArn: string;
+  serviceEnvironmentType: string;
+  state: string;
+  status: string;
+  capacityLimits: unknown;
+  tags: Record<string, string>;
+};
+
+type StoredQuotaShare = {
+  quotaShareName: string;
+  quotaShareArn: string;
+  jobQueue: string;
+  jobQueueArn: string;
+  capacityLimits: unknown;
+  resourceSharingConfiguration: unknown;
+  preemptionConfiguration: unknown;
+  state: string;
+  status: string;
+  tags: Record<string, string>;
+};
+
+type StoredServiceJob = {
+  jobArn: string;
+  jobName: string;
+  jobId: string;
+  jobQueue: string;
+  serviceJobType: string;
+  status: string;
+  createdAt: number;
+  startedAt: number;
+  schedulingPriority: number | undefined;
+  serviceRequestPayload: Record<string, unknown> | undefined;
+  shareIdentifier: string | undefined;
+  quotaShareName: string | undefined;
+  preemptionConfiguration: unknown;
+  retryStrategy: unknown;
+  timeoutConfig: unknown;
+  tags: Record<string, string>;
+};
+
 const computeEnvironmentKey = (name: string): string => `ce/${name}`;
 
 const jobQueueKey = (name: string): string => `jq/${name}`;
@@ -77,6 +137,18 @@ const jobDefinitionKey = (name: string, revision: number): string =>
   `jd/${name}:${revision}`;
 
 const jobKey = (id: string): string => `job/${id}`;
+
+const schedulingPolicyKey = (name: string): string => `sp/${name}`;
+
+const consumableResourceKey = (name: string): string => `cr/${name}`;
+
+const serviceEnvironmentKey = (name: string): string => `se/${name}`;
+
+const quotaShareKey = (arn: string): string => `qs/${arn}`;
+
+const serviceJobKey = (id: string): string => `sj/${id}`;
+
+const tagsKey = (arn: string): string => `tags/${arn}`;
 
 const uuid = (): string => crypto.randomUUID();
 
@@ -195,6 +267,97 @@ const jobSummaryView = (job: StoredJob): Record<string, unknown> => ({
   container: job.container,
 });
 
+const schedulingPolicyView = (
+  sp: StoredSchedulingPolicy,
+): Record<string, unknown> => ({
+  name: sp.name,
+  arn: sp.arn,
+  fairsharePolicy: sp.fairsharePolicy,
+  quotaSharePolicy: sp.quotaSharePolicy,
+  tags: sp.tags,
+});
+
+const consumableResourceView = (
+  cr: StoredConsumableResource,
+): Record<string, unknown> => ({
+  consumableResourceName: cr.consumableResourceName,
+  consumableResourceArn: cr.consumableResourceArn,
+  totalQuantity: cr.totalQuantity,
+  inUseQuantity: cr.inUseQuantity,
+  availableQuantity: cr.totalQuantity - cr.inUseQuantity,
+  resourceType: cr.resourceType,
+  createdAt: cr.createdAt,
+  tags: cr.tags,
+});
+
+const consumableResourceSummaryView = (
+  cr: StoredConsumableResource,
+): Record<string, unknown> => ({
+  consumableResourceArn: cr.consumableResourceArn,
+  consumableResourceName: cr.consumableResourceName,
+  totalQuantity: cr.totalQuantity,
+  inUseQuantity: cr.inUseQuantity,
+  resourceType: cr.resourceType,
+});
+
+const serviceEnvironmentView = (
+  se: StoredServiceEnvironment,
+): Record<string, unknown> => ({
+  serviceEnvironmentName: se.serviceEnvironmentName,
+  serviceEnvironmentArn: se.serviceEnvironmentArn,
+  serviceEnvironmentType: se.serviceEnvironmentType,
+  state: se.state,
+  status: se.status,
+  capacityLimits: se.capacityLimits,
+  tags: se.tags,
+});
+
+const quotaShareView = (qs: StoredQuotaShare): Record<string, unknown> => ({
+  quotaShareName: qs.quotaShareName,
+  quotaShareArn: qs.quotaShareArn,
+  jobQueueArn: qs.jobQueueArn,
+  capacityLimits: qs.capacityLimits,
+  resourceSharingConfiguration: qs.resourceSharingConfiguration,
+  preemptionConfiguration: qs.preemptionConfiguration,
+  state: qs.state,
+  status: qs.status,
+  tags: qs.tags,
+});
+
+const serviceJobView = (sj: StoredServiceJob): Record<string, unknown> => ({
+  jobArn: sj.jobArn,
+  jobId: sj.jobId,
+  jobName: sj.jobName,
+  jobQueue: sj.jobQueue,
+  serviceJobType: sj.serviceJobType,
+  status: sj.status,
+  createdAt: sj.createdAt,
+  startedAt: sj.startedAt,
+  schedulingPriority: sj.schedulingPriority,
+  serviceRequestPayload: sj.serviceRequestPayload,
+  shareIdentifier: sj.shareIdentifier,
+  quotaShareName: sj.quotaShareName,
+  preemptionConfiguration: sj.preemptionConfiguration,
+  retryStrategy: sj.retryStrategy,
+  timeoutConfig: sj.timeoutConfig,
+  tags: sj.tags,
+  isTerminated: sj.status === "FAILED",
+});
+
+const serviceJobSummaryView = (
+  sj: StoredServiceJob,
+): Record<string, unknown> => ({
+  jobArn: sj.jobArn,
+  jobId: sj.jobId,
+  jobName: sj.jobName,
+  serviceJobType: sj.serviceJobType,
+  status: sj.status,
+  createdAt: sj.createdAt,
+  startedAt: sj.startedAt,
+  shareIdentifier: sj.shareIdentifier,
+  quotaShareName: sj.quotaShareName,
+});
+
 const listComputeEnvironments = (
   ctx: ServiceContext,
 ): StoredComputeEnvironment[] =>
@@ -219,6 +382,42 @@ const listJobs = (ctx: ServiceContext): StoredJob[] =>
   ctx.store
     .list<StoredJob>()
     .filter((entry) => entry.key.startsWith("job/"))
+    .map((entry) => entry.value);
+
+const listSchedulingPolicies = (
+  ctx: ServiceContext,
+): StoredSchedulingPolicy[] =>
+  ctx.store
+    .list<StoredSchedulingPolicy>()
+    .filter((entry) => entry.key.startsWith("sp/"))
+    .map((entry) => entry.value);
+
+const listConsumableResources = (
+  ctx: ServiceContext,
+): StoredConsumableResource[] =>
+  ctx.store
+    .list<StoredConsumableResource>()
+    .filter((entry) => entry.key.startsWith("cr/"))
+    .map((entry) => entry.value);
+
+const listServiceEnvironments = (
+  ctx: ServiceContext,
+): StoredServiceEnvironment[] =>
+  ctx.store
+    .list<StoredServiceEnvironment>()
+    .filter((entry) => entry.key.startsWith("se/"))
+    .map((entry) => entry.value);
+
+const listQuotaShares = (ctx: ServiceContext): StoredQuotaShare[] =>
+  ctx.store
+    .list<StoredQuotaShare>()
+    .filter((entry) => entry.key.startsWith("qs/"))
+    .map((entry) => entry.value);
+
+const listServiceJobs = (ctx: ServiceContext): StoredServiceJob[] =>
+  ctx.store
+    .list<StoredServiceJob>()
+    .filter((entry) => entry.key.startsWith("sj/"))
     .map((entry) => entry.value);
 
 const CreateComputeEnvironment: OperationHandler = (input, ctx) => {
@@ -546,6 +745,492 @@ const DeleteComputeEnvironment: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DeregisterJobDefinition: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "jobDefinition");
+  const all = listJobDefinitions(ctx);
+  const match = all.find(
+    (jd) =>
+      jd.jobDefinitionArn === identifier ||
+      `${jd.jobDefinitionName}:${jd.revision}` === identifier ||
+      jd.jobDefinitionName === identifier,
+  );
+  if (match !== undefined) {
+    ctx.store.set(jobDefinitionKey(match.jobDefinitionName, match.revision), {
+      ...match,
+      status: "INACTIVE",
+    });
+  }
+  return {};
+};
+
+const findSchedulingPolicy = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredSchedulingPolicy | undefined =>
+  listSchedulingPolicies(ctx).find((sp) => sp.arn === arn || sp.name === arn);
+
+const CreateSchedulingPolicy: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "name");
+  const arn = `arn:aws:batch:${ctx.region}:${ctx.account}:scheduling-policy/${name}`;
+  const sp: StoredSchedulingPolicy = {
+    name,
+    arn,
+    fairsharePolicy: recordOrUndefined(input["fairsharePolicy"]),
+    quotaSharePolicy: recordOrUndefined(input["quotaSharePolicy"]),
+    tags: tagsFromInput(input["tags"]),
+  };
+  ctx.store.set(schedulingPolicyKey(name), sp);
+  ctx.store.set(tagsKey(arn), sp.tags);
+  return { name, arn };
+};
+
+const DeleteSchedulingPolicy: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "arn");
+  const existing = findSchedulingPolicy(ctx, arn);
+  if (existing !== undefined) {
+    ctx.store.delete(schedulingPolicyKey(existing.name));
+    ctx.store.delete(tagsKey(existing.arn));
+  }
+  return {};
+};
+
+const DescribeSchedulingPolicies: OperationHandler = (input, ctx) => {
+  const arns = stringListFromInput(input["arns"]);
+  const all = listSchedulingPolicies(ctx);
+  const matched = arns
+    .map((arn) => all.find((sp) => sp.arn === arn || sp.name === arn))
+    .filter((sp): sp is StoredSchedulingPolicy => sp !== undefined);
+  return { schedulingPolicies: matched.map(schedulingPolicyView) };
+};
+
+const ListSchedulingPolicies: OperationHandler = (_input, ctx) => {
+  const all = listSchedulingPolicies(ctx);
+  return {
+    schedulingPolicies: all.map((sp) => ({ arn: sp.arn, tags: sp.tags })),
+  };
+};
+
+const UpdateSchedulingPolicy: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "arn");
+  const existing = findSchedulingPolicy(ctx, arn);
+  if (existing === undefined) {
+    throw awsError(
+      "ClientException",
+      `scheduling policy ${arn} not found.`,
+      400,
+    );
+  }
+  const updated: StoredSchedulingPolicy = {
+    ...existing,
+    fairsharePolicy:
+      recordOrUndefined(input["fairsharePolicy"]) ?? existing.fairsharePolicy,
+    quotaSharePolicy:
+      recordOrUndefined(input["quotaSharePolicy"]) ?? existing.quotaSharePolicy,
+  };
+  ctx.store.set(schedulingPolicyKey(existing.name), updated);
+  return {};
+};
+
+const findConsumableResource = (
+  ctx: ServiceContext,
+  identifier: string,
+): StoredConsumableResource | undefined =>
+  listConsumableResources(ctx).find(
+    (cr) =>
+      cr.consumableResourceName === identifier ||
+      cr.consumableResourceArn === identifier,
+  );
+
+const CreateConsumableResource: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "consumableResourceName");
+  const consumableResourceArn = `arn:aws:batch:${ctx.region}:${ctx.account}:consumable-resource/${name}`;
+  const totalQuantity =
+    typeof input["totalQuantity"] === "number"
+      ? (input["totalQuantity"] as number)
+      : 0;
+  const cr: StoredConsumableResource = {
+    consumableResourceName: name,
+    consumableResourceArn,
+    totalQuantity,
+    inUseQuantity: 0,
+    resourceType: stringOrUndefined(input["resourceType"]),
+    tags: tagsFromInput(input["tags"]),
+    createdAt: Date.now(),
+  };
+  ctx.store.set(consumableResourceKey(name), cr);
+  ctx.store.set(tagsKey(consumableResourceArn), cr.tags);
+  return { consumableResourceName: name, consumableResourceArn };
+};
+
+const DeleteConsumableResource: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "consumableResource");
+  const existing = findConsumableResource(ctx, identifier);
+  if (existing !== undefined) {
+    ctx.store.delete(consumableResourceKey(existing.consumableResourceName));
+    ctx.store.delete(tagsKey(existing.consumableResourceArn));
+  }
+  return {};
+};
+
+const DescribeConsumableResource: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "consumableResource");
+  const existing = findConsumableResource(ctx, identifier);
+  if (existing === undefined) {
+    throw awsError(
+      "ClientException",
+      `consumable resource ${identifier} not found.`,
+      400,
+    );
+  }
+  return consumableResourceView(existing);
+};
+
+const UpdateConsumableResource: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "consumableResource");
+  const existing = findConsumableResource(ctx, identifier);
+  if (existing === undefined) {
+    throw awsError(
+      "ClientException",
+      `consumable resource ${identifier} not found.`,
+      400,
+    );
+  }
+  const operation = stringOrUndefined(input["operation"]) ?? "SET";
+  const quantity =
+    typeof input["quantity"] === "number" ? (input["quantity"] as number) : 0;
+  let newTotal = existing.totalQuantity;
+  if (operation === "ADD") newTotal += quantity;
+  else if (operation === "REMOVE") newTotal = Math.max(0, newTotal - quantity);
+  else newTotal = quantity;
+  const updated: StoredConsumableResource = {
+    ...existing,
+    totalQuantity: newTotal,
+  };
+  ctx.store.set(
+    consumableResourceKey(existing.consumableResourceName),
+    updated,
+  );
+  return {
+    consumableResourceName: existing.consumableResourceName,
+    consumableResourceArn: existing.consumableResourceArn,
+    totalQuantity: newTotal,
+  };
+};
+
+const ListConsumableResources: OperationHandler = (_input, ctx) => ({
+  consumableResources: listConsumableResources(ctx).map(
+    consumableResourceSummaryView,
+  ),
+});
+
+const ListJobsByConsumableResource: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "consumableResource");
+  const cr = findConsumableResource(ctx, identifier);
+  if (cr === undefined) {
+    throw awsError(
+      "ClientException",
+      `consumable resource ${identifier} not found.`,
+      400,
+    );
+  }
+  return { jobs: [] };
+};
+
+const findServiceEnvironment = (
+  ctx: ServiceContext,
+  identifier: string,
+): StoredServiceEnvironment | undefined =>
+  listServiceEnvironments(ctx).find(
+    (se) =>
+      se.serviceEnvironmentName === identifier ||
+      se.serviceEnvironmentArn === identifier,
+  );
+
+const CreateServiceEnvironment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "serviceEnvironmentName");
+  const serviceEnvironmentType = requireString(input, "serviceEnvironmentType");
+  const serviceEnvironmentArn = `arn:aws:batch:${ctx.region}:${ctx.account}:service-environment/${name}`;
+  const se: StoredServiceEnvironment = {
+    serviceEnvironmentName: name,
+    serviceEnvironmentArn,
+    serviceEnvironmentType,
+    state: stringOrUndefined(input["state"]) ?? "ENABLED",
+    status: "VALID",
+    capacityLimits: input["capacityLimits"] ?? {},
+    tags: tagsFromInput(input["tags"]),
+  };
+  ctx.store.set(serviceEnvironmentKey(name), se);
+  ctx.store.set(tagsKey(serviceEnvironmentArn), se.tags);
+  return { serviceEnvironmentName: name, serviceEnvironmentArn };
+};
+
+const DeleteServiceEnvironment: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "serviceEnvironment");
+  const existing = findServiceEnvironment(ctx, identifier);
+  if (existing !== undefined) {
+    ctx.store.delete(serviceEnvironmentKey(existing.serviceEnvironmentName));
+    ctx.store.delete(tagsKey(existing.serviceEnvironmentArn));
+  }
+  return {};
+};
+
+const DescribeServiceEnvironments: OperationHandler = (input, ctx) => {
+  const requested = stringListFromInput(input["serviceEnvironments"]);
+  const matches = (se: StoredServiceEnvironment): boolean =>
+    requested.length === 0 ||
+    requested.includes(se.serviceEnvironmentName) ||
+    requested.includes(se.serviceEnvironmentArn);
+  return {
+    serviceEnvironments: listServiceEnvironments(ctx)
+      .filter(matches)
+      .map(serviceEnvironmentView),
+  };
+};
+
+const UpdateServiceEnvironment: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "serviceEnvironment");
+  const existing = findServiceEnvironment(ctx, identifier);
+  if (existing === undefined) {
+    throw awsError(
+      "ClientException",
+      `service environment ${identifier} not found.`,
+      400,
+    );
+  }
+  const updated: StoredServiceEnvironment = {
+    ...existing,
+    state: stringOrUndefined(input["state"]) ?? existing.state,
+    capacityLimits: input["capacityLimits"] ?? existing.capacityLimits,
+  };
+  ctx.store.set(
+    serviceEnvironmentKey(existing.serviceEnvironmentName),
+    updated,
+  );
+  return {
+    serviceEnvironmentName: existing.serviceEnvironmentName,
+    serviceEnvironmentArn: existing.serviceEnvironmentArn,
+  };
+};
+
+const findQuotaShare = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredQuotaShare | undefined =>
+  listQuotaShares(ctx).find((qs) => qs.quotaShareArn === arn);
+
+const CreateQuotaShare: OperationHandler = (input, ctx) => {
+  const quotaShareName = requireString(input, "quotaShareName");
+  const jobQueue = requireString(input, "jobQueue");
+  const quotaShareArn = `arn:aws:batch:${ctx.region}:${ctx.account}:quota-share/${quotaShareName}`;
+  const jq = listJobQueues(ctx).find(
+    (q) => q.jobQueueName === jobQueue || q.jobQueueArn === jobQueue,
+  );
+  const jobQueueArn =
+    jq?.jobQueueArn ??
+    `arn:aws:batch:${ctx.region}:${ctx.account}:job-queue/${jobQueue}`;
+  const qs: StoredQuotaShare = {
+    quotaShareName,
+    quotaShareArn,
+    jobQueue,
+    jobQueueArn,
+    capacityLimits: input["capacityLimits"] ?? [],
+    resourceSharingConfiguration: input["resourceSharingConfiguration"] ?? {},
+    preemptionConfiguration: input["preemptionConfiguration"] ?? {},
+    state: stringOrUndefined(input["state"]) ?? "ENABLED",
+    status: "VALID",
+    tags: tagsFromInput(input["tags"]),
+  };
+  ctx.store.set(quotaShareKey(quotaShareArn), qs);
+  ctx.store.set(tagsKey(quotaShareArn), qs.tags);
+  return { quotaShareName, quotaShareArn };
+};
+
+const DeleteQuotaShare: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "quotaShareArn");
+  const existing = findQuotaShare(ctx, arn);
+  if (existing !== undefined) {
+    ctx.store.delete(quotaShareKey(existing.quotaShareArn));
+    ctx.store.delete(tagsKey(existing.quotaShareArn));
+  }
+  return {};
+};
+
+const DescribeQuotaShare: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "quotaShareArn");
+  const existing = findQuotaShare(ctx, arn);
+  if (existing === undefined) {
+    throw awsError("ClientException", `quota share ${arn} not found.`, 400);
+  }
+  return quotaShareView(existing);
+};
+
+const UpdateQuotaShare: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "quotaShareArn");
+  const existing = findQuotaShare(ctx, arn);
+  if (existing === undefined) {
+    throw awsError("ClientException", `quota share ${arn} not found.`, 400);
+  }
+  const updated: StoredQuotaShare = {
+    ...existing,
+    capacityLimits: input["capacityLimits"] ?? existing.capacityLimits,
+    resourceSharingConfiguration:
+      input["resourceSharingConfiguration"] ??
+      existing.resourceSharingConfiguration,
+    preemptionConfiguration:
+      input["preemptionConfiguration"] ?? existing.preemptionConfiguration,
+    state: stringOrUndefined(input["state"]) ?? existing.state,
+  };
+  ctx.store.set(quotaShareKey(existing.quotaShareArn), updated);
+  return {
+    quotaShareName: existing.quotaShareName,
+    quotaShareArn: existing.quotaShareArn,
+  };
+};
+
+const ListQuotaShares: OperationHandler = (input, ctx) => {
+  const jobQueue = requireString(input, "jobQueue");
+  const all = listQuotaShares(ctx).filter(
+    (qs) => qs.jobQueue === jobQueue || qs.jobQueueArn === jobQueue,
+  );
+  return { quotaShares: all.map(quotaShareView) };
+};
+
+const findServiceJob = (
+  ctx: ServiceContext,
+  jobId: string,
+): StoredServiceJob | undefined =>
+  ctx.store.get<StoredServiceJob>(serviceJobKey(jobId));
+
+const SubmitServiceJob: OperationHandler = (input, ctx) => {
+  const jobName = requireString(input, "jobName");
+  const jobQueue = requireString(input, "jobQueue");
+  const serviceJobType = requireString(input, "serviceJobType");
+  const jobId = uuid();
+  const jobArn = `arn:aws:batch:${ctx.region}:${ctx.account}:job/${jobId}`;
+  const now = Date.now();
+  const sj: StoredServiceJob = {
+    jobArn,
+    jobName,
+    jobId,
+    jobQueue,
+    serviceJobType,
+    status: "SUBMITTED",
+    createdAt: now,
+    startedAt: now,
+    schedulingPriority:
+      typeof input["schedulingPriority"] === "number"
+        ? (input["schedulingPriority"] as number)
+        : undefined,
+    serviceRequestPayload: recordOrUndefined(input["serviceRequestPayload"]),
+    shareIdentifier: stringOrUndefined(input["shareIdentifier"]),
+    quotaShareName: stringOrUndefined(input["quotaShareName"]),
+    preemptionConfiguration: input["preemptionConfiguration"],
+    retryStrategy: input["retryStrategy"],
+    timeoutConfig: input["timeoutConfig"],
+    tags: tagsFromInput(input["tags"]),
+  };
+  ctx.store.set(serviceJobKey(jobId), sj);
+  ctx.store.set(tagsKey(jobArn), sj.tags);
+  return { jobArn, jobName, jobId };
+};
+
+const DescribeServiceJob: OperationHandler = (input, ctx) => {
+  const jobId = requireString(input, "jobId");
+  const existing = findServiceJob(ctx, jobId);
+  if (existing === undefined) {
+    throw awsError("ClientException", `service job ${jobId} not found.`, 400);
+  }
+  return serviceJobView(existing);
+};
+
+const TerminateServiceJob: OperationHandler = (input, ctx) => {
+  const jobId = requireString(input, "jobId");
+  requireString(input, "reason");
+  const existing = findServiceJob(ctx, jobId);
+  if (existing !== undefined) {
+    ctx.store.set(serviceJobKey(jobId), { ...existing, status: "FAILED" });
+  }
+  return {};
+};
+
+const UpdateServiceJob: OperationHandler = (input, ctx) => {
+  const jobId = requireString(input, "jobId");
+  const schedulingPriority = requireNumber(input, "schedulingPriority");
+  const existing = findServiceJob(ctx, jobId);
+  if (existing === undefined) {
+    throw awsError("ClientException", `service job ${jobId} not found.`, 400);
+  }
+  const updated: StoredServiceJob = { ...existing, schedulingPriority };
+  ctx.store.set(serviceJobKey(jobId), updated);
+  return {
+    jobArn: existing.jobArn,
+    jobName: existing.jobName,
+    jobId,
+  };
+};
+
+const ListServiceJobs: OperationHandler = (input, ctx) => {
+  const jobQueue = stringOrUndefined(input["jobQueue"]);
+  const jobStatus = stringOrUndefined(input["jobStatus"]);
+  const matches = (sj: StoredServiceJob): boolean => {
+    if (jobQueue !== undefined && sj.jobQueue !== jobQueue) return false;
+    if (jobStatus !== undefined && sj.status !== jobStatus) return false;
+    return true;
+  };
+  return {
+    jobSummaryList: listServiceJobs(ctx)
+      .filter(matches)
+      .map(serviceJobSummaryView),
+  };
+};
+
+const GetJobQueueSnapshot: OperationHandler = (input, ctx) => {
+  const jobQueue = requireString(input, "jobQueue");
+  const jq = findJobQueue(ctx, jobQueue);
+  if (jq === undefined) {
+    throw awsError("ClientException", `jobQueue ${jobQueue} not found.`, 400);
+  }
+  return {
+    frontOfQueue: {
+      jobs: [],
+      lastUpdatedAt: Date.now(),
+    },
+    frontOfQuotaShares: [],
+    queueUtilization: {
+      prioritizedJobsUtilizationPercentageByInstanceType: [],
+    },
+  };
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const tags =
+    ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
+  return { tags };
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const newTags = tagsFromInput(input["tags"]);
+  const existing =
+    ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
+  ctx.store.set(tagsKey(resourceArn), { ...existing, ...newTags });
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const tagKeys = stringListFromInput(input["tagKeys"]);
+  const existing =
+    ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
+  const updated: Record<string, string> = { ...existing };
+  for (const key of tagKeys) {
+    delete updated[key];
+  }
+  ctx.store.set(tagsKey(resourceArn), updated);
+  return {};
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -565,6 +1250,33 @@ const operationByPath: Record<string, string> = {
   deletejobqueue: "DeleteJobQueue",
   updatecomputeenvironment: "UpdateComputeEnvironment",
   deletecomputeenvironment: "DeleteComputeEnvironment",
+  createschedulingpolicy: "CreateSchedulingPolicy",
+  deleteschedulingpolicy: "DeleteSchedulingPolicy",
+  describeschedulingpolicies: "DescribeSchedulingPolicies",
+  listschedulingpolicies: "ListSchedulingPolicies",
+  updateschedulingpolicy: "UpdateSchedulingPolicy",
+  createconsumableresource: "CreateConsumableResource",
+  deleteconsumableresource: "DeleteConsumableResource",
+  describeconsumableresource: "DescribeConsumableResource",
+  updateconsumableresource: "UpdateConsumableResource",
+  listconsumableresources: "ListConsumableResources",
+  listjobsbyconsumableresource: "ListJobsByConsumableResource",
+  createserviceenvironment: "CreateServiceEnvironment",
+  deleteserviceenvironment: "DeleteServiceEnvironment",
+  describeserviceenvironments: "DescribeServiceEnvironments",
+  updateserviceenvironment: "UpdateServiceEnvironment",
+  createquotashare: "CreateQuotaShare",
+  deletequotashare: "DeleteQuotaShare",
+  describequotashare: "DescribeQuotaShare",
+  updatequotashare: "UpdateQuotaShare",
+  listquotashares: "ListQuotaShares",
+  submitservicejob: "SubmitServiceJob",
+  describeservicejob: "DescribeServiceJob",
+  terminateservicejob: "TerminateServiceJob",
+  updateservicejob: "UpdateServiceJob",
+  listservicejobs: "ListServiceJobs",
+  getjobqueuesnapshot: "GetJobQueueSnapshot",
+  deregisterjobdefinition: "DeregisterJobDefinition",
 };
 
 const batch = {
@@ -572,7 +1284,14 @@ const batch = {
   protocol: "rest-json",
   resolveOperation: (req: ParsedRequest): string | undefined => {
     const parts = pathSegments(req.path);
-    if (parts[0] !== "v1" || parts.length !== 2) return undefined;
+    if (parts[0] !== "v1") return undefined;
+    if (parts[1] === "tags" && parts.length >= 3) {
+      if (req.method === "GET") return "ListTagsForResource";
+      if (req.method === "POST") return "TagResource";
+      if (req.method === "DELETE") return "UntagResource";
+      return undefined;
+    }
+    if (parts.length !== 2) return undefined;
     if (req.method !== "POST") return undefined;
     return operationByPath[parts[1]];
   },
@@ -592,6 +1311,36 @@ const batch = {
     DeleteJobQueue,
     UpdateComputeEnvironment,
     DeleteComputeEnvironment,
+    DeregisterJobDefinition,
+    CreateSchedulingPolicy,
+    DeleteSchedulingPolicy,
+    DescribeSchedulingPolicies,
+    ListSchedulingPolicies,
+    UpdateSchedulingPolicy,
+    CreateConsumableResource,
+    DeleteConsumableResource,
+    DescribeConsumableResource,
+    UpdateConsumableResource,
+    ListConsumableResources,
+    ListJobsByConsumableResource,
+    CreateServiceEnvironment,
+    DeleteServiceEnvironment,
+    DescribeServiceEnvironments,
+    UpdateServiceEnvironment,
+    CreateQuotaShare,
+    DeleteQuotaShare,
+    DescribeQuotaShare,
+    UpdateQuotaShare,
+    ListQuotaShares,
+    SubmitServiceJob,
+    DescribeServiceJob,
+    TerminateServiceJob,
+    UpdateServiceJob,
+    ListServiceJobs,
+    GetJobQueueSnapshot,
+    ListTagsForResource,
+    TagResource,
+    UntagResource,
   },
   model,
 } as const satisfies ServiceDefinition;

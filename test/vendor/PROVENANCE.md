@@ -153,6 +153,9 @@ aws-models/
   dlm.json              # botocore/data/dlm/2018-01-12/service-2.json              (protocol rest-json, endpointPrefix dlm, signingName dlm)
   mediapackage.json     # botocore/data/mediapackage/2017-10-12/service-2.json     (protocol rest-json, endpointPrefix mediapackage, signingName mediapackage)
   greengrass.json       # botocore/data/greengrass/2017-06-07/service-2.json       (protocol rest-json, endpointPrefix greengrass, signingName greengrass)
+  medialive.json        # botocore/data/medialive/2017-10-14/service-2.json        (protocol rest-json, endpointPrefix medialive, signingName medialive)
+  appmesh.json          # botocore/data/appmesh/2019-01-25/service-2.json          (protocol rest-json, endpointPrefix appmesh, signingName appmesh)
+  codeartifact.json     # botocore/data/codeartifact/2018-09-22/service-2.json     (protocol rest-json, endpointPrefix codeartifact, signingName codeartifact)
 ```
 
 ### Notes

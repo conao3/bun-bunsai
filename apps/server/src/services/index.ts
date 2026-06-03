@@ -87,6 +87,9 @@ import signer from "./signer.ts";
 import dlm from "./dlm.ts";
 import mediapackage from "./mediapackage.ts";
 import greengrass from "./greengrass.ts";
+import medialive from "./medialive.ts";
+import appmesh from "./appmesh.ts";
+import codeartifact from "./codeartifact.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -177,6 +180,9 @@ export const services: ServiceDefinition[] = [
   dlm,
   mediapackage,
   greengrass,
+  medialive,
+  appmesh,
+  codeartifact,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

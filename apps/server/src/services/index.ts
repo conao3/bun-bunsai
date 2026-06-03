@@ -79,6 +79,9 @@ import forecast from "./forecast.ts";
 import kendra from "./kendra.ts";
 import personalize from "./personalize.ts";
 import budgets from "./budgets.ts";
+import accessanalyzer from "./accessanalyzer.ts";
+import networkmanager from "./networkmanager.ts";
+import imagebuilder from "./imagebuilder.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -161,6 +164,9 @@ export const services: ServiceDefinition[] = [
   kendra,
   personalize,
   budgets,
+  accessanalyzer,
+  networkmanager,
+  imagebuilder,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

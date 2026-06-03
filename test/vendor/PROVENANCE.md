@@ -145,6 +145,9 @@ aws-models/
   kendra.json           # botocore/data/kendra/2019-02-03/service-2.json           (protocol json, targetPrefix AWSKendraFrontendService)
   personalize.json      # botocore/data/personalize/2018-05-22/service-2.json      (protocol json, targetPrefix AmazonPersonalize)
   budgets.json          # botocore/data/budgets/2016-10-20/service-2.json          (protocol json, targetPrefix AWSBudgetServiceGateway)
+  accessanalyzer.json   # botocore/data/accessanalyzer/2019-11-01/service-2.json   (protocol rest-json, endpointPrefix access-analyzer, signingName access-analyzer)
+  networkmanager.json   # botocore/data/networkmanager/2019-07-05/service-2.json   (protocol rest-json, endpointPrefix networkmanager, signingName networkmanager)
+  imagebuilder.json     # botocore/data/imagebuilder/2019-12-02/service-2.json     (protocol rest-json, endpointPrefix imagebuilder, signingName imagebuilder)
 ```
 
 ### Notes

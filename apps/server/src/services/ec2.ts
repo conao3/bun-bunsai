@@ -277,6 +277,129 @@ type StoredCustomerGateway = {
   Tags: Tag[];
 };
 
+type StoredIpam = {
+  IpamId: string;
+  OwnerId: string;
+  IpamArn: string;
+  State: string;
+  Description: string | undefined;
+  PublicDefaultScopeId: string;
+  PrivateDefaultScopeId: string;
+  ScopeCount: number;
+  Tags: Tag[];
+};
+
+type StoredIpamScope = {
+  IpamScopeId: string;
+  IpamId: string;
+  IpamScopeArn: string;
+  IpamArn: string;
+  IpamScopeType: string;
+  IsDefault: boolean;
+  Description: string | undefined;
+  PoolCount: number;
+  State: string;
+  Tags: Tag[];
+};
+
+type StoredIpamPool = {
+  IpamPoolId: string;
+  IpamScopeId: string;
+  IpamId: string;
+  IpamArn: string;
+  IpamScopeArn: string;
+  IpamPoolArn: string;
+  Locale: string | undefined;
+  AddressFamily: string;
+  State: string;
+  Description: string | undefined;
+  Tags: Tag[];
+};
+
+type StoredIpamResourceDiscovery = {
+  IpamResourceDiscoveryId: string;
+  OwnerId: string;
+  IpamResourceDiscoveryArn: string;
+  State: string;
+  Description: string | undefined;
+  IsDefault: boolean;
+  Tags: Tag[];
+};
+
+type StoredIpamExternalResourceVerificationToken = {
+  IpamExternalResourceVerificationTokenId: string;
+  IpamArn: string;
+  IpamId: string;
+  TokenValue: string;
+  TokenName: string;
+  NotAfter: string;
+  Status: string;
+  State: string;
+  Tags: Tag[];
+};
+
+type StoredIpamPolicy = {
+  IpamPolicyId: string;
+  IpamArn: string;
+  Description: string | undefined;
+  Policy: string | undefined;
+  Tags: Tag[];
+};
+
+type StoredIpamPrefixListResolver = {
+  IpamPrefixListResolverId: string;
+  IpamId: string;
+  IpamArn: string;
+  OwnerId: string;
+  Tags: Tag[];
+};
+
+type StoredIpamPrefixListResolverTarget = {
+  IpamPrefixListResolverId: string;
+  IpamPrefixListResolverTargetId: string;
+  PrefixListId: string;
+  OwnerId: string;
+  Tags: Tag[];
+};
+
+type StoredLaunchTemplate = {
+  LaunchTemplateId: string;
+  LaunchTemplateName: string;
+  DefaultVersionNumber: number;
+  LatestVersionNumber: number;
+  CreateTime: string;
+  CreatedBy: string;
+  Tags: Tag[];
+};
+
+type StoredLaunchTemplateVersion = {
+  LaunchTemplateId: string;
+  LaunchTemplateName: string;
+  VersionNumber: number;
+  VersionDescription: string | undefined;
+  CreateTime: string;
+  CreatedBy: string;
+  DefaultVersion: boolean;
+  LaunchTemplateData: Record<string, unknown>;
+};
+
+type StoredLocalGatewayRouteTable = {
+  LocalGatewayRouteTableId: string;
+  LocalGatewayRouteTableArn: string;
+  LocalGatewayId: string;
+  State: string;
+  OwnerId: string;
+  Tags: Tag[];
+};
+
+type StoredLocalGatewayRoute = {
+  LocalGatewayRouteTableId: string;
+  DestinationCidrBlock: string;
+  LocalGatewayVirtualInterfaceGroupId: string | undefined;
+  Type: string;
+  State: string;
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -311,6 +434,23 @@ const coipPoolKey = (id: string): string => `coip-pool/${id}`;
 const coipCidrKey = (poolId: string, cidr: string): string =>
   `coip-cidr/${poolId}/${cidr}`;
 const customerGatewayKey = (id: string): string => `cgw/${id}`;
+const ipamKey = (id: string): string => `ipam/${id}`;
+const ipamScopeKey = (id: string): string => `ipam-scope/${id}`;
+const ipamPoolKey = (id: string): string => `ipam-pool/${id}`;
+const ipamResourceDiscoveryKey = (id: string): string => `ipam-rd/${id}`;
+const ipamExternalTokenKey = (id: string): string => `ipam-token/${id}`;
+const ipamPolicyKey = (id: string): string => `ipam-policy/${id}`;
+const ipamPrefixListResolverKey = (id: string): string => `ipam-plr/${id}`;
+const ipamPrefixListResolverTargetKey = (
+  resolverId: string,
+  targetId: string,
+): string => `ipam-plrt/${resolverId}/${targetId}`;
+const launchTemplateKey = (id: string): string => `lt/${id}`;
+const launchTemplateVersionKey = (ltId: string, version: number): string =>
+  `lt-version/${ltId}/${version}`;
+const localGatewayRouteTableKey = (id: string): string => `lgw-rtb/${id}`;
+const localGatewayRouteKey = (rtbId: string, cidr: string): string =>
+  `lgw-route/${rtbId}/${cidr}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -2455,6 +2595,515 @@ const CreateDefaultVpc: OperationHandler = (_input, ctx) => {
   };
 };
 
+const CreateIpam: OperationHandler = (input, ctx) => {
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : undefined;
+  const id = hexId("ipam");
+  const ipamArn = `arn:aws:ec2::${ctx.account}:ipam/${id}`;
+  const publicScopeId = hexId("ipam-scope");
+  const privateScopeId = hexId("ipam-scope");
+  const publicScope: StoredIpamScope = {
+    IpamScopeId: publicScopeId,
+    IpamId: id,
+    IpamScopeArn: `arn:aws:ec2::${ctx.account}:ipam-scope/${publicScopeId}`,
+    IpamArn: ipamArn,
+    IpamScopeType: "public",
+    IsDefault: true,
+    Description: undefined,
+    PoolCount: 0,
+    State: "create-complete",
+    Tags: [],
+  };
+  const privateScope: StoredIpamScope = {
+    IpamScopeId: privateScopeId,
+    IpamId: id,
+    IpamScopeArn: `arn:aws:ec2::${ctx.account}:ipam-scope/${privateScopeId}`,
+    IpamArn: ipamArn,
+    IpamScopeType: "private",
+    IsDefault: true,
+    Description: undefined,
+    PoolCount: 0,
+    State: "create-complete",
+    Tags: [],
+  };
+  const ipam: StoredIpam = {
+    IpamId: id,
+    OwnerId: ctx.account,
+    IpamArn: ipamArn,
+    State: "create-complete",
+    Description: description,
+    PublicDefaultScopeId: publicScopeId,
+    PrivateDefaultScopeId: privateScopeId,
+    ScopeCount: 2,
+    Tags: [],
+  };
+  ctx.store.set(ipamScopeKey(publicScopeId), publicScope);
+  ctx.store.set(ipamScopeKey(privateScopeId), privateScope);
+  ctx.store.set(ipamKey(id), ipam);
+  return {
+    Ipam: {
+      IpamId: ipam.IpamId,
+      OwnerId: ipam.OwnerId,
+      IpamArn: ipam.IpamArn,
+      State: ipam.State,
+      Description: ipam.Description,
+      PublicDefaultScopeId: ipam.PublicDefaultScopeId,
+      PrivateDefaultScopeId: ipam.PrivateDefaultScopeId,
+      ScopeCount: ipam.ScopeCount,
+      Tags: ipam.Tags,
+    },
+  };
+};
+
+const CreateIpamExternalResourceVerificationToken: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ipamId = typeof input["IpamId"] === "string" ? input["IpamId"] : "";
+  const ipam = ctx.store.get<StoredIpam>(ipamKey(ipamId));
+  if (ipam === undefined) {
+    throw awsError(
+      "InvalidIpamId.NotFound",
+      `The IPAM ID '${ipamId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("ipam-external-resource-verification-token");
+  const notAfter = new Date(
+    new Date().getTime() + 7 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const token: StoredIpamExternalResourceVerificationToken = {
+    IpamExternalResourceVerificationTokenId: id,
+    IpamArn: ipam.IpamArn,
+    IpamId: ipamId,
+    TokenValue: hexId("token"),
+    TokenName: `ipam-token-${id}`,
+    NotAfter: notAfter,
+    Status: "create-complete",
+    State: "create-complete",
+    Tags: [],
+  };
+  ctx.store.set(ipamExternalTokenKey(id), token);
+  return {
+    IpamExternalResourceVerificationToken: {
+      IpamExternalResourceVerificationTokenId:
+        token.IpamExternalResourceVerificationTokenId,
+      IpamArn: token.IpamArn,
+      IpamId: token.IpamId,
+      TokenValue: token.TokenValue,
+      TokenName: token.TokenName,
+      NotAfter: token.NotAfter,
+      Status: token.Status,
+      State: token.State,
+      Tags: token.Tags,
+    },
+  };
+};
+
+const CreateIpamPolicy: OperationHandler = (input, ctx) => {
+  const ipamArn = typeof input["IpamArn"] === "string" ? input["IpamArn"] : "";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : undefined;
+  const policy =
+    typeof input["Policy"] === "string" ? input["Policy"] : undefined;
+  const id = hexId("ipam-policy");
+  const ipamPolicy: StoredIpamPolicy = {
+    IpamPolicyId: id,
+    IpamArn: ipamArn,
+    Description: description,
+    Policy: policy,
+    Tags: [],
+  };
+  ctx.store.set(ipamPolicyKey(id), ipamPolicy);
+  return {
+    IpamPolicy: {
+      IpamPolicyId: ipamPolicy.IpamPolicyId,
+      IpamArn: ipamPolicy.IpamArn,
+      Description: ipamPolicy.Description,
+      Policy: ipamPolicy.Policy,
+      Tags: ipamPolicy.Tags,
+    },
+  };
+};
+
+const CreateIpamPool: OperationHandler = (input, ctx) => {
+  const ipamScopeId =
+    typeof input["IpamScopeId"] === "string" ? input["IpamScopeId"] : "";
+  const addressFamily =
+    typeof input["AddressFamily"] === "string"
+      ? input["AddressFamily"]
+      : "ipv4";
+  const locale =
+    typeof input["Locale"] === "string" ? input["Locale"] : undefined;
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : undefined;
+  const scope = ctx.store.get<StoredIpamScope>(ipamScopeKey(ipamScopeId));
+  if (scope === undefined) {
+    throw awsError(
+      "InvalidIpamScopeId.NotFound",
+      `The IPAM scope ID '${ipamScopeId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("ipam-pool");
+  const ipamPoolArn = `arn:aws:ec2::${ctx.account}:ipam-pool/${id}`;
+  const pool: StoredIpamPool = {
+    IpamPoolId: id,
+    IpamScopeId: ipamScopeId,
+    IpamId: scope.IpamId,
+    IpamArn: scope.IpamArn,
+    IpamScopeArn: scope.IpamScopeArn,
+    IpamPoolArn: ipamPoolArn,
+    Locale: locale,
+    AddressFamily: addressFamily,
+    State: "create-complete",
+    Description: description,
+    Tags: [],
+  };
+  ctx.store.set(ipamPoolKey(id), pool);
+  return {
+    IpamPool: {
+      IpamPoolId: pool.IpamPoolId,
+      IpamScopeId: pool.IpamScopeId,
+      IpamId: pool.IpamId,
+      IpamArn: pool.IpamArn,
+      IpamScopeArn: pool.IpamScopeArn,
+      IpamPoolArn: pool.IpamPoolArn,
+      Locale: pool.Locale,
+      AddressFamily: pool.AddressFamily,
+      State: pool.State,
+      Description: pool.Description,
+      Tags: pool.Tags,
+    },
+  };
+};
+
+const CreateIpamPrefixListResolver: OperationHandler = (input, ctx) => {
+  const ipamId = typeof input["IpamId"] === "string" ? input["IpamId"] : "";
+  const ipam = ctx.store.get<StoredIpam>(ipamKey(ipamId));
+  if (ipam === undefined) {
+    throw awsError(
+      "InvalidIpamId.NotFound",
+      `The IPAM ID '${ipamId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("ipam-prefix-list-resolver");
+  const resolver: StoredIpamPrefixListResolver = {
+    IpamPrefixListResolverId: id,
+    IpamId: ipamId,
+    IpamArn: ipam.IpamArn,
+    OwnerId: ctx.account,
+    Tags: [],
+  };
+  ctx.store.set(ipamPrefixListResolverKey(id), resolver);
+  return {
+    IpamPrefixListResolver: {
+      IpamPrefixListResolverId: resolver.IpamPrefixListResolverId,
+      IpamId: resolver.IpamId,
+      IpamArn: resolver.IpamArn,
+      OwnerId: resolver.OwnerId,
+      Tags: resolver.Tags,
+    },
+  };
+};
+
+const CreateIpamPrefixListResolverTarget: OperationHandler = (input, ctx) => {
+  const ipamPrefixListResolverId =
+    typeof input["IpamPrefixListResolverId"] === "string"
+      ? input["IpamPrefixListResolverId"]
+      : "";
+  const prefixListId =
+    typeof input["PrefixListId"] === "string" ? input["PrefixListId"] : "";
+  const resolver = ctx.store.get<StoredIpamPrefixListResolver>(
+    ipamPrefixListResolverKey(ipamPrefixListResolverId),
+  );
+  if (resolver === undefined) {
+    throw awsError(
+      "InvalidIpamPrefixListResolverId.NotFound",
+      `The IPAM prefix list resolver ID '${ipamPrefixListResolverId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("ipam-prefix-list-resolver-target");
+  const target: StoredIpamPrefixListResolverTarget = {
+    IpamPrefixListResolverId: ipamPrefixListResolverId,
+    IpamPrefixListResolverTargetId: id,
+    PrefixListId: prefixListId,
+    OwnerId: ctx.account,
+    Tags: [],
+  };
+  ctx.store.set(
+    ipamPrefixListResolverTargetKey(ipamPrefixListResolverId, id),
+    target,
+  );
+  return {
+    IpamPrefixListResolverTarget: {
+      IpamPrefixListResolverId: target.IpamPrefixListResolverId,
+      IpamPrefixListResolverTargetId: target.IpamPrefixListResolverTargetId,
+      PrefixListId: target.PrefixListId,
+      OwnerId: target.OwnerId,
+      Tags: target.Tags,
+    },
+  };
+};
+
+const CreateIpamResourceDiscovery: OperationHandler = (input, ctx) => {
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : undefined;
+  const id = hexId("ipam-resource-discovery");
+  const resourceDiscovery: StoredIpamResourceDiscovery = {
+    IpamResourceDiscoveryId: id,
+    OwnerId: ctx.account,
+    IpamResourceDiscoveryArn: `arn:aws:ec2::${ctx.account}:ipam-resource-discovery/${id}`,
+    State: "create-complete",
+    Description: description,
+    IsDefault: false,
+    Tags: [],
+  };
+  ctx.store.set(ipamResourceDiscoveryKey(id), resourceDiscovery);
+  return {
+    IpamResourceDiscovery: {
+      IpamResourceDiscoveryId: resourceDiscovery.IpamResourceDiscoveryId,
+      OwnerId: resourceDiscovery.OwnerId,
+      IpamResourceDiscoveryArn: resourceDiscovery.IpamResourceDiscoveryArn,
+      State: resourceDiscovery.State,
+      Description: resourceDiscovery.Description,
+      IsDefault: resourceDiscovery.IsDefault,
+      Tags: resourceDiscovery.Tags,
+    },
+  };
+};
+
+const CreateIpamScope: OperationHandler = (input, ctx) => {
+  const ipamId = typeof input["IpamId"] === "string" ? input["IpamId"] : "";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : undefined;
+  const ipam = ctx.store.get<StoredIpam>(ipamKey(ipamId));
+  if (ipam === undefined) {
+    throw awsError(
+      "InvalidIpamId.NotFound",
+      `The IPAM ID '${ipamId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("ipam-scope");
+  const scope: StoredIpamScope = {
+    IpamScopeId: id,
+    IpamId: ipamId,
+    IpamScopeArn: `arn:aws:ec2::${ctx.account}:ipam-scope/${id}`,
+    IpamArn: ipam.IpamArn,
+    IpamScopeType: "private",
+    IsDefault: false,
+    Description: description,
+    PoolCount: 0,
+    State: "create-complete",
+    Tags: [],
+  };
+  ipam.ScopeCount += 1;
+  ctx.store.set(ipamKey(ipamId), ipam);
+  ctx.store.set(ipamScopeKey(id), scope);
+  return {
+    IpamScope: {
+      IpamScopeId: scope.IpamScopeId,
+      IpamId: scope.IpamId,
+      IpamScopeArn: scope.IpamScopeArn,
+      IpamArn: scope.IpamArn,
+      IpamScopeType: scope.IpamScopeType,
+      IsDefault: scope.IsDefault,
+      Description: scope.Description,
+      PoolCount: scope.PoolCount,
+      State: scope.State,
+      Tags: scope.Tags,
+    },
+  };
+};
+
+const CreateLaunchTemplate: OperationHandler = (input, ctx) => {
+  const launchTemplateName =
+    typeof input["LaunchTemplateName"] === "string"
+      ? input["LaunchTemplateName"]
+      : "";
+  const versionDescription =
+    typeof input["VersionDescription"] === "string"
+      ? input["VersionDescription"]
+      : undefined;
+  const launchTemplateData =
+    typeof input["LaunchTemplateData"] === "object" &&
+    input["LaunchTemplateData"] !== null
+      ? (input["LaunchTemplateData"] as Record<string, unknown>)
+      : {};
+  const id = hexId("lt");
+  const createTime = new Date().toISOString();
+  const createdBy = `arn:aws:iam::${ctx.account}:root`;
+  const lt: StoredLaunchTemplate = {
+    LaunchTemplateId: id,
+    LaunchTemplateName: launchTemplateName,
+    DefaultVersionNumber: 1,
+    LatestVersionNumber: 1,
+    CreateTime: createTime,
+    CreatedBy: createdBy,
+    Tags: [],
+  };
+  const version: StoredLaunchTemplateVersion = {
+    LaunchTemplateId: id,
+    LaunchTemplateName: launchTemplateName,
+    VersionNumber: 1,
+    VersionDescription: versionDescription,
+    CreateTime: createTime,
+    CreatedBy: createdBy,
+    DefaultVersion: true,
+    LaunchTemplateData: launchTemplateData,
+  };
+  ctx.store.set(launchTemplateKey(id), lt);
+  ctx.store.set(launchTemplateVersionKey(id, 1), version);
+  return {
+    LaunchTemplate: {
+      LaunchTemplateId: lt.LaunchTemplateId,
+      LaunchTemplateName: lt.LaunchTemplateName,
+      DefaultVersionNumber: lt.DefaultVersionNumber,
+      LatestVersionNumber: lt.LatestVersionNumber,
+      CreateTime: lt.CreateTime,
+      CreatedBy: lt.CreatedBy,
+      Tags: lt.Tags,
+    },
+  };
+};
+
+const CreateLaunchTemplateVersion: OperationHandler = (input, ctx) => {
+  const launchTemplateId =
+    typeof input["LaunchTemplateId"] === "string"
+      ? input["LaunchTemplateId"]
+      : typeof input["LaunchTemplateName"] === "string"
+        ? undefined
+        : "";
+  const launchTemplateName =
+    typeof input["LaunchTemplateName"] === "string"
+      ? input["LaunchTemplateName"]
+      : undefined;
+  const versionDescription =
+    typeof input["VersionDescription"] === "string"
+      ? input["VersionDescription"]
+      : undefined;
+  const launchTemplateData =
+    typeof input["LaunchTemplateData"] === "object" &&
+    input["LaunchTemplateData"] !== null
+      ? (input["LaunchTemplateData"] as Record<string, unknown>)
+      : {};
+
+  let lt: StoredLaunchTemplate | undefined;
+  if (launchTemplateId !== undefined && launchTemplateId !== "") {
+    lt = ctx.store.get<StoredLaunchTemplate>(
+      launchTemplateKey(launchTemplateId),
+    );
+  } else if (launchTemplateName !== undefined) {
+    lt = ctx.store
+      .list<StoredLaunchTemplate>()
+      .filter((entry) => entry.key.startsWith("lt/"))
+      .map((entry) => entry.value)
+      .find((t) => t.LaunchTemplateName === launchTemplateName);
+  }
+  if (lt === undefined) {
+    throw awsError(
+      "InvalidLaunchTemplateId.NotFound",
+      `The launch template ID or name does not exist`,
+      400,
+    );
+  }
+  const newVersion = lt.LatestVersionNumber + 1;
+  const createTime = new Date().toISOString();
+  const createdBy = `arn:aws:iam::${ctx.account}:root`;
+  const version: StoredLaunchTemplateVersion = {
+    LaunchTemplateId: lt.LaunchTemplateId,
+    LaunchTemplateName: lt.LaunchTemplateName,
+    VersionNumber: newVersion,
+    VersionDescription: versionDescription,
+    CreateTime: createTime,
+    CreatedBy: createdBy,
+    DefaultVersion: false,
+    LaunchTemplateData: launchTemplateData,
+  };
+  lt.LatestVersionNumber = newVersion;
+  ctx.store.set(launchTemplateKey(lt.LaunchTemplateId), lt);
+  ctx.store.set(
+    launchTemplateVersionKey(lt.LaunchTemplateId, newVersion),
+    version,
+  );
+  return {
+    LaunchTemplateVersion: {
+      LaunchTemplateId: version.LaunchTemplateId,
+      LaunchTemplateName: version.LaunchTemplateName,
+      VersionNumber: version.VersionNumber,
+      VersionDescription: version.VersionDescription,
+      CreateTime: version.CreateTime,
+      CreatedBy: version.CreatedBy,
+      DefaultVersion: version.DefaultVersion,
+      LaunchTemplateData: version.LaunchTemplateData,
+    },
+  };
+};
+
+const CreateLocalGatewayRoute: OperationHandler = (input, ctx) => {
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "";
+  const localGatewayRouteTableId =
+    typeof input["LocalGatewayRouteTableId"] === "string"
+      ? input["LocalGatewayRouteTableId"]
+      : "";
+  const localGatewayVirtualInterfaceGroupId =
+    typeof input["LocalGatewayVirtualInterfaceGroupId"] === "string"
+      ? input["LocalGatewayVirtualInterfaceGroupId"]
+      : undefined;
+  const route: StoredLocalGatewayRoute = {
+    LocalGatewayRouteTableId: localGatewayRouteTableId,
+    DestinationCidrBlock: destinationCidrBlock,
+    LocalGatewayVirtualInterfaceGroupId: localGatewayVirtualInterfaceGroupId,
+    Type: "static",
+    State: "active",
+  };
+  ctx.store.set(
+    localGatewayRouteKey(localGatewayRouteTableId, destinationCidrBlock),
+    route,
+  );
+  return {
+    Route: {
+      DestinationCidrBlock: route.DestinationCidrBlock,
+      LocalGatewayVirtualInterfaceGroupId:
+        route.LocalGatewayVirtualInterfaceGroupId,
+      Type: route.Type,
+      State: route.State,
+      LocalGatewayRouteTableId: route.LocalGatewayRouteTableId,
+    },
+  };
+};
+
+const CreateLocalGatewayRouteTable: OperationHandler = (input, ctx) => {
+  const localGatewayId =
+    typeof input["LocalGatewayId"] === "string" ? input["LocalGatewayId"] : "";
+  const id = hexId("lgw-rtb");
+  const routeTable: StoredLocalGatewayRouteTable = {
+    LocalGatewayRouteTableId: id,
+    LocalGatewayRouteTableArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:local-gateway-route-table/${id}`,
+    LocalGatewayId: localGatewayId,
+    State: "available",
+    OwnerId: ctx.account,
+    Tags: [],
+  };
+  ctx.store.set(localGatewayRouteTableKey(id), routeTable);
+  return {
+    LocalGatewayRouteTable: {
+      LocalGatewayRouteTableId: routeTable.LocalGatewayRouteTableId,
+      LocalGatewayRouteTableArn: routeTable.LocalGatewayRouteTableArn,
+      LocalGatewayId: routeTable.LocalGatewayId,
+      State: routeTable.State,
+      OwnerId: routeTable.OwnerId,
+      Tags: routeTable.Tags,
+    },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -2536,6 +3185,18 @@ const ec2: ServiceDefinition = {
     CreateCustomerGateway,
     CreateDefaultSubnet,
     CreateDefaultVpc,
+    CreateIpam,
+    CreateIpamExternalResourceVerificationToken,
+    CreateIpamPolicy,
+    CreateIpamPool,
+    CreateIpamPrefixListResolver,
+    CreateIpamPrefixListResolverTarget,
+    CreateIpamResourceDiscovery,
+    CreateIpamScope,
+    CreateLaunchTemplate,
+    CreateLaunchTemplateVersion,
+    CreateLocalGatewayRoute,
+    CreateLocalGatewayRouteTable,
   },
   model,
 } as const;

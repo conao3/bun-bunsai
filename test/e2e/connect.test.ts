@@ -12,6 +12,11 @@ import {
   BatchAssociateAnalyticsDataSetCommand,
   BatchDisassociateAnalyticsDataSetCommand,
   CreateAgentStatusCommand,
+  CreateContactFlowCommand,
+  CreateQueueCommand,
+  CreateHoursOfOperationCommand,
+  CreateRoutingProfileCommand,
+  CreateSecurityProfileCommand,
 } from "@aws-sdk/client-connect";
 
 const awsPort = 4566;
@@ -208,6 +213,120 @@ test("CreateAgentStatus", async () => {
   expect(created.AgentStatusARN).toBeDefined();
   expect(created.AgentStatusARN).toContain(instanceId);
   expect(created.AgentStatusARN).toContain("agent-state");
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("CreateContactFlow", async () => {
+  const client = connect();
+
+  const instance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-cf-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = instance.Id ?? "";
+
+  const created = await client.send(
+    new CreateContactFlowCommand({
+      InstanceId: instanceId,
+      Name: "TestFlow",
+      Type: "CONTACT_FLOW",
+      Content: '{"Version":"2019-10-30","StartAction":"id1","Actions":[]}',
+    }),
+  );
+  expect(created.ContactFlowId).toBeDefined();
+  expect(created.ContactFlowArn).toContain(instanceId);
+  expect(created.ContactFlowArn).toContain("contact-flow");
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("CreateQueue and CreateHoursOfOperation", async () => {
+  const client = connect();
+
+  const instance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-q-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = instance.Id ?? "";
+
+  const hoo = await client.send(
+    new CreateHoursOfOperationCommand({
+      InstanceId: instanceId,
+      Name: "24x7",
+      TimeZone: "UTC",
+      Config: [],
+    }),
+  );
+  expect(hoo.HoursOfOperationId).toBeDefined();
+  expect(hoo.HoursOfOperationArn).toContain(instanceId);
+
+  const queue = await client.send(
+    new CreateQueueCommand({
+      InstanceId: instanceId,
+      Name: "SupportQueue",
+      HoursOfOperationId: hoo.HoursOfOperationId ?? "",
+    }),
+  );
+  expect(queue.QueueId).toBeDefined();
+  expect(queue.QueueArn).toContain(instanceId);
+  expect(queue.QueueArn).toContain("queue");
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("CreateRoutingProfile and CreateSecurityProfile", async () => {
+  const client = connect();
+
+  const instance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-rp-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = instance.Id ?? "";
+
+  const queue = await client.send(
+    new CreateQueueCommand({
+      InstanceId: instanceId,
+      Name: "DefaultQueue",
+      HoursOfOperationId: "00000000-0000-0000-0000-000000000000",
+    }),
+  );
+  const queueId = queue.QueueId ?? "";
+
+  const rp = await client.send(
+    new CreateRoutingProfileCommand({
+      InstanceId: instanceId,
+      Name: "DefaultRP",
+      Description: "Default routing profile",
+      DefaultOutboundQueueId: queueId,
+      MediaConcurrencies: [{ Channel: "VOICE", Concurrency: 1 }],
+    }),
+  );
+  expect(rp.RoutingProfileId).toBeDefined();
+  expect(rp.RoutingProfileArn).toContain(instanceId);
+  expect(rp.RoutingProfileArn).toContain("routing-profile");
+
+  const sp = await client.send(
+    new CreateSecurityProfileCommand({
+      InstanceId: instanceId,
+      SecurityProfileName: "ReadOnly",
+    }),
+  );
+  expect(sp.SecurityProfileId).toBeDefined();
+  expect(sp.SecurityProfileArn).toContain(instanceId);
+  expect(sp.SecurityProfileArn).toContain("security-profile");
 
   await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
 });

@@ -84,9 +84,14 @@ import {
   UpdateClusterCommand,
   UpdateEventBridgeRuleTemplateCommand,
   UpdateEventBridgeRuleTemplateGroupCommand,
+  UpdateNetworkCommand,
   UpdateNodeCommand,
   UpdateNodeStateCommand,
   UpdateSdiSourceCommand,
+  CreateNetworkCommand,
+  DeleteNetworkCommand,
+  DescribeNetworkCommand,
+  ListNetworksCommand,
 } from "@aws-sdk/client-medialive";
 
 const awsPort = 4566;
@@ -799,5 +804,50 @@ test("cluster + node lifecycle", async () => {
 
   await expect(
     client.send(new DescribeClusterCommand({ ClusterId: clusterId })),
+  ).rejects.toThrow();
+});
+
+test("network lifecycle", async () => {
+  const client = medialive();
+
+  const created = await client.send(
+    new CreateNetworkCommand({
+      Name: "e2e-network",
+      IpPools: [{ Cidr: "10.0.0.0/24" }],
+      Routes: [{ Cidr: "0.0.0.0/0", Gateway: "10.0.0.1" }],
+    }),
+  );
+  const networkId = created.Id!;
+  expect(networkId).toBeDefined();
+  expect(created.Arn).toBeDefined();
+  expect(created.Name).toBe("e2e-network");
+  expect(created.State).toBe("ACTIVE");
+  expect(created.IpPools).toHaveLength(1);
+  expect(created.Routes).toHaveLength(1);
+
+  const described = await client.send(
+    new DescribeNetworkCommand({ NetworkId: networkId }),
+  );
+  expect(described.Id).toBe(networkId);
+  expect(described.Name).toBe("e2e-network");
+
+  const listed = await client.send(new ListNetworksCommand({}));
+  expect((listed.Networks ?? []).map((n) => n.Id)).toContain(networkId);
+
+  const updated = await client.send(
+    new UpdateNetworkCommand({
+      NetworkId: networkId,
+      Name: "e2e-network-v2",
+    }),
+  );
+  expect(updated.Name).toBe("e2e-network-v2");
+
+  const deleted = await client.send(
+    new DeleteNetworkCommand({ NetworkId: networkId }),
+  );
+  expect(deleted.State).toBe("DELETED");
+
+  await expect(
+    client.send(new DescribeNetworkCommand({ NetworkId: networkId })),
   ).rejects.toThrow();
 });

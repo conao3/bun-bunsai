@@ -22,6 +22,11 @@ const schedulePrefix = "schedule:" as const;
 const transferPrefix = "transfer:" as const;
 const tagsPrefix = "tags:" as const;
 const accountConfigKey = "accountConfig" as const;
+const cwAlarmTemplatePrefix = "cwalarmtempl:" as const;
+const cwAlarmTemplateGroupPrefix = "cwalarmtemplgrp:" as const;
+const ebRuleTemplatePrefix = "ebruletempl:" as const;
+const ebRuleTemplateGroupPrefix = "ebruletemplgrp:" as const;
+const signalMapPrefix = "signalmap:" as const;
 
 type StoredChannel = {
   Id: string;
@@ -124,6 +129,74 @@ type StoredTransfer = {
   Message: string;
 };
 
+type StoredCloudWatchAlarmTemplate = {
+  Id: string;
+  Arn: string;
+  Name: string;
+  Description: string;
+  GroupId: string;
+  ComparisonOperator: string;
+  DatapointsToAlarm: number;
+  EvaluationPeriods: number;
+  MetricName: string;
+  Period: number;
+  Statistic: string;
+  TargetResourceType: string;
+  Threshold: number;
+  TreatMissingData: string;
+  Tags: Record<string, unknown>;
+  CreatedAt: string;
+  ModifiedAt: string;
+};
+
+type StoredCloudWatchAlarmTemplateGroup = {
+  Id: string;
+  Arn: string;
+  Name: string;
+  Description: string;
+  Tags: Record<string, unknown>;
+  CreatedAt: string;
+  ModifiedAt: string;
+};
+
+type StoredEventBridgeRuleTemplate = {
+  Id: string;
+  Arn: string;
+  Name: string;
+  Description: string;
+  GroupId: string;
+  EventType: string;
+  EventTargets: unknown[];
+  Tags: Record<string, unknown>;
+  CreatedAt: string;
+  ModifiedAt: string;
+};
+
+type StoredEventBridgeRuleTemplateGroup = {
+  Id: string;
+  Arn: string;
+  Name: string;
+  Description: string;
+  Tags: Record<string, unknown>;
+  CreatedAt: string;
+  ModifiedAt: string;
+};
+
+type StoredSignalMap = {
+  Id: string;
+  Arn: string;
+  Name: string;
+  Description: string;
+  DiscoveryEntryPointArn: string;
+  Status: string;
+  CloudWatchAlarmTemplateGroupIds: string[];
+  EventBridgeRuleTemplateGroupIds: string[];
+  MonitorChangesPendingDeployment: boolean;
+  Tags: Record<string, unknown>;
+  CreatedAt: string;
+  ModifiedAt: string;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -159,6 +232,15 @@ const scheduleKey = (channelId: string): string =>
   `${schedulePrefix}${channelId}`;
 const transferKey = (id: string): string => `${transferPrefix}${id}`;
 const tagsKey = (arn: string): string => `${tagsPrefix}${arn}`;
+const cwAlarmTemplateKey = (id: string): string =>
+  `${cwAlarmTemplatePrefix}${id}`;
+const cwAlarmTemplateGroupKey = (id: string): string =>
+  `${cwAlarmTemplateGroupPrefix}${id}`;
+const ebRuleTemplateKey = (id: string): string =>
+  `${ebRuleTemplatePrefix}${id}`;
+const ebRuleTemplateGroupKey = (id: string): string =>
+  `${ebRuleTemplateGroupPrefix}${id}`;
+const signalMapKey = (id: string): string => `${signalMapPrefix}${id}`;
 
 const channelArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:medialive:${ctx.region}:${ctx.account}:channel:${id}`;
@@ -180,6 +262,21 @@ const offeringArn = (ctx: ServiceContext, id: string): string =>
 
 const reservationArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:medialive:${ctx.region}:${ctx.account}:reservation:${id}`;
+
+const cwAlarmTemplateArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:medialive:${ctx.region}:${ctx.account}:cloudwatch-alarm-template:${id}`;
+
+const cwAlarmTemplateGroupArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:medialive:${ctx.region}:${ctx.account}:cloudwatch-alarm-template-group:${id}`;
+
+const ebRuleTemplateArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:medialive:${ctx.region}:${ctx.account}:eventbridge-rule-template:${id}`;
+
+const ebRuleTemplateGroupArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:medialive:${ctx.region}:${ctx.account}:eventbridge-rule-template-group:${id}`;
+
+const signalMapArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:medialive:${ctx.region}:${ctx.account}:signal-map:${id}`;
 
 const nextChannelId = (ctx: ServiceContext): string => {
   const used = ctx.store
@@ -214,6 +311,41 @@ const nextReservationId = (ctx: ServiceContext): string => {
     .list<StoredReservation>()
     .filter((entry) => entry.key.startsWith(reservationPrefix)).length;
   return String(5000000 + used + 1);
+};
+
+const nextCwAlarmTemplateId = (ctx: ServiceContext): string => {
+  const used = ctx.store
+    .list<StoredCloudWatchAlarmTemplate>()
+    .filter((entry) => entry.key.startsWith(cwAlarmTemplatePrefix)).length;
+  return String(6000000 + used + 1);
+};
+
+const nextCwAlarmTemplateGroupId = (ctx: ServiceContext): string => {
+  const used = ctx.store
+    .list<StoredCloudWatchAlarmTemplateGroup>()
+    .filter((entry) => entry.key.startsWith(cwAlarmTemplateGroupPrefix)).length;
+  return String(7000000 + used + 1);
+};
+
+const nextEbRuleTemplateId = (ctx: ServiceContext): string => {
+  const used = ctx.store
+    .list<StoredEventBridgeRuleTemplate>()
+    .filter((entry) => entry.key.startsWith(ebRuleTemplatePrefix)).length;
+  return String(8000000 + used + 1);
+};
+
+const nextEbRuleTemplateGroupId = (ctx: ServiceContext): string => {
+  const used = ctx.store
+    .list<StoredEventBridgeRuleTemplateGroup>()
+    .filter((entry) => entry.key.startsWith(ebRuleTemplateGroupPrefix)).length;
+  return String(9000000 + used + 1);
+};
+
+const nextSignalMapId = (ctx: ServiceContext): string => {
+  const used = ctx.store
+    .list<StoredSignalMap>()
+    .filter((entry) => entry.key.startsWith(signalMapPrefix)).length;
+  return String(10000000 + used + 1);
 };
 
 const requireChannel = (ctx: ServiceContext, id: string): StoredChannel => {
@@ -280,6 +412,89 @@ const requireReservation = (
   const stored = ctx.store.get<StoredReservation>(reservationKey(id));
   if (stored === undefined) {
     throw awsError("NotFoundException", `Reservation ${id} not found.`, 404);
+  }
+  return stored;
+};
+
+const requireCwAlarmTemplate = (
+  ctx: ServiceContext,
+  identifier: string,
+): StoredCloudWatchAlarmTemplate => {
+  const stored = ctx.store.get<StoredCloudWatchAlarmTemplate>(
+    cwAlarmTemplateKey(identifier),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `CloudWatchAlarmTemplate ${identifier} not found.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireCwAlarmTemplateGroup = (
+  ctx: ServiceContext,
+  identifier: string,
+): StoredCloudWatchAlarmTemplateGroup => {
+  const stored = ctx.store.get<StoredCloudWatchAlarmTemplateGroup>(
+    cwAlarmTemplateGroupKey(identifier),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `CloudWatchAlarmTemplateGroup ${identifier} not found.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireEbRuleTemplate = (
+  ctx: ServiceContext,
+  identifier: string,
+): StoredEventBridgeRuleTemplate => {
+  const stored = ctx.store.get<StoredEventBridgeRuleTemplate>(
+    ebRuleTemplateKey(identifier),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `EventBridgeRuleTemplate ${identifier} not found.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireEbRuleTemplateGroup = (
+  ctx: ServiceContext,
+  identifier: string,
+): StoredEventBridgeRuleTemplateGroup => {
+  const stored = ctx.store.get<StoredEventBridgeRuleTemplateGroup>(
+    ebRuleTemplateGroupKey(identifier),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `EventBridgeRuleTemplateGroup ${identifier} not found.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireSignalMap = (
+  ctx: ServiceContext,
+  identifier: string,
+): StoredSignalMap => {
+  const stored = ctx.store.get<StoredSignalMap>(signalMapKey(identifier));
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `SignalMap ${identifier} not found.`,
+      404,
+    );
   }
   return stored;
 };
@@ -1151,6 +1366,346 @@ const BatchStop: OperationHandler = (input, ctx) => {
   return { Successful: successful, Failed: failed };
 };
 
+const nowIso = (): string => new Date().toISOString();
+
+const CreateCloudWatchAlarmTemplateGroup: OperationHandler = (input, ctx) => {
+  const id = nextCwAlarmTemplateGroupId(ctx);
+  const now = nowIso();
+  const group: StoredCloudWatchAlarmTemplateGroup = {
+    Id: id,
+    Arn: cwAlarmTemplateGroupArn(ctx, id),
+    Name: requireString(input, "Name"),
+    Description: stringOrUndefined(input["Description"]) ?? "",
+    Tags: recordOrEmpty(input["Tags"]),
+    CreatedAt: now,
+    ModifiedAt: now,
+  };
+  ctx.store.set(cwAlarmTemplateGroupKey(id), group);
+  return group;
+};
+
+const GetCloudWatchAlarmTemplateGroup: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  return requireCwAlarmTemplateGroup(ctx, identifier);
+};
+
+const ListCloudWatchAlarmTemplateGroups: OperationHandler = (_input, ctx) => {
+  const groups = ctx.store
+    .list<StoredCloudWatchAlarmTemplateGroup>()
+    .filter((e) => e.key.startsWith(cwAlarmTemplateGroupPrefix))
+    .map((e) => e.value);
+  return { CloudWatchAlarmTemplateGroups: groups };
+};
+
+const UpdateCloudWatchAlarmTemplateGroup: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  const group = requireCwAlarmTemplateGroup(ctx, identifier);
+  const updated: StoredCloudWatchAlarmTemplateGroup = {
+    ...group,
+    Description: stringOrUndefined(input["Description"]) ?? group.Description,
+    ModifiedAt: nowIso(),
+  };
+  ctx.store.set(cwAlarmTemplateGroupKey(identifier), updated);
+  return updated;
+};
+
+const DeleteCloudWatchAlarmTemplateGroup: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  requireCwAlarmTemplateGroup(ctx, identifier);
+  ctx.store.delete(cwAlarmTemplateGroupKey(identifier));
+  return {};
+};
+
+const CreateCloudWatchAlarmTemplate: OperationHandler = (input, ctx) => {
+  const id = nextCwAlarmTemplateId(ctx);
+  const groupIdentifier = requireString(input, "GroupIdentifier");
+  const group = requireCwAlarmTemplateGroup(ctx, groupIdentifier);
+  const now = nowIso();
+  const template: StoredCloudWatchAlarmTemplate = {
+    Id: id,
+    Arn: cwAlarmTemplateArn(ctx, id),
+    Name: requireString(input, "Name"),
+    Description: stringOrUndefined(input["Description"]) ?? "",
+    GroupId: group.Id,
+    ComparisonOperator: requireString(input, "ComparisonOperator"),
+    DatapointsToAlarm:
+      typeof input["DatapointsToAlarm"] === "number"
+        ? input["DatapointsToAlarm"]
+        : 1,
+    EvaluationPeriods:
+      typeof input["EvaluationPeriods"] === "number"
+        ? input["EvaluationPeriods"]
+        : 1,
+    MetricName: requireString(input, "MetricName"),
+    Period: typeof input["Period"] === "number" ? input["Period"] : 60,
+    Statistic: requireString(input, "Statistic"),
+    TargetResourceType: requireString(input, "TargetResourceType"),
+    Threshold: typeof input["Threshold"] === "number" ? input["Threshold"] : 0,
+    TreatMissingData: requireString(input, "TreatMissingData"),
+    Tags: recordOrEmpty(input["Tags"]),
+    CreatedAt: now,
+    ModifiedAt: now,
+  };
+  ctx.store.set(cwAlarmTemplateKey(id), template);
+  return template;
+};
+
+const GetCloudWatchAlarmTemplate: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  return requireCwAlarmTemplate(ctx, identifier);
+};
+
+const ListCloudWatchAlarmTemplates: OperationHandler = (_input, ctx) => {
+  const templates = ctx.store
+    .list<StoredCloudWatchAlarmTemplate>()
+    .filter((e) => e.key.startsWith(cwAlarmTemplatePrefix))
+    .map((e) => e.value);
+  return { CloudWatchAlarmTemplates: templates };
+};
+
+const UpdateCloudWatchAlarmTemplate: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  const template = requireCwAlarmTemplate(ctx, identifier);
+  const updated: StoredCloudWatchAlarmTemplate = {
+    ...template,
+    Name: stringOrUndefined(input["Name"]) ?? template.Name,
+    Description:
+      stringOrUndefined(input["Description"]) ?? template.Description,
+    ComparisonOperator:
+      stringOrUndefined(input["ComparisonOperator"]) ??
+      template.ComparisonOperator,
+    MetricName: stringOrUndefined(input["MetricName"]) ?? template.MetricName,
+    Statistic: stringOrUndefined(input["Statistic"]) ?? template.Statistic,
+    TargetResourceType:
+      stringOrUndefined(input["TargetResourceType"]) ??
+      template.TargetResourceType,
+    TreatMissingData:
+      stringOrUndefined(input["TreatMissingData"]) ?? template.TreatMissingData,
+    DatapointsToAlarm:
+      typeof input["DatapointsToAlarm"] === "number"
+        ? input["DatapointsToAlarm"]
+        : template.DatapointsToAlarm,
+    EvaluationPeriods:
+      typeof input["EvaluationPeriods"] === "number"
+        ? input["EvaluationPeriods"]
+        : template.EvaluationPeriods,
+    Period:
+      typeof input["Period"] === "number" ? input["Period"] : template.Period,
+    Threshold:
+      typeof input["Threshold"] === "number"
+        ? input["Threshold"]
+        : template.Threshold,
+    ModifiedAt: nowIso(),
+  };
+  ctx.store.set(cwAlarmTemplateKey(identifier), updated);
+  return updated;
+};
+
+const DeleteCloudWatchAlarmTemplate: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  requireCwAlarmTemplate(ctx, identifier);
+  ctx.store.delete(cwAlarmTemplateKey(identifier));
+  return {};
+};
+
+const CreateEventBridgeRuleTemplateGroup: OperationHandler = (input, ctx) => {
+  const id = nextEbRuleTemplateGroupId(ctx);
+  const now = nowIso();
+  const group: StoredEventBridgeRuleTemplateGroup = {
+    Id: id,
+    Arn: ebRuleTemplateGroupArn(ctx, id),
+    Name: requireString(input, "Name"),
+    Description: stringOrUndefined(input["Description"]) ?? "",
+    Tags: recordOrEmpty(input["Tags"]),
+    CreatedAt: now,
+    ModifiedAt: now,
+  };
+  ctx.store.set(ebRuleTemplateGroupKey(id), group);
+  return group;
+};
+
+const GetEventBridgeRuleTemplateGroup: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  return requireEbRuleTemplateGroup(ctx, identifier);
+};
+
+const ListEventBridgeRuleTemplateGroups: OperationHandler = (_input, ctx) => {
+  const groups = ctx.store
+    .list<StoredEventBridgeRuleTemplateGroup>()
+    .filter((e) => e.key.startsWith(ebRuleTemplateGroupPrefix))
+    .map((e) => e.value);
+  return { EventBridgeRuleTemplateGroups: groups };
+};
+
+const UpdateEventBridgeRuleTemplateGroup: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  const group = requireEbRuleTemplateGroup(ctx, identifier);
+  const updated: StoredEventBridgeRuleTemplateGroup = {
+    ...group,
+    Description: stringOrUndefined(input["Description"]) ?? group.Description,
+    ModifiedAt: nowIso(),
+  };
+  ctx.store.set(ebRuleTemplateGroupKey(identifier), updated);
+  return updated;
+};
+
+const DeleteEventBridgeRuleTemplateGroup: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  requireEbRuleTemplateGroup(ctx, identifier);
+  ctx.store.delete(ebRuleTemplateGroupKey(identifier));
+  return {};
+};
+
+const CreateEventBridgeRuleTemplate: OperationHandler = (input, ctx) => {
+  const id = nextEbRuleTemplateId(ctx);
+  const groupIdentifier = requireString(input, "GroupIdentifier");
+  const group = requireEbRuleTemplateGroup(ctx, groupIdentifier);
+  const now = nowIso();
+  const template: StoredEventBridgeRuleTemplate = {
+    Id: id,
+    Arn: ebRuleTemplateArn(ctx, id),
+    Name: requireString(input, "Name"),
+    Description: stringOrUndefined(input["Description"]) ?? "",
+    GroupId: group.Id,
+    EventType: requireString(input, "EventType"),
+    EventTargets: arrayOrEmpty(input["EventTargets"]),
+    Tags: recordOrEmpty(input["Tags"]),
+    CreatedAt: now,
+    ModifiedAt: now,
+  };
+  ctx.store.set(ebRuleTemplateKey(id), template);
+  return template;
+};
+
+const GetEventBridgeRuleTemplate: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  return requireEbRuleTemplate(ctx, identifier);
+};
+
+const ListEventBridgeRuleTemplates: OperationHandler = (_input, ctx) => {
+  const templates = ctx.store
+    .list<StoredEventBridgeRuleTemplate>()
+    .filter((e) => e.key.startsWith(ebRuleTemplatePrefix))
+    .map((e) => e.value);
+  return { EventBridgeRuleTemplates: templates };
+};
+
+const UpdateEventBridgeRuleTemplate: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  const template = requireEbRuleTemplate(ctx, identifier);
+  const updated: StoredEventBridgeRuleTemplate = {
+    ...template,
+    Name: stringOrUndefined(input["Name"]) ?? template.Name,
+    Description:
+      stringOrUndefined(input["Description"]) ?? template.Description,
+    EventType: stringOrUndefined(input["EventType"]) ?? template.EventType,
+    EventTargets: Array.isArray(input["EventTargets"])
+      ? input["EventTargets"]
+      : template.EventTargets,
+    ModifiedAt: nowIso(),
+  };
+  ctx.store.set(ebRuleTemplateKey(identifier), updated);
+  return updated;
+};
+
+const DeleteEventBridgeRuleTemplate: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  requireEbRuleTemplate(ctx, identifier);
+  ctx.store.delete(ebRuleTemplateKey(identifier));
+  return {};
+};
+
+const CreateSignalMap: OperationHandler = (input, ctx) => {
+  const id = nextSignalMapId(ctx);
+  const now = nowIso();
+  const signalMap: StoredSignalMap = {
+    Id: id,
+    Arn: signalMapArn(ctx, id),
+    Name: requireString(input, "Name"),
+    Description: stringOrUndefined(input["Description"]) ?? "",
+    DiscoveryEntryPointArn: requireString(input, "DiscoveryEntryPointArn"),
+    Status: "CREATE_COMPLETE",
+    CloudWatchAlarmTemplateGroupIds: arrayOrEmpty(
+      input["CloudWatchAlarmTemplateGroupIdentifiers"],
+    ).filter((s): s is string => typeof s === "string"),
+    EventBridgeRuleTemplateGroupIds: arrayOrEmpty(
+      input["EventBridgeRuleTemplateGroupIdentifiers"],
+    ).filter((s): s is string => typeof s === "string"),
+    MonitorChangesPendingDeployment: false,
+    Tags: recordOrEmpty(input["Tags"]),
+    CreatedAt: now,
+    ModifiedAt: now,
+  };
+  ctx.store.set(signalMapKey(id), signalMap);
+  return signalMap;
+};
+
+const GetSignalMap: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  return requireSignalMap(ctx, identifier);
+};
+
+const ListSignalMaps: OperationHandler = (_input, ctx) => {
+  const maps = ctx.store
+    .list<StoredSignalMap>()
+    .filter((e) => e.key.startsWith(signalMapPrefix))
+    .map((e) => e.value);
+  return { SignalMaps: maps };
+};
+
+const StartUpdateSignalMap: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  const signalMap = requireSignalMap(ctx, identifier);
+  const updated: StoredSignalMap = {
+    ...signalMap,
+    Name: stringOrUndefined(input["Name"]) ?? signalMap.Name,
+    Description:
+      stringOrUndefined(input["Description"]) ?? signalMap.Description,
+    DiscoveryEntryPointArn:
+      stringOrUndefined(input["DiscoveryEntryPointArn"]) ??
+      signalMap.DiscoveryEntryPointArn,
+    Status: "UPDATE_COMPLETE",
+    ModifiedAt: nowIso(),
+  };
+  ctx.store.set(signalMapKey(identifier), updated);
+  return updated;
+};
+
+const DeleteSignalMap: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  requireSignalMap(ctx, identifier);
+  ctx.store.delete(signalMapKey(identifier));
+  return {};
+};
+
+const StartMonitorDeployment: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  const signalMap = requireSignalMap(ctx, identifier);
+  const updated: StoredSignalMap = {
+    ...signalMap,
+    MonitorChangesPendingDeployment: false,
+    ModifiedAt: nowIso(),
+  };
+  ctx.store.set(signalMapKey(identifier), updated);
+  return updated;
+};
+
+const StartDeleteMonitorDeployment: OperationHandler = (input, ctx) => {
+  const identifier = requireString(input, "Identifier");
+  const signalMap = requireSignalMap(ctx, identifier);
+  const updated: StoredSignalMap = {
+    ...signalMap,
+    MonitorChangesPendingDeployment: false,
+    ModifiedAt: nowIso(),
+  };
+  ctx.store.set(signalMapKey(identifier), updated);
+  return updated;
+};
+
+const ListVersions: OperationHandler = (_input, _ctx) => {
+  return { Versions: [] };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -1339,6 +1894,91 @@ const medialive = {
       return undefined;
     }
 
+    if (r1 === "cloudwatch-alarm-template-groups") {
+      if (parts.length === 2) {
+        if (m === "POST") return "CreateCloudWatchAlarmTemplateGroup";
+        if (m === "GET") return "ListCloudWatchAlarmTemplateGroups";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (m === "GET") return "GetCloudWatchAlarmTemplateGroup";
+        if (m === "PATCH") return "UpdateCloudWatchAlarmTemplateGroup";
+        if (m === "DELETE") return "DeleteCloudWatchAlarmTemplateGroup";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (r1 === "cloudwatch-alarm-templates") {
+      if (parts.length === 2) {
+        if (m === "POST") return "CreateCloudWatchAlarmTemplate";
+        if (m === "GET") return "ListCloudWatchAlarmTemplates";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (m === "GET") return "GetCloudWatchAlarmTemplate";
+        if (m === "PATCH") return "UpdateCloudWatchAlarmTemplate";
+        if (m === "DELETE") return "DeleteCloudWatchAlarmTemplate";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (r1 === "eventbridge-rule-template-groups") {
+      if (parts.length === 2) {
+        if (m === "POST") return "CreateEventBridgeRuleTemplateGroup";
+        if (m === "GET") return "ListEventBridgeRuleTemplateGroups";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (m === "GET") return "GetEventBridgeRuleTemplateGroup";
+        if (m === "PATCH") return "UpdateEventBridgeRuleTemplateGroup";
+        if (m === "DELETE") return "DeleteEventBridgeRuleTemplateGroup";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (r1 === "eventbridge-rule-templates") {
+      if (parts.length === 2) {
+        if (m === "POST") return "CreateEventBridgeRuleTemplate";
+        if (m === "GET") return "ListEventBridgeRuleTemplates";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (m === "GET") return "GetEventBridgeRuleTemplate";
+        if (m === "PATCH") return "UpdateEventBridgeRuleTemplate";
+        if (m === "DELETE") return "DeleteEventBridgeRuleTemplate";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (r1 === "signal-maps") {
+      if (parts.length === 2) {
+        if (m === "POST") return "CreateSignalMap";
+        if (m === "GET") return "ListSignalMaps";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (m === "GET") return "GetSignalMap";
+        if (m === "PATCH") return "StartUpdateSignalMap";
+        if (m === "DELETE") return "DeleteSignalMap";
+        return undefined;
+      }
+      if (parts.length === 4 && parts[3] === "monitor-deployment") {
+        if (m === "POST") return "StartMonitorDeployment";
+        if (m === "DELETE") return "StartDeleteMonitorDeployment";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (r1 === "versions" && parts.length === 2) {
+      if (m === "GET") return "ListVersions";
+      return undefined;
+    }
+
     return undefined;
   },
   operations: {
@@ -1407,6 +2047,34 @@ const medialive = {
     BatchDelete,
     BatchStart,
     BatchStop,
+    CreateCloudWatchAlarmTemplateGroup,
+    GetCloudWatchAlarmTemplateGroup,
+    ListCloudWatchAlarmTemplateGroups,
+    UpdateCloudWatchAlarmTemplateGroup,
+    DeleteCloudWatchAlarmTemplateGroup,
+    CreateCloudWatchAlarmTemplate,
+    GetCloudWatchAlarmTemplate,
+    ListCloudWatchAlarmTemplates,
+    UpdateCloudWatchAlarmTemplate,
+    DeleteCloudWatchAlarmTemplate,
+    CreateEventBridgeRuleTemplateGroup,
+    GetEventBridgeRuleTemplateGroup,
+    ListEventBridgeRuleTemplateGroups,
+    UpdateEventBridgeRuleTemplateGroup,
+    DeleteEventBridgeRuleTemplateGroup,
+    CreateEventBridgeRuleTemplate,
+    GetEventBridgeRuleTemplate,
+    ListEventBridgeRuleTemplates,
+    UpdateEventBridgeRuleTemplate,
+    DeleteEventBridgeRuleTemplate,
+    CreateSignalMap,
+    GetSignalMap,
+    ListSignalMaps,
+    StartUpdateSignalMap,
+    DeleteSignalMap,
+    StartMonitorDeployment,
+    StartDeleteMonitorDeployment,
+    ListVersions,
   },
   model,
 } as const satisfies ServiceDefinition;

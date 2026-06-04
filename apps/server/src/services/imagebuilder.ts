@@ -22,6 +22,8 @@ const infraConfigPrefix = "infra-config:" as const;
 const tagsPrefix = "tags:" as const;
 const imagePrefix = "image:" as const;
 const imagePolicyPrefix = "image-policy:" as const;
+const lifecyclePolicyPrefix = "lifecycle-policy:" as const;
+const lifecycleExecutionPrefix = "lifecycle-execution:" as const;
 
 type StoredPipeline = {
   arn: string;
@@ -136,9 +138,33 @@ type StoredImage = {
   imageTestsConfiguration: Record<string, unknown> | undefined;
   enhancedImageMetadataEnabled: boolean | undefined;
   executionRole: string | undefined;
+  pipelineArn: string | undefined;
   state: { status: string; reason?: string };
   tags: Record<string, string>;
   dateCreated: string;
+};
+
+type StoredLifecyclePolicy = {
+  arn: string;
+  name: string;
+  description: string | undefined;
+  status: string;
+  executionRole: string;
+  resourceType: string;
+  policyDetails: unknown;
+  resourceSelection: unknown;
+  dateCreated: string;
+  dateUpdated: string;
+  tags: Record<string, string>;
+};
+
+type StoredLifecycleExecution = {
+  lifecycleExecutionId: string;
+  lifecyclePolicyArn: string | undefined;
+  resourceArn: string;
+  state: { status: string; reason?: string };
+  startTime: string;
+  endTime: string | undefined;
 };
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -194,6 +220,10 @@ const infraConfigKey = (arn: string): string => `${infraConfigPrefix}${arn}`;
 const tagsKey = (arn: string): string => `${tagsPrefix}${arn}`;
 const imageKey = (arn: string): string => `${imagePrefix}${arn}`;
 const imagePolicyKey = (arn: string): string => `${imagePolicyPrefix}${arn}`;
+const lifecyclePolicyKey = (arn: string): string =>
+  `${lifecyclePolicyPrefix}${arn}`;
+const lifecycleExecutionKey = (id: string): string =>
+  `${lifecycleExecutionPrefix}${id}`;
 
 const pipelineArnOf = (ctx: ServiceContext, name: string): string =>
   `arn:aws:imagebuilder:${ctx.region}:${ctx.account}:image-pipeline/${name}`;
@@ -238,6 +268,9 @@ const imageVersionArnOf = (
   version: string,
 ): string =>
   `arn:aws:imagebuilder:${ctx.region}:${ctx.account}:image/${name}/${version}`;
+
+const lifecyclePolicyArnOf = (ctx: ServiceContext, name: string): string =>
+  `arn:aws:imagebuilder:${ctx.region}:${ctx.account}:lifecycle-policy/${name}`;
 
 const pipelineView = (pipeline: StoredPipeline): Record<string, unknown> => ({
   arn: pipeline.arn,
@@ -485,6 +518,46 @@ const imageVersionView = (img: StoredImage): Record<string, unknown> => {
   };
 };
 
+const lifecyclePolicyView = (
+  p: StoredLifecyclePolicy,
+): Record<string, unknown> => ({
+  arn: p.arn,
+  name: p.name,
+  description: p.description,
+  status: p.status,
+  executionRole: p.executionRole,
+  resourceType: p.resourceType,
+  policyDetails: p.policyDetails,
+  resourceSelection: p.resourceSelection,
+  dateCreated: p.dateCreated,
+  dateUpdated: p.dateUpdated,
+  tags: p.tags,
+});
+
+const lifecyclePolicySummaryView = (
+  p: StoredLifecyclePolicy,
+): Record<string, unknown> => ({
+  arn: p.arn,
+  name: p.name,
+  description: p.description,
+  status: p.status,
+  executionRole: p.executionRole,
+  resourceType: p.resourceType,
+  dateCreated: p.dateCreated,
+  dateUpdated: p.dateUpdated,
+  tags: p.tags,
+});
+
+const lifecycleExecutionView = (
+  e: StoredLifecycleExecution,
+): Record<string, unknown> => ({
+  lifecycleExecutionId: e.lifecycleExecutionId,
+  lifecyclePolicyArn: e.lifecyclePolicyArn,
+  state: e.state,
+  startTime: e.startTime,
+  endTime: e.endTime,
+});
+
 const requireImage = (ctx: ServiceContext, arn: string): StoredImage => {
   const stored = ctx.store.get<StoredImage>(imageKey(arn));
   if (stored === undefined) {
@@ -578,6 +651,38 @@ const requireInfraConfig = (
     throw awsError(
       "ResourceNotFoundException",
       `Infrastructure configuration not found for arn: ${arn}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireLifecyclePolicy = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredLifecyclePolicy => {
+  const stored = ctx.store.get<StoredLifecyclePolicy>(lifecyclePolicyKey(arn));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Lifecycle policy not found for arn: ${arn}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireLifecycleExecution = (
+  ctx: ServiceContext,
+  id: string,
+): StoredLifecycleExecution => {
+  const stored = ctx.store.get<StoredLifecycleExecution>(
+    lifecycleExecutionKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Lifecycle execution not found for id: ${id}.`,
       404,
     );
   }
@@ -1482,6 +1587,229 @@ const ListImagePackages: OperationHandler = (input, ctx) => {
   };
 };
 
+const CreateLifecyclePolicy: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "name");
+  const executionRole = requireString(input, "executionRole");
+  const resourceType = requireString(input, "resourceType");
+  const arn = lifecyclePolicyArnOf(ctx, name);
+  if (ctx.store.get<StoredLifecyclePolicy>(lifecyclePolicyKey(arn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Lifecycle policy already exists with name: ${name}.`,
+      400,
+    );
+  }
+  const now = nowIso();
+  const policy: StoredLifecyclePolicy = {
+    arn,
+    name,
+    description: stringOrUndefined(input["description"]),
+    status: stringOrUndefined(input["status"]) ?? "ENABLED",
+    executionRole,
+    resourceType,
+    policyDetails: input["policyDetails"],
+    resourceSelection: input["resourceSelection"],
+    dateCreated: now,
+    dateUpdated: now,
+    tags: stringMapFrom(input["tags"]),
+  };
+  ctx.store.set(lifecyclePolicyKey(arn), policy);
+  return {
+    clientToken: stringOrUndefined(input["clientToken"]),
+    lifecyclePolicyArn: arn,
+  };
+};
+
+const GetLifecyclePolicy: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "lifecyclePolicyArn");
+  const policy = requireLifecyclePolicy(ctx, arn);
+  return { lifecyclePolicy: lifecyclePolicyView(policy) };
+};
+
+const ListLifecyclePolicies: OperationHandler = (_input, ctx) => {
+  const policies = ctx.store
+    .list<StoredLifecyclePolicy>()
+    .filter((entry) => entry.key.startsWith(lifecyclePolicyPrefix))
+    .map((entry) => entry.value)
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { lifecyclePolicySummaryList: policies.map(lifecyclePolicySummaryView) };
+};
+
+const UpdateLifecyclePolicy: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "lifecyclePolicyArn");
+  const existing = requireLifecyclePolicy(ctx, arn);
+  const executionRole = requireString(input, "executionRole");
+  const resourceType = requireString(input, "resourceType");
+  const updated: StoredLifecyclePolicy = {
+    ...existing,
+    description: stringOrUndefined(input["description"]),
+    status: stringOrUndefined(input["status"]) ?? existing.status,
+    executionRole,
+    resourceType,
+    policyDetails: input["policyDetails"],
+    resourceSelection: input["resourceSelection"],
+    dateUpdated: nowIso(),
+  };
+  ctx.store.set(lifecyclePolicyKey(arn), updated);
+  return { lifecyclePolicyArn: arn };
+};
+
+const DeleteLifecyclePolicy: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "lifecyclePolicyArn");
+  requireLifecyclePolicy(ctx, arn);
+  ctx.store.delete(lifecyclePolicyKey(arn));
+  return { lifecyclePolicyArn: arn };
+};
+
+const StartResourceStateUpdate: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const id = crypto.randomUUID();
+  const execution: StoredLifecycleExecution = {
+    lifecycleExecutionId: id,
+    lifecyclePolicyArn: undefined,
+    resourceArn,
+    state: { status: "IN_PROGRESS" },
+    startTime: nowIso(),
+    endTime: undefined,
+  };
+  ctx.store.set(lifecycleExecutionKey(id), execution);
+  return { lifecycleExecutionId: id, resourceArn };
+};
+
+const GetLifecycleExecution: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "lifecycleExecutionId");
+  const execution = requireLifecycleExecution(ctx, id);
+  return { lifecycleExecution: lifecycleExecutionView(execution) };
+};
+
+const CancelLifecycleExecution: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "lifecycleExecutionId");
+  const execution = requireLifecycleExecution(ctx, id);
+  const updated: StoredLifecycleExecution = {
+    ...execution,
+    state: { status: "CANCELLED" },
+    endTime: nowIso(),
+  };
+  ctx.store.set(lifecycleExecutionKey(id), updated);
+  return { lifecycleExecutionId: id };
+};
+
+const ListLifecycleExecutions: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  const executions = ctx.store
+    .list<StoredLifecycleExecution>()
+    .filter((entry) => entry.key.startsWith(lifecycleExecutionPrefix))
+    .map((entry) => entry.value)
+    .filter((e) => e.resourceArn === resourceArn)
+    .sort((a, b) =>
+      a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0,
+    );
+  return { lifecycleExecutions: executions.map(lifecycleExecutionView) };
+};
+
+const ListLifecycleExecutionResources: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "lifecycleExecutionId");
+  const execution = requireLifecycleExecution(ctx, id);
+  return {
+    lifecycleExecutionId: id,
+    lifecycleExecutionState: execution.state,
+    resources: [],
+  };
+};
+
+const UpdateImagePipeline: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "imagePipelineArn");
+  const existing = requirePipeline(ctx, arn);
+  const infrastructureConfigurationArn = requireString(
+    input,
+    "infrastructureConfigurationArn",
+  );
+  const updated: StoredPipeline = {
+    ...existing,
+    description: stringOrUndefined(input["description"]),
+    imageRecipeArn:
+      stringOrUndefined(input["imageRecipeArn"]) ?? existing.imageRecipeArn,
+    containerRecipeArn:
+      stringOrUndefined(input["containerRecipeArn"]) ??
+      existing.containerRecipeArn,
+    infrastructureConfigurationArn,
+    distributionConfigurationArn:
+      stringOrUndefined(input["distributionConfigurationArn"]) ??
+      existing.distributionConfigurationArn,
+    imageTestsConfiguration:
+      asRecord(input["imageTestsConfiguration"]) ??
+      existing.imageTestsConfiguration,
+    enhancedImageMetadataEnabled:
+      booleanOrUndefined(input["enhancedImageMetadataEnabled"]) ??
+      existing.enhancedImageMetadataEnabled,
+    schedule: asRecord(input["schedule"]) ?? existing.schedule,
+    status: stringOrUndefined(input["status"]) ?? existing.status,
+    executionRole:
+      stringOrUndefined(input["executionRole"]) ?? existing.executionRole,
+    imageTags: Object.keys(stringMapFrom(input["imageTags"])).length > 0
+      ? stringMapFrom(input["imageTags"])
+      : existing.imageTags,
+    dateUpdated: nowIso(),
+  };
+  ctx.store.set(pipelineKey(arn), updated);
+  return {
+    requestId: crypto.randomUUID(),
+    clientToken: stringOrUndefined(input["clientToken"]),
+    imagePipelineArn: arn,
+  };
+};
+
+const StartImagePipelineExecution: OperationHandler = (input, ctx) => {
+  const pipelineArn = requireString(input, "imagePipelineArn");
+  const pipeline = requirePipeline(ctx, pipelineArn);
+  const pipelineName = pipeline.name;
+  const version = "0.0.1";
+  const arn = imageArnOf(ctx, pipelineName, version);
+  const now = nowIso();
+  const image: StoredImage = {
+    arn,
+    name: pipelineName,
+    version,
+    type: "AMI",
+    platform: "Linux",
+    osVersion: undefined,
+    imageRecipeArn: pipeline.imageRecipeArn,
+    containerRecipeArn: pipeline.containerRecipeArn,
+    infrastructureConfigurationArn: pipeline.infrastructureConfigurationArn,
+    distributionConfigurationArn: pipeline.distributionConfigurationArn,
+    imageTestsConfiguration: pipeline.imageTestsConfiguration,
+    enhancedImageMetadataEnabled: pipeline.enhancedImageMetadataEnabled,
+    executionRole: pipeline.executionRole,
+    pipelineArn,
+    state: { status: "BUILDING" },
+    tags: stringMapFrom(input["tags"]),
+    dateCreated: now,
+  };
+  ctx.store.set(imageKey(arn), image);
+  return {
+    requestId: crypto.randomUUID(),
+    clientToken: stringOrUndefined(input["clientToken"]),
+    imageBuildVersionArn: arn,
+  };
+};
+
+const ListImagePipelineImages: OperationHandler = (input, ctx) => {
+  const pipelineArn = requireString(input, "imagePipelineArn");
+  requirePipeline(ctx, pipelineArn);
+  const images = ctx.store
+    .list<StoredImage>()
+    .filter((entry) => entry.key.startsWith(imagePrefix))
+    .map((entry) => entry.value)
+    .filter((img) => img.pipelineArn === pipelineArn)
+    .sort((a, b) =>
+      a.dateCreated < b.dateCreated ? -1 : a.dateCreated > b.dateCreated ? 1 : 0,
+    );
+  return {
+    requestId: crypto.randomUUID(),
+    imageSummaryList: images.map(imageSummaryView),
+  };
+};
+
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
   const newTags = stringMapFrom(input["tags"]);
@@ -1669,6 +1997,45 @@ const imagebuilder = {
     if (path.startsWith("/tags/") && req.method === "GET") {
       return "ListTagsForResource";
     }
+    if (path === "/CreateLifecyclePolicy" && req.method === "PUT") {
+      return "CreateLifecyclePolicy";
+    }
+    if (path === "/GetLifecyclePolicy" && req.method === "GET") {
+      return "GetLifecyclePolicy";
+    }
+    if (path === "/ListLifecyclePolicies" && req.method === "POST") {
+      return "ListLifecyclePolicies";
+    }
+    if (path === "/UpdateLifecyclePolicy" && req.method === "PUT") {
+      return "UpdateLifecyclePolicy";
+    }
+    if (path === "/DeleteLifecyclePolicy" && req.method === "DELETE") {
+      return "DeleteLifecyclePolicy";
+    }
+    if (path === "/StartResourceStateUpdate" && req.method === "PUT") {
+      return "StartResourceStateUpdate";
+    }
+    if (path === "/GetLifecycleExecution" && req.method === "GET") {
+      return "GetLifecycleExecution";
+    }
+    if (path === "/CancelLifecycleExecution" && req.method === "PUT") {
+      return "CancelLifecycleExecution";
+    }
+    if (path === "/ListLifecycleExecutions" && req.method === "POST") {
+      return "ListLifecycleExecutions";
+    }
+    if (path === "/ListLifecycleExecutionResources" && req.method === "POST") {
+      return "ListLifecycleExecutionResources";
+    }
+    if (path === "/UpdateImagePipeline" && req.method === "PUT") {
+      return "UpdateImagePipeline";
+    }
+    if (path === "/StartImagePipelineExecution" && req.method === "PUT") {
+      return "StartImagePipelineExecution";
+    }
+    if (path === "/ListImagePipelineImages" && req.method === "POST") {
+      return "ListImagePipelineImages";
+    }
     return undefined;
   },
   operations: {
@@ -1722,6 +2089,19 @@ const imagebuilder = {
     TagResource,
     UntagResource,
     ListTagsForResource,
+    CreateLifecyclePolicy,
+    GetLifecyclePolicy,
+    ListLifecyclePolicies,
+    UpdateLifecyclePolicy,
+    DeleteLifecyclePolicy,
+    StartResourceStateUpdate,
+    GetLifecycleExecution,
+    CancelLifecycleExecution,
+    ListLifecycleExecutions,
+    ListLifecycleExecutionResources,
+    UpdateImagePipeline,
+    StartImagePipelineExecution,
+    ListImagePipelineImages,
   },
   model,
 } as const satisfies ServiceDefinition;

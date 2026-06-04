@@ -113,7 +113,9 @@ test("SageMaker model package group and package lifecycle", async () => {
   expect(describedPkg.ModelPackageStatus).toBe("Completed");
   expect(describedPkg.ModelApprovalStatus).toBe("Approved");
 
-  await client.send(new DeleteModelPackageCommand({ ModelPackageName: pkgName }));
+  await client.send(
+    new DeleteModelPackageCommand({ ModelPackageName: pkgName }),
+  );
   await client.send(
     new DeleteModelPackageGroupCommand({ ModelPackageGroupName: groupName }),
   );
@@ -162,9 +164,7 @@ test("SageMaker endpoint config describe, list, and delete", async () => {
       ],
     }),
   );
-  expect(created.EndpointConfigArn).toContain(
-    `endpoint-config/${configName}`,
-  );
+  expect(created.EndpointConfigArn).toContain(`endpoint-config/${configName}`);
 
   const described = await client.send(
     new DescribeEndpointConfigCommand({ EndpointConfigName: configName }),

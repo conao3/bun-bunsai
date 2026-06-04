@@ -542,7 +542,9 @@ test("Imagebuilder lifecycle policy create/get/list/update/delete", async () => 
   expect(created.lifecyclePolicyArn).toContain(`lifecycle-policy/${name}`);
   const arn = created.lifecyclePolicyArn ?? "";
 
-  const got = await client.send(new GetLifecyclePolicyCommand({ lifecyclePolicyArn: arn }));
+  const got = await client.send(
+    new GetLifecyclePolicyCommand({ lifecyclePolicyArn: arn }),
+  );
   expect(got.lifecyclePolicy?.arn).toBe(arn);
   expect(got.lifecyclePolicy?.name).toBe(name);
   expect(got.lifecyclePolicy?.status).toBe("ENABLED");
@@ -550,7 +552,9 @@ test("Imagebuilder lifecycle policy create/get/list/update/delete", async () => 
   expect(got.lifecyclePolicy?.resourceType).toBe("AMI_IMAGE");
 
   const listed = await client.send(new ListLifecyclePoliciesCommand({}));
-  expect((listed.lifecyclePolicySummaryList ?? []).map((p) => p.arn)).toContain(arn);
+  expect((listed.lifecyclePolicySummaryList ?? []).map((p) => p.arn)).toContain(
+    arn,
+  );
 
   await client.send(
     new UpdateLifecyclePolicyCommand({
@@ -564,10 +568,14 @@ test("Imagebuilder lifecycle policy create/get/list/update/delete", async () => 
     }),
   );
 
-  const updated = await client.send(new GetLifecyclePolicyCommand({ lifecyclePolicyArn: arn }));
+  const updated = await client.send(
+    new GetLifecyclePolicyCommand({ lifecyclePolicyArn: arn }),
+  );
   expect(updated.lifecyclePolicy?.status).toBe("DISABLED");
 
-  await client.send(new DeleteLifecyclePolicyCommand({ lifecyclePolicyArn: arn }));
+  await client.send(
+    new DeleteLifecyclePolicyCommand({ lifecyclePolicyArn: arn }),
+  );
   await expect(
     client.send(new GetLifecyclePolicyCommand({ lifecyclePolicyArn: arn })),
   ).rejects.toThrow();
@@ -588,12 +596,18 @@ test("Imagebuilder StartResourceStateUpdate/GetLifecycleExecution/ListLifecycleE
   expect(started.resourceArn).toBe(imageArn);
   const execId = started.lifecycleExecutionId ?? "";
 
-  const got = await client.send(new GetLifecycleExecutionCommand({ lifecycleExecutionId: execId }));
+  const got = await client.send(
+    new GetLifecycleExecutionCommand({ lifecycleExecutionId: execId }),
+  );
   expect(got.lifecycleExecution?.lifecycleExecutionId).toBe(execId);
   expect(got.lifecycleExecution?.state?.status).toBe("IN_PROGRESS");
 
-  const listed = await client.send(new ListLifecycleExecutionsCommand({ resourceArn: imageArn }));
-  expect((listed.lifecycleExecutions ?? []).map((e) => e.lifecycleExecutionId)).toContain(execId);
+  const listed = await client.send(
+    new ListLifecycleExecutionsCommand({ resourceArn: imageArn }),
+  );
+  expect(
+    (listed.lifecycleExecutions ?? []).map((e) => e.lifecycleExecutionId),
+  ).toContain(execId);
 
   await client.send(
     new CancelLifecycleExecutionCommand({
@@ -601,7 +615,9 @@ test("Imagebuilder StartResourceStateUpdate/GetLifecycleExecution/ListLifecycleE
       clientToken: crypto.randomUUID(),
     }),
   );
-  const afterCancel = await client.send(new GetLifecycleExecutionCommand({ lifecycleExecutionId: execId }));
+  const afterCancel = await client.send(
+    new GetLifecycleExecutionCommand({ lifecycleExecutionId: execId }),
+  );
   expect(afterCancel.lifecycleExecution?.state?.status).toBe("CANCELLED");
 });
 
@@ -629,7 +645,9 @@ test("Imagebuilder UpdateImagePipeline and StartImagePipelineExecution", async (
     }),
   );
 
-  const updated = await client.send(new GetImagePipelineCommand({ imagePipelineArn: pipelineArn }));
+  const updated = await client.send(
+    new GetImagePipelineCommand({ imagePipelineArn: pipelineArn }),
+  );
   expect(updated.imagePipeline?.description).toBe("updated desc");
 
   const exec = await client.send(
@@ -641,8 +659,14 @@ test("Imagebuilder UpdateImagePipeline and StartImagePipelineExecution", async (
   expect(exec.imageBuildVersionArn).toBeDefined();
   expect(exec.imageBuildVersionArn).toContain(`image/${name}`);
 
-  const images = await client.send(new ListImagePipelineImagesCommand({ imagePipelineArn: pipelineArn }));
-  expect((images.imageSummaryList ?? []).map((i) => i.arn)).toContain(exec.imageBuildVersionArn);
+  const images = await client.send(
+    new ListImagePipelineImagesCommand({ imagePipelineArn: pipelineArn }),
+  );
+  expect((images.imageSummaryList ?? []).map((i) => i.arn)).toContain(
+    exec.imageBuildVersionArn,
+  );
 
-  await client.send(new DeleteImagePipelineCommand({ imagePipelineArn: pipelineArn }));
+  await client.send(
+    new DeleteImagePipelineCommand({ imagePipelineArn: pipelineArn }),
+  );
 });

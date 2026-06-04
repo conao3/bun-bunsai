@@ -1592,7 +1592,9 @@ const CreateLifecyclePolicy: OperationHandler = (input, ctx) => {
   const executionRole = requireString(input, "executionRole");
   const resourceType = requireString(input, "resourceType");
   const arn = lifecyclePolicyArnOf(ctx, name);
-  if (ctx.store.get<StoredLifecyclePolicy>(lifecyclePolicyKey(arn)) !== undefined) {
+  if (
+    ctx.store.get<StoredLifecyclePolicy>(lifecyclePolicyKey(arn)) !== undefined
+  ) {
     throw awsError(
       "ResourceAlreadyExistsException",
       `Lifecycle policy already exists with name: ${name}.`,
@@ -1632,7 +1634,9 @@ const ListLifecyclePolicies: OperationHandler = (_input, ctx) => {
     .filter((entry) => entry.key.startsWith(lifecyclePolicyPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { lifecyclePolicySummaryList: policies.map(lifecyclePolicySummaryView) };
+  return {
+    lifecyclePolicySummaryList: policies.map(lifecyclePolicySummaryView),
+  };
 };
 
 const UpdateLifecyclePolicy: OperationHandler = (input, ctx) => {
@@ -1746,9 +1750,10 @@ const UpdateImagePipeline: OperationHandler = (input, ctx) => {
     status: stringOrUndefined(input["status"]) ?? existing.status,
     executionRole:
       stringOrUndefined(input["executionRole"]) ?? existing.executionRole,
-    imageTags: Object.keys(stringMapFrom(input["imageTags"])).length > 0
-      ? stringMapFrom(input["imageTags"])
-      : existing.imageTags,
+    imageTags:
+      Object.keys(stringMapFrom(input["imageTags"])).length > 0
+        ? stringMapFrom(input["imageTags"])
+        : existing.imageTags,
     dateUpdated: nowIso(),
   };
   ctx.store.set(pipelineKey(arn), updated);
@@ -1802,7 +1807,11 @@ const ListImagePipelineImages: OperationHandler = (input, ctx) => {
     .map((entry) => entry.value)
     .filter((img) => img.pipelineArn === pipelineArn)
     .sort((a, b) =>
-      a.dateCreated < b.dateCreated ? -1 : a.dateCreated > b.dateCreated ? 1 : 0,
+      a.dateCreated < b.dateCreated
+        ? -1
+        : a.dateCreated > b.dateCreated
+          ? 1
+          : 0,
     );
   return {
     requestId: crypto.randomUUID(),

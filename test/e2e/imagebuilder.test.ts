@@ -1,14 +1,17 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn } from "bun";
 import {
+  CancelImageCreationCommand,
   CreateComponentCommand,
   CreateContainerRecipeCommand,
   CreateDistributionConfigurationCommand,
+  CreateImageCommand,
   CreateImagePipelineCommand,
   CreateImageRecipeCommand,
   CreateInfrastructureConfigurationCommand,
   DeleteComponentCommand,
   DeleteDistributionConfigurationCommand,
+  DeleteImageCommand,
   DeleteImagePipelineCommand,
   DeleteImageRecipeCommand,
   DeleteInfrastructureConfigurationCommand,
@@ -16,6 +19,7 @@ import {
   GetComponentPolicyCommand,
   GetContainerRecipeCommand,
   GetDistributionConfigurationCommand,
+  GetImageCommand,
   GetImagePipelineCommand,
   GetImageRecipeCommand,
   GetInfrastructureConfigurationCommand,
@@ -24,12 +28,17 @@ import {
   ListComponentsCommand,
   ListContainerRecipesCommand,
   ListDistributionConfigurationsCommand,
+  ListImageBuildVersionsCommand,
+  ListImagePackagesCommand,
   ListImagePipelinesCommand,
   ListImageRecipesCommand,
+  ListImagesCommand,
   ListInfrastructureConfigurationsCommand,
   ListTagsForResourceCommand,
   PutComponentPolicyCommand,
+  PutImagePolicyCommand,
   PutImageRecipePolicyCommand,
+  RetryImageCommand,
   TagResourceCommand,
   UntagResourceCommand,
   UpdateDistributionConfigurationCommand,
@@ -409,4 +418,88 @@ test("Imagebuilder tag operations", async () => {
     new ListTagsForResourceCommand({ resourceArn: arn }),
   );
   expect(untagged.tags?.owner).toBeUndefined();
+});
+
+test("Imagebuilder image create/get/list/policy/cancel/retry/delete lifecycle", async () => {
+  const client = imagebuilder();
+  const name = `img-e2e-${Date.now()}`;
+  const imageRecipeArn = `arn:aws:imagebuilder:${region}:000000000000:image-recipe/${name}/1.0.0`;
+  const infrastructureConfigurationArn = `arn:aws:imagebuilder:${region}:000000000000:infrastructure-configuration/${name}`;
+
+  const created = await client.send(
+    new CreateImageCommand({
+      imageRecipeArn,
+      infrastructureConfigurationArn,
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  expect(created.imageBuildVersionArn).toBeDefined();
+  expect(created.imageBuildVersionArn).toContain(`image/${name}`);
+  const buildArn = created.imageBuildVersionArn ?? "";
+
+  const got = await client.send(
+    new GetImageCommand({ imageBuildVersionArn: buildArn }),
+  );
+  expect(got.image?.arn).toBe(buildArn);
+  expect(got.image?.name).toBe(name);
+  expect(got.image?.state?.status).toBe("BUILDING");
+
+  const listed = await client.send(new ListImagesCommand({}));
+  expect((listed.imageVersionList ?? []).some((v) => v.name === name)).toBe(
+    true,
+  );
+
+  const versionArn = buildArn.split("/").slice(0, -1).join("/");
+  const buildVersions = await client.send(
+    new ListImageBuildVersionsCommand({ imageVersionArn: versionArn }),
+  );
+  expect((buildVersions.imageSummaryList ?? []).map((s) => s.arn)).toContain(
+    buildArn,
+  );
+
+  await client.send(
+    new ListImagePackagesCommand({ imageBuildVersionArn: buildArn }),
+  );
+
+  const imageArn = versionArn;
+  const policy = JSON.stringify({ Statement: [{ Effect: "Allow" }] });
+  const putPolicy = await client.send(
+    new PutImagePolicyCommand({ imageArn, policy }),
+  );
+  expect(putPolicy.imageArn).toBe(imageArn);
+
+  const cancelled = await client.send(
+    new CancelImageCreationCommand({
+      imageBuildVersionArn: buildArn,
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  expect(cancelled.imageBuildVersionArn).toBe(buildArn);
+
+  const afterCancel = await client.send(
+    new GetImageCommand({ imageBuildVersionArn: buildArn }),
+  );
+  expect(afterCancel.image?.state?.status).toBe("CANCELLED");
+
+  const retried = await client.send(
+    new RetryImageCommand({
+      imageBuildVersionArn: buildArn,
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  expect(retried.imageBuildVersionArn).toBe(buildArn);
+
+  const afterRetry = await client.send(
+    new GetImageCommand({ imageBuildVersionArn: buildArn }),
+  );
+  expect(afterRetry.image?.state?.status).toBe("BUILDING");
+
+  const deleted = await client.send(
+    new DeleteImageCommand({ imageBuildVersionArn: buildArn }),
+  );
+  expect(deleted.imageBuildVersionArn).toBe(buildArn);
+
+  await expect(
+    client.send(new GetImageCommand({ imageBuildVersionArn: buildArn })),
+  ).rejects.toThrow();
 });

@@ -20,6 +20,8 @@ const containerRecipePolicyPrefix = "container-recipe-policy:" as const;
 const distConfigPrefix = "dist-config:" as const;
 const infraConfigPrefix = "infra-config:" as const;
 const tagsPrefix = "tags:" as const;
+const imagePrefix = "image:" as const;
+const imagePolicyPrefix = "image-policy:" as const;
 
 type StoredPipeline = {
   arn: string;
@@ -120,6 +122,25 @@ type StoredInfraConfig = {
   dateUpdated: string;
 };
 
+type StoredImage = {
+  arn: string;
+  name: string;
+  version: string;
+  type: string;
+  platform: string;
+  osVersion: string | undefined;
+  imageRecipeArn: string | undefined;
+  containerRecipeArn: string | undefined;
+  infrastructureConfigurationArn: string | undefined;
+  distributionConfigurationArn: string | undefined;
+  imageTestsConfiguration: Record<string, unknown> | undefined;
+  enhancedImageMetadataEnabled: boolean | undefined;
+  executionRole: string | undefined;
+  state: { status: string; reason?: string };
+  tags: Record<string, string>;
+  dateCreated: string;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -171,6 +192,8 @@ const containerRecipePolicyKey = (arn: string): string =>
 const distConfigKey = (arn: string): string => `${distConfigPrefix}${arn}`;
 const infraConfigKey = (arn: string): string => `${infraConfigPrefix}${arn}`;
 const tagsKey = (arn: string): string => `${tagsPrefix}${arn}`;
+const imageKey = (arn: string): string => `${imagePrefix}${arn}`;
+const imagePolicyKey = (arn: string): string => `${imagePolicyPrefix}${arn}`;
 
 const pipelineArnOf = (ctx: ServiceContext, name: string): string =>
   `arn:aws:imagebuilder:${ctx.region}:${ctx.account}:image-pipeline/${name}`;
@@ -201,6 +224,20 @@ const distConfigArnOf = (ctx: ServiceContext, name: string): string =>
 
 const infraConfigArnOf = (ctx: ServiceContext, name: string): string =>
   `arn:aws:imagebuilder:${ctx.region}:${ctx.account}:infrastructure-configuration/${name}`;
+
+const imageArnOf = (
+  ctx: ServiceContext,
+  name: string,
+  version: string,
+): string =>
+  `arn:aws:imagebuilder:${ctx.region}:${ctx.account}:image/${name}/${version}/1`;
+
+const imageVersionArnOf = (
+  ctx: ServiceContext,
+  name: string,
+  version: string,
+): string =>
+  `arn:aws:imagebuilder:${ctx.region}:${ctx.account}:image/${name}/${version}`;
 
 const pipelineView = (pipeline: StoredPipeline): Record<string, unknown> => ({
   arn: pipeline.arn,
@@ -389,6 +426,76 @@ const infraConfigSummaryView = (
   instanceProfileName: i.instanceProfileName,
   placement: i.placement,
 });
+
+const imageView = (img: StoredImage): Record<string, unknown> => ({
+  arn: img.arn,
+  type: img.type,
+  name: img.name,
+  version: img.version,
+  platform: img.platform,
+  osVersion: img.osVersion,
+  state: img.state,
+  imageRecipe: img.imageRecipeArn ? { arn: img.imageRecipeArn } : undefined,
+  containerRecipe: img.containerRecipeArn
+    ? { arn: img.containerRecipeArn }
+    : undefined,
+  infrastructureConfiguration: img.infrastructureConfigurationArn
+    ? { arn: img.infrastructureConfigurationArn }
+    : undefined,
+  distributionConfiguration: img.distributionConfigurationArn
+    ? { arn: img.distributionConfigurationArn }
+    : undefined,
+  imageTestsConfiguration: img.imageTestsConfiguration,
+  enhancedImageMetadataEnabled: img.enhancedImageMetadataEnabled,
+  executionRole: img.executionRole,
+  tags: img.tags,
+  dateCreated: img.dateCreated,
+  buildType: "USER_INITIATED",
+  imageSource: "USER_CREATED",
+});
+
+const imageSummaryView = (img: StoredImage): Record<string, unknown> => ({
+  arn: img.arn,
+  name: img.name,
+  type: img.type,
+  version: img.version,
+  platform: img.platform,
+  osVersion: img.osVersion,
+  state: img.state,
+  owner: "Self",
+  dateCreated: img.dateCreated,
+  tags: img.tags,
+  buildType: "USER_INITIATED",
+  imageSource: "USER_CREATED",
+});
+
+const imageVersionView = (img: StoredImage): Record<string, unknown> => {
+  const versionArn = img.arn.split("/").slice(0, -1).join("/");
+  return {
+    arn: versionArn,
+    name: img.name,
+    type: img.type,
+    version: img.version,
+    platform: img.platform,
+    osVersion: img.osVersion,
+    owner: "Self",
+    dateCreated: img.dateCreated,
+    buildType: "USER_INITIATED",
+    imageSource: "USER_CREATED",
+  };
+};
+
+const requireImage = (ctx: ServiceContext, arn: string): StoredImage => {
+  const stored = ctx.store.get<StoredImage>(imageKey(arn));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Image not found for arn: ${arn}.`,
+      404,
+    );
+  }
+  return stored;
+};
 
 const requirePipeline = (ctx: ServiceContext, arn: string): StoredPipeline => {
   const stored = ctx.store.get<StoredPipeline>(pipelineKey(arn));
@@ -1094,6 +1201,287 @@ const ListInfrastructureConfigurations: OperationHandler = (_input, ctx) => {
   };
 };
 
+const CreateImage: OperationHandler = (input, ctx) => {
+  const imageRecipeArn = stringOrUndefined(input["imageRecipeArn"]);
+  const containerRecipeArn = stringOrUndefined(input["containerRecipeArn"]);
+  const infrastructureConfigurationArn = requireString(
+    input,
+    "infrastructureConfigurationArn",
+  );
+  let name: string;
+  let version: string;
+  let type: string;
+  if (imageRecipeArn) {
+    const parts = imageRecipeArn.split("/");
+    name = parts[parts.length - 2] ?? "image";
+    version = parts[parts.length - 1] ?? "1.0.0";
+    type = "AMI";
+  } else if (containerRecipeArn) {
+    const parts = containerRecipeArn.split("/");
+    name = parts[parts.length - 2] ?? "image";
+    version = parts[parts.length - 1] ?? "1.0.0";
+    type = "DOCKER";
+  } else {
+    throw awsError(
+      "InvalidParameterException",
+      "imageRecipeArn or containerRecipeArn is required.",
+      400,
+    );
+  }
+  const arn = imageArnOf(ctx, name, version);
+  const now = nowIso();
+  const image: StoredImage = {
+    arn,
+    name,
+    version,
+    type,
+    platform: "Linux",
+    osVersion: undefined,
+    imageRecipeArn,
+    containerRecipeArn,
+    infrastructureConfigurationArn,
+    distributionConfigurationArn: stringOrUndefined(
+      input["distributionConfigurationArn"],
+    ),
+    imageTestsConfiguration: asRecord(input["imageTestsConfiguration"]),
+    enhancedImageMetadataEnabled: booleanOrUndefined(
+      input["enhancedImageMetadataEnabled"],
+    ),
+    executionRole: stringOrUndefined(input["executionRole"]),
+    state: { status: "BUILDING" },
+    tags: stringMapFrom(input["tags"]),
+    dateCreated: now,
+  };
+  ctx.store.set(imageKey(arn), image);
+  return {
+    requestId: crypto.randomUUID(),
+    clientToken: stringOrUndefined(input["clientToken"]),
+    imageBuildVersionArn: arn,
+  };
+};
+
+const GetImage: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "imageBuildVersionArn");
+  const image = requireImage(ctx, arn);
+  return {
+    requestId: crypto.randomUUID(),
+    image: imageView(image),
+  };
+};
+
+const DeleteImage: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "imageBuildVersionArn");
+  requireImage(ctx, arn);
+  ctx.store.delete(imageKey(arn));
+  return {
+    requestId: crypto.randomUUID(),
+    imageBuildVersionArn: arn,
+  };
+};
+
+const ListImages: OperationHandler = (_input, ctx) => {
+  const images = ctx.store
+    .list<StoredImage>()
+    .filter((entry) => entry.key.startsWith(imagePrefix))
+    .map((entry) => entry.value)
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return {
+    requestId: crypto.randomUUID(),
+    imageVersionList: images.map(imageVersionView),
+  };
+};
+
+const GetImagePolicy: OperationHandler = (input, ctx) => {
+  const imageArn = requireString(input, "imageArn");
+  const policy = ctx.store.get<string>(imagePolicyKey(imageArn));
+  if (policy === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Policy not found for image arn: ${imageArn}.`,
+      404,
+    );
+  }
+  return {
+    requestId: crypto.randomUUID(),
+    policy,
+  };
+};
+
+const PutImagePolicy: OperationHandler = (input, ctx) => {
+  const imageArn = requireString(input, "imageArn");
+  const policy = requireString(input, "policy");
+  ctx.store.set(imagePolicyKey(imageArn), policy);
+  return {
+    requestId: crypto.randomUUID(),
+    imageArn,
+  };
+};
+
+const CancelImageCreation: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "imageBuildVersionArn");
+  const image = requireImage(ctx, arn);
+  const updated: StoredImage = { ...image, state: { status: "CANCELLED" } };
+  ctx.store.set(imageKey(arn), updated);
+  return {
+    requestId: crypto.randomUUID(),
+    clientToken: stringOrUndefined(input["clientToken"]),
+    imageBuildVersionArn: arn,
+  };
+};
+
+const DistributeImage: OperationHandler = (input, ctx) => {
+  const sourceImage = requireString(input, "sourceImage");
+  const distributionConfigurationArn = requireString(
+    input,
+    "distributionConfigurationArn",
+  );
+  const sourceParts = sourceImage.split("/");
+  const name =
+    sourceParts.length >= 2
+      ? (sourceParts[sourceParts.length - 2] ?? "distributed")
+      : "distributed";
+  const version =
+    sourceParts.length >= 2
+      ? (sourceParts[sourceParts.length - 1] ?? "1.0.0")
+      : "1.0.0";
+  const arn = imageArnOf(ctx, name, version);
+  const now = nowIso();
+  const image: StoredImage = {
+    arn,
+    name,
+    version,
+    type: "AMI",
+    platform: "Linux",
+    osVersion: undefined,
+    imageRecipeArn: undefined,
+    containerRecipeArn: undefined,
+    infrastructureConfigurationArn: undefined,
+    distributionConfigurationArn,
+    imageTestsConfiguration: undefined,
+    enhancedImageMetadataEnabled: undefined,
+    executionRole: stringOrUndefined(input["executionRole"]),
+    state: { status: "DISTRIBUTING" },
+    tags: stringMapFrom(input["tags"]),
+    dateCreated: now,
+  };
+  ctx.store.set(imageKey(arn), image);
+  return {
+    clientToken: stringOrUndefined(input["clientToken"]),
+    imageBuildVersionArn: arn,
+  };
+};
+
+const RetryImage: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "imageBuildVersionArn");
+  const image = requireImage(ctx, arn);
+  const updated: StoredImage = { ...image, state: { status: "BUILDING" } };
+  ctx.store.set(imageKey(arn), updated);
+  return {
+    clientToken: stringOrUndefined(input["clientToken"]),
+    imageBuildVersionArn: arn,
+  };
+};
+
+const ImportDiskImage: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "name");
+  const semanticVersion = requireString(input, "semanticVersion");
+  const platform = requireString(input, "platform");
+  const infrastructureConfigurationArn = requireString(
+    input,
+    "infrastructureConfigurationArn",
+  );
+  const arn = imageArnOf(ctx, name, semanticVersion);
+  const now = nowIso();
+  const image: StoredImage = {
+    arn,
+    name,
+    version: semanticVersion,
+    type: "AMI",
+    platform,
+    osVersion: stringOrUndefined(input["osVersion"]),
+    imageRecipeArn: undefined,
+    containerRecipeArn: undefined,
+    infrastructureConfigurationArn,
+    distributionConfigurationArn: undefined,
+    imageTestsConfiguration: undefined,
+    enhancedImageMetadataEnabled: undefined,
+    executionRole: stringOrUndefined(input["executionRole"]),
+    state: { status: "IMPORTING" },
+    tags: stringMapFrom(input["tags"]),
+    dateCreated: now,
+  };
+  ctx.store.set(imageKey(arn), image);
+  return {
+    clientToken: stringOrUndefined(input["clientToken"]),
+    imageBuildVersionArn: arn,
+  };
+};
+
+const ImportVmImage: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "name");
+  const semanticVersion = requireString(input, "semanticVersion");
+  const platform = requireString(input, "platform");
+  const arn = imageArnOf(ctx, name, semanticVersion);
+  const versionArn = imageVersionArnOf(ctx, name, semanticVersion);
+  const now = nowIso();
+  const image: StoredImage = {
+    arn,
+    name,
+    version: semanticVersion,
+    type: "AMI",
+    platform,
+    osVersion: stringOrUndefined(input["osVersion"]),
+    imageRecipeArn: undefined,
+    containerRecipeArn: undefined,
+    infrastructureConfigurationArn: undefined,
+    distributionConfigurationArn: undefined,
+    imageTestsConfiguration: undefined,
+    enhancedImageMetadataEnabled: undefined,
+    executionRole: undefined,
+    state: { status: "IMPORTING" },
+    tags: stringMapFrom(input["tags"]),
+    dateCreated: now,
+  };
+  ctx.store.set(imageKey(arn), image);
+  return {
+    requestId: crypto.randomUUID(),
+    imageArn: versionArn,
+    clientToken: stringOrUndefined(input["clientToken"]),
+  };
+};
+
+const ListImageBuildVersions: OperationHandler = (input, ctx) => {
+  const imageVersionArn = requireString(input, "imageVersionArn");
+  const images = ctx.store
+    .list<StoredImage>()
+    .filter((entry) => entry.key.startsWith(imagePrefix))
+    .map((entry) => entry.value)
+    .filter((img) => {
+      const versionArn = img.arn.split("/").slice(0, -1).join("/");
+      return versionArn === imageVersionArn;
+    })
+    .sort((a, b) =>
+      a.dateCreated < b.dateCreated
+        ? -1
+        : a.dateCreated > b.dateCreated
+          ? 1
+          : 0,
+    );
+  return {
+    requestId: crypto.randomUUID(),
+    imageSummaryList: images.map(imageSummaryView),
+  };
+};
+
+const ListImagePackages: OperationHandler = (input, ctx) => {
+  const imageBuildVersionArn = requireString(input, "imageBuildVersionArn");
+  requireImage(ctx, imageBuildVersionArn);
+  return {
+    requestId: crypto.randomUUID(),
+    imagePackageList: [],
+  };
+};
+
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
   const newTags = stringMapFrom(input["tags"]);
@@ -1233,6 +1621,45 @@ const imagebuilder = {
     if (path === "/ListInfrastructureConfigurations" && req.method === "POST") {
       return "ListInfrastructureConfigurations";
     }
+    if (path === "/CreateImage" && req.method === "PUT") {
+      return "CreateImage";
+    }
+    if (path === "/GetImage" && req.method === "GET") {
+      return "GetImage";
+    }
+    if (path === "/DeleteImage" && req.method === "DELETE") {
+      return "DeleteImage";
+    }
+    if (path === "/ListImages" && req.method === "POST") {
+      return "ListImages";
+    }
+    if (path === "/GetImagePolicy" && req.method === "GET") {
+      return "GetImagePolicy";
+    }
+    if (path === "/PutImagePolicy" && req.method === "PUT") {
+      return "PutImagePolicy";
+    }
+    if (path === "/CancelImageCreation" && req.method === "PUT") {
+      return "CancelImageCreation";
+    }
+    if (path === "/DistributeImage" && req.method === "PUT") {
+      return "DistributeImage";
+    }
+    if (path === "/RetryImage" && req.method === "PUT") {
+      return "RetryImage";
+    }
+    if (path === "/ImportDiskImage" && req.method === "PUT") {
+      return "ImportDiskImage";
+    }
+    if (path === "/ImportVmImage" && req.method === "PUT") {
+      return "ImportVmImage";
+    }
+    if (path === "/ListImageBuildVersions" && req.method === "POST") {
+      return "ListImageBuildVersions";
+    }
+    if (path === "/ListImagePackages" && req.method === "POST") {
+      return "ListImagePackages";
+    }
     if (path.startsWith("/tags/") && req.method === "POST") {
       return "TagResource";
     }
@@ -1279,6 +1706,19 @@ const imagebuilder = {
     UpdateInfrastructureConfiguration,
     DeleteInfrastructureConfiguration,
     ListInfrastructureConfigurations,
+    CreateImage,
+    GetImage,
+    DeleteImage,
+    ListImages,
+    GetImagePolicy,
+    PutImagePolicy,
+    CancelImageCreation,
+    DistributeImage,
+    RetryImage,
+    ImportDiskImage,
+    ImportVmImage,
+    ListImageBuildVersions,
+    ListImagePackages,
     TagResource,
     UntagResource,
     ListTagsForResource,

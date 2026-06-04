@@ -25,6 +25,9 @@ type StoredDatabase = {
 
 const crawlerPrefix = "crawler:";
 const jobPrefix = "job:";
+const triggerPrefix = "trigger:";
+const jobRunPrefix = "jobrun:";
+const jobBookmarkPrefix = "jobbookmark:";
 const connPrefix = "conn:";
 const classifierPrefix = "classifier:";
 const catalogPrefix = "catalog:";
@@ -43,6 +46,31 @@ type StoredJob = {
   input: Record<string, unknown>;
   createdOn: number;
   lastModifiedOn: number;
+};
+
+type StoredTrigger = {
+  input: Record<string, unknown>;
+  createTime: number;
+  state: string;
+};
+
+type StoredJobRun = {
+  jobName: string;
+  jobRunId: string;
+  startedOn: number;
+  completedOn: number | undefined;
+  jobRunState: string;
+  arguments: Record<string, unknown>;
+};
+
+type StoredJobBookmark = {
+  jobName: string;
+  run: number;
+  attempt: number;
+  previousRunId: string;
+  runId: string;
+  version: number;
+  jobBookmark: string;
 };
 
 type StoredConnection = {
@@ -544,6 +572,303 @@ const DeleteJob: OperationHandler = (input, ctx) => {
   requireJob(ctx, name);
   ctx.store.delete(`${jobPrefix}${name}`);
   return { JobName: name };
+};
+
+const BatchGetJobs: OperationHandler = (input, ctx) => {
+  const names = Array.isArray(input["JobNames"])
+    ? (input["JobNames"] as string[])
+    : [];
+  const jobs: Record<string, unknown>[] = [];
+  const jobsNotFound: string[] = [];
+  for (const name of names) {
+    const job = ctx.store.get<StoredJob>(`${jobPrefix}${name}`);
+    if (job === undefined) {
+      jobsNotFound.push(name);
+    } else {
+      jobs.push(jobView(name, job));
+    }
+  }
+  return { Jobs: jobs, JobsNotFound: jobsNotFound };
+};
+
+const ListJobs: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredJob>()
+    .filter((e) => e.key.startsWith(jobPrefix))
+    .map((e) => e.key.slice(jobPrefix.length));
+  return { JobNames: list };
+};
+
+const jobRunView = (run: StoredJobRun): Record<string, unknown> => ({
+  Id: run.jobRunId,
+  JobName: run.jobName,
+  StartedOn: run.startedOn,
+  ...(run.completedOn !== undefined ? { CompletedOn: run.completedOn } : {}),
+  JobRunState: run.jobRunState,
+  ...(Object.keys(run.arguments).length > 0 ? { Arguments: run.arguments } : {}),
+});
+
+const GetJobRun: OperationHandler = (input, ctx) => {
+  const jobName = requireJobName(input);
+  const runId = input["RunId"];
+  if (typeof runId !== "string" || runId === "") {
+    throw awsError("InvalidInputException", "RunId is required.", 400);
+  }
+  const key = `${jobRunPrefix}${jobName}:${runId}`;
+  const run = ctx.store.get<StoredJobRun>(key);
+  if (run === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Job run ${runId} not found.`,
+      400,
+    );
+  }
+  return { JobRun: jobRunView(run) };
+};
+
+const GetJobRuns: OperationHandler = (input, ctx) => {
+  const jobName = requireJobName(input);
+  requireJob(ctx, jobName);
+  const prefix = `${jobRunPrefix}${jobName}:`;
+  const runs = ctx.store
+    .list<StoredJobRun>()
+    .filter((e) => e.key.startsWith(prefix))
+    .map((e) => jobRunView(e.value));
+  return { JobRuns: runs };
+};
+
+const BatchStopJobRun: OperationHandler = (input, ctx) => {
+  const jobName = requireJobName(input);
+  const jobRunIds = Array.isArray(input["JobRunIds"])
+    ? (input["JobRunIds"] as string[])
+    : [];
+  const successfulSubmissions: Record<string, unknown>[] = [];
+  const errors: Record<string, unknown>[] = [];
+  for (const jobRunId of jobRunIds) {
+    const key = `${jobRunPrefix}${jobName}:${jobRunId}`;
+    const run = ctx.store.get<StoredJobRun>(key);
+    if (run === undefined) {
+      errors.push({
+        JobRunId: jobRunId,
+        ErrorDetail: {
+          ErrorCode: "EntityNotFoundException",
+          ErrorMessage: `Job run ${jobRunId} not found.`,
+        },
+      });
+    } else {
+      const updated: StoredJobRun = { ...run, jobRunState: "STOPPING" };
+      ctx.store.set(key, updated);
+      successfulSubmissions.push({ JobName: jobName, JobRunId: jobRunId });
+    }
+  }
+  return { SuccessfulSubmissions: successfulSubmissions, Errors: errors };
+};
+
+const GetJobBookmark: OperationHandler = (input, ctx) => {
+  const jobName = requireJobName(input);
+  requireJob(ctx, jobName);
+  const key = `${jobBookmarkPrefix}${jobName}`;
+  const bookmark = ctx.store.get<StoredJobBookmark>(key);
+  if (bookmark === undefined) {
+    return {
+      JobBookmarkEntry: {
+        JobName: jobName,
+        Run: 0,
+        Attempt: 0,
+        PreviousRunId: "",
+        RunId: "",
+        Version: 0,
+        JobBookmark: "{}",
+      },
+    };
+  }
+  return {
+    JobBookmarkEntry: {
+      JobName: bookmark.jobName,
+      Run: bookmark.run,
+      Attempt: bookmark.attempt,
+      PreviousRunId: bookmark.previousRunId,
+      RunId: bookmark.runId,
+      Version: bookmark.version,
+      JobBookmark: bookmark.jobBookmark,
+    },
+  };
+};
+
+const ResetJobBookmark: OperationHandler = (input, ctx) => {
+  const jobName = requireJobName(input);
+  requireJob(ctx, jobName);
+  const key = `${jobBookmarkPrefix}${jobName}`;
+  ctx.store.delete(key);
+  return {
+    JobBookmarkEntry: {
+      JobName: jobName,
+      Run: 0,
+      Attempt: 0,
+      PreviousRunId: "",
+      RunId: "",
+      Version: 0,
+      JobBookmark: "{}",
+    },
+  };
+};
+
+const triggerView = (
+  name: string,
+  trigger: StoredTrigger,
+): Record<string, unknown> => ({
+  Name: name,
+  ...(typeof trigger.input["Type"] === "string"
+    ? { Type: trigger.input["Type"] }
+    : {}),
+  ...(typeof trigger.input["Description"] === "string"
+    ? { Description: trigger.input["Description"] }
+    : {}),
+  ...(typeof trigger.input["Schedule"] === "string"
+    ? { Schedule: trigger.input["Schedule"] }
+    : {}),
+  ...(Array.isArray(trigger.input["Actions"])
+    ? { Actions: trigger.input["Actions"] }
+    : {}),
+  ...(typeof trigger.input["Predicate"] === "object" &&
+  trigger.input["Predicate"] !== null
+    ? { Predicate: trigger.input["Predicate"] }
+    : {}),
+  ...(typeof trigger.input["StartOnCreation"] === "boolean"
+    ? { StartOnCreation: trigger.input["StartOnCreation"] }
+    : {}),
+  State: trigger.state,
+  CreateTime: trigger.createTime,
+});
+
+const requireTrigger = (
+  ctx: ServiceContext,
+  name: string,
+): StoredTrigger => {
+  const trigger = ctx.store.get<StoredTrigger>(`${triggerPrefix}${name}`);
+  if (trigger === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Trigger ${name} not found.`,
+      400,
+    );
+  }
+  return trigger;
+};
+
+const CreateTrigger: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const name = requireName(record);
+  if (ctx.store.get<StoredTrigger>(`${triggerPrefix}${name}`) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Trigger already exists. Trigger name:${name}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const trigger: StoredTrigger = {
+    input: record,
+    createTime: now,
+    state: "CREATED",
+  };
+  ctx.store.set(`${triggerPrefix}${name}`, trigger);
+  return { Name: name };
+};
+
+const GetTrigger: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const trigger = requireTrigger(ctx, name);
+  return { Trigger: triggerView(name, trigger) };
+};
+
+const GetTriggers: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredTrigger>()
+    .filter((e) => e.key.startsWith(triggerPrefix))
+    .map((e) => triggerView(e.key.slice(triggerPrefix.length), e.value));
+  return { Triggers: list };
+};
+
+const ListTriggers: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredTrigger>()
+    .filter((e) => e.key.startsWith(triggerPrefix))
+    .map((e) => e.key.slice(triggerPrefix.length));
+  return { TriggerNames: list };
+};
+
+const DeleteTrigger: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  requireTrigger(ctx, name);
+  ctx.store.delete(`${triggerPrefix}${name}`);
+  return { Name: name };
+};
+
+const BatchGetTriggers: OperationHandler = (input, ctx) => {
+  const names = Array.isArray(input["TriggerNames"])
+    ? (input["TriggerNames"] as string[])
+    : [];
+  const triggers: Record<string, unknown>[] = [];
+  const triggersNotFound: string[] = [];
+  for (const name of names) {
+    const trigger = ctx.store.get<StoredTrigger>(`${triggerPrefix}${name}`);
+    if (trigger === undefined) {
+      triggersNotFound.push(name);
+    } else {
+      triggers.push(triggerView(name, trigger));
+    }
+  }
+  return { Triggers: triggers, TriggersNotFound: triggersNotFound };
+};
+
+const BatchGetCrawlers: OperationHandler = (input, ctx) => {
+  const names = Array.isArray(input["CrawlerNames"])
+    ? (input["CrawlerNames"] as string[])
+    : [];
+  const crawlers: Record<string, unknown>[] = [];
+  const crawlersNotFound: string[] = [];
+  for (const name of names) {
+    const crawler = ctx.store.get<StoredCrawler>(`${crawlerPrefix}${name}`);
+    if (crawler === undefined) {
+      crawlersNotFound.push(name);
+    } else {
+      crawlers.push(crawlerView(name, crawler));
+    }
+  }
+  return { Crawlers: crawlers, CrawlersNotFound: crawlersNotFound };
+};
+
+const ListCrawlers: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredCrawler>()
+    .filter((e) => e.key.startsWith(crawlerPrefix))
+    .map((e) => e.key.slice(crawlerPrefix.length));
+  return { CrawlerNames: list };
+};
+
+const GetCrawlerMetrics: OperationHandler = (input, ctx) => {
+  const nameList = Array.isArray(input["CrawlerNameList"])
+    ? (input["CrawlerNameList"] as string[])
+    : undefined;
+  const all = ctx.store
+    .list<StoredCrawler>()
+    .filter((e) => e.key.startsWith(crawlerPrefix));
+  const filtered =
+    nameList !== undefined
+      ? all.filter((e) => nameList.includes(e.key.slice(crawlerPrefix.length)))
+      : all;
+  const metrics = filtered.map((e) => ({
+    CrawlerName: e.key.slice(crawlerPrefix.length),
+    TimeLeftSeconds: 0,
+    StillEstimating: false,
+    LastRuntimeSeconds: 0,
+    MedianRuntimeSeconds: 0,
+    TablesCreated: 0,
+    TablesUpdated: 0,
+    TablesDeleted: 0,
+  }));
+  return { CrawlerMetricsList: metrics };
 };
 
 const partitionValuesKey = (values: string[]): string =>
@@ -1508,14 +1833,30 @@ const glue: ServiceDefinition = {
     BatchDeleteTable,
     DeleteTableVersion,
     BatchDeleteTableVersion,
+    BatchGetCrawlers,
     CreateCrawler,
     GetCrawler,
     GetCrawlers,
     DeleteCrawler,
+    ListCrawlers,
+    GetCrawlerMetrics,
+    BatchGetJobs,
     CreateJob,
     GetJob,
     GetJobs,
     DeleteJob,
+    ListJobs,
+    GetJobRun,
+    GetJobRuns,
+    BatchStopJobRun,
+    GetJobBookmark,
+    ResetJobBookmark,
+    BatchGetTriggers,
+    CreateTrigger,
+    GetTrigger,
+    GetTriggers,
+    DeleteTrigger,
+    ListTriggers,
     CreatePartition,
     GetPartition,
     GetPartitions,

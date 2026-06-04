@@ -159,9 +159,7 @@ test("IoTSiteWise asset lifecycle with association", async () => {
   expect(described.assetModelId).toBe(assetModelId);
 
   const listedAll = await client.send(new ListAssetsCommand({}));
-  expect(
-    (listedAll.assetSummaries ?? []).map((s) => s.id),
-  ).toContain(parentId);
+  expect((listedAll.assetSummaries ?? []).map((s) => s.id)).toContain(parentId);
 
   await client.send(
     new AssociateAssetsCommand({
@@ -192,14 +190,16 @@ test("IoTSiteWise gateway lifecycle", async () => {
   expect(created.gatewayArn).toBeDefined();
   const gatewayId = created.gatewayId ?? "";
 
-  const described = await client.send(new DescribeGatewayCommand({ gatewayId }));
+  const described = await client.send(
+    new DescribeGatewayCommand({ gatewayId }),
+  );
   expect(described.gatewayId).toBe(gatewayId);
   expect(described.gatewayName).toBeDefined();
 
   const listed = await client.send(new ListGatewaysCommand({}));
-  expect(
-    (listed.gatewaySummaries ?? []).map((s) => s.gatewayId),
-  ).toContain(gatewayId);
+  expect((listed.gatewaySummaries ?? []).map((s) => s.gatewayId)).toContain(
+    gatewayId,
+  );
 });
 
 test("IoTSiteWise portal lifecycle", async () => {
@@ -249,10 +249,12 @@ test("IoTSiteWise project and project-assets lifecycle", async () => {
   expect(described.projectId).toBe(projectId);
   expect(described.portalId).toBe(portalId);
 
-  const listedProjects = await client.send(new ListProjectsCommand({ portalId }));
-  expect(
-    (listedProjects.projectSummaries ?? []).map((s) => s.id),
-  ).toContain(projectId);
+  const listedProjects = await client.send(
+    new ListProjectsCommand({ portalId }),
+  );
+  expect((listedProjects.projectSummaries ?? []).map((s) => s.id)).toContain(
+    projectId,
+  );
 
   const fakeAssetId = crypto.randomUUID();
   await client.send(
@@ -302,9 +304,9 @@ test("IoTSiteWise dashboard lifecycle", async () => {
   expect(described.dashboardDefinition).toBe('{"widgets":[]}');
 
   const listed = await client.send(new ListDashboardsCommand({ projectId }));
-  expect(
-    (listed.dashboardSummaries ?? []).map((s) => s.id),
-  ).toContain(dashboardId);
+  expect((listed.dashboardSummaries ?? []).map((s) => s.id)).toContain(
+    dashboardId,
+  );
 });
 
 test("IoTSiteWise dataset lifecycle", async () => {
@@ -323,15 +325,15 @@ test("IoTSiteWise dataset lifecycle", async () => {
   expect(created.datasetStatus?.state).toBe("CREATING");
   const datasetId = created.datasetId ?? "";
 
-  const described = await client.send(new DescribeDatasetCommand({ datasetId }));
+  const described = await client.send(
+    new DescribeDatasetCommand({ datasetId }),
+  );
   expect(described.datasetId).toBe(datasetId);
 
   const listed = await client.send(
     new ListDatasetsCommand({ sourceType: "KENDRA" }),
   );
-  expect(
-    (listed.datasetSummaries ?? []).map((s) => s.id),
-  ).toContain(datasetId);
+  expect((listed.datasetSummaries ?? []).map((s) => s.id)).toContain(datasetId);
 });
 
 test("IoTSiteWise access policy lifecycle", async () => {
@@ -363,9 +365,9 @@ test("IoTSiteWise access policy lifecycle", async () => {
   expect(described.accessPolicyPermission).toBe("VIEWER");
 
   const listed = await client.send(new ListAccessPoliciesCommand({}));
-  expect(
-    (listed.accessPolicySummaries ?? []).map((s) => s.id),
-  ).toContain(accessPolicyId);
+  expect((listed.accessPolicySummaries ?? []).map((s) => s.id)).toContain(
+    accessPolicyId,
+  );
 });
 
 test("IoTSiteWise property value put/get", async () => {

@@ -4,7 +4,7 @@ A lightweight, dependency-free local AWS cloud emulator written in [Bun](https:/
 
 `bunsai` ingests the same service definitions the AWS SDK ships internally (botocore `service-2.json` / Smithy models) and drives protocol encoding/decoding from that data, so adding or extending a service is a matter of writing handlers against a model rather than hand-rolling wire formats.
 
-> **Status:** early but broad — **113 AWS services** registered across all 5 AWS wire protocols, validated by real `@aws-sdk/v3` round-trip tests. Operation coverage is **~13%** and growing via automated PR-driven development. See [STATUS.md](./STATUS.md) for the live coverage dashboard.
+> **Status:** broad and growing — **113 AWS services** registered across all 5 AWS wire protocols, validated by real `@aws-sdk/v3` round-trip tests. Operation coverage is **~58%** (92 services at 100%) and growing via automated PR-driven development. See [STATUS.md](./STATUS.md) for the live coverage dashboard.
 
 ## Quick start
 
@@ -103,11 +103,10 @@ Bun workspaces monorepo:
 
 ## Testing
 
-Three test layers (see [`STATUS.md`](./STATUS.md) and the specs under `specs/`):
+Two test layers (see [`STATUS.md`](./STATUS.md)):
 
 - **L0 / e2e** — real `@aws-sdk/v3` clients hit a spawned `bunsai` server and assert full round-trips (`test/e2e/`).
 - **L1 / conformance** — botocore protocol test suite (`test/conformance/`) drives the codec in-process.
-- **L2** — framework-level validation tests.
 
 ```sh
 bun test

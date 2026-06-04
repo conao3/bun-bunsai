@@ -90,6 +90,36 @@ type StoredAddress = {
   Domain: string;
   PublicIpv4Pool: string;
   NetworkBorderGroup: string;
+  AssociationId: string | undefined;
+  InstanceId: string | undefined;
+  Tags: Tag[];
+};
+
+type StoredHost = {
+  HostId: string;
+  AvailabilityZone: string;
+  InstanceType: string | undefined;
+  InstanceFamily: string | undefined;
+  AutoPlacement: string;
+  HostRecovery: string;
+  State: string;
+  Tags: Tag[];
+};
+
+type StoredVpcPeeringConnection = {
+  VpcPeeringConnectionId: string;
+  AccepterVpcId: string;
+  RequesterVpcId: string;
+  Status: { Code: string; Message: string };
+  Tags: Tag[];
+};
+
+type StoredTgwAttachment = {
+  TransitGatewayAttachmentId: string;
+  TransitGatewayId: string;
+  ResourceId: string;
+  ResourceType: string;
+  State: string;
   Tags: Tag[];
 };
 
@@ -162,6 +192,9 @@ const keyPairKey = (name: string): string => `keypair/${name}`;
 const volumeKey = (id: string): string => `volume/${id}`;
 const snapshotKey = (id: string): string => `snapshot/${id}`;
 const natGatewayKey = (id: string): string => `natgw/${id}`;
+const hostKey = (id: string): string => `host/${id}`;
+const vpcPeeringKey = (id: string): string => `pcx/${id}`;
+const tgwAttachmentKey = (id: string): string => `tgw-attach/${id}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -227,6 +260,26 @@ const allNatGateways = (ctx: ServiceContext): StoredNatGateway[] =>
   ctx.store
     .list<StoredNatGateway>()
     .filter((entry) => entry.key.startsWith("natgw/"))
+    .map((entry) => entry.value);
+
+const allHosts = (ctx: ServiceContext): StoredHost[] =>
+  ctx.store
+    .list<StoredHost>()
+    .filter((entry) => entry.key.startsWith("host/"))
+    .map((entry) => entry.value);
+
+const allVpcPeeringConnections = (
+  ctx: ServiceContext,
+): StoredVpcPeeringConnection[] =>
+  ctx.store
+    .list<StoredVpcPeeringConnection>()
+    .filter((entry) => entry.key.startsWith("pcx/"))
+    .map((entry) => entry.value);
+
+const allTgwAttachments = (ctx: ServiceContext): StoredTgwAttachment[] =>
+  ctx.store
+    .list<StoredTgwAttachment>()
+    .filter((entry) => entry.key.startsWith("tgw-attach/"))
     .map((entry) => entry.value);
 
 const integerOf = (value: unknown): number | undefined => {
@@ -783,6 +836,8 @@ const AllocateAddress: OperationHandler = (input, ctx) => {
     Domain: domain,
     PublicIpv4Pool: "amazon",
     NetworkBorderGroup: ctx.region,
+    AssociationId: undefined,
+    InstanceId: undefined,
     Tags: [],
   };
   ctx.store.set(addressKey(id), address);
@@ -1257,6 +1312,354 @@ const DeleteNatGateway: OperationHandler = (input, ctx) => {
   return { NatGatewayId: id };
 };
 
+const AcceptAddressTransfer: OperationHandler = (input, ctx) => {
+  const address = typeof input["Address"] === "string" ? input["Address"] : "";
+  const found = allAddresses(ctx).find((a) => a.PublicIp === address);
+  if (found === undefined) {
+    throw awsError(
+      "InvalidAllocationID.NotFound",
+      `No Elastic IP address found for address '${address}'`,
+      400,
+    );
+  }
+  return {
+    AddressTransfer: {
+      PublicIp: found.PublicIp,
+      AllocationId: found.AllocationId,
+      TransferAccountId: ctx.account,
+      TransferOfferAcceptedTimestamp: new Date().toISOString(),
+      AddressTransferStatus: "accepted",
+    },
+  };
+};
+
+const AcceptCapacityReservationBillingOwnership: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Return: true };
+};
+
+const AcceptReservedInstancesExchangeQuote: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { ExchangeId: hexId("ri-exchange") };
+};
+
+const AcceptTransitGatewayMulticastDomainAssociations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : hexId("tgw-attach");
+  const domainId =
+    typeof input["TransitGatewayMulticastDomainId"] === "string"
+      ? input["TransitGatewayMulticastDomainId"]
+      : hexId("tgw-mcast");
+  return {
+    Associations: {
+      TransitGatewayMulticastDomainId: domainId,
+      TransitGatewayAttachmentId: attachmentId,
+      ResourceId: hexId("vpc"),
+      ResourceType: "vpc",
+      ResourceOwnerId: ctx.account,
+      Subnets: [],
+    },
+  };
+};
+
+const AcceptTransitGatewayPeeringAttachment: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const stored = ctx.store.get<StoredTgwAttachment>(
+    tgwAttachmentKey(attachmentId),
+  );
+  const tgwId = stored?.TransitGatewayId ?? hexId("tgw");
+  if (stored !== undefined) {
+    stored.State = "available";
+    ctx.store.set(tgwAttachmentKey(attachmentId), stored);
+  }
+  return {
+    TransitGatewayPeeringAttachment: {
+      TransitGatewayAttachmentId: attachmentId,
+      AccepterTransitGatewayAttachmentId: hexId("tgw-attach"),
+      RequesterTgwInfo: {
+        TransitGatewayId: tgwId,
+        OwnerId: ctx.account,
+        Region: ctx.region,
+      },
+      AccepterTgwInfo: {
+        TransitGatewayId: hexId("tgw"),
+        OwnerId: ctx.account,
+        Region: ctx.region,
+      },
+      Status: { Code: "200", Message: "OK" },
+      State: "available",
+      CreationTime: new Date().toISOString(),
+      Tags: stored?.Tags ?? [],
+    },
+  };
+};
+
+const AcceptTransitGatewayVpcAttachment: OperationHandler = (input, ctx) => {
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const stored = ctx.store.get<StoredTgwAttachment>(
+    tgwAttachmentKey(attachmentId),
+  );
+  const tgwId = stored?.TransitGatewayId ?? hexId("tgw");
+  const vpcId = stored?.ResourceId ?? hexId("vpc");
+  if (stored !== undefined) {
+    stored.State = "available";
+    ctx.store.set(tgwAttachmentKey(attachmentId), stored);
+  }
+  return {
+    TransitGatewayVpcAttachment: {
+      TransitGatewayAttachmentId: attachmentId,
+      TransitGatewayId: tgwId,
+      VpcId: vpcId,
+      VpcOwnerId: ctx.account,
+      State: "available",
+      SubnetIds: [],
+      CreationTime: new Date().toISOString(),
+      Tags: stored?.Tags ?? [],
+    },
+  };
+};
+
+const AcceptVpcEndpointConnections: OperationHandler = (_input, _ctx) => {
+  return { Unsuccessful: [] };
+};
+
+const AcceptVpcPeeringConnection: OperationHandler = (input, ctx) => {
+  const peeringId =
+    typeof input["VpcPeeringConnectionId"] === "string"
+      ? input["VpcPeeringConnectionId"]
+      : "";
+  const stored = ctx.store.get<StoredVpcPeeringConnection>(
+    vpcPeeringKey(peeringId),
+  );
+  if (stored !== undefined) {
+    stored.Status = { Code: "active", Message: "Active" };
+    ctx.store.set(vpcPeeringKey(peeringId), stored);
+  }
+  const accepterVpcId = stored?.AccepterVpcId ?? hexId("vpc");
+  const requesterVpcId = stored?.RequesterVpcId ?? hexId("vpc");
+  return {
+    VpcPeeringConnection: {
+      VpcPeeringConnectionId: peeringId,
+      AccepterVpcInfo: { VpcId: accepterVpcId, OwnerId: ctx.account },
+      RequesterVpcInfo: { VpcId: requesterVpcId, OwnerId: ctx.account },
+      Status: { Code: "active", Message: "Active" },
+      Tags: stored?.Tags ?? [],
+    },
+  };
+};
+
+const AdvertiseByoipCidr: OperationHandler = (input, _ctx) => {
+  const cidr = typeof input["Cidr"] === "string" ? input["Cidr"] : "";
+  return {
+    ByoipCidr: {
+      Cidr: cidr,
+      State: "advertised",
+      StatusMessage: "Success",
+      AsnAssociations: [],
+    },
+  };
+};
+
+const AllocateHosts: OperationHandler = (input, ctx) => {
+  const availabilityZone =
+    typeof input["AvailabilityZone"] === "string"
+      ? input["AvailabilityZone"]
+      : `${ctx.region}a`;
+  const instanceType =
+    typeof input["InstanceType"] === "string"
+      ? input["InstanceType"]
+      : undefined;
+  const instanceFamily =
+    typeof input["InstanceFamily"] === "string"
+      ? input["InstanceFamily"]
+      : undefined;
+  const quantity = integerOf(input["Quantity"]) ?? 1;
+  const autoPlacement =
+    typeof input["AutoPlacement"] === "string" ? input["AutoPlacement"] : "on";
+  const hostRecovery =
+    typeof input["HostRecovery"] === "string" ? input["HostRecovery"] : "off";
+  const hostIds: string[] = [];
+  for (let i = 0; i < quantity; i += 1) {
+    const id = hexId("h");
+    const host: StoredHost = {
+      HostId: id,
+      AvailabilityZone: availabilityZone,
+      InstanceType: instanceType,
+      InstanceFamily: instanceFamily,
+      AutoPlacement: autoPlacement,
+      HostRecovery: hostRecovery,
+      State: "available",
+      Tags: [],
+    };
+    ctx.store.set(hostKey(id), host);
+    hostIds.push(id);
+  }
+  return { HostIds: hostIds };
+};
+
+const AllocateIpamPoolCidr: OperationHandler = (input, ctx) => {
+  const poolId =
+    typeof input["IpamPoolId"] === "string" ? input["IpamPoolId"] : "";
+  const cidr =
+    typeof input["Cidr"] === "string" ? input["Cidr"] : "10.0.0.0/24";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const allocationId = hexId("ipam-alloc");
+  return {
+    IpamPoolAllocation: {
+      Cidr: cidr,
+      IpamPoolAllocationId: allocationId,
+      Description: description,
+      ResourceId: poolId,
+      ResourceType: "ipam-pool",
+      ResourceRegion: ctx.region,
+      ResourceOwner: ctx.account,
+    },
+  };
+};
+
+const AssignIpv6Addresses: OperationHandler = (input, _ctx) => {
+  const networkInterfaceId =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const count = integerOf(input["Ipv6AddressCount"]) ?? 1;
+  const assigned: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const bytes = crypto.getRandomValues(new Uint8Array(8));
+    const hex = Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    assigned.push(
+      `2600:1f${hex.slice(0, 2)}:${hex.slice(2, 6)}:${hex.slice(6, 10)}::${i + 1}`,
+    );
+  }
+  return {
+    NetworkInterfaceId: networkInterfaceId,
+    AssignedIpv6Addresses: assigned,
+    AssignedIpv6Prefixes: [],
+  };
+};
+
+const AssignPrivateIpAddresses: OperationHandler = (input, _ctx) => {
+  const networkInterfaceId =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const requestedIps = stringList(input["PrivateIpAddresses"]);
+  const count =
+    requestedIps.length > 0
+      ? requestedIps.length
+      : (integerOf(input["SecondaryPrivateIpAddressCount"]) ?? 1);
+  const assigned =
+    requestedIps.length > 0
+      ? requestedIps.map((ip) => ({ PrivateIpAddress: ip }))
+      : Array.from({ length: count }, (_, i) => ({
+          PrivateIpAddress: `10.0.1.${100 + i}`,
+        }));
+  return {
+    NetworkInterfaceId: networkInterfaceId,
+    AssignedPrivateIpAddresses: assigned,
+    AssignedIpv4Prefixes: [],
+  };
+};
+
+const AssignPrivateNatGatewayAddress: OperationHandler = (input, ctx) => {
+  const natGatewayId =
+    typeof input["NatGatewayId"] === "string" ? input["NatGatewayId"] : "";
+  const gateway = ctx.store.get<StoredNatGateway>(natGatewayKey(natGatewayId));
+  if (gateway === undefined) {
+    throw awsError(
+      "NatGatewayNotFound",
+      `The Nat Gateway '${natGatewayId}' does not exist`,
+      400,
+    );
+  }
+  const requestedIps = stringList(input["PrivateIpAddresses"]);
+  const count =
+    requestedIps.length > 0
+      ? requestedIps.length
+      : (integerOf(input["PrivateIpAddressCount"]) ?? 1);
+  const newAddresses = (
+    requestedIps.length > 0
+      ? requestedIps
+      : Array.from({ length: count }, (_, i) => `10.0.2.${200 + i}`)
+  ).map((ip) => ({
+    AllocationId: undefined,
+    PublicIp: randomIpv4(),
+    PrivateIp: ip,
+    NetworkInterfaceId: hexId("eni"),
+  }));
+  for (const addr of newAddresses) gateway.NatGatewayAddresses.push(addr);
+  ctx.store.set(natGatewayKey(natGatewayId), gateway);
+  return {
+    NatGatewayId: natGatewayId,
+    NatGatewayAddresses: gateway.NatGatewayAddresses,
+  };
+};
+
+const AssociateAddress: OperationHandler = (input, ctx) => {
+  const allocationId =
+    typeof input["AllocationId"] === "string"
+      ? input["AllocationId"]
+      : undefined;
+  const publicIp =
+    typeof input["PublicIp"] === "string" ? input["PublicIp"] : undefined;
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : undefined;
+  let address: StoredAddress | undefined;
+  if (allocationId !== undefined) {
+    address = ctx.store.get<StoredAddress>(addressKey(allocationId));
+  } else if (publicIp !== undefined) {
+    address = allAddresses(ctx).find((a) => a.PublicIp === publicIp);
+  }
+  if (address === undefined) {
+    throw awsError(
+      "InvalidAllocationID.NotFound",
+      "No Elastic IP address found",
+      400,
+    );
+  }
+  const associationId = hexId("eipassoc");
+  address.AssociationId = associationId;
+  address.InstanceId = instanceId;
+  ctx.store.set(addressKey(address.AllocationId), address);
+  return { AssociationId: associationId };
+};
+
+const AssociateCapacityReservationBillingOwner: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Return: true };
+};
+
+const AssociateClientVpnTargetNetwork: OperationHandler = (input, _ctx) => {
+  const associationId = hexId("cvpn-assoc");
+  return {
+    AssociationId: associationId,
+    Status: { Code: "associated", Message: "" },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -1298,6 +1701,23 @@ const ec2: ServiceDefinition = {
     CreateNatGateway,
     DescribeNatGateways,
     DeleteNatGateway,
+    AcceptAddressTransfer,
+    AcceptCapacityReservationBillingOwnership,
+    AcceptReservedInstancesExchangeQuote,
+    AcceptTransitGatewayMulticastDomainAssociations,
+    AcceptTransitGatewayPeeringAttachment,
+    AcceptTransitGatewayVpcAttachment,
+    AcceptVpcEndpointConnections,
+    AcceptVpcPeeringConnection,
+    AdvertiseByoipCidr,
+    AllocateHosts,
+    AllocateIpamPoolCidr,
+    AssignIpv6Addresses,
+    AssignPrivateIpAddresses,
+    AssignPrivateNatGatewayAddress,
+    AssociateAddress,
+    AssociateCapacityReservationBillingOwner,
+    AssociateClientVpnTargetNetwork,
   },
   model,
 } as const;

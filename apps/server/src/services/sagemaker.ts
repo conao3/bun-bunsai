@@ -156,6 +156,63 @@ type StoredTrainingPlan = {
   CreationTime: number;
 };
 
+type StoredNotebookInstanceLifecycleConfig = {
+  NotebookInstanceLifecycleConfigName: string;
+  NotebookInstanceLifecycleConfigArn: string;
+  OnStart?: unknown;
+  OnCreate?: unknown;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredPipeline = {
+  PipelineName: string;
+  PipelineArn: string;
+  PipelineDisplayName?: string;
+  PipelineDefinition?: string;
+  PipelineDescription?: string;
+  RoleArn?: string;
+  PipelineStatus: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredPipelineExecution = {
+  PipelineArn: string;
+  PipelineExecutionArn: string;
+  PipelineExecutionDisplayName?: string;
+  PipelineExecutionStatus: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+  PipelineParameters?: Array<{ Name: string; Value: string }>;
+};
+
+type StoredProcessingJob = {
+  ProcessingJobName: string;
+  ProcessingJobArn: string;
+  ProcessingJobStatus: string;
+  AppSpecification?: unknown;
+  ProcessingInputs?: unknown;
+  ProcessingOutputConfig?: unknown;
+  ProcessingResources?: unknown;
+  RoleArn?: string;
+  StoppingCondition?: unknown;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredTransformJob = {
+  TransformJobName: string;
+  TransformJobArn: string;
+  TransformJobStatus: string;
+  ModelName: string;
+  TransformInput?: unknown;
+  TransformOutput?: unknown;
+  TransformResources?: unknown;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
 const modelKey = (name: string): string => `model/${name}`;
 
 const configKey = (name: string): string => `endpoint-config/${name}`;
@@ -187,6 +244,18 @@ const modelQualityJobDefinitionKey = (name: string): string =>
   `model-quality-job-definition/${name}`;
 
 const trainingPlanKey = (name: string): string => `training-plan/${name}`;
+
+const notebookInstanceLifecycleConfigKey = (name: string): string =>
+  `notebook-instance-lifecycle-config/${name}`;
+
+const pipelineKey = (name: string): string => `pipeline/${name}`;
+
+const pipelineExecutionKey = (arn: string): string =>
+  `pipeline-execution/${arn}`;
+
+const processingJobKey = (name: string): string => `processing-job/${name}`;
+
+const transformJobKey = (name: string): string => `transform-job/${name}`;
 
 const trainingJobArnOf = (
   region: string,
@@ -261,6 +330,36 @@ const trainingPlanArnOf = (
   account: string,
   name: string,
 ): string => `arn:aws:sagemaker:${region}:${account}:training-plan/${name}`;
+
+const notebookInstanceLifecycleConfigArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:notebook-instance-lifecycle-config/${name}`;
+
+const pipelineArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:sagemaker:${region}:${account}:pipeline/${name}`;
+
+const pipelineExecutionArnOf = (
+  region: string,
+  account: string,
+  pipelineName: string,
+  executionId: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:pipeline/${pipelineName}/execution/${executionId}`;
+
+const processingJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:processing-job/${name}`;
+
+const transformJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:transform-job/${name}`;
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
@@ -413,9 +512,7 @@ const ListEndpointConfigs: OperationHandler = (_input, ctx) => {
     .list<StoredEndpointConfig>()
     .filter((entry) => entry.key.startsWith("endpoint-config/"))
     .map((entry) => entry.value)
-    .sort((a, b) =>
-      a.EndpointConfigName.localeCompare(b.EndpointConfigName),
-    );
+    .sort((a, b) => a.EndpointConfigName.localeCompare(b.EndpointConfigName));
   return {
     EndpointConfigs: configs.map((stored) => ({
       EndpointConfigName: stored.EndpointConfigName,
@@ -874,7 +971,9 @@ const CreateModelCard: OperationHandler = (input, ctx) => {
     ModelCardArn: arn,
     ModelCardVersion: 1,
     Content:
-      typeof input["Content"] === "string" ? (input["Content"] as string) : "{}",
+      typeof input["Content"] === "string"
+        ? (input["Content"] as string)
+        : "{}",
     ModelCardStatus:
       typeof input["ModelCardStatus"] === "string"
         ? (input["ModelCardStatus"] as string)
@@ -1116,7 +1215,8 @@ const DescribeModelExplainabilityJobDefinition: OperationHandler = (
     ModelExplainabilityAppSpecification:
       stored.ModelExplainabilityAppSpecification,
     ModelExplainabilityJobInput: stored.ModelExplainabilityJobInput,
-    ModelExplainabilityJobOutputConfig: stored.ModelExplainabilityJobOutputConfig,
+    ModelExplainabilityJobOutputConfig:
+      stored.ModelExplainabilityJobOutputConfig,
     JobResources: stored.JobResources,
     NetworkConfig: stored.NetworkConfig,
     RoleArn: stored.RoleArn,
@@ -1247,6 +1347,394 @@ const DescribeTrainingPlan: OperationHandler = (input, ctx) => {
   };
 };
 
+const DeleteNotebookInstance: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "NotebookInstanceName");
+  const stored = ctx.store.get<StoredNotebookInstance>(
+    notebookInstanceKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ValidationException",
+      `RecordNotFound: notebook instance "${name}".`,
+      400,
+    );
+  }
+  ctx.store.delete(notebookInstanceKey(name));
+  return {};
+};
+
+const CreatePresignedNotebookInstanceUrl: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "NotebookInstanceName");
+  const stored = ctx.store.get<StoredNotebookInstance>(
+    notebookInstanceKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ValidationException",
+      `RecordNotFound: notebook instance "${name}".`,
+      400,
+    );
+  }
+  const url = `https://${name}.notebook.${ctx.region}.sagemaker.aws/tree?token=bunsai-presigned-token`;
+  return { AuthorizedUrl: url };
+};
+
+const CreateNotebookInstanceLifecycleConfig: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const name = requireString(input, "NotebookInstanceLifecycleConfigName");
+  const existing = ctx.store.get<StoredNotebookInstanceLifecycleConfig>(
+    notebookInstanceLifecycleConfigKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create NotebookInstanceLifecycleConfig ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = notebookInstanceLifecycleConfigArnOf(
+    ctx.region,
+    ctx.account,
+    name,
+  );
+  const at = nowSeconds();
+  const stored: StoredNotebookInstanceLifecycleConfig = {
+    NotebookInstanceLifecycleConfigName: name,
+    NotebookInstanceLifecycleConfigArn: arn,
+    OnStart: input["OnStart"],
+    OnCreate: input["OnCreate"],
+    CreationTime: at,
+    LastModifiedTime: at,
+  };
+  ctx.store.set(notebookInstanceLifecycleConfigKey(name), stored);
+  return { NotebookInstanceLifecycleConfigArn: arn };
+};
+
+const requireNotebookInstanceLifecycleConfig = (
+  ctx: ServiceContext,
+  name: string,
+): StoredNotebookInstanceLifecycleConfig => {
+  const stored = ctx.store.get<StoredNotebookInstanceLifecycleConfig>(
+    notebookInstanceLifecycleConfigKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ValidationException",
+      `Could not find notebook instance lifecycle config "${name}".`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DescribeNotebookInstanceLifecycleConfig: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const name = requireString(input, "NotebookInstanceLifecycleConfigName");
+  const stored = requireNotebookInstanceLifecycleConfig(ctx, name);
+  return {
+    NotebookInstanceLifecycleConfigArn:
+      stored.NotebookInstanceLifecycleConfigArn,
+    NotebookInstanceLifecycleConfigName:
+      stored.NotebookInstanceLifecycleConfigName,
+    OnStart: stored.OnStart,
+    OnCreate: stored.OnCreate,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DeleteNotebookInstanceLifecycleConfig: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const name = requireString(input, "NotebookInstanceLifecycleConfigName");
+  requireNotebookInstanceLifecycleConfig(ctx, name);
+  ctx.store.delete(notebookInstanceLifecycleConfigKey(name));
+  return {};
+};
+
+const ListNotebookInstanceLifecycleConfigs: OperationHandler = (
+  _input,
+  ctx,
+) => {
+  const configs = ctx.store
+    .list<StoredNotebookInstanceLifecycleConfig>()
+    .filter((entry) =>
+      entry.key.startsWith("notebook-instance-lifecycle-config/"),
+    )
+    .map((entry) => entry.value)
+    .sort((a, b) =>
+      a.NotebookInstanceLifecycleConfigName.localeCompare(
+        b.NotebookInstanceLifecycleConfigName,
+      ),
+    );
+  return {
+    NotebookInstanceLifecycleConfigs: configs.map((stored) => ({
+      NotebookInstanceLifecycleConfigName:
+        stored.NotebookInstanceLifecycleConfigName,
+      NotebookInstanceLifecycleConfigArn:
+        stored.NotebookInstanceLifecycleConfigArn,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const CreatePipeline: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "PipelineName");
+  const existing = ctx.store.get<StoredPipeline>(pipelineKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create Pipeline ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = pipelineArnOf(ctx.region, ctx.account, name);
+  const at = nowSeconds();
+  const stored: StoredPipeline = {
+    PipelineName: name,
+    PipelineArn: arn,
+    PipelineDisplayName:
+      typeof input["PipelineDisplayName"] === "string"
+        ? (input["PipelineDisplayName"] as string)
+        : undefined,
+    PipelineDefinition:
+      typeof input["PipelineDefinition"] === "string"
+        ? (input["PipelineDefinition"] as string)
+        : undefined,
+    PipelineDescription:
+      typeof input["PipelineDescription"] === "string"
+        ? (input["PipelineDescription"] as string)
+        : undefined,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    PipelineStatus: "Active",
+    CreationTime: at,
+    LastModifiedTime: at,
+  };
+  ctx.store.set(pipelineKey(name), stored);
+  return { PipelineArn: arn };
+};
+
+const requirePipeline = (ctx: ServiceContext, name: string): StoredPipeline => {
+  const stored = ctx.store.get<StoredPipeline>(pipelineKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Pipeline with name "${name}" does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DescribePipeline: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "PipelineName");
+  const stored = requirePipeline(ctx, name);
+  return {
+    PipelineArn: stored.PipelineArn,
+    PipelineName: stored.PipelineName,
+    PipelineDisplayName: stored.PipelineDisplayName,
+    PipelineDefinition: stored.PipelineDefinition,
+    PipelineDescription: stored.PipelineDescription,
+    RoleArn: stored.RoleArn,
+    PipelineStatus: stored.PipelineStatus,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+    CreatedBy: {},
+    LastModifiedBy: {},
+  };
+};
+
+const DeletePipeline: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "PipelineName");
+  const stored = requirePipeline(ctx, name);
+  ctx.store.delete(pipelineKey(name));
+  return { PipelineArn: stored.PipelineArn };
+};
+
+const ListPipelineVersions: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "PipelineName");
+  const stored = requirePipeline(ctx, name);
+  return {
+    PipelineVersionSummaries: [
+      {
+        PipelineArn: stored.PipelineArn,
+        CreationTime: stored.CreationTime,
+        LastModifiedTime: stored.LastModifiedTime,
+      },
+    ],
+  };
+};
+
+const ListPipelineExecutions: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "PipelineName");
+  requirePipeline(ctx, name);
+  const arn = pipelineArnOf(ctx.region, ctx.account, name);
+  const executions = ctx.store
+    .list<StoredPipelineExecution>()
+    .filter((entry) => entry.key.startsWith("pipeline-execution/"))
+    .map((entry) => entry.value)
+    .filter((exec) => exec.PipelineArn === arn)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  return {
+    PipelineExecutionSummaries: executions.map((exec) => ({
+      PipelineExecutionArn: exec.PipelineExecutionArn,
+      PipelineExecutionDisplayName: exec.PipelineExecutionDisplayName,
+      PipelineExecutionStatus: exec.PipelineExecutionStatus,
+      StartTime: exec.CreationTime,
+    })),
+  };
+};
+
+const requirePipelineExecution = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredPipelineExecution => {
+  const stored = ctx.store.get<StoredPipelineExecution>(
+    pipelineExecutionKey(arn),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Pipeline execution with ARN "${arn}" does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DescribePipelineExecution: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "PipelineExecutionArn");
+  const stored = requirePipelineExecution(ctx, arn);
+  return {
+    PipelineArn: stored.PipelineArn,
+    PipelineExecutionArn: stored.PipelineExecutionArn,
+    PipelineExecutionDisplayName: stored.PipelineExecutionDisplayName,
+    PipelineExecutionStatus: stored.PipelineExecutionStatus,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+    CreatedBy: {},
+    LastModifiedBy: {},
+  };
+};
+
+const DescribePipelineDefinitionForExecution: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const execArn = requireString(input, "PipelineExecutionArn");
+  const exec = requirePipelineExecution(ctx, execArn);
+  const pipelineNameMatch = exec.PipelineArn.split(":pipeline/")[1];
+  const pipeline = pipelineNameMatch
+    ? ctx.store.get<StoredPipeline>(pipelineKey(pipelineNameMatch))
+    : undefined;
+  return {
+    PipelineDefinition: pipeline?.PipelineDefinition ?? "{}",
+    CreationTime: exec.CreationTime,
+  };
+};
+
+const ListPipelineExecutionSteps: OperationHandler = (input, _ctx) => {
+  requireString(input, "PipelineExecutionArn");
+  return { PipelineExecutionSteps: [] };
+};
+
+const ListPipelineParametersForExecution: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "PipelineExecutionArn");
+  const stored = requirePipelineExecution(ctx, arn);
+  return { PipelineParameters: stored.PipelineParameters ?? [] };
+};
+
+const CreateProcessingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ProcessingJobName");
+  const existing = ctx.store.get<StoredProcessingJob>(processingJobKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create ProcessingJob ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = processingJobArnOf(ctx.region, ctx.account, name);
+  const at = nowSeconds();
+  const stored: StoredProcessingJob = {
+    ProcessingJobName: name,
+    ProcessingJobArn: arn,
+    ProcessingJobStatus: "InProgress",
+    AppSpecification: input["AppSpecification"],
+    ProcessingInputs: input["ProcessingInputs"],
+    ProcessingOutputConfig: input["ProcessingOutputConfig"],
+    ProcessingResources: input["ProcessingResources"],
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    StoppingCondition: input["StoppingCondition"],
+    CreationTime: at,
+    LastModifiedTime: at,
+  };
+  ctx.store.set(processingJobKey(name), stored);
+  return { ProcessingJobArn: arn };
+};
+
+const requireProcessingJob = (
+  ctx: ServiceContext,
+  name: string,
+): StoredProcessingJob => {
+  const stored = ctx.store.get<StoredProcessingJob>(processingJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Could not find processing job "${name}".`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteProcessingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ProcessingJobName");
+  requireProcessingJob(ctx, name);
+  ctx.store.delete(processingJobKey(name));
+  return {};
+};
+
+const CreateTransformJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TransformJobName");
+  const existing = ctx.store.get<StoredTransformJob>(transformJobKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create TransformJob ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const modelName = requireString(input, "ModelName");
+  const arn = transformJobArnOf(ctx.region, ctx.account, name);
+  const at = nowSeconds();
+  const stored: StoredTransformJob = {
+    TransformJobName: name,
+    TransformJobArn: arn,
+    TransformJobStatus: "InProgress",
+    ModelName: modelName,
+    TransformInput: input["TransformInput"],
+    TransformOutput: input["TransformOutput"],
+    TransformResources: input["TransformResources"],
+    CreationTime: at,
+    LastModifiedTime: at,
+  };
+  ctx.store.set(transformJobKey(name), stored);
+  return { TransformJobArn: arn };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -1294,6 +1782,24 @@ const sagemaker = {
     DeleteModelQualityJobDefinition,
     CreateTrainingPlan,
     DescribeTrainingPlan,
+    DeleteNotebookInstance,
+    CreatePresignedNotebookInstanceUrl,
+    CreateNotebookInstanceLifecycleConfig,
+    DescribeNotebookInstanceLifecycleConfig,
+    DeleteNotebookInstanceLifecycleConfig,
+    ListNotebookInstanceLifecycleConfigs,
+    CreatePipeline,
+    DescribePipeline,
+    DeletePipeline,
+    ListPipelineVersions,
+    ListPipelineExecutions,
+    DescribePipelineExecution,
+    DescribePipelineDefinitionForExecution,
+    ListPipelineExecutionSteps,
+    ListPipelineParametersForExecution,
+    CreateProcessingJob,
+    DeleteProcessingJob,
+    CreateTransformJob,
   },
   model,
 } as const satisfies ServiceDefinition;

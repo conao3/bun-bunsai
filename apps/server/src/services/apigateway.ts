@@ -213,6 +213,35 @@ type StoredVpcLink = {
   tags: Record<string, string> | undefined;
 };
 
+type StoredUsagePlan = {
+  id: string;
+  name: string;
+  description: string | undefined;
+  apiStages: Array<{
+    apiId: string;
+    stage: string;
+    throttle?: Record<string, unknown>;
+  }>;
+  throttle: { burstLimit?: number; rateLimit?: number } | undefined;
+  quota: { limit?: number; offset?: number; period?: string } | undefined;
+  productCode: string | undefined;
+  tags: Record<string, string> | undefined;
+};
+
+type StoredUsagePlanKey = {
+  id: string;
+  type: string;
+  value: string;
+  name: string;
+};
+
+type StoredUsage = {
+  usagePlanId: string;
+  startDate: string;
+  endDate: string;
+  items: Record<string, Array<[number, number]>>;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -294,6 +323,14 @@ const domainNameAccessAssociationKey = (arn: string): string =>
   `domainnameaccessassociation/${arn}`;
 
 const vpcLinkKey = (id: string): string => `vpclink/${id}`;
+
+const usagePlanKey = (id: string): string => `usageplan/${id}`;
+
+const usagePlanKeyKey = (usagePlanId: string, keyId: string): string =>
+  `usageplankey/${usagePlanId}/${keyId}`;
+
+const usageKey = (usagePlanId: string, keyId: string): string =>
+  `usage/${usagePlanId}/${keyId}`;
 
 const requireRestApi = (
   ctx: ServiceContext,
@@ -585,6 +622,34 @@ const requireVpcLink = (ctx: ServiceContext, id: string): StoredVpcLink => {
   return v;
 };
 
+const requireUsagePlan = (ctx: ServiceContext, id: string): StoredUsagePlan => {
+  const p = ctx.store.get<StoredUsagePlan>(usagePlanKey(id));
+  if (p === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Invalid usage plan identifier specified`,
+      404,
+    );
+  }
+  return p;
+};
+
+const requireUsagePlanKey = (
+  ctx: ServiceContext,
+  planId: string,
+  keyId: string,
+): StoredUsagePlanKey => {
+  const k = ctx.store.get<StoredUsagePlanKey>(usagePlanKeyKey(planId, keyId));
+  if (k === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Invalid usage plan key identifier specified`,
+      404,
+    );
+  }
+  return k;
+};
+
 const applyPatch = (
   obj: Record<string, unknown>,
   patches: unknown,
@@ -822,6 +887,24 @@ const vpcLinkView = (v: StoredVpcLink): Record<string, unknown> => ({
   status: v.status,
   statusMessage: v.statusMessage,
   tags: v.tags,
+});
+
+const usagePlanView = (p: StoredUsagePlan): Record<string, unknown> => ({
+  id: p.id,
+  name: p.name,
+  description: p.description,
+  apiStages: p.apiStages,
+  throttle: p.throttle,
+  quota: p.quota,
+  productCode: p.productCode,
+  tags: p.tags,
+});
+
+const usagePlanKeyView = (k: StoredUsagePlanKey): Record<string, unknown> => ({
+  id: k.id,
+  type: k.type,
+  value: k.value,
+  name: k.name,
 });
 
 const defaultAccount: StoredAccount = {
@@ -3085,6 +3168,261 @@ const DeleteVpcLink: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const UpdateVpcLink: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["vpcLinkId"]);
+  if (!id) {
+    throw awsError("BadRequestException", "vpcLinkId is required.", 400);
+  }
+  const v = requireVpcLink(ctx, id);
+  const patched = applyPatch(
+    v as unknown as Record<string, unknown>,
+    input["patchOperations"],
+  );
+  const updated: StoredVpcLink = {
+    id,
+    name: typeof patched["name"] === "string" ? patched["name"] : v.name,
+    description: stringOrUndefined(patched["description"]) ?? v.description,
+    targetArns: Array.isArray(patched["targetArns"])
+      ? (patched["targetArns"] as string[])
+      : v.targetArns,
+    status:
+      typeof patched["status"] === "string" ? patched["status"] : v.status,
+    statusMessage:
+      stringOrUndefined(patched["statusMessage"]) ?? v.statusMessage,
+    tags: v.tags,
+  };
+  ctx.store.set(vpcLinkKey(id), updated);
+  return vpcLinkView(updated);
+};
+
+const CreateUsagePlan: OperationHandler = (input, ctx) => {
+  const name = stringOrUndefined(input["name"]);
+  if (!name) {
+    throw awsError("BadRequestException", "name is required.", 400);
+  }
+  const id = randomId();
+  const apiStages = Array.isArray(input["apiStages"])
+    ? (input["apiStages"] as Array<{
+        apiId: string;
+        stage: string;
+        throttle?: Record<string, unknown>;
+      }>)
+    : [];
+  const rawThrottle = input["throttle"];
+  const rawQuota = input["quota"];
+  const plan: StoredUsagePlan = {
+    id,
+    name,
+    description: stringOrUndefined(input["description"]),
+    apiStages,
+    throttle:
+      rawThrottle != null && typeof rawThrottle === "object"
+        ? (rawThrottle as { burstLimit?: number; rateLimit?: number })
+        : undefined,
+    quota:
+      rawQuota != null && typeof rawQuota === "object"
+        ? (rawQuota as { limit?: number; offset?: number; period?: string })
+        : undefined,
+    productCode: stringOrUndefined(input["productCode"]),
+    tags:
+      input["tags"] != null && typeof input["tags"] === "object"
+        ? (input["tags"] as Record<string, string>)
+        : undefined,
+  };
+  ctx.store.set(usagePlanKey(id), plan);
+  return usagePlanView(plan);
+};
+
+const GetUsagePlan: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["usagePlanId"]);
+  if (!id) {
+    throw awsError("BadRequestException", "usagePlanId is required.", 400);
+  }
+  return usagePlanView(requireUsagePlan(ctx, id));
+};
+
+const GetUsagePlans: OperationHandler = (_input, ctx) => {
+  const items = ctx.store
+    .list<StoredUsagePlan>()
+    .filter((e) => e.key.startsWith("usageplan/"))
+    .map((e) => usagePlanView(e.value));
+  return { items };
+};
+
+const DeleteUsagePlan: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["usagePlanId"]);
+  if (!id) {
+    throw awsError("BadRequestException", "usagePlanId is required.", 400);
+  }
+  requireUsagePlan(ctx, id);
+  ctx.store.delete(usagePlanKey(id));
+  return {};
+};
+
+const UpdateUsagePlan: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["usagePlanId"]);
+  if (!id) {
+    throw awsError("BadRequestException", "usagePlanId is required.", 400);
+  }
+  const plan = requireUsagePlan(ctx, id);
+  const patched = applyPatch(
+    plan as unknown as Record<string, unknown>,
+    input["patchOperations"],
+  );
+  const updated: StoredUsagePlan = {
+    id,
+    name: typeof patched["name"] === "string" ? patched["name"] : plan.name,
+    description: stringOrUndefined(patched["description"]) ?? plan.description,
+    apiStages: Array.isArray(patched["apiStages"])
+      ? (patched["apiStages"] as Array<{ apiId: string; stage: string }>)
+      : plan.apiStages,
+    throttle:
+      patched["throttle"] != null && typeof patched["throttle"] === "object"
+        ? (patched["throttle"] as { burstLimit?: number; rateLimit?: number })
+        : plan.throttle,
+    quota:
+      patched["quota"] != null && typeof patched["quota"] === "object"
+        ? (patched["quota"] as {
+            limit?: number;
+            offset?: number;
+            period?: string;
+          })
+        : plan.quota,
+    productCode: stringOrUndefined(patched["productCode"]) ?? plan.productCode,
+    tags: plan.tags,
+  };
+  ctx.store.set(usagePlanKey(id), updated);
+  return usagePlanView(updated);
+};
+
+const CreateUsagePlanKey: OperationHandler = (input, ctx) => {
+  const planId = stringOrUndefined(input["usagePlanId"]);
+  if (!planId) {
+    throw awsError("BadRequestException", "usagePlanId is required.", 400);
+  }
+  requireUsagePlan(ctx, planId);
+  const keyId = stringOrUndefined(input["keyId"]);
+  if (!keyId) {
+    throw awsError("BadRequestException", "keyId is required.", 400);
+  }
+  const keyType = stringOrUndefined(input["keyType"]);
+  if (!keyType) {
+    throw awsError("BadRequestException", "keyType is required.", 400);
+  }
+  const apiKey = ctx.store.get<{ id: string; value: string; name: string }>(
+    apiKeyKey(keyId),
+  );
+  const k: StoredUsagePlanKey = {
+    id: keyId,
+    type: keyType,
+    value: apiKey?.value ?? keyId,
+    name: apiKey?.name ?? keyId,
+  };
+  ctx.store.set(usagePlanKeyKey(planId, keyId), k);
+  return usagePlanKeyView(k);
+};
+
+const GetUsagePlanKey: OperationHandler = (input, ctx) => {
+  const planId = stringOrUndefined(input["usagePlanId"]);
+  if (!planId) {
+    throw awsError("BadRequestException", "usagePlanId is required.", 400);
+  }
+  const keyId = stringOrUndefined(input["keyId"]);
+  if (!keyId) {
+    throw awsError("BadRequestException", "keyId is required.", 400);
+  }
+  return usagePlanKeyView(requireUsagePlanKey(ctx, planId, keyId));
+};
+
+const GetUsagePlanKeys: OperationHandler = (input, ctx) => {
+  const planId = stringOrUndefined(input["usagePlanId"]);
+  if (!planId) {
+    throw awsError("BadRequestException", "usagePlanId is required.", 400);
+  }
+  requireUsagePlan(ctx, planId);
+  const prefix = `usageplankey/${planId}/`;
+  const items = ctx.store
+    .list<StoredUsagePlanKey>()
+    .filter((e) => e.key.startsWith(prefix))
+    .map((e) => usagePlanKeyView(e.value));
+  return { items };
+};
+
+const DeleteUsagePlanKey: OperationHandler = (input, ctx) => {
+  const planId = stringOrUndefined(input["usagePlanId"]);
+  if (!planId) {
+    throw awsError("BadRequestException", "usagePlanId is required.", 400);
+  }
+  const keyId = stringOrUndefined(input["keyId"]);
+  if (!keyId) {
+    throw awsError("BadRequestException", "keyId is required.", 400);
+  }
+  requireUsagePlanKey(ctx, planId, keyId);
+  ctx.store.delete(usagePlanKeyKey(planId, keyId));
+  return {};
+};
+
+const GetUsage: OperationHandler = (input, ctx) => {
+  const planId = stringOrUndefined(input["usagePlanId"]);
+  if (!planId) {
+    throw awsError("BadRequestException", "usagePlanId is required.", 400);
+  }
+  requireUsagePlan(ctx, planId);
+  const startDate = stringOrUndefined(input["startDate"]) ?? "";
+  const endDate = stringOrUndefined(input["endDate"]) ?? "";
+  const filterKeyId = stringOrUndefined(input["keyId"]);
+  const prefix = `usage/${planId}/`;
+  const usages = ctx.store
+    .list<StoredUsage>()
+    .filter((e) => e.key.startsWith(prefix));
+  const items: Record<string, Array<[number, number]>> = {};
+  for (const e of usages) {
+    if (filterKeyId && e.value.usagePlanId !== planId) continue;
+    const keyId = e.key.slice(prefix.length);
+    if (filterKeyId && keyId !== filterKeyId) continue;
+    items[keyId] = e.value.items[keyId] ?? [];
+  }
+  return { usagePlanId: planId, startDate, endDate, items };
+};
+
+const UpdateUsage: OperationHandler = (input, ctx) => {
+  const planId = stringOrUndefined(input["usagePlanId"]);
+  if (!planId) {
+    throw awsError("BadRequestException", "usagePlanId is required.", 400);
+  }
+  const keyId = stringOrUndefined(input["keyId"]);
+  if (!keyId) {
+    throw awsError("BadRequestException", "keyId is required.", 400);
+  }
+  requireUsagePlan(ctx, planId);
+  const existing = ctx.store.get<StoredUsage>(usageKey(planId, keyId)) ?? {
+    usagePlanId: planId,
+    startDate: "",
+    endDate: "",
+    items: {},
+  };
+  const patched = applyPatch(
+    existing as unknown as Record<string, unknown>,
+    input["patchOperations"],
+  );
+  const updated: StoredUsage = {
+    usagePlanId: planId,
+    startDate: existing.startDate,
+    endDate: existing.endDate,
+    items:
+      patched["items"] != null && typeof patched["items"] === "object"
+        ? (patched["items"] as Record<string, Array<[number, number]>>)
+        : existing.items,
+  };
+  ctx.store.set(usageKey(planId, keyId), updated);
+  return {
+    usagePlanId: planId,
+    startDate: updated.startDate,
+    endDate: updated.endDate,
+    items: updated.items,
+  };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -3197,7 +3535,44 @@ const apigateway = {
       if (parts.length === 2) {
         if (req.method === "GET") return "GetVpcLink";
         if (req.method === "DELETE") return "DeleteVpcLink";
+        if (req.method === "PATCH") return "UpdateVpcLink";
         return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "usageplans") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateUsagePlan";
+        if (req.method === "GET") return "GetUsagePlans";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetUsagePlan";
+        if (req.method === "DELETE") return "DeleteUsagePlan";
+        if (req.method === "PATCH") return "UpdateUsagePlan";
+        return undefined;
+      }
+      if (parts.length === 3 && parts[2] === "keys") {
+        if (req.method === "POST") return "CreateUsagePlanKey";
+        if (req.method === "GET") return "GetUsagePlanKeys";
+        return undefined;
+      }
+      if (parts.length === 4 && parts[2] === "keys") {
+        if (req.method === "GET") return "GetUsagePlanKey";
+        if (req.method === "DELETE") return "DeleteUsagePlanKey";
+        return undefined;
+      }
+      if (parts.length === 3 && parts[2] === "usage") {
+        if (req.method === "GET") return "GetUsage";
+        return undefined;
+      }
+      if (
+        parts.length === 4 &&
+        parts[2] === "usage" &&
+        req.method === "PATCH"
+      ) {
+        return "UpdateUsage";
       }
       return undefined;
     }
@@ -3522,6 +3897,18 @@ const apigateway = {
     GetVpcLink,
     GetVpcLinks,
     DeleteVpcLink,
+    UpdateVpcLink,
+    CreateUsagePlan,
+    GetUsagePlan,
+    GetUsagePlans,
+    DeleteUsagePlan,
+    UpdateUsagePlan,
+    CreateUsagePlanKey,
+    GetUsagePlanKey,
+    GetUsagePlanKeys,
+    DeleteUsagePlanKey,
+    GetUsage,
+    UpdateUsage,
     GetClientCertificate,
     GetClientCertificates,
     DeleteClientCertificate,

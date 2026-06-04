@@ -211,6 +211,72 @@ type StoredVerifiedAccessTrustProvider = {
   LastUpdatedTime: string;
 };
 
+type StoredCapacityReservation = {
+  CapacityReservationId: string;
+  InstanceType: string;
+  InstancePlatform: string;
+  AvailabilityZone: string;
+  Tenancy: string;
+  TotalInstanceCount: number;
+  AvailableInstanceCount: number;
+  EbsOptimized: boolean;
+  EphemeralStorage: boolean;
+  State: string;
+  EndDateType: string;
+  InstanceMatchCriteria: string;
+  CreateDate: string;
+  Tags: Tag[];
+};
+
+type StoredCarrierGateway = {
+  CarrierGatewayId: string;
+  VpcId: string;
+  State: string;
+  OwnerId: string;
+  Tags: Tag[];
+};
+
+type StoredClientVpnEndpoint = {
+  ClientVpnEndpointId: string;
+  ServerCertificateArn: string;
+  DnsName: string;
+  State: string;
+  Tags: Tag[];
+};
+
+type StoredClientVpnRoute = {
+  ClientVpnEndpointId: string;
+  DestinationCidrBlock: string;
+  TargetSubnet: string;
+  Description: string;
+  Status: string;
+};
+
+type StoredCoipPool = {
+  PoolId: string;
+  PoolCidrs: string[];
+  LocalGatewayRouteTableId: string;
+  Tags: Tag[];
+  PoolArn: string;
+};
+
+type StoredCoipCidr = {
+  Cidr: string;
+  CoipPoolId: string;
+  LocalGatewayRouteTableId: string;
+};
+
+type StoredCustomerGateway = {
+  CustomerGatewayId: string;
+  State: string;
+  Type: string;
+  IpAddress: string;
+  BgpAsn: string;
+  CertificateArn: string | undefined;
+  DeviceName: string | undefined;
+  Tags: Tag[];
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -236,6 +302,15 @@ const niAttachKey = (id: string): string => `ni-attach/${id}`;
 const vpnGwKey = (id: string): string => `vpngw/${id}`;
 const vaInstanceKey = (id: string): string => `vai/${id}`;
 const vaTrustProviderKey = (id: string): string => `vatp/${id}`;
+const capacityReservationKey = (id: string): string => `cr/${id}`;
+const carrierGatewayKey = (id: string): string => `cagw/${id}`;
+const clientVpnEndpointKey = (id: string): string => `cvpn/${id}`;
+const clientVpnRouteKey = (endpointId: string, cidr: string): string =>
+  `cvpn-route/${endpointId}/${cidr}`;
+const coipPoolKey = (id: string): string => `coip-pool/${id}`;
+const coipCidrKey = (poolId: string, cidr: string): string =>
+  `coip-cidr/${poolId}/${cidr}`;
+const customerGatewayKey = (id: string): string => `cgw/${id}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -321,6 +396,32 @@ const allTgwAttachments = (ctx: ServiceContext): StoredTgwAttachment[] =>
   ctx.store
     .list<StoredTgwAttachment>()
     .filter((entry) => entry.key.startsWith("tgw-attach/"))
+    .map((entry) => entry.value);
+
+const allCapacityReservations = (
+  ctx: ServiceContext,
+): StoredCapacityReservation[] =>
+  ctx.store
+    .list<StoredCapacityReservation>()
+    .filter((entry) => entry.key.startsWith("cr/"))
+    .map((entry) => entry.value);
+
+const allCarrierGateways = (ctx: ServiceContext): StoredCarrierGateway[] =>
+  ctx.store
+    .list<StoredCarrierGateway>()
+    .filter((entry) => entry.key.startsWith("cagw/"))
+    .map((entry) => entry.value);
+
+const allCoipPools = (ctx: ServiceContext): StoredCoipPool[] =>
+  ctx.store
+    .list<StoredCoipPool>()
+    .filter((entry) => entry.key.startsWith("coip-pool/"))
+    .map((entry) => entry.value);
+
+const allCustomerGateways = (ctx: ServiceContext): StoredCustomerGateway[] =>
+  ctx.store
+    .list<StoredCustomerGateway>()
+    .filter((entry) => entry.key.startsWith("cgw/"))
     .map((entry) => entry.value);
 
 const integerOf = (value: unknown): number | undefined => {
@@ -1955,6 +2056,405 @@ const DetachInternetGateway: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const CreateCapacityReservation: OperationHandler = (input, ctx) => {
+  const instanceType =
+    typeof input["InstanceType"] === "string" ? input["InstanceType"] : "";
+  const instancePlatform =
+    typeof input["InstancePlatform"] === "string"
+      ? input["InstancePlatform"]
+      : "Linux/UNIX";
+  const instanceCount =
+    typeof input["InstanceCount"] === "number" ? input["InstanceCount"] : 1;
+  const availabilityZone =
+    typeof input["AvailabilityZone"] === "string"
+      ? input["AvailabilityZone"]
+      : `${ctx.region}a`;
+  const tenancy =
+    typeof input["Tenancy"] === "string" ? input["Tenancy"] : "default";
+  const endDateType =
+    typeof input["EndDateType"] === "string"
+      ? input["EndDateType"]
+      : "unlimited";
+  const instanceMatchCriteria =
+    typeof input["InstanceMatchCriteria"] === "string"
+      ? input["InstanceMatchCriteria"]
+      : "open";
+  const id = hexId("cr");
+  const reservation: StoredCapacityReservation = {
+    CapacityReservationId: id,
+    InstanceType: instanceType,
+    InstancePlatform: instancePlatform,
+    AvailabilityZone: availabilityZone,
+    Tenancy: tenancy,
+    TotalInstanceCount: instanceCount,
+    AvailableInstanceCount: instanceCount,
+    EbsOptimized: input["EbsOptimized"] === true,
+    EphemeralStorage: input["EphemeralStorage"] === true,
+    State: "active",
+    EndDateType: endDateType,
+    InstanceMatchCriteria: instanceMatchCriteria,
+    CreateDate: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(capacityReservationKey(id), reservation);
+  return {
+    CapacityReservation: {
+      CapacityReservationId: reservation.CapacityReservationId,
+      OwnerId: ctx.account,
+      CapacityReservationArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:capacity-reservation/${id}`,
+      InstanceType: reservation.InstanceType,
+      InstancePlatform: reservation.InstancePlatform,
+      AvailabilityZone: reservation.AvailabilityZone,
+      Tenancy: reservation.Tenancy,
+      TotalInstanceCount: reservation.TotalInstanceCount,
+      AvailableInstanceCount: reservation.AvailableInstanceCount,
+      EbsOptimized: reservation.EbsOptimized,
+      EphemeralStorage: reservation.EphemeralStorage,
+      State: reservation.State,
+      EndDateType: reservation.EndDateType,
+      InstanceMatchCriteria: reservation.InstanceMatchCriteria,
+      CreateDate: reservation.CreateDate,
+      Tags: reservation.Tags,
+    },
+  };
+};
+
+const CreateCapacityReservationBySplitting: OperationHandler = (input, ctx) => {
+  const sourceId =
+    typeof input["SourceCapacityReservationId"] === "string"
+      ? input["SourceCapacityReservationId"]
+      : "";
+  const instanceCount =
+    typeof input["InstanceCount"] === "number" ? input["InstanceCount"] : 1;
+  const source = ctx.store.get<StoredCapacityReservation>(
+    capacityReservationKey(sourceId),
+  );
+  if (source === undefined) {
+    throw awsError(
+      "InvalidCapacityReservationId.NotFound",
+      `The capacity reservation ID '${sourceId}' does not exist`,
+      400,
+    );
+  }
+  const destId = hexId("cr");
+  const dest: StoredCapacityReservation = {
+    ...source,
+    CapacityReservationId: destId,
+    TotalInstanceCount: instanceCount,
+    AvailableInstanceCount: instanceCount,
+    CreateDate: new Date().toISOString(),
+  };
+  source.TotalInstanceCount -= instanceCount;
+  source.AvailableInstanceCount -= instanceCount;
+  ctx.store.set(capacityReservationKey(sourceId), source);
+  ctx.store.set(capacityReservationKey(destId), dest);
+  const toView = (r: StoredCapacityReservation) => ({
+    CapacityReservationId: r.CapacityReservationId,
+    OwnerId: ctx.account,
+    CapacityReservationArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:capacity-reservation/${r.CapacityReservationId}`,
+    InstanceType: r.InstanceType,
+    InstancePlatform: r.InstancePlatform,
+    AvailabilityZone: r.AvailabilityZone,
+    Tenancy: r.Tenancy,
+    TotalInstanceCount: r.TotalInstanceCount,
+    AvailableInstanceCount: r.AvailableInstanceCount,
+    State: r.State,
+    EndDateType: r.EndDateType,
+    InstanceMatchCriteria: r.InstanceMatchCriteria,
+    CreateDate: r.CreateDate,
+    Tags: r.Tags,
+  });
+  return {
+    SourceCapacityReservation: toView(source),
+    DestinationCapacityReservation: toView(dest),
+    InstanceCount: instanceCount,
+  };
+};
+
+const CreateCapacityReservationFleet: OperationHandler = (input, ctx) => {
+  const totalTargetCapacity =
+    typeof input["TotalTargetCapacity"] === "number"
+      ? input["TotalTargetCapacity"]
+      : 1;
+  const allocationStrategy =
+    typeof input["AllocationStrategy"] === "string"
+      ? input["AllocationStrategy"]
+      : "prioritized";
+  const instanceMatchCriteria =
+    typeof input["InstanceMatchCriteria"] === "string"
+      ? input["InstanceMatchCriteria"]
+      : "open";
+  const id = hexId("crf");
+  return {
+    CapacityReservationFleetId: id,
+    State: "submitted",
+    TotalTargetCapacity: totalTargetCapacity,
+    TotalFulfilledCapacity: 0,
+    InstanceMatchCriteria: instanceMatchCriteria,
+    AllocationStrategy: allocationStrategy,
+    CreateTime: new Date().toISOString(),
+    FleetCapacityReservations: [],
+    Tags: [],
+  };
+};
+
+const CreateCapacityManagerDataExport: OperationHandler = (_input, _ctx) => {
+  return { CapacityManagerDataExportId: hexId("cmde") };
+};
+
+const CreateCarrierGateway: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const vpc = ctx.store.get<StoredVpc>(vpcKey(vpcId));
+  if (vpc === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${vpcId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("cagw");
+  const gateway: StoredCarrierGateway = {
+    CarrierGatewayId: id,
+    VpcId: vpcId,
+    State: "available",
+    OwnerId: ctx.account,
+    Tags: [],
+  };
+  ctx.store.set(carrierGatewayKey(id), gateway);
+  return {
+    CarrierGateway: {
+      CarrierGatewayId: gateway.CarrierGatewayId,
+      VpcId: gateway.VpcId,
+      State: gateway.State,
+      OwnerId: gateway.OwnerId,
+      Tags: gateway.Tags,
+    },
+  };
+};
+
+const CreateClientVpnEndpoint: OperationHandler = (input, ctx) => {
+  const serverCertificateArn =
+    typeof input["ServerCertificateArn"] === "string"
+      ? input["ServerCertificateArn"]
+      : "";
+  const id = hexId("cvpn");
+  const endpoint: StoredClientVpnEndpoint = {
+    ClientVpnEndpointId: id,
+    ServerCertificateArn: serverCertificateArn,
+    DnsName: `${id}.prod.clientvpn.${ctx.region}.amazonaws.com`,
+    State: "available",
+    Tags: [],
+  };
+  ctx.store.set(clientVpnEndpointKey(id), endpoint);
+  return {
+    ClientVpnEndpointId: id,
+    Status: { Code: "available", Message: "" },
+    DnsName: endpoint.DnsName,
+  };
+};
+
+const CreateClientVpnRoute: OperationHandler = (input, ctx) => {
+  const clientVpnEndpointId =
+    typeof input["ClientVpnEndpointId"] === "string"
+      ? input["ClientVpnEndpointId"]
+      : "";
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "";
+  const targetVpcSubnetId =
+    typeof input["TargetVpcSubnetId"] === "string"
+      ? input["TargetVpcSubnetId"]
+      : "local";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const endpoint = ctx.store.get<StoredClientVpnEndpoint>(
+    clientVpnEndpointKey(clientVpnEndpointId),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidClientVpnEndpointId.NotFound",
+      `The Client VPN endpoint ID '${clientVpnEndpointId}' does not exist`,
+      400,
+    );
+  }
+  const route: StoredClientVpnRoute = {
+    ClientVpnEndpointId: clientVpnEndpointId,
+    DestinationCidrBlock: destinationCidrBlock,
+    TargetSubnet: targetVpcSubnetId,
+    Description: description,
+    Status: "active",
+  };
+  ctx.store.set(
+    clientVpnRouteKey(clientVpnEndpointId, destinationCidrBlock),
+    route,
+  );
+  return { Status: { Code: "creating", Message: "" } };
+};
+
+const CreateCoipPool: OperationHandler = (input, ctx) => {
+  const localGatewayRouteTableId =
+    typeof input["LocalGatewayRouteTableId"] === "string"
+      ? input["LocalGatewayRouteTableId"]
+      : "";
+  const id = hexId("ipv4pool-coip");
+  const pool: StoredCoipPool = {
+    PoolId: id,
+    PoolCidrs: [],
+    LocalGatewayRouteTableId: localGatewayRouteTableId,
+    Tags: [],
+    PoolArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:coip-pool/${id}`,
+  };
+  ctx.store.set(coipPoolKey(id), pool);
+  return {
+    CoipPool: {
+      PoolId: pool.PoolId,
+      PoolCidrs: pool.PoolCidrs,
+      LocalGatewayRouteTableId: pool.LocalGatewayRouteTableId,
+      Tags: pool.Tags,
+      PoolArn: pool.PoolArn,
+    },
+  };
+};
+
+const CreateCoipCidr: OperationHandler = (input, ctx) => {
+  const cidr = typeof input["Cidr"] === "string" ? input["Cidr"] : "";
+  const coipPoolId =
+    typeof input["CoipPoolId"] === "string" ? input["CoipPoolId"] : "";
+  const pool = ctx.store.get<StoredCoipPool>(coipPoolKey(coipPoolId));
+  if (pool === undefined) {
+    throw awsError(
+      "InvalidCoipPoolId.NotFound",
+      `The COIP pool ID '${coipPoolId}' does not exist`,
+      400,
+    );
+  }
+  const coipCidr: StoredCoipCidr = {
+    Cidr: cidr,
+    CoipPoolId: coipPoolId,
+    LocalGatewayRouteTableId: pool.LocalGatewayRouteTableId,
+  };
+  ctx.store.set(coipCidrKey(coipPoolId, cidr), coipCidr);
+  pool.PoolCidrs.push(cidr);
+  ctx.store.set(coipPoolKey(coipPoolId), pool);
+  return {
+    CoipCidr: {
+      Cidr: coipCidr.Cidr,
+      CoipPoolId: coipCidr.CoipPoolId,
+      LocalGatewayRouteTableId: coipCidr.LocalGatewayRouteTableId,
+    },
+  };
+};
+
+const CreateCustomerGateway: OperationHandler = (input, ctx) => {
+  const type = typeof input["Type"] === "string" ? input["Type"] : "ipsec.1";
+  const ipAddress =
+    typeof input["IpAddress"] === "string"
+      ? input["IpAddress"]
+      : typeof input["PublicIp"] === "string"
+        ? input["PublicIp"]
+        : randomIpv4();
+  const bgpAsn =
+    typeof input["BgpAsn"] === "number"
+      ? String(input["BgpAsn"])
+      : typeof input["BgpAsnExtended"] === "number"
+        ? String(input["BgpAsnExtended"])
+        : "65000";
+  const certificateArn =
+    typeof input["CertificateArn"] === "string"
+      ? input["CertificateArn"]
+      : undefined;
+  const deviceName =
+    typeof input["DeviceName"] === "string" ? input["DeviceName"] : undefined;
+  const id = hexId("cgw");
+  const gateway: StoredCustomerGateway = {
+    CustomerGatewayId: id,
+    State: "available",
+    Type: type,
+    IpAddress: ipAddress,
+    BgpAsn: bgpAsn,
+    CertificateArn: certificateArn,
+    DeviceName: deviceName,
+    Tags: [],
+  };
+  ctx.store.set(customerGatewayKey(id), gateway);
+  return {
+    CustomerGateway: {
+      CustomerGatewayId: gateway.CustomerGatewayId,
+      State: gateway.State,
+      Type: gateway.Type,
+      IpAddress: gateway.IpAddress,
+      BgpAsn: gateway.BgpAsn,
+      CertificateArn: gateway.CertificateArn,
+      DeviceName: gateway.DeviceName,
+      Tags: gateway.Tags,
+    },
+  };
+};
+
+const CreateDefaultSubnet: OperationHandler = (input, ctx) => {
+  const availabilityZone =
+    typeof input["AvailabilityZone"] === "string"
+      ? input["AvailabilityZone"]
+      : `${ctx.region}a`;
+  const defaultVpc = allVpcs(ctx).find((vpc) => vpc.IsDefault);
+  if (defaultVpc === undefined) {
+    throw awsError(
+      "DefaultVpcAlreadyExists",
+      "A Default VPC for this user already exists in this region",
+      400,
+    );
+  }
+  const id = hexId("subnet");
+  const subnet: StoredSubnet = {
+    SubnetId: id,
+    VpcId: defaultVpc.VpcId,
+    CidrBlock: "172.31.0.0/20",
+    AvailabilityZone: availabilityZone,
+    State: "available",
+    AvailableIpAddressCount: 4091,
+    DefaultForAz: true,
+    MapPublicIpOnLaunch: true,
+    Tags: [],
+  };
+  ctx.store.set(subnetKey(id), subnet);
+  return { Subnet: subnetView(subnet, ctx.account) };
+};
+
+const CreateDefaultVpc: OperationHandler = (_input, ctx) => {
+  const existing = allVpcs(ctx).find((vpc) => vpc.IsDefault);
+  if (existing !== undefined) {
+    throw awsError(
+      "DefaultVpcAlreadyExists",
+      "A Default VPC for this user already exists in this region",
+      400,
+    );
+  }
+  const id = hexId("vpc");
+  const vpc: StoredVpc = {
+    VpcId: id,
+    CidrBlock: "172.31.0.0/16",
+    State: "available",
+    InstanceTenancy: "default",
+    IsDefault: true,
+    DhcpOptionsId: hexId("dopt"),
+    Tags: [],
+  };
+  ctx.store.set(vpcKey(id), vpc);
+  return {
+    Vpc: {
+      VpcId: vpc.VpcId,
+      CidrBlock: vpc.CidrBlock,
+      State: vpc.State,
+      InstanceTenancy: vpc.InstanceTenancy,
+      IsDefault: vpc.IsDefault,
+      DhcpOptionsId: vpc.DhcpOptionsId,
+      OwnerId: ctx.account,
+      Tags: vpc.Tags,
+    },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -2024,6 +2524,18 @@ const ec2: ServiceDefinition = {
     AttachVerifiedAccessTrustProvider,
     DetachVerifiedAccessTrustProvider,
     DetachInternetGateway,
+    CreateCapacityReservation,
+    CreateCapacityReservationBySplitting,
+    CreateCapacityReservationFleet,
+    CreateCapacityManagerDataExport,
+    CreateCarrierGateway,
+    CreateClientVpnEndpoint,
+    CreateClientVpnRoute,
+    CreateCoipPool,
+    CreateCoipCidr,
+    CreateCustomerGateway,
+    CreateDefaultSubnet,
+    CreateDefaultVpc,
   },
   model,
 } as const;

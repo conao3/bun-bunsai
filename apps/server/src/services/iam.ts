@@ -3211,6 +3211,262 @@ const GetCredentialReport: OperationHandler = (input, ctx) => {
   };
 };
 
+const orgRootKey = "orgroot/state";
+
+type StoredOrgRootState = {
+  OrganizationId: string;
+  EnabledFeatures: string[];
+};
+
+const getOrCreateOrgRootState = (ctx: ServiceContext): StoredOrgRootState => {
+  const existing = ctx.store.get<StoredOrgRootState>(orgRootKey);
+  if (existing !== undefined) return existing;
+  const state: StoredOrgRootState = {
+    OrganizationId: "o-exampleorgid11",
+    EnabledFeatures: [],
+  };
+  ctx.store.set(orgRootKey, state);
+  return state;
+};
+
+const orgAccessReportKey = (jobId: string): string =>
+  `orgaccessreport/${jobId}`;
+
+type StoredOrgAccessReport = {
+  JobId: string;
+  EntityPath: string;
+  JobCreationDate: string;
+  JobCompletionDate: string;
+  JobStatus: string;
+};
+
+const DisableOrganizationsRootCredentialsManagement: OperationHandler = (
+  _input,
+  ctx,
+) => {
+  const state = getOrCreateOrgRootState(ctx);
+  const updated = {
+    ...state,
+    EnabledFeatures: state.EnabledFeatures.filter(
+      (f) => f !== "RootCredentialsManagement",
+    ),
+  };
+  ctx.store.set(orgRootKey, updated);
+  return {
+    OrganizationId: updated.OrganizationId,
+    EnabledFeatures: updated.EnabledFeatures,
+  };
+};
+
+const DisableOrganizationsRootSessions: OperationHandler = (_input, ctx) => {
+  const state = getOrCreateOrgRootState(ctx);
+  const updated = {
+    ...state,
+    EnabledFeatures: state.EnabledFeatures.filter((f) => f !== "RootSessions"),
+  };
+  ctx.store.set(orgRootKey, updated);
+  return {
+    OrganizationId: updated.OrganizationId,
+    EnabledFeatures: updated.EnabledFeatures,
+  };
+};
+
+const EnableOrganizationsRootCredentialsManagement: OperationHandler = (
+  _input,
+  ctx,
+) => {
+  const state = getOrCreateOrgRootState(ctx);
+  const features = state.EnabledFeatures.includes("RootCredentialsManagement")
+    ? state.EnabledFeatures
+    : [...state.EnabledFeatures, "RootCredentialsManagement"];
+  const updated = { ...state, EnabledFeatures: features };
+  ctx.store.set(orgRootKey, updated);
+  return {
+    OrganizationId: updated.OrganizationId,
+    EnabledFeatures: updated.EnabledFeatures,
+  };
+};
+
+const EnableOrganizationsRootSessions: OperationHandler = (_input, ctx) => {
+  const state = getOrCreateOrgRootState(ctx);
+  const features = state.EnabledFeatures.includes("RootSessions")
+    ? state.EnabledFeatures
+    : [...state.EnabledFeatures, "RootSessions"];
+  const updated = { ...state, EnabledFeatures: features };
+  ctx.store.set(orgRootKey, updated);
+  return {
+    OrganizationId: updated.OrganizationId,
+    EnabledFeatures: updated.EnabledFeatures,
+  };
+};
+
+const GenerateOrganizationsAccessReport: OperationHandler = (input, ctx) => {
+  const entityPath = requireString(input, "EntityPath");
+  const jobId = `job/${randomHex(16)}`;
+  const now = new Date().toISOString();
+  const report: StoredOrgAccessReport = {
+    JobId: jobId,
+    EntityPath: entityPath,
+    JobCreationDate: now,
+    JobCompletionDate: now,
+    JobStatus: "COMPLETED",
+  };
+  ctx.store.set(orgAccessReportKey(jobId), report);
+  return { JobId: jobId };
+};
+
+const GetOrganizationsAccessReport: OperationHandler = (input, ctx) => {
+  const jobId = requireString(input, "JobId");
+  const report = ctx.store.get<StoredOrgAccessReport>(
+    orgAccessReportKey(jobId),
+  );
+  if (report === undefined) {
+    throw awsError("NoSuchEntity", `Job ${jobId} cannot be found.`, 404);
+  }
+  return {
+    JobStatus: report.JobStatus,
+    JobCreationDate: report.JobCreationDate,
+    JobCompletionDate: report.JobCompletionDate,
+    NumberOfServicesAccessible: 0,
+    NumberOfServicesNotAccessed: 0,
+    AccessDetails: [],
+    IsTruncated: false,
+  };
+};
+
+const ListOrganizationsFeatures: OperationHandler = (_input, ctx) => {
+  const state = getOrCreateOrgRootState(ctx);
+  return {
+    OrganizationId: state.OrganizationId,
+    EnabledFeatures: state.EnabledFeatures,
+  };
+};
+
+const owifKey = "owif/state";
+
+type StoredOwifState = {
+  JwtVendingEnabled: boolean;
+  IssuerIdentifier: string;
+};
+
+const getOrCreateOwifState = (ctx: ServiceContext): StoredOwifState => {
+  const existing = ctx.store.get<StoredOwifState>(owifKey);
+  if (existing !== undefined) return existing;
+  const state: StoredOwifState = {
+    JwtVendingEnabled: false,
+    IssuerIdentifier: "",
+  };
+  ctx.store.set(owifKey, state);
+  return state;
+};
+
+const DisableOutboundWebIdentityFederation: OperationHandler = (
+  _input,
+  ctx,
+) => {
+  const state = getOrCreateOwifState(ctx);
+  ctx.store.set(owifKey, { ...state, JwtVendingEnabled: false });
+  return {};
+};
+
+const EnableOutboundWebIdentityFederation: OperationHandler = (_input, ctx) => {
+  const state = getOrCreateOwifState(ctx);
+  const issuer =
+    state.IssuerIdentifier ||
+    `https://oidc.eks.us-east-1.amazonaws.com/id/${randomHex(32)}`;
+  ctx.store.set(owifKey, {
+    ...state,
+    JwtVendingEnabled: true,
+    IssuerIdentifier: issuer,
+  });
+  return { IssuerIdentifier: issuer };
+};
+
+const GetOutboundWebIdentityFederationInfo: OperationHandler = (
+  _input,
+  ctx,
+) => {
+  const state = getOrCreateOwifState(ctx);
+  return {
+    IssuerIdentifier: state.IssuerIdentifier || undefined,
+    JwtVendingEnabled: state.JwtVendingEnabled,
+  };
+};
+
+const GetAccountAuthorizationDetails: OperationHandler = (_input, ctx) => {
+  const users = ctx.store
+    .list<StoredUser>()
+    .filter((e) => e.key.startsWith("user/"))
+    .map((e) => e.value);
+  const groups = ctx.store
+    .list<StoredGroup>()
+    .filter((e) => e.key.startsWith("group/"))
+    .map((e) => e.value);
+  const roles = ctx.store
+    .list<StoredRole>()
+    .filter((e) => e.key.startsWith("role/"))
+    .map((e) => e.value);
+  const policies = ctx.store
+    .list<StoredPolicy>()
+    .filter((e) => e.key.startsWith("policy/"))
+    .map((e) => e.value);
+  return {
+    UserDetailList: users.map((u) => ({
+      Path: u.Path,
+      UserName: u.UserName,
+      UserId: u.UserId,
+      Arn: u.Arn,
+      CreateDate: u.CreateDate,
+      UserPolicyList: [],
+      GroupList: [],
+      AttachedManagedPolicies: [],
+    })),
+    GroupDetailList: groups.map((g) => ({
+      Path: g.Path,
+      GroupName: g.GroupName,
+      GroupId: g.GroupId,
+      Arn: g.Arn,
+      CreateDate: g.CreateDate,
+      GroupPolicyList: [],
+      AttachedManagedPolicies: [],
+    })),
+    RoleDetailList: roles.map((r) => ({
+      Path: r.Path,
+      RoleName: r.RoleName,
+      RoleId: r.RoleId,
+      Arn: r.Arn,
+      CreateDate: r.CreateDate,
+      AssumeRolePolicyDocument: r.AssumeRolePolicyDocument,
+      RolePolicyList: [],
+      AttachedManagedPolicies: [],
+    })),
+    Policies: policies.map((p) => ({
+      PolicyName: p.PolicyName,
+      PolicyId: p.PolicyId,
+      Arn: p.Arn,
+      Path: p.Path,
+      DefaultVersionId: p.DefaultVersionId,
+      AttachmentCount: p.AttachmentCount,
+      IsAttachable: p.IsAttachable,
+      Description: p.Description,
+      CreateDate: p.CreateDate,
+      UpdateDate: p.UpdateDate,
+      PolicyVersionList: [],
+    })),
+    IsTruncated: false,
+  };
+};
+
+const GetHumanReadableSummary: OperationHandler = (input, _ctx) => {
+  const entityArn = requireString(input, "EntityArn");
+  const locale = optionalString(input, "Locale") ?? "en";
+  return {
+    SummaryContent: `Summary for ${entityArn}`,
+    Locale: locale,
+    SummaryState: "AVAILABLE",
+  };
+};
+
 const iam = {
   name: "iam",
   protocol: "query",
@@ -3368,6 +3624,18 @@ const iam = {
     AssociateDelegationRequest,
     CreateDelegationRequest,
     GetDelegationRequest,
+    DisableOrganizationsRootCredentialsManagement,
+    DisableOrganizationsRootSessions,
+    EnableOrganizationsRootCredentialsManagement,
+    EnableOrganizationsRootSessions,
+    GenerateOrganizationsAccessReport,
+    GetOrganizationsAccessReport,
+    ListOrganizationsFeatures,
+    DisableOutboundWebIdentityFederation,
+    EnableOutboundWebIdentityFederation,
+    GetOutboundWebIdentityFederationInfo,
+    GetAccountAuthorizationDetails,
+    GetHumanReadableSummary,
   },
   model,
 } as const satisfies ServiceDefinition;

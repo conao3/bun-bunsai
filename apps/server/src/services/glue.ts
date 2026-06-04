@@ -39,6 +39,10 @@ const devEndpointPrefix = "devEndpoint:";
 const mlTransformPrefix = "mlTransform:";
 const registryPrefix = "registry:";
 const schemaPrefix = "schema:";
+const blueprintPrefix = "blueprint:";
+const workflowPrefix = "workflow:";
+const sessionPrefix = "session:";
+const dqRulesetPrefix = "dqRuleset:";
 
 type StoredCrawler = {
   input: Record<string, unknown>;
@@ -152,6 +156,32 @@ type StoredSchema = {
   nextSchemaVersion: number;
   schemaCheckpoint: number;
   firstSchemaVersionId: string;
+};
+
+type StoredBlueprint = {
+  name: string;
+  input: Record<string, unknown>;
+  createdOn: number;
+  lastModifiedOn: number;
+};
+
+type StoredWorkflow = {
+  name: string;
+  input: Record<string, unknown>;
+  createdOn: number;
+  lastModifiedOn: number;
+};
+
+type StoredSession = {
+  id: string;
+  input: Record<string, unknown>;
+  createdOn: number;
+};
+
+type StoredDataQualityRuleset = {
+  name: string;
+  input: Record<string, unknown>;
+  createdOn: number;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -281,7 +311,11 @@ const GetDatabases: OperationHandler = (input, ctx) => {
         !entry.key.startsWith(devEndpointPrefix) &&
         !entry.key.startsWith(mlTransformPrefix) &&
         !entry.key.startsWith(registryPrefix) &&
-        !entry.key.startsWith(schemaPrefix),
+        !entry.key.startsWith(schemaPrefix) &&
+        !entry.key.startsWith(blueprintPrefix) &&
+        !entry.key.startsWith(workflowPrefix) &&
+        !entry.key.startsWith(sessionPrefix) &&
+        !entry.key.startsWith(dqRulesetPrefix),
     )
     .map((entry) => databaseView(entry.key, entry.value, catalogId));
   return { DatabaseList: list };
@@ -2309,6 +2343,269 @@ const DeleteIntegrationTableProperties: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const blueprintView = (stored: StoredBlueprint): Record<string, unknown> => ({
+  Name: stored.name,
+  ...(typeof stored.input["Description"] === "string"
+    ? { Description: stored.input["Description"] }
+    : {}),
+  ...(typeof stored.input["BlueprintLocation"] === "string"
+    ? { BlueprintLocation: stored.input["BlueprintLocation"] }
+    : {}),
+  CreatedOn: stored.createdOn,
+  LastModifiedOn: stored.lastModifiedOn,
+  Status: "ACTIVE",
+});
+
+const CreateBlueprint: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const name =
+    typeof record["Name"] === "string" ? (record["Name"] as string) : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredBlueprint>(`${blueprintPrefix}${name}`) !== undefined
+  ) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Blueprint already exists: ${name}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredBlueprint = {
+    name,
+    input: record,
+    createdOn: now,
+    lastModifiedOn: now,
+  };
+  ctx.store.set(`${blueprintPrefix}${name}`, stored);
+  return { Name: name };
+};
+
+const DeleteBlueprint: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["Name"] === "string" ? (input["Name"] as string) : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredBlueprint>(`${blueprintPrefix}${name}`) === undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Blueprint ${name} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(`${blueprintPrefix}${name}`);
+  return { Name: name };
+};
+
+const BatchGetBlueprints: OperationHandler = (input, ctx) => {
+  const names = Array.isArray(input["Names"])
+    ? (input["Names"] as string[])
+    : [];
+  const blueprints: Record<string, unknown>[] = [];
+  const missingBlueprints: string[] = [];
+  for (const name of names) {
+    const stored = ctx.store.get<StoredBlueprint>(`${blueprintPrefix}${name}`);
+    if (stored === undefined) {
+      missingBlueprints.push(name);
+    } else {
+      blueprints.push(blueprintView(stored));
+    }
+  }
+  return { Blueprints: blueprints, MissingBlueprints: missingBlueprints };
+};
+
+const workflowView = (stored: StoredWorkflow): Record<string, unknown> => ({
+  Name: stored.name,
+  ...(typeof stored.input["Description"] === "string"
+    ? { Description: stored.input["Description"] }
+    : {}),
+  ...(typeof stored.input["DefaultRunProperties"] === "object" &&
+  stored.input["DefaultRunProperties"] !== null
+    ? { DefaultRunProperties: stored.input["DefaultRunProperties"] }
+    : {}),
+  ...(typeof stored.input["MaxConcurrentRuns"] === "number"
+    ? { MaxConcurrentRuns: stored.input["MaxConcurrentRuns"] }
+    : {}),
+  CreatedOn: stored.createdOn,
+  LastModifiedOn: stored.lastModifiedOn,
+});
+
+const CreateWorkflow: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const name =
+    typeof record["Name"] === "string" ? (record["Name"] as string) : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  if (ctx.store.get<StoredWorkflow>(`${workflowPrefix}${name}`) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Workflow already exists: ${name}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredWorkflow = {
+    name,
+    input: record,
+    createdOn: now,
+    lastModifiedOn: now,
+  };
+  ctx.store.set(`${workflowPrefix}${name}`, stored);
+  return { Name: name };
+};
+
+const BatchGetWorkflows: OperationHandler = (input, ctx) => {
+  const names = Array.isArray(input["Names"])
+    ? (input["Names"] as string[])
+    : [];
+  const workflows: Record<string, unknown>[] = [];
+  const missingWorkflows: string[] = [];
+  for (const name of names) {
+    const stored = ctx.store.get<StoredWorkflow>(`${workflowPrefix}${name}`);
+    if (stored === undefined) {
+      missingWorkflows.push(name);
+    } else {
+      workflows.push(workflowView(stored));
+    }
+  }
+  return { Workflows: workflows, MissingWorkflows: missingWorkflows };
+};
+
+const sessionView = (stored: StoredSession): Record<string, unknown> => ({
+  Id: stored.id,
+  ...(typeof stored.input["Description"] === "string"
+    ? { Description: stored.input["Description"] }
+    : {}),
+  ...(typeof stored.input["Role"] === "string"
+    ? { Role: stored.input["Role"] }
+    : {}),
+  ...(typeof stored.input["Command"] === "object" &&
+  stored.input["Command"] !== null
+    ? { Command: stored.input["Command"] }
+    : {}),
+  ...(typeof stored.input["GlueVersion"] === "string"
+    ? { GlueVersion: stored.input["GlueVersion"] }
+    : {}),
+  ...(typeof stored.input["NumberOfWorkers"] === "number"
+    ? { NumberOfWorkers: stored.input["NumberOfWorkers"] }
+    : {}),
+  ...(typeof stored.input["WorkerType"] === "string"
+    ? { WorkerType: stored.input["WorkerType"] }
+    : {}),
+  CreatedOn: stored.createdOn,
+  Status: "READY",
+});
+
+const CreateSession: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const id = typeof record["Id"] === "string" ? (record["Id"] as string) : "";
+  if (id === "") {
+    throw awsError("InvalidInputException", "Id is required.", 400);
+  }
+  if (ctx.store.get<StoredSession>(`${sessionPrefix}${id}`) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Session already exists: ${id}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredSession = { id, input: record, createdOn: now };
+  ctx.store.set(`${sessionPrefix}${id}`, stored);
+  return { Session: sessionView(stored) };
+};
+
+const CancelStatement: OperationHandler = (input, ctx) => {
+  const sessionId =
+    typeof input["SessionId"] === "string"
+      ? (input["SessionId"] as string)
+      : "";
+  if (sessionId === "") {
+    throw awsError("InvalidInputException", "SessionId is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredSession>(`${sessionPrefix}${sessionId}`) === undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Session ${sessionId} not found.`,
+      400,
+    );
+  }
+  return {};
+};
+
+const CreateDataQualityRuleset: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const name =
+    typeof record["Name"] === "string" ? (record["Name"] as string) : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredDataQualityRuleset>(`${dqRulesetPrefix}${name}`) !==
+    undefined
+  ) {
+    throw awsError(
+      "AlreadyExistsException",
+      `DataQualityRuleset already exists: ${name}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredDataQualityRuleset = {
+    name,
+    input: record,
+    createdOn: now,
+  };
+  ctx.store.set(`${dqRulesetPrefix}${name}`, stored);
+  return { Name: name };
+};
+
+const BatchGetDataQualityResult: OperationHandler = (input, _ctx) => {
+  const resultIds = Array.isArray(input["ResultIds"])
+    ? (input["ResultIds"] as string[])
+    : [];
+  return { Results: [], ResultsNotFound: resultIds };
+};
+
+const BatchPutDataQualityStatisticAnnotation: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { FailedInclusionAnnotations: [] };
+};
+
+const CancelDataQualityRuleRecommendationRun: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const runId =
+    typeof input["RunId"] === "string" ? (input["RunId"] as string) : "";
+  if (runId === "") {
+    throw awsError("InvalidInputException", "RunId is required.", 400);
+  }
+  return {};
+};
+
+const CancelDataQualityRulesetEvaluationRun: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const runId =
+    typeof input["RunId"] === "string" ? (input["RunId"] as string) : "";
+  if (runId === "") {
+    throw awsError("InvalidInputException", "RunId is required.", 400);
+  }
+  return {};
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -2392,6 +2689,18 @@ const glue: ServiceDefinition = {
     DeleteSchema,
     DeleteSchemaVersions,
     CheckSchemaVersionValidity,
+    CreateBlueprint,
+    DeleteBlueprint,
+    BatchGetBlueprints,
+    CreateWorkflow,
+    BatchGetWorkflows,
+    CreateSession,
+    CancelStatement,
+    CreateDataQualityRuleset,
+    BatchGetDataQualityResult,
+    BatchPutDataQualityStatisticAnnotation,
+    CancelDataQualityRuleRecommendationRun,
+    CancelDataQualityRulesetEvaluationRun,
   },
   model,
 } as const;

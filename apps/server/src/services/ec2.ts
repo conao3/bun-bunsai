@@ -132,6 +132,14 @@ type StoredKeyPair = {
   Tags: Tag[];
 };
 
+type StoredVolumeAttachment = {
+  VolumeId: string;
+  InstanceId: string;
+  Device: string;
+  State: string;
+  AttachTime: string;
+};
+
 type StoredVolume = {
   VolumeId: string;
   Size: number;
@@ -143,6 +151,7 @@ type StoredVolume = {
   Encrypted: boolean;
   CreateTime: string;
   Tags: Tag[];
+  Attachments: StoredVolumeAttachment[];
 };
 
 type StoredSnapshot = {
@@ -174,6 +183,34 @@ type StoredNatGateway = {
   Tags: Tag[];
 };
 
+type StoredNetworkInterfaceAttachment = {
+  AttachmentId: string;
+  NetworkInterfaceId: string;
+  InstanceId: string;
+  DeviceIndex: number;
+};
+
+type StoredVpnGateway = {
+  VpnGatewayId: string;
+  State: string;
+  VpcAttachments: { VpcId: string; State: string }[];
+};
+
+type StoredVerifiedAccessInstance = {
+  VerifiedAccessInstanceId: string;
+  TrustProviderIds: string[];
+  CreationTime: string;
+  LastUpdatedTime: string;
+};
+
+type StoredVerifiedAccessTrustProvider = {
+  VerifiedAccessTrustProviderId: string;
+  TrustProviderType: string;
+  PolicyReferenceName: string;
+  CreationTime: string;
+  LastUpdatedTime: string;
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -195,6 +232,10 @@ const natGatewayKey = (id: string): string => `natgw/${id}`;
 const hostKey = (id: string): string => `host/${id}`;
 const vpcPeeringKey = (id: string): string => `pcx/${id}`;
 const tgwAttachmentKey = (id: string): string => `tgw-attach/${id}`;
+const niAttachKey = (id: string): string => `ni-attach/${id}`;
+const vpnGwKey = (id: string): string => `vpngw/${id}`;
+const vaInstanceKey = (id: string): string => `vai/${id}`;
+const vaTrustProviderKey = (id: string): string => `vatp/${id}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -1118,7 +1159,7 @@ const volumeView = (volume: StoredVolume): unknown => ({
   Iops: volume.Iops,
   Encrypted: volume.Encrypted,
   CreateTime: volume.CreateTime,
-  Attachments: [],
+  Attachments: volume.Attachments,
   Tags: volume.Tags,
 });
 
@@ -1144,6 +1185,7 @@ const CreateVolume: OperationHandler = (input, ctx) => {
     Encrypted: input["Encrypted"] === true,
     CreateTime: new Date().toISOString(),
     Tags: [],
+    Attachments: [],
   };
   ctx.store.set(volumeKey(id), volume);
   return volumeView(volume);
@@ -1660,6 +1702,259 @@ const AssociateClientVpnTargetNetwork: OperationHandler = (input, _ctx) => {
   };
 };
 
+const AttachVolume: OperationHandler = (input, ctx) => {
+  const volumeId =
+    typeof input["VolumeId"] === "string" ? input["VolumeId"] : "";
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const device =
+    typeof input["Device"] === "string" ? input["Device"] : "/dev/sdf";
+  const volume = ctx.store.get<StoredVolume>(volumeKey(volumeId));
+  if (volume === undefined) {
+    throw awsError(
+      "InvalidVolume.NotFound",
+      `The volume '${volumeId}' does not exist.`,
+      400,
+    );
+  }
+  const attachTime = new Date().toISOString();
+  const attachment: StoredVolumeAttachment = {
+    VolumeId: volumeId,
+    InstanceId: instanceId,
+    Device: device,
+    State: "attached",
+    AttachTime: attachTime,
+  };
+  volume.State = "in-use";
+  volume.Attachments = [attachment];
+  ctx.store.set(volumeKey(volumeId), volume);
+  return attachment;
+};
+
+const DetachVolume: OperationHandler = (input, ctx) => {
+  const volumeId =
+    typeof input["VolumeId"] === "string" ? input["VolumeId"] : "";
+  const volume = ctx.store.get<StoredVolume>(volumeKey(volumeId));
+  if (volume === undefined) {
+    throw awsError(
+      "InvalidVolume.NotFound",
+      `The volume '${volumeId}' does not exist.`,
+      400,
+    );
+  }
+  const prior = volume.Attachments[0];
+  volume.State = "available";
+  volume.Attachments = [];
+  ctx.store.set(volumeKey(volumeId), volume);
+  return {
+    VolumeId: volumeId,
+    InstanceId: prior?.InstanceId ?? "",
+    Device: prior?.Device ?? "",
+    State: "detached",
+    AttachTime: prior?.AttachTime ?? new Date().toISOString(),
+  };
+};
+
+const AttachNetworkInterface: OperationHandler = (input, ctx) => {
+  const networkInterfaceId =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const deviceIndex = integerOf(input["DeviceIndex"]) ?? 0;
+  const attachmentId = hexId("eni-attach");
+  const attachment: StoredNetworkInterfaceAttachment = {
+    AttachmentId: attachmentId,
+    NetworkInterfaceId: networkInterfaceId,
+    InstanceId: instanceId,
+    DeviceIndex: deviceIndex,
+  };
+  ctx.store.set(niAttachKey(attachmentId), attachment);
+  return { AttachmentId: attachmentId, NetworkCardIndex: 0 };
+};
+
+const DetachNetworkInterface: OperationHandler = (input, ctx) => {
+  const attachmentId =
+    typeof input["AttachmentId"] === "string" ? input["AttachmentId"] : "";
+  ctx.store.delete(niAttachKey(attachmentId));
+  return {};
+};
+
+const AttachVpnGateway: OperationHandler = (input, ctx) => {
+  const vpnGatewayId =
+    typeof input["VpnGatewayId"] === "string" ? input["VpnGatewayId"] : "";
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  let gateway = ctx.store.get<StoredVpnGateway>(vpnGwKey(vpnGatewayId));
+  if (gateway === undefined) {
+    gateway = {
+      VpnGatewayId: vpnGatewayId,
+      State: "available",
+      VpcAttachments: [],
+    };
+  }
+  gateway.VpcAttachments = gateway.VpcAttachments.filter(
+    (a) => a.VpcId !== vpcId,
+  );
+  gateway.VpcAttachments.push({ VpcId: vpcId, State: "attached" });
+  ctx.store.set(vpnGwKey(vpnGatewayId), gateway);
+  return { VpcAttachment: { VpcId: vpcId, State: "attached" } };
+};
+
+const DetachVpnGateway: OperationHandler = (input, ctx) => {
+  const vpnGatewayId =
+    typeof input["VpnGatewayId"] === "string" ? input["VpnGatewayId"] : "";
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const gateway = ctx.store.get<StoredVpnGateway>(vpnGwKey(vpnGatewayId));
+  if (gateway !== undefined) {
+    gateway.VpcAttachments = gateway.VpcAttachments.filter(
+      (a) => a.VpcId !== vpcId,
+    );
+    ctx.store.set(vpnGwKey(vpnGatewayId), gateway);
+  }
+  return {};
+};
+
+const AttachClassicLinkVpc: OperationHandler = (_input, _ctx) => {
+  return { Return: true };
+};
+
+const DetachClassicLinkVpc: OperationHandler = (_input, _ctx) => {
+  return { Return: true };
+};
+
+const AttachVerifiedAccessTrustProvider: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["VerifiedAccessInstanceId"] === "string"
+      ? input["VerifiedAccessInstanceId"]
+      : "";
+  const trustProviderId =
+    typeof input["VerifiedAccessTrustProviderId"] === "string"
+      ? input["VerifiedAccessTrustProviderId"]
+      : "";
+  let instance = ctx.store.get<StoredVerifiedAccessInstance>(
+    vaInstanceKey(instanceId),
+  );
+  if (instance === undefined) {
+    instance = {
+      VerifiedAccessInstanceId: instanceId,
+      TrustProviderIds: [],
+      CreationTime: new Date().toISOString(),
+      LastUpdatedTime: new Date().toISOString(),
+    };
+  }
+  if (!instance.TrustProviderIds.includes(trustProviderId)) {
+    instance.TrustProviderIds.push(trustProviderId);
+  }
+  instance.LastUpdatedTime = new Date().toISOString();
+  ctx.store.set(vaInstanceKey(instanceId), instance);
+  let trustProvider = ctx.store.get<StoredVerifiedAccessTrustProvider>(
+    vaTrustProviderKey(trustProviderId),
+  );
+  if (trustProvider === undefined) {
+    trustProvider = {
+      VerifiedAccessTrustProviderId: trustProviderId,
+      TrustProviderType: "user",
+      PolicyReferenceName: "user",
+      CreationTime: new Date().toISOString(),
+      LastUpdatedTime: new Date().toISOString(),
+    };
+    ctx.store.set(vaTrustProviderKey(trustProviderId), trustProvider);
+  }
+  return {
+    VerifiedAccessTrustProvider: {
+      VerifiedAccessTrustProviderId:
+        trustProvider.VerifiedAccessTrustProviderId,
+      TrustProviderType: trustProvider.TrustProviderType,
+      PolicyReferenceName: trustProvider.PolicyReferenceName,
+      CreationTime: trustProvider.CreationTime,
+      LastUpdatedTime: trustProvider.LastUpdatedTime,
+    },
+    VerifiedAccessInstance: {
+      VerifiedAccessInstanceId: instance.VerifiedAccessInstanceId,
+      CreationTime: instance.CreationTime,
+      LastUpdatedTime: instance.LastUpdatedTime,
+      VerifiedAccessTrustProviders: instance.TrustProviderIds.map((id) => ({
+        VerifiedAccessTrustProviderId: id,
+        TrustProviderType: "user",
+      })),
+    },
+  };
+};
+
+const DetachVerifiedAccessTrustProvider: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["VerifiedAccessInstanceId"] === "string"
+      ? input["VerifiedAccessInstanceId"]
+      : "";
+  const trustProviderId =
+    typeof input["VerifiedAccessTrustProviderId"] === "string"
+      ? input["VerifiedAccessTrustProviderId"]
+      : "";
+  const instance = ctx.store.get<StoredVerifiedAccessInstance>(
+    vaInstanceKey(instanceId),
+  );
+  if (instance !== undefined) {
+    instance.TrustProviderIds = instance.TrustProviderIds.filter(
+      (id) => id !== trustProviderId,
+    );
+    instance.LastUpdatedTime = new Date().toISOString();
+    ctx.store.set(vaInstanceKey(instanceId), instance);
+  }
+  const trustProvider = ctx.store.get<StoredVerifiedAccessTrustProvider>(
+    vaTrustProviderKey(trustProviderId),
+  );
+  return {
+    VerifiedAccessTrustProvider: trustProvider
+      ? {
+          VerifiedAccessTrustProviderId:
+            trustProvider.VerifiedAccessTrustProviderId,
+          TrustProviderType: trustProvider.TrustProviderType,
+          PolicyReferenceName: trustProvider.PolicyReferenceName,
+          CreationTime: trustProvider.CreationTime,
+          LastUpdatedTime: trustProvider.LastUpdatedTime,
+        }
+      : {
+          VerifiedAccessTrustProviderId: trustProviderId,
+          TrustProviderType: "user",
+          PolicyReferenceName: "user",
+        },
+    VerifiedAccessInstance: instance
+      ? {
+          VerifiedAccessInstanceId: instance.VerifiedAccessInstanceId,
+          CreationTime: instance.CreationTime,
+          LastUpdatedTime: instance.LastUpdatedTime,
+          VerifiedAccessTrustProviders: instance.TrustProviderIds.map((id) => ({
+            VerifiedAccessTrustProviderId: id,
+            TrustProviderType: "user",
+          })),
+        }
+      : {
+          VerifiedAccessInstanceId: instanceId,
+          VerifiedAccessTrustProviders: [],
+        },
+  };
+};
+
+const DetachInternetGateway: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["InternetGatewayId"] === "string"
+      ? input["InternetGatewayId"]
+      : "";
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const gateway = ctx.store.get<StoredInternetGateway>(igwKey(id));
+  if (gateway === undefined) {
+    throw awsError(
+      "InvalidInternetGatewayID.NotFound",
+      `The internet gateway ID '${id}' does not exist`,
+      400,
+    );
+  }
+  gateway.Attachments = gateway.Attachments.filter((a) => a.VpcId !== vpcId);
+  ctx.store.set(igwKey(id), gateway);
+  return {};
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -1718,6 +2013,17 @@ const ec2: ServiceDefinition = {
     AssociateAddress,
     AssociateCapacityReservationBillingOwner,
     AssociateClientVpnTargetNetwork,
+    AttachVolume,
+    DetachVolume,
+    AttachNetworkInterface,
+    DetachNetworkInterface,
+    AttachVpnGateway,
+    DetachVpnGateway,
+    AttachClassicLinkVpc,
+    DetachClassicLinkVpc,
+    AttachVerifiedAccessTrustProvider,
+    DetachVerifiedAccessTrustProvider,
+    DetachInternetGateway,
   },
   model,
 } as const;

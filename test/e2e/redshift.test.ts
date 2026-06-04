@@ -7,19 +7,34 @@ import {
   BatchModifyClusterSnapshotsCommand,
   CancelResizeCommand,
   CopyClusterSnapshotCommand,
+  CreateAuthenticationProfileCommand,
   CreateClusterCommand,
   CreateClusterParameterGroupCommand,
   CreateClusterSecurityGroupCommand,
   CreateClusterSnapshotCommand,
   CreateClusterSubnetGroupCommand,
+  CreateCustomDomainAssociationCommand,
+  CreateEventSubscriptionCommand,
+  CreateScheduledActionCommand,
+  CreateSnapshotCopyGrantCommand,
+  CreateSnapshotScheduleCommand,
   CreateTagsCommand,
+  CreateUsageLimitCommand,
+  DeleteAuthenticationProfileCommand,
   DeleteClusterCommand,
   DeleteClusterParameterGroupCommand,
   DeleteClusterSecurityGroupCommand,
   DeleteClusterSnapshotCommand,
   DeleteClusterSubnetGroupCommand,
+  DeleteCustomDomainAssociationCommand,
+  DeleteEventSubscriptionCommand,
+  DeleteScheduledActionCommand,
+  DeleteSnapshotCopyGrantCommand,
+  DeleteSnapshotScheduleCommand,
   DeleteTagsCommand,
+  DeleteUsageLimitCommand,
   DescribeAccountAttributesCommand,
+  DescribeAuthenticationProfilesCommand,
   DescribeClusterDbRevisionsCommand,
   DescribeClusterParameterGroupsCommand,
   DescribeClusterParametersCommand,
@@ -29,28 +44,44 @@ import {
   DescribeClusterTracksCommand,
   DescribeClusterVersionsCommand,
   DescribeClustersCommand,
+  DescribeCustomDomainAssociationsCommand,
   DescribeDefaultClusterParametersCommand,
   DescribeEventCategoriesCommand,
+  DescribeEventSubscriptionsCommand,
   DescribeEventsCommand,
   DescribeLoggingStatusCommand,
   DescribeNodeConfigurationOptionsCommand,
   DescribeOrderableClusterOptionsCommand,
   DescribeResizeCommand,
+  DescribeScheduledActionsCommand,
+  DescribeSnapshotCopyGrantsCommand,
+  DescribeSnapshotSchedulesCommand,
   DescribeStorageCommand,
   DescribeTableRestoreStatusCommand,
   DescribeTagsCommand,
+  DescribeUsageLimitsCommand,
   DisableLoggingCommand,
+  DisableSnapshotCopyCommand,
   EnableLoggingCommand,
+  EnableSnapshotCopyCommand,
   GetClusterCredentialsCommand,
   GetClusterCredentialsWithIAMCommand,
   ModifyAquaConfigurationCommand,
+  ModifyAuthenticationProfileCommand,
   ModifyClusterCommand,
   ModifyClusterDbRevisionCommand,
   ModifyClusterIamRolesCommand,
   ModifyClusterMaintenanceCommand,
   ModifyClusterParameterGroupCommand,
   ModifyClusterSnapshotCommand,
+  ModifyClusterSnapshotScheduleCommand,
   ModifyClusterSubnetGroupCommand,
+  ModifyCustomDomainAssociationCommand,
+  ModifyEventSubscriptionCommand,
+  ModifyScheduledActionCommand,
+  ModifySnapshotCopyRetentionPeriodCommand,
+  ModifySnapshotScheduleCommand,
+  ModifyUsageLimitCommand,
   PauseClusterCommand,
   RebootClusterCommand,
   RedshiftClient,
@@ -664,6 +695,393 @@ test("Redshift cluster DB revisions", async () => {
     new DescribeClusterDbRevisionsCommand({ ClusterIdentifier: clusterId }),
   );
   expect((revisions.ClusterDbRevisions ?? []).length).toBeGreaterThan(0);
+
+  await client.send(
+    new DeleteClusterCommand({
+      ClusterIdentifier: clusterId,
+      SkipFinalClusterSnapshot: true,
+    }),
+  );
+});
+
+test("Redshift event-subscription lifecycle", async () => {
+  const client = redshift();
+  const subName = "bunsai-e2e-eventsub";
+
+  const created = await client.send(
+    new CreateEventSubscriptionCommand({
+      SubscriptionName: subName,
+      SnsTopicArn: "arn:aws:sns:us-east-1:123456789012:bunsai-topic",
+      SourceType: "cluster",
+      Severity: "INFO",
+      Enabled: true,
+    }),
+  );
+  expect(created.EventSubscription?.CustSubscriptionId).toBe(subName);
+  expect(created.EventSubscription?.Status).toBe("active");
+  expect(created.EventSubscription?.Enabled).toBe(true);
+
+  const listed = await client.send(
+    new DescribeEventSubscriptionsCommand({ SubscriptionName: subName }),
+  );
+  expect((listed.EventSubscriptionsList ?? []).length).toBe(1);
+  expect(listed.EventSubscriptionsList?.[0]?.SnsTopicArn).toContain(
+    "bunsai-topic",
+  );
+
+  const modified = await client.send(
+    new ModifyEventSubscriptionCommand({
+      SubscriptionName: subName,
+      Severity: "ERROR",
+      Enabled: false,
+    }),
+  );
+  expect(modified.EventSubscription?.Severity).toBe("ERROR");
+  expect(modified.EventSubscription?.Enabled).toBe(false);
+
+  await client.send(
+    new DeleteEventSubscriptionCommand({ SubscriptionName: subName }),
+  );
+  const afterDelete = await client.send(
+    new DescribeEventSubscriptionsCommand({}),
+  );
+  const remaining = (afterDelete.EventSubscriptionsList ?? []).filter(
+    (s) => s.CustSubscriptionId === subName,
+  );
+  expect(remaining.length).toBe(0);
+});
+
+test("Redshift scheduled-action lifecycle", async () => {
+  const client = redshift();
+  const actionName = "bunsai-e2e-action";
+  const clusterId = "bunsai-sa-cluster";
+
+  await client.send(
+    new CreateClusterCommand({
+      ClusterIdentifier: clusterId,
+      NodeType: "dc2.large",
+      MasterUsername: "admin",
+      MasterUserPassword: "BunsaiTestPw1",
+      ClusterType: "single-node",
+    }),
+  );
+
+  const created = await client.send(
+    new CreateScheduledActionCommand({
+      ScheduledActionName: actionName,
+      TargetAction: {
+        PauseCluster: { ClusterIdentifier: clusterId },
+      },
+      Schedule: "cron(0 12 * * ? *)",
+      IamRole: "arn:aws:iam::123456789012:role/RedshiftScheduler",
+      ScheduledActionDescription: "pause daily",
+    }),
+  );
+  expect(created.ScheduledActionName).toBe(actionName);
+  expect(created.State).toBe("ACTIVE");
+
+  const listed = await client.send(
+    new DescribeScheduledActionsCommand({ ScheduledActionName: actionName }),
+  );
+  expect((listed.ScheduledActions ?? []).length).toBe(1);
+
+  const modified = await client.send(
+    new ModifyScheduledActionCommand({
+      ScheduledActionName: actionName,
+      ScheduledActionDescription: "pause daily updated",
+      Enable: false,
+    }),
+  );
+  expect(modified.State).toBe("DISABLED");
+
+  await client.send(
+    new DeleteScheduledActionCommand({ ScheduledActionName: actionName }),
+  );
+
+  await client.send(
+    new DeleteClusterCommand({
+      ClusterIdentifier: clusterId,
+      SkipFinalClusterSnapshot: true,
+    }),
+  );
+});
+
+test("Redshift snapshot-copy-grant lifecycle", async () => {
+  const client = redshift();
+  const grantName = "bunsai-e2e-grant";
+  const clusterId = "bunsai-sncopy-cluster";
+
+  await client.send(
+    new CreateClusterCommand({
+      ClusterIdentifier: clusterId,
+      NodeType: "dc2.large",
+      MasterUsername: "admin",
+      MasterUserPassword: "BunsaiTestPw1",
+      ClusterType: "single-node",
+    }),
+  );
+
+  const grant = await client.send(
+    new CreateSnapshotCopyGrantCommand({
+      SnapshotCopyGrantName: grantName,
+    }),
+  );
+  expect(grant.SnapshotCopyGrant?.SnapshotCopyGrantName).toBe(grantName);
+
+  const listed = await client.send(
+    new DescribeSnapshotCopyGrantsCommand({
+      SnapshotCopyGrantName: grantName,
+    }),
+  );
+  expect((listed.SnapshotCopyGrants ?? []).length).toBe(1);
+
+  const enabled = await client.send(
+    new EnableSnapshotCopyCommand({
+      ClusterIdentifier: clusterId,
+      DestinationRegion: "us-west-2",
+      RetentionPeriod: 14,
+      SnapshotCopyGrantName: grantName,
+    }),
+  );
+  expect(enabled.Cluster?.ClusterIdentifier).toBe(clusterId);
+
+  const retention = await client.send(
+    new ModifySnapshotCopyRetentionPeriodCommand({
+      ClusterIdentifier: clusterId,
+      RetentionPeriod: 30,
+    }),
+  );
+  expect(retention.Cluster?.ClusterIdentifier).toBe(clusterId);
+
+  const disabled = await client.send(
+    new DisableSnapshotCopyCommand({ ClusterIdentifier: clusterId }),
+  );
+  expect(disabled.Cluster?.ClusterIdentifier).toBe(clusterId);
+
+  await client.send(
+    new DeleteSnapshotCopyGrantCommand({ SnapshotCopyGrantName: grantName }),
+  );
+
+  await client.send(
+    new DeleteClusterCommand({
+      ClusterIdentifier: clusterId,
+      SkipFinalClusterSnapshot: true,
+    }),
+  );
+});
+
+test("Redshift usage-limit lifecycle", async () => {
+  const client = redshift();
+  const clusterId = "bunsai-ul-cluster";
+
+  await client.send(
+    new CreateClusterCommand({
+      ClusterIdentifier: clusterId,
+      NodeType: "dc2.large",
+      MasterUsername: "admin",
+      MasterUserPassword: "BunsaiTestPw1",
+      ClusterType: "single-node",
+    }),
+  );
+
+  const created = await client.send(
+    new CreateUsageLimitCommand({
+      ClusterIdentifier: clusterId,
+      FeatureType: "spectrum",
+      LimitType: "data-scanned",
+      Amount: 1024,
+      Period: "monthly",
+      BreachAction: "log",
+    }),
+  );
+  expect(created.ClusterIdentifier).toBe(clusterId);
+  expect(created.Amount).toBe(1024);
+  expect(created.FeatureType).toBe("spectrum");
+  const limitId = created.UsageLimitId!;
+
+  const listed = await client.send(
+    new DescribeUsageLimitsCommand({ ClusterIdentifier: clusterId }),
+  );
+  expect((listed.UsageLimits ?? []).length).toBeGreaterThan(0);
+
+  const modified = await client.send(
+    new ModifyUsageLimitCommand({
+      UsageLimitId: limitId,
+      Amount: 2048,
+      BreachAction: "emit-metric",
+    }),
+  );
+  expect(modified.Amount).toBe(2048);
+  expect(modified.BreachAction).toBe("emit-metric");
+
+  await client.send(new DeleteUsageLimitCommand({ UsageLimitId: limitId }));
+
+  const afterDelete = await client.send(
+    new DescribeUsageLimitsCommand({ ClusterIdentifier: clusterId }),
+  );
+  expect((afterDelete.UsageLimits ?? []).length).toBe(0);
+
+  await client.send(
+    new DeleteClusterCommand({
+      ClusterIdentifier: clusterId,
+      SkipFinalClusterSnapshot: true,
+    }),
+  );
+});
+
+test("Redshift authentication-profile and snapshot-schedule lifecycle", async () => {
+  const client = redshift();
+
+  const profName = "bunsai-e2e-authprofile";
+  const profContent = JSON.stringify({ type: "saml", idp_url: "https://idp.example.com" });
+
+  const profCreated = await client.send(
+    new CreateAuthenticationProfileCommand({
+      AuthenticationProfileName: profName,
+      AuthenticationProfileContent: profContent,
+    }),
+  );
+  expect(profCreated.AuthenticationProfileName).toBe(profName);
+
+  const profListed = await client.send(
+    new DescribeAuthenticationProfilesCommand({
+      AuthenticationProfileName: profName,
+    }),
+  );
+  expect((profListed.AuthenticationProfiles ?? []).length).toBe(1);
+
+  const newContent = JSON.stringify({ type: "saml", idp_url: "https://idp2.example.com" });
+  const profModified = await client.send(
+    new ModifyAuthenticationProfileCommand({
+      AuthenticationProfileName: profName,
+      AuthenticationProfileContent: newContent,
+    }),
+  );
+  expect(profModified.AuthenticationProfileContent).toBe(newContent);
+
+  await client.send(
+    new DeleteAuthenticationProfileCommand({
+      AuthenticationProfileName: profName,
+    }),
+  );
+
+  const schedId = "bunsai-e2e-schedule";
+  const schedCreated = await client.send(
+    new CreateSnapshotScheduleCommand({
+      ScheduleIdentifier: schedId,
+      ScheduleDefinitions: ["rate(12 hours)"],
+      ScheduleDescription: "every 12h",
+    }),
+  );
+  expect(schedCreated.ScheduleIdentifier).toBe(schedId);
+
+  const schedListed = await client.send(
+    new DescribeSnapshotSchedulesCommand({ ScheduleIdentifier: schedId }),
+  );
+  expect((schedListed.SnapshotSchedules ?? []).length).toBe(1);
+
+  const schedModified = await client.send(
+    new ModifySnapshotScheduleCommand({
+      ScheduleIdentifier: schedId,
+      ScheduleDefinitions: ["rate(24 hours)"],
+    }),
+  );
+  expect(schedModified.ScheduleDefinitions?.[0]).toBe("rate(24 hours)");
+
+  const clusterId = "bunsai-sched-assoc-cluster";
+  await client.send(
+    new CreateClusterCommand({
+      ClusterIdentifier: clusterId,
+      NodeType: "dc2.large",
+      MasterUsername: "admin",
+      MasterUserPassword: "BunsaiTestPw1",
+      ClusterType: "single-node",
+    }),
+  );
+
+  await client.send(
+    new ModifyClusterSnapshotScheduleCommand({
+      ClusterIdentifier: clusterId,
+      ScheduleIdentifier: schedId,
+    }),
+  );
+
+  const afterAssoc = await client.send(
+    new DescribeSnapshotSchedulesCommand({ ScheduleIdentifier: schedId }),
+  );
+  expect(afterAssoc.SnapshotSchedules?.[0]?.AssociatedClusterCount).toBe(1);
+
+  await client.send(
+    new ModifyClusterSnapshotScheduleCommand({
+      ClusterIdentifier: clusterId,
+      ScheduleIdentifier: schedId,
+      DisassociateSchedule: true,
+    }),
+  );
+
+  await client.send(
+    new DeleteSnapshotScheduleCommand({ ScheduleIdentifier: schedId }),
+  );
+
+  await client.send(
+    new DeleteClusterCommand({
+      ClusterIdentifier: clusterId,
+      SkipFinalClusterSnapshot: true,
+    }),
+  );
+});
+
+test("Redshift custom-domain-association lifecycle", async () => {
+  const client = redshift();
+  const clusterId = "bunsai-cda-cluster";
+  const domainName = "redshift.bunsai.example.com";
+  const certArn =
+    "arn:aws:acm:us-east-1:123456789012:certificate/bunsai-cert-00000000";
+
+  await client.send(
+    new CreateClusterCommand({
+      ClusterIdentifier: clusterId,
+      NodeType: "dc2.large",
+      MasterUsername: "admin",
+      MasterUserPassword: "BunsaiTestPw1",
+      ClusterType: "single-node",
+    }),
+  );
+
+  const created = await client.send(
+    new CreateCustomDomainAssociationCommand({
+      ClusterIdentifier: clusterId,
+      CustomDomainName: domainName,
+      CustomDomainCertificateArn: certArn,
+    }),
+  );
+  expect(created.ClusterIdentifier).toBe(clusterId);
+  expect(created.CustomDomainName).toBe(domainName);
+
+  const listed = await client.send(
+    new DescribeCustomDomainAssociationsCommand({
+      ClusterIdentifier: clusterId,
+    }),
+  );
+  expect((listed.Associations ?? []).length).toBe(1);
+
+  const newCertArn =
+    "arn:aws:acm:us-east-1:123456789012:certificate/bunsai-cert-11111111";
+  const modified = await client.send(
+    new ModifyCustomDomainAssociationCommand({
+      ClusterIdentifier: clusterId,
+      CustomDomainName: domainName,
+      CustomDomainCertificateArn: newCertArn,
+    }),
+  );
+  expect(modified.CustomDomainCertificateArn).toBe(newCertArn);
+
+  await client.send(
+    new DeleteCustomDomainAssociationCommand({
+      ClusterIdentifier: clusterId,
+      CustomDomainName: domainName,
+    }),
+  );
 
   await client.send(
     new DeleteClusterCommand({

@@ -138,6 +138,47 @@ type StoredAccount = {
   apiKeyVersion: string | undefined;
 };
 
+type StoredApiKey = {
+  id: string;
+  value: string;
+  name: string;
+  description: string | undefined;
+  customerId: string | undefined;
+  enabled: boolean;
+  createdDate: Date;
+  lastUpdatedDate: Date;
+  stageKeys: Array<{ restApiId: string; stageName: string }> | undefined;
+  tags: Record<string, string> | undefined;
+};
+
+type StoredAuthorizer = {
+  id: string;
+  name: string;
+  type: string;
+  providerARNs: string[] | undefined;
+  authType: string | undefined;
+  authorizerUri: string | undefined;
+  authorizerCredentials: string | undefined;
+  identitySource: string | undefined;
+  identityValidationExpression: string | undefined;
+  authorizerResultTtlInSeconds: number | undefined;
+};
+
+type StoredBasePathMapping = {
+  basePath: string;
+  restApiId: string;
+  stage: string | undefined;
+};
+
+type StoredClientCertificate = {
+  clientCertificateId: string;
+  description: string | undefined;
+  pemEncodedCertificate: string;
+  createdDate: Date;
+  expirationDate: Date;
+  tags: Record<string, string> | undefined;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -199,6 +240,18 @@ const gatewayResponseKey = (restApiId: string, responseType: string): string =>
   `gatewayresponse/${restApiId}/${responseType}`;
 
 const accountKey = "account";
+
+const apiKeyKey = (id: string): string => `apikey/${id}`;
+
+const authorizerKey = (restApiId: string, id: string): string =>
+  `authorizer/${restApiId}/${id}`;
+
+const basePathMappingKey = (domainName: string, basePath: string): string =>
+  `basepathmapping/${domainName}/${basePath}`;
+
+const clientCertificateKey = (id: string): string => `clientcertificate/${id}`;
+
+const arnTagsKey = (arn: string): string => `arntags/${arn}`;
 
 const requireRestApi = (
   ctx: ServiceContext,
@@ -387,6 +440,69 @@ const requireGatewayResponse = (
   return g;
 };
 
+const requireApiKey = (ctx: ServiceContext, id: string): StoredApiKey => {
+  const k = ctx.store.get<StoredApiKey>(apiKeyKey(id));
+  if (k === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Invalid API Key identifier specified`,
+      404,
+    );
+  }
+  return k;
+};
+
+const requireAuthorizer = (
+  ctx: ServiceContext,
+  restApiId: string,
+  authorizerId: string,
+): StoredAuthorizer => {
+  const a = ctx.store.get<StoredAuthorizer>(
+    authorizerKey(restApiId, authorizerId),
+  );
+  if (a === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Invalid authorizer identifier specified`,
+      404,
+    );
+  }
+  return a;
+};
+
+const requireBasePathMapping = (
+  ctx: ServiceContext,
+  domainName: string,
+  basePath: string,
+): StoredBasePathMapping => {
+  const b = ctx.store.get<StoredBasePathMapping>(
+    basePathMappingKey(domainName, basePath),
+  );
+  if (b === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Invalid base path mapping specified`,
+      404,
+    );
+  }
+  return b;
+};
+
+const requireClientCertificate = (
+  ctx: ServiceContext,
+  id: string,
+): StoredClientCertificate => {
+  const c = ctx.store.get<StoredClientCertificate>(clientCertificateKey(id));
+  if (c === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Invalid client certificate identifier specified`,
+      404,
+    );
+  }
+  return c;
+};
+
 const applyPatch = (
   obj: Record<string, unknown>,
   patches: unknown,
@@ -543,6 +659,51 @@ const accountView = (a: StoredAccount): Record<string, unknown> => ({
   throttleSettings: a.throttleSettings,
   features: a.features,
   apiKeyVersion: a.apiKeyVersion,
+});
+
+const apiKeyView = (k: StoredApiKey): Record<string, unknown> => ({
+  id: k.id,
+  value: k.value,
+  name: k.name,
+  customerId: k.customerId,
+  description: k.description,
+  enabled: k.enabled,
+  createdDate: k.createdDate,
+  lastUpdatedDate: k.lastUpdatedDate,
+  stageKeys: k.stageKeys,
+  tags: k.tags,
+});
+
+const authorizerView = (a: StoredAuthorizer): Record<string, unknown> => ({
+  id: a.id,
+  name: a.name,
+  type: a.type,
+  providerARNs: a.providerARNs,
+  authType: a.authType,
+  authorizerUri: a.authorizerUri,
+  authorizerCredentials: a.authorizerCredentials,
+  identitySource: a.identitySource,
+  identityValidationExpression: a.identityValidationExpression,
+  authorizerResultTtlInSeconds: a.authorizerResultTtlInSeconds,
+});
+
+const basePathMappingView = (
+  b: StoredBasePathMapping,
+): Record<string, unknown> => ({
+  basePath: b.basePath,
+  restApiId: b.restApiId,
+  stage: b.stage,
+});
+
+const clientCertificateView = (
+  c: StoredClientCertificate,
+): Record<string, unknown> => ({
+  clientCertificateId: c.clientCertificateId,
+  description: c.description,
+  pemEncodedCertificate: c.pemEncodedCertificate,
+  createdDate: c.createdDate,
+  expirationDate: c.expirationDate,
+  tags: c.tags,
 });
 
 const defaultAccount: StoredAccount = {
@@ -2198,6 +2359,407 @@ const TestInvokeAuthorizer: OperationHandler = (input, ctx) => {
   };
 };
 
+const CreateApiKey: OperationHandler = (input, ctx) => {
+  const id = randomId();
+  const now = new Date();
+  const expirationDate = new Date(now);
+  expirationDate.setFullYear(expirationDate.getFullYear() + 1);
+  const k: StoredApiKey = {
+    id,
+    value:
+      stringOrUndefined(input["value"]) ??
+      crypto.randomUUID().replaceAll("-", ""),
+    name: stringOrUndefined(input["name"]) ?? "",
+    description: stringOrUndefined(input["description"]),
+    customerId: stringOrUndefined(input["customerId"]),
+    enabled: input["enabled"] !== false,
+    createdDate: now,
+    lastUpdatedDate: now,
+    stageKeys: Array.isArray(input["stageKeys"])
+      ? (input["stageKeys"] as Array<Record<string, unknown>>).map((sk) => ({
+          restApiId: String(sk["restApiId"] ?? ""),
+          stageName: String(sk["stageName"] ?? ""),
+        }))
+      : undefined,
+    tags:
+      input["tags"] != null && typeof input["tags"] === "object"
+        ? (input["tags"] as Record<string, string>)
+        : undefined,
+  };
+  ctx.store.set(apiKeyKey(id), k);
+  return apiKeyView(k);
+};
+
+const GetApiKey: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["apiKey"]);
+  if (!id) throw awsError("BadRequestException", "apiKey is required.", 400);
+  return apiKeyView(requireApiKey(ctx, id));
+};
+
+const GetApiKeys: OperationHandler = (_input, ctx) => {
+  const items = ctx.store
+    .list<StoredApiKey>()
+    .filter((e) => e.key.startsWith("apikey/"))
+    .map((e) => apiKeyView(e.value));
+  return { items };
+};
+
+const DeleteApiKey: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["apiKey"]);
+  if (!id) throw awsError("BadRequestException", "apiKey is required.", 400);
+  requireApiKey(ctx, id);
+  ctx.store.delete(apiKeyKey(id));
+  return {};
+};
+
+const UpdateApiKey: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["apiKey"]);
+  if (!id) throw awsError("BadRequestException", "apiKey is required.", 400);
+  const k = requireApiKey(ctx, id);
+  const patched = applyPatch(
+    k as unknown as Record<string, unknown>,
+    input["patchOperations"],
+  );
+  const updated: StoredApiKey = {
+    ...k,
+    name: stringOrUndefined(patched["name"]) ?? k.name,
+    description: stringOrUndefined(patched["description"]),
+    customerId: stringOrUndefined(patched["customerId"]),
+    enabled:
+      patched["enabled"] === "false" || patched["enabled"] === false
+        ? false
+        : k.enabled,
+    lastUpdatedDate: new Date(),
+  };
+  ctx.store.set(apiKeyKey(id), updated);
+  return apiKeyView(updated);
+};
+
+const ImportApiKeys: OperationHandler = (_input, ctx) => {
+  const id = randomId();
+  const now = new Date();
+  const k: StoredApiKey = {
+    id,
+    value: crypto.randomUUID().replaceAll("-", ""),
+    name: `imported-${id}`,
+    description: undefined,
+    customerId: undefined,
+    enabled: true,
+    createdDate: now,
+    lastUpdatedDate: now,
+    stageKeys: undefined,
+    tags: undefined,
+  };
+  ctx.store.set(apiKeyKey(id), k);
+  return { ids: [id], warnings: [] };
+};
+
+const CreateAuthorizer: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  const name = stringOrUndefined(input["name"]);
+  const type = stringOrUndefined(input["type"]);
+  if (!restApiId || !name || !type) {
+    throw awsError(
+      "BadRequestException",
+      "restApiId, name and type are required.",
+      400,
+    );
+  }
+  requireRestApi(ctx, restApiId);
+  const id = randomId();
+  const a: StoredAuthorizer = {
+    id,
+    name,
+    type,
+    providerARNs: Array.isArray(input["providerARNs"])
+      ? (input["providerARNs"] as string[])
+      : undefined,
+    authType: stringOrUndefined(input["authType"]),
+    authorizerUri: stringOrUndefined(input["authorizerUri"]),
+    authorizerCredentials: stringOrUndefined(input["authorizerCredentials"]),
+    identitySource: stringOrUndefined(input["identitySource"]),
+    identityValidationExpression: stringOrUndefined(
+      input["identityValidationExpression"],
+    ),
+    authorizerResultTtlInSeconds:
+      typeof input["authorizerResultTtlInSeconds"] === "number"
+        ? input["authorizerResultTtlInSeconds"]
+        : undefined,
+  };
+  ctx.store.set(authorizerKey(restApiId, id), a);
+  return authorizerView(a);
+};
+
+const GetAuthorizer: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  const authorizerId = stringOrUndefined(input["authorizerId"]);
+  if (!restApiId || !authorizerId) {
+    throw awsError(
+      "BadRequestException",
+      "restApiId and authorizerId are required.",
+      400,
+    );
+  }
+  requireRestApi(ctx, restApiId);
+  return authorizerView(requireAuthorizer(ctx, restApiId, authorizerId));
+};
+
+const GetAuthorizers: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  if (!restApiId) {
+    throw awsError("BadRequestException", "restApiId is required.", 400);
+  }
+  requireRestApi(ctx, restApiId);
+  const prefix = `authorizer/${restApiId}/`;
+  const items = ctx.store
+    .list<StoredAuthorizer>()
+    .filter((e) => e.key.startsWith(prefix))
+    .map((e) => authorizerView(e.value));
+  return { items };
+};
+
+const DeleteAuthorizer: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  const authorizerId = stringOrUndefined(input["authorizerId"]);
+  if (!restApiId || !authorizerId) {
+    throw awsError(
+      "BadRequestException",
+      "restApiId and authorizerId are required.",
+      400,
+    );
+  }
+  requireRestApi(ctx, restApiId);
+  requireAuthorizer(ctx, restApiId, authorizerId);
+  ctx.store.delete(authorizerKey(restApiId, authorizerId));
+  return {};
+};
+
+const UpdateAuthorizer: OperationHandler = (input, ctx) => {
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  const authorizerId = stringOrUndefined(input["authorizerId"]);
+  if (!restApiId || !authorizerId) {
+    throw awsError(
+      "BadRequestException",
+      "restApiId and authorizerId are required.",
+      400,
+    );
+  }
+  requireRestApi(ctx, restApiId);
+  const a = requireAuthorizer(ctx, restApiId, authorizerId);
+  const patched = applyPatch(
+    a as unknown as Record<string, unknown>,
+    input["patchOperations"],
+  );
+  const updated: StoredAuthorizer = {
+    ...a,
+    name: stringOrUndefined(patched["name"]) ?? a.name,
+    authorizerUri: stringOrUndefined(patched["authorizerUri"]),
+    identitySource: stringOrUndefined(patched["identitySource"]),
+    authorizerResultTtlInSeconds:
+      typeof patched["authorizerResultTtlInSeconds"] === "number"
+        ? patched["authorizerResultTtlInSeconds"]
+        : a.authorizerResultTtlInSeconds,
+  };
+  ctx.store.set(authorizerKey(restApiId, authorizerId), updated);
+  return authorizerView(updated);
+};
+
+const CreateBasePathMapping: OperationHandler = (input, ctx) => {
+  const domainName = stringOrUndefined(input["domainName"]);
+  const restApiId = stringOrUndefined(input["restApiId"]);
+  if (!domainName || !restApiId) {
+    throw awsError(
+      "BadRequestException",
+      "domainName and restApiId are required.",
+      400,
+    );
+  }
+  const basePath = stringOrUndefined(input["basePath"]) ?? "(none)";
+  const b: StoredBasePathMapping = {
+    basePath,
+    restApiId,
+    stage: stringOrUndefined(input["stage"]),
+  };
+  ctx.store.set(basePathMappingKey(domainName, basePath), b);
+  return basePathMappingView(b);
+};
+
+const GetBasePathMapping: OperationHandler = (input, ctx) => {
+  const domainName = stringOrUndefined(input["domainName"]);
+  const basePath = stringOrUndefined(input["basePath"]) ?? "(none)";
+  if (!domainName) {
+    throw awsError("BadRequestException", "domainName is required.", 400);
+  }
+  return basePathMappingView(requireBasePathMapping(ctx, domainName, basePath));
+};
+
+const GetBasePathMappings: OperationHandler = (input, ctx) => {
+  const domainName = stringOrUndefined(input["domainName"]);
+  if (!domainName) {
+    throw awsError("BadRequestException", "domainName is required.", 400);
+  }
+  const prefix = `basepathmapping/${domainName}/`;
+  const items = ctx.store
+    .list<StoredBasePathMapping>()
+    .filter((e) => e.key.startsWith(prefix))
+    .map((e) => basePathMappingView(e.value));
+  return { items };
+};
+
+const DeleteBasePathMapping: OperationHandler = (input, ctx) => {
+  const domainName = stringOrUndefined(input["domainName"]);
+  const basePath = stringOrUndefined(input["basePath"]) ?? "(none)";
+  if (!domainName) {
+    throw awsError("BadRequestException", "domainName is required.", 400);
+  }
+  requireBasePathMapping(ctx, domainName, basePath);
+  ctx.store.delete(basePathMappingKey(domainName, basePath));
+  return {};
+};
+
+const UpdateBasePathMapping: OperationHandler = (input, ctx) => {
+  const domainName = stringOrUndefined(input["domainName"]);
+  const basePath = stringOrUndefined(input["basePath"]) ?? "(none)";
+  if (!domainName) {
+    throw awsError("BadRequestException", "domainName is required.", 400);
+  }
+  const b = requireBasePathMapping(ctx, domainName, basePath);
+  const patched = applyPatch(
+    b as unknown as Record<string, unknown>,
+    input["patchOperations"],
+  );
+  const newBasePath = stringOrUndefined(patched["basePath"]) ?? b.basePath;
+  const updated: StoredBasePathMapping = {
+    basePath: newBasePath,
+    restApiId: stringOrUndefined(patched["restApiId"]) ?? b.restApiId,
+    stage: stringOrUndefined(patched["stage"]) ?? b.stage,
+  };
+  if (newBasePath !== basePath) {
+    ctx.store.delete(basePathMappingKey(domainName, basePath));
+  }
+  ctx.store.set(basePathMappingKey(domainName, newBasePath), updated);
+  return basePathMappingView(updated);
+};
+
+const GenerateClientCertificate: OperationHandler = (input, ctx) => {
+  const id = randomId();
+  const now = new Date();
+  const expirationDate = new Date(now);
+  expirationDate.setFullYear(expirationDate.getFullYear() + 2);
+  const c: StoredClientCertificate = {
+    clientCertificateId: id,
+    description: stringOrUndefined(input["description"]),
+    pemEncodedCertificate: `-----BEGIN CERTIFICATE-----\nMOCK${id}\n-----END CERTIFICATE-----`,
+    createdDate: now,
+    expirationDate,
+    tags:
+      input["tags"] != null && typeof input["tags"] === "object"
+        ? (input["tags"] as Record<string, string>)
+        : undefined,
+  };
+  ctx.store.set(clientCertificateKey(id), c);
+  return clientCertificateView(c);
+};
+
+const GetClientCertificate: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["clientCertificateId"]);
+  if (!id) {
+    throw awsError(
+      "BadRequestException",
+      "clientCertificateId is required.",
+      400,
+    );
+  }
+  return clientCertificateView(requireClientCertificate(ctx, id));
+};
+
+const GetClientCertificates: OperationHandler = (_input, ctx) => {
+  const items = ctx.store
+    .list<StoredClientCertificate>()
+    .filter((e) => e.key.startsWith("clientcertificate/"))
+    .map((e) => clientCertificateView(e.value));
+  return { items };
+};
+
+const DeleteClientCertificate: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["clientCertificateId"]);
+  if (!id) {
+    throw awsError(
+      "BadRequestException",
+      "clientCertificateId is required.",
+      400,
+    );
+  }
+  requireClientCertificate(ctx, id);
+  ctx.store.delete(clientCertificateKey(id));
+  return {};
+};
+
+const UpdateClientCertificate: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["clientCertificateId"]);
+  if (!id) {
+    throw awsError(
+      "BadRequestException",
+      "clientCertificateId is required.",
+      400,
+    );
+  }
+  const c = requireClientCertificate(ctx, id);
+  const patched = applyPatch(
+    c as unknown as Record<string, unknown>,
+    input["patchOperations"],
+  );
+  const updated: StoredClientCertificate = {
+    ...c,
+    description: stringOrUndefined(patched["description"]),
+  };
+  ctx.store.set(clientCertificateKey(id), updated);
+  return clientCertificateView(updated);
+};
+
+const GetTags: OperationHandler = (input, ctx) => {
+  const resourceArn = stringOrUndefined(input["resourceArn"]);
+  if (!resourceArn) {
+    throw awsError("BadRequestException", "resourceArn is required.", 400);
+  }
+  const tags =
+    ctx.store.get<Record<string, string>>(arnTagsKey(resourceArn)) ?? {};
+  return { tags };
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = stringOrUndefined(input["resourceArn"]);
+  if (!resourceArn) {
+    throw awsError("BadRequestException", "resourceArn is required.", 400);
+  }
+  const existing =
+    ctx.store.get<Record<string, string>>(arnTagsKey(resourceArn)) ?? {};
+  const newTags =
+    input["tags"] != null && typeof input["tags"] === "object"
+      ? (input["tags"] as Record<string, string>)
+      : {};
+  ctx.store.set(arnTagsKey(resourceArn), { ...existing, ...newTags });
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const resourceArn = stringOrUndefined(input["resourceArn"]);
+  if (!resourceArn) {
+    throw awsError("BadRequestException", "resourceArn is required.", 400);
+  }
+  const existing =
+    ctx.store.get<Record<string, string>>(arnTagsKey(resourceArn)) ?? {};
+  const tagKeys = Array.isArray(input["tagKeys"])
+    ? (input["tagKeys"] as string[])
+    : [];
+  const updated = { ...existing };
+  for (const k of tagKeys) {
+    delete updated[k];
+  }
+  ctx.store.set(arnTagsKey(resourceArn), updated);
+  return {};
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -2218,6 +2780,64 @@ const apigateway = {
     if (parts[0] === "sdktypes") {
       if (parts.length === 1 && req.method === "GET") return "GetSdkTypes";
       if (parts.length === 2 && req.method === "GET") return "GetSdkType";
+      return undefined;
+    }
+
+    if (parts[0] === "apikeys") {
+      if (parts.length === 1) {
+        if (req.method === "POST") {
+          if (req.query.get("mode") === "import") return "ImportApiKeys";
+          return "CreateApiKey";
+        }
+        if (req.method === "GET") return "GetApiKeys";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetApiKey";
+        if (req.method === "DELETE") return "DeleteApiKey";
+        if (req.method === "PATCH") return "UpdateApiKey";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "clientcertificates") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "GenerateClientCertificate";
+        if (req.method === "GET") return "GetClientCertificates";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetClientCertificate";
+        if (req.method === "DELETE") return "DeleteClientCertificate";
+        if (req.method === "PATCH") return "UpdateClientCertificate";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "domainnames") {
+      if (parts.length === 3 && parts[2] === "basepathmappings") {
+        if (req.method === "POST") return "CreateBasePathMapping";
+        if (req.method === "GET") return "GetBasePathMappings";
+        return undefined;
+      }
+      if (parts.length === 4 && parts[2] === "basepathmappings") {
+        if (req.method === "GET") return "GetBasePathMapping";
+        if (req.method === "DELETE") return "DeleteBasePathMapping";
+        if (req.method === "PATCH") return "UpdateBasePathMapping";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "tags") {
+      if (parts.length >= 2) {
+        if (req.method === "GET") return "GetTags";
+        if (req.method === "PUT") return "TagResource";
+        if (req.method === "DELETE") return "UntagResource";
+        return undefined;
+      }
       return undefined;
     }
 
@@ -2407,8 +3027,18 @@ const apigateway = {
         return undefined;
       }
       case "authorizers": {
-        if (parts.length === 4 && req.method === "POST")
-          return "TestInvokeAuthorizer";
+        if (parts.length === 3) {
+          if (req.method === "POST") return "CreateAuthorizer";
+          if (req.method === "GET") return "GetAuthorizers";
+          return undefined;
+        }
+        if (parts.length === 4) {
+          if (req.method === "GET") return "GetAuthorizer";
+          if (req.method === "DELETE") return "DeleteAuthorizer";
+          if (req.method === "PATCH") return "UpdateAuthorizer";
+          if (req.method === "POST") return "TestInvokeAuthorizer";
+          return undefined;
+        }
         return undefined;
       }
     }
@@ -2491,6 +3121,30 @@ const apigateway = {
     UpdateGatewayResponse,
     DeleteGatewayResponse,
     TestInvokeAuthorizer,
+    CreateApiKey,
+    GetApiKey,
+    GetApiKeys,
+    DeleteApiKey,
+    UpdateApiKey,
+    ImportApiKeys,
+    CreateAuthorizer,
+    GetAuthorizer,
+    GetAuthorizers,
+    DeleteAuthorizer,
+    UpdateAuthorizer,
+    CreateBasePathMapping,
+    GetBasePathMapping,
+    GetBasePathMappings,
+    DeleteBasePathMapping,
+    UpdateBasePathMapping,
+    GenerateClientCertificate,
+    GetClientCertificate,
+    GetClientCertificates,
+    DeleteClientCertificate,
+    UpdateClientCertificate,
+    GetTags,
+    TagResource,
+    UntagResource,
   },
   model,
 } as const satisfies ServiceDefinition;

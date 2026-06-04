@@ -7,6 +7,11 @@ import {
   DeleteInstanceCommand,
   DescribeInstanceCommand,
   ListInstancesCommand,
+  ClaimPhoneNumberCommand,
+  AssociatePhoneNumberContactFlowCommand,
+  BatchAssociateAnalyticsDataSetCommand,
+  BatchDisassociateAnalyticsDataSetCommand,
+  CreateAgentStatusCommand,
 } from "@aws-sdk/client-connect";
 
 const awsPort = 4566;
@@ -97,4 +102,112 @@ test("Connect instance roundtrip", async () => {
   await expect(
     client.send(new DescribeInstanceCommand({ InstanceId: instanceId })),
   ).rejects.toThrow();
+});
+
+test("ClaimPhoneNumber and AssociatePhoneNumberContactFlow", async () => {
+  const client = connect();
+
+  const instanceAlias = `bunsai-e2e-phone-${Date.now()}`;
+  const createdInstance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: instanceAlias,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: true,
+    }),
+  );
+  const instanceId = createdInstance.Id ?? "";
+
+  const claimed = await client.send(
+    new ClaimPhoneNumberCommand({
+      PhoneNumber: "+12065551234",
+      InstanceId: instanceId,
+    }),
+  );
+  expect(claimed.PhoneNumberId).toBeDefined();
+  expect(claimed.PhoneNumberArn).toBeDefined();
+  expect(claimed.PhoneNumberArn).toContain("phone-number");
+
+  const phoneNumberId = claimed.PhoneNumberId ?? "";
+  const fakeContactFlowId = crypto.randomUUID();
+
+  await expect(
+    client.send(
+      new AssociatePhoneNumberContactFlowCommand({
+        PhoneNumberId: phoneNumberId,
+        InstanceId: instanceId,
+        ContactFlowId: fakeContactFlowId,
+      }),
+    ),
+  ).resolves.toBeDefined();
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("BatchAssociateAnalyticsDataSet and BatchDisassociateAnalyticsDataSet", async () => {
+  const client = connect();
+
+  const instanceAlias = `bunsai-e2e-analytics-${Date.now()}`;
+  const createdInstance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: instanceAlias,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = createdInstance.Id ?? "";
+
+  const dataSetIds = [crypto.randomUUID(), crypto.randomUUID()];
+
+  const associated = await client.send(
+    new BatchAssociateAnalyticsDataSetCommand({
+      InstanceId: instanceId,
+      DataSetIds: dataSetIds,
+    }),
+  );
+  expect(associated.Created).toHaveLength(2);
+  expect(associated.Created?.map((c) => c.DataSetId)).toContain(dataSetIds[0]);
+  expect(associated.Errors).toHaveLength(0);
+
+  const disassociated = await client.send(
+    new BatchDisassociateAnalyticsDataSetCommand({
+      InstanceId: instanceId,
+      DataSetIds: dataSetIds,
+    }),
+  );
+  expect(disassociated.Deleted).toContain(dataSetIds[0]);
+  expect(disassociated.Deleted).toContain(dataSetIds[1]);
+  expect(disassociated.Errors).toHaveLength(0);
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("CreateAgentStatus", async () => {
+  const client = connect();
+
+  const instanceAlias = `bunsai-e2e-agentstatus-${Date.now()}`;
+  const createdInstance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: instanceAlias,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = createdInstance.Id ?? "";
+
+  const created = await client.send(
+    new CreateAgentStatusCommand({
+      InstanceId: instanceId,
+      Name: "On Break",
+      State: "ENABLED",
+    }),
+  );
+  expect(created.AgentStatusId).toBeDefined();
+  expect(created.AgentStatusARN).toBeDefined();
+  expect(created.AgentStatusARN).toContain(instanceId);
+  expect(created.AgentStatusARN).toContain("agent-state");
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
 });

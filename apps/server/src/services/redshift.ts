@@ -299,6 +299,50 @@ type StoredReservedNodeExchangeStatus = {
   TargetReservedNodeCount: number;
 };
 
+type StoredIntegration = {
+  IntegrationArn: string;
+  IntegrationName: string;
+  SourceArn: string;
+  TargetArn: string;
+  Status: string;
+  Errors: { ErrorCode: string; ErrorMessage: string }[];
+  CreateTime: string;
+  Description: string | undefined;
+  KMSKeyId: string | undefined;
+  AdditionalEncryptionContext: Record<string, string>;
+  Tags: { Key: string; Value: string }[];
+};
+
+type StoredInboundIntegration = {
+  IntegrationArn: string;
+  SourceArn: string;
+  TargetArn: string;
+  Status: string;
+  Errors: { ErrorCode: string; ErrorMessage: string }[];
+  CreateTime: string;
+};
+
+type StoredAuthorizedTokenIssuer = {
+  TrustedTokenIssuerArn: string | undefined;
+  AuthorizedAudiencesList: string[];
+};
+
+type StoredRedshiftIdcApplication = {
+  IdcInstanceArn: string;
+  RedshiftIdcApplicationName: string;
+  RedshiftIdcApplicationArn: string;
+  IdentityNamespace: string | undefined;
+  IdcDisplayName: string | undefined;
+  IamRoleArn: string;
+  IdcManagedApplicationArn: string;
+  IdcOnboardStatus: string;
+  AuthorizedTokenIssuerList: StoredAuthorizedTokenIssuer[];
+  ServiceIntegrations: Record<string, unknown>[];
+  ApplicationType: string | undefined;
+  Tags: { Key: string; Value: string }[];
+  SsoTagKeys: string[];
+};
+
 const clusterKey = (id: string): string => `cluster/${id}`;
 const subnetGroupKey = (name: string): string => `subnetgroup/${name}`;
 const snapshotKey = (id: string): string => `snapshot/${id}`;
@@ -329,6 +373,10 @@ const reservedNodeOfferingKey = (id: string): string =>
 const reservedNodeKey = (id: string): string => `reservednode/${id}`;
 const reservedNodeExchangeKey = (id: string): string =>
   `reservednodeexchange/${id}`;
+const integrationKey = (arn: string): string => `integration/${arn}`;
+const inboundIntegrationKey = (arn: string): string =>
+  `inboundintegration/${arn}`;
+const idcApplicationKey = (arn: string): string => `idcapplication/${arn}`;
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -625,6 +673,86 @@ const requireReservedNode = (
 
 const namespaceArnOf = (region: string, account: string, id: string): string =>
   `arn:aws:redshift:${region}:${account}:namespace:${crypto.randomUUID()}`;
+
+const integrationArnOf = (region: string, account: string): string =>
+  `arn:aws:redshift:${region}:${account}:integration:${crypto.randomUUID()}`;
+
+const idcApplicationArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:redshift:${region}:${account}:redshiftidcapplication/${name}`;
+
+const requireIntegration = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredIntegration => {
+  const integration = ctx.store.get<StoredIntegration>(integrationKey(arn));
+  if (integration === undefined) {
+    throw awsError(
+      "IntegrationNotFoundFault",
+      `Integration ${arn} not found.`,
+      404,
+    );
+  }
+  return integration;
+};
+
+const requireIdcApplication = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredRedshiftIdcApplication => {
+  const app = ctx.store.get<StoredRedshiftIdcApplication>(
+    idcApplicationKey(arn),
+  );
+  if (app === undefined) {
+    throw awsError(
+      "RedshiftIdcApplicationNotExistsFault",
+      `IDC application ${arn} not found.`,
+      404,
+    );
+  }
+  return app;
+};
+
+const presentIntegration = (i: StoredIntegration) => ({
+  IntegrationArn: i.IntegrationArn,
+  IntegrationName: i.IntegrationName,
+  SourceArn: i.SourceArn,
+  TargetArn: i.TargetArn,
+  Status: i.Status,
+  Errors: i.Errors,
+  CreateTime: i.CreateTime,
+  Description: i.Description,
+  KMSKeyId: i.KMSKeyId,
+  AdditionalEncryptionContext: i.AdditionalEncryptionContext,
+  Tags: i.Tags,
+});
+
+const presentInboundIntegration = (i: StoredInboundIntegration) => ({
+  IntegrationArn: i.IntegrationArn,
+  SourceArn: i.SourceArn,
+  TargetArn: i.TargetArn,
+  Status: i.Status,
+  Errors: i.Errors,
+  CreateTime: i.CreateTime,
+});
+
+const presentIdcApplication = (a: StoredRedshiftIdcApplication) => ({
+  IdcInstanceArn: a.IdcInstanceArn,
+  RedshiftIdcApplicationName: a.RedshiftIdcApplicationName,
+  RedshiftIdcApplicationArn: a.RedshiftIdcApplicationArn,
+  IdentityNamespace: a.IdentityNamespace,
+  IdcDisplayName: a.IdcDisplayName,
+  IamRoleArn: a.IamRoleArn,
+  IdcManagedApplicationArn: a.IdcManagedApplicationArn,
+  IdcOnboardStatus: a.IdcOnboardStatus,
+  AuthorizedTokenIssuerList: a.AuthorizedTokenIssuerList,
+  ServiceIntegrations: a.ServiceIntegrations,
+  ApplicationType: a.ApplicationType,
+  Tags: a.Tags,
+  SsoTagKeys: a.SsoTagKeys,
+});
 
 const presentCluster = (cluster: StoredCluster) => ({
   ClusterIdentifier: cluster.ClusterIdentifier,
@@ -3237,6 +3365,236 @@ const GetReservedNodeExchangeConfigurationOptions: OperationHandler = (
   return { ReservedNodeConfigurationOptionList: options };
 };
 
+const CreateIntegration: OperationHandler = (input, ctx) => {
+  const sourceArn = requireString(input, "SourceArn");
+  const targetArn = requireString(input, "TargetArn");
+  const integrationName = requireString(input, "IntegrationName");
+  const arn = integrationArnOf(ctx.region, ctx.account);
+  const now = new Date().toISOString();
+  const encCtxRaw = input["AdditionalEncryptionContext"];
+  const additionalEncryptionContext: Record<string, string> =
+    encCtxRaw !== null &&
+    typeof encCtxRaw === "object" &&
+    !Array.isArray(encCtxRaw)
+      ? Object.fromEntries(
+          Object.entries(encCtxRaw as Record<string, unknown>).map(
+            ([k, v]) => [k, String(v)],
+          ),
+        )
+      : {};
+  const tagListRaw = input["TagList"];
+  const tags: { Key: string; Value: string }[] = Array.isArray(tagListRaw)
+    ? (tagListRaw as Record<string, unknown>[])
+        .filter((t) => t !== null && typeof t === "object")
+        .map((t) => ({ Key: String(t["Key"] ?? ""), Value: String(t["Value"] ?? "") }))
+    : [];
+  const integration: StoredIntegration = {
+    IntegrationArn: arn,
+    IntegrationName: integrationName,
+    SourceArn: sourceArn,
+    TargetArn: targetArn,
+    Status: "active",
+    Errors: [],
+    CreateTime: now,
+    Description: optionalString(input, "Description"),
+    KMSKeyId: optionalString(input, "KMSKeyId"),
+    AdditionalEncryptionContext: additionalEncryptionContext,
+    Tags: tags,
+  };
+  ctx.store.set(integrationKey(arn), integration);
+  const inbound: StoredInboundIntegration = {
+    IntegrationArn: arn,
+    SourceArn: sourceArn,
+    TargetArn: targetArn,
+    Status: "active",
+    Errors: [],
+    CreateTime: now,
+  };
+  ctx.store.set(inboundIntegrationKey(arn), inbound);
+  return presentIntegration(integration);
+};
+
+const DeleteIntegration: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "IntegrationArn");
+  const integration = requireIntegration(ctx, arn);
+  ctx.store.delete(integrationKey(arn));
+  ctx.store.delete(inboundIntegrationKey(arn));
+  return presentIntegration(integration);
+};
+
+const DescribeIntegrations: OperationHandler = (input, ctx) => {
+  const arn = optionalString(input, "IntegrationArn");
+  if (arn !== undefined) {
+    const integration = requireIntegration(ctx, arn);
+    return { Integrations: [presentIntegration(integration)] };
+  }
+  const filtersRaw = input["Filters"];
+  let integrations = ctx.store
+    .list<StoredIntegration>()
+    .filter((e) => e.key.startsWith("integration/"))
+    .map((e) => e.value);
+  if (Array.isArray(filtersRaw)) {
+    for (const f of filtersRaw as Record<string, unknown>[]) {
+      if (typeof f !== "object" || f === null) continue;
+      const name = String(f["Name"] ?? "");
+      const values = Array.isArray(f["Values"])
+        ? (f["Values"] as unknown[]).map((v) => String(v))
+        : [];
+      if (values.length === 0) continue;
+      if (name === "integration-arn") {
+        integrations = integrations.filter((i) =>
+          values.includes(i.IntegrationArn),
+        );
+      } else if (name === "source-arn") {
+        integrations = integrations.filter((i) =>
+          values.includes(i.SourceArn),
+        );
+      } else if (name === "status") {
+        integrations = integrations.filter((i) => values.includes(i.Status));
+      }
+    }
+  }
+  return { Integrations: integrations.map(presentIntegration) };
+};
+
+const DescribeInboundIntegrations: OperationHandler = (input, ctx) => {
+  const integrationArn = optionalString(input, "IntegrationArn");
+  const targetArn = optionalString(input, "TargetArn");
+  let inbounds = ctx.store
+    .list<StoredInboundIntegration>()
+    .filter((e) => e.key.startsWith("inboundintegration/"))
+    .map((e) => e.value);
+  if (integrationArn !== undefined) {
+    inbounds = inbounds.filter((i) => i.IntegrationArn === integrationArn);
+  }
+  if (targetArn !== undefined) {
+    inbounds = inbounds.filter((i) => i.TargetArn === targetArn);
+  }
+  return { InboundIntegrations: inbounds.map(presentInboundIntegration) };
+};
+
+const ModifyIntegration: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "IntegrationArn");
+  const integration = requireIntegration(ctx, arn);
+  const description = optionalString(input, "Description");
+  const integrationName = optionalString(input, "IntegrationName");
+  if (description !== undefined) {
+    integration.Description = description;
+  }
+  if (integrationName !== undefined) {
+    integration.IntegrationName = integrationName;
+  }
+  ctx.store.set(integrationKey(arn), integration);
+  return presentIntegration(integration);
+};
+
+const CreateRedshiftIdcApplication: OperationHandler = (input, ctx) => {
+  const idcInstanceArn = requireString(input, "IdcInstanceArn");
+  const name = requireString(input, "RedshiftIdcApplicationName");
+  const iamRoleArn = requireString(input, "IamRoleArn");
+  const arn = idcApplicationArnOf(ctx.region, ctx.account, name);
+  const tokenIssuerListRaw = input["AuthorizedTokenIssuerList"];
+  const authorizedTokenIssuerList: StoredAuthorizedTokenIssuer[] =
+    Array.isArray(tokenIssuerListRaw)
+      ? (tokenIssuerListRaw as Record<string, unknown>[]).map((t) => ({
+          TrustedTokenIssuerArn: optionalString(t, "TrustedTokenIssuerArn"),
+          AuthorizedAudiencesList: stringList(t, "AuthorizedAudiencesList"),
+        }))
+      : [];
+  const serviceIntegrationsRaw = input["ServiceIntegrations"];
+  const serviceIntegrations: Record<string, unknown>[] = Array.isArray(
+    serviceIntegrationsRaw,
+  )
+    ? (serviceIntegrationsRaw as Record<string, unknown>[])
+    : [];
+  const app: StoredRedshiftIdcApplication = {
+    IdcInstanceArn: idcInstanceArn,
+    RedshiftIdcApplicationName: name,
+    RedshiftIdcApplicationArn: arn,
+    IdentityNamespace: optionalString(input, "IdentityNamespace"),
+    IdcDisplayName: optionalString(input, "IdcDisplayName"),
+    IamRoleArn: iamRoleArn,
+    IdcManagedApplicationArn: `arn:aws:sso::${ctx.account}:application/ssoins-${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}/${name}`,
+    IdcOnboardStatus: "ENABLED",
+    AuthorizedTokenIssuerList: authorizedTokenIssuerList,
+    ServiceIntegrations: serviceIntegrations,
+    ApplicationType: optionalString(input, "ApplicationType"),
+    Tags: tagList(input),
+    SsoTagKeys: stringList(input, "SsoTagKeys"),
+  };
+  ctx.store.set(idcApplicationKey(arn), app);
+  return { RedshiftIdcApplication: presentIdcApplication(app) };
+};
+
+const DeleteRedshiftIdcApplication: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "RedshiftIdcApplicationArn");
+  requireIdcApplication(ctx, arn);
+  ctx.store.delete(idcApplicationKey(arn));
+  return {};
+};
+
+const DescribeRedshiftIdcApplications: OperationHandler = (input, ctx) => {
+  const arn = optionalString(input, "RedshiftIdcApplicationArn");
+  if (arn !== undefined) {
+    const app = requireIdcApplication(ctx, arn);
+    return { RedshiftIdcApplications: [presentIdcApplication(app)] };
+  }
+  const apps = ctx.store
+    .list<StoredRedshiftIdcApplication>()
+    .filter((e) => e.key.startsWith("idcapplication/"))
+    .map((e) => presentIdcApplication(e.value));
+  return { RedshiftIdcApplications: apps };
+};
+
+const ModifyRedshiftIdcApplication: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "RedshiftIdcApplicationArn");
+  const app = requireIdcApplication(ctx, arn);
+  const identityNamespace = optionalString(input, "IdentityNamespace");
+  const iamRoleArn = optionalString(input, "IamRoleArn");
+  const idcDisplayName = optionalString(input, "IdcDisplayName");
+  if (identityNamespace !== undefined) {
+    app.IdentityNamespace = identityNamespace;
+  }
+  if (iamRoleArn !== undefined) {
+    app.IamRoleArn = iamRoleArn;
+  }
+  if (idcDisplayName !== undefined) {
+    app.IdcDisplayName = idcDisplayName;
+  }
+  const tokenIssuerListRaw = input["AuthorizedTokenIssuerList"];
+  if (Array.isArray(tokenIssuerListRaw)) {
+    app.AuthorizedTokenIssuerList = (
+      tokenIssuerListRaw as Record<string, unknown>[]
+    ).map((t) => ({
+      TrustedTokenIssuerArn: optionalString(t, "TrustedTokenIssuerArn"),
+      AuthorizedAudiencesList: stringList(t, "AuthorizedAudiencesList"),
+    }));
+  }
+  const serviceIntegrationsRaw = input["ServiceIntegrations"];
+  if (Array.isArray(serviceIntegrationsRaw)) {
+    app.ServiceIntegrations =
+      serviceIntegrationsRaw as Record<string, unknown>[];
+  }
+  ctx.store.set(idcApplicationKey(arn), app);
+  return { RedshiftIdcApplication: presentIdcApplication(app) };
+};
+
+const GetIdentityCenterAuthToken: OperationHandler = (input, _ctx) => {
+  const clusterIds = stringList(input, "ClusterIds");
+  if (clusterIds.length === 0) {
+    throw awsError(
+      "MissingParameter",
+      "The required parameter ClusterIds is missing.",
+      400,
+    );
+  }
+  const expiration = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  return {
+    Token: `bunsai-mock-idc-token-${crypto.randomUUID()}`,
+    ExpirationTime: expiration,
+  };
+};
+
 const redshift: ServiceDefinition = {
   name: "redshift",
   protocol: "query",
@@ -3355,6 +3713,16 @@ const redshift: ServiceDefinition = {
     DeleteHsmConfiguration,
     DescribeHsmClientCertificates,
     DescribeHsmConfigurations,
+    CreateIntegration,
+    DeleteIntegration,
+    DescribeIntegrations,
+    DescribeInboundIntegrations,
+    ModifyIntegration,
+    CreateRedshiftIdcApplication,
+    DeleteRedshiftIdcApplication,
+    DescribeRedshiftIdcApplications,
+    ModifyRedshiftIdcApplication,
+    GetIdentityCenterAuthToken,
     AcceptReservedNodeExchange,
     DescribeReservedNodeExchangeStatus,
     DescribeReservedNodeOfferings,

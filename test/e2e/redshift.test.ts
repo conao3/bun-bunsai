@@ -132,6 +132,16 @@ import {
   DescribeRedshiftIdcApplicationsCommand,
   ModifyRedshiftIdcApplicationCommand,
   GetIdentityCenterAuthTokenCommand,
+  AddPartnerCommand,
+  DeletePartnerCommand,
+  DescribePartnersCommand,
+  UpdatePartnerStatusCommand,
+  PutResourcePolicyCommand,
+  GetResourcePolicyCommand,
+  DeleteResourcePolicyCommand,
+  ListRecommendationsCommand,
+  FailoverPrimaryComputeCommand,
+  ModifyLakehouseConfigurationCommand,
 } from "@aws-sdk/client-redshift";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 
@@ -1599,4 +1609,127 @@ test("Redshift integration and IDC application lifecycle", async () => {
     (a) => a.RedshiftIdcApplicationArn === idcArn,
   );
   expect(remaining.length).toBe(0);
+});
+
+test("Redshift partner + resource-policy lifecycle", async () => {
+  const client = redshift();
+  const clusterId = "bunsai-partner-cluster";
+
+  await client.send(
+    new CreateClusterCommand({
+      ClusterIdentifier: clusterId,
+      NodeType: "ra3.xlplus",
+      MasterUsername: "admin",
+      MasterUserPassword: "BunsaiTestPw1",
+      ClusterType: "single-node",
+      DBName: "partnertest",
+    }),
+  );
+
+  const added = await client.send(
+    new AddPartnerCommand({
+      AccountId: "123456789012",
+      ClusterIdentifier: clusterId,
+      DatabaseName: "partnerdb",
+      PartnerName: "mypartner",
+    }),
+  );
+  expect(added.DatabaseName).toBe("partnerdb");
+  expect(added.PartnerName).toBe("mypartner");
+
+  const described = await client.send(
+    new DescribePartnersCommand({
+      AccountId: "123456789012",
+      ClusterIdentifier: clusterId,
+      DatabaseName: "partnerdb",
+    }),
+  );
+  expect(described.PartnerIntegrationInfoList?.length).toBeGreaterThanOrEqual(
+    1,
+  );
+  const found = (described.PartnerIntegrationInfoList ?? []).find(
+    (p) => p.PartnerName === "mypartner",
+  );
+  expect(found?.Status).toBe("Active");
+
+  const updated = await client.send(
+    new UpdatePartnerStatusCommand({
+      AccountId: "123456789012",
+      ClusterIdentifier: clusterId,
+      DatabaseName: "partnerdb",
+      PartnerName: "mypartner",
+      Status: "ConnectionFailure",
+      StatusMessage: "test failure",
+    }),
+  );
+  expect(updated.PartnerName).toBe("mypartner");
+
+  await client.send(
+    new DeletePartnerCommand({
+      AccountId: "123456789012",
+      ClusterIdentifier: clusterId,
+      DatabaseName: "partnerdb",
+      PartnerName: "mypartner",
+    }),
+  );
+
+  const afterDelete = await client.send(
+    new DescribePartnersCommand({
+      AccountId: "123456789012",
+      ClusterIdentifier: clusterId,
+      DatabaseName: "partnerdb",
+    }),
+  );
+  const remaining = (afterDelete.PartnerIntegrationInfoList ?? []).filter(
+    (p) => p.PartnerName === "mypartner",
+  );
+  expect(remaining.length).toBe(0);
+
+  const clusterArn = `arn:aws:redshift:us-east-1:123456789012:cluster:${clusterId}`;
+  const policy = JSON.stringify({ Version: "2012-10-17", Statement: [] });
+
+  const put = await client.send(
+    new PutResourcePolicyCommand({
+      ResourceArn: clusterArn,
+      Policy: policy,
+    }),
+  );
+  expect(put.ResourcePolicy?.ResourceArn).toBe(clusterArn);
+  expect(put.ResourcePolicy?.Policy).toBe(policy);
+
+  const got = await client.send(
+    new GetResourcePolicyCommand({ ResourceArn: clusterArn }),
+  );
+  expect(got.ResourcePolicy?.Policy).toBe(policy);
+
+  await client.send(
+    new DeleteResourcePolicyCommand({ ResourceArn: clusterArn }),
+  );
+
+  const recs = await client.send(
+    new ListRecommendationsCommand({ ClusterIdentifier: clusterId }),
+  );
+  expect(Array.isArray(recs.Recommendations)).toBe(true);
+
+  const failover = await client.send(
+    new FailoverPrimaryComputeCommand({ ClusterIdentifier: clusterId }),
+  );
+  expect(failover.Cluster?.ClusterIdentifier).toBe(clusterId);
+
+  const lakehouse = await client.send(
+    new ModifyLakehouseConfigurationCommand({
+      ClusterIdentifier: clusterId,
+      LakehouseRegistration: "Register",
+      CatalogName: "my-catalog",
+    }),
+  );
+  expect(lakehouse.ClusterIdentifier).toBe(clusterId);
+  expect(lakehouse.LakehouseRegistrationStatus).toBe("Registered");
+
+  await client.send(
+    new DeleteClusterCommand({
+      ClusterIdentifier: clusterId,
+      SkipFinalClusterSnapshot: true,
+    }),
+  );
 });

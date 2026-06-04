@@ -11,6 +11,7 @@ import {
   CreateImageRecipeCommand,
   CreateInfrastructureConfigurationCommand,
   CreateLifecyclePolicyCommand,
+  CreateWorkflowCommand,
   DeleteComponentCommand,
   DeleteDistributionConfigurationCommand,
   DeleteImageCommand,
@@ -18,6 +19,7 @@ import {
   DeleteImageRecipeCommand,
   DeleteInfrastructureConfigurationCommand,
   DeleteLifecyclePolicyCommand,
+  DeleteWorkflowCommand,
   GetComponentCommand,
   GetComponentPolicyCommand,
   GetContainerRecipeCommand,
@@ -28,6 +30,7 @@ import {
   GetInfrastructureConfigurationCommand,
   GetLifecycleExecutionCommand,
   GetLifecyclePolicyCommand,
+  GetWorkflowCommand,
   ImagebuilderClient,
   ListComponentBuildVersionsCommand,
   ListComponentsCommand,
@@ -43,6 +46,8 @@ import {
   ListLifecycleExecutionsCommand,
   ListLifecyclePoliciesCommand,
   ListTagsForResourceCommand,
+  ListWorkflowBuildVersionsCommand,
+  ListWorkflowsCommand,
   PutComponentPolicyCommand,
   PutImagePolicyCommand,
   PutImageRecipePolicyCommand,
@@ -669,4 +674,53 @@ test("Imagebuilder UpdateImagePipeline and StartImagePipelineExecution", async (
   await client.send(
     new DeleteImagePipelineCommand({ imagePipelineArn: pipelineArn }),
   );
+});
+
+test("Imagebuilder workflow create→get→list lifecycle", async () => {
+  const client = imagebuilder();
+  const name = `wf-${Date.now()}`;
+  const version = "1.0.0";
+
+  const created = await client.send(
+    new CreateWorkflowCommand({
+      name,
+      semanticVersion: version,
+      type: "BUILD",
+      data: "schemaVersion: 1.0\nsteps: []",
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  expect(created.workflowBuildVersionArn).toBeDefined();
+  expect(created.workflowBuildVersionArn).toContain(`workflow/build/${name}`);
+  const arn = created.workflowBuildVersionArn ?? "";
+
+  const got = await client.send(
+    new GetWorkflowCommand({ workflowBuildVersionArn: arn }),
+  );
+  expect(got.workflow?.arn).toBe(arn);
+  expect(got.workflow?.name).toBe(name);
+  expect(got.workflow?.version).toBe(version);
+  expect(got.workflow?.type).toBe("BUILD");
+  expect(got.workflow?.state?.status).toBe("AVAILABLE");
+  expect(got.workflow?.owner).toBe("Self");
+
+  const listed = await client.send(new ListWorkflowsCommand({}));
+  expect((listed.workflowVersionList ?? []).map((w) => w.name)).toContain(name);
+
+  const versionArn = arn.split("/").slice(0, -1).join("/");
+  const buildVersions = await client.send(
+    new ListWorkflowBuildVersionsCommand({ workflowVersionArn: versionArn }),
+  );
+  expect(
+    (buildVersions.workflowSummaryList ?? []).map((w) => w.name),
+  ).toContain(name);
+
+  const deleted = await client.send(
+    new DeleteWorkflowCommand({ workflowBuildVersionArn: arn }),
+  );
+  expect(deleted.workflowBuildVersionArn).toBe(arn);
+
+  await expect(
+    client.send(new GetWorkflowCommand({ workflowBuildVersionArn: arn })),
+  ).rejects.toThrow();
 });

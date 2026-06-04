@@ -24,6 +24,9 @@ const imagePrefix = "image:" as const;
 const imagePolicyPrefix = "image-policy:" as const;
 const lifecyclePolicyPrefix = "lifecycle-policy:" as const;
 const lifecycleExecutionPrefix = "lifecycle-execution:" as const;
+const workflowPrefix = "workflow:" as const;
+const workflowExecutionPrefix = "workflow-execution:" as const;
+const workflowStepExecutionPrefix = "workflow-step-execution:" as const;
 
 type StoredPipeline = {
   arn: string;
@@ -167,6 +170,57 @@ type StoredLifecycleExecution = {
   endTime: string | undefined;
 };
 
+type StoredWorkflow = {
+  arn: string;
+  name: string;
+  version: string;
+  description: string | undefined;
+  changeDescription: string | undefined;
+  type: string;
+  state: { status: string; reason?: string };
+  owner: string;
+  data: string | undefined;
+  kmsKeyId: string | undefined;
+  dateCreated: string;
+  tags: Record<string, string>;
+  parameters: unknown[] | undefined;
+};
+
+type StoredWorkflowExecution = {
+  workflowBuildVersionArn: string;
+  workflowExecutionId: string;
+  imageBuildVersionArn: string | undefined;
+  type: string;
+  status: string;
+  message: string | undefined;
+  totalStepCount: number;
+  totalStepsSucceeded: number;
+  totalStepsFailed: number;
+  totalStepsSkipped: number;
+  startTime: string;
+  endTime: string | undefined;
+  parallelGroup: string | undefined;
+};
+
+type StoredWorkflowStepExecution = {
+  stepExecutionId: string;
+  workflowBuildVersionArn: string;
+  workflowExecutionId: string;
+  imageBuildVersionArn: string | undefined;
+  name: string;
+  description: string | undefined;
+  action: string;
+  status: string;
+  rollbackStatus: string | undefined;
+  message: string | undefined;
+  inputs: string | undefined;
+  outputs: string | undefined;
+  startTime: string;
+  endTime: string | undefined;
+  onFailure: string | undefined;
+  timeoutSeconds: number | undefined;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -224,6 +278,11 @@ const lifecyclePolicyKey = (arn: string): string =>
   `${lifecyclePolicyPrefix}${arn}`;
 const lifecycleExecutionKey = (id: string): string =>
   `${lifecycleExecutionPrefix}${id}`;
+const workflowKey = (arn: string): string => `${workflowPrefix}${arn}`;
+const workflowExecutionKey = (id: string): string =>
+  `${workflowExecutionPrefix}${id}`;
+const workflowStepExecutionKey = (id: string): string =>
+  `${workflowStepExecutionPrefix}${id}`;
 
 const pipelineArnOf = (ctx: ServiceContext, name: string): string =>
   `arn:aws:imagebuilder:${ctx.region}:${ctx.account}:image-pipeline/${name}`;
@@ -271,6 +330,14 @@ const imageVersionArnOf = (
 
 const lifecyclePolicyArnOf = (ctx: ServiceContext, name: string): string =>
   `arn:aws:imagebuilder:${ctx.region}:${ctx.account}:lifecycle-policy/${name}`;
+
+const workflowArnOf = (
+  ctx: ServiceContext,
+  type: string,
+  name: string,
+  version: string,
+): string =>
+  `arn:aws:imagebuilder:${ctx.region}:${ctx.account}:workflow/${type.toLowerCase()}/${name}/${version}/1`;
 
 const pipelineView = (pipeline: StoredPipeline): Record<string, unknown> => ({
   arn: pipeline.arn,
@@ -558,6 +625,98 @@ const lifecycleExecutionView = (
   endTime: e.endTime,
 });
 
+const workflowView = (w: StoredWorkflow): Record<string, unknown> => ({
+  arn: w.arn,
+  name: w.name,
+  version: w.version,
+  description: w.description,
+  changeDescription: w.changeDescription,
+  type: w.type,
+  state: w.state,
+  owner: w.owner,
+  data: w.data,
+  kmsKeyId: w.kmsKeyId,
+  dateCreated: w.dateCreated,
+  tags: w.tags,
+  parameters: w.parameters,
+});
+
+const workflowVersionView = (w: StoredWorkflow): Record<string, unknown> => {
+  const versionArn = w.arn.split("/").slice(0, -1).join("/");
+  return {
+    arn: versionArn,
+    name: w.name,
+    version: w.version,
+    description: w.description,
+    type: w.type,
+    owner: w.owner,
+    dateCreated: w.dateCreated,
+  };
+};
+
+const workflowSummaryView = (w: StoredWorkflow): Record<string, unknown> => ({
+  arn: w.arn.split("/").slice(0, -1).join("/"),
+  name: w.name,
+  version: w.version,
+  description: w.description,
+  changeDescription: w.changeDescription,
+  type: w.type,
+  owner: w.owner,
+  state: w.state,
+  dateCreated: w.dateCreated,
+  tags: w.tags,
+});
+
+const workflowExecutionView = (
+  e: StoredWorkflowExecution,
+): Record<string, unknown> => ({
+  workflowBuildVersionArn: e.workflowBuildVersionArn,
+  workflowExecutionId: e.workflowExecutionId,
+  type: e.type,
+  status: e.status,
+  message: e.message,
+  totalStepCount: e.totalStepCount,
+  totalStepsSucceeded: e.totalStepsSucceeded,
+  totalStepsFailed: e.totalStepsFailed,
+  totalStepsSkipped: e.totalStepsSkipped,
+  startTime: e.startTime,
+  endTime: e.endTime,
+  parallelGroup: e.parallelGroup,
+});
+
+const workflowStepExecutionView = (
+  s: StoredWorkflowStepExecution,
+): Record<string, unknown> => ({
+  stepExecutionId: s.stepExecutionId,
+  workflowBuildVersionArn: s.workflowBuildVersionArn,
+  workflowExecutionId: s.workflowExecutionId,
+  imageBuildVersionArn: s.imageBuildVersionArn,
+  name: s.name,
+  description: s.description,
+  action: s.action,
+  status: s.status,
+  rollbackStatus: s.rollbackStatus,
+  message: s.message,
+  inputs: s.inputs,
+  outputs: s.outputs,
+  startTime: s.startTime,
+  endTime: s.endTime,
+  onFailure: s.onFailure,
+  timeoutSeconds: s.timeoutSeconds,
+});
+
+const workflowStepExecutionSummaryView = (
+  s: StoredWorkflowStepExecution,
+): Record<string, unknown> => ({
+  stepExecutionId: s.stepExecutionId,
+  imageBuildVersionArn: s.imageBuildVersionArn,
+  workflowExecutionId: s.workflowExecutionId,
+  workflowBuildVersionArn: s.workflowBuildVersionArn,
+  name: s.name,
+  action: s.action,
+  startTime: s.startTime,
+});
+
 const requireImage = (ctx: ServiceContext, arn: string): StoredImage => {
   const stored = ctx.store.get<StoredImage>(imageKey(arn));
   if (stored === undefined) {
@@ -683,6 +842,52 @@ const requireLifecycleExecution = (
     throw awsError(
       "ResourceNotFoundException",
       `Lifecycle execution not found for id: ${id}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireWorkflow = (ctx: ServiceContext, arn: string): StoredWorkflow => {
+  const stored = ctx.store.get<StoredWorkflow>(workflowKey(arn));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Workflow not found for arn: ${arn}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireWorkflowExecution = (
+  ctx: ServiceContext,
+  id: string,
+): StoredWorkflowExecution => {
+  const stored = ctx.store.get<StoredWorkflowExecution>(
+    workflowExecutionKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Workflow execution not found for id: ${id}.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireWorkflowStepExecution = (
+  ctx: ServiceContext,
+  id: string,
+): StoredWorkflowStepExecution => {
+  const stored = ctx.store.get<StoredWorkflowStepExecution>(
+    workflowStepExecutionKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Workflow step execution not found for id: ${id}.`,
       404,
     );
   }
@@ -1845,6 +2050,206 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
   return { tags };
 };
 
+const CreateWorkflow: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "name");
+  const semanticVersion = requireString(input, "semanticVersion");
+  const type = requireString(input, "type");
+  const arn = workflowArnOf(ctx, type, name, semanticVersion);
+  if (ctx.store.get<StoredWorkflow>(workflowKey(arn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Workflow already exists with name: ${name}.`,
+      400,
+    );
+  }
+  const workflow: StoredWorkflow = {
+    arn,
+    name,
+    version: semanticVersion,
+    description: stringOrUndefined(input["description"]),
+    changeDescription: stringOrUndefined(input["changeDescription"]),
+    type,
+    state: { status: "AVAILABLE" },
+    owner: "Self",
+    data: stringOrUndefined(input["data"]),
+    kmsKeyId: stringOrUndefined(input["kmsKeyId"]),
+    dateCreated: nowIso(),
+    tags: stringMapFrom(input["tags"]),
+    parameters: arrayOrUndefined(input["parameters"]),
+  };
+  ctx.store.set(workflowKey(arn), workflow);
+  return {
+    clientToken: stringOrUndefined(input["clientToken"]),
+    workflowBuildVersionArn: arn,
+  };
+};
+
+const DeleteWorkflow: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "workflowBuildVersionArn");
+  requireWorkflow(ctx, arn);
+  ctx.store.delete(workflowKey(arn));
+  return { workflowBuildVersionArn: arn };
+};
+
+const GetWorkflow: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "workflowBuildVersionArn");
+  const workflow = requireWorkflow(ctx, arn);
+  return { workflow: workflowView(workflow) };
+};
+
+const ListWorkflows: OperationHandler = (_input, ctx) => {
+  const workflows = ctx.store
+    .list<StoredWorkflow>()
+    .filter((entry) => entry.key.startsWith(workflowPrefix))
+    .map((entry) => entry.value)
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { workflowVersionList: workflows.map(workflowVersionView) };
+};
+
+const ListWorkflowBuildVersions: OperationHandler = (input, ctx) => {
+  const versionArn = requireString(input, "workflowVersionArn");
+  const workflows = ctx.store
+    .list<StoredWorkflow>()
+    .filter((entry) => entry.key.startsWith(workflowPrefix))
+    .map((entry) => entry.value)
+    .filter((w) => w.arn.startsWith(versionArn))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { workflowSummaryList: workflows.map(workflowSummaryView) };
+};
+
+const GetWorkflowExecution: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "workflowExecutionId");
+  const execution = requireWorkflowExecution(ctx, id);
+  return {
+    requestId: crypto.randomUUID(),
+    workflowBuildVersionArn: execution.workflowBuildVersionArn,
+    workflowExecutionId: execution.workflowExecutionId,
+    imageBuildVersionArn: execution.imageBuildVersionArn,
+    type: execution.type,
+    status: execution.status,
+    message: execution.message,
+    totalStepCount: execution.totalStepCount,
+    totalStepsSucceeded: execution.totalStepsSucceeded,
+    totalStepsFailed: execution.totalStepsFailed,
+    totalStepsSkipped: execution.totalStepsSkipped,
+    startTime: execution.startTime,
+    endTime: execution.endTime,
+    parallelGroup: execution.parallelGroup,
+  };
+};
+
+const GetWorkflowStepExecution: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "stepExecutionId");
+  const step = requireWorkflowStepExecution(ctx, id);
+  return {
+    requestId: crypto.randomUUID(),
+    stepExecutionId: step.stepExecutionId,
+    workflowBuildVersionArn: step.workflowBuildVersionArn,
+    workflowExecutionId: step.workflowExecutionId,
+    imageBuildVersionArn: step.imageBuildVersionArn,
+    name: step.name,
+    description: step.description,
+    action: step.action,
+    status: step.status,
+    rollbackStatus: step.rollbackStatus,
+    message: step.message,
+    inputs: step.inputs,
+    outputs: step.outputs,
+    startTime: step.startTime,
+    endTime: step.endTime,
+    onFailure: step.onFailure,
+    timeoutSeconds: step.timeoutSeconds,
+  };
+};
+
+const ListWorkflowExecutions: OperationHandler = (input, ctx) => {
+  const imageBuildVersionArn = requireString(input, "imageBuildVersionArn");
+  const executions = ctx.store
+    .list<StoredWorkflowExecution>()
+    .filter((entry) => entry.key.startsWith(workflowExecutionPrefix))
+    .map((entry) => entry.value)
+    .filter((e) => e.imageBuildVersionArn === imageBuildVersionArn)
+    .sort((a, b) =>
+      a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0,
+    );
+  return {
+    requestId: crypto.randomUUID(),
+    workflowExecutions: executions.map(workflowExecutionView),
+    imageBuildVersionArn,
+  };
+};
+
+const ListWorkflowStepExecutions: OperationHandler = (input, ctx) => {
+  const workflowExecutionId = requireString(input, "workflowExecutionId");
+  const execution = requireWorkflowExecution(ctx, workflowExecutionId);
+  const steps = ctx.store
+    .list<StoredWorkflowStepExecution>()
+    .filter((entry) => entry.key.startsWith(workflowStepExecutionPrefix))
+    .map((entry) => entry.value)
+    .filter((s) => s.workflowExecutionId === workflowExecutionId)
+    .sort((a, b) =>
+      a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0,
+    );
+  return {
+    requestId: crypto.randomUUID(),
+    steps: steps.map(workflowStepExecutionView),
+    workflowBuildVersionArn: execution.workflowBuildVersionArn,
+    workflowExecutionId,
+    imageBuildVersionArn: execution.imageBuildVersionArn,
+  };
+};
+
+const ListWaitingWorkflowSteps: OperationHandler = (_input, ctx) => {
+  const steps = ctx.store
+    .list<StoredWorkflowStepExecution>()
+    .filter((entry) => entry.key.startsWith(workflowStepExecutionPrefix))
+    .map((entry) => entry.value)
+    .filter((s) => s.status === "WAITING")
+    .sort((a, b) =>
+      a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0,
+    );
+  return { steps: steps.map(workflowStepExecutionSummaryView) };
+};
+
+const SendWorkflowStepAction: OperationHandler = (input, ctx) => {
+  const stepExecutionId = requireString(input, "stepExecutionId");
+  const imageBuildVersionArn = requireString(input, "imageBuildVersionArn");
+  const action = requireString(input, "action");
+  const step = requireWorkflowStepExecution(ctx, stepExecutionId);
+  const newStatus = action === "RESUME" ? "COMPLETED" : "SKIPPED";
+  const updated: StoredWorkflowStepExecution = {
+    ...step,
+    status: newStatus,
+    endTime: nowIso(),
+  };
+  ctx.store.set(workflowStepExecutionKey(stepExecutionId), updated);
+  return {
+    stepExecutionId,
+    imageBuildVersionArn,
+    clientToken: stringOrUndefined(input["clientToken"]),
+  };
+};
+
+const GetMarketplaceResource: OperationHandler = (input, _ctx) => {
+  const resourceArn = requireString(input, "resourceArn");
+  return {
+    resourceArn,
+    url: undefined,
+    data: undefined,
+  };
+};
+
+const ListImageScanFindingAggregations: OperationHandler = (_input, _ctx) => ({
+  requestId: crypto.randomUUID(),
+  aggregationType: "FINDING_SEVERITY",
+  responses: [],
+});
+
+const ListImageScanFindings: OperationHandler = (_input, _ctx) => ({
+  requestId: crypto.randomUUID(),
+  findings: [],
+});
+
 const imagebuilder = {
   name: "imagebuilder",
   protocol: "rest-json",
@@ -2045,6 +2450,48 @@ const imagebuilder = {
     if (path === "/ListImagePipelineImages" && req.method === "POST") {
       return "ListImagePipelineImages";
     }
+    if (path === "/CreateWorkflow" && req.method === "PUT") {
+      return "CreateWorkflow";
+    }
+    if (path === "/DeleteWorkflow" && req.method === "DELETE") {
+      return "DeleteWorkflow";
+    }
+    if (path === "/GetWorkflow" && req.method === "GET") {
+      return "GetWorkflow";
+    }
+    if (path === "/ListWorkflows" && req.method === "POST") {
+      return "ListWorkflows";
+    }
+    if (path === "/ListWorkflowBuildVersions" && req.method === "POST") {
+      return "ListWorkflowBuildVersions";
+    }
+    if (path === "/GetWorkflowExecution" && req.method === "GET") {
+      return "GetWorkflowExecution";
+    }
+    if (path === "/GetWorkflowStepExecution" && req.method === "GET") {
+      return "GetWorkflowStepExecution";
+    }
+    if (path === "/ListWorkflowExecutions" && req.method === "POST") {
+      return "ListWorkflowExecutions";
+    }
+    if (path === "/ListWorkflowStepExecutions" && req.method === "POST") {
+      return "ListWorkflowStepExecutions";
+    }
+    if (path === "/ListWaitingWorkflowSteps" && req.method === "POST") {
+      return "ListWaitingWorkflowSteps";
+    }
+    if (path === "/SendWorkflowStepAction" && req.method === "PUT") {
+      return "SendWorkflowStepAction";
+    }
+    if (path === "/GetMarketplaceResource" && req.method === "POST") {
+      return "GetMarketplaceResource";
+    }
+    if (path === "/ListImageScanFindingAggregations" && req.method === "POST") {
+      return "ListImageScanFindingAggregations";
+    }
+    if (path === "/ListImageScanFindings" && req.method === "POST") {
+      return "ListImageScanFindings";
+    }
     return undefined;
   },
   operations: {
@@ -2111,6 +2558,20 @@ const imagebuilder = {
     UpdateImagePipeline,
     StartImagePipelineExecution,
     ListImagePipelineImages,
+    CreateWorkflow,
+    DeleteWorkflow,
+    GetWorkflow,
+    ListWorkflows,
+    ListWorkflowBuildVersions,
+    GetWorkflowExecution,
+    GetWorkflowStepExecution,
+    ListWorkflowExecutions,
+    ListWorkflowStepExecutions,
+    ListWaitingWorkflowSteps,
+    SendWorkflowStepAction,
+    GetMarketplaceResource,
+    ListImageScanFindingAggregations,
+    ListImageScanFindings,
   },
   model,
 } as const satisfies ServiceDefinition;

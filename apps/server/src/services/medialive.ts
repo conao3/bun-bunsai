@@ -29,6 +29,8 @@ const ebRuleTemplateGroupPrefix = "ebruletemplgrp:" as const;
 const signalMapPrefix = "signalmap:" as const;
 const sdiSourcePrefix = "sdiSource:" as const;
 const channelPlacementGroupPrefix = "channelPlacementGroup:" as const;
+const clusterPrefix = "cluster:" as const;
+const nodePrefix = "node:" as const;
 
 type StoredChannel = {
   Id: string;
@@ -219,6 +221,37 @@ type StoredChannelPlacementGroup = {
   Channels: string[];
 };
 
+type StoredCluster = {
+  Id: string;
+  Arn: string;
+  ChannelIds: string[];
+  ClusterType: string;
+  InstanceRoleArn: string;
+  Name: string;
+  NetworkSettings: {
+    DefaultRoute: string;
+    InterfaceMappings: { LogicalInterfaceName: string; NetworkId: string }[];
+  };
+  State: string;
+};
+
+type StoredNode = {
+  Id: string;
+  Arn: string;
+  ChannelPlacementGroups: string[];
+  ClusterId: string;
+  ConnectionState: string;
+  InstanceArn: string;
+  Name: string;
+  NodeInterfaceMappings: {
+    LogicalInterfaceName: string;
+    NetworkInterfaceMode: string;
+    PhysicalInterfaceName: string;
+  }[];
+  Role: string;
+  State: string;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -266,6 +299,9 @@ const signalMapKey = (id: string): string => `${signalMapPrefix}${id}`;
 const sdiSourceKey = (id: string): string => `${sdiSourcePrefix}${id}`;
 const channelPlacementGroupKey = (clusterId: string, id: string): string =>
   `${channelPlacementGroupPrefix}${clusterId}:${id}`;
+const clusterKey = (id: string): string => `${clusterPrefix}${id}`;
+const nodeKey = (clusterId: string, nodeId: string): string =>
+  `${nodePrefix}${clusterId}:${nodeId}`;
 
 const channelArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:medialive:${ctx.region}:${ctx.account}:channel:${id}`;
@@ -308,6 +344,12 @@ const sdiSourceArn = (ctx: ServiceContext, id: string): string =>
 
 const channelPlacementGroupArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:medialive:${ctx.region}:${ctx.account}:channelPlacementGroup:${id}`;
+
+const clusterArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:medialive:${ctx.region}:${ctx.account}:cluster:${id}`;
+
+const nodeArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:medialive:${ctx.region}:${ctx.account}:node:${id}`;
 
 const nextChannelId = (ctx: ServiceContext): string => {
   const used = ctx.store
@@ -393,6 +435,20 @@ const nextChannelPlacementGroupId = (ctx: ServiceContext): string => {
       entry.key.startsWith(channelPlacementGroupPrefix),
     ).length;
   return String(12000000 + used + 1);
+};
+
+const nextClusterId = (ctx: ServiceContext): string => {
+  const used = ctx.store
+    .list<StoredCluster>()
+    .filter((entry) => entry.key.startsWith(clusterPrefix)).length;
+  return String(13000000 + used + 1);
+};
+
+const nextNodeId = (ctx: ServiceContext): string => {
+  const used = ctx.store
+    .list<StoredNode>()
+    .filter((entry) => entry.key.startsWith(nodePrefix)).length;
+  return String(14000000 + used + 1);
 };
 
 const requireChannel = (ctx: ServiceContext, id: string): StoredChannel => {
@@ -568,6 +624,26 @@ const requireChannelPlacementGroup = (
       `ChannelPlacementGroup ${id} not found.`,
       404,
     );
+  }
+  return stored;
+};
+
+const requireCluster = (ctx: ServiceContext, id: string): StoredCluster => {
+  const stored = ctx.store.get<StoredCluster>(clusterKey(id));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Cluster ${id} not found.`, 404);
+  }
+  return stored;
+};
+
+const requireNode = (
+  ctx: ServiceContext,
+  clusterId: string,
+  nodeId: string,
+): StoredNode => {
+  const stored = ctx.store.get<StoredNode>(nodeKey(clusterId, nodeId));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Node ${nodeId} not found.`, 404);
   }
   return stored;
 };
@@ -1930,6 +2006,193 @@ const UpdateChannelPlacementGroup: OperationHandler = (input, ctx) => {
   };
 };
 
+const clusterNetworkSettings = (
+  input: Record<string, unknown>,
+): StoredCluster["NetworkSettings"] => {
+  const ns =
+    typeof input["NetworkSettings"] === "object" &&
+    input["NetworkSettings"] !== null
+      ? (input["NetworkSettings"] as Record<string, unknown>)
+      : {};
+  return {
+    DefaultRoute: stringOrUndefined(ns["DefaultRoute"]) ?? "",
+    InterfaceMappings: arrayOrEmpty(ns["InterfaceMappings"]).map((m) => {
+      const mapping = m as Record<string, unknown>;
+      return {
+        LogicalInterfaceName:
+          stringOrUndefined(mapping["LogicalInterfaceName"]) ?? "",
+        NetworkId: stringOrUndefined(mapping["NetworkId"]) ?? "",
+      };
+    }),
+  };
+};
+
+const clusterResponse = (c: StoredCluster) => ({
+  Arn: c.Arn,
+  ChannelIds: c.ChannelIds,
+  ClusterType: c.ClusterType,
+  Id: c.Id,
+  InstanceRoleArn: c.InstanceRoleArn,
+  Name: c.Name,
+  NetworkSettings: c.NetworkSettings,
+  State: c.State,
+});
+
+const CreateCluster: OperationHandler = (input, ctx) => {
+  const id = nextClusterId(ctx);
+  const cluster: StoredCluster = {
+    Id: id,
+    Arn: clusterArn(ctx, id),
+    ChannelIds: [],
+    ClusterType: stringOrUndefined(input["ClusterType"]) ?? "",
+    InstanceRoleArn: stringOrUndefined(input["InstanceRoleArn"]) ?? "",
+    Name: stringOrUndefined(input["Name"]) ?? "",
+    NetworkSettings: clusterNetworkSettings(input),
+    State: "ACTIVE",
+  };
+  ctx.store.set(clusterKey(id), cluster);
+  return clusterResponse(cluster);
+};
+
+const DescribeCluster: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ClusterId");
+  return clusterResponse(requireCluster(ctx, id));
+};
+
+const ListClusters: OperationHandler = (_input, ctx) => {
+  const clusters = ctx.store
+    .list<StoredCluster>()
+    .filter((entry) => entry.key.startsWith(clusterPrefix))
+    .map((entry) => clusterResponse(entry.value));
+  return { Clusters: clusters };
+};
+
+const DeleteCluster: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ClusterId");
+  const cluster = requireCluster(ctx, id);
+  ctx.store.delete(clusterKey(id));
+  return clusterResponse({ ...cluster, State: "DELETED" });
+};
+
+const UpdateCluster: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ClusterId");
+  const existing = requireCluster(ctx, id);
+  const updated: StoredCluster = {
+    ...existing,
+    Name: stringOrUndefined(input["Name"]) ?? existing.Name,
+    NetworkSettings:
+      input["NetworkSettings"] !== undefined
+        ? clusterNetworkSettings(input)
+        : existing.NetworkSettings,
+  };
+  ctx.store.set(clusterKey(id), updated);
+  return clusterResponse(updated);
+};
+
+const nodeResponse = (n: StoredNode) => ({
+  Arn: n.Arn,
+  ChannelPlacementGroups: n.ChannelPlacementGroups,
+  ClusterId: n.ClusterId,
+  ConnectionState: n.ConnectionState,
+  Id: n.Id,
+  InstanceArn: n.InstanceArn,
+  Name: n.Name,
+  NodeInterfaceMappings: n.NodeInterfaceMappings,
+  Role: n.Role,
+  State: n.State,
+  SdiSourceMappings: [],
+});
+
+const CreateNode: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  requireCluster(ctx, clusterId);
+  const id = nextNodeId(ctx);
+  const node: StoredNode = {
+    Id: id,
+    Arn: nodeArn(ctx, id),
+    ChannelPlacementGroups: [],
+    ClusterId: clusterId,
+    ConnectionState: "DISCONNECTED",
+    InstanceArn: "",
+    Name: stringOrUndefined(input["Name"]) ?? "",
+    NodeInterfaceMappings: arrayOrEmpty(input["NodeInterfaceMappings"]).map(
+      (m) => {
+        const mapping = m as Record<string, unknown>;
+        return {
+          LogicalInterfaceName:
+            stringOrUndefined(mapping["LogicalInterfaceName"]) ?? "",
+          NetworkInterfaceMode:
+            stringOrUndefined(mapping["NetworkInterfaceMode"]) ?? "",
+          PhysicalInterfaceName:
+            stringOrUndefined(mapping["PhysicalInterfaceName"]) ?? "",
+        };
+      },
+    ),
+    Role: stringOrUndefined(input["Role"]) ?? "BACKUP",
+    State: "CREATED",
+  };
+  ctx.store.set(nodeKey(clusterId, id), node);
+  return nodeResponse(node);
+};
+
+const DescribeNode: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  const nodeId = requireString(input, "NodeId");
+  return nodeResponse(requireNode(ctx, clusterId, nodeId));
+};
+
+const ListNodes: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  const prefix = nodeKey(clusterId, "");
+  const nodes = ctx.store
+    .list<StoredNode>()
+    .filter((entry) => entry.key.startsWith(prefix))
+    .map((entry) => nodeResponse(entry.value));
+  return { Nodes: nodes };
+};
+
+const DeleteNode: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  const nodeId = requireString(input, "NodeId");
+  const node = requireNode(ctx, clusterId, nodeId);
+  ctx.store.delete(nodeKey(clusterId, nodeId));
+  return nodeResponse({ ...node, State: "DELETED" });
+};
+
+const UpdateNode: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  const nodeId = requireString(input, "NodeId");
+  const existing = requireNode(ctx, clusterId, nodeId);
+  const updated: StoredNode = {
+    ...existing,
+    Name: stringOrUndefined(input["Name"]) ?? existing.Name,
+    Role: stringOrUndefined(input["Role"]) ?? existing.Role,
+  };
+  ctx.store.set(nodeKey(clusterId, nodeId), updated);
+  return nodeResponse(updated);
+};
+
+const UpdateNodeState: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  const nodeId = requireString(input, "NodeId");
+  const existing = requireNode(ctx, clusterId, nodeId);
+  const newState = stringOrUndefined(input["State"]);
+  const updated: StoredNode = {
+    ...existing,
+    State: newState ?? existing.State,
+  };
+  ctx.store.set(nodeKey(clusterId, nodeId), updated);
+  return nodeResponse(updated);
+};
+
+const CreateNodeRegistrationScript: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  requireCluster(ctx, clusterId);
+  return {
+    NodeRegistrationScript: `#!/bin/bash\n# cluster=${clusterId}`,
+  };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -2110,6 +2373,17 @@ const medialive = {
     }
 
     if (r1 === "clusters") {
+      if (parts.length === 2) {
+        if (m === "POST") return "CreateCluster";
+        if (m === "GET") return "ListClusters";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (m === "GET") return "DescribeCluster";
+        if (m === "DELETE") return "DeleteCluster";
+        if (m === "PUT") return "UpdateCluster";
+        return undefined;
+      }
       if (parts.length === 4) {
         const section = parts[3];
         if (section === "alerts" && m === "GET") return "ListClusterAlerts";
@@ -2118,14 +2392,37 @@ const medialive = {
           if (m === "GET") return "ListChannelPlacementGroups";
           return undefined;
         }
+        if (section === "nodes") {
+          if (m === "POST") return "CreateNode";
+          if (m === "GET") return "ListNodes";
+          return undefined;
+        }
+        if (section === "nodeRegistrationScript" && m === "POST")
+          return "CreateNodeRegistrationScript";
         return undefined;
       }
-      if (parts.length === 5 && parts[3] === "channelplacementgroups") {
-        if (m === "GET") return "DescribeChannelPlacementGroup";
-        if (m === "DELETE") return "DeleteChannelPlacementGroup";
-        if (m === "PUT") return "UpdateChannelPlacementGroup";
+      if (parts.length === 5) {
+        if (parts[3] === "channelplacementgroups") {
+          if (m === "GET") return "DescribeChannelPlacementGroup";
+          if (m === "DELETE") return "DeleteChannelPlacementGroup";
+          if (m === "PUT") return "UpdateChannelPlacementGroup";
+          return undefined;
+        }
+        if (parts[3] === "nodes") {
+          if (m === "GET") return "DescribeNode";
+          if (m === "DELETE") return "DeleteNode";
+          if (m === "PUT") return "UpdateNode";
+          return undefined;
+        }
         return undefined;
       }
+      if (
+        parts.length === 6 &&
+        parts[3] === "nodes" &&
+        parts[5] === "state" &&
+        m === "PUT"
+      )
+        return "UpdateNodeState";
       return undefined;
     }
 
@@ -2349,6 +2646,18 @@ const medialive = {
     DescribeChannelPlacementGroup,
     ListChannelPlacementGroups,
     UpdateChannelPlacementGroup,
+    CreateCluster,
+    DescribeCluster,
+    ListClusters,
+    DeleteCluster,
+    UpdateCluster,
+    CreateNode,
+    DescribeNode,
+    ListNodes,
+    DeleteNode,
+    UpdateNode,
+    UpdateNodeState,
+    CreateNodeRegistrationScript,
   },
   model,
 } as const satisfies ServiceDefinition;

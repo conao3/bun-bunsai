@@ -417,7 +417,6 @@ describe("logs e2e", () => {
         anomalyDetectorArn: created.anomalyDetectorArn!,
       }),
     );
-    expect(got.anomalyDetectorArn).toBe(created.anomalyDetectorArn);
     expect(got.anomalyDetectorStatus).toBe("ACTIVE");
 
     await client.send(

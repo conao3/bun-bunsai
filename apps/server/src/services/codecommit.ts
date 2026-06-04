@@ -1480,6 +1480,1217 @@ const UpdateRepositoryName: OperationHandler = (input, ctx) => {
   return {};
 };
 
+type StoredApprovalRuleTemplate = {
+  approvalRuleTemplateId: string;
+  approvalRuleTemplateName: string;
+  approvalRuleTemplateDescription: string | undefined;
+  approvalRuleTemplateContent: string;
+  ruleContentSha256: string;
+  lastModifiedDate: string;
+  creationDate: string;
+  lastModifiedUser: string;
+};
+
+type StoredPullRequest = {
+  pullRequestId: string;
+  title: string;
+  description: string | undefined;
+  repositoryName: string;
+  sourceReference: string;
+  destinationReference: string;
+  sourceCommit: string;
+  destinationCommit: string;
+  mergeBase: string | undefined;
+  pullRequestStatus: "OPEN" | "CLOSED";
+  authorArn: string;
+  creationDate: string;
+  lastActivityDate: string;
+  clientRequestToken: string | undefined;
+  revisionId: string;
+  isMerged: boolean;
+  mergedBy: string | undefined;
+  mergeCommitId: string | undefined;
+  mergeOption: string | undefined;
+};
+
+type StoredPullRequestApprovalRule = {
+  approvalRuleId: string;
+  approvalRuleName: string;
+  approvalRuleContent: string;
+  ruleContentSha256: string;
+  creationDate: string;
+  lastModifiedDate: string;
+  lastModifiedUser: string;
+  originatesFrom: string;
+};
+
+type StoredComment = {
+  commentId: string;
+  content: string;
+  inReplyTo: string | undefined;
+  creationDate: string;
+  lastModifiedDate: string;
+  authorArn: string;
+  deleted: boolean;
+  clientRequestToken: string | undefined;
+  callerReactions: string[];
+  reactions: Record<string, string[]>;
+  repositoryName: string | undefined;
+  pullRequestId: string | undefined;
+  beforeCommitId: string | undefined;
+  afterCommitId: string | undefined;
+  beforeBlobId: string | undefined;
+  afterBlobId: string | undefined;
+  filePath: string | undefined;
+  filePosition: number | undefined;
+  relativeFileVersion: string | undefined;
+};
+
+const approvalRuleTemplateKey = (name: string): string => `art/${name}`;
+const pullRequestKey = (id: string): string => `pr/${id}`;
+const prApprovalRuleKey = (prId: string, ruleName: string): string =>
+  `prRule/${prId}/${ruleName}`;
+const artAssociationsKey = (templateName: string): string =>
+  `artAssoc/${templateName}`;
+const commentKey = (id: string): string => `comment/${id}`;
+const prApprovalKey = (prId: string, userArn: string): string =>
+  `prApproval/${prId}/${userArn}`;
+const prOverrideKey = (prId: string): string => `prOverride/${prId}`;
+
+const nextPullRequestId = (ctx: ServiceContext): string => {
+  const current = ctx.store.get<number>("counter/pullRequest") ?? 0;
+  const next = current + 1;
+  ctx.store.set("counter/pullRequest", next);
+  return String(next);
+};
+
+const stripRefsHeads = (ref: string): string =>
+  ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
+
+const requireApprovalRuleTemplate = (
+  ctx: ServiceContext,
+  name: string,
+): StoredApprovalRuleTemplate => {
+  const template = ctx.store.get<StoredApprovalRuleTemplate>(
+    approvalRuleTemplateKey(name),
+  );
+  if (template === undefined) {
+    throw awsError(
+      "ApprovalRuleTemplateDoesNotExistException",
+      `The specified approval rule template does not exist: ${name}`,
+      400,
+    );
+  }
+  return template;
+};
+
+const requirePullRequest = (
+  ctx: ServiceContext,
+  id: string,
+): StoredPullRequest => {
+  const pr = ctx.store.get<StoredPullRequest>(pullRequestKey(id));
+  if (pr === undefined) {
+    throw awsError(
+      "PullRequestDoesNotExistException",
+      `The specified pull request does not exist: ${id}`,
+      400,
+    );
+  }
+  return pr;
+};
+
+const requireComment = (
+  ctx: ServiceContext,
+  commentId: string,
+): StoredComment => {
+  const comment = ctx.store.get<StoredComment>(commentKey(commentId));
+  if (comment === undefined) {
+    throw awsError(
+      "CommentDoesNotExistException",
+      `The specified comment does not exist: ${commentId}`,
+      400,
+    );
+  }
+  return comment;
+};
+
+const approvalRuleTemplateView = (
+  template: StoredApprovalRuleTemplate,
+): Record<string, unknown> => ({
+  approvalRuleTemplateId: template.approvalRuleTemplateId,
+  approvalRuleTemplateName: template.approvalRuleTemplateName,
+  approvalRuleTemplateDescription: template.approvalRuleTemplateDescription,
+  approvalRuleTemplateContent: template.approvalRuleTemplateContent,
+  ruleContentSha256: template.ruleContentSha256,
+  lastModifiedDate: template.lastModifiedDate,
+  creationDate: template.creationDate,
+  lastModifiedUser: template.lastModifiedUser,
+});
+
+const listPrApprovalRules = (
+  ctx: ServiceContext,
+  prId: string,
+): StoredPullRequestApprovalRule[] =>
+  ctx.store
+    .list<StoredPullRequestApprovalRule>()
+    .filter((entry) => entry.key.startsWith(`prRule/${prId}/`))
+    .map((entry) => entry.value);
+
+const pullRequestView = (
+  pr: StoredPullRequest,
+  approvalRules: StoredPullRequestApprovalRule[],
+): Record<string, unknown> => ({
+  pullRequestId: pr.pullRequestId,
+  title: pr.title,
+  description: pr.description,
+  lastActivityDate: pr.lastActivityDate,
+  creationDate: pr.creationDate,
+  pullRequestStatus: pr.pullRequestStatus,
+  authorArn: pr.authorArn,
+  clientRequestToken: pr.clientRequestToken,
+  revisionId: pr.revisionId,
+  pullRequestTargets: [
+    {
+      repositoryName: pr.repositoryName,
+      sourceReference: pr.sourceReference,
+      destinationReference: pr.destinationReference,
+      destinationCommit: pr.destinationCommit,
+      sourceCommit: pr.sourceCommit,
+      mergeBase: pr.mergeBase,
+      mergeMetadata: {
+        isMerged: pr.isMerged,
+        mergedBy: pr.mergedBy,
+        mergeCommitId: pr.mergeCommitId,
+        mergeOption: pr.mergeOption,
+      },
+    },
+  ],
+  approvalRules: approvalRules.map((rule) => ({
+    approvalRuleId: rule.approvalRuleId,
+    approvalRuleName: rule.approvalRuleName,
+    approvalRuleContent: rule.approvalRuleContent,
+    ruleContentSha256: rule.ruleContentSha256,
+    creationDate: rule.creationDate,
+    lastModifiedDate: rule.lastModifiedDate,
+    lastModifiedUser: rule.lastModifiedUser,
+    originatesFrom: rule.originatesFrom,
+  })),
+});
+
+const commentView = (comment: StoredComment): Record<string, unknown> => ({
+  commentId: comment.commentId,
+  content: comment.deleted ? "" : comment.content,
+  inReplyTo: comment.inReplyTo,
+  creationDate: comment.creationDate,
+  lastModifiedDate: comment.lastModifiedDate,
+  authorArn: comment.authorArn,
+  deleted: comment.deleted,
+  clientRequestToken: comment.clientRequestToken,
+  callerReactions: comment.callerReactions,
+  reactionCounts: Object.fromEntries(
+    Object.entries(comment.reactions).map(([emoji, users]) => [
+      emoji,
+      users.length,
+    ]),
+  ),
+});
+
+const buildComment = (
+  ctx: ServiceContext,
+  params: {
+    content: string;
+    inReplyTo: string | undefined;
+    clientRequestToken: string | undefined;
+    repositoryName: string | undefined;
+    pullRequestId: string | undefined;
+    beforeCommitId: string | undefined;
+    afterCommitId: string | undefined;
+    beforeBlobId: string | undefined;
+    afterBlobId: string | undefined;
+    filePath: string | undefined;
+    filePosition: number | undefined;
+    relativeFileVersion: string | undefined;
+  },
+): StoredComment => {
+  const now = nowIso();
+  const comment: StoredComment = {
+    commentId: crypto.randomUUID().replace(/-/g, ""),
+    content: params.content,
+    inReplyTo: params.inReplyTo,
+    creationDate: now,
+    lastModifiedDate: now,
+    authorArn: `arn:aws:iam::${ctx.account}:root`,
+    deleted: false,
+    clientRequestToken: params.clientRequestToken,
+    callerReactions: [],
+    reactions: {},
+    repositoryName: params.repositoryName,
+    pullRequestId: params.pullRequestId,
+    beforeCommitId: params.beforeCommitId,
+    afterCommitId: params.afterCommitId,
+    beforeBlobId: params.beforeBlobId,
+    afterBlobId: params.afterBlobId,
+    filePath: params.filePath,
+    filePosition: params.filePosition,
+    relativeFileVersion: params.relativeFileVersion,
+  };
+  ctx.store.set(commentKey(comment.commentId), comment);
+  return comment;
+};
+
+const prApprovalRuleView = (
+  rule: StoredPullRequestApprovalRule,
+): Record<string, unknown> => ({
+  approvalRuleId: rule.approvalRuleId,
+  approvalRuleName: rule.approvalRuleName,
+  approvalRuleContent: rule.approvalRuleContent,
+  ruleContentSha256: rule.ruleContentSha256,
+  creationDate: rule.creationDate,
+  lastModifiedDate: rule.lastModifiedDate,
+  lastModifiedUser: rule.lastModifiedUser,
+  originatesFrom: rule.originatesFrom,
+});
+
+const CreateApprovalRuleTemplate: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "approvalRuleTemplateName");
+  if (
+    ctx.store.get<StoredApprovalRuleTemplate>(approvalRuleTemplateKey(name)) !==
+    undefined
+  ) {
+    throw awsError(
+      "ApprovalRuleTemplateNameAlreadyExistsException",
+      `An approval rule template with that name already exists: ${name}`,
+      400,
+    );
+  }
+  const content = requireString(input, "approvalRuleTemplateContent");
+  const now = nowIso();
+  const template: StoredApprovalRuleTemplate = {
+    approvalRuleTemplateId: crypto.randomUUID(),
+    approvalRuleTemplateName: name,
+    approvalRuleTemplateDescription: stringOrUndefined(
+      input["approvalRuleTemplateDescription"],
+    ),
+    approvalRuleTemplateContent: content,
+    ruleContentSha256: contentHash(content),
+    lastModifiedDate: now,
+    creationDate: now,
+    lastModifiedUser: `arn:aws:iam::${ctx.account}:root`,
+  };
+  ctx.store.set(approvalRuleTemplateKey(name), template);
+  return { approvalRuleTemplate: approvalRuleTemplateView(template) };
+};
+
+const GetApprovalRuleTemplate: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "approvalRuleTemplateName");
+  const template = requireApprovalRuleTemplate(ctx, name);
+  return { approvalRuleTemplate: approvalRuleTemplateView(template) };
+};
+
+const DeleteApprovalRuleTemplate: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "approvalRuleTemplateName");
+  const template = requireApprovalRuleTemplate(ctx, name);
+  ctx.store.delete(approvalRuleTemplateKey(name));
+  return { approvalRuleTemplateId: template.approvalRuleTemplateId };
+};
+
+const UpdateApprovalRuleTemplateContent: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "approvalRuleTemplateName");
+  const template = requireApprovalRuleTemplate(ctx, name);
+  const newContent = requireString(input, "newRuleContent");
+  const updated: StoredApprovalRuleTemplate = {
+    ...template,
+    approvalRuleTemplateContent: newContent,
+    ruleContentSha256: contentHash(newContent),
+    lastModifiedDate: nowIso(),
+  };
+  ctx.store.set(approvalRuleTemplateKey(name), updated);
+  return { approvalRuleTemplate: approvalRuleTemplateView(updated) };
+};
+
+const UpdateApprovalRuleTemplateDescription: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const name = requireString(input, "approvalRuleTemplateName");
+  const template = requireApprovalRuleTemplate(ctx, name);
+  const updated: StoredApprovalRuleTemplate = {
+    ...template,
+    approvalRuleTemplateDescription: stringOrUndefined(
+      input["approvalRuleTemplateDescription"],
+    ),
+    lastModifiedDate: nowIso(),
+  };
+  ctx.store.set(approvalRuleTemplateKey(name), updated);
+  return { approvalRuleTemplate: approvalRuleTemplateView(updated) };
+};
+
+const UpdateApprovalRuleTemplateName: OperationHandler = (input, ctx) => {
+  const oldName = requireString(input, "oldApprovalRuleTemplateName");
+  const newName = requireString(input, "newApprovalRuleTemplateName");
+  const template = requireApprovalRuleTemplate(ctx, oldName);
+  if (
+    ctx.store.get<StoredApprovalRuleTemplate>(
+      approvalRuleTemplateKey(newName),
+    ) !== undefined
+  ) {
+    throw awsError(
+      "ApprovalRuleTemplateNameAlreadyExistsException",
+      `An approval rule template with that name already exists: ${newName}`,
+      400,
+    );
+  }
+  const updated: StoredApprovalRuleTemplate = {
+    ...template,
+    approvalRuleTemplateName: newName,
+    lastModifiedDate: nowIso(),
+  };
+  ctx.store.set(approvalRuleTemplateKey(newName), updated);
+  ctx.store.delete(approvalRuleTemplateKey(oldName));
+  const associations =
+    ctx.store.get<string[]>(artAssociationsKey(oldName)) ?? [];
+  if (associations.length > 0) {
+    ctx.store.set(artAssociationsKey(newName), associations);
+    ctx.store.delete(artAssociationsKey(oldName));
+  }
+  return { approvalRuleTemplate: approvalRuleTemplateView(updated) };
+};
+
+const ListApprovalRuleTemplates: OperationHandler = (input, ctx) => {
+  void input;
+  const templateNames = ctx.store
+    .list<StoredApprovalRuleTemplate>()
+    .filter((entry) => entry.key.startsWith("art/"))
+    .map((entry) => entry.value.approvalRuleTemplateName);
+  return { approvalRuleTemplateNames: templateNames, nextToken: undefined };
+};
+
+const AssociateApprovalRuleTemplateWithRepository: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const templateName = requireString(input, "approvalRuleTemplateName");
+  const repoName = requireString(input, "repositoryName");
+  requireApprovalRuleTemplate(ctx, templateName);
+  requireRepository(ctx, repoName);
+  const current =
+    ctx.store.get<string[]>(artAssociationsKey(templateName)) ?? [];
+  if (!current.includes(repoName)) {
+    ctx.store.set(artAssociationsKey(templateName), [...current, repoName]);
+  }
+  return {};
+};
+
+const BatchAssociateApprovalRuleTemplateWithRepositories: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const templateName = requireString(input, "approvalRuleTemplateName");
+  requireApprovalRuleTemplate(ctx, templateName);
+  const rawRepos = input["repositoryNames"];
+  if (!Array.isArray(rawRepos)) {
+    throw awsError(
+      "InvalidRepositoryNameException",
+      "repositoryNames is required.",
+      400,
+    );
+  }
+  const associatedRepositoryNames: string[] = [];
+  const errors: Record<string, unknown>[] = [];
+  const current =
+    ctx.store.get<string[]>(artAssociationsKey(templateName)) ?? [];
+  const updated = [...current];
+  for (const rawName of rawRepos) {
+    const name = String(rawName);
+    const repo = ctx.store.get<StoredRepository>(repositoryKey(name));
+    if (repo === undefined) {
+      errors.push({
+        repositoryName: name,
+        errorCode: "RepositoryDoesNotExistException",
+        errorMessage: `Repository does not exist: ${name}`,
+      });
+    } else {
+      if (!updated.includes(name)) updated.push(name);
+      associatedRepositoryNames.push(name);
+    }
+  }
+  ctx.store.set(artAssociationsKey(templateName), updated);
+  return { associatedRepositoryNames, errors };
+};
+
+const DisassociateApprovalRuleTemplateFromRepository: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const templateName = requireString(input, "approvalRuleTemplateName");
+  const repoName = requireString(input, "repositoryName");
+  requireApprovalRuleTemplate(ctx, templateName);
+  requireRepository(ctx, repoName);
+  const current =
+    ctx.store.get<string[]>(artAssociationsKey(templateName)) ?? [];
+  ctx.store.set(
+    artAssociationsKey(templateName),
+    current.filter((r) => r !== repoName),
+  );
+  return {};
+};
+
+const BatchDisassociateApprovalRuleTemplateFromRepositories: OperationHandler =
+  (input, ctx) => {
+    const templateName = requireString(input, "approvalRuleTemplateName");
+    requireApprovalRuleTemplate(ctx, templateName);
+    const rawRepos = input["repositoryNames"];
+    if (!Array.isArray(rawRepos)) {
+      throw awsError(
+        "InvalidRepositoryNameException",
+        "repositoryNames is required.",
+        400,
+      );
+    }
+    const disassociatedRepositoryNames: string[] = [];
+    const errors: Record<string, unknown>[] = [];
+    const current =
+      ctx.store.get<string[]>(artAssociationsKey(templateName)) ?? [];
+    const toRemove = new Set<string>();
+    for (const rawName of rawRepos) {
+      const name = String(rawName);
+      const repo = ctx.store.get<StoredRepository>(repositoryKey(name));
+      if (repo === undefined) {
+        errors.push({
+          repositoryName: name,
+          errorCode: "RepositoryDoesNotExistException",
+          errorMessage: `Repository does not exist: ${name}`,
+        });
+      } else {
+        toRemove.add(name);
+        disassociatedRepositoryNames.push(name);
+      }
+    }
+    ctx.store.set(
+      artAssociationsKey(templateName),
+      current.filter((r) => !toRemove.has(r)),
+    );
+    return { disassociatedRepositoryNames, errors };
+  };
+
+const ListAssociatedApprovalRuleTemplatesForRepository: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const repoName = requireString(input, "repositoryName");
+  requireRepository(ctx, repoName);
+  const approvalRuleTemplateNames = ctx.store
+    .list<string[]>()
+    .filter((entry) => entry.key.startsWith("artAssoc/"))
+    .filter((entry) => entry.value.includes(repoName))
+    .map((entry) => entry.key.slice("artAssoc/".length));
+  return { approvalRuleTemplateNames, nextToken: undefined };
+};
+
+const ListRepositoriesForApprovalRuleTemplate: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const templateName = requireString(input, "approvalRuleTemplateName");
+  requireApprovalRuleTemplate(ctx, templateName);
+  const repositoryNames =
+    ctx.store.get<string[]>(artAssociationsKey(templateName)) ?? [];
+  return { repositoryNames, nextToken: undefined };
+};
+
+const CreatePullRequest: OperationHandler = (input, ctx) => {
+  const title = requireString(input, "title");
+  const rawTargets = input["targets"];
+  if (!Array.isArray(rawTargets) || rawTargets.length === 0) {
+    throw awsError("InvalidTargetsException", "targets is required.", 400);
+  }
+  const target = rawTargets[0] as Record<string, unknown>;
+  const repoName = requireString(target, "repositoryName");
+  const sourceReference = requireString(target, "sourceReference");
+  const destinationReference =
+    stringOrUndefined(target["destinationReference"]) ?? "main";
+
+  requireRepository(ctx, repoName);
+
+  const sourceCommit = resolveRef(
+    ctx,
+    repoName,
+    stripRefsHeads(sourceReference),
+  );
+  const destinationCommit = resolveRef(
+    ctx,
+    repoName,
+    stripRefsHeads(destinationReference),
+  );
+  const mergeBase = getMergeBase(
+    ctx,
+    repoName,
+    sourceCommit,
+    destinationCommit,
+  );
+
+  const now = nowIso();
+  const pr: StoredPullRequest = {
+    pullRequestId: nextPullRequestId(ctx),
+    title,
+    description: stringOrUndefined(input["description"]),
+    repositoryName: repoName,
+    sourceReference,
+    destinationReference,
+    sourceCommit,
+    destinationCommit,
+    mergeBase,
+    pullRequestStatus: "OPEN",
+    authorArn: `arn:aws:iam::${ctx.account}:root`,
+    creationDate: now,
+    lastActivityDate: now,
+    clientRequestToken: stringOrUndefined(input["clientRequestToken"]),
+    revisionId: crypto.randomUUID().replace(/-/g, ""),
+    isMerged: false,
+    mergedBy: undefined,
+    mergeCommitId: undefined,
+    mergeOption: undefined,
+  };
+  ctx.store.set(pullRequestKey(pr.pullRequestId), pr);
+  return { pullRequest: pullRequestView(pr, []) };
+};
+
+const GetPullRequest: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  const pr = requirePullRequest(ctx, prId);
+  const rules = listPrApprovalRules(ctx, prId);
+  return { pullRequest: pullRequestView(pr, rules) };
+};
+
+const ListPullRequests: OperationHandler = (input, ctx) => {
+  const repoName = requireString(input, "repositoryName");
+  requireRepository(ctx, repoName);
+  const statusFilter = stringOrUndefined(input["pullRequestStatus"]);
+  const pullRequestIds = ctx.store
+    .list<StoredPullRequest>()
+    .filter((entry) => entry.key.startsWith("pr/"))
+    .map((entry) => entry.value)
+    .filter((pr) => pr.repositoryName === repoName)
+    .filter(
+      (pr) =>
+        statusFilter === undefined || pr.pullRequestStatus === statusFilter,
+    )
+    .map((pr) => pr.pullRequestId);
+  return { pullRequestIds, nextToken: undefined };
+};
+
+const UpdatePullRequestDescription: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  const pr = requirePullRequest(ctx, prId);
+  const updated: StoredPullRequest = {
+    ...pr,
+    description: stringOrUndefined(input["description"]),
+    lastActivityDate: nowIso(),
+  };
+  ctx.store.set(pullRequestKey(prId), updated);
+  const rules = listPrApprovalRules(ctx, prId);
+  return { pullRequest: pullRequestView(updated, rules) };
+};
+
+const UpdatePullRequestStatus: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  const pr = requirePullRequest(ctx, prId);
+  const newStatus = requireString(input, "pullRequestStatus") as
+    | "OPEN"
+    | "CLOSED";
+  const updated: StoredPullRequest = {
+    ...pr,
+    pullRequestStatus: newStatus,
+    lastActivityDate: nowIso(),
+  };
+  ctx.store.set(pullRequestKey(prId), updated);
+  const rules = listPrApprovalRules(ctx, prId);
+  return { pullRequest: pullRequestView(updated, rules) };
+};
+
+const UpdatePullRequestTitle: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  const pr = requirePullRequest(ctx, prId);
+  const title = requireString(input, "title");
+  const updated: StoredPullRequest = {
+    ...pr,
+    title,
+    lastActivityDate: nowIso(),
+  };
+  ctx.store.set(pullRequestKey(prId), updated);
+  const rules = listPrApprovalRules(ctx, prId);
+  return { pullRequest: pullRequestView(updated, rules) };
+};
+
+const MergePullRequestByFastForward: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  const repoName = requireString(input, "repositoryName");
+  const pr = requirePullRequest(ctx, prId);
+  const repo = requireRepository(ctx, repoName);
+
+  const srcRef = resolveRef(ctx, repoName, stripRefsHeads(pr.sourceReference));
+  const dstBranch = stripRefsHeads(pr.destinationReference);
+  updateBranchHead(ctx, repo, dstBranch, srcRef);
+
+  const now = nowIso();
+  const updated: StoredPullRequest = {
+    ...pr,
+    pullRequestStatus: "CLOSED",
+    isMerged: true,
+    mergedBy: `arn:aws:iam::${ctx.account}:root`,
+    mergeCommitId: srcRef,
+    mergeOption: "FAST_FORWARD_MERGE",
+    lastActivityDate: now,
+  };
+  ctx.store.set(pullRequestKey(prId), updated);
+  const rules = listPrApprovalRules(ctx, prId);
+  return { pullRequest: pullRequestView(updated, rules) };
+};
+
+const MergePullRequestBySquash: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  const repoName = requireString(input, "repositoryName");
+  const pr = requirePullRequest(ctx, prId);
+  const repo = requireRepository(ctx, repoName);
+
+  const srcRef = resolveRef(ctx, repoName, stripRefsHeads(pr.sourceReference));
+  const dstRef = resolveRef(
+    ctx,
+    repoName,
+    stripRefsHeads(pr.destinationReference),
+  );
+  const srcFiles = filesForRef(ctx, repoName, srcRef).files;
+  const dstFiles = filesForRef(ctx, repoName, dstRef).files;
+  const mergedFiles = { ...dstFiles, ...srcFiles };
+
+  const userInfo = systemUser();
+  const commit = makeCommit(ctx, repoName, {
+    message:
+      stringOrUndefined(input["commitMessage"]) ?? `Squash merge: ${pr.title}`,
+    parentCommitIds: [dstRef],
+    files: mergedFiles,
+    author: userInfo,
+    committer: userInfo,
+  });
+
+  const dstBranch = stripRefsHeads(pr.destinationReference);
+  updateBranchHead(ctx, repo, dstBranch, commit.commitId);
+
+  const now = nowIso();
+  const updated: StoredPullRequest = {
+    ...pr,
+    pullRequestStatus: "CLOSED",
+    isMerged: true,
+    mergedBy: `arn:aws:iam::${ctx.account}:root`,
+    mergeCommitId: commit.commitId,
+    mergeOption: "SQUASH_MERGE",
+    lastActivityDate: now,
+  };
+  ctx.store.set(pullRequestKey(prId), updated);
+  const rules = listPrApprovalRules(ctx, prId);
+  return { pullRequest: pullRequestView(updated, rules) };
+};
+
+const MergePullRequestByThreeWay: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  const repoName = requireString(input, "repositoryName");
+  const pr = requirePullRequest(ctx, prId);
+  const repo = requireRepository(ctx, repoName);
+
+  const srcRef = resolveRef(ctx, repoName, stripRefsHeads(pr.sourceReference));
+  const dstRef = resolveRef(
+    ctx,
+    repoName,
+    stripRefsHeads(pr.destinationReference),
+  );
+  const srcFiles = filesForRef(ctx, repoName, srcRef).files;
+  const dstFiles = filesForRef(ctx, repoName, dstRef).files;
+  const mergedFiles = { ...dstFiles, ...srcFiles };
+
+  const userInfo = systemUser();
+  const commit = makeCommit(ctx, repoName, {
+    message:
+      stringOrUndefined(input["commitMessage"]) ??
+      `Merge pull request: ${pr.title}`,
+    parentCommitIds: [dstRef, srcRef],
+    files: mergedFiles,
+    author: userInfo,
+    committer: userInfo,
+  });
+
+  const dstBranch = stripRefsHeads(pr.destinationReference);
+  updateBranchHead(ctx, repo, dstBranch, commit.commitId);
+
+  const now = nowIso();
+  const updated: StoredPullRequest = {
+    ...pr,
+    pullRequestStatus: "CLOSED",
+    isMerged: true,
+    mergedBy: `arn:aws:iam::${ctx.account}:root`,
+    mergeCommitId: commit.commitId,
+    mergeOption: "THREE_WAY_MERGE",
+    lastActivityDate: now,
+  };
+  ctx.store.set(pullRequestKey(prId), updated);
+  const rules = listPrApprovalRules(ctx, prId);
+  return { pullRequest: pullRequestView(updated, rules) };
+};
+
+const CreatePullRequestApprovalRule: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  requirePullRequest(ctx, prId);
+  const ruleName = requireString(input, "approvalRuleName");
+  const ruleContent = requireString(input, "approvalRuleContent");
+  const now = nowIso();
+  const rule: StoredPullRequestApprovalRule = {
+    approvalRuleId: crypto.randomUUID(),
+    approvalRuleName: ruleName,
+    approvalRuleContent: ruleContent,
+    ruleContentSha256: contentHash(ruleContent),
+    creationDate: now,
+    lastModifiedDate: now,
+    lastModifiedUser: `arn:aws:iam::${ctx.account}:root`,
+    originatesFrom: "TEMPLATE_ASSOCIATION",
+  };
+  ctx.store.set(prApprovalRuleKey(prId, ruleName), rule);
+  return { approvalRule: prApprovalRuleView(rule) };
+};
+
+const DeletePullRequestApprovalRule: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  requirePullRequest(ctx, prId);
+  const ruleName = requireString(input, "approvalRuleName");
+  const rule = ctx.store.get<StoredPullRequestApprovalRule>(
+    prApprovalRuleKey(prId, ruleName),
+  );
+  ctx.store.delete(prApprovalRuleKey(prId, ruleName));
+  return { approvalRuleId: rule?.approvalRuleId ?? "" };
+};
+
+const UpdatePullRequestApprovalRuleContent: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  requirePullRequest(ctx, prId);
+  const ruleName = requireString(input, "approvalRuleName");
+  const existing = ctx.store.get<StoredPullRequestApprovalRule>(
+    prApprovalRuleKey(prId, ruleName),
+  );
+  if (existing === undefined) {
+    throw awsError(
+      "ApprovalRuleDoesNotExistException",
+      `The specified approval rule does not exist: ${ruleName}`,
+      400,
+    );
+  }
+  const newContent = requireString(input, "newRuleContent");
+  const updated: StoredPullRequestApprovalRule = {
+    ...existing,
+    approvalRuleContent: newContent,
+    ruleContentSha256: contentHash(newContent),
+    lastModifiedDate: nowIso(),
+  };
+  ctx.store.set(prApprovalRuleKey(prId, ruleName), updated);
+  return { approvalRule: prApprovalRuleView(updated) };
+};
+
+const GetPullRequestApprovalStates: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  requireString(input, "revisionId");
+  requirePullRequest(ctx, prId);
+  const approvals = ctx.store
+    .list<{ userArn: string; approvalState: string }>()
+    .filter((entry) => entry.key.startsWith(`prApproval/${prId}/`))
+    .map((entry) => ({
+      userArn: entry.value.userArn,
+      approvalState: entry.value.approvalState,
+    }));
+  return { approvals };
+};
+
+const UpdatePullRequestApprovalState: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  requireString(input, "revisionId");
+  const approvalState = requireString(input, "approvalState");
+  requirePullRequest(ctx, prId);
+  const userArn = `arn:aws:iam::${ctx.account}:root`;
+  ctx.store.set(prApprovalKey(prId, userArn), { userArn, approvalState });
+  return {};
+};
+
+const GetPullRequestOverrideState: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  requireString(input, "revisionId");
+  requirePullRequest(ctx, prId);
+  const override = ctx.store.get<{
+    overridden: boolean;
+    overrider: string;
+  }>(prOverrideKey(prId));
+  return {
+    overridden: override?.overridden ?? false,
+    overrider: override?.overrider ?? "",
+  };
+};
+
+const OverridePullRequestApprovalRules: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  requireString(input, "revisionId");
+  const overrideStatus = requireString(input, "overrideStatus");
+  requirePullRequest(ctx, prId);
+  ctx.store.set(prOverrideKey(prId), {
+    overridden: overrideStatus === "OVERRIDE",
+    overrider: `arn:aws:iam::${ctx.account}:root`,
+  });
+  return {};
+};
+
+const EvaluatePullRequestApprovalRules: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  requireString(input, "revisionId");
+  requirePullRequest(ctx, prId);
+  const rules = listPrApprovalRules(ctx, prId);
+  const override = ctx.store.get<{ overridden: boolean }>(prOverrideKey(prId));
+  const approved = override?.overridden === true || rules.length === 0;
+  return {
+    evaluation: {
+      approved,
+      overridden: override?.overridden ?? false,
+      approvalRulesSatisfied: approved
+        ? rules.map((r) => r.approvalRuleName)
+        : [],
+      approvalRulesNotSatisfied: approved
+        ? []
+        : rules.map((r) => r.approvalRuleName),
+    },
+  };
+};
+
+const DescribePullRequestEvents: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  const pr = requirePullRequest(ctx, prId);
+  const events: Record<string, unknown>[] = [
+    {
+      pullRequestId: prId,
+      eventDate: pr.creationDate,
+      pullRequestEventType: "PULL_REQUEST_CREATED",
+      actorArn: pr.authorArn,
+      pullRequestCreatedEventMetadata: {
+        repositoryName: pr.repositoryName,
+        sourceCommitId: pr.sourceCommit,
+        destinationCommitId: pr.destinationCommit,
+        mergeBase: pr.mergeBase,
+      },
+    },
+  ];
+  if (pr.isMerged) {
+    events.push({
+      pullRequestId: prId,
+      eventDate: pr.lastActivityDate,
+      pullRequestEventType: "PULL_REQUEST_MERGE_STATE_CHANGED",
+      actorArn: pr.mergedBy ?? pr.authorArn,
+      pullRequestMergedStateChangedEventMetadata: {
+        repositoryName: pr.repositoryName,
+        destinationReference: pr.destinationReference,
+        mergeMetadata: {
+          isMerged: true,
+          mergedBy: pr.mergedBy,
+          mergeCommitId: pr.mergeCommitId,
+          mergeOption: pr.mergeOption,
+        },
+      },
+    });
+  }
+  return { pullRequestEvents: events, nextToken: undefined };
+};
+
+const PostCommentForPullRequest: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  const repoName = requireString(input, "repositoryName");
+  const beforeCommitId = requireString(input, "beforeCommitId");
+  const afterCommitId = requireString(input, "afterCommitId");
+  const content = requireString(input, "content");
+  requirePullRequest(ctx, prId);
+  requireRepository(ctx, repoName);
+
+  const rawLocation = input["location"] as Record<string, unknown> | undefined;
+  const filePath =
+    rawLocation !== undefined
+      ? stringOrUndefined(rawLocation["filePath"])
+      : undefined;
+  const filePosition =
+    rawLocation !== undefined && typeof rawLocation["filePosition"] === "number"
+      ? rawLocation["filePosition"]
+      : undefined;
+  const relativeFileVersion =
+    rawLocation !== undefined
+      ? stringOrUndefined(rawLocation["relativeFileVersion"])
+      : undefined;
+
+  const beforeBlobId =
+    filePath !== undefined
+      ? filesForRef(ctx, repoName, beforeCommitId).files[filePath]?.blobId
+      : undefined;
+  const afterBlobId =
+    filePath !== undefined
+      ? filesForRef(ctx, repoName, afterCommitId).files[filePath]?.blobId
+      : undefined;
+
+  const comment = buildComment(ctx, {
+    content,
+    inReplyTo: undefined,
+    clientRequestToken: stringOrUndefined(input["clientRequestToken"]),
+    repositoryName: repoName,
+    pullRequestId: prId,
+    beforeCommitId,
+    afterCommitId,
+    beforeBlobId,
+    afterBlobId,
+    filePath,
+    filePosition,
+    relativeFileVersion,
+  });
+
+  return {
+    repositoryName: repoName,
+    pullRequestId: prId,
+    beforeCommitId,
+    afterCommitId,
+    location: rawLocation,
+    comment: commentView(comment),
+  };
+};
+
+const PostCommentForComparedCommit: OperationHandler = (input, ctx) => {
+  const repoName = requireString(input, "repositoryName");
+  const afterCommitId = requireString(input, "afterCommitId");
+  const content = requireString(input, "content");
+  requireRepository(ctx, repoName);
+
+  const beforeCommitId = stringOrUndefined(input["beforeCommitId"]);
+  const rawLocation = input["location"] as Record<string, unknown> | undefined;
+  const filePath =
+    rawLocation !== undefined
+      ? stringOrUndefined(rawLocation["filePath"])
+      : undefined;
+  const filePosition =
+    rawLocation !== undefined && typeof rawLocation["filePosition"] === "number"
+      ? rawLocation["filePosition"]
+      : undefined;
+  const relativeFileVersion =
+    rawLocation !== undefined
+      ? stringOrUndefined(rawLocation["relativeFileVersion"])
+      : undefined;
+
+  const beforeBlobId =
+    filePath !== undefined && beforeCommitId !== undefined
+      ? filesForRef(ctx, repoName, beforeCommitId).files[filePath]?.blobId
+      : undefined;
+  const afterBlobId =
+    filePath !== undefined
+      ? filesForRef(ctx, repoName, afterCommitId).files[filePath]?.blobId
+      : undefined;
+
+  const comment = buildComment(ctx, {
+    content,
+    inReplyTo: undefined,
+    clientRequestToken: stringOrUndefined(input["clientRequestToken"]),
+    repositoryName: repoName,
+    pullRequestId: undefined,
+    beforeCommitId,
+    afterCommitId,
+    beforeBlobId,
+    afterBlobId,
+    filePath,
+    filePosition,
+    relativeFileVersion,
+  });
+
+  return {
+    repositoryName: repoName,
+    beforeCommitId,
+    afterCommitId,
+    blobId: afterBlobId,
+    location: rawLocation,
+    comment: commentView(comment),
+  };
+};
+
+const PostCommentReply: OperationHandler = (input, ctx) => {
+  const inReplyTo = requireString(input, "inReplyTo");
+  const content = requireString(input, "content");
+  const parent = requireComment(ctx, inReplyTo);
+
+  const comment = buildComment(ctx, {
+    content,
+    inReplyTo,
+    clientRequestToken: stringOrUndefined(input["clientRequestToken"]),
+    repositoryName: parent.repositoryName,
+    pullRequestId: parent.pullRequestId,
+    beforeCommitId: parent.beforeCommitId,
+    afterCommitId: parent.afterCommitId,
+    beforeBlobId: parent.beforeBlobId,
+    afterBlobId: parent.afterBlobId,
+    filePath: parent.filePath,
+    filePosition: parent.filePosition,
+    relativeFileVersion: parent.relativeFileVersion,
+  });
+
+  return { comment: commentView(comment) };
+};
+
+const GetComment: OperationHandler = (input, ctx) => {
+  const commentId = requireString(input, "commentId");
+  const comment = requireComment(ctx, commentId);
+  return { comment: commentView(comment) };
+};
+
+const GetCommentsForPullRequest: OperationHandler = (input, ctx) => {
+  const prId = requireString(input, "pullRequestId");
+  requirePullRequest(ctx, prId);
+
+  const allComments = ctx.store
+    .list<StoredComment>()
+    .filter((entry) => entry.key.startsWith("comment/"))
+    .map((entry) => entry.value);
+
+  const rootComments = allComments.filter(
+    (c) => c.pullRequestId === prId && c.inReplyTo === undefined,
+  );
+
+  const commentsForPullRequest = rootComments.map((c) => ({
+    repositoryName: c.repositoryName,
+    pullRequestId: c.pullRequestId,
+    beforeCommitId: c.beforeCommitId,
+    afterCommitId: c.afterCommitId,
+    beforeBlobId: c.beforeBlobId,
+    afterBlobId: c.afterBlobId,
+    location:
+      c.filePath !== undefined
+        ? {
+            filePath: c.filePath,
+            filePosition: c.filePosition,
+            relativeFileVersion: c.relativeFileVersion,
+          }
+        : undefined,
+    comments: [
+      commentView(c),
+      ...allComments
+        .filter((r) => r.inReplyTo === c.commentId)
+        .map((r) => commentView(r)),
+    ],
+  }));
+
+  return { commentsForPullRequest, nextToken: undefined };
+};
+
+const GetCommentsForComparedCommit: OperationHandler = (input, ctx) => {
+  const repoName = requireString(input, "repositoryName");
+  const afterCommitId = requireString(input, "afterCommitId");
+  requireRepository(ctx, repoName);
+
+  const allComments = ctx.store
+    .list<StoredComment>()
+    .filter((entry) => entry.key.startsWith("comment/"))
+    .map((entry) => entry.value);
+
+  const rootComments = allComments.filter(
+    (c) =>
+      c.repositoryName === repoName &&
+      c.afterCommitId === afterCommitId &&
+      c.inReplyTo === undefined,
+  );
+
+  const commentsForComparedCommit = rootComments.map((c) => ({
+    repositoryName: c.repositoryName,
+    beforeCommitId: c.beforeCommitId,
+    afterCommitId: c.afterCommitId,
+    beforeBlobId: c.beforeBlobId,
+    afterBlobId: c.afterBlobId,
+    location:
+      c.filePath !== undefined
+        ? {
+            filePath: c.filePath,
+            filePosition: c.filePosition,
+            relativeFileVersion: c.relativeFileVersion,
+          }
+        : undefined,
+    comments: [
+      commentView(c),
+      ...allComments
+        .filter((r) => r.inReplyTo === c.commentId)
+        .map((r) => commentView(r)),
+    ],
+  }));
+
+  return { commentsForComparedCommit, nextToken: undefined };
+};
+
+const UpdateComment: OperationHandler = (input, ctx) => {
+  const commentId = requireString(input, "commentId");
+  const content = requireString(input, "content");
+  const comment = requireComment(ctx, commentId);
+  if (comment.deleted) {
+    throw awsError(
+      "CommentDeletedException",
+      "The comment has been deleted.",
+      400,
+    );
+  }
+  const updated: StoredComment = {
+    ...comment,
+    content,
+    lastModifiedDate: nowIso(),
+  };
+  ctx.store.set(commentKey(commentId), updated);
+  return { comment: commentView(updated) };
+};
+
+const DeleteCommentContent: OperationHandler = (input, ctx) => {
+  const commentId = requireString(input, "commentId");
+  const comment = requireComment(ctx, commentId);
+  const updated: StoredComment = {
+    ...comment,
+    content: "",
+    deleted: true,
+    lastModifiedDate: nowIso(),
+  };
+  ctx.store.set(commentKey(commentId), updated);
+  return { comment: commentView(updated) };
+};
+
+const GetCommentReactions: OperationHandler = (input, ctx) => {
+  const commentId = requireString(input, "commentId");
+  const comment = requireComment(ctx, commentId);
+  const reactionsForComment = Object.entries(comment.reactions).map(
+    ([emoji, users]) => ({
+      reaction: { emoji, shortCode: emoji, unicode: emoji },
+      reactionUsers: users,
+      reactionsFromDeletedUsersCount: 0,
+    }),
+  );
+  return { reactionsForComment, nextToken: undefined };
+};
+
+const PutCommentReaction: OperationHandler = (input, ctx) => {
+  const commentId = requireString(input, "commentId");
+  const reactionValue = requireString(input, "reactionValue");
+  const comment = requireComment(ctx, commentId);
+  const userArn = `arn:aws:iam::${ctx.account}:root`;
+  const existing = comment.reactions[reactionValue] ?? [];
+  const updated: StoredComment = {
+    ...comment,
+    reactions: {
+      ...comment.reactions,
+      [reactionValue]: existing.includes(userArn)
+        ? existing
+        : [...existing, userArn],
+    },
+    callerReactions: comment.callerReactions.includes(reactionValue)
+      ? comment.callerReactions
+      : [...comment.callerReactions, reactionValue],
+  };
+  ctx.store.set(commentKey(commentId), updated);
+  return {};
+};
+
 const codecommit = {
   name: "codecommit",
   protocol: "json",
@@ -1522,6 +2733,47 @@ const codecommit = {
     UpdateDefaultBranch,
     UpdateRepositoryEncryptionKey,
     UpdateRepositoryName,
+    CreateApprovalRuleTemplate,
+    GetApprovalRuleTemplate,
+    DeleteApprovalRuleTemplate,
+    UpdateApprovalRuleTemplateContent,
+    UpdateApprovalRuleTemplateDescription,
+    UpdateApprovalRuleTemplateName,
+    ListApprovalRuleTemplates,
+    AssociateApprovalRuleTemplateWithRepository,
+    BatchAssociateApprovalRuleTemplateWithRepositories,
+    DisassociateApprovalRuleTemplateFromRepository,
+    BatchDisassociateApprovalRuleTemplateFromRepositories,
+    ListAssociatedApprovalRuleTemplatesForRepository,
+    ListRepositoriesForApprovalRuleTemplate,
+    CreatePullRequest,
+    GetPullRequest,
+    ListPullRequests,
+    UpdatePullRequestDescription,
+    UpdatePullRequestStatus,
+    UpdatePullRequestTitle,
+    MergePullRequestByFastForward,
+    MergePullRequestBySquash,
+    MergePullRequestByThreeWay,
+    CreatePullRequestApprovalRule,
+    DeletePullRequestApprovalRule,
+    UpdatePullRequestApprovalRuleContent,
+    GetPullRequestApprovalStates,
+    UpdatePullRequestApprovalState,
+    GetPullRequestOverrideState,
+    OverridePullRequestApprovalRules,
+    EvaluatePullRequestApprovalRules,
+    DescribePullRequestEvents,
+    PostCommentForPullRequest,
+    PostCommentForComparedCommit,
+    PostCommentReply,
+    GetComment,
+    GetCommentsForPullRequest,
+    GetCommentsForComparedCommit,
+    UpdateComment,
+    DeleteCommentContent,
+    GetCommentReactions,
+    PutCommentReaction,
   },
   model,
 } as const satisfies ServiceDefinition;

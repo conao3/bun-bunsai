@@ -18,6 +18,10 @@ type StoredRole = {
   AssumeRolePolicyDocument?: string;
   Description?: string;
   MaxSessionDuration: number;
+  PermissionsBoundary?: {
+    PermissionsBoundaryType: string;
+    PermissionsBoundaryArn: string;
+  };
 };
 
 type StoredUser = {
@@ -197,6 +201,30 @@ type StoredPasswordPolicy = {
   HardExpiry?: boolean;
 };
 
+type StoredOIDCProvider = {
+  Url: string;
+  Arn: string;
+  ClientIDList: string[];
+  ThumbprintList: string[];
+  CreateDate: string;
+  Tags: StoredTag[];
+};
+
+type StoredDeletionTask = {
+  TaskId: string;
+  RoleName: string;
+  Status: string;
+};
+
+type StoredServiceLastAccessJob = {
+  JobId: string;
+  EntityType: string;
+  EntityArn: string;
+  JobCreationDate: string;
+  JobCompletionDate: string;
+  JobStatus: string;
+};
+
 const roleKey = (name: string): string => `role/${name}`;
 
 const userKey = (name: string): string => `user/${name}`;
@@ -262,6 +290,19 @@ const mfaTagKey = (serialNumber: string, tagKey: string): string =>
 
 const serviceSpecCredKey = (id: string): string => `servicespeccred/${id}`;
 
+const policyTagKey = (arn: string, tagKey: string): string =>
+  `policytag/${arn}/${tagKey}`;
+
+const oidcProviderKey = (arn: string): string => `oidcprovider/${arn}`;
+
+const oidcProviderTagKey = (arn: string, tagKey: string): string =>
+  `oidcprovidertag/${arn}/${tagKey}`;
+
+const deletionTaskKey = (taskId: string): string => `deletiontask/${taskId}`;
+
+const serviceLastAccessJobKey = (jobId: string): string =>
+  `servicelastaccessjob/${jobId}`;
+
 const roleArnOf = (account: string, path: string, name: string): string =>
   `arn:aws:iam::${account}:role${path}${name}`;
 
@@ -291,6 +332,11 @@ const serverCertArnOf = (account: string, path: string, name: string): string =>
 
 const virtualMfaArnOf = (account: string, path: string, name: string): string =>
   `arn:aws:iam::${account}:mfa${path}${name}`;
+
+const oidcProviderArnOf = (account: string, url: string): string => {
+  const host = url.replace(/^https?:\/\//, "").split("/")[0];
+  return `arn:aws:iam::${account}:oidc-provider/${host}`;
+};
 
 const randomHex = (length: number): string => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -701,6 +747,14 @@ const CreatePolicy: OperationHandler = (input, ctx) => {
     UpdateDate: now,
   };
   ctx.store.set(policyKey(arn), policy);
+  const v1: StoredPolicyVersion = {
+    PolicyArn: arn,
+    VersionId: "v1",
+    Document: document,
+    IsDefaultVersion: true,
+    CreateDate: now,
+  };
+  ctx.store.set(policyVersionKey(arn, "v1"), v1);
   return { Policy: policy };
 };
 
@@ -2355,6 +2409,539 @@ const UpdateServiceSpecificCredential: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DeletePolicy: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "PolicyArn");
+  requirePolicy(ctx, arn);
+  ctx.store.delete(policyKey(arn));
+  for (const entry of ctx.store.list()) {
+    if (
+      (entry.key.startsWith("policyversion/") &&
+        (entry.value as StoredPolicyVersion).PolicyArn === arn) ||
+      (entry.key.startsWith("policytag/") &&
+        entry.key.startsWith(`policytag/${arn}/`))
+    ) {
+      ctx.store.delete(entry.key);
+    }
+  }
+  return {};
+};
+
+const DeletePolicyVersion: OperationHandler = (input, ctx) => {
+  const policyArn = requireString(input, "PolicyArn");
+  const versionId = requireString(input, "VersionId");
+  const policy = requirePolicy(ctx, policyArn);
+  if (policy.DefaultVersionId === versionId) {
+    throw awsError(
+      "DeleteConflict",
+      `Cannot delete the default version of a policy.`,
+      409,
+    );
+  }
+  const key = policyVersionKey(policyArn, versionId);
+  if (ctx.store.get<StoredPolicyVersion>(key) === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Policy version ${versionId} does not exist.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const SetDefaultPolicyVersion: OperationHandler = (input, ctx) => {
+  const policyArn = requireString(input, "PolicyArn");
+  const versionId = requireString(input, "VersionId");
+  const policy = requirePolicy(ctx, policyArn);
+  const stored = ctx.store.get<StoredPolicyVersion>(
+    policyVersionKey(policyArn, versionId),
+  );
+  const version =
+    stored ?? (versionId === "v1" ? defaultPolicyVersionOf(policy) : undefined);
+  if (version === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Policy version ${versionId} does not exist.`,
+      404,
+    );
+  }
+  const existing = policyVersionsOf(ctx, policyArn);
+  for (const v of existing) {
+    if (v.IsDefaultVersion) {
+      ctx.store.set(policyVersionKey(policyArn, v.VersionId), {
+        ...v,
+        IsDefaultVersion: false,
+      });
+    }
+  }
+  if (stored !== undefined) {
+    ctx.store.set(policyVersionKey(policyArn, versionId), {
+      ...stored,
+      IsDefaultVersion: true,
+    });
+  }
+  ctx.store.set(policyKey(policyArn), {
+    ...policy,
+    DefaultVersionId: versionId,
+    UpdateDate: new Date().toISOString(),
+  });
+  return {};
+};
+
+const TagPolicy: OperationHandler = (input, ctx) => {
+  const policyArn = requireString(input, "PolicyArn");
+  requirePolicy(ctx, policyArn);
+  for (const tag of toTagList(input)) {
+    ctx.store.set(policyTagKey(policyArn, tag.Key), {
+      PolicyArn: policyArn,
+      ...tag,
+    });
+  }
+  return {};
+};
+
+const UntagPolicy: OperationHandler = (input, ctx) => {
+  const policyArn = requireString(input, "PolicyArn");
+  requirePolicy(ctx, policyArn);
+  const tagKeys = input["TagKeys"];
+  if (Array.isArray(tagKeys)) {
+    for (const key of tagKeys) {
+      if (typeof key === "string") {
+        ctx.store.delete(policyTagKey(policyArn, key));
+      }
+    }
+  }
+  return {};
+};
+
+const ListPolicyTags: OperationHandler = (input, ctx) => {
+  const policyArn = requireString(input, "PolicyArn");
+  requirePolicy(ctx, policyArn);
+  const tags = ctx.store
+    .list<StoredTag & { PolicyArn: string }>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("policytag/") &&
+        entry.value.PolicyArn === policyArn,
+    )
+    .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
+  return { Tags: tags, IsTruncated: false };
+};
+
+const DeleteInstanceProfile: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InstanceProfileName");
+  const profile = requireInstanceProfile(ctx, name);
+  if (profile.Roles.length > 0) {
+    throw awsError(
+      "DeleteConflict",
+      `Cannot delete entity, must remove roles from instance profile first.`,
+      409,
+    );
+  }
+  ctx.store.delete(instanceProfileKey(name));
+  return {};
+};
+
+const ListInstanceProfiles: OperationHandler = (input, ctx) => {
+  const prefix = optionalString(input, "PathPrefix") ?? "/";
+  const profiles = ctx.store
+    .list<StoredInstanceProfile>()
+    .filter((entry) => entry.key.startsWith("instanceprofile/"))
+    .map((entry) => entry.value)
+    .filter((profile) => profile.Path.startsWith(prefix));
+  return { InstanceProfiles: profiles, IsTruncated: false };
+};
+
+const ListInstanceProfilesForRole: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  requireRole(ctx, roleName);
+  const profiles = ctx.store
+    .list<StoredInstanceProfile>()
+    .filter((entry) => entry.key.startsWith("instanceprofile/"))
+    .map((entry) => entry.value)
+    .filter((profile) => profile.Roles.some((r) => r.RoleName === roleName));
+  return { InstanceProfiles: profiles, IsTruncated: false };
+};
+
+const RemoveRoleFromInstanceProfile: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InstanceProfileName");
+  const roleName = requireString(input, "RoleName");
+  const profile = requireInstanceProfile(ctx, name);
+  if (!profile.Roles.some((r) => r.RoleName === roleName)) {
+    throw awsError(
+      "NoSuchEntity",
+      `Role ${roleName} is not associated with instance profile ${name}.`,
+      404,
+    );
+  }
+  ctx.store.set(instanceProfileKey(name), {
+    ...profile,
+    Roles: profile.Roles.filter((r) => r.RoleName !== roleName),
+  });
+  return {};
+};
+
+const TagInstanceProfile: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InstanceProfileName");
+  const profile = requireInstanceProfile(ctx, name);
+  const newTags = toTagList(input);
+  const existingTags = profile.Tags.filter(
+    (t) => !newTags.some((nt) => nt.Key === t.Key),
+  );
+  ctx.store.set(instanceProfileKey(name), {
+    ...profile,
+    Tags: [...existingTags, ...newTags],
+  });
+  return {};
+};
+
+const UntagInstanceProfile: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InstanceProfileName");
+  const profile = requireInstanceProfile(ctx, name);
+  const tagKeys = input["TagKeys"];
+  const keysToRemove = new Set<string>(
+    Array.isArray(tagKeys)
+      ? tagKeys.filter((k): k is string => typeof k === "string")
+      : [],
+  );
+  ctx.store.set(instanceProfileKey(name), {
+    ...profile,
+    Tags: profile.Tags.filter((t) => !keysToRemove.has(t.Key)),
+  });
+  return {};
+};
+
+const ListInstanceProfileTags: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InstanceProfileName");
+  const profile = requireInstanceProfile(ctx, name);
+  return { Tags: profile.Tags, IsTruncated: false };
+};
+
+const PutRolePermissionsBoundary: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  const permissionsBoundary = requireString(input, "PermissionsBoundary");
+  const role = requireRole(ctx, roleName);
+  ctx.store.set(roleKey(roleName), {
+    ...role,
+    PermissionsBoundary: {
+      PermissionsBoundaryType: "PermissionsBoundaryPolicy",
+      PermissionsBoundaryArn: permissionsBoundary,
+    },
+  });
+  return {};
+};
+
+const DeleteRolePermissionsBoundary: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  const role = requireRole(ctx, roleName);
+  const { PermissionsBoundary: _pb, ...rest } = role;
+  ctx.store.set(roleKey(roleName), rest);
+  return {};
+};
+
+const DetachRolePolicy: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  const policyArn = requireString(input, "PolicyArn");
+  requireRole(ctx, roleName);
+  const key = attachmentKey(roleName, policyArn);
+  if (ctx.store.get<StoredAttachment>(key) === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Policy ${policyArn} was not attached to role ${roleName}.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  const policy = ctx.store.get<StoredPolicy>(policyKey(policyArn));
+  if (policy !== undefined) {
+    ctx.store.set(policyKey(policyArn), {
+      ...policy,
+      AttachmentCount: Math.max(0, policy.AttachmentCount - 1),
+    });
+  }
+  return {};
+};
+
+const UpdateAssumeRolePolicy: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  const policyDocument = requireString(input, "PolicyDocument");
+  const role = requireRole(ctx, roleName);
+  ctx.store.set(roleKey(roleName), {
+    ...role,
+    AssumeRolePolicyDocument: policyDocument,
+  });
+  return {};
+};
+
+const DeleteServiceLinkedRole: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  requireRole(ctx, roleName);
+  ctx.store.delete(roleKey(roleName));
+  const taskId = `task/${randomHex(16)}`;
+  const task: StoredDeletionTask = {
+    TaskId: taskId,
+    RoleName: roleName,
+    Status: "SUCCEEDED",
+  };
+  ctx.store.set(deletionTaskKey(taskId), task);
+  return { DeletionTaskId: taskId };
+};
+
+const GetServiceLinkedRoleDeletionStatus: OperationHandler = (input, ctx) => {
+  const taskId = requireString(input, "DeletionTaskId");
+  const task = ctx.store.get<StoredDeletionTask>(deletionTaskKey(taskId));
+  if (task === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Deletion task ${taskId} cannot be found.`,
+      404,
+    );
+  }
+  return { Status: task.Status };
+};
+
+const GenerateServiceLastAccessedDetails: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "Arn");
+  const jobId = `job/${randomHex(16)}`;
+  const now = new Date().toISOString();
+  const job: StoredServiceLastAccessJob = {
+    JobId: jobId,
+    EntityType: "Role",
+    EntityArn: arn,
+    JobCreationDate: now,
+    JobCompletionDate: now,
+    JobStatus: "COMPLETED",
+  };
+  ctx.store.set(serviceLastAccessJobKey(jobId), job);
+  return { JobId: jobId };
+};
+
+const GetServiceLastAccessedDetails: OperationHandler = (input, ctx) => {
+  const jobId = requireString(input, "JobId");
+  const job = ctx.store.get<StoredServiceLastAccessJob>(
+    serviceLastAccessJobKey(jobId),
+  );
+  if (job === undefined) {
+    throw awsError("NoSuchEntity", `Job ${jobId} cannot be found.`, 404);
+  }
+  return {
+    JobStatus: job.JobStatus,
+    JobCreationDate: job.JobCreationDate,
+    JobCompletionDate: job.JobCompletionDate,
+    ServicesLastAccessed: [],
+    IsTruncated: false,
+  };
+};
+
+const GetServiceLastAccessedDetailsWithEntities: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const jobId = requireString(input, "JobId");
+  const job = ctx.store.get<StoredServiceLastAccessJob>(
+    serviceLastAccessJobKey(jobId),
+  );
+  if (job === undefined) {
+    throw awsError("NoSuchEntity", `Job ${jobId} cannot be found.`, 404);
+  }
+  return {
+    JobStatus: job.JobStatus,
+    JobCreationDate: job.JobCreationDate,
+    JobCompletionDate: job.JobCompletionDate,
+    EntityDetailsList: [],
+    IsTruncated: false,
+  };
+};
+
+const GetContextKeysForCustomPolicy: OperationHandler = (input, _ctx) => {
+  return { ContextKeyNames: [] };
+};
+
+const GetContextKeysForPrincipalPolicy: OperationHandler = (input, _ctx) => {
+  return { ContextKeyNames: [] };
+};
+
+const SimulateCustomPolicy: OperationHandler = (input, _ctx) => {
+  const actionNames = input["ActionNames"];
+  const actions = Array.isArray(actionNames) ? (actionNames as string[]) : [];
+  const results = actions.map((action) => ({
+    EvalActionName: action,
+    EvalDecision: "allowed",
+  }));
+  return { EvaluationResults: results, IsTruncated: false };
+};
+
+const SimulatePrincipalPolicy: OperationHandler = (input, _ctx) => {
+  const actionNames = input["ActionNames"];
+  const actions = Array.isArray(actionNames) ? (actionNames as string[]) : [];
+  const results = actions.map((action) => ({
+    EvalActionName: action,
+    EvalDecision: "allowed",
+  }));
+  return { EvaluationResults: results, IsTruncated: false };
+};
+
+const requireOIDCProvider = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredOIDCProvider => {
+  const provider = ctx.store.get<StoredOIDCProvider>(oidcProviderKey(arn));
+  if (provider === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `OpenIDConnect Provider ${arn} cannot be found.`,
+      404,
+    );
+  }
+  return provider;
+};
+
+const CreateOpenIDConnectProvider: OperationHandler = (input, ctx) => {
+  const url = requireString(input, "Url");
+  const arn = oidcProviderArnOf(ctx.account, url);
+  if (ctx.store.get<StoredOIDCProvider>(oidcProviderKey(arn)) !== undefined) {
+    throw awsError(
+      "EntityAlreadyExists",
+      `Provider with URL ${url} already exists.`,
+      409,
+    );
+  }
+  const clientIdList = input["ClientIDList"];
+  const thumbprintList = input["ThumbprintList"];
+  const provider: StoredOIDCProvider = {
+    Url: url,
+    Arn: arn,
+    ClientIDList: Array.isArray(clientIdList) ? (clientIdList as string[]) : [],
+    ThumbprintList: Array.isArray(thumbprintList)
+      ? (thumbprintList as string[])
+      : [],
+    CreateDate: new Date().toISOString(),
+    Tags: toTagList(input),
+  };
+  ctx.store.set(oidcProviderKey(arn), provider);
+  return { OpenIDConnectProviderArn: arn };
+};
+
+const DeleteOpenIDConnectProvider: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "OpenIDConnectProviderArn");
+  requireOIDCProvider(ctx, arn);
+  ctx.store.delete(oidcProviderKey(arn));
+  for (const entry of ctx.store.list()) {
+    if (
+      entry.key.startsWith("oidcprovidertag/") &&
+      entry.key.startsWith(`oidcprovidertag/${arn}/`)
+    ) {
+      ctx.store.delete(entry.key);
+    }
+  }
+  return {};
+};
+
+const GetOpenIDConnectProvider: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "OpenIDConnectProviderArn");
+  const provider = requireOIDCProvider(ctx, arn);
+  const tags = ctx.store
+    .list<StoredTag & { ProviderArn: string }>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("oidcprovidertag/") &&
+        entry.value.ProviderArn === arn,
+    )
+    .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
+  return {
+    Url: provider.Url,
+    ClientIDList: provider.ClientIDList,
+    ThumbprintList: provider.ThumbprintList,
+    CreateDate: provider.CreateDate,
+    Tags: tags.length > 0 ? tags : provider.Tags,
+  };
+};
+
+const AddClientIDToOpenIDConnectProvider: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "OpenIDConnectProviderArn");
+  const clientId = requireString(input, "ClientID");
+  const provider = requireOIDCProvider(ctx, arn);
+  if (provider.ClientIDList.includes(clientId)) {
+    return {};
+  }
+  ctx.store.set(oidcProviderKey(arn), {
+    ...provider,
+    ClientIDList: [...provider.ClientIDList, clientId],
+  });
+  return {};
+};
+
+const RemoveClientIDFromOpenIDConnectProvider: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const arn = requireString(input, "OpenIDConnectProviderArn");
+  const clientId = requireString(input, "ClientID");
+  const provider = requireOIDCProvider(ctx, arn);
+  ctx.store.set(oidcProviderKey(arn), {
+    ...provider,
+    ClientIDList: provider.ClientIDList.filter((id) => id !== clientId),
+  });
+  return {};
+};
+
+const UpdateOpenIDConnectProviderThumbprint: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const arn = requireString(input, "OpenIDConnectProviderArn");
+  const thumbprintList = input["ThumbprintList"];
+  const provider = requireOIDCProvider(ctx, arn);
+  ctx.store.set(oidcProviderKey(arn), {
+    ...provider,
+    ThumbprintList: Array.isArray(thumbprintList)
+      ? (thumbprintList as string[])
+      : provider.ThumbprintList,
+  });
+  return {};
+};
+
+const ListOpenIDConnectProviders: OperationHandler = (input, ctx) => {
+  const providers = ctx.store
+    .list<StoredOIDCProvider>()
+    .filter((entry) => entry.key.startsWith("oidcprovider/"))
+    .map((entry) => ({ Arn: entry.value.Arn }));
+  return { OpenIDConnectProviderList: providers };
+};
+
+const TagOpenIDConnectProvider: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "OpenIDConnectProviderArn");
+  requireOIDCProvider(ctx, arn);
+  for (const tag of toTagList(input)) {
+    ctx.store.set(oidcProviderTagKey(arn, tag.Key), {
+      ProviderArn: arn,
+      ...tag,
+    });
+  }
+  return {};
+};
+
+const ListOpenIDConnectProviderTags: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "OpenIDConnectProviderArn");
+  requireOIDCProvider(ctx, arn);
+  const storedTags = ctx.store
+    .list<StoredTag & { ProviderArn: string }>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("oidcprovidertag/") &&
+        entry.value.ProviderArn === arn,
+    )
+    .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
+  const provider = ctx.store.get<StoredOIDCProvider>(oidcProviderKey(arn));
+  const inlineTags = provider?.Tags ?? [];
+  const allTagKeys = new Set<string>(storedTags.map((t) => t.Key));
+  const combinedTags = [
+    ...storedTags,
+    ...inlineTags.filter((t) => !allTagKeys.has(t.Key)),
+  ];
+  return { Tags: combinedTags, IsTruncated: false };
+};
+
 const GenerateCredentialReport: OperationHandler = (input, ctx) => {
   ctx.store.set("credentialreport/0", {
     GeneratedTime: new Date().toISOString(),
@@ -2502,6 +3089,41 @@ const iam = {
     UpdateServiceSpecificCredential,
     GenerateCredentialReport,
     GetCredentialReport,
+    DeletePolicy,
+    DeletePolicyVersion,
+    SetDefaultPolicyVersion,
+    TagPolicy,
+    UntagPolicy,
+    ListPolicyTags,
+    DeleteInstanceProfile,
+    ListInstanceProfiles,
+    ListInstanceProfilesForRole,
+    RemoveRoleFromInstanceProfile,
+    TagInstanceProfile,
+    UntagInstanceProfile,
+    ListInstanceProfileTags,
+    PutRolePermissionsBoundary,
+    DeleteRolePermissionsBoundary,
+    DetachRolePolicy,
+    UpdateAssumeRolePolicy,
+    DeleteServiceLinkedRole,
+    GetServiceLinkedRoleDeletionStatus,
+    GenerateServiceLastAccessedDetails,
+    GetServiceLastAccessedDetails,
+    GetServiceLastAccessedDetailsWithEntities,
+    GetContextKeysForCustomPolicy,
+    GetContextKeysForPrincipalPolicy,
+    SimulateCustomPolicy,
+    SimulatePrincipalPolicy,
+    CreateOpenIDConnectProvider,
+    DeleteOpenIDConnectProvider,
+    GetOpenIDConnectProvider,
+    AddClientIDToOpenIDConnectProvider,
+    RemoveClientIDFromOpenIDConnectProvider,
+    UpdateOpenIDConnectProviderThumbprint,
+    ListOpenIDConnectProviders,
+    TagOpenIDConnectProvider,
+    ListOpenIDConnectProviderTags,
   },
   model,
 } as const satisfies ServiceDefinition;

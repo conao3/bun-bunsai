@@ -1533,7 +1533,7 @@ const logAnomalyView = (
 
 const GetLogAnomalyDetector: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "anomalyDetectorArn");
-  const id = arn.split("/").pop() ?? arn.split(":").pop() ?? arn;
+  const id = arn.split(":").pop() ?? arn;
   const detector = ctx.store.get<StoredLogAnomalyDetector>(
     `${logAnomalyPrefix}${id}`,
   );
@@ -1562,7 +1562,7 @@ const ListLogAnomalyDetectors: OperationHandler = (input, ctx) => {
 
 const UpdateLogAnomalyDetector: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "anomalyDetectorArn");
-  const id = arn.split("/").pop() ?? arn.split(":").pop() ?? arn;
+  const id = arn.split(":").pop() ?? arn;
   const key = `${logAnomalyPrefix}${id}`;
   const detector = ctx.store.get<StoredLogAnomalyDetector>(key);
   if (detector === undefined) {
@@ -1588,7 +1588,7 @@ const UpdateLogAnomalyDetector: OperationHandler = (input, ctx) => {
 
 const DeleteLogAnomalyDetector: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "anomalyDetectorArn");
-  const id = arn.split("/").pop() ?? arn.split(":").pop() ?? arn;
+  const id = arn.split(":").pop() ?? arn;
   const key = `${logAnomalyPrefix}${id}`;
   if (ctx.store.get<StoredLogAnomalyDetector>(key) === undefined) {
     throw awsError(

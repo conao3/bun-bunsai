@@ -1,13 +1,74 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn } from "bun";
 import {
+  CloneReceiptRuleSetCommand,
+  CreateConfigurationSetCommand,
+  CreateConfigurationSetEventDestinationCommand,
+  CreateConfigurationSetTrackingOptionsCommand,
+  CreateCustomVerificationEmailTemplateCommand,
+  CreateReceiptFilterCommand,
+  CreateReceiptRuleCommand,
+  CreateReceiptRuleSetCommand,
+  CreateTemplateCommand,
+  DeleteConfigurationSetCommand,
+  DeleteConfigurationSetEventDestinationCommand,
+  DeleteConfigurationSetTrackingOptionsCommand,
+  DeleteCustomVerificationEmailTemplateCommand,
   DeleteIdentityCommand,
+  DeleteIdentityPolicyCommand,
+  DeleteReceiptFilterCommand,
+  DeleteReceiptRuleCommand,
+  DeleteReceiptRuleSetCommand,
+  DeleteTemplateCommand,
+  DescribeActiveReceiptRuleSetCommand,
+  DescribeConfigurationSetCommand,
+  DescribeReceiptRuleCommand,
+  DescribeReceiptRuleSetCommand,
+  GetAccountSendingEnabledCommand,
+  GetCustomVerificationEmailTemplateCommand,
+  GetIdentityDkimAttributesCommand,
+  GetIdentityMailFromDomainAttributesCommand,
+  GetIdentityNotificationAttributesCommand,
+  GetIdentityPoliciesCommand,
   GetIdentityVerificationAttributesCommand,
   GetSendQuotaCommand,
+  GetSendStatisticsCommand,
+  GetTemplateCommand,
+  ListConfigurationSetsCommand,
+  ListCustomVerificationEmailTemplatesCommand,
   ListIdentitiesCommand,
+  ListIdentityPoliciesCommand,
+  ListReceiptFiltersCommand,
+  ListReceiptRuleSetsCommand,
+  ListTemplatesCommand,
+  ListVerifiedEmailAddressesCommand,
+  PutConfigurationSetDeliveryOptionsCommand,
+  PutIdentityPolicyCommand,
+  ReorderReceiptRuleSetCommand,
+  SendBounceCommand,
+  SendBulkTemplatedEmailCommand,
   SendEmailCommand,
   SendRawEmailCommand,
+  SendTemplatedEmailCommand,
   SESClient,
+  SetActiveReceiptRuleSetCommand,
+  SetIdentityDkimEnabledCommand,
+  SetIdentityFeedbackForwardingEnabledCommand,
+  SetIdentityHeadersInNotificationsEnabledCommand,
+  SetIdentityMailFromDomainCommand,
+  SetIdentityNotificationTopicCommand,
+  TestRenderTemplateCommand,
+  UpdateAccountSendingEnabledCommand,
+  UpdateConfigurationSetEventDestinationCommand,
+  UpdateConfigurationSetReputationMetricsEnabledCommand,
+  UpdateConfigurationSetSendingEnabledCommand,
+  UpdateConfigurationSetTrackingOptionsCommand,
+  UpdateCustomVerificationEmailTemplateCommand,
+  UpdateReceiptRuleCommand,
+  UpdateTemplateCommand,
+  VerifyDomainDkimCommand,
+  VerifyDomainIdentityCommand,
+  VerifyEmailAddressCommand,
   VerifyEmailIdentityCommand,
 } from "@aws-sdk/client-ses";
 
@@ -124,4 +185,526 @@ test("SES rejects sending from unverified identity", async () => {
       }),
     ),
   ).rejects.toThrow();
+});
+
+test("SES configuration set + event destination + tracking lifecycle", async () => {
+  const client = ses();
+  const csName = "e2e-configset";
+
+  await client.send(
+    new CreateConfigurationSetCommand({ ConfigurationSet: { Name: csName } }),
+  );
+
+  const listed = await client.send(new ListConfigurationSetsCommand({}));
+  expect(
+    (listed.ConfigurationSets ?? []).some((cs) => cs.Name === csName),
+  ).toBe(true);
+
+  await client.send(
+    new CreateConfigurationSetEventDestinationCommand({
+      ConfigurationSetName: csName,
+      EventDestination: {
+        Name: "e2e-dest",
+        Enabled: true,
+        MatchingEventTypes: ["send", "bounce"],
+        SNSDestination: {
+          TopicARN: "arn:aws:sns:us-east-1:123456789012:topic",
+        },
+      },
+    }),
+  );
+
+  await client.send(
+    new UpdateConfigurationSetEventDestinationCommand({
+      ConfigurationSetName: csName,
+      EventDestination: {
+        Name: "e2e-dest",
+        Enabled: false,
+        MatchingEventTypes: ["send"],
+        SNSDestination: {
+          TopicARN: "arn:aws:sns:us-east-1:123456789012:topic",
+        },
+      },
+    }),
+  );
+
+  const described = await client.send(
+    new DescribeConfigurationSetCommand({ ConfigurationSetName: csName }),
+  );
+  expect(described.ConfigurationSet?.Name).toBe(csName);
+  expect(described.EventDestinations?.length).toBe(1);
+  expect(described.EventDestinations?.[0]?.Name).toBe("e2e-dest");
+  expect(described.EventDestinations?.[0]?.Enabled).toBe(false);
+
+  await client.send(
+    new CreateConfigurationSetTrackingOptionsCommand({
+      ConfigurationSetName: csName,
+      TrackingOptions: { CustomRedirectDomain: "track.example.com" },
+    }),
+  );
+
+  await client.send(
+    new UpdateConfigurationSetTrackingOptionsCommand({
+      ConfigurationSetName: csName,
+      TrackingOptions: { CustomRedirectDomain: "track2.example.com" },
+    }),
+  );
+
+  await client.send(
+    new PutConfigurationSetDeliveryOptionsCommand({
+      ConfigurationSetName: csName,
+      DeliveryOptions: { TlsPolicy: "Optional" },
+    }),
+  );
+
+  await client.send(
+    new UpdateConfigurationSetReputationMetricsEnabledCommand({
+      ConfigurationSetName: csName,
+      Enabled: true,
+    }),
+  );
+
+  await client.send(
+    new UpdateConfigurationSetSendingEnabledCommand({
+      ConfigurationSetName: csName,
+      Enabled: false,
+    }),
+  );
+
+  await client.send(
+    new DeleteConfigurationSetEventDestinationCommand({
+      ConfigurationSetName: csName,
+      EventDestinationName: "e2e-dest",
+    }),
+  );
+
+  await client.send(
+    new DeleteConfigurationSetTrackingOptionsCommand({
+      ConfigurationSetName: csName,
+    }),
+  );
+
+  await client.send(
+    new DeleteConfigurationSetCommand({ ConfigurationSetName: csName }),
+  );
+
+  const afterDelete = await client.send(new ListConfigurationSetsCommand({}));
+  expect(
+    (afterDelete.ConfigurationSets ?? []).some((cs) => cs.Name === csName),
+  ).toBe(false);
+});
+
+test("SES receipt rule set + rule + filter lifecycle", async () => {
+  const client = ses();
+  const ruleSetName = "e2e-ruleset";
+
+  await client.send(
+    new CreateReceiptRuleSetCommand({ RuleSetName: ruleSetName }),
+  );
+
+  const listed = await client.send(new ListReceiptRuleSetsCommand({}));
+  expect((listed.RuleSets ?? []).some((rs) => rs.Name === ruleSetName)).toBe(
+    true,
+  );
+
+  await client.send(
+    new CreateReceiptRuleCommand({
+      RuleSetName: ruleSetName,
+      Rule: {
+        Name: "e2e-rule",
+        Enabled: true,
+        Recipients: ["test@example.com"],
+        Actions: [],
+        ScanEnabled: false,
+      },
+    }),
+  );
+
+  const described = await client.send(
+    new DescribeReceiptRuleSetCommand({ RuleSetName: ruleSetName }),
+  );
+  expect(described.Metadata?.Name).toBe(ruleSetName);
+  expect(described.Rules?.length).toBe(1);
+
+  const rule = await client.send(
+    new DescribeReceiptRuleCommand({
+      RuleSetName: ruleSetName,
+      RuleName: "e2e-rule",
+    }),
+  );
+  expect(rule.Rule?.Name).toBe("e2e-rule");
+  expect(rule.Rule?.Enabled).toBe(true);
+
+  await client.send(
+    new UpdateReceiptRuleCommand({
+      RuleSetName: ruleSetName,
+      Rule: {
+        Name: "e2e-rule",
+        Enabled: false,
+        Recipients: ["updated@example.com"],
+        Actions: [],
+        ScanEnabled: true,
+      },
+    }),
+  );
+
+  await client.send(
+    new SetActiveReceiptRuleSetCommand({ RuleSetName: ruleSetName }),
+  );
+
+  const active = await client.send(new DescribeActiveReceiptRuleSetCommand({}));
+  expect(active.Metadata?.Name).toBe(ruleSetName);
+
+  const cloneSetName = "e2e-ruleset-clone";
+  await client.send(
+    new CloneReceiptRuleSetCommand({
+      OriginalRuleSetName: ruleSetName,
+      RuleSetName: cloneSetName,
+    }),
+  );
+  const cloneDesc = await client.send(
+    new DescribeReceiptRuleSetCommand({ RuleSetName: cloneSetName }),
+  );
+  expect(cloneDesc.Rules?.length).toBe(1);
+
+  await client.send(
+    new ReorderReceiptRuleSetCommand({
+      RuleSetName: ruleSetName,
+      RuleNames: ["e2e-rule"],
+    }),
+  );
+
+  await client.send(
+    new DeleteReceiptRuleCommand({
+      RuleSetName: ruleSetName,
+      RuleName: "e2e-rule",
+    }),
+  );
+
+  await client.send(
+    new CreateReceiptFilterCommand({
+      Filter: {
+        Name: "e2e-filter",
+        IpFilter: { Policy: "Block", Cidr: "10.0.0.0/8" },
+      },
+    }),
+  );
+
+  const filters = await client.send(new ListReceiptFiltersCommand({}));
+  expect((filters.Filters ?? []).some((f) => f.Name === "e2e-filter")).toBe(
+    true,
+  );
+
+  await client.send(
+    new DeleteReceiptFilterCommand({ FilterName: "e2e-filter" }),
+  );
+
+  await client.send(
+    new DeleteReceiptRuleSetCommand({ RuleSetName: ruleSetName }),
+  );
+  await client.send(
+    new DeleteReceiptRuleSetCommand({ RuleSetName: cloneSetName }),
+  );
+});
+
+test("SES template lifecycle + render", async () => {
+  const client = ses();
+
+  await client.send(
+    new CreateTemplateCommand({
+      Template: {
+        TemplateName: "e2e-template",
+        SubjectPart: "Hello {{name}}",
+        TextPart: "Dear {{name}}, welcome.",
+        HtmlPart: "<p>Dear {{name}}</p>",
+      },
+    }),
+  );
+
+  const got = await client.send(
+    new GetTemplateCommand({ TemplateName: "e2e-template" }),
+  );
+  expect(got.Template?.TemplateName).toBe("e2e-template");
+  expect(got.Template?.SubjectPart).toBe("Hello {{name}}");
+
+  const listed = await client.send(new ListTemplatesCommand({}));
+  expect(
+    (listed.TemplatesMetadata ?? []).some((t) => t.Name === "e2e-template"),
+  ).toBe(true);
+
+  await client.send(
+    new UpdateTemplateCommand({
+      Template: {
+        TemplateName: "e2e-template",
+        SubjectPart: "Hi {{name}}",
+        TextPart: "Hello {{name}}.",
+        HtmlPart: "<p>Hi {{name}}</p>",
+      },
+    }),
+  );
+
+  const rendered = await client.send(
+    new TestRenderTemplateCommand({
+      TemplateName: "e2e-template",
+      TemplateData: JSON.stringify({ name: "World" }),
+    }),
+  );
+  expect(rendered.RenderedTemplate).toContain("World");
+
+  const sender = "sender@bunsai-e2e.example.com";
+  await client.send(new VerifyEmailIdentityCommand({ EmailAddress: sender }));
+  const sent = await client.send(
+    new SendTemplatedEmailCommand({
+      Source: sender,
+      Destination: { ToAddresses: ["dest@example.com"] },
+      Template: "e2e-template",
+      TemplateData: JSON.stringify({ name: "Test" }),
+    }),
+  );
+  expect(sent.MessageId).toBeDefined();
+
+  const bulkSent = await client.send(
+    new SendBulkTemplatedEmailCommand({
+      Source: sender,
+      Template: "e2e-template",
+      DefaultTemplateData: JSON.stringify({ name: "Default" }),
+      Destinations: [
+        {
+          Destination: { ToAddresses: ["a@example.com"] },
+          ReplacementTemplateData: JSON.stringify({ name: "Alice" }),
+        },
+      ],
+    }),
+  );
+  expect(bulkSent.Status?.length).toBe(1);
+  expect(bulkSent.Status?.[0]?.Status).toBe("Success");
+
+  await client.send(
+    new DeleteTemplateCommand({ TemplateName: "e2e-template" }),
+  );
+  await client.send(new DeleteIdentityCommand({ Identity: sender }));
+});
+
+test("SES custom verification email template lifecycle", async () => {
+  const client = ses();
+
+  await client.send(
+    new CreateCustomVerificationEmailTemplateCommand({
+      TemplateName: "e2e-cvtemplate",
+      FromEmailAddress: "verify@example.com",
+      TemplateSubject: "Verify your email",
+      TemplateContent: "<p>Please verify</p>",
+      SuccessRedirectionURL: "https://example.com/success",
+      FailureRedirectionURL: "https://example.com/failure",
+    }),
+  );
+
+  const got = await client.send(
+    new GetCustomVerificationEmailTemplateCommand({
+      TemplateName: "e2e-cvtemplate",
+    }),
+  );
+  expect(got.TemplateName).toBe("e2e-cvtemplate");
+  expect(got.SuccessRedirectionURL).toBe("https://example.com/success");
+
+  const listed = await client.send(
+    new ListCustomVerificationEmailTemplatesCommand({}),
+  );
+  expect(
+    (listed.CustomVerificationEmailTemplates ?? []).some(
+      (t) => t.TemplateName === "e2e-cvtemplate",
+    ),
+  ).toBe(true);
+
+  await client.send(
+    new UpdateCustomVerificationEmailTemplateCommand({
+      TemplateName: "e2e-cvtemplate",
+      FromEmailAddress: "verify2@example.com",
+      TemplateSubject: "Verify your email (updated)",
+      TemplateContent: "<p>Please verify now</p>",
+      SuccessRedirectionURL: "https://example.com/ok",
+      FailureRedirectionURL: "https://example.com/fail",
+    }),
+  );
+
+  const updated = await client.send(
+    new GetCustomVerificationEmailTemplateCommand({
+      TemplateName: "e2e-cvtemplate",
+    }),
+  );
+  expect(updated.SuccessRedirectionURL).toBe("https://example.com/ok");
+
+  await client.send(
+    new DeleteCustomVerificationEmailTemplateCommand({
+      TemplateName: "e2e-cvtemplate",
+    }),
+  );
+
+  await expect(
+    client.send(
+      new GetCustomVerificationEmailTemplateCommand({
+        TemplateName: "e2e-cvtemplate",
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("SES identity policy lifecycle", async () => {
+  const client = ses();
+  const domain = "policy-test.bunsai-e2e.example.com";
+
+  await client.send(new VerifyDomainIdentityCommand({ Domain: domain }));
+
+  await client.send(
+    new PutIdentityPolicyCommand({
+      Identity: domain,
+      PolicyName: "e2e-policy",
+      Policy: JSON.stringify({ Version: "2012-10-17", Statement: [] }),
+    }),
+  );
+
+  const policyNames = await client.send(
+    new ListIdentityPoliciesCommand({ Identity: domain }),
+  );
+  expect((policyNames.PolicyNames ?? []).includes("e2e-policy")).toBe(true);
+
+  const policies = await client.send(
+    new GetIdentityPoliciesCommand({
+      Identity: domain,
+      PolicyNames: ["e2e-policy"],
+    }),
+  );
+  expect(policies.Policies?.["e2e-policy"]).toBeDefined();
+
+  await client.send(
+    new DeleteIdentityPolicyCommand({
+      Identity: domain,
+      PolicyName: "e2e-policy",
+    }),
+  );
+
+  const afterDelete = await client.send(
+    new ListIdentityPoliciesCommand({ Identity: domain }),
+  );
+  expect((afterDelete.PolicyNames ?? []).includes("e2e-policy")).toBe(false);
+
+  await client.send(new DeleteIdentityCommand({ Identity: domain }));
+});
+
+test("SES domain identity attributes", async () => {
+  const client = ses();
+  const domain = "attrs-test.bunsai-e2e.example.com";
+
+  const verifyResult = await client.send(
+    new VerifyDomainIdentityCommand({ Domain: domain }),
+  );
+  expect(verifyResult.VerificationToken).toBeDefined();
+
+  const dkimResult = await client.send(
+    new VerifyDomainDkimCommand({ Domain: domain }),
+  );
+  expect((dkimResult.DkimTokens ?? []).length).toBe(3);
+
+  const dkimAttrs = await client.send(
+    new GetIdentityDkimAttributesCommand({ Identities: [domain] }),
+  );
+  expect(dkimAttrs.DkimAttributes?.[domain]?.DkimTokens?.length).toBe(3);
+
+  await client.send(
+    new SetIdentityDkimEnabledCommand({ Identity: domain, DkimEnabled: false }),
+  );
+
+  const dkimAttrs2 = await client.send(
+    new GetIdentityDkimAttributesCommand({ Identities: [domain] }),
+  );
+  expect(dkimAttrs2.DkimAttributes?.[domain]?.DkimEnabled).toBe(false);
+
+  await client.send(
+    new SetIdentityMailFromDomainCommand({
+      Identity: domain,
+      MailFromDomain: "bounce.example.com",
+    }),
+  );
+
+  const mailFromAttrs = await client.send(
+    new GetIdentityMailFromDomainAttributesCommand({ Identities: [domain] }),
+  );
+  expect(mailFromAttrs.MailFromDomainAttributes?.[domain]?.MailFromDomain).toBe(
+    "bounce.example.com",
+  );
+
+  await client.send(
+    new SetIdentityNotificationTopicCommand({
+      Identity: domain,
+      NotificationType: "Bounce",
+      SnsTopic: "arn:aws:sns:us-east-1:123456789012:bounce-topic",
+    }),
+  );
+
+  await client.send(
+    new SetIdentityFeedbackForwardingEnabledCommand({
+      Identity: domain,
+      ForwardingEnabled: false,
+    }),
+  );
+
+  await client.send(
+    new SetIdentityHeadersInNotificationsEnabledCommand({
+      Identity: domain,
+      NotificationType: "Bounce",
+      Enabled: true,
+    }),
+  );
+
+  const notifAttrs = await client.send(
+    new GetIdentityNotificationAttributesCommand({ Identities: [domain] }),
+  );
+  expect(notifAttrs.NotificationAttributes?.[domain]?.ForwardingEnabled).toBe(
+    false,
+  );
+  expect(
+    notifAttrs.NotificationAttributes?.[domain]
+      ?.HeadersInBounceNotificationsEnabled,
+  ).toBe(true);
+
+  await client.send(new DeleteIdentityCommand({ Identity: domain }));
+});
+
+test("SES account sending + send stats + misc", async () => {
+  const client = ses();
+
+  await client.send(new UpdateAccountSendingEnabledCommand({ Enabled: false }));
+  const disabled = await client.send(new GetAccountSendingEnabledCommand({}));
+  expect(disabled.Enabled).toBe(false);
+
+  await client.send(new UpdateAccountSendingEnabledCommand({ Enabled: true }));
+  const enabled = await client.send(new GetAccountSendingEnabledCommand({}));
+  expect(enabled.Enabled).toBe(true);
+
+  const stats = await client.send(new GetSendStatisticsCommand({}));
+  expect((stats.SendDataPoints ?? []).length).toBeGreaterThan(0);
+
+  const emailAddr = "bounce-src@bunsai-e2e.example.com";
+  await client.send(new VerifyEmailAddressCommand({ EmailAddress: emailAddr }));
+
+  const verifiedList = await client.send(
+    new ListVerifiedEmailAddressesCommand({}),
+  );
+  expect((verifiedList.VerifiedEmailAddresses ?? []).includes(emailAddr)).toBe(
+    true,
+  );
+
+  const bounceResult = await client.send(
+    new SendBounceCommand({
+      OriginalMessageId: "msg-12345",
+      BounceSender: emailAddr,
+      BouncedRecipientInfoList: [
+        {
+          Recipient: "bad@invalid-domain.example",
+          BounceType: "DoesNotExist",
+        },
+      ],
+    }),
+  );
+  expect(bounceResult.MessageId).toContain("msg-12345");
 });

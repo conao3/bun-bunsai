@@ -1,33 +1,54 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn } from "bun";
 import {
+  AssociateApprovalRuleTemplateWithRepositoryCommand,
   BatchGetCommitsCommand,
   BatchGetRepositoriesCommand,
   CodeCommitClient,
+  CreateApprovalRuleTemplateCommand,
   CreateBranchCommand,
+  CreatePullRequestApprovalRuleCommand,
+  CreatePullRequestCommand,
   CreateRepositoryCommand,
+  DeleteApprovalRuleTemplateCommand,
   DeleteBranchCommand,
+  DeleteCommentContentCommand,
   DeleteFileCommand,
   DeleteRepositoryCommand,
+  GetApprovalRuleTemplateCommand,
   GetBlobCommand,
   GetBranchCommand,
+  GetCommentCommand,
+  GetCommentReactionsCommand,
   GetCommitCommand,
   GetDifferencesCommand,
   GetFileCommand,
   GetFolderCommand,
   GetMergeOptionsCommand,
+  GetPullRequestApprovalStatesCommand,
+  GetPullRequestCommand,
   GetRepositoryCommand,
   GetRepositoryTriggersCommand,
+  ListApprovalRuleTemplatesCommand,
+  ListAssociatedApprovalRuleTemplatesForRepositoryCommand,
   ListBranchesCommand,
+  ListPullRequestsCommand,
   ListRepositoriesCommand,
   ListTagsForResourceCommand,
   MergeBranchesByThreeWayCommand,
+  MergePullRequestByFastForwardCommand,
+  PostCommentForPullRequestCommand,
+  PostCommentReplyCommand,
+  PutCommentReactionCommand,
   PutFileCommand,
   PutRepositoryTriggersCommand,
   TagResourceCommand,
   TestRepositoryTriggersCommand,
   UntagResourceCommand,
+  UpdateApprovalRuleTemplateNameCommand,
+  UpdateCommentCommand,
   UpdateDefaultBranchCommand,
+  UpdatePullRequestTitleCommand,
   UpdateRepositoryDescriptionCommand,
   UpdateRepositoryEncryptionKeyCommand,
   UpdateRepositoryNameCommand,
@@ -378,4 +399,254 @@ test("CodeCommit lifecycle: branches, files, merges, triggers, tags", async () =
   await client.send(
     new DeleteRepositoryCommand({ repositoryName: `${repoName}-renamed` }),
   );
+});
+
+test("CodeCommit approval-rule-template lifecycle", async () => {
+  const client = codecommit();
+  const templateName = "art-e2e-template";
+  const repoName = "art-e2e-repo";
+
+  await client.send(new CreateRepositoryCommand({ repositoryName: repoName }));
+
+  const created = await client.send(
+    new CreateApprovalRuleTemplateCommand({
+      approvalRuleTemplateName: templateName,
+      approvalRuleTemplateContent: '{"Version":"2018-11-08","Statements":[]}',
+      approvalRuleTemplateDescription: "e2e template",
+    }),
+  );
+  expect(created.approvalRuleTemplate?.approvalRuleTemplateName).toBe(
+    templateName,
+  );
+  expect(created.approvalRuleTemplate?.approvalRuleTemplateId).toBeTruthy();
+
+  const fetched = await client.send(
+    new GetApprovalRuleTemplateCommand({
+      approvalRuleTemplateName: templateName,
+    }),
+  );
+  expect(fetched.approvalRuleTemplate?.approvalRuleTemplateDescription).toBe(
+    "e2e template",
+  );
+
+  const listed = await client.send(new ListApprovalRuleTemplatesCommand({}));
+  expect((listed.approvalRuleTemplateNames ?? []).includes(templateName)).toBe(
+    true,
+  );
+
+  await client.send(
+    new AssociateApprovalRuleTemplateWithRepositoryCommand({
+      approvalRuleTemplateName: templateName,
+      repositoryName: repoName,
+    }),
+  );
+  const assocList = await client.send(
+    new ListAssociatedApprovalRuleTemplatesForRepositoryCommand({
+      repositoryName: repoName,
+    }),
+  );
+  expect(
+    (assocList.approvalRuleTemplateNames ?? []).includes(templateName),
+  ).toBe(true);
+
+  const renamed = await client.send(
+    new UpdateApprovalRuleTemplateNameCommand({
+      oldApprovalRuleTemplateName: templateName,
+      newApprovalRuleTemplateName: `${templateName}-v2`,
+    }),
+  );
+  expect(renamed.approvalRuleTemplate?.approvalRuleTemplateName).toBe(
+    `${templateName}-v2`,
+  );
+
+  await client.send(
+    new DeleteApprovalRuleTemplateCommand({
+      approvalRuleTemplateName: `${templateName}-v2`,
+    }),
+  );
+  await client.send(new DeleteRepositoryCommand({ repositoryName: repoName }));
+});
+
+test("CodeCommit pull-request lifecycle", async () => {
+  const client = codecommit();
+  const repoName = "pr-e2e-repo";
+
+  await client.send(new CreateRepositoryCommand({ repositoryName: repoName }));
+  const put = await client.send(
+    new PutFileCommand({
+      repositoryName: repoName,
+      branchName: "main",
+      filePath: "README.md",
+      fileContent: Buffer.from("hello").toString("base64"),
+      commitMessage: "init",
+    }),
+  );
+  await client.send(
+    new CreateBranchCommand({
+      repositoryName: repoName,
+      branchName: "feature",
+      commitId: put.commitId!,
+    }),
+  );
+  await client.send(
+    new PutFileCommand({
+      repositoryName: repoName,
+      branchName: "feature",
+      filePath: "feat.md",
+      fileContent: Buffer.from("feature").toString("base64"),
+      commitMessage: "feat",
+    }),
+  );
+
+  const pr = await client.send(
+    new CreatePullRequestCommand({
+      title: "My PR",
+      targets: [
+        {
+          repositoryName: repoName,
+          sourceReference: "feature",
+          destinationReference: "main",
+        },
+      ],
+    }),
+  );
+  const prId = pr.pullRequest?.pullRequestId!;
+  expect(pr.pullRequest?.title).toBe("My PR");
+  expect(pr.pullRequest?.pullRequestStatus).toBe("OPEN");
+
+  const fetched = await client.send(
+    new GetPullRequestCommand({ pullRequestId: prId }),
+  );
+  expect(fetched.pullRequest?.pullRequestId).toBe(prId);
+
+  const listed = await client.send(
+    new ListPullRequestsCommand({ repositoryName: repoName }),
+  );
+  expect((listed.pullRequestIds ?? []).includes(prId)).toBe(true);
+
+  const updated = await client.send(
+    new UpdatePullRequestTitleCommand({
+      pullRequestId: prId,
+      title: "Updated PR",
+    }),
+  );
+  expect(updated.pullRequest?.title).toBe("Updated PR");
+
+  const rule = await client.send(
+    new CreatePullRequestApprovalRuleCommand({
+      pullRequestId: prId,
+      approvalRuleName: "required-approval",
+      approvalRuleContent: '{"Version":"2018-11-08","Statements":[]}',
+    }),
+  );
+  expect(rule.approvalRule?.approvalRuleName).toBe("required-approval");
+
+  const states = await client.send(
+    new GetPullRequestApprovalStatesCommand({
+      pullRequestId: prId,
+      revisionId: fetched.pullRequest?.revisionId!,
+    }),
+  );
+  expect(states.approvals).toBeDefined();
+
+  const merged = await client.send(
+    new MergePullRequestByFastForwardCommand({
+      pullRequestId: prId,
+      repositoryName: repoName,
+    }),
+  );
+  expect(merged.pullRequest?.pullRequestStatus).toBe("CLOSED");
+
+  await client.send(new DeleteRepositoryCommand({ repositoryName: repoName }));
+});
+
+test("CodeCommit comment lifecycle", async () => {
+  const client = codecommit();
+  const repoName = "comment-e2e-repo";
+
+  await client.send(new CreateRepositoryCommand({ repositoryName: repoName }));
+  const put = await client.send(
+    new PutFileCommand({
+      repositoryName: repoName,
+      branchName: "main",
+      filePath: "README.md",
+      fileContent: Buffer.from("hello").toString("base64"),
+      commitMessage: "init",
+    }),
+  );
+  await client.send(
+    new CreateBranchCommand({
+      repositoryName: repoName,
+      branchName: "feature",
+      commitId: put.commitId!,
+    }),
+  );
+  await client.send(
+    new PutFileCommand({
+      repositoryName: repoName,
+      branchName: "feature",
+      filePath: "feat.md",
+      fileContent: Buffer.from("feature").toString("base64"),
+      commitMessage: "feat",
+    }),
+  );
+
+  const pr = await client.send(
+    new CreatePullRequestCommand({
+      title: "Comment PR",
+      targets: [
+        {
+          repositoryName: repoName,
+          sourceReference: "feature",
+          destinationReference: "main",
+        },
+      ],
+    }),
+  );
+  const prId = pr.pullRequest?.pullRequestId!;
+  const targets = pr.pullRequest?.pullRequestTargets ?? [];
+  const beforeCommit = targets[0]?.destinationCommit ?? put.commitId!;
+  const afterCommit = targets[0]?.sourceCommit ?? put.commitId!;
+
+  const posted = await client.send(
+    new PostCommentForPullRequestCommand({
+      pullRequestId: prId,
+      repositoryName: repoName,
+      beforeCommitId: beforeCommit,
+      afterCommitId: afterCommit,
+      content: "looks good",
+    }),
+  );
+  const commentId = posted.comment?.commentId!;
+  expect(posted.comment?.content).toBe("looks good");
+
+  const fetched = await client.send(new GetCommentCommand({ commentId }));
+  expect(fetched.comment?.content).toBe("looks good");
+
+  const updated = await client.send(
+    new UpdateCommentCommand({ commentId, content: "updated comment" }),
+  );
+  expect(updated.comment?.content).toBe("updated comment");
+
+  const reply = await client.send(
+    new PostCommentReplyCommand({
+      inReplyTo: commentId,
+      content: "reply here",
+    }),
+  );
+  expect(reply.comment?.content).toBe("reply here");
+
+  await client.send(
+    new PutCommentReactionCommand({ commentId, reactionValue: ":thumbsup:" }),
+  );
+  const reactions = await client.send(
+    new GetCommentReactionsCommand({ commentId }),
+  );
+  expect((reactions.reactionsForComment ?? []).length).toBeGreaterThan(0);
+
+  await client.send(new DeleteCommentContentCommand({ commentId }));
+  const deleted = await client.send(new GetCommentCommand({ commentId }));
+  expect(deleted.comment?.deleted).toBe(true);
+
+  await client.send(new DeleteRepositoryCommand({ repositoryName: repoName }));
 });

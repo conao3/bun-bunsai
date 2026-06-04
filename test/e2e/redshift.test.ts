@@ -122,6 +122,16 @@ import {
   RevokeEndpointAccessCommand,
   RevokeSnapshotAccessCommand,
   RotateEncryptionKeyCommand,
+  CreateIntegrationCommand,
+  DeleteIntegrationCommand,
+  DescribeIntegrationsCommand,
+  DescribeInboundIntegrationsCommand,
+  ModifyIntegrationCommand,
+  CreateRedshiftIdcApplicationCommand,
+  DeleteRedshiftIdcApplicationCommand,
+  DescribeRedshiftIdcApplicationsCommand,
+  ModifyRedshiftIdcApplicationCommand,
+  GetIdentityCenterAuthTokenCommand,
 } from "@aws-sdk/client-redshift";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 
@@ -1475,4 +1485,118 @@ test("Redshift reserved node lifecycle", async () => {
       "succeeded",
     );
   }
+});
+
+test("Redshift integration and IDC application lifecycle", async () => {
+  const client = redshift();
+
+  const sourceArn = "arn:aws:rds:us-east-1:123456789012:db:bunsai-source-db";
+  const targetArn =
+    "arn:aws:redshift:us-east-1:123456789012:namespace:bunsai-ns";
+
+  const created = await client.send(
+    new CreateIntegrationCommand({
+      SourceArn: sourceArn,
+      TargetArn: targetArn,
+      IntegrationName: "bunsai-e2e-integration",
+      Description: "e2e test integration",
+    }),
+  );
+  expect(created.IntegrationArn).toBeDefined();
+  expect(created.IntegrationName).toBe("bunsai-e2e-integration");
+  expect(created.SourceArn).toBe(sourceArn);
+  expect(created.TargetArn).toBe(targetArn);
+  expect(created.Status).toBe("active");
+  const integrationArn = created.IntegrationArn!;
+
+  const described = await client.send(
+    new DescribeIntegrationsCommand({ IntegrationArn: integrationArn }),
+  );
+  expect((described.Integrations ?? []).length).toBe(1);
+  expect(described.Integrations?.[0]?.Description).toBe("e2e test integration");
+
+  const inbound = await client.send(
+    new DescribeInboundIntegrationsCommand({ IntegrationArn: integrationArn }),
+  );
+  expect((inbound.InboundIntegrations ?? []).length).toBe(1);
+  expect(inbound.InboundIntegrations?.[0]?.Status).toBe("active");
+
+  const modified = await client.send(
+    new ModifyIntegrationCommand({
+      IntegrationArn: integrationArn,
+      Description: "updated description",
+      IntegrationName: "bunsai-e2e-integration-v2",
+    }),
+  );
+  expect(modified.Description).toBe("updated description");
+  expect(modified.IntegrationName).toBe("bunsai-e2e-integration-v2");
+
+  const deleted = await client.send(
+    new DeleteIntegrationCommand({ IntegrationArn: integrationArn }),
+  );
+  expect(deleted.IntegrationArn).toBe(integrationArn);
+
+  const idcApp = await client.send(
+    new CreateRedshiftIdcApplicationCommand({
+      IdcInstanceArn: "arn:aws:sso:::instance/ssoins-1234567890abcdef0",
+      RedshiftIdcApplicationName: "bunsai-e2e-idc-app",
+      IamRoleArn: "arn:aws:iam::123456789012:role/RedshiftIdcRole",
+      IdentityNamespace: "bunsai-ns",
+      IdcDisplayName: "Bunsai E2E IDC App",
+    }),
+  );
+  expect(
+    idcApp.RedshiftIdcApplication?.RedshiftIdcApplicationArn,
+  ).toBeDefined();
+  expect(idcApp.RedshiftIdcApplication?.RedshiftIdcApplicationName).toBe(
+    "bunsai-e2e-idc-app",
+  );
+  expect(idcApp.RedshiftIdcApplication?.IdcOnboardStatus).toBe("ENABLED");
+  const idcArn = idcApp.RedshiftIdcApplication?.RedshiftIdcApplicationArn!;
+
+  const describedIdcApps = await client.send(
+    new DescribeRedshiftIdcApplicationsCommand({
+      RedshiftIdcApplicationArn: idcArn,
+    }),
+  );
+  expect((describedIdcApps.RedshiftIdcApplications ?? []).length).toBe(1);
+  expect(describedIdcApps.RedshiftIdcApplications?.[0]?.IdentityNamespace).toBe(
+    "bunsai-ns",
+  );
+
+  const modifiedIdcApp = await client.send(
+    new ModifyRedshiftIdcApplicationCommand({
+      RedshiftIdcApplicationArn: idcArn,
+      IdcDisplayName: "Updated IDC App",
+      IdentityNamespace: "bunsai-ns-v2",
+    }),
+  );
+  expect(modifiedIdcApp.RedshiftIdcApplication?.IdcDisplayName).toBe(
+    "Updated IDC App",
+  );
+  expect(modifiedIdcApp.RedshiftIdcApplication?.IdentityNamespace).toBe(
+    "bunsai-ns-v2",
+  );
+
+  const token = await client.send(
+    new GetIdentityCenterAuthTokenCommand({
+      ClusterIds: ["bunsai-e2e-cluster"],
+    }),
+  );
+  expect(token.Token).toBeDefined();
+  expect(token.ExpirationTime).toBeDefined();
+
+  await client.send(
+    new DeleteRedshiftIdcApplicationCommand({
+      RedshiftIdcApplicationArn: idcArn,
+    }),
+  );
+
+  const afterDelete = await client.send(
+    new DescribeRedshiftIdcApplicationsCommand({}),
+  );
+  const remaining = (afterDelete.RedshiftIdcApplications ?? []).filter(
+    (a) => a.RedshiftIdcApplicationArn === idcArn,
+  );
+  expect(remaining.length).toBe(0);
 });

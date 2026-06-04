@@ -213,6 +213,89 @@ type StoredTransformJob = {
   LastModifiedTime: number;
 };
 
+type StoredDomain = {
+  DomainId: string;
+  DomainArn: string;
+  DomainName: string;
+  AuthMode?: string;
+  Status: string;
+  Url: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+  DefaultUserSettings?: unknown;
+  DomainSettings?: unknown;
+  SubnetIds?: unknown;
+  VpcId?: string;
+  AppNetworkAccessType?: string;
+  DefaultSpaceSettings?: unknown;
+};
+
+type StoredApp = {
+  DomainId: string;
+  AppType: string;
+  AppName: string;
+  AppArn: string;
+  UserProfileName?: string;
+  SpaceName?: string;
+  Status: string;
+  CreationTime: number;
+  ResourceSpec?: unknown;
+};
+
+type StoredAppImageConfig = {
+  AppImageConfigName: string;
+  AppImageConfigArn: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+  KernelGatewayImageConfig?: unknown;
+  JupyterLabAppImageConfig?: unknown;
+  CodeEditorAppImageConfig?: unknown;
+};
+
+type StoredSpace = {
+  DomainId: string;
+  SpaceName: string;
+  SpaceArn: string;
+  Status: string;
+  SpaceDisplayName?: string;
+  SpaceSettings?: unknown;
+  OwnershipSettings?: unknown;
+  SpaceSharingSettings?: unknown;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredUserProfile = {
+  DomainId: string;
+  UserProfileName: string;
+  UserProfileArn: string;
+  Status: string;
+  SingleSignOnUserIdentifier?: string;
+  SingleSignOnUserValue?: string;
+  UserSettings?: unknown;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredMlflowApp = {
+  Name: string;
+  Arn: string;
+  ArtifactStoreUri?: string;
+  RoleArn?: string;
+  ModelRegistrationMode?: string;
+  CreationTime: number;
+};
+
+type StoredPartnerApp = {
+  Name: string;
+  Arn: string;
+  Type?: string;
+  ExecutionRoleArn?: string;
+  Tier?: string;
+  AuthType?: string;
+  CreationTime: number;
+};
+
 const modelKey = (name: string): string => `model/${name}`;
 
 const configKey = (name: string): string => `endpoint-config/${name}`;
@@ -256,6 +339,23 @@ const pipelineExecutionKey = (arn: string): string =>
 const processingJobKey = (name: string): string => `processing-job/${name}`;
 
 const transformJobKey = (name: string): string => `transform-job/${name}`;
+
+const domainKey = (id: string): string => `domain/${id}`;
+
+const appKey = (domainId: string, appType: string, appName: string): string =>
+  `app/${domainId}/${appType}/${appName}`;
+
+const appImageConfigKey = (name: string): string => `app-image-config/${name}`;
+
+const spaceKey = (domainId: string, spaceName: string): string =>
+  `space/${domainId}/${spaceName}`;
+
+const userProfileKey = (domainId: string, userProfileName: string): string =>
+  `user-profile/${domainId}/${userProfileName}`;
+
+const mlflowAppKey = (name: string): string => `mlflow-app/${name}`;
+
+const partnerAppKey = (name: string): string => `partner-app/${name}`;
 
 const trainingJobArnOf = (
   region: string,
@@ -360,6 +460,54 @@ const transformJobArnOf = (
   account: string,
   name: string,
 ): string => `arn:aws:sagemaker:${region}:${account}:transform-job/${name}`;
+
+const domainArnOf = (region: string, account: string, id: string): string =>
+  `arn:aws:sagemaker:${region}:${account}:domain/${id}`;
+
+const appArnOf = (
+  region: string,
+  account: string,
+  domainId: string,
+  userProfileOrSpace: string,
+  appType: string,
+  appName: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:app/${domainId}/${userProfileOrSpace}/${appType}/${appName}`;
+
+const appImageConfigArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:app-image-config/${name}`;
+
+const spaceArnOf = (
+  region: string,
+  account: string,
+  domainId: string,
+  spaceName: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:space/${domainId}/${spaceName}`;
+
+const userProfileArnOf = (
+  region: string,
+  account: string,
+  domainId: string,
+  userProfileName: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:user-profile/${domainId}/${userProfileName}`;
+
+const mlflowAppArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:mlflow-tracking-server/${name}`;
+
+const partnerAppArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:partner-app/${name}`;
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
@@ -1735,6 +1883,354 @@ const CreateTransformJob: OperationHandler = (input, ctx) => {
   return { TransformJobArn: arn };
 };
 
+let domainIdCounter = 1;
+
+const CreateDomain: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "DomainName");
+  const domainId = `d-${String(domainIdCounter++).padStart(10, "0")}`;
+  const arn = domainArnOf(ctx.region, ctx.account, domainId);
+  const at = nowSeconds();
+  const stored: StoredDomain = {
+    DomainId: domainId,
+    DomainArn: arn,
+    DomainName: name,
+    AuthMode:
+      typeof input["AuthMode"] === "string"
+        ? (input["AuthMode"] as string)
+        : undefined,
+    Status: "InService",
+    Url: `https://${domainId}.studio.${ctx.region}.sagemaker.aws`,
+    DefaultUserSettings: input["DefaultUserSettings"],
+    DomainSettings: input["DomainSettings"],
+    SubnetIds: input["SubnetIds"],
+    VpcId:
+      typeof input["VpcId"] === "string"
+        ? (input["VpcId"] as string)
+        : undefined,
+    AppNetworkAccessType:
+      typeof input["AppNetworkAccessType"] === "string"
+        ? (input["AppNetworkAccessType"] as string)
+        : undefined,
+    DefaultSpaceSettings: input["DefaultSpaceSettings"],
+    CreationTime: at,
+    LastModifiedTime: at,
+  };
+  ctx.store.set(domainKey(domainId), stored);
+  return { DomainArn: arn, DomainId: domainId, Url: stored.Url };
+};
+
+const requireDomain = (ctx: ServiceContext, id: string): StoredDomain => {
+  const stored = ctx.store.get<StoredDomain>(domainKey(id));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Domain ${id} does not exist.`, 400);
+  }
+  return stored;
+};
+
+const CreateApp: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  requireDomain(ctx, domainId);
+  const appType = requireString(input, "AppType");
+  const appName = requireString(input, "AppName");
+  const userProfileName =
+    typeof input["UserProfileName"] === "string"
+      ? (input["UserProfileName"] as string)
+      : undefined;
+  const spaceName =
+    typeof input["SpaceName"] === "string"
+      ? (input["SpaceName"] as string)
+      : undefined;
+  const qualifier = userProfileName ?? spaceName ?? "default";
+  const arn = appArnOf(
+    ctx.region,
+    ctx.account,
+    domainId,
+    qualifier,
+    appType,
+    appName,
+  );
+  const stored: StoredApp = {
+    DomainId: domainId,
+    AppType: appType,
+    AppName: appName,
+    AppArn: arn,
+    UserProfileName: userProfileName,
+    SpaceName: spaceName,
+    Status: "InService",
+    CreationTime: nowSeconds(),
+    ResourceSpec: input["ResourceSpec"],
+  };
+  ctx.store.set(appKey(domainId, appType, appName), stored);
+  return { AppArn: arn };
+};
+
+const requireApp = (
+  ctx: ServiceContext,
+  domainId: string,
+  appType: string,
+  appName: string,
+): StoredApp => {
+  const stored = ctx.store.get<StoredApp>(appKey(domainId, appType, appName));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `App ${appName} of type ${appType} in domain ${domainId} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteApp: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  const appType = requireString(input, "AppType");
+  const appName = requireString(input, "AppName");
+  requireApp(ctx, domainId, appType, appName);
+  ctx.store.delete(appKey(domainId, appType, appName));
+  return {};
+};
+
+const CreateAppImageConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AppImageConfigName");
+  const existing = ctx.store.get<StoredAppImageConfig>(appImageConfigKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create AppImageConfig ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = appImageConfigArnOf(ctx.region, ctx.account, name);
+  const at = nowSeconds();
+  const stored: StoredAppImageConfig = {
+    AppImageConfigName: name,
+    AppImageConfigArn: arn,
+    KernelGatewayImageConfig: input["KernelGatewayImageConfig"],
+    JupyterLabAppImageConfig: input["JupyterLabAppImageConfig"],
+    CodeEditorAppImageConfig: input["CodeEditorAppImageConfig"],
+    CreationTime: at,
+    LastModifiedTime: at,
+  };
+  ctx.store.set(appImageConfigKey(name), stored);
+  return { AppImageConfigArn: arn };
+};
+
+const requireAppImageConfig = (
+  ctx: ServiceContext,
+  name: string,
+): StoredAppImageConfig => {
+  const stored = ctx.store.get<StoredAppImageConfig>(appImageConfigKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `AppImageConfig ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteAppImageConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AppImageConfigName");
+  requireAppImageConfig(ctx, name);
+  ctx.store.delete(appImageConfigKey(name));
+  return {};
+};
+
+const CreateSpace: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  requireDomain(ctx, domainId);
+  const spaceName = requireString(input, "SpaceName");
+  const existing = ctx.store.get<StoredSpace>(spaceKey(domainId, spaceName));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create Space ${spaceName} in domain ${domainId}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = spaceArnOf(ctx.region, ctx.account, domainId, spaceName);
+  const at = nowSeconds();
+  const stored: StoredSpace = {
+    DomainId: domainId,
+    SpaceName: spaceName,
+    SpaceArn: arn,
+    Status: "InService",
+    SpaceDisplayName:
+      typeof input["SpaceDisplayName"] === "string"
+        ? (input["SpaceDisplayName"] as string)
+        : undefined,
+    SpaceSettings: input["SpaceSettings"],
+    OwnershipSettings: input["OwnershipSettings"],
+    SpaceSharingSettings: input["SpaceSharingSettings"],
+    CreationTime: at,
+    LastModifiedTime: at,
+  };
+  ctx.store.set(spaceKey(domainId, spaceName), stored);
+  return { SpaceArn: arn };
+};
+
+const CreateUserProfile: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  requireDomain(ctx, domainId);
+  const userProfileName = requireString(input, "UserProfileName");
+  const existing = ctx.store.get<StoredUserProfile>(
+    userProfileKey(domainId, userProfileName),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create UserProfile ${userProfileName} in domain ${domainId}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = userProfileArnOf(
+    ctx.region,
+    ctx.account,
+    domainId,
+    userProfileName,
+  );
+  const at = nowSeconds();
+  const stored: StoredUserProfile = {
+    DomainId: domainId,
+    UserProfileName: userProfileName,
+    UserProfileArn: arn,
+    Status: "InService",
+    SingleSignOnUserIdentifier:
+      typeof input["SingleSignOnUserIdentifier"] === "string"
+        ? (input["SingleSignOnUserIdentifier"] as string)
+        : undefined,
+    SingleSignOnUserValue:
+      typeof input["SingleSignOnUserValue"] === "string"
+        ? (input["SingleSignOnUserValue"] as string)
+        : undefined,
+    UserSettings: input["UserSettings"],
+    CreationTime: at,
+    LastModifiedTime: at,
+  };
+  ctx.store.set(userProfileKey(domainId, userProfileName), stored);
+  return { UserProfileArn: arn };
+};
+
+const CreatePresignedDomainUrl: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  requireDomain(ctx, domainId);
+  const url = `https://${domainId}.studio.${ctx.region}.sagemaker.aws/auth?token=bunsai-presigned-token`;
+  return { AuthorizedUrl: url };
+};
+
+const CreateMlflowApp: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const existing = ctx.store.get<StoredMlflowApp>(mlflowAppKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create MlflowApp ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = mlflowAppArnOf(ctx.region, ctx.account, name);
+  const stored: StoredMlflowApp = {
+    Name: name,
+    Arn: arn,
+    ArtifactStoreUri:
+      typeof input["ArtifactStoreUri"] === "string"
+        ? (input["ArtifactStoreUri"] as string)
+        : undefined,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    ModelRegistrationMode:
+      typeof input["ModelRegistrationMode"] === "string"
+        ? (input["ModelRegistrationMode"] as string)
+        : undefined,
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(mlflowAppKey(name), stored);
+  return { Arn: arn };
+};
+
+const requireMlflowApp = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredMlflowApp => {
+  const entries = ctx.store
+    .list<StoredMlflowApp>()
+    .filter((e) => e.key.startsWith("mlflow-app/"))
+    .map((e) => e.value)
+    .find((v) => v.Arn === arn);
+  if (entries === undefined) {
+    throw awsError("ResourceNotFound", `MlflowApp ${arn} does not exist.`, 400);
+  }
+  return entries;
+};
+
+const CreatePresignedMlflowAppUrl: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "Arn");
+  requireMlflowApp(ctx, arn);
+  const url = `https://mlflow.${ctx.region}.sagemaker.aws/auth?arn=${encodeURIComponent(arn)}&token=bunsai-presigned-token`;
+  return { AuthorizedUrl: url };
+};
+
+const CreatePartnerApp: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const existing = ctx.store.get<StoredPartnerApp>(partnerAppKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create PartnerApp ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = partnerAppArnOf(ctx.region, ctx.account, name);
+  const stored: StoredPartnerApp = {
+    Name: name,
+    Arn: arn,
+    Type:
+      typeof input["Type"] === "string" ? (input["Type"] as string) : undefined,
+    ExecutionRoleArn:
+      typeof input["ExecutionRoleArn"] === "string"
+        ? (input["ExecutionRoleArn"] as string)
+        : undefined,
+    Tier:
+      typeof input["Tier"] === "string" ? (input["Tier"] as string) : undefined,
+    AuthType:
+      typeof input["AuthType"] === "string"
+        ? (input["AuthType"] as string)
+        : undefined,
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(partnerAppKey(name), stored);
+  return { Arn: arn };
+};
+
+const requirePartnerApp = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredPartnerApp => {
+  const entry = ctx.store
+    .list<StoredPartnerApp>()
+    .filter((e) => e.key.startsWith("partner-app/"))
+    .map((e) => e.value)
+    .find((v) => v.Arn === arn);
+  if (entry === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `PartnerApp ${arn} does not exist.`,
+      400,
+    );
+  }
+  return entry;
+};
+
+const CreatePartnerAppPresignedUrl: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "Arn");
+  requirePartnerApp(ctx, arn);
+  const url = `https://partner-app.${ctx.region}.sagemaker.aws/auth?arn=${encodeURIComponent(arn)}&token=bunsai-presigned-token`;
+  return { Url: url };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -1800,6 +2296,18 @@ const sagemaker = {
     CreateProcessingJob,
     DeleteProcessingJob,
     CreateTransformJob,
+    CreateDomain,
+    CreateApp,
+    DeleteApp,
+    CreateAppImageConfig,
+    DeleteAppImageConfig,
+    CreateSpace,
+    CreateUserProfile,
+    CreatePresignedDomainUrl,
+    CreateMlflowApp,
+    CreatePresignedMlflowAppUrl,
+    CreatePartnerApp,
+    CreatePartnerAppPresignedUrl,
   },
   model,
 } as const satisfies ServiceDefinition;

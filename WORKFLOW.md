@@ -55,7 +55,7 @@ Final-attempt context (scope-violation cap reached):
   - Why the scope was too large (which subtasks should be split off — propose 3-5 concrete sub-issues with one-line scope each).
 - Move the Linear state to `Cancelled` via `mcp__linear__save_issue` (`state="Cancelled"`). The operator will read your summary, split the work, and reinject.
 - Then end the turn. Do not attempt to keep working.
-{% endif %}
+  {% endif %}
 
 Issue context:
 Identifier: {{ issue.identifier }}

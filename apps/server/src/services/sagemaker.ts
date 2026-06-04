@@ -296,6 +296,89 @@ type StoredPartnerApp = {
   CreationTime: number;
 };
 
+type StoredFeatureGroup = {
+  FeatureGroupName: string;
+  FeatureGroupArn: string;
+  RecordIdentifierFeatureName: string;
+  EventTimeFeatureName: string;
+  FeatureDefinitions?: unknown;
+  OnlineStoreConfig?: unknown;
+  OfflineStoreConfig?: unknown;
+  ThroughputConfig?: unknown;
+  RoleArn?: string;
+  Description?: string;
+  CreationTime: number;
+};
+
+type StoredHub = {
+  HubName: string;
+  HubArn: string;
+  HubDescription: string;
+  HubDisplayName?: string;
+  HubSearchKeywords?: unknown;
+  S3StorageConfig?: unknown;
+  CreationTime: number;
+};
+
+type StoredImage = {
+  ImageName: string;
+  ImageArn: string;
+  Description?: string;
+  DisplayName?: string;
+  RoleArn: string;
+  CreationTime: number;
+};
+
+type StoredImageVersion = {
+  ImageName: string;
+  ImageVersionArn: string;
+  Version: number;
+  BaseImage: string;
+  CreationTime: number;
+};
+
+type StoredInferenceComponent = {
+  InferenceComponentName: string;
+  InferenceComponentArn: string;
+  EndpointName: string;
+  VariantName?: string;
+  Specification?: unknown;
+  Specifications?: unknown;
+  RuntimeConfig?: unknown;
+  CreationTime: number;
+};
+
+type StoredInferenceExperiment = {
+  Name: string;
+  InferenceExperimentArn: string;
+  Type: string;
+  RoleArn: string;
+  EndpointName: string;
+  ModelVariants?: unknown;
+  ShadowModeConfig?: unknown;
+  Description?: string;
+  Schedule?: unknown;
+  DataStorageConfig?: unknown;
+  CreationTime: number;
+};
+
+type StoredInferenceRecommendationsJob = {
+  JobName: string;
+  JobArn: string;
+  JobType: string;
+  RoleArn: string;
+  InputConfig?: unknown;
+  JobDescription?: string;
+  CreationTime: number;
+};
+
+type StoredMonitoringSchedule = {
+  MonitoringScheduleName: string;
+  MonitoringScheduleArn: string;
+  MonitoringScheduleConfig?: unknown;
+  CreationTime: number;
+};
+
 const modelKey = (name: string): string => `model/${name}`;
 
 const configKey = (name: string): string => `endpoint-config/${name}`;
@@ -356,6 +439,27 @@ const userProfileKey = (domainId: string, userProfileName: string): string =>
 const mlflowAppKey = (name: string): string => `mlflow-app/${name}`;
 
 const partnerAppKey = (name: string): string => `partner-app/${name}`;
+
+const featureGroupKey = (name: string): string => `feature-group/${name}`;
+
+const hubKey = (name: string): string => `hub/${name}`;
+
+const imageKey = (name: string): string => `image/${name}`;
+
+const imageVersionKey = (imageName: string, version: number): string =>
+  `image-version/${imageName}/${version}`;
+
+const inferenceComponentKey = (name: string): string =>
+  `inference-component/${name}`;
+
+const inferenceExperimentKey = (name: string): string =>
+  `inference-experiment/${name}`;
+
+const inferenceRecommendationsJobKey = (name: string): string =>
+  `inference-recommendations-job/${name}`;
+
+const monitoringScheduleKey = (name: string): string =>
+  `monitoring-schedule/${name}`;
 
 const trainingJobArnOf = (
   region: string,
@@ -508,6 +612,64 @@ const partnerAppArnOf = (
   account: string,
   name: string,
 ): string => `arn:aws:sagemaker:${region}:${account}:partner-app/${name}`;
+
+const featureGroupArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:feature-group/${name}`;
+
+const hubArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:sagemaker:${region}:${account}:hub/${name}`;
+
+const hubContentArnOf = (
+  region: string,
+  account: string,
+  hubName: string,
+  contentType: string,
+  contentName: string,
+  contentVersion: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:hub-content/${hubName}/${contentType}/${contentName}/${contentVersion}`;
+
+const imageArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:sagemaker:${region}:${account}:image/${name}`;
+
+const imageVersionArnOf = (
+  region: string,
+  account: string,
+  name: string,
+  version: number,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:image-version/${name}/${version}`;
+
+const inferenceComponentArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:inference-component/${name}`;
+
+const inferenceExperimentArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:inference-experiment/${name}`;
+
+const inferenceRecommendationsJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:inference-recommendations-job/${name}`;
+
+const monitoringScheduleArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:monitoring-schedule/${name}`;
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
@@ -2231,6 +2393,332 @@ const CreatePartnerAppPresignedUrl: OperationHandler = (input, ctx) => {
   return { Url: url };
 };
 
+const CreateFeatureGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "FeatureGroupName");
+  const existing = ctx.store.get<StoredFeatureGroup>(featureGroupKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create FeatureGroup ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = featureGroupArnOf(ctx.region, ctx.account, name);
+  const stored: StoredFeatureGroup = {
+    FeatureGroupName: name,
+    FeatureGroupArn: arn,
+    RecordIdentifierFeatureName: requireString(
+      input,
+      "RecordIdentifierFeatureName",
+    ),
+    EventTimeFeatureName: requireString(input, "EventTimeFeatureName"),
+    FeatureDefinitions: input["FeatureDefinitions"],
+    OnlineStoreConfig: input["OnlineStoreConfig"],
+    OfflineStoreConfig: input["OfflineStoreConfig"],
+    ThroughputConfig: input["ThroughputConfig"],
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : undefined,
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(featureGroupKey(name), stored);
+  return { FeatureGroupArn: arn };
+};
+
+const requireFeatureGroup = (
+  ctx: ServiceContext,
+  name: string,
+): StoredFeatureGroup => {
+  const stored = ctx.store.get<StoredFeatureGroup>(featureGroupKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `FeatureGroup ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteFeatureGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "FeatureGroupName");
+  requireFeatureGroup(ctx, name);
+  ctx.store.delete(featureGroupKey(name));
+  return {};
+};
+
+const CreateHub: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "HubName");
+  const existing = ctx.store.get<StoredHub>(hubKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create Hub ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = hubArnOf(ctx.region, ctx.account, name);
+  const stored: StoredHub = {
+    HubName: name,
+    HubArn: arn,
+    HubDescription: requireString(input, "HubDescription"),
+    HubDisplayName:
+      typeof input["HubDisplayName"] === "string"
+        ? (input["HubDisplayName"] as string)
+        : undefined,
+    HubSearchKeywords: input["HubSearchKeywords"],
+    S3StorageConfig: input["S3StorageConfig"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(hubKey(name), stored);
+  return { HubArn: arn };
+};
+
+const requireHub = (ctx: ServiceContext, name: string): StoredHub => {
+  const stored = ctx.store.get<StoredHub>(hubKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Hub ${name} does not exist.`, 400);
+  }
+  return stored;
+};
+
+const CreateHubContentPresignedUrls: OperationHandler = (input, ctx) => {
+  const hubName = requireString(input, "HubName");
+  const contentType = requireString(input, "HubContentType");
+  const contentName = requireString(input, "HubContentName");
+  requireHub(ctx, hubName);
+  const version =
+    typeof input["HubContentVersion"] === "string"
+      ? (input["HubContentVersion"] as string)
+      : "1.0.0";
+  const url = `https://s3.${ctx.region}.amazonaws.com/sagemaker-hub-${ctx.account}/${hubName}/${contentType}/${contentName}/${version}?presigned=bunsai-token`;
+  return { AuthorizedUrlConfigs: [{ Url: url }] };
+};
+
+const CreateHubContentReference: OperationHandler = (input, ctx) => {
+  const hubName = requireString(input, "HubName");
+  const publicArn = requireString(input, "SageMakerPublicHubContentArn");
+  const hub = requireHub(ctx, hubName);
+  const contentName =
+    typeof input["HubContentName"] === "string"
+      ? (input["HubContentName"] as string)
+      : (publicArn.split("/").pop() ?? "content");
+  const contentVersion =
+    typeof input["MinVersion"] === "string"
+      ? (input["MinVersion"] as string)
+      : "1.0.0";
+  const hubContentArn = hubContentArnOf(
+    ctx.region,
+    ctx.account,
+    hubName,
+    "Model",
+    contentName,
+    contentVersion,
+  );
+  return { HubArn: hub.HubArn, HubContentArn: hubContentArn };
+};
+
+const CreateImage: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ImageName");
+  const existing = ctx.store.get<StoredImage>(imageKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create Image ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = imageArnOf(ctx.region, ctx.account, name);
+  const stored: StoredImage = {
+    ImageName: name,
+    ImageArn: arn,
+    RoleArn: requireString(input, "RoleArn"),
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : undefined,
+    DisplayName:
+      typeof input["DisplayName"] === "string"
+        ? (input["DisplayName"] as string)
+        : undefined,
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(imageKey(name), stored);
+  return { ImageArn: arn };
+};
+
+const requireImage = (ctx: ServiceContext, name: string): StoredImage => {
+  const stored = ctx.store.get<StoredImage>(imageKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Image ${name} does not exist.`, 400);
+  }
+  return stored;
+};
+
+const CreateImageVersion: OperationHandler = (input, ctx) => {
+  const imageName = requireString(input, "ImageName");
+  requireImage(ctx, imageName);
+  const versions = ctx.store
+    .list<StoredImageVersion>()
+    .filter((e) => e.key.startsWith(`image-version/${imageName}/`))
+    .map((e) => e.value);
+  const version = versions.length + 1;
+  const arn = imageVersionArnOf(ctx.region, ctx.account, imageName, version);
+  const stored: StoredImageVersion = {
+    ImageName: imageName,
+    ImageVersionArn: arn,
+    Version: version,
+    BaseImage: requireString(input, "BaseImage"),
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(imageVersionKey(imageName, version), stored);
+  return { ImageVersionArn: arn };
+};
+
+const CreateInferenceComponent: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InferenceComponentName");
+  const existing = ctx.store.get<StoredInferenceComponent>(
+    inferenceComponentKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create InferenceComponent ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = inferenceComponentArnOf(ctx.region, ctx.account, name);
+  const stored: StoredInferenceComponent = {
+    InferenceComponentName: name,
+    InferenceComponentArn: arn,
+    EndpointName: requireString(input, "EndpointName"),
+    VariantName:
+      typeof input["VariantName"] === "string"
+        ? (input["VariantName"] as string)
+        : undefined,
+    Specification: input["Specification"],
+    Specifications: input["Specifications"],
+    RuntimeConfig: input["RuntimeConfig"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(inferenceComponentKey(name), stored);
+  return { InferenceComponentArn: arn };
+};
+
+const CreateInferenceExperiment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const existing = ctx.store.get<StoredInferenceExperiment>(
+    inferenceExperimentKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create InferenceExperiment ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = inferenceExperimentArnOf(ctx.region, ctx.account, name);
+  const stored: StoredInferenceExperiment = {
+    Name: name,
+    InferenceExperimentArn: arn,
+    Type: requireString(input, "Type"),
+    RoleArn: requireString(input, "RoleArn"),
+    EndpointName: requireString(input, "EndpointName"),
+    ModelVariants: input["ModelVariants"],
+    ShadowModeConfig: input["ShadowModeConfig"],
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : undefined,
+    Schedule: input["Schedule"],
+    DataStorageConfig: input["DataStorageConfig"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(inferenceExperimentKey(name), stored);
+  return { InferenceExperimentArn: arn };
+};
+
+const CreateInferenceRecommendationsJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "JobName");
+  const existing = ctx.store.get<StoredInferenceRecommendationsJob>(
+    inferenceRecommendationsJobKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create InferenceRecommendationsJob ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = inferenceRecommendationsJobArnOf(ctx.region, ctx.account, name);
+  const stored: StoredInferenceRecommendationsJob = {
+    JobName: name,
+    JobArn: arn,
+    JobType: requireString(input, "JobType"),
+    RoleArn: requireString(input, "RoleArn"),
+    InputConfig: input["InputConfig"],
+    JobDescription:
+      typeof input["JobDescription"] === "string"
+        ? (input["JobDescription"] as string)
+        : undefined,
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(inferenceRecommendationsJobKey(name), stored);
+  return { JobArn: arn };
+};
+
+const CreateMonitoringSchedule: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "MonitoringScheduleName");
+  const existing = ctx.store.get<StoredMonitoringSchedule>(
+    monitoringScheduleKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Cannot create MonitoringSchedule ${name}. Resource already exists.`,
+      400,
+    );
+  }
+  const arn = monitoringScheduleArnOf(ctx.region, ctx.account, name);
+  const stored: StoredMonitoringSchedule = {
+    MonitoringScheduleName: name,
+    MonitoringScheduleArn: arn,
+    MonitoringScheduleConfig: input["MonitoringScheduleConfig"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(monitoringScheduleKey(name), stored);
+  return { MonitoringScheduleArn: arn };
+};
+
+const requireMonitoringSchedule = (
+  ctx: ServiceContext,
+  name: string,
+): StoredMonitoringSchedule => {
+  const stored = ctx.store.get<StoredMonitoringSchedule>(
+    monitoringScheduleKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `MonitoringSchedule ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteMonitoringSchedule: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "MonitoringScheduleName");
+  requireMonitoringSchedule(ctx, name);
+  ctx.store.delete(monitoringScheduleKey(name));
+  return {};
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -2308,6 +2796,18 @@ const sagemaker = {
     CreatePresignedMlflowAppUrl,
     CreatePartnerApp,
     CreatePartnerAppPresignedUrl,
+    CreateFeatureGroup,
+    DeleteFeatureGroup,
+    CreateHub,
+    CreateHubContentPresignedUrls,
+    CreateHubContentReference,
+    CreateImage,
+    CreateImageVersion,
+    CreateInferenceComponent,
+    CreateInferenceExperiment,
+    CreateInferenceRecommendationsJob,
+    CreateMonitoringSchedule,
+    DeleteMonitoringSchedule,
   },
   model,
 } as const satisfies ServiceDefinition;

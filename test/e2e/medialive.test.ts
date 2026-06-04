@@ -2,32 +2,64 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn } from "bun";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import {
+  CloudWatchAlarmTemplateComparisonOperator,
+  CloudWatchAlarmTemplateStatistic,
+  CloudWatchAlarmTemplateTargetResourceType,
   CreateChannelCommand,
+  CreateCloudWatchAlarmTemplateCommand,
+  CreateCloudWatchAlarmTemplateGroupCommand,
+  CreateEventBridgeRuleTemplateCommand,
+  CreateEventBridgeRuleTemplateGroupCommand,
   CreateInputCommand,
   CreateInputSecurityGroupCommand,
   CreateMultiplexCommand,
   CreateMultiplexProgramCommand,
+  CreateSignalMapCommand,
   DeleteChannelCommand,
+  DeleteCloudWatchAlarmTemplateCommand,
+  DeleteCloudWatchAlarmTemplateGroupCommand,
+  DeleteEventBridgeRuleTemplateCommand,
+  DeleteEventBridgeRuleTemplateGroupCommand,
   DeleteInputCommand,
   DeleteInputSecurityGroupCommand,
   DeleteMultiplexCommand,
   DeleteMultiplexProgramCommand,
   DeleteReservationCommand,
+  DeleteSignalMapCommand,
   DescribeChannelCommand,
   DescribeInputCommand,
   DescribeInputSecurityGroupCommand,
   DescribeMultiplexCommand,
   DescribeMultiplexProgramCommand,
   DescribeReservationCommand,
+  EventBridgeRuleTemplateEventType,
+  GetCloudWatchAlarmTemplateCommand,
+  GetCloudWatchAlarmTemplateGroupCommand,
+  GetEventBridgeRuleTemplateCommand,
+  GetEventBridgeRuleTemplateGroupCommand,
+  GetSignalMapCommand,
   ListChannelsCommand,
+  ListCloudWatchAlarmTemplateGroupsCommand,
+  ListCloudWatchAlarmTemplatesCommand,
+  ListEventBridgeRuleTemplateGroupsCommand,
+  ListEventBridgeRuleTemplatesCommand,
   ListInputSecurityGroupsCommand,
   ListInputsCommand,
   ListMultiplexProgramsCommand,
   ListMultiplexesCommand,
   ListOfferingsCommand,
   ListReservationsCommand,
+  ListSignalMapsCommand,
+  ListVersionsCommand,
   MediaLiveClient,
   PurchaseOfferingCommand,
+  StartDeleteMonitorDeploymentCommand,
+  StartMonitorDeploymentCommand,
+  StartUpdateSignalMapCommand,
+  UpdateCloudWatchAlarmTemplateCommand,
+  UpdateCloudWatchAlarmTemplateGroupCommand,
+  UpdateEventBridgeRuleTemplateCommand,
+  UpdateEventBridgeRuleTemplateGroupCommand,
 } from "@aws-sdk/client-medialive";
 
 const awsPort = 4566;
@@ -288,4 +320,232 @@ test("MediaLive reservation and offering lifecycle", async () => {
       new DescribeReservationCommand({ ReservationId: reservationId }),
     ),
   ).rejects.toThrow();
+});
+
+test("MediaLive CloudWatch alarm template group and template lifecycle", async () => {
+  const client = medialive();
+
+  const grpCreated = await client.send(
+    new CreateCloudWatchAlarmTemplateGroupCommand({
+      Name: "e2e-cw-group",
+      Description: "e2e test group",
+    }),
+  );
+  const grpId = grpCreated.Id;
+  expect(grpId).toBeDefined();
+  expect(grpCreated.Arn).toBeDefined();
+  expect(grpCreated.Name).toBe("e2e-cw-group");
+
+  const grpGot = await client.send(
+    new GetCloudWatchAlarmTemplateGroupCommand({ Identifier: grpId! }),
+  );
+  expect(grpGot.Id).toBe(grpId);
+
+  const grpListed = await client.send(
+    new ListCloudWatchAlarmTemplateGroupsCommand({}),
+  );
+  expect(
+    (grpListed.CloudWatchAlarmTemplateGroups ?? []).map((g) => g.Id),
+  ).toContain(grpId);
+
+  const grpUpdated = await client.send(
+    new UpdateCloudWatchAlarmTemplateGroupCommand({
+      Identifier: grpId!,
+      Description: "updated",
+    }),
+  );
+  expect(grpUpdated.Id).toBe(grpId);
+
+  const tmplCreated = await client.send(
+    new CreateCloudWatchAlarmTemplateCommand({
+      Name: "e2e-cw-template",
+      GroupIdentifier: grpId!,
+      ComparisonOperator:
+        CloudWatchAlarmTemplateComparisonOperator.GreaterThanOrEqualToThreshold,
+      EvaluationPeriods: 2,
+      MetricName: "IngestVideoBitrate",
+      Period: 60,
+      Statistic: CloudWatchAlarmTemplateStatistic.Sum,
+      TargetResourceType:
+        CloudWatchAlarmTemplateTargetResourceType.MEDIALIVE_CHANNEL,
+      Threshold: 1000,
+      TreatMissingData: "breaching",
+    }),
+  );
+  const tmplId = tmplCreated.Id;
+  expect(tmplId).toBeDefined();
+  expect(tmplCreated.Arn).toBeDefined();
+  expect(tmplCreated.GroupId).toBe(grpId);
+
+  const tmplGot = await client.send(
+    new GetCloudWatchAlarmTemplateCommand({ Identifier: tmplId! }),
+  );
+  expect(tmplGot.Id).toBe(tmplId);
+
+  const tmplListed = await client.send(
+    new ListCloudWatchAlarmTemplatesCommand({}),
+  );
+  expect(
+    (tmplListed.CloudWatchAlarmTemplates ?? []).map((t) => t.Id),
+  ).toContain(tmplId);
+
+  const tmplUpdated = await client.send(
+    new UpdateCloudWatchAlarmTemplateCommand({
+      Identifier: tmplId!,
+      Name: "e2e-cw-template-updated",
+    }),
+  );
+  expect(tmplUpdated.Name).toBe("e2e-cw-template-updated");
+
+  await client.send(
+    new DeleteCloudWatchAlarmTemplateCommand({ Identifier: tmplId! }),
+  );
+
+  await client.send(
+    new DeleteCloudWatchAlarmTemplateGroupCommand({ Identifier: grpId! }),
+  );
+
+  await expect(
+    client.send(
+      new GetCloudWatchAlarmTemplateGroupCommand({ Identifier: grpId! }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("MediaLive EventBridge rule template group and template lifecycle", async () => {
+  const client = medialive();
+
+  const grpCreated = await client.send(
+    new CreateEventBridgeRuleTemplateGroupCommand({
+      Name: "e2e-eb-group",
+      Description: "e2e test eb group",
+    }),
+  );
+  const grpId = grpCreated.Id;
+  expect(grpId).toBeDefined();
+  expect(grpCreated.Arn).toBeDefined();
+  expect(grpCreated.Name).toBe("e2e-eb-group");
+
+  const grpGot = await client.send(
+    new GetEventBridgeRuleTemplateGroupCommand({ Identifier: grpId! }),
+  );
+  expect(grpGot.Id).toBe(grpId);
+
+  const grpListed = await client.send(
+    new ListEventBridgeRuleTemplateGroupsCommand({}),
+  );
+  expect(
+    (grpListed.EventBridgeRuleTemplateGroups ?? []).map((g) => g.Id),
+  ).toContain(grpId);
+
+  const grpUpdated = await client.send(
+    new UpdateEventBridgeRuleTemplateGroupCommand({
+      Identifier: grpId!,
+      Description: "updated eb group",
+    }),
+  );
+  expect(grpUpdated.Id).toBe(grpId);
+
+  const tmplCreated = await client.send(
+    new CreateEventBridgeRuleTemplateCommand({
+      Name: "e2e-eb-template",
+      GroupIdentifier: grpId!,
+      EventType:
+        EventBridgeRuleTemplateEventType.MEDIALIVE_CHANNEL_STATE_CHANGE,
+    }),
+  );
+  const tmplId = tmplCreated.Id;
+  expect(tmplId).toBeDefined();
+  expect(tmplCreated.Arn).toBeDefined();
+  expect(tmplCreated.GroupId).toBe(grpId);
+  expect(tmplCreated.EventType).toBe(
+    EventBridgeRuleTemplateEventType.MEDIALIVE_CHANNEL_STATE_CHANGE,
+  );
+
+  const tmplGot = await client.send(
+    new GetEventBridgeRuleTemplateCommand({ Identifier: tmplId! }),
+  );
+  expect(tmplGot.Id).toBe(tmplId);
+
+  const tmplListed = await client.send(
+    new ListEventBridgeRuleTemplatesCommand({}),
+  );
+  expect(
+    (tmplListed.EventBridgeRuleTemplates ?? []).map((t) => t.Id),
+  ).toContain(tmplId);
+
+  const tmplUpdated = await client.send(
+    new UpdateEventBridgeRuleTemplateCommand({
+      Identifier: tmplId!,
+      Name: "e2e-eb-template-updated",
+    }),
+  );
+  expect(tmplUpdated.Name).toBe("e2e-eb-template-updated");
+
+  await client.send(
+    new DeleteEventBridgeRuleTemplateCommand({ Identifier: tmplId! }),
+  );
+
+  await client.send(
+    new DeleteEventBridgeRuleTemplateGroupCommand({ Identifier: grpId! }),
+  );
+
+  await expect(
+    client.send(
+      new GetEventBridgeRuleTemplateGroupCommand({ Identifier: grpId! }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("MediaLive signal map lifecycle", async () => {
+  const client = medialive();
+
+  const created = await client.send(
+    new CreateSignalMapCommand({
+      Name: "e2e-signal-map",
+      DiscoveryEntryPointArn:
+        "arn:aws:medialive:us-east-1:123456789012:channel:test-entry",
+    }),
+  );
+  const id = created.Id;
+  expect(id).toBeDefined();
+  expect(created.Arn).toBeDefined();
+  expect(created.Name).toBe("e2e-signal-map");
+  expect(created.Status).toBeDefined();
+
+  const got = await client.send(new GetSignalMapCommand({ Identifier: id! }));
+  expect(got.Id).toBe(id);
+
+  const listed = await client.send(new ListSignalMapsCommand({}));
+  expect((listed.SignalMaps ?? []).map((s) => s.Id)).toContain(id);
+
+  const updated = await client.send(
+    new StartUpdateSignalMapCommand({
+      Identifier: id!,
+      Name: "e2e-signal-map-updated",
+    }),
+  );
+  expect(updated.Name).toBe("e2e-signal-map-updated");
+
+  const deployed = await client.send(
+    new StartMonitorDeploymentCommand({ Identifier: id! }),
+  );
+  expect(deployed.Id).toBe(id);
+
+  const undeployed = await client.send(
+    new StartDeleteMonitorDeploymentCommand({ Identifier: id! }),
+  );
+  expect(undeployed.Id).toBe(id);
+
+  await client.send(new DeleteSignalMapCommand({ Identifier: id! }));
+
+  await expect(
+    client.send(new GetSignalMapCommand({ Identifier: id! })),
+  ).rejects.toThrow();
+});
+
+test("MediaLive list versions", async () => {
+  const client = medialive();
+  const result = await client.send(new ListVersionsCommand({}));
+  expect(result.Versions).toBeDefined();
 });

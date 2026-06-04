@@ -343,6 +343,28 @@ type StoredRedshiftIdcApplication = {
   SsoTagKeys: string[];
 };
 
+type StoredPartner = {
+  ClusterIdentifier: string;
+  DatabaseName: string;
+  PartnerName: string;
+  Status: string;
+  StatusMessage: string | undefined;
+  CreatedAt: string;
+  UpdatedAt: string;
+};
+
+type StoredResourcePolicy = {
+  ResourceArn: string;
+  Policy: string;
+};
+
+type StoredLakehouseConfig = {
+  ClusterIdentifier: string;
+  LakehouseIdcApplicationArn: string | undefined;
+  LakehouseRegistrationStatus: string;
+  CatalogArn: string | undefined;
+};
+
 const clusterKey = (id: string): string => `cluster/${id}`;
 const subnetGroupKey = (name: string): string => `subnetgroup/${name}`;
 const snapshotKey = (id: string): string => `snapshot/${id}`;
@@ -377,6 +399,14 @@ const integrationKey = (arn: string): string => `integration/${arn}`;
 const inboundIntegrationKey = (arn: string): string =>
   `inboundintegration/${arn}`;
 const idcApplicationKey = (arn: string): string => `idcapplication/${arn}`;
+const partnerKey = (
+  clusterId: string,
+  dbName: string,
+  partnerName: string,
+): string => `partner/${clusterId}/${dbName}/${partnerName}`;
+const resourcePolicyKey = (arn: string): string => `resourcepolicy/${arn}`;
+const lakehouseConfigKey = (clusterId: string): string =>
+  `lakehouse/${clusterId}`;
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -714,6 +744,40 @@ const requireIdcApplication = (
     );
   }
   return app;
+};
+
+const requirePartner = (
+  ctx: ServiceContext,
+  clusterId: string,
+  dbName: string,
+  partnerName: string,
+): StoredPartner => {
+  const partner = ctx.store.get<StoredPartner>(
+    partnerKey(clusterId, dbName, partnerName),
+  );
+  if (partner === undefined) {
+    throw awsError(
+      "PartnerNotFoundFault",
+      `Partner ${partnerName} not found.`,
+      404,
+    );
+  }
+  return partner;
+};
+
+const requireResourcePolicy = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredResourcePolicy => {
+  const policy = ctx.store.get<StoredResourcePolicy>(resourcePolicyKey(arn));
+  if (policy === undefined) {
+    throw awsError(
+      "ResourceNotFoundFault",
+      `Resource policy for ${arn} not found.`,
+      404,
+    );
+  }
+  return policy;
 };
 
 const presentIntegration = (i: StoredIntegration) => ({
@@ -3600,6 +3664,145 @@ const GetIdentityCenterAuthToken: OperationHandler = (input, _ctx) => {
   };
 };
 
+const AddPartner: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterIdentifier");
+  requireCluster(ctx, clusterId);
+  const dbName = requireString(input, "DatabaseName");
+  const partnerName = requireString(input, "PartnerName");
+  const now = new Date().toISOString();
+  const partner: StoredPartner = {
+    ClusterIdentifier: clusterId,
+    DatabaseName: dbName,
+    PartnerName: partnerName,
+    Status: "Active",
+    StatusMessage: undefined,
+    CreatedAt: now,
+    UpdatedAt: now,
+  };
+  ctx.store.set(partnerKey(clusterId, dbName, partnerName), partner);
+  return { DatabaseName: dbName, PartnerName: partnerName };
+};
+
+const DeletePartner: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterIdentifier");
+  requireCluster(ctx, clusterId);
+  const dbName = requireString(input, "DatabaseName");
+  const partnerName = requireString(input, "PartnerName");
+  requirePartner(ctx, clusterId, dbName, partnerName);
+  ctx.store.delete(partnerKey(clusterId, dbName, partnerName));
+  return { DatabaseName: dbName, PartnerName: partnerName };
+};
+
+const DescribePartners: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterIdentifier");
+  requireCluster(ctx, clusterId);
+  const dbName = optionalString(input, "DatabaseName");
+  const partnerName = optionalString(input, "PartnerName");
+  let partners = ctx.store
+    .list<StoredPartner>()
+    .filter((e) => e.key.startsWith(`partner/${clusterId}/`))
+    .map((e) => e.value);
+  if (dbName !== undefined) {
+    partners = partners.filter((p) => p.DatabaseName === dbName);
+  }
+  if (partnerName !== undefined) {
+    partners = partners.filter((p) => p.PartnerName === partnerName);
+  }
+  return {
+    PartnerIntegrationInfoList: partners.map((p) => ({
+      DatabaseName: p.DatabaseName,
+      PartnerName: p.PartnerName,
+      Status: p.Status,
+      StatusMessage: p.StatusMessage,
+      CreatedAt: p.CreatedAt,
+      UpdatedAt: p.UpdatedAt,
+    })),
+  };
+};
+
+const UpdatePartnerStatus: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterIdentifier");
+  requireCluster(ctx, clusterId);
+  const dbName = requireString(input, "DatabaseName");
+  const partnerName = requireString(input, "PartnerName");
+  const partner = requirePartner(ctx, clusterId, dbName, partnerName);
+  partner.Status = requireString(input, "Status");
+  partner.StatusMessage =
+    optionalString(input, "StatusMessage") ?? partner.StatusMessage;
+  partner.UpdatedAt = new Date().toISOString();
+  ctx.store.set(partnerKey(clusterId, dbName, partnerName), partner);
+  return { DatabaseName: dbName, PartnerName: partnerName };
+};
+
+const PutResourcePolicy: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const policy = requireString(input, "Policy");
+  const stored: StoredResourcePolicy = { ResourceArn: arn, Policy: policy };
+  ctx.store.set(resourcePolicyKey(arn), stored);
+  return { ResourcePolicy: { ResourceArn: arn, Policy: policy } };
+};
+
+const GetResourcePolicy: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  const stored = requireResourcePolicy(ctx, arn);
+  return {
+    ResourcePolicy: { ResourceArn: stored.ResourceArn, Policy: stored.Policy },
+  };
+};
+
+const DeleteResourcePolicy: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ResourceArn");
+  requireResourcePolicy(ctx, arn);
+  ctx.store.delete(resourcePolicyKey(arn));
+  return {};
+};
+
+const ListRecommendations: OperationHandler = (_input, _ctx) => {
+  return { Recommendations: [], Marker: undefined };
+};
+
+const FailoverPrimaryCompute: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterIdentifier");
+  const cluster = requireCluster(ctx, clusterId);
+  cluster.ClusterStatus = "available";
+  ctx.store.set(clusterKey(clusterId), cluster);
+  return { Cluster: presentCluster(cluster) };
+};
+
+const ModifyLakehouseConfiguration: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterIdentifier");
+  requireCluster(ctx, clusterId);
+  const existing =
+    ctx.store.get<StoredLakehouseConfig>(lakehouseConfigKey(clusterId)) ??
+    ({
+      ClusterIdentifier: clusterId,
+      LakehouseIdcApplicationArn: undefined,
+      LakehouseRegistrationStatus: "Deregistered",
+      CatalogArn: undefined,
+    } as StoredLakehouseConfig);
+  const registration = optionalString(input, "LakehouseRegistration");
+  if (registration === "Register") {
+    existing.LakehouseRegistrationStatus = "Registered";
+  } else if (registration === "Deregister") {
+    existing.LakehouseRegistrationStatus = "Deregistered";
+  }
+  const idcArn = optionalString(input, "LakehouseIdcApplicationArn");
+  if (idcArn !== undefined) {
+    existing.LakehouseIdcApplicationArn = idcArn;
+  }
+  const catalogName = optionalString(input, "CatalogName");
+  if (catalogName !== undefined) {
+    existing.CatalogArn = `arn:aws:glue:${ctx.region}:${ctx.account}:catalog/${catalogName}`;
+  }
+  ctx.store.set(lakehouseConfigKey(clusterId), existing);
+  return {
+    ClusterIdentifier: existing.ClusterIdentifier,
+    LakehouseIdcApplicationArn: existing.LakehouseIdcApplicationArn,
+    LakehouseRegistrationStatus: existing.LakehouseRegistrationStatus,
+    CatalogArn: existing.CatalogArn,
+  };
+};
+
 const redshift: ServiceDefinition = {
   name: "redshift",
   protocol: "query",
@@ -3728,6 +3931,16 @@ const redshift: ServiceDefinition = {
     DescribeRedshiftIdcApplications,
     ModifyRedshiftIdcApplication,
     GetIdentityCenterAuthToken,
+    AddPartner,
+    DeletePartner,
+    DescribePartners,
+    UpdatePartnerStatus,
+    DeleteResourcePolicy,
+    GetResourcePolicy,
+    PutResourcePolicy,
+    ListRecommendations,
+    FailoverPrimaryCompute,
+    ModifyLakehouseConfiguration,
     AcceptReservedNodeExchange,
     DescribeReservedNodeExchangeStatus,
     DescribeReservedNodeOfferings,

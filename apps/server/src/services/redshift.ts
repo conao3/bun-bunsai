@@ -193,6 +193,52 @@ type StoredSnapshotCopySettings = {
   SnapshotCopyGrantName: string | undefined;
 };
 
+type StoredDataShare = {
+  DataShareArn: string;
+  ProducerArn: string;
+  AllowPubliclyAccessibleConsumers: boolean;
+  DataShareAssociations: {
+    ConsumerIdentifier: string | undefined;
+    Status: string;
+    ConsumerRegion: string | undefined;
+    CreatedDate: string;
+    StatusChangeDate: string;
+    ProducerAllowedWrites: boolean | undefined;
+    ConsumerAcceptedWrites: boolean | undefined;
+  }[];
+  ManagedBy: string | undefined;
+  DataShareType: string | undefined;
+};
+
+type StoredEndpointAccess = {
+  ClusterIdentifier: string;
+  ResourceOwner: string;
+  SubnetGroupName: string;
+  EndpointStatus: string;
+  EndpointName: string;
+  EndpointCreateTime: string;
+  Port: number;
+  Address: string;
+  VpcSecurityGroups: { VpcSecurityGroupId: string; Status: string }[];
+  VpcEndpoint: {
+    VpcEndpointId: string;
+    VpcId: string;
+    NetworkInterfaces: unknown[];
+  };
+};
+
+type StoredEndpointAuthorization = {
+  Grantor: string;
+  Grantee: string;
+  ClusterIdentifier: string;
+  AuthorizeTime: string;
+  ClusterStatus: string;
+  Status: string;
+  AllowedAllVPCs: boolean;
+  AllowedVPCs: string[];
+  EndpointCount: number;
+};
+
 const clusterKey = (id: string): string => `cluster/${id}`;
 const subnetGroupKey = (name: string): string => `subnetgroup/${name}`;
 const snapshotKey = (id: string): string => `snapshot/${id}`;
@@ -212,6 +258,10 @@ const customDomainKey = (clusterId: string, domainName: string): string =>
 const scheduledActionKey = (name: string): string => `scheduledaction/${name}`;
 const snapshotCopyKey = (clusterId: string): string =>
   `snapshotcopy/${clusterId}`;
+const datashareKey = (arn: string): string => `datashare/${arn}`;
+const endpointKey = (name: string): string => `endpoint/${name}`;
+const endpointAuthKey = (clusterId: string, account: string): string =>
+  `endpointauth/${clusterId}/${account}`;
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -1875,13 +1925,11 @@ const DescribeCustomDomainAssociations: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith("customdomain/"))
     .filter(
       (entry) =>
-        clusterId === undefined ||
-        entry.value.ClusterIdentifier === clusterId,
+        clusterId === undefined || entry.value.ClusterIdentifier === clusterId,
     )
     .filter(
       (entry) =>
-        domainName === undefined ||
-        entry.value.CustomDomainName === domainName,
+        domainName === undefined || entry.value.CustomDomainName === domainName,
     );
   const associations = entries.map((entry) => ({
     CustomDomainCertificateArn: entry.value.CustomDomainCertificateArn,
@@ -1968,10 +2016,8 @@ const DescribeEventSubscriptions: OperationHandler = (input, ctx) => {
 const ModifyEventSubscription: OperationHandler = (input, ctx) => {
   const name = requireString(input, "SubscriptionName");
   const sub = requireEventSub(ctx, name);
-  sub.SnsTopicArn =
-    optionalString(input, "SnsTopicArn") ?? sub.SnsTopicArn;
-  sub.SourceType =
-    optionalString(input, "SourceType") ?? sub.SourceType;
+  sub.SnsTopicArn = optionalString(input, "SnsTopicArn") ?? sub.SnsTopicArn;
+  sub.SourceType = optionalString(input, "SourceType") ?? sub.SourceType;
   const sourceIds = stringList(input, "SourceIds");
   if (sourceIds.length > 0) {
     sub.SourceIdsList = sourceIds;
@@ -2000,8 +2046,7 @@ const CreateScheduledAction: OperationHandler = (input, ctx) => {
       400,
     );
   }
-  const targetAction =
-    (input["TargetAction"] as Record<string, unknown>) ?? {};
+  const targetAction = (input["TargetAction"] as Record<string, unknown>) ?? {};
   const schedule = requireString(input, "Schedule");
   const iamRole = requireString(input, "IamRole");
   const action: StoredScheduledAction = {
@@ -2298,6 +2343,386 @@ const ModifySnapshotCopyRetentionPeriod: OperationHandler = (input, ctx) => {
   return { Cluster: presentCluster(cluster) };
 };
 
+const requireDataShare = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredDataShare => {
+  const ds = ctx.store.get<StoredDataShare>(datashareKey(arn));
+  if (ds === undefined) {
+    throw awsError("InvalidDataShareFault", `DataShare ${arn} not found.`, 404);
+  }
+  return ds;
+};
+
+const requireEndpointAccess = (
+  ctx: ServiceContext,
+  name: string,
+): StoredEndpointAccess => {
+  const ep = ctx.store.get<StoredEndpointAccess>(endpointKey(name));
+  if (ep === undefined) {
+    throw awsError("EndpointNotFound", `Endpoint ${name} not found.`, 404);
+  }
+  return ep;
+};
+
+const requireEndpointAuthorization = (
+  ctx: ServiceContext,
+  clusterId: string,
+  account: string,
+): StoredEndpointAuthorization => {
+  const auth = ctx.store.get<StoredEndpointAuthorization>(
+    endpointAuthKey(clusterId, account),
+  );
+  if (auth === undefined) {
+    throw awsError(
+      "EndpointAuthorizationNotFound",
+      `Endpoint authorization for cluster ${clusterId} account ${account} not found.`,
+      404,
+    );
+  }
+  return auth;
+};
+
+const presentDataShare = (ds: StoredDataShare) => ({
+  DataShareArn: ds.DataShareArn,
+  ProducerArn: ds.ProducerArn,
+  AllowPubliclyAccessibleConsumers: ds.AllowPubliclyAccessibleConsumers,
+  DataShareAssociations: ds.DataShareAssociations.map((a) => ({
+    ConsumerIdentifier: a.ConsumerIdentifier,
+    Status: a.Status,
+    ConsumerRegion: a.ConsumerRegion,
+    CreatedDate: a.CreatedDate,
+    StatusChangeDate: a.StatusChangeDate,
+    ProducerAllowedWrites: a.ProducerAllowedWrites,
+    ConsumerAcceptedWrites: a.ConsumerAcceptedWrites,
+  })),
+  ManagedBy: ds.ManagedBy,
+  DataShareType: ds.DataShareType,
+});
+
+const presentEndpointAccess = (ep: StoredEndpointAccess) => ({
+  ClusterIdentifier: ep.ClusterIdentifier,
+  ResourceOwner: ep.ResourceOwner,
+  SubnetGroupName: ep.SubnetGroupName,
+  EndpointStatus: ep.EndpointStatus,
+  EndpointName: ep.EndpointName,
+  EndpointCreateTime: ep.EndpointCreateTime,
+  Port: ep.Port,
+  Address: ep.Address,
+  VpcSecurityGroups: ep.VpcSecurityGroups,
+  VpcEndpoint: ep.VpcEndpoint,
+});
+
+const presentEndpointAuthorization = (auth: StoredEndpointAuthorization) => ({
+  Grantor: auth.Grantor,
+  Grantee: auth.Grantee,
+  ClusterIdentifier: auth.ClusterIdentifier,
+  AuthorizeTime: auth.AuthorizeTime,
+  ClusterStatus: auth.ClusterStatus,
+  Status: auth.Status,
+  AllowedAllVPCs: auth.AllowedAllVPCs,
+  AllowedVPCs: auth.AllowedVPCs,
+  EndpointCount: auth.EndpointCount,
+});
+
+const AuthorizeDataShare: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "DataShareArn");
+  const consumerIdentifier = requireString(input, "ConsumerIdentifier");
+  const allowWrites = booleanOr(input, "AllowWrites", false);
+  const now = new Date().toISOString();
+  let ds = ctx.store.get<StoredDataShare>(datashareKey(arn));
+  if (ds === undefined) {
+    ds = {
+      DataShareArn: arn,
+      ProducerArn: arn,
+      AllowPubliclyAccessibleConsumers: false,
+      DataShareAssociations: [],
+      ManagedBy: undefined,
+      DataShareType: undefined,
+    };
+  }
+  const existing = ds.DataShareAssociations.find(
+    (a) => a.ConsumerIdentifier === consumerIdentifier,
+  );
+  if (existing !== undefined) {
+    existing.Status = "AUTHORIZED";
+    existing.StatusChangeDate = now;
+    existing.ProducerAllowedWrites = allowWrites;
+  } else {
+    ds.DataShareAssociations.push({
+      ConsumerIdentifier: consumerIdentifier,
+      Status: "AUTHORIZED",
+      ConsumerRegion: undefined,
+      CreatedDate: now,
+      StatusChangeDate: now,
+      ProducerAllowedWrites: allowWrites,
+      ConsumerAcceptedWrites: undefined,
+    });
+  }
+  ctx.store.set(datashareKey(arn), ds);
+  return presentDataShare(ds);
+};
+
+const DeauthorizeDataShare: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "DataShareArn");
+  const consumerIdentifier = requireString(input, "ConsumerIdentifier");
+  const ds = requireDataShare(ctx, arn);
+  const now = new Date().toISOString();
+  const assoc = ds.DataShareAssociations.find(
+    (a) => a.ConsumerIdentifier === consumerIdentifier,
+  );
+  if (assoc !== undefined) {
+    assoc.Status = "DEAUTHORIZED";
+    assoc.StatusChangeDate = now;
+  }
+  ctx.store.set(datashareKey(arn), ds);
+  return presentDataShare(ds);
+};
+
+const AssociateDataShareConsumer: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "DataShareArn");
+  const ds = requireDataShare(ctx, arn);
+  const now = new Date().toISOString();
+  const consumerArn = optionalString(input, "ConsumerArn");
+  const consumerRegion = optionalString(input, "ConsumerRegion");
+  const allowWrites = booleanOr(input, "AllowWrites", false);
+  const identifier = consumerArn ?? consumerRegion;
+  const existing = ds.DataShareAssociations.find(
+    (a) => a.ConsumerIdentifier === identifier,
+  );
+  if (existing !== undefined) {
+    existing.Status = "ACTIVE";
+    existing.StatusChangeDate = now;
+    existing.ConsumerAcceptedWrites = allowWrites;
+  } else {
+    ds.DataShareAssociations.push({
+      ConsumerIdentifier: identifier,
+      Status: "ACTIVE",
+      ConsumerRegion: consumerRegion,
+      CreatedDate: now,
+      StatusChangeDate: now,
+      ProducerAllowedWrites: undefined,
+      ConsumerAcceptedWrites: allowWrites,
+    });
+  }
+  ctx.store.set(datashareKey(arn), ds);
+  return presentDataShare(ds);
+};
+
+const DisassociateDataShareConsumer: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "DataShareArn");
+  const ds = requireDataShare(ctx, arn);
+  const now = new Date().toISOString();
+  const consumerArn = optionalString(input, "ConsumerArn");
+  const consumerRegion = optionalString(input, "ConsumerRegion");
+  const identifier = consumerArn ?? consumerRegion;
+  const assoc = ds.DataShareAssociations.find(
+    (a) => a.ConsumerIdentifier === identifier,
+  );
+  if (assoc !== undefined) {
+    assoc.Status = "DEAUTHORIZED";
+    assoc.StatusChangeDate = now;
+  }
+  ctx.store.set(datashareKey(arn), ds);
+  return presentDataShare(ds);
+};
+
+const RejectDataShare: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "DataShareArn");
+  const ds = requireDataShare(ctx, arn);
+  const now = new Date().toISOString();
+  for (const assoc of ds.DataShareAssociations) {
+    assoc.Status = "REJECTED";
+    assoc.StatusChangeDate = now;
+  }
+  ctx.store.set(datashareKey(arn), ds);
+  return presentDataShare(ds);
+};
+
+const DescribeDataShares: OperationHandler = (input, ctx) => {
+  const arn = optionalString(input, "DataShareArn");
+  if (arn !== undefined) {
+    const ds = requireDataShare(ctx, arn);
+    return { DataShares: [presentDataShare(ds)] };
+  }
+  const all = ctx.store
+    .list<StoredDataShare>()
+    .filter((e) => e.key.startsWith("datashare/"))
+    .map((e) => presentDataShare(e.value));
+  return { DataShares: all };
+};
+
+const DescribeDataSharesForConsumer: OperationHandler = (input, ctx) => {
+  const consumerArn = optionalString(input, "ConsumerArn");
+  const statusFilter = optionalString(input, "Status");
+  let all = ctx.store
+    .list<StoredDataShare>()
+    .filter((e) => e.key.startsWith("datashare/"))
+    .map((e) => e.value);
+  if (consumerArn !== undefined) {
+    all = all.filter((ds) =>
+      ds.DataShareAssociations.some(
+        (a) => a.ConsumerIdentifier === consumerArn,
+      ),
+    );
+  }
+  if (statusFilter !== undefined) {
+    all = all.filter((ds) =>
+      ds.DataShareAssociations.some((a) => a.Status === statusFilter),
+    );
+  }
+  return { DataShares: all.map(presentDataShare) };
+};
+
+const DescribeDataSharesForProducer: OperationHandler = (input, ctx) => {
+  const producerArn = optionalString(input, "ProducerArn");
+  const statusFilter = optionalString(input, "Status");
+  let all = ctx.store
+    .list<StoredDataShare>()
+    .filter((e) => e.key.startsWith("datashare/"))
+    .map((e) => e.value);
+  if (producerArn !== undefined) {
+    all = all.filter((ds) => ds.ProducerArn === producerArn);
+  }
+  if (statusFilter !== undefined) {
+    all = all.filter((ds) =>
+      ds.DataShareAssociations.some((a) => a.Status === statusFilter),
+    );
+  }
+  return { DataShares: all.map(presentDataShare) };
+};
+
+const AuthorizeEndpointAccess: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterIdentifier");
+  const cluster = requireCluster(ctx, clusterId);
+  const account = requireString(input, "Account");
+  const vpcIds = stringList(input, "VpcIds");
+  const now = new Date().toISOString();
+  const auth: StoredEndpointAuthorization = {
+    Grantor: ctx.account,
+    Grantee: account,
+    ClusterIdentifier: clusterId,
+    AuthorizeTime: now,
+    ClusterStatus: cluster.ClusterStatus,
+    Status: "Authorized",
+    AllowedAllVPCs: vpcIds.length === 0,
+    AllowedVPCs: vpcIds,
+    EndpointCount: 0,
+  };
+  ctx.store.set(endpointAuthKey(clusterId, account), auth);
+  return presentEndpointAuthorization(auth);
+};
+
+const RevokeEndpointAccess: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterIdentifier");
+  const account = requireString(input, "Account");
+  const auth = requireEndpointAuthorization(ctx, clusterId, account);
+  ctx.store.delete(endpointAuthKey(clusterId, account));
+  return presentEndpointAuthorization({ ...auth, Status: "Revoking" });
+};
+
+const CreateEndpointAccess: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterIdentifier");
+  requireCluster(ctx, clusterId);
+  const endpointName = requireString(input, "EndpointName");
+  const subnetGroupName = requireString(input, "SubnetGroupName");
+  const resourceOwner = optionalString(input, "ResourceOwner") ?? ctx.account;
+  const vpcSgIds = stringList(input, "VpcSecurityGroupIds");
+  const now = new Date().toISOString();
+  const ep: StoredEndpointAccess = {
+    ClusterIdentifier: clusterId,
+    ResourceOwner: resourceOwner,
+    SubnetGroupName: subnetGroupName,
+    EndpointStatus: "active",
+    EndpointName: endpointName,
+    EndpointCreateTime: now,
+    Port: 5439,
+    Address: `${endpointName}.${ctx.region}.redshift.amazonaws.com`,
+    VpcSecurityGroups: vpcSgIds.map((id) => ({
+      VpcSecurityGroupId: id,
+      Status: "active",
+    })),
+    VpcEndpoint: {
+      VpcEndpointId: crypto.randomUUID(),
+      VpcId: "",
+      NetworkInterfaces: [],
+    },
+  };
+  ctx.store.set(endpointKey(endpointName), ep);
+  return presentEndpointAccess(ep);
+};
+
+const DeleteEndpointAccess: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "EndpointName");
+  const ep = requireEndpointAccess(ctx, name);
+  ctx.store.delete(endpointKey(name));
+  return presentEndpointAccess(ep);
+};
+
+const DescribeEndpointAccess: OperationHandler = (input, ctx) => {
+  const name = optionalString(input, "EndpointName");
+  const clusterId = optionalString(input, "ClusterIdentifier");
+  const resourceOwner = optionalString(input, "ResourceOwner");
+  if (name !== undefined) {
+    const ep = requireEndpointAccess(ctx, name);
+    return { EndpointAccessList: [presentEndpointAccess(ep)] };
+  }
+  let eps = ctx.store
+    .list<StoredEndpointAccess>()
+    .filter((e) => e.key.startsWith("endpoint/"))
+    .map((e) => e.value);
+  if (clusterId !== undefined) {
+    eps = eps.filter((e) => e.ClusterIdentifier === clusterId);
+  }
+  if (resourceOwner !== undefined) {
+    eps = eps.filter((e) => e.ResourceOwner === resourceOwner);
+  }
+  return { EndpointAccessList: eps.map(presentEndpointAccess) };
+};
+
+const ModifyEndpointAccess: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "EndpointName");
+  const ep = requireEndpointAccess(ctx, name);
+  const vpcSgIds = stringList(input, "VpcSecurityGroupIds");
+  if (vpcSgIds.length > 0) {
+    ep.VpcSecurityGroups = vpcSgIds.map((id) => ({
+      VpcSecurityGroupId: id,
+      Status: "active",
+    }));
+  }
+  ctx.store.set(endpointKey(name), ep);
+  return presentEndpointAccess(ep);
+};
+
+const DescribeEndpointAuthorization: OperationHandler = (input, ctx) => {
+  const clusterId = optionalString(input, "ClusterIdentifier");
+  const account = optionalString(input, "Account");
+  let auths = ctx.store
+    .list<StoredEndpointAuthorization>()
+    .filter((e) => e.key.startsWith("endpointauth/"))
+    .map((e) => e.value);
+  if (clusterId !== undefined) {
+    auths = auths.filter((a) => a.ClusterIdentifier === clusterId);
+  }
+  if (account !== undefined) {
+    const grantee = booleanOr(input, "Grantee", false);
+    if (grantee) {
+      auths = auths.filter((a) => a.Grantee === account);
+    } else {
+      auths = auths.filter((a) => a.Grantor === account);
+    }
+  }
+  return { EndpointAuthorizationList: auths.map(presentEndpointAuthorization) };
+};
+
+const RegisterNamespace: OperationHandler = (_input, _ctx) => {
+  return { Status: "Registering" };
+};
+
+const DeregisterNamespace: OperationHandler = (_input, _ctx) => {
+  return { Status: "Deregistering" };
+};
+
 const redshift: ServiceDefinition = {
   name: "redshift",
   protocol: "query",
@@ -2393,6 +2818,23 @@ const redshift: ServiceDefinition = {
     RevokeClusterSecurityGroupIngress,
     RevokeSnapshotAccess,
     RotateEncryptionKey,
+    AssociateDataShareConsumer,
+    AuthorizeDataShare,
+    AuthorizeEndpointAccess,
+    CreateEndpointAccess,
+    DeauthorizeDataShare,
+    DeleteEndpointAccess,
+    DeregisterNamespace,
+    DescribeDataShares,
+    DescribeDataSharesForConsumer,
+    DescribeDataSharesForProducer,
+    DescribeEndpointAccess,
+    DescribeEndpointAuthorization,
+    DisassociateDataShareConsumer,
+    ModifyEndpointAccess,
+    RegisterNamespace,
+    RejectDataShare,
+    RevokeEndpointAccess,
   },
   model,
 } as const;

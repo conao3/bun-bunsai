@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn } from "bun";
 import {
+  AssociateDataShareConsumerCommand,
   AuthorizeClusterSecurityGroupIngressCommand,
+  AuthorizeDataShareCommand,
+  AuthorizeEndpointAccessCommand,
   AuthorizeSnapshotAccessCommand,
   BatchDeleteClusterSnapshotsCommand,
   BatchModifyClusterSnapshotsCommand,
@@ -14,12 +17,14 @@ import {
   CreateClusterSnapshotCommand,
   CreateClusterSubnetGroupCommand,
   CreateCustomDomainAssociationCommand,
+  CreateEndpointAccessCommand,
   CreateEventSubscriptionCommand,
   CreateScheduledActionCommand,
   CreateSnapshotCopyGrantCommand,
   CreateSnapshotScheduleCommand,
   CreateTagsCommand,
   CreateUsageLimitCommand,
+  DeauthorizeDataShareCommand,
   DeleteAuthenticationProfileCommand,
   DeleteClusterCommand,
   DeleteClusterParameterGroupCommand,
@@ -27,12 +32,14 @@ import {
   DeleteClusterSnapshotCommand,
   DeleteClusterSubnetGroupCommand,
   DeleteCustomDomainAssociationCommand,
+  DeleteEndpointAccessCommand,
   DeleteEventSubscriptionCommand,
   DeleteScheduledActionCommand,
   DeleteSnapshotCopyGrantCommand,
   DeleteSnapshotScheduleCommand,
   DeleteTagsCommand,
   DeleteUsageLimitCommand,
+  DeregisterNamespaceCommand,
   DescribeAccountAttributesCommand,
   DescribeAuthenticationProfilesCommand,
   DescribeClusterDbRevisionsCommand,
@@ -45,7 +52,12 @@ import {
   DescribeClusterVersionsCommand,
   DescribeClustersCommand,
   DescribeCustomDomainAssociationsCommand,
+  DescribeDataSharesCommand,
+  DescribeDataSharesForConsumerCommand,
+  DescribeDataSharesForProducerCommand,
   DescribeDefaultClusterParametersCommand,
+  DescribeEndpointAccessCommand,
+  DescribeEndpointAuthorizationCommand,
   DescribeEventCategoriesCommand,
   DescribeEventSubscriptionsCommand,
   DescribeEventsCommand,
@@ -62,6 +74,7 @@ import {
   DescribeUsageLimitsCommand,
   DisableLoggingCommand,
   DisableSnapshotCopyCommand,
+  DisassociateDataShareConsumerCommand,
   EnableLoggingCommand,
   EnableSnapshotCopyCommand,
   GetClusterCredentialsCommand,
@@ -77,6 +90,7 @@ import {
   ModifyClusterSnapshotScheduleCommand,
   ModifyClusterSubnetGroupCommand,
   ModifyCustomDomainAssociationCommand,
+  ModifyEndpointAccessCommand,
   ModifyEventSubscriptionCommand,
   ModifyScheduledActionCommand,
   ModifySnapshotCopyRetentionPeriodCommand,
@@ -85,11 +99,14 @@ import {
   PauseClusterCommand,
   RebootClusterCommand,
   RedshiftClient,
+  RegisterNamespaceCommand,
+  RejectDataShareCommand,
   ResetClusterParameterGroupCommand,
   ResizeClusterCommand,
   RestoreFromClusterSnapshotCommand,
   ResumeClusterCommand,
   RevokeClusterSecurityGroupIngressCommand,
+  RevokeEndpointAccessCommand,
   RevokeSnapshotAccessCommand,
   RotateEncryptionKeyCommand,
 } from "@aws-sdk/client-redshift";
@@ -933,7 +950,10 @@ test("Redshift authentication-profile and snapshot-schedule lifecycle", async ()
   const client = redshift();
 
   const profName = "bunsai-e2e-authprofile";
-  const profContent = JSON.stringify({ type: "saml", idp_url: "https://idp.example.com" });
+  const profContent = JSON.stringify({
+    type: "saml",
+    idp_url: "https://idp.example.com",
+  });
 
   const profCreated = await client.send(
     new CreateAuthenticationProfileCommand({
@@ -950,7 +970,10 @@ test("Redshift authentication-profile and snapshot-schedule lifecycle", async ()
   );
   expect((profListed.AuthenticationProfiles ?? []).length).toBe(1);
 
-  const newContent = JSON.stringify({ type: "saml", idp_url: "https://idp2.example.com" });
+  const newContent = JSON.stringify({
+    type: "saml",
+    idp_url: "https://idp2.example.com",
+  });
   const profModified = await client.send(
     new ModifyAuthenticationProfileCommand({
       AuthenticationProfileName: profName,
@@ -1082,6 +1105,215 @@ test("Redshift custom-domain-association lifecycle", async () => {
       CustomDomainName: domainName,
     }),
   );
+
+  await client.send(
+    new DeleteClusterCommand({
+      ClusterIdentifier: clusterId,
+      SkipFinalClusterSnapshot: true,
+    }),
+  );
+});
+
+test("Redshift datashare lifecycle", async () => {
+  const client = redshift();
+  const clusterId = "bunsai-e2e-ds-cluster";
+  const dataShareArn =
+    "arn:aws:redshift:us-east-1:123456789012:datashare:bunsai-ds/bunsai-share";
+  const consumerAccount = "987654321098";
+
+  await client.send(
+    new CreateClusterCommand({
+      ClusterIdentifier: clusterId,
+      NodeType: "ra3.xlplus",
+      MasterUsername: "admin",
+      MasterUserPassword: "BunsaiTestPw1",
+      ClusterType: "single-node",
+      DBName: "bunsaidb",
+    }),
+  );
+
+  const authorized = await client.send(
+    new AuthorizeDataShareCommand({
+      DataShareArn: dataShareArn,
+      ConsumerIdentifier: consumerAccount,
+      AllowWrites: false,
+    }),
+  );
+  expect(authorized.DataShareArn).toBe(dataShareArn);
+  expect((authorized.DataShareAssociations ?? [])[0]?.Status).toBe(
+    "AUTHORIZED",
+  );
+
+  const described = await client.send(
+    new DescribeDataSharesCommand({ DataShareArn: dataShareArn }),
+  );
+  expect((described.DataShares ?? []).length).toBe(1);
+  expect(described.DataShares?.[0]?.DataShareArn).toBe(dataShareArn);
+
+  const forProducer = await client.send(
+    new DescribeDataSharesForProducerCommand({
+      ProducerArn: dataShareArn,
+    }),
+  );
+  expect((forProducer.DataShares ?? []).length).toBe(1);
+
+  const associated = await client.send(
+    new AssociateDataShareConsumerCommand({
+      DataShareArn: dataShareArn,
+      ConsumerArn: consumerAccount,
+    }),
+  );
+  expect(
+    (associated.DataShareAssociations ?? []).find(
+      (a) => a.ConsumerIdentifier === consumerAccount,
+    )?.Status,
+  ).toBe("ACTIVE");
+
+  const forConsumer = await client.send(
+    new DescribeDataSharesForConsumerCommand({
+      ConsumerArn: consumerAccount,
+    }),
+  );
+  expect((forConsumer.DataShares ?? []).length).toBeGreaterThanOrEqual(1);
+
+  const dissociated = await client.send(
+    new DisassociateDataShareConsumerCommand({
+      DataShareArn: dataShareArn,
+      ConsumerArn: consumerAccount,
+    }),
+  );
+  expect(
+    (dissociated.DataShareAssociations ?? []).find(
+      (a) => a.ConsumerIdentifier === consumerAccount,
+    )?.Status,
+  ).toBe("DEAUTHORIZED");
+
+  const deauthorized = await client.send(
+    new DeauthorizeDataShareCommand({
+      DataShareArn: dataShareArn,
+      ConsumerIdentifier: consumerAccount,
+    }),
+  );
+  expect(
+    (deauthorized.DataShareAssociations ?? []).find(
+      (a) => a.ConsumerIdentifier === consumerAccount,
+    )?.Status,
+  ).toBe("DEAUTHORIZED");
+
+  const rejected = await client.send(
+    new RejectDataShareCommand({ DataShareArn: dataShareArn }),
+  );
+  expect(
+    (rejected.DataShareAssociations ?? []).every(
+      (a) => a.Status === "REJECTED",
+    ),
+  ).toBe(true);
+
+  await client.send(
+    new DeleteClusterCommand({
+      ClusterIdentifier: clusterId,
+      SkipFinalClusterSnapshot: true,
+    }),
+  );
+});
+
+test("Redshift endpoint-access lifecycle", async () => {
+  const client = redshift();
+  const clusterId = "bunsai-e2e-ep-cluster";
+  const granteeAccount = "987654321098";
+  const endpointName = "bunsai-e2e-endpoint";
+
+  await client.send(
+    new CreateClusterCommand({
+      ClusterIdentifier: clusterId,
+      NodeType: "ra3.xlplus",
+      MasterUsername: "admin",
+      MasterUserPassword: "BunsaiTestPw1",
+      ClusterType: "single-node",
+      DBName: "bunsaidb",
+    }),
+  );
+
+  const authResult = await client.send(
+    new AuthorizeEndpointAccessCommand({
+      ClusterIdentifier: clusterId,
+      Account: granteeAccount,
+      VpcIds: ["vpc-11111111"],
+    }),
+  );
+  expect(authResult.ClusterIdentifier).toBe(clusterId);
+  expect(authResult.Grantee).toBe(granteeAccount);
+  expect(authResult.Status).toBe("Authorized");
+  expect(authResult.AllowedAllVPCs).toBe(false);
+  expect((authResult.AllowedVPCs ?? []).length).toBe(1);
+
+  const authList = await client.send(
+    new DescribeEndpointAuthorizationCommand({
+      ClusterIdentifier: clusterId,
+    }),
+  );
+  expect((authList.EndpointAuthorizationList ?? []).length).toBe(1);
+
+  const created = await client.send(
+    new CreateEndpointAccessCommand({
+      ClusterIdentifier: clusterId,
+      EndpointName: endpointName,
+      SubnetGroupName: "default",
+      VpcSecurityGroupIds: ["sg-aabbccdd"],
+    }),
+  );
+  expect(created.EndpointName).toBe(endpointName);
+  expect(created.ClusterIdentifier).toBe(clusterId);
+  expect(created.EndpointStatus).toBe("active");
+  expect(created.Port).toBe(5439);
+
+  const listed = await client.send(
+    new DescribeEndpointAccessCommand({
+      ClusterIdentifier: clusterId,
+    }),
+  );
+  expect((listed.EndpointAccessList ?? []).length).toBe(1);
+
+  const modified = await client.send(
+    new ModifyEndpointAccessCommand({
+      EndpointName: endpointName,
+      VpcSecurityGroupIds: ["sg-11223344", "sg-55667788"],
+    }),
+  );
+  expect((modified.VpcSecurityGroups ?? []).length).toBe(2);
+
+  const deleted = await client.send(
+    new DeleteEndpointAccessCommand({ EndpointName: endpointName }),
+  );
+  expect(deleted.EndpointName).toBe(endpointName);
+
+  const revoked = await client.send(
+    new RevokeEndpointAccessCommand({
+      ClusterIdentifier: clusterId,
+      Account: granteeAccount,
+    }),
+  );
+  expect(revoked.Status).toBe("Revoking");
+
+  const registerResult = await client.send(
+    new RegisterNamespaceCommand({
+      NamespaceIdentifier: {
+        ProvisionedIdentifier: { ClusterIdentifier: clusterId },
+      },
+      ConsumerIdentifiers: [granteeAccount],
+    }),
+  );
+  expect(registerResult.Status).toBe("Registering");
+
+  const deregisterResult = await client.send(
+    new DeregisterNamespaceCommand({
+      NamespaceIdentifier: {
+        ProvisionedIdentifier: { ClusterIdentifier: clusterId },
+      },
+      ConsumerIdentifiers: [granteeAccount],
+    }),
+  );
+  expect(deregisterResult.Status).toBe("Deregistering");
 
   await client.send(
     new DeleteClusterCommand({

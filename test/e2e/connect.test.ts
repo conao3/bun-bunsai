@@ -29,6 +29,10 @@ import {
   UpdateAgentStatusCommand,
   UpdateContactFlowContentCommand,
   UpdateContactFlowNameCommand,
+  DeleteContactFlowCommand,
+  DeleteHoursOfOperationCommand,
+  DeleteEmailAddressCommand,
+  DeleteEvaluationFormCommand,
 } from "@aws-sdk/client-connect";
 
 const awsPort = 4566;
@@ -577,6 +581,125 @@ test("UpdateContactFlowContent and UpdateContactFlowName — create then update"
     }),
   );
   expect(updatedDesc.ContactFlow?.Name).toBe("RenamedFlow");
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("Delete operations — contact-flow create then delete", async () => {
+  const client = connect();
+
+  const instance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-del-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = instance.Id ?? "";
+
+  const hoo = await client.send(
+    new CreateHoursOfOperationCommand({
+      InstanceId: instanceId,
+      Name: "DeleteableHOO",
+      TimeZone: "UTC",
+      Config: [],
+    }),
+  );
+  const hooId = hoo.HoursOfOperationId ?? "";
+  expect(hooId).toBeDefined();
+
+  await client.send(
+    new DeleteHoursOfOperationCommand({
+      InstanceId: instanceId,
+      HoursOfOperationId: hooId,
+    }),
+  );
+  await expect(
+    client.send(
+      new DescribeHoursOfOperationCommand({
+        InstanceId: instanceId,
+        HoursOfOperationId: hooId,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const email = await client.send(
+    new CreateEmailAddressCommand({
+      InstanceId: instanceId,
+      EmailAddress: "del@example.com",
+      DisplayName: "Delete Test",
+    }),
+  );
+  const emailId = email.EmailAddressId ?? "";
+  expect(emailId).toBeDefined();
+
+  await client.send(
+    new DeleteEmailAddressCommand({
+      InstanceId: instanceId,
+      EmailAddressId: emailId,
+    }),
+  );
+  await expect(
+    client.send(
+      new DescribeEmailAddressCommand({
+        InstanceId: instanceId,
+        EmailAddressId: emailId,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const evalForm = await client.send(
+    new CreateEvaluationFormCommand({
+      InstanceId: instanceId,
+      Title: "DeleteableForm",
+      Items: [],
+    }),
+  );
+  const evalFormId = evalForm.EvaluationFormId ?? "";
+  expect(evalFormId).toBeDefined();
+
+  await client.send(
+    new DeleteEvaluationFormCommand({
+      InstanceId: instanceId,
+      EvaluationFormId: evalFormId,
+    }),
+  );
+  await expect(
+    client.send(
+      new DescribeEvaluationFormCommand({
+        InstanceId: instanceId,
+        EvaluationFormId: evalFormId,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const cf = await client.send(
+    new CreateContactFlowCommand({
+      InstanceId: instanceId,
+      Name: "DeleteableFlow",
+      Type: "CONTACT_FLOW",
+      Content: '{"Version":"2019-10-30","StartAction":"s1","Actions":[]}',
+    }),
+  );
+  const cfId = cf.ContactFlowId ?? "";
+  expect(cfId).toBeDefined();
+  expect(cf.ContactFlowArn).toContain(instanceId);
+
+  await client.send(
+    new DeleteContactFlowCommand({
+      InstanceId: instanceId,
+      ContactFlowId: cfId,
+    }),
+  );
+  await expect(
+    client.send(
+      new DescribeContactFlowCommand({
+        InstanceId: instanceId,
+        ContactFlowId: cfId,
+      }),
+    ),
+  ).rejects.toThrow();
 
   await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
 });

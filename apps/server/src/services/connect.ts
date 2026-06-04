@@ -312,6 +312,180 @@ const DeleteInstance: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DeleteAttachedFile: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeleteContactEvaluation: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeleteContactFlow: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactFlowId = requireString(input, "ContactFlowId");
+  const stored = ctx.store.get<StoredContactFlow>(
+    contactFlowKey(instanceId, contactFlowId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlow ${contactFlowId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(contactFlowKey(instanceId, contactFlowId));
+  return {};
+};
+
+const DeleteContactFlowModule: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactFlowModuleId = requireString(input, "ContactFlowModuleId");
+  const stored = ctx.store.get<StoredContactFlowModule>(
+    contactFlowModuleKey(instanceId, contactFlowModuleId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlowModule ${contactFlowModuleId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(contactFlowModuleKey(instanceId, contactFlowModuleId));
+  return {};
+};
+
+const DeleteContactFlowModuleAlias: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactFlowModuleId = requireString(input, "ContactFlowModuleId");
+  const aliasId = requireString(input, "AliasId");
+  const stored = ctx.store.get<StoredContactFlowModuleAlias>(
+    contactFlowModuleAliasKey(instanceId, contactFlowModuleId, aliasId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlowModuleAlias ${aliasId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(
+    contactFlowModuleAliasKey(instanceId, contactFlowModuleId, aliasId),
+  );
+  return {};
+};
+
+const DeleteContactFlowModuleVersion: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeleteContactFlowVersion: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeleteDataTable: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
+  const stored = ctx.store.get<StoredDataTable>(
+    dataTableKey(instanceId, dataTableId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `DataTable ${dataTableId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(dataTableKey(instanceId, dataTableId));
+  return {};
+};
+
+const DeleteDataTableAttribute: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
+  const attributeName = requireString(input, "AttributeName");
+  const stored = ctx.store.get<StoredDataTableAttribute>(
+    dataTableAttributeKey(instanceId, dataTableId, attributeName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `DataTableAttribute ${attributeName} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(
+    dataTableAttributeKey(instanceId, dataTableId, attributeName),
+  );
+  return {};
+};
+
+const DeleteEmailAddress: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const emailAddressId = requireString(input, "EmailAddressId");
+  const stored = ctx.store.get<StoredEmailAddress>(
+    emailAddressKey(instanceId, emailAddressId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `EmailAddress ${emailAddressId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(emailAddressKey(instanceId, emailAddressId));
+  return {};
+};
+
+const DeleteEvaluationForm: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const evaluationFormId = requireString(input, "EvaluationFormId");
+  const stored = ctx.store.get<StoredEvaluationForm>(
+    evaluationFormKey(instanceId, evaluationFormId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `EvaluationForm ${evaluationFormId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(evaluationFormKey(instanceId, evaluationFormId));
+  return {};
+};
+
+const DeleteHoursOfOperation: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hoursOfOperationId = requireString(input, "HoursOfOperationId");
+  const stored = ctx.store.get<StoredHoursOfOperation>(
+    hoursOfOperationKey(instanceId, hoursOfOperationId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `HoursOfOperation ${hoursOfOperationId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(hoursOfOperationKey(instanceId, hoursOfOperationId));
+  return {};
+};
+
 const ActivateEvaluationForm: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
@@ -1530,6 +1704,8 @@ const connect = {
           return "CreateEvaluationForm";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeEvaluationForm";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteEvaluationForm";
         if (
           parts.length === 4 &&
           parts[3] === "activate" &&
@@ -1569,6 +1745,8 @@ const connect = {
           return "CreateEmailAddress";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeEmailAddress";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteEmailAddress";
         if (
           parts.length === 4 &&
           parts[3] === "associate-alias" &&
@@ -1586,6 +1764,8 @@ const connect = {
           return "CreateHoursOfOperation";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeHoursOfOperation";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteHoursOfOperation";
         if (
           parts.length === 4 &&
           parts[3] === "associate-hours" &&
@@ -1669,6 +1849,8 @@ const connect = {
           return "BatchGetAttachedFileMetadata";
         if (parts.length === 3 && req.method === "POST")
           return "CompleteAttachedFileUpload";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteAttachedFile";
         return undefined;
 
       case "flow-associations-batch":
@@ -1709,6 +1891,8 @@ const connect = {
           return "CreateContactFlow";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeContactFlow";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteContactFlow";
         if (
           parts.length === 4 &&
           req.method === "PUT" &&
@@ -1720,6 +1904,12 @@ const connect = {
           if (parts[3] === "metadata") return "UpdateContactFlowMetadata";
           if (parts[3] === "name") return "UpdateContactFlowName";
         }
+        if (
+          parts.length === 5 &&
+          parts[3] === "version" &&
+          req.method === "DELETE"
+        )
+          return "DeleteContactFlowVersion";
         return undefined;
 
       case "contact-flow-modules":
@@ -1727,6 +1917,8 @@ const connect = {
           return "CreateContactFlowModule";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeContactFlowModule";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteContactFlowModule";
         if (parts.length === 4 && req.method === "PUT") {
           if (parts[3] === "alias") return "CreateContactFlowModuleAlias";
           if (parts[3] === "version") return "CreateContactFlowModuleVersion";
@@ -1738,7 +1930,14 @@ const connect = {
         if (parts.length === 5 && parts[3] === "alias") {
           if (req.method === "GET") return "DescribeContactFlowModuleAlias";
           if (req.method === "POST") return "UpdateContactFlowModuleAlias";
+          if (req.method === "DELETE") return "DeleteContactFlowModuleAlias";
         }
+        if (
+          parts.length === 5 &&
+          parts[3] === "version" &&
+          req.method === "DELETE"
+        )
+          return "DeleteContactFlowModuleVersion";
         return undefined;
 
       case "data-tables":
@@ -1746,6 +1945,8 @@ const connect = {
           return "CreateDataTable";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeDataTable";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteDataTable";
         if (
           parts.length === 4 &&
           parts[3] === "attributes" &&
@@ -1758,6 +1959,12 @@ const connect = {
           req.method === "GET"
         )
           return "DescribeDataTableAttribute";
+        if (
+          parts.length === 5 &&
+          parts[3] === "attributes" &&
+          req.method === "DELETE"
+        )
+          return "DeleteDataTableAttribute";
         return undefined;
 
       case "notifications":
@@ -1815,6 +2022,8 @@ const connect = {
           return "DescribeContactEvaluation";
         if (parts.length === 3 && req.method === "POST")
           return "UpdateContactEvaluation";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteContactEvaluation";
         return undefined;
 
       default:
@@ -1826,6 +2035,18 @@ const connect = {
     DescribeInstance,
     ListInstances,
     DeleteInstance,
+    DeleteAttachedFile,
+    DeleteContactEvaluation,
+    DeleteContactFlow,
+    DeleteContactFlowModule,
+    DeleteContactFlowModuleAlias,
+    DeleteContactFlowModuleVersion,
+    DeleteContactFlowVersion,
+    DeleteDataTable,
+    DeleteDataTableAttribute,
+    DeleteEmailAddress,
+    DeleteEvaluationForm,
+    DeleteHoursOfOperation,
     ActivateEvaluationForm,
     AssociateAnalyticsDataSet,
     AssociateApprovedOrigin,

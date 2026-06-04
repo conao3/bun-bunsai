@@ -35,6 +35,10 @@ const partitionPrefix = "partition:";
 const colstatsTPrefix = "colstats_t:";
 const colstatsPPrefix = "colstats_p:";
 const itpPrefix = "itp:";
+const devEndpointPrefix = "devEndpoint:";
+const mlTransformPrefix = "mlTransform:";
+const registryPrefix = "registry:";
+const schemaPrefix = "schema:";
 
 type StoredCrawler = {
   input: Record<string, unknown>;
@@ -114,6 +118,40 @@ type StoredITP = {
   tableName: string;
   sourceTableConfig: Record<string, unknown> | undefined;
   targetTableConfig: Record<string, unknown> | undefined;
+};
+
+type StoredDevEndpoint = {
+  input: Record<string, unknown>;
+  createdTimestamp: number;
+};
+
+type StoredMLTransform = {
+  transformId: string;
+  input: Record<string, unknown>;
+  createdOn: number;
+  lastModifiedOn: number;
+};
+
+type StoredRegistry = {
+  registryName: string;
+  registryArn: string;
+  description: string;
+  tags: Record<string, string>;
+};
+
+type StoredSchema = {
+  schemaName: string;
+  schemaArn: string;
+  registryName: string;
+  registryArn: string;
+  dataFormat: string;
+  compatibility: string;
+  description: string;
+  tags: Record<string, string>;
+  latestSchemaVersion: number;
+  nextSchemaVersion: number;
+  schemaCheckpoint: number;
+  firstSchemaVersionId: string;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -239,7 +277,11 @@ const GetDatabases: OperationHandler = (input, ctx) => {
         !entry.key.startsWith(partitionPrefix) &&
         !entry.key.startsWith(colstatsTPrefix) &&
         !entry.key.startsWith(colstatsPPrefix) &&
-        !entry.key.startsWith(itpPrefix),
+        !entry.key.startsWith(itpPrefix) &&
+        !entry.key.startsWith(devEndpointPrefix) &&
+        !entry.key.startsWith(mlTransformPrefix) &&
+        !entry.key.startsWith(registryPrefix) &&
+        !entry.key.startsWith(schemaPrefix),
     )
     .map((entry) => databaseView(entry.key, entry.value, catalogId));
   return { DatabaseList: list };
@@ -1803,6 +1845,456 @@ const GetIntegrationTableProperties: OperationHandler = (input, ctx) => {
   };
 };
 
+const buildRegistryArn = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:glue:${region}:${account}:registry/${name}`;
+
+const buildSchemaArn = (
+  region: string,
+  account: string,
+  registryName: string,
+  name: string,
+): string => `arn:aws:glue:${region}:${account}:schema/${registryName}/${name}`;
+
+const resolveRegistryName = (registryId: Record<string, unknown>): string => {
+  const name = registryId["RegistryName"];
+  if (typeof name === "string" && name !== "") return name;
+  const arn = registryId["RegistryArn"];
+  if (typeof arn === "string" && arn !== "") {
+    const idx = arn.lastIndexOf("/");
+    return arn.slice(idx + 1);
+  }
+  throw awsError(
+    "InvalidInputException",
+    "RegistryId requires RegistryName or RegistryArn.",
+    400,
+  );
+};
+
+const requireRegistryByid = (
+  ctx: ServiceContext,
+  registryId: Record<string, unknown>,
+): { name: string; stored: StoredRegistry } => {
+  const name = resolveRegistryName(registryId);
+  const stored = ctx.store.get<StoredRegistry>(`${registryPrefix}${name}`);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Registry ${name} not found.`,
+      400,
+    );
+  }
+  return { name, stored };
+};
+
+const resolveSchemaKey = (schemaId: Record<string, unknown>): string => {
+  const arn = schemaId["SchemaArn"];
+  if (typeof arn === "string" && arn !== "") {
+    const parts = arn.split("/");
+    const schemaName = parts[parts.length - 1];
+    const regName = parts[parts.length - 2];
+    return `${schemaPrefix}${regName}:${schemaName}`;
+  }
+  const schemaName = schemaId["SchemaName"];
+  if (typeof schemaName !== "string" || schemaName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "SchemaId requires SchemaArn or SchemaName.",
+      400,
+    );
+  }
+  const regName =
+    typeof schemaId["RegistryName"] === "string"
+      ? schemaId["RegistryName"]
+      : "";
+  return `${schemaPrefix}${regName}:${schemaName}`;
+};
+
+const devEndpointView = (
+  name: string,
+  endpoint: StoredDevEndpoint,
+): Record<string, unknown> => ({
+  EndpointName: name,
+  Status: "READY",
+  ...(typeof endpoint.input["RoleArn"] === "string"
+    ? { RoleArn: endpoint.input["RoleArn"] }
+    : {}),
+  ...(Array.isArray(endpoint.input["SecurityGroupIds"])
+    ? { SecurityGroupIds: endpoint.input["SecurityGroupIds"] }
+    : {}),
+  ...(typeof endpoint.input["SubnetId"] === "string"
+    ? { SubnetId: endpoint.input["SubnetId"] }
+    : {}),
+  ...(typeof endpoint.input["NumberOfNodes"] === "number"
+    ? { NumberOfNodes: endpoint.input["NumberOfNodes"] }
+    : {}),
+  ...(typeof endpoint.input["WorkerType"] === "string"
+    ? { WorkerType: endpoint.input["WorkerType"] }
+    : {}),
+  ...(typeof endpoint.input["GlueVersion"] === "string"
+    ? { GlueVersion: endpoint.input["GlueVersion"] }
+    : {}),
+  ...(typeof endpoint.input["NumberOfWorkers"] === "number"
+    ? { NumberOfWorkers: endpoint.input["NumberOfWorkers"] }
+    : {}),
+  ...(typeof endpoint.input["ExtraPythonLibsS3Path"] === "string"
+    ? { ExtraPythonLibsS3Path: endpoint.input["ExtraPythonLibsS3Path"] }
+    : {}),
+  ...(typeof endpoint.input["ExtraJarsS3Path"] === "string"
+    ? { ExtraJarsS3Path: endpoint.input["ExtraJarsS3Path"] }
+    : {}),
+  ...(typeof endpoint.input["SecurityConfiguration"] === "string"
+    ? { SecurityConfiguration: endpoint.input["SecurityConfiguration"] }
+    : {}),
+  ...(typeof endpoint.input["PublicKey"] === "string"
+    ? { PublicKey: endpoint.input["PublicKey"] }
+    : {}),
+  ...(Array.isArray(endpoint.input["PublicKeys"])
+    ? { PublicKeys: endpoint.input["PublicKeys"] }
+    : {}),
+  ...(typeof endpoint.input["Arguments"] === "object" &&
+  endpoint.input["Arguments"] !== null
+    ? { Arguments: endpoint.input["Arguments"] }
+    : {}),
+  CreatedTimestamp: endpoint.createdTimestamp,
+});
+
+const CreateDevEndpoint: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const name =
+    typeof record["EndpointName"] === "string"
+      ? (record["EndpointName"] as string)
+      : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "EndpointName is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredDevEndpoint>(`${devEndpointPrefix}${name}`) !==
+    undefined
+  ) {
+    throw awsError(
+      "AlreadyExistsException",
+      `DevEndpoint already exists: ${name}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredDevEndpoint = { input: record, createdTimestamp: now };
+  ctx.store.set(`${devEndpointPrefix}${name}`, stored);
+  return {
+    EndpointName: name,
+    Status: "PROVISIONING",
+    ...(typeof record["RoleArn"] === "string"
+      ? { RoleArn: record["RoleArn"] }
+      : {}),
+    ...(Array.isArray(record["SecurityGroupIds"])
+      ? { SecurityGroupIds: record["SecurityGroupIds"] }
+      : {}),
+    ...(typeof record["SubnetId"] === "string"
+      ? { SubnetId: record["SubnetId"] }
+      : {}),
+    ...(typeof record["NumberOfNodes"] === "number"
+      ? { NumberOfNodes: record["NumberOfNodes"] }
+      : {}),
+    ...(typeof record["WorkerType"] === "string"
+      ? { WorkerType: record["WorkerType"] }
+      : {}),
+    ...(typeof record["GlueVersion"] === "string"
+      ? { GlueVersion: record["GlueVersion"] }
+      : {}),
+    ...(typeof record["NumberOfWorkers"] === "number"
+      ? { NumberOfWorkers: record["NumberOfWorkers"] }
+      : {}),
+    ...(typeof record["ExtraPythonLibsS3Path"] === "string"
+      ? { ExtraPythonLibsS3Path: record["ExtraPythonLibsS3Path"] }
+      : {}),
+    ...(typeof record["ExtraJarsS3Path"] === "string"
+      ? { ExtraJarsS3Path: record["ExtraJarsS3Path"] }
+      : {}),
+    ...(typeof record["SecurityConfiguration"] === "string"
+      ? { SecurityConfiguration: record["SecurityConfiguration"] }
+      : {}),
+    ...(typeof record["Arguments"] === "object" && record["Arguments"] !== null
+      ? { Arguments: record["Arguments"] }
+      : {}),
+    CreatedTimestamp: now,
+  };
+};
+
+const DeleteDevEndpoint: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["EndpointName"] === "string"
+      ? (input["EndpointName"] as string)
+      : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "EndpointName is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredDevEndpoint>(`${devEndpointPrefix}${name}`) ===
+    undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `DevEndpoint ${name} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(`${devEndpointPrefix}${name}`);
+  return {};
+};
+
+const BatchGetDevEndpoints: OperationHandler = (input, ctx) => {
+  const names = Array.isArray(input["DevEndpointNames"])
+    ? (input["DevEndpointNames"] as string[])
+    : [];
+  const devEndpoints: Record<string, unknown>[] = [];
+  const devEndpointsNotFound: string[] = [];
+  for (const name of names) {
+    const stored = ctx.store.get<StoredDevEndpoint>(
+      `${devEndpointPrefix}${name}`,
+    );
+    if (stored === undefined) {
+      devEndpointsNotFound.push(name);
+    } else {
+      devEndpoints.push(devEndpointView(name, stored));
+    }
+  }
+  return {
+    DevEndpoints: devEndpoints,
+    DevEndpointsNotFound: devEndpointsNotFound,
+  };
+};
+
+const CreateMLTransform: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const transformId = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredMLTransform = {
+    transformId,
+    input: record,
+    createdOn: now,
+    lastModifiedOn: now,
+  };
+  ctx.store.set(`${mlTransformPrefix}${transformId}`, stored);
+  return { TransformId: transformId };
+};
+
+const DeleteMLTransform: OperationHandler = (input, ctx) => {
+  const transformId =
+    typeof input["TransformId"] === "string"
+      ? (input["TransformId"] as string)
+      : "";
+  if (transformId === "") {
+    throw awsError("InvalidInputException", "TransformId is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredMLTransform>(`${mlTransformPrefix}${transformId}`) ===
+    undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `MLTransform ${transformId} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(`${mlTransformPrefix}${transformId}`);
+  return { TransformId: transformId };
+};
+
+const CancelMLTaskRun: OperationHandler = (input, ctx) => {
+  const transformId =
+    typeof input["TransformId"] === "string"
+      ? (input["TransformId"] as string)
+      : "";
+  const taskRunId =
+    typeof input["TaskRunId"] === "string"
+      ? (input["TaskRunId"] as string)
+      : "";
+  if (transformId === "") {
+    throw awsError("InvalidInputException", "TransformId is required.", 400);
+  }
+  if (taskRunId === "") {
+    throw awsError("InvalidInputException", "TaskRunId is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredMLTransform>(`${mlTransformPrefix}${transformId}`) ===
+    undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `MLTransform ${transformId} not found.`,
+      400,
+    );
+  }
+  return { TransformId: transformId, TaskRunId: taskRunId, Status: "STOPPED" };
+};
+
+const CreateRegistry: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const name =
+    typeof record["RegistryName"] === "string"
+      ? (record["RegistryName"] as string)
+      : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "RegistryName is required.", 400);
+  }
+  if (ctx.store.get<StoredRegistry>(`${registryPrefix}${name}`) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Registry already exists: ${name}`,
+      400,
+    );
+  }
+  const arn = buildRegistryArn(ctx.region, ctx.account, name);
+  const description =
+    typeof record["Description"] === "string"
+      ? (record["Description"] as string)
+      : "";
+  const tags =
+    typeof record["Tags"] === "object" && record["Tags"] !== null
+      ? (record["Tags"] as Record<string, string>)
+      : {};
+  const stored: StoredRegistry = {
+    registryName: name,
+    registryArn: arn,
+    description,
+    tags,
+  };
+  ctx.store.set(`${registryPrefix}${name}`, stored);
+  return {
+    RegistryArn: arn,
+    RegistryName: name,
+    Description: description,
+    Tags: tags,
+  };
+};
+
+const DeleteRegistry: OperationHandler = (input, ctx) => {
+  const registryId = asRecord(input["RegistryId"] ?? {});
+  const { name, stored } = requireRegistryByid(ctx, registryId);
+  ctx.store.delete(`${registryPrefix}${name}`);
+  return {
+    RegistryName: name,
+    RegistryArn: stored.registryArn,
+    Status: "DELETING",
+  };
+};
+
+const CreateSchema: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const registryId = asRecord(record["RegistryId"] ?? {});
+  const registryName = resolveRegistryName(registryId);
+  const regStored = ctx.store.get<StoredRegistry>(
+    `${registryPrefix}${registryName}`,
+  );
+  if (regStored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Registry ${registryName} not found.`,
+      400,
+    );
+  }
+  const schemaName =
+    typeof record["SchemaName"] === "string"
+      ? (record["SchemaName"] as string)
+      : "";
+  if (schemaName === "") {
+    throw awsError("InvalidInputException", "SchemaName is required.", 400);
+  }
+  const key = `${schemaPrefix}${registryName}:${schemaName}`;
+  if (ctx.store.get<StoredSchema>(key) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Schema already exists: ${schemaName}`,
+      400,
+    );
+  }
+  const dataFormat =
+    typeof record["DataFormat"] === "string"
+      ? (record["DataFormat"] as string)
+      : "AVRO";
+  const compatibility =
+    typeof record["Compatibility"] === "string"
+      ? (record["Compatibility"] as string)
+      : "NONE";
+  const description =
+    typeof record["Description"] === "string"
+      ? (record["Description"] as string)
+      : "";
+  const tags =
+    typeof record["Tags"] === "object" && record["Tags"] !== null
+      ? (record["Tags"] as Record<string, string>)
+      : {};
+  const sArn = buildSchemaArn(
+    ctx.region,
+    ctx.account,
+    registryName,
+    schemaName,
+  );
+  const firstSchemaVersionId = crypto.randomUUID();
+  const stored: StoredSchema = {
+    schemaName,
+    schemaArn: sArn,
+    registryName,
+    registryArn: regStored.registryArn,
+    dataFormat,
+    compatibility,
+    description,
+    tags,
+    latestSchemaVersion: 1,
+    nextSchemaVersion: 2,
+    schemaCheckpoint: 1,
+    firstSchemaVersionId,
+  };
+  ctx.store.set(key, stored);
+  return {
+    RegistryName: registryName,
+    RegistryArn: regStored.registryArn,
+    SchemaName: schemaName,
+    SchemaArn: sArn,
+    Description: description,
+    DataFormat: dataFormat,
+    Compatibility: compatibility,
+    SchemaCheckpoint: 1,
+    LatestSchemaVersion: 1,
+    NextSchemaVersion: 2,
+    SchemaStatus: "AVAILABLE",
+    Tags: tags,
+    SchemaVersionId: firstSchemaVersionId,
+    SchemaVersionStatus: "AVAILABLE",
+  };
+};
+
+const DeleteSchema: OperationHandler = (input, ctx) => {
+  const schemaId = asRecord(input["SchemaId"] ?? {});
+  const key = resolveSchemaKey(schemaId);
+  const stored = ctx.store.get<StoredSchema>(key);
+  if (stored === undefined) {
+    throw awsError("EntityNotFoundException", `Schema not found.`, 400);
+  }
+  ctx.store.delete(key);
+  return {
+    SchemaArn: stored.schemaArn,
+    SchemaName: stored.schemaName,
+    Status: "DELETING",
+  };
+};
+
+const DeleteSchemaVersions: OperationHandler = (input, ctx) => {
+  const schemaId = asRecord(input["SchemaId"] ?? {});
+  const key = resolveSchemaKey(schemaId);
+  if (ctx.store.get<StoredSchema>(key) === undefined) {
+    throw awsError("EntityNotFoundException", `Schema not found.`, 400);
+  }
+  return { SchemaVersionErrors: [] };
+};
+
+const CheckSchemaVersionValidity: OperationHandler = (_input, _ctx) => {
+  return { Valid: true };
+};
+
 const DeleteIntegrationTableProperties: OperationHandler = (input, ctx) => {
   const resourceArn =
     typeof input["ResourceArn"] === "string"
@@ -1888,6 +2380,18 @@ const glue: ServiceDefinition = {
     CreateIntegrationTableProperties,
     GetIntegrationTableProperties,
     DeleteIntegrationTableProperties,
+    BatchGetDevEndpoints,
+    CreateDevEndpoint,
+    DeleteDevEndpoint,
+    CreateMLTransform,
+    DeleteMLTransform,
+    CancelMLTaskRun,
+    CreateRegistry,
+    DeleteRegistry,
+    CreateSchema,
+    DeleteSchema,
+    DeleteSchemaVersions,
+    CheckSchemaVersionValidity,
   },
   model,
 } as const;

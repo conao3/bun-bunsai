@@ -681,7 +681,8 @@ const idcApplicationArnOf = (
   region: string,
   account: string,
   name: string,
-): string => `arn:aws:redshift:${region}:${account}:redshiftidcapplication/${name}`;
+): string =>
+  `arn:aws:redshift:${region}:${account}:redshiftidcapplication/${name}`;
 
 const requireIntegration = (
   ctx: ServiceContext,
@@ -3377,16 +3378,20 @@ const CreateIntegration: OperationHandler = (input, ctx) => {
     typeof encCtxRaw === "object" &&
     !Array.isArray(encCtxRaw)
       ? Object.fromEntries(
-          Object.entries(encCtxRaw as Record<string, unknown>).map(
-            ([k, v]) => [k, String(v)],
-          ),
+          Object.entries(encCtxRaw as Record<string, unknown>).map(([k, v]) => [
+            k,
+            String(v),
+          ]),
         )
       : {};
   const tagListRaw = input["TagList"];
   const tags: { Key: string; Value: string }[] = Array.isArray(tagListRaw)
     ? (tagListRaw as Record<string, unknown>[])
         .filter((t) => t !== null && typeof t === "object")
-        .map((t) => ({ Key: String(t["Key"] ?? ""), Value: String(t["Value"] ?? "") }))
+        .map((t) => ({
+          Key: String(t["Key"] ?? ""),
+          Value: String(t["Value"] ?? ""),
+        }))
     : [];
   const integration: StoredIntegration = {
     IntegrationArn: arn,
@@ -3446,9 +3451,7 @@ const DescribeIntegrations: OperationHandler = (input, ctx) => {
           values.includes(i.IntegrationArn),
         );
       } else if (name === "source-arn") {
-        integrations = integrations.filter((i) =>
-          values.includes(i.SourceArn),
-        );
+        integrations = integrations.filter((i) => values.includes(i.SourceArn));
       } else if (name === "status") {
         integrations = integrations.filter((i) => values.includes(i.Status));
       }
@@ -3572,8 +3575,10 @@ const ModifyRedshiftIdcApplication: OperationHandler = (input, ctx) => {
   }
   const serviceIntegrationsRaw = input["ServiceIntegrations"];
   if (Array.isArray(serviceIntegrationsRaw)) {
-    app.ServiceIntegrations =
-      serviceIntegrationsRaw as Record<string, unknown>[];
+    app.ServiceIntegrations = serviceIntegrationsRaw as Record<
+      string,
+      unknown
+    >[];
   }
   ctx.store.set(idcApplicationKey(arn), app);
   return { RedshiftIdcApplication: presentIdcApplication(app) };

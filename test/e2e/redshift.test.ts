@@ -1490,8 +1490,7 @@ test("Redshift reserved node lifecycle", async () => {
 test("Redshift integration and IDC application lifecycle", async () => {
   const client = redshift();
 
-  const sourceArn =
-    "arn:aws:rds:us-east-1:123456789012:db:bunsai-source-db";
+  const sourceArn = "arn:aws:rds:us-east-1:123456789012:db:bunsai-source-db";
   const targetArn =
     "arn:aws:redshift:us-east-1:123456789012:namespace:bunsai-ns";
 
@@ -1514,9 +1513,7 @@ test("Redshift integration and IDC application lifecycle", async () => {
     new DescribeIntegrationsCommand({ IntegrationArn: integrationArn }),
   );
   expect((described.Integrations ?? []).length).toBe(1);
-  expect(described.Integrations?.[0]?.Description).toBe(
-    "e2e test integration",
-  );
+  expect(described.Integrations?.[0]?.Description).toBe("e2e test integration");
 
   const inbound = await client.send(
     new DescribeInboundIntegrationsCommand({ IntegrationArn: integrationArn }),
@@ -1541,19 +1538,19 @@ test("Redshift integration and IDC application lifecycle", async () => {
 
   const idcApp = await client.send(
     new CreateRedshiftIdcApplicationCommand({
-      IdcInstanceArn:
-        "arn:aws:sso:::instance/ssoins-1234567890abcdef0",
+      IdcInstanceArn: "arn:aws:sso:::instance/ssoins-1234567890abcdef0",
       RedshiftIdcApplicationName: "bunsai-e2e-idc-app",
-      IamRoleArn:
-        "arn:aws:iam::123456789012:role/RedshiftIdcRole",
+      IamRoleArn: "arn:aws:iam::123456789012:role/RedshiftIdcRole",
       IdentityNamespace: "bunsai-ns",
       IdcDisplayName: "Bunsai E2E IDC App",
     }),
   );
-  expect(idcApp.RedshiftIdcApplication?.RedshiftIdcApplicationArn).toBeDefined();
   expect(
-    idcApp.RedshiftIdcApplication?.RedshiftIdcApplicationName,
-  ).toBe("bunsai-e2e-idc-app");
+    idcApp.RedshiftIdcApplication?.RedshiftIdcApplicationArn,
+  ).toBeDefined();
+  expect(idcApp.RedshiftIdcApplication?.RedshiftIdcApplicationName).toBe(
+    "bunsai-e2e-idc-app",
+  );
   expect(idcApp.RedshiftIdcApplication?.IdcOnboardStatus).toBe("ENABLED");
   const idcArn = idcApp.RedshiftIdcApplication?.RedshiftIdcApplicationArn!;
 
@@ -1563,9 +1560,9 @@ test("Redshift integration and IDC application lifecycle", async () => {
     }),
   );
   expect((describedIdcApps.RedshiftIdcApplications ?? []).length).toBe(1);
-  expect(
-    describedIdcApps.RedshiftIdcApplications?.[0]?.IdentityNamespace,
-  ).toBe("bunsai-ns");
+  expect(describedIdcApps.RedshiftIdcApplications?.[0]?.IdentityNamespace).toBe(
+    "bunsai-ns",
+  );
 
   const modifiedIdcApp = await client.send(
     new ModifyRedshiftIdcApplicationCommand({

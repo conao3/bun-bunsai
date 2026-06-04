@@ -31,6 +31,7 @@ const sdiSourcePrefix = "sdiSource:" as const;
 const channelPlacementGroupPrefix = "channelPlacementGroup:" as const;
 const clusterPrefix = "cluster:" as const;
 const nodePrefix = "node:" as const;
+const networkPrefix = "network:" as const;
 
 type StoredChannel = {
   Id: string;
@@ -252,6 +253,16 @@ type StoredNode = {
   State: string;
 };
 
+type StoredNetwork = {
+  Arn: string;
+  AssociatedClusterIds: string[];
+  Id: string;
+  IpPools: { Cidr: string }[];
+  Name: string;
+  Routes: { Cidr: string; Gateway: string }[];
+  State: string;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -302,6 +313,7 @@ const channelPlacementGroupKey = (clusterId: string, id: string): string =>
 const clusterKey = (id: string): string => `${clusterPrefix}${id}`;
 const nodeKey = (clusterId: string, nodeId: string): string =>
   `${nodePrefix}${clusterId}:${nodeId}`;
+const networkKey = (id: string): string => `${networkPrefix}${id}`;
 
 const channelArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:medialive:${ctx.region}:${ctx.account}:channel:${id}`;
@@ -350,6 +362,9 @@ const clusterArn = (ctx: ServiceContext, id: string): string =>
 
 const nodeArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:medialive:${ctx.region}:${ctx.account}:node:${id}`;
+
+const networkArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:medialive:${ctx.region}:${ctx.account}:network:${id}`;
 
 const nextChannelId = (ctx: ServiceContext): string => {
   const used = ctx.store
@@ -449,6 +464,13 @@ const nextNodeId = (ctx: ServiceContext): string => {
     .list<StoredNode>()
     .filter((entry) => entry.key.startsWith(nodePrefix)).length;
   return String(14000000 + used + 1);
+};
+
+const nextNetworkId = (ctx: ServiceContext): string => {
+  const used = ctx.store
+    .list<StoredNetwork>()
+    .filter((entry) => entry.key.startsWith(networkPrefix)).length;
+  return String(15000000 + used + 1);
 };
 
 const requireChannel = (ctx: ServiceContext, id: string): StoredChannel => {
@@ -644,6 +666,14 @@ const requireNode = (
   const stored = ctx.store.get<StoredNode>(nodeKey(clusterId, nodeId));
   if (stored === undefined) {
     throw awsError("NotFoundException", `Node ${nodeId} not found.`, 404);
+  }
+  return stored;
+};
+
+const requireNetwork = (ctx: ServiceContext, id: string): StoredNetwork => {
+  const stored = ctx.store.get<StoredNetwork>(networkKey(id));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Network ${id} not found.`, 404);
   }
   return stored;
 };
@@ -2193,6 +2223,83 @@ const CreateNodeRegistrationScript: OperationHandler = (input, ctx) => {
   };
 };
 
+const networkResponse = (n: StoredNetwork) => ({
+  Arn: n.Arn,
+  AssociatedClusterIds: n.AssociatedClusterIds,
+  Id: n.Id,
+  IpPools: n.IpPools,
+  Name: n.Name,
+  Routes: n.Routes,
+  State: n.State,
+});
+
+const parseIpPools = (input: Record<string, unknown>): { Cidr: string }[] =>
+  arrayOrEmpty(input["IpPools"]).map((p) => {
+    const pool = p as Record<string, unknown>;
+    return { Cidr: stringOrUndefined(pool["Cidr"]) ?? "" };
+  });
+
+const parseRoutes = (
+  input: Record<string, unknown>,
+): { Cidr: string; Gateway: string }[] =>
+  arrayOrEmpty(input["Routes"]).map((r) => {
+    const route = r as Record<string, unknown>;
+    return {
+      Cidr: stringOrUndefined(route["Cidr"]) ?? "",
+      Gateway: stringOrUndefined(route["Gateway"]) ?? "",
+    };
+  });
+
+const CreateNetwork: OperationHandler = (input, ctx) => {
+  const id = nextNetworkId(ctx);
+  const network: StoredNetwork = {
+    Arn: networkArn(ctx, id),
+    AssociatedClusterIds: [],
+    Id: id,
+    IpPools: parseIpPools(input),
+    Name: stringOrUndefined(input["Name"]) ?? "",
+    Routes: parseRoutes(input),
+    State: "ACTIVE",
+  };
+  ctx.store.set(networkKey(id), network);
+  return networkResponse(network);
+};
+
+const DescribeNetwork: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "NetworkId");
+  return networkResponse(requireNetwork(ctx, id));
+};
+
+const ListNetworks: OperationHandler = (_input, ctx) => {
+  const networks = ctx.store
+    .list<StoredNetwork>()
+    .filter((entry) => entry.key.startsWith(networkPrefix))
+    .map((entry) => networkResponse(entry.value));
+  return { Networks: networks };
+};
+
+const DeleteNetwork: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "NetworkId");
+  const network = requireNetwork(ctx, id);
+  ctx.store.delete(networkKey(id));
+  return networkResponse({ ...network, State: "DELETED" });
+};
+
+const UpdateNetwork: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "NetworkId");
+  const existing = requireNetwork(ctx, id);
+  const updated: StoredNetwork = {
+    ...existing,
+    Name: stringOrUndefined(input["Name"]) ?? existing.Name,
+    IpPools:
+      input["IpPools"] !== undefined ? parseIpPools(input) : existing.IpPools,
+    Routes:
+      input["Routes"] !== undefined ? parseRoutes(input) : existing.Routes,
+  };
+  ctx.store.set(networkKey(id), updated);
+  return networkResponse(updated);
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -2537,6 +2644,21 @@ const medialive = {
       return undefined;
     }
 
+    if (r1 === "networks") {
+      if (parts.length === 2) {
+        if (m === "POST") return "CreateNetwork";
+        if (m === "GET") return "ListNetworks";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (m === "GET") return "DescribeNetwork";
+        if (m === "DELETE") return "DeleteNetwork";
+        if (m === "PUT") return "UpdateNetwork";
+        return undefined;
+      }
+      return undefined;
+    }
+
     return undefined;
   },
   operations: {
@@ -2658,6 +2780,11 @@ const medialive = {
     UpdateNode,
     UpdateNodeState,
     CreateNodeRegistrationScript,
+    CreateNetwork,
+    DescribeNetwork,
+    ListNetworks,
+    DeleteNetwork,
+    UpdateNetwork,
   },
   model,
 } as const satisfies ServiceDefinition;

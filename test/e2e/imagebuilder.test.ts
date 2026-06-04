@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn } from "bun";
 import {
   CancelImageCreationCommand,
+  CancelLifecycleExecutionCommand,
   CreateComponentCommand,
   CreateContainerRecipeCommand,
   CreateDistributionConfigurationCommand,
@@ -9,12 +10,14 @@ import {
   CreateImagePipelineCommand,
   CreateImageRecipeCommand,
   CreateInfrastructureConfigurationCommand,
+  CreateLifecyclePolicyCommand,
   DeleteComponentCommand,
   DeleteDistributionConfigurationCommand,
   DeleteImageCommand,
   DeleteImagePipelineCommand,
   DeleteImageRecipeCommand,
   DeleteInfrastructureConfigurationCommand,
+  DeleteLifecyclePolicyCommand,
   GetComponentCommand,
   GetComponentPolicyCommand,
   GetContainerRecipeCommand,
@@ -23,6 +26,8 @@ import {
   GetImagePipelineCommand,
   GetImageRecipeCommand,
   GetInfrastructureConfigurationCommand,
+  GetLifecycleExecutionCommand,
+  GetLifecyclePolicyCommand,
   ImagebuilderClient,
   ListComponentBuildVersionsCommand,
   ListComponentsCommand,
@@ -30,19 +35,26 @@ import {
   ListDistributionConfigurationsCommand,
   ListImageBuildVersionsCommand,
   ListImagePackagesCommand,
+  ListImagePipelineImagesCommand,
   ListImagePipelinesCommand,
   ListImageRecipesCommand,
   ListImagesCommand,
   ListInfrastructureConfigurationsCommand,
+  ListLifecycleExecutionsCommand,
+  ListLifecyclePoliciesCommand,
   ListTagsForResourceCommand,
   PutComponentPolicyCommand,
   PutImagePolicyCommand,
   PutImageRecipePolicyCommand,
   RetryImageCommand,
+  StartImagePipelineExecutionCommand,
+  StartResourceStateUpdateCommand,
   TagResourceCommand,
   UntagResourceCommand,
   UpdateDistributionConfigurationCommand,
+  UpdateImagePipelineCommand,
   UpdateInfrastructureConfigurationCommand,
+  UpdateLifecyclePolicyCommand,
 } from "@aws-sdk/client-imagebuilder";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 
@@ -502,4 +514,135 @@ test("Imagebuilder image create/get/list/policy/cancel/retry/delete lifecycle", 
   await expect(
     client.send(new GetImageCommand({ imageBuildVersionArn: buildArn })),
   ).rejects.toThrow();
+});
+
+test("Imagebuilder lifecycle policy create/get/list/update/delete", async () => {
+  const client = imagebuilder();
+  const name = `lc-policy-${Date.now()}`;
+  const executionRole = `arn:aws:iam::000000000000:role/ImageBuilderLifecycleRole`;
+  const resourceSelection = { tagMap: { lifecycle: "true" } };
+  const policyDetails = [
+    {
+      action: { name: "DELETE" },
+      filter: { type: "AGE", value: 6, unit: "MONTHS" },
+    },
+  ];
+
+  const created = await client.send(
+    new CreateLifecyclePolicyCommand({
+      name,
+      executionRole,
+      resourceType: "AMI_IMAGE",
+      policyDetails,
+      resourceSelection,
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  expect(created.lifecyclePolicyArn).toBeDefined();
+  expect(created.lifecyclePolicyArn).toContain(`lifecycle-policy/${name}`);
+  const arn = created.lifecyclePolicyArn ?? "";
+
+  const got = await client.send(new GetLifecyclePolicyCommand({ lifecyclePolicyArn: arn }));
+  expect(got.lifecyclePolicy?.arn).toBe(arn);
+  expect(got.lifecyclePolicy?.name).toBe(name);
+  expect(got.lifecyclePolicy?.status).toBe("ENABLED");
+  expect(got.lifecyclePolicy?.executionRole).toBe(executionRole);
+  expect(got.lifecyclePolicy?.resourceType).toBe("AMI_IMAGE");
+
+  const listed = await client.send(new ListLifecyclePoliciesCommand({}));
+  expect((listed.lifecyclePolicySummaryList ?? []).map((p) => p.arn)).toContain(arn);
+
+  await client.send(
+    new UpdateLifecyclePolicyCommand({
+      lifecyclePolicyArn: arn,
+      executionRole,
+      resourceType: "AMI_IMAGE",
+      policyDetails,
+      resourceSelection,
+      status: "DISABLED",
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+
+  const updated = await client.send(new GetLifecyclePolicyCommand({ lifecyclePolicyArn: arn }));
+  expect(updated.lifecyclePolicy?.status).toBe("DISABLED");
+
+  await client.send(new DeleteLifecyclePolicyCommand({ lifecyclePolicyArn: arn }));
+  await expect(
+    client.send(new GetLifecyclePolicyCommand({ lifecyclePolicyArn: arn })),
+  ).rejects.toThrow();
+});
+
+test("Imagebuilder StartResourceStateUpdate/GetLifecycleExecution/ListLifecycleExecutions/Cancel", async () => {
+  const client = imagebuilder();
+  const imageArn = `arn:aws:imagebuilder:${region}:000000000000:image/test-img/1.0.0/1`;
+
+  const started = await client.send(
+    new StartResourceStateUpdateCommand({
+      resourceArn: imageArn,
+      state: { status: "DEPRECATED" },
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  expect(started.lifecycleExecutionId).toBeDefined();
+  expect(started.resourceArn).toBe(imageArn);
+  const execId = started.lifecycleExecutionId ?? "";
+
+  const got = await client.send(new GetLifecycleExecutionCommand({ lifecycleExecutionId: execId }));
+  expect(got.lifecycleExecution?.lifecycleExecutionId).toBe(execId);
+  expect(got.lifecycleExecution?.state?.status).toBe("IN_PROGRESS");
+
+  const listed = await client.send(new ListLifecycleExecutionsCommand({ resourceArn: imageArn }));
+  expect((listed.lifecycleExecutions ?? []).map((e) => e.lifecycleExecutionId)).toContain(execId);
+
+  await client.send(
+    new CancelLifecycleExecutionCommand({
+      lifecycleExecutionId: execId,
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  const afterCancel = await client.send(new GetLifecycleExecutionCommand({ lifecycleExecutionId: execId }));
+  expect(afterCancel.lifecycleExecution?.state?.status).toBe("CANCELLED");
+});
+
+test("Imagebuilder UpdateImagePipeline and StartImagePipelineExecution", async () => {
+  const client = imagebuilder();
+  const name = `pipeline-exec-${Date.now()}`;
+  const imageRecipeArn = `arn:aws:imagebuilder:${region}:000000000000:image-recipe/${name}/1.0.0`;
+  const infraArn = `arn:aws:imagebuilder:${region}:000000000000:infrastructure-configuration/${name}`;
+
+  const created = await client.send(
+    new CreateImagePipelineCommand({
+      name,
+      imageRecipeArn,
+      infrastructureConfigurationArn: infraArn,
+    }),
+  );
+  const pipelineArn = created.imagePipelineArn ?? "";
+
+  await client.send(
+    new UpdateImagePipelineCommand({
+      imagePipelineArn: pipelineArn,
+      infrastructureConfigurationArn: infraArn,
+      description: "updated desc",
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+
+  const updated = await client.send(new GetImagePipelineCommand({ imagePipelineArn: pipelineArn }));
+  expect(updated.imagePipeline?.description).toBe("updated desc");
+
+  const exec = await client.send(
+    new StartImagePipelineExecutionCommand({
+      imagePipelineArn: pipelineArn,
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  expect(exec.imageBuildVersionArn).toBeDefined();
+  expect(exec.imageBuildVersionArn).toContain(`image/${name}`);
+
+  const images = await client.send(new ListImagePipelineImagesCommand({ imagePipelineArn: pipelineArn }));
+  expect((images.imageSummaryList ?? []).map((i) => i.arn)).toContain(exec.imageBuildVersionArn);
+
+  await client.send(new DeleteImagePipelineCommand({ imagePipelineArn: pipelineArn }));
 });

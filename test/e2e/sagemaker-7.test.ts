@@ -1,0 +1,171 @@
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { spawn } from "bun";
+import {
+  CreateAppCommand,
+  CreateAppImageConfigCommand,
+  CreateDomainCommand,
+  DescribeActionCommand,
+  DescribeAlgorithmCommand,
+  DescribeAppCommand,
+  DescribeAppImageConfigCommand,
+  DescribeArtifactCommand,
+  DescribeAutoMLJobCommand,
+  DescribeClusterCommand,
+  SageMakerClient,
+} from "@aws-sdk/client-sagemaker";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
+
+const awsPort = 4909;
+const uiPort = 5909;
+const endpoint = `http://localhost:${awsPort}`;
+const region = "us-east-1";
+const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
+
+const serverEntry = new URL("../../apps/server/src/index.ts", import.meta.url)
+  .pathname;
+
+let proc: ReturnType<typeof spawn> | undefined;
+
+const waitForServer = async (): Promise<void> => {
+  for (let i = 0; i < 100; i += 1) {
+    try {
+      const res = await fetch(`http://localhost:${uiPort}/__bunsai/logs`);
+      if (res.ok) {
+        await res.body?.cancel();
+        return;
+      }
+    } catch {
+      void 0;
+    }
+    await Bun.sleep(100);
+  }
+  throw new Error("server did not become ready");
+};
+
+beforeAll(async () => {
+  proc = spawn({
+    cmd: ["bun", serverEntry],
+    env: {
+      ...process.env,
+      BUNSAI_PORT: String(awsPort),
+      BUNSAI_UI_PORT: String(uiPort),
+      NODE_ENV: "production",
+    },
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  await waitForServer();
+});
+
+afterAll(() => {
+  proc?.kill();
+});
+
+const sagemaker = () =>
+  new SageMakerClient({
+    endpoint,
+    region,
+    credentials,
+    requestHandler: new NodeHttpHandler(),
+  });
+
+test("SageMaker app create → describe lifecycle", async () => {
+  const client = sagemaker();
+  const domainName = "bunsai-e2e-dom7";
+  const appName = "default";
+  const appType = "JupyterServer";
+
+  const createdDomain = await client.send(
+    new CreateDomainCommand({
+      DomainName: domainName,
+      AuthMode: "IAM",
+      DefaultUserSettings: {},
+      SubnetIds: ["subnet-12345678"],
+      VpcId: "vpc-12345678",
+    }),
+  );
+  const domainId = createdDomain.DomainId!;
+  expect(domainId).toBeDefined();
+
+  const createdApp = await client.send(
+    new CreateAppCommand({
+      DomainId: domainId,
+      AppType: appType,
+      AppName: appName,
+      UserProfileName: "default-user",
+    }),
+  );
+  expect(createdApp.AppArn).toContain(`app/${domainId}`);
+
+  const describedApp = await client.send(
+    new DescribeAppCommand({
+      DomainId: domainId,
+      AppType: appType,
+      AppName: appName,
+    }),
+  );
+  expect(describedApp.AppName).toBe(appName);
+  expect(describedApp.AppType).toBe(appType);
+  expect(describedApp.DomainId).toBe(domainId);
+  expect(describedApp.Status).toBe("InService");
+  expect(describedApp.CreationTime).toBeDefined();
+  expect(describedApp.AppArn).toBe(createdApp.AppArn);
+
+  const imageConfigName = "bunsai-e2e-cfg7";
+  const createdCfg = await client.send(
+    new CreateAppImageConfigCommand({
+      AppImageConfigName: imageConfigName,
+    }),
+  );
+  expect(createdCfg.AppImageConfigArn).toContain(
+    `app-image-config/${imageConfigName}`,
+  );
+
+  const describedCfg = await client.send(
+    new DescribeAppImageConfigCommand({
+      AppImageConfigName: imageConfigName,
+    }),
+  );
+  expect(describedCfg.AppImageConfigName).toBe(imageConfigName);
+  expect(describedCfg.AppImageConfigArn).toBe(createdCfg.AppImageConfigArn);
+  expect(describedCfg.CreationTime).toBeDefined();
+});
+
+test("SageMaker describe synthetic operations", async () => {
+  const client = sagemaker();
+
+  const action = await client.send(
+    new DescribeActionCommand({ ActionName: "bunsai-e2e-action" }),
+  );
+  expect(action.ActionName).toBe("bunsai-e2e-action");
+  expect(action.ActionArn).toContain("action/bunsai-e2e-action");
+  expect(action.Status).toBe("Completed");
+
+  const algo = await client.send(
+    new DescribeAlgorithmCommand({ AlgorithmName: "bunsai-e2e-algo" }),
+  );
+  expect(algo.AlgorithmName).toBe("bunsai-e2e-algo");
+  expect(algo.AlgorithmArn).toContain("algorithm/bunsai-e2e-algo");
+  expect(algo.AlgorithmStatus).toBe("Completed");
+
+  const artifact = await client.send(
+    new DescribeArtifactCommand({
+      ArtifactArn: `arn:aws:sagemaker:${region}:123456789012:artifact/bunsai-e2e-art`,
+    }),
+  );
+  expect(artifact.ArtifactArn).toContain("artifact/bunsai-e2e-art");
+  expect(artifact.ArtifactType).toBe("DataSet");
+
+  const automl = await client.send(
+    new DescribeAutoMLJobCommand({ AutoMLJobName: "bunsai-e2e-automl" }),
+  );
+  expect(automl.AutoMLJobName).toBe("bunsai-e2e-automl");
+  expect(automl.AutoMLJobArn).toContain("automl-job/bunsai-e2e-automl");
+  expect(automl.AutoMLJobStatus).toBe("Completed");
+
+  const cluster = await client.send(
+    new DescribeClusterCommand({ ClusterName: "bunsai-e2e-cluster" }),
+  );
+  expect(cluster.ClusterArn).toContain("cluster/bunsai-e2e-cluster");
+  expect(cluster.ClusterStatus).toBe("InService");
+});

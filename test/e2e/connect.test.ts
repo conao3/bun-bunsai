@@ -17,6 +17,15 @@ import {
   CreateHoursOfOperationCommand,
   CreateRoutingProfileCommand,
   CreateSecurityProfileCommand,
+  DescribeAgentStatusCommand,
+  DescribeContactFlowCommand,
+  DescribeHoursOfOperationCommand,
+  CreateContactCommand,
+  DescribeContactCommand,
+  CreateEmailAddressCommand,
+  DescribeEmailAddressCommand,
+  CreateEvaluationFormCommand,
+  DescribeEvaluationFormCommand,
 } from "@aws-sdk/client-connect";
 
 const awsPort = 4566;
@@ -327,6 +336,132 @@ test("CreateRoutingProfile and CreateSecurityProfile", async () => {
   expect(sp.SecurityProfileId).toBeDefined();
   expect(sp.SecurityProfileArn).toContain(instanceId);
   expect(sp.SecurityProfileArn).toContain("security-profile");
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("Describe operations — agent status, contact flow, hours of operation, contact, email address, evaluation form", async () => {
+  const client = connect();
+
+  const instance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-desc-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = instance.Id ?? "";
+
+  const agentStatus = await client.send(
+    new CreateAgentStatusCommand({
+      InstanceId: instanceId,
+      Name: "On Lunch",
+      State: "ENABLED",
+    }),
+  );
+  const agentStatusId = agentStatus.AgentStatusId ?? "";
+
+  const describedAgent = await client.send(
+    new DescribeAgentStatusCommand({
+      InstanceId: instanceId,
+      AgentStatusId: agentStatusId,
+    }),
+  );
+  expect(describedAgent.AgentStatus?.AgentStatusId).toBe(agentStatusId);
+  expect(describedAgent.AgentStatus?.Name).toBe("On Lunch");
+  expect(describedAgent.AgentStatus?.State).toBe("ENABLED");
+
+  const hoo = await client.send(
+    new CreateHoursOfOperationCommand({
+      InstanceId: instanceId,
+      Name: "Weekdays",
+      TimeZone: "UTC",
+      Config: [],
+    }),
+  );
+  const hooId = hoo.HoursOfOperationId ?? "";
+
+  const describedHoo = await client.send(
+    new DescribeHoursOfOperationCommand({
+      InstanceId: instanceId,
+      HoursOfOperationId: hooId,
+    }),
+  );
+  expect(describedHoo.HoursOfOperation?.HoursOfOperationId).toBe(hooId);
+  expect(describedHoo.HoursOfOperation?.Name).toBe("Weekdays");
+
+  const cf = await client.send(
+    new CreateContactFlowCommand({
+      InstanceId: instanceId,
+      Name: "MainFlow",
+      Type: "CONTACT_FLOW",
+      Content: '{"Version":"2019-10-30","StartAction":"s1","Actions":[]}',
+    }),
+  );
+  const cfId = cf.ContactFlowId ?? "";
+
+  const describedCf = await client.send(
+    new DescribeContactFlowCommand({
+      InstanceId: instanceId,
+      ContactFlowId: cfId,
+    }),
+  );
+  expect(describedCf.ContactFlow?.Id).toBe(cfId);
+  expect(describedCf.ContactFlow?.Name).toBe("MainFlow");
+  expect(describedCf.ContactFlow?.Type).toBe("CONTACT_FLOW");
+
+  const contact = await client.send(
+    new CreateContactCommand({
+      InstanceId: instanceId,
+      Channel: "CHAT",
+      InitiationMethod: "OUTBOUND",
+    }),
+  );
+  const contactId = contact.ContactId ?? "";
+
+  const describedContact = await client.send(
+    new DescribeContactCommand({
+      InstanceId: instanceId,
+      ContactId: contactId,
+    }),
+  );
+  expect(describedContact.Contact?.Id).toBe(contactId);
+
+  const email = await client.send(
+    new CreateEmailAddressCommand({
+      InstanceId: instanceId,
+      EmailAddress: "support@example.com",
+      DisplayName: "Support",
+    }),
+  );
+  const emailId = email.EmailAddressId ?? "";
+
+  const describedEmail = await client.send(
+    new DescribeEmailAddressCommand({
+      InstanceId: instanceId,
+      EmailAddressId: emailId,
+    }),
+  );
+  expect(describedEmail.EmailAddressId).toBe(emailId);
+  expect(describedEmail.EmailAddress).toBe("support@example.com");
+
+  const evalForm = await client.send(
+    new CreateEvaluationFormCommand({
+      InstanceId: instanceId,
+      Title: "QA Form",
+      Items: [],
+    }),
+  );
+  const evalFormId = evalForm.EvaluationFormId ?? "";
+
+  const describedEvalForm = await client.send(
+    new DescribeEvaluationFormCommand({
+      InstanceId: instanceId,
+      EvaluationFormId: evalFormId,
+    }),
+  );
+  expect(describedEvalForm.EvaluationForm?.EvaluationFormId).toBe(evalFormId);
 
   await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
 });

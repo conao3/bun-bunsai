@@ -21,6 +21,13 @@ const hoursOfOperationPrefix = "hours-of-operation:" as const;
 const securityProfilePrefix = "security-profile:" as const;
 const quickConnectPrefix = "quick-connect:" as const;
 const evaluationFormPrefix = "evaluation-form:" as const;
+const contactPrefix = "contact:" as const;
+const emailAddressPrefix = "email-address:" as const;
+const dataTablePrefix = "data-table:" as const;
+const dataTableAttributePrefix = "data-table-attribute:" as const;
+const contactFlowModuleAliasPrefix = "contact-flow-module-alias:" as const;
+const hoursOfOperationOverridePrefix = "hours-of-operation-override:" as const;
+const instanceStorageConfigPrefix = "instance-storage-config:" as const;
 
 type StoredInstance = {
   Id: string;
@@ -107,6 +114,51 @@ type StoredEvaluationForm = {
   InstanceId: string;
 };
 
+type StoredContact = {
+  ContactId: string;
+  ContactArn: string;
+  InstanceId: string;
+};
+
+type StoredEmailAddress = {
+  EmailAddressId: string;
+  EmailAddressArn: string;
+  EmailAddress: string;
+  InstanceId: string;
+};
+
+type StoredDataTable = {
+  Id: string;
+  Arn: string;
+  InstanceId: string;
+};
+
+type StoredDataTableAttribute = {
+  Name: string;
+  AttributeId: string;
+  DataTableId: string;
+  InstanceId: string;
+};
+
+type StoredContactFlowModuleAlias = {
+  Id: string;
+  ContactFlowModuleArn: string;
+  InstanceId: string;
+  ContactFlowModuleId: string;
+};
+
+type StoredHoursOfOperationOverride = {
+  HoursOfOperationOverrideId: string;
+  HoursOfOperationId: string;
+  InstanceId: string;
+};
+
+type StoredInstanceStorageConfig = {
+  AssociationId: string;
+  InstanceId: string;
+  ResourceType: string;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -144,6 +196,33 @@ const quickConnectKey = (instanceId: string, id: string): string =>
   `${quickConnectPrefix}${instanceId}:${id}`;
 const evaluationFormKey = (instanceId: string, id: string): string =>
   `${evaluationFormPrefix}${instanceId}:${id}`;
+const contactKey = (instanceId: string, id: string): string =>
+  `${contactPrefix}${instanceId}:${id}`;
+const emailAddressKey = (instanceId: string, id: string): string =>
+  `${emailAddressPrefix}${instanceId}:${id}`;
+const dataTableKey = (instanceId: string, id: string): string =>
+  `${dataTablePrefix}${instanceId}:${id}`;
+const dataTableAttributeKey = (
+  instanceId: string,
+  tableId: string,
+  name: string,
+): string => `${dataTableAttributePrefix}${instanceId}:${tableId}:${name}`;
+const contactFlowModuleAliasKey = (
+  instanceId: string,
+  moduleId: string,
+  aliasId: string,
+): string =>
+  `${contactFlowModuleAliasPrefix}${instanceId}:${moduleId}:${aliasId}`;
+const hoursOfOperationOverrideKey = (
+  instanceId: string,
+  hooId: string,
+  overrideId: string,
+): string =>
+  `${hoursOfOperationOverridePrefix}${instanceId}:${hooId}:${overrideId}`;
+const instanceStorageConfigKey = (
+  instanceId: string,
+  associationId: string,
+): string => `${instanceStorageConfigPrefix}${instanceId}:${associationId}`;
 
 const requireInstance = (ctx: ServiceContext, id: string): StoredInstance => {
   const stored = ctx.store.get<StoredInstance>(instanceKey(id));
@@ -310,7 +389,18 @@ const AssociateHoursOfOperations: OperationHandler = (input, ctx) => {
 const AssociateInstanceStorageConfig: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
-  return { AssociationId: crypto.randomUUID() };
+  const resourceType =
+    typeof input["ResourceType"] === "string"
+      ? input["ResourceType"]
+      : "CHAT_TRANSCRIPTS";
+  const associationId = crypto.randomUUID();
+  const stored: StoredInstanceStorageConfig = {
+    AssociationId: associationId,
+    InstanceId: instanceId,
+    ResourceType: resourceType,
+  };
+  ctx.store.set(instanceStorageConfigKey(instanceId, associationId), stored);
+  return { AssociationId: associationId };
 };
 
 const AssociateLambdaFunction: OperationHandler = (input, ctx) => {
@@ -472,6 +562,12 @@ const CreateContact: OperationHandler = (input, ctx) => {
   requireInstance(ctx, instanceId);
   const id = crypto.randomUUID();
   const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact/${id}`;
+  const stored: StoredContact = {
+    ContactId: id,
+    ContactArn: arn,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(contactKey(instanceId, id), stored);
   return { ContactId: id, ContactArn: arn };
 };
 
@@ -520,6 +616,13 @@ const CreateContactFlowModuleAlias: OperationHandler = (input, ctx) => {
   const moduleId = requireString(input, "ContactFlowModuleId");
   const id = crypto.randomUUID();
   const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/flow-module/${moduleId}`;
+  const stored: StoredContactFlowModuleAlias = {
+    Id: id,
+    ContactFlowModuleArn: arn,
+    InstanceId: instanceId,
+    ContactFlowModuleId: moduleId,
+  };
+  ctx.store.set(contactFlowModuleAliasKey(instanceId, moduleId, id), stored);
   return { ContactFlowModuleArn: arn, Id: id };
 };
 
@@ -544,22 +647,40 @@ const CreateDataTable: OperationHandler = (input, ctx) => {
   requireInstance(ctx, instanceId);
   const id = crypto.randomUUID();
   const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/data-table/${id}`;
+  const stored: StoredDataTable = { Id: id, Arn: arn, InstanceId: instanceId };
+  ctx.store.set(dataTableKey(instanceId, id), stored);
   return { Id: id, Arn: arn, LockVersion: 1 };
 };
 
 const CreateDataTableAttribute: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
   const name = requireString(input, "Name");
   const attributeId = crypto.randomUUID();
+  const stored: StoredDataTableAttribute = {
+    Name: name,
+    AttributeId: attributeId,
+    DataTableId: dataTableId,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(dataTableAttributeKey(instanceId, dataTableId, name), stored);
   return { Name: name, AttributeId: attributeId, LockVersion: 1 };
 };
 
 const CreateEmailAddress: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const emailAddress = requireString(input, "EmailAddress");
   const id = crypto.randomUUID();
   const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/email-address/${id}`;
+  const stored: StoredEmailAddress = {
+    EmailAddressId: id,
+    EmailAddressArn: arn,
+    EmailAddress: emailAddress,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(emailAddressKey(instanceId, id), stored);
   return { EmailAddressId: id, EmailAddressArn: arn };
 };
 
@@ -596,7 +717,17 @@ const CreateHoursOfOperation: OperationHandler = (input, ctx) => {
 const CreateHoursOfOperationOverride: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const hooId = requireString(input, "HoursOfOperationId");
   const overrideId = crypto.randomUUID();
+  const stored: StoredHoursOfOperationOverride = {
+    HoursOfOperationOverrideId: overrideId,
+    HoursOfOperationId: hooId,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(
+    hoursOfOperationOverrideKey(instanceId, hooId, overrideId),
+    stored,
+  );
   return { HoursOfOperationOverrideId: overrideId };
 };
 
@@ -759,6 +890,373 @@ const CreateUseCase: OperationHandler = (input, ctx) => {
   return { UseCaseId: id, UseCaseArn: arn };
 };
 
+const DescribeAgentStatus: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const agentStatusId = requireString(input, "AgentStatusId");
+  const stored = ctx.store.get<StoredAgentStatus>(
+    agentStatusKey(instanceId, agentStatusId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `AgentStatus ${agentStatusId} not found.`,
+      404,
+    );
+  }
+  return {
+    AgentStatus: {
+      AgentStatusId: stored.AgentStatusId,
+      AgentStatusARN: stored.AgentStatusARN,
+      Name: stored.Name,
+      State: stored.State,
+      Type: "CUSTOM",
+    },
+  };
+};
+
+const DescribeAttachedFilesConfiguration: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const attachmentScope = requireString(input, "AttachmentScope");
+  return {
+    AttachedFilesConfiguration: {
+      S3Config: {
+        BucketName: `connect-${instanceId}`,
+        BucketPrefix: attachmentScope,
+      },
+    },
+  };
+};
+
+const DescribeAuthenticationProfile: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const authenticationProfileId = requireString(
+    input,
+    "AuthenticationProfileId",
+  );
+  return {
+    AuthenticationProfile: {
+      Id: authenticationProfileId,
+      Arn: `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/authentication-profile/${authenticationProfileId}`,
+      Name: "default",
+      IsDefault: true,
+    },
+  };
+};
+
+const DescribeContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  return {
+    Contact: {
+      Id: stored.ContactId,
+      Arn: stored.ContactArn,
+    },
+  };
+};
+
+const DescribeContactEvaluation: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const evaluationId = requireString(input, "EvaluationId");
+  return {
+    Evaluation: {
+      EvaluationId: evaluationId,
+      EvaluationArn: `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact-evaluation/${evaluationId}`,
+      Status: "DRAFT",
+      Answers: {},
+      Notes: {},
+      CreatedTime: new Date().toISOString(),
+      LastModifiedTime: new Date().toISOString(),
+    },
+    EvaluationForm: {
+      EvaluationFormVersion: 1,
+      EvaluationFormId: evaluationId,
+      EvaluationFormArn: `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/evaluation-form/${evaluationId}`,
+      Title: "default",
+      Status: "ACTIVE",
+      Items: [],
+      CreatedTime: new Date().toISOString(),
+      LastModifiedTime: new Date().toISOString(),
+      CreatedBy: `arn:aws:iam::${ctx.account}:root`,
+      LastModifiedBy: `arn:aws:iam::${ctx.account}:root`,
+    },
+  };
+};
+
+const DescribeContactFlow: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactFlowId = requireString(input, "ContactFlowId");
+  const stored = ctx.store.get<StoredContactFlow>(
+    contactFlowKey(instanceId, contactFlowId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlow ${contactFlowId} not found.`,
+      404,
+    );
+  }
+  return {
+    ContactFlow: {
+      Id: stored.ContactFlowId,
+      Arn: stored.ContactFlowArn,
+      Name: stored.Name,
+      Type: stored.Type,
+      State: "ACTIVE",
+      Status: "PUBLISHED",
+    },
+  };
+};
+
+const DescribeContactFlowModule: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactFlowModuleId = requireString(input, "ContactFlowModuleId");
+  const stored = ctx.store.get<StoredContactFlowModule>(
+    contactFlowModuleKey(instanceId, contactFlowModuleId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlowModule ${contactFlowModuleId} not found.`,
+      404,
+    );
+  }
+  return {
+    ContactFlowModule: {
+      Id: stored.Id,
+      Arn: stored.Arn,
+      Name: stored.Name,
+      Status: "PUBLISHED",
+    },
+  };
+};
+
+const DescribeContactFlowModuleAlias: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactFlowModuleId = requireString(input, "ContactFlowModuleId");
+  const aliasId = requireString(input, "AliasId");
+  const stored = ctx.store.get<StoredContactFlowModuleAlias>(
+    contactFlowModuleAliasKey(instanceId, contactFlowModuleId, aliasId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlowModuleAlias ${aliasId} not found.`,
+      404,
+    );
+  }
+  return {
+    ContactFlowModuleAlias: {
+      Id: stored.Id,
+      Arn: stored.ContactFlowModuleArn,
+    },
+  };
+};
+
+const DescribeDataTable: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
+  const stored = ctx.store.get<StoredDataTable>(
+    dataTableKey(instanceId, dataTableId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `DataTable ${dataTableId} not found.`,
+      404,
+    );
+  }
+  return {
+    DataTable: {
+      Id: stored.Id,
+      Arn: stored.Arn,
+    },
+  };
+};
+
+const DescribeDataTableAttribute: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
+  const attributeName = requireString(input, "AttributeName");
+  const stored = ctx.store.get<StoredDataTableAttribute>(
+    dataTableAttributeKey(instanceId, dataTableId, attributeName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `DataTableAttribute ${attributeName} not found.`,
+      404,
+    );
+  }
+  return {
+    Attribute: {
+      Name: stored.Name,
+      AttributeId: stored.AttributeId,
+    },
+  };
+};
+
+const DescribeEmailAddress: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const emailAddressId = requireString(input, "EmailAddressId");
+  const stored = ctx.store.get<StoredEmailAddress>(
+    emailAddressKey(instanceId, emailAddressId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `EmailAddress ${emailAddressId} not found.`,
+      404,
+    );
+  }
+  return {
+    EmailAddressId: stored.EmailAddressId,
+    EmailAddressArn: stored.EmailAddressArn,
+    EmailAddress: stored.EmailAddress,
+  };
+};
+
+const DescribeEvaluationForm: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const evaluationFormId = requireString(input, "EvaluationFormId");
+  const stored = ctx.store.get<StoredEvaluationForm>(
+    evaluationFormKey(instanceId, evaluationFormId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `EvaluationForm ${evaluationFormId} not found.`,
+      404,
+    );
+  }
+  return {
+    EvaluationForm: {
+      EvaluationFormId: stored.EvaluationFormId,
+      EvaluationFormArn: stored.EvaluationFormArn,
+      EvaluationFormVersion: 1,
+      Locked: false,
+      Status: "DRAFT",
+      Title: "default",
+      Items: [],
+      CreatedTime: new Date().toISOString(),
+      LastModifiedTime: new Date().toISOString(),
+      CreatedBy: `arn:aws:iam::${ctx.account}:root`,
+      LastModifiedBy: `arn:aws:iam::${ctx.account}:root`,
+    },
+  };
+};
+
+const DescribeHoursOfOperation: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hoursOfOperationId = requireString(input, "HoursOfOperationId");
+  const stored = ctx.store.get<StoredHoursOfOperation>(
+    hoursOfOperationKey(instanceId, hoursOfOperationId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `HoursOfOperation ${hoursOfOperationId} not found.`,
+      404,
+    );
+  }
+  return {
+    HoursOfOperation: {
+      HoursOfOperationId: stored.HoursOfOperationId,
+      HoursOfOperationArn: stored.HoursOfOperationArn,
+      Name: stored.Name,
+      Config: [],
+    },
+  };
+};
+
+const DescribeHoursOfOperationOverride: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hoursOfOperationId = requireString(input, "HoursOfOperationId");
+  const hoursOfOperationOverrideId = requireString(
+    input,
+    "HoursOfOperationOverrideId",
+  );
+  const stored = ctx.store.get<StoredHoursOfOperationOverride>(
+    hoursOfOperationOverrideKey(
+      instanceId,
+      hoursOfOperationId,
+      hoursOfOperationOverrideId,
+    ),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `HoursOfOperationOverride ${hoursOfOperationOverrideId} not found.`,
+      404,
+    );
+  }
+  return {
+    HoursOfOperationOverride: {
+      HoursOfOperationOverrideId: stored.HoursOfOperationOverrideId,
+      HoursOfOperationId: stored.HoursOfOperationId,
+      Config: [],
+    },
+  };
+};
+
+const DescribeInstanceAttribute: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const attributeType = requireString(input, "AttributeType");
+  return {
+    Attribute: {
+      AttributeType: attributeType,
+      Value: "true",
+    },
+  };
+};
+
+const DescribeInstanceStorageConfig: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const associationId = requireString(input, "AssociationId");
+  const stored = ctx.store.get<StoredInstanceStorageConfig>(
+    instanceStorageConfigKey(instanceId, associationId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `InstanceStorageConfig ${associationId} not found.`,
+      404,
+    );
+  }
+  return {
+    StorageConfig: {
+      AssociationId: stored.AssociationId,
+      StorageType: "S3",
+      ResourceType: stored.ResourceType,
+    },
+  };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -801,6 +1299,10 @@ const connect = {
             parts[3] === "template"
           )
             return "CreateTaskTemplate";
+          if (req.method === "GET" && parts[2] === "attribute")
+            return "DescribeInstanceAttribute";
+          if (req.method === "GET" && parts[2] === "storage-config")
+            return "DescribeInstanceStorageConfig";
         }
         if (parts.length === 5) {
           if (
@@ -815,6 +1317,8 @@ const connect = {
       case "evaluation-forms":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateEvaluationForm";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeEvaluationForm";
         if (
           parts.length === 4 &&
           parts[3] === "activate" &&
@@ -835,6 +1339,8 @@ const connect = {
         return undefined;
 
       case "contacts":
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeContact";
         if (
           parts.length === 4 &&
           parts[3] === "associate-user" &&
@@ -851,6 +1357,8 @@ const connect = {
       case "email-addresses":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateEmailAddress";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeEmailAddress";
         if (
           parts.length === 4 &&
           parts[3] === "associate-alias" &&
@@ -866,6 +1374,8 @@ const connect = {
       case "hours-of-operations":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateHoursOfOperation";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeHoursOfOperation";
         if (
           parts.length === 4 &&
           parts[3] === "associate-hours" &&
@@ -878,6 +1388,12 @@ const connect = {
           req.method === "PUT"
         )
           return "CreateHoursOfOperationOverride";
+        if (
+          parts.length === 5 &&
+          parts[3] === "overrides" &&
+          req.method === "GET"
+        )
+          return "DescribeHoursOfOperationOverride";
         return undefined;
 
       case "phone-number":
@@ -953,6 +1469,8 @@ const connect = {
       case "agent-status":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateAgentStatus";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeAgentStatus";
         return undefined;
 
       case "contact":
@@ -973,6 +1491,8 @@ const connect = {
       case "contact-flows":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateContactFlow";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeContactFlow";
         if (
           parts.length === 4 &&
           parts[3] === "version" &&
@@ -984,21 +1504,33 @@ const connect = {
       case "contact-flow-modules":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateContactFlowModule";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeContactFlowModule";
         if (parts.length === 4 && req.method === "PUT") {
           if (parts[3] === "alias") return "CreateContactFlowModuleAlias";
           if (parts[3] === "version") return "CreateContactFlowModuleVersion";
         }
+        if (parts.length === 5 && parts[3] === "alias" && req.method === "GET")
+          return "DescribeContactFlowModuleAlias";
         return undefined;
 
       case "data-tables":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateDataTable";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeDataTable";
         if (
           parts.length === 4 &&
           parts[3] === "attributes" &&
           req.method === "PUT"
         )
           return "CreateDataTableAttribute";
+        if (
+          parts.length === 5 &&
+          parts[3] === "attributes" &&
+          req.method === "GET"
+        )
+          return "DescribeDataTableAttribute";
         return undefined;
 
       case "notifications":
@@ -1035,6 +1567,21 @@ const connect = {
 
       case "test-cases":
         if (parts.length === 2 && req.method === "PUT") return "CreateTestCase";
+        return undefined;
+
+      case "attached-files-configurations":
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeAttachedFilesConfiguration";
+        return undefined;
+
+      case "authentication-profiles":
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeAuthenticationProfile";
+        return undefined;
+
+      case "contact-evaluations":
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeContactEvaluation";
         return undefined;
 
       default:
@@ -1101,6 +1648,22 @@ const connect = {
     CreateTestCase,
     CreateTrafficDistributionGroup,
     CreateUseCase,
+    DescribeAgentStatus,
+    DescribeAttachedFilesConfiguration,
+    DescribeAuthenticationProfile,
+    DescribeContact,
+    DescribeContactEvaluation,
+    DescribeContactFlow,
+    DescribeContactFlowModule,
+    DescribeContactFlowModuleAlias,
+    DescribeDataTable,
+    DescribeDataTableAttribute,
+    DescribeEmailAddress,
+    DescribeEvaluationForm,
+    DescribeHoursOfOperation,
+    DescribeHoursOfOperationOverride,
+    DescribeInstanceAttribute,
+    DescribeInstanceStorageConfig,
   },
   model,
 } as const satisfies ServiceDefinition;

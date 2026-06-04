@@ -26,6 +26,10 @@ type StoredUser = {
   UserId: string;
   Arn: string;
   CreateDate: string;
+  PermissionsBoundary?: {
+    PermissionsBoundaryType: string;
+    PermissionsBoundaryArn: string;
+  };
 };
 
 type StoredPolicy = {
@@ -98,6 +102,101 @@ type StoredPolicyVersion = {
   CreateDate: string;
 };
 
+type StoredLoginProfile = {
+  UserName: string;
+  CreateDate: string;
+  PasswordResetRequired: boolean;
+};
+
+type StoredUserPolicy = {
+  UserName: string;
+  PolicyName: string;
+  PolicyDocument: string;
+};
+
+type StoredUserAttachment = {
+  UserName: string;
+  PolicyArn: string;
+  PolicyName: string;
+};
+
+type StoredGroupPolicy = {
+  GroupName: string;
+  PolicyName: string;
+  PolicyDocument: string;
+};
+
+type StoredGroupAttachment = {
+  GroupName: string;
+  PolicyArn: string;
+  PolicyName: string;
+};
+
+type StoredServerCertificate = {
+  Path: string;
+  ServerCertificateName: string;
+  ServerCertificateId: string;
+  Arn: string;
+  UploadDate: string;
+  Expiration?: string;
+  CertificateBody: string;
+  PrivateKey: string;
+  CertificateChain?: string;
+  Tags: StoredTag[];
+};
+
+type StoredSSHPublicKey = {
+  UserName: string;
+  SSHPublicKeyId: string;
+  Fingerprint: string;
+  SSHPublicKeyBody: string;
+  Status: string;
+  UploadDate: string;
+};
+
+type StoredSigningCertificate = {
+  UserName: string;
+  CertificateId: string;
+  CertificateBody: string;
+  Status: string;
+  UploadDate: string;
+};
+
+type StoredVirtualMFADevice = {
+  SerialNumber: string;
+  VirtualMFADeviceName: string;
+  Path: string;
+  Tags: StoredTag[];
+};
+
+type StoredEnabledMFADevice = {
+  UserName: string;
+  SerialNumber: string;
+  EnableDate: string;
+};
+
+type StoredServiceSpecificCredential = {
+  UserName: string;
+  ServiceName: string;
+  ServiceSpecificCredentialId: string;
+  ServiceUserName: string;
+  ServicePassword: string;
+  Status: string;
+  CreateDate: string;
+};
+
+type StoredPasswordPolicy = {
+  MinimumPasswordLength?: number;
+  RequireSymbols?: boolean;
+  RequireNumbers?: boolean;
+  RequireUppercaseCharacters?: boolean;
+  RequireLowercaseCharacters?: boolean;
+  AllowUsersToChangePassword?: boolean;
+  MaxPasswordAge?: number;
+  PasswordReusePrevention?: number;
+  HardExpiry?: boolean;
+};
+
 const roleKey = (name: string): string => `role/${name}`;
 
 const userKey = (name: string): string => `user/${name}`;
@@ -125,6 +224,44 @@ const groupMemberKey = (groupName: string, userName: string): string =>
 const policyVersionKey = (arn: string, versionId: string): string =>
   `policyversion/${arn}/${versionId}`;
 
+const loginProfileKey = (userName: string): string =>
+  `loginprofile/${userName}`;
+
+const userPolicyKey = (userName: string, policyName: string): string =>
+  `userpolicy/${userName}/${policyName}`;
+
+const userAttachmentKey = (userName: string, policyArn: string): string =>
+  `userattachment/${userName}/${policyArn}`;
+
+const userTagKey = (userName: string, tagKey: string): string =>
+  `usertag/${userName}/${tagKey}`;
+
+const groupPolicyKey = (groupName: string, policyName: string): string =>
+  `grouppolicy/${groupName}/${policyName}`;
+
+const groupAttachmentKey = (groupName: string, policyArn: string): string =>
+  `groupattachment/${groupName}/${policyArn}`;
+
+const serverCertKey = (name: string): string => `servercert/${name}`;
+
+const serverCertTagKey = (name: string, tagKey: string): string =>
+  `servercerttag/${name}/${tagKey}`;
+
+const sshPublicKeyKey = (id: string): string => `sshpublickey/${id}`;
+
+const signingCertKey = (id: string): string => `signingcert/${id}`;
+
+const virtualMfaKey = (serialNumber: string): string =>
+  `virtualmfa/${serialNumber}`;
+
+const enabledMfaKey = (serialNumber: string): string =>
+  `mfaenabled/${serialNumber}`;
+
+const mfaTagKey = (serialNumber: string, tagKey: string): string =>
+  `mfatag/${serialNumber}/${tagKey}`;
+
+const serviceSpecCredKey = (id: string): string => `servicespeccred/${id}`;
+
 const roleArnOf = (account: string, path: string, name: string): string =>
   `arn:aws:iam::${account}:role${path}${name}`;
 
@@ -149,6 +286,12 @@ const serviceLinkedRoleArnOf = (
   name: string,
 ): string => `arn:aws:iam::${account}:role/aws-service-role/${service}/${name}`;
 
+const serverCertArnOf = (account: string, path: string, name: string): string =>
+  `arn:aws:iam::${account}:server-certificate${path}${name}`;
+
+const virtualMfaArnOf = (account: string, path: string, name: string): string =>
+  `arn:aws:iam::${account}:mfa${path}${name}`;
+
 const randomHex = (length: number): string => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
   let result = "";
@@ -172,6 +315,22 @@ const optionalString = (
 ): string | undefined => {
   const value = input[key];
   return typeof value === "string" ? value : undefined;
+};
+
+const optionalBool = (
+  input: Record<string, unknown>,
+  key: string,
+): boolean | undefined => {
+  const value = input[key];
+  return typeof value === "boolean" ? value : undefined;
+};
+
+const optionalNumber = (
+  input: Record<string, unknown>,
+  key: string,
+): number | undefined => {
+  const value = input[key];
+  return typeof value === "number" ? value : undefined;
 };
 
 const normalizePath = (input: Record<string, unknown>): string => {
@@ -304,6 +463,221 @@ const ListUsers: OperationHandler = (input, ctx) => {
   return { Users: users, IsTruncated: false };
 };
 
+const UpdateUser: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "UserName");
+  const user = requireUser(ctx, name);
+  const newPath = optionalString(input, "NewPath");
+  const newName = optionalString(input, "NewUserName");
+  if (newName !== undefined && newName !== name) {
+    if (ctx.store.get<StoredUser>(userKey(newName)) !== undefined) {
+      throw awsError(
+        "EntityAlreadyExists",
+        `User with name ${newName} already exists.`,
+        409,
+      );
+    }
+    const updatedUser: StoredUser = {
+      ...user,
+      UserName: newName,
+      Path: newPath ?? user.Path,
+      Arn: userArnOf(ctx.account, newPath ?? user.Path, newName),
+    };
+    ctx.store.set(userKey(newName), updatedUser);
+    ctx.store.delete(userKey(name));
+    for (const entry of ctx.store.list<StoredAccessKey>()) {
+      if (entry.key.startsWith("accesskey/") && entry.value.UserName === name) {
+        ctx.store.set(entry.key, { ...entry.value, UserName: newName });
+      }
+    }
+    for (const entry of ctx.store.list<StoredGroupMember>()) {
+      if (
+        entry.key.startsWith("groupmember/") &&
+        entry.value.UserName === name
+      ) {
+        ctx.store.set(entry.key, { ...entry.value, UserName: newName });
+      }
+    }
+  } else if (newPath !== undefined) {
+    ctx.store.set(userKey(name), {
+      ...user,
+      Path: newPath,
+      Arn: userArnOf(ctx.account, newPath, name),
+    });
+  }
+  return {};
+};
+
+const TagUser: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  for (const tag of toTagList(input)) {
+    ctx.store.set(userTagKey(userName, tag.Key), {
+      UserName: userName,
+      ...tag,
+    });
+  }
+  return {};
+};
+
+const UntagUser: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  const tagKeys = input["TagKeys"];
+  if (Array.isArray(tagKeys)) {
+    for (const key of tagKeys) {
+      if (typeof key === "string") {
+        ctx.store.delete(userTagKey(userName, key));
+      }
+    }
+  }
+  return {};
+};
+
+const ListUserTags: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  const tags = ctx.store
+    .list<StoredTag & { UserName: string }>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("usertag/") && entry.value.UserName === userName,
+    )
+    .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
+  return { Tags: tags, IsTruncated: false };
+};
+
+const PutUserPolicy: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const policyName = requireString(input, "PolicyName");
+  const policyDocument = requireString(input, "PolicyDocument");
+  requireUser(ctx, userName);
+  const userPolicy: StoredUserPolicy = {
+    UserName: userName,
+    PolicyName: policyName,
+    PolicyDocument: policyDocument,
+  };
+  ctx.store.set(userPolicyKey(userName, policyName), userPolicy);
+  return {};
+};
+
+const GetUserPolicy: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const policyName = requireString(input, "PolicyName");
+  const userPolicy = ctx.store.get<StoredUserPolicy>(
+    userPolicyKey(userName, policyName),
+  );
+  if (userPolicy === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `The user policy with name ${policyName} cannot be found.`,
+      404,
+    );
+  }
+  return {
+    UserName: userPolicy.UserName,
+    PolicyName: userPolicy.PolicyName,
+    PolicyDocument: userPolicy.PolicyDocument,
+  };
+};
+
+const DeleteUserPolicy: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const policyName = requireString(input, "PolicyName");
+  const key = userPolicyKey(userName, policyName);
+  if (ctx.store.get<StoredUserPolicy>(key) === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `The user policy with name ${policyName} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const ListUserPolicies: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  const names = ctx.store
+    .list<StoredUserPolicy>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("userpolicy/") &&
+        entry.value.UserName === userName,
+    )
+    .map((entry) => entry.value.PolicyName);
+  return { PolicyNames: names, IsTruncated: false };
+};
+
+const AttachUserPolicy: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const policyArn = requireString(input, "PolicyArn");
+  requireUser(ctx, userName);
+  const policy = requirePolicy(ctx, policyArn);
+  const attachment: StoredUserAttachment = {
+    UserName: userName,
+    PolicyArn: policyArn,
+    PolicyName: policy.PolicyName,
+  };
+  ctx.store.set(userAttachmentKey(userName, policyArn), attachment);
+  return {};
+};
+
+const DetachUserPolicy: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const policyArn = requireString(input, "PolicyArn");
+  requireUser(ctx, userName);
+  const key = userAttachmentKey(userName, policyArn);
+  if (ctx.store.get<StoredUserAttachment>(key) === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Policy ${policyArn} was not attached to user ${userName}.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const ListAttachedUserPolicies: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  const attached = ctx.store
+    .list<StoredUserAttachment>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("userattachment/") &&
+        entry.value.UserName === userName,
+    )
+    .map((entry) => ({
+      PolicyName: entry.value.PolicyName,
+      PolicyArn: entry.value.PolicyArn,
+    }));
+  return { AttachedPolicies: attached, IsTruncated: false };
+};
+
+const PutUserPermissionsBoundary: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const permissionsBoundary = requireString(input, "PermissionsBoundary");
+  const user = requireUser(ctx, userName);
+  ctx.store.set(userKey(userName), {
+    ...user,
+    PermissionsBoundary: {
+      PermissionsBoundaryType: "Policy",
+      PermissionsBoundaryArn: permissionsBoundary,
+    },
+  });
+  return {};
+};
+
+const DeleteUserPermissionsBoundary: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const user = requireUser(ctx, userName);
+  const { PermissionsBoundary: _pb, ...rest } = user;
+  ctx.store.set(userKey(userName), rest);
+  return {};
+};
+
 const CreatePolicy: OperationHandler = (input, ctx) => {
   const name = requireString(input, "PolicyName");
   const document = requireString(input, "PolicyDocument");
@@ -406,6 +780,50 @@ const ListAccessKeys: OperationHandler = (input, ctx) => {
       CreateDate: key.CreateDate,
     }));
   return { AccessKeyMetadata: keys, IsTruncated: false };
+};
+
+const DeleteAccessKey: OperationHandler = (input, ctx) => {
+  const accessKeyId = requireString(input, "AccessKeyId");
+  const key = accessKeyKey(accessKeyId);
+  if (ctx.store.get<StoredAccessKey>(key) === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Access Key ${accessKeyId} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const UpdateAccessKey: OperationHandler = (input, ctx) => {
+  const accessKeyId = requireString(input, "AccessKeyId");
+  const status = requireString(input, "Status");
+  const key = accessKeyKey(accessKeyId);
+  const accessKey = ctx.store.get<StoredAccessKey>(key);
+  if (accessKey === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Access Key ${accessKeyId} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.set(key, { ...accessKey, Status: status });
+  return {};
+};
+
+const GetAccessKeyLastUsed: OperationHandler = (input, ctx) => {
+  const accessKeyId = requireString(input, "AccessKeyId");
+  const accessKey = ctx.store.get<StoredAccessKey>(accessKeyKey(accessKeyId));
+  const userName = accessKey?.UserName ?? "";
+  return {
+    UserName: userName,
+    AccessKeyLastUsed: {
+      LastUsedDate: undefined,
+      ServiceName: "N/A",
+      Region: "N/A",
+    },
+  };
 };
 
 const PutRolePolicy: OperationHandler = (input, ctx) => {
@@ -672,6 +1090,49 @@ const DeleteGroup: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const UpdateGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "GroupName");
+  const group = requireGroup(ctx, name);
+  const newPath = optionalString(input, "NewPath");
+  const newName = optionalString(input, "NewGroupName");
+  if (newName !== undefined && newName !== name) {
+    if (ctx.store.get<StoredGroup>(groupKey(newName)) !== undefined) {
+      throw awsError(
+        "EntityAlreadyExists",
+        `Group with name ${newName} already exists.`,
+        409,
+      );
+    }
+    const updatedGroup: StoredGroup = {
+      ...group,
+      GroupName: newName,
+      Path: newPath ?? group.Path,
+      Arn: groupArnOf(ctx.account, newPath ?? group.Path, newName),
+    };
+    ctx.store.set(groupKey(newName), updatedGroup);
+    ctx.store.delete(groupKey(name));
+    for (const entry of ctx.store.list<StoredGroupMember>()) {
+      if (
+        entry.key.startsWith("groupmember/") &&
+        entry.value.GroupName === name
+      ) {
+        ctx.store.delete(entry.key);
+        ctx.store.set(groupMemberKey(newName, entry.value.UserName), {
+          GroupName: newName,
+          UserName: entry.value.UserName,
+        });
+      }
+    }
+  } else if (newPath !== undefined) {
+    ctx.store.set(groupKey(name), {
+      ...group,
+      Path: newPath,
+      Arn: groupArnOf(ctx.account, newPath, name),
+    });
+  }
+  return {};
+};
+
 const AddUserToGroup: OperationHandler = (input, ctx) => {
   const groupName = requireString(input, "GroupName");
   const userName = requireString(input, "UserName");
@@ -691,6 +1152,131 @@ const RemoveUserFromGroup: OperationHandler = (input, ctx) => {
   requireGroup(ctx, groupName);
   ctx.store.delete(groupMemberKey(groupName, userName));
   return {};
+};
+
+const ListGroupsForUser: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  const groups = ctx.store
+    .list<StoredGroupMember>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("groupmember/") &&
+        entry.value.UserName === userName,
+    )
+    .map((entry) => ctx.store.get<StoredGroup>(groupKey(entry.value.GroupName)))
+    .filter((group): group is StoredGroup => group !== undefined);
+  return { Groups: groups, IsTruncated: false };
+};
+
+const AttachGroupPolicy: OperationHandler = (input, ctx) => {
+  const groupName = requireString(input, "GroupName");
+  const policyArn = requireString(input, "PolicyArn");
+  requireGroup(ctx, groupName);
+  const policy = requirePolicy(ctx, policyArn);
+  const attachment: StoredGroupAttachment = {
+    GroupName: groupName,
+    PolicyArn: policyArn,
+    PolicyName: policy.PolicyName,
+  };
+  ctx.store.set(groupAttachmentKey(groupName, policyArn), attachment);
+  return {};
+};
+
+const DetachGroupPolicy: OperationHandler = (input, ctx) => {
+  const groupName = requireString(input, "GroupName");
+  const policyArn = requireString(input, "PolicyArn");
+  requireGroup(ctx, groupName);
+  const key = groupAttachmentKey(groupName, policyArn);
+  if (ctx.store.get<StoredGroupAttachment>(key) === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Policy ${policyArn} was not attached to group ${groupName}.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const ListAttachedGroupPolicies: OperationHandler = (input, ctx) => {
+  const groupName = requireString(input, "GroupName");
+  requireGroup(ctx, groupName);
+  const attached = ctx.store
+    .list<StoredGroupAttachment>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("groupattachment/") &&
+        entry.value.GroupName === groupName,
+    )
+    .map((entry) => ({
+      PolicyName: entry.value.PolicyName,
+      PolicyArn: entry.value.PolicyArn,
+    }));
+  return { AttachedPolicies: attached, IsTruncated: false };
+};
+
+const PutGroupPolicy: OperationHandler = (input, ctx) => {
+  const groupName = requireString(input, "GroupName");
+  const policyName = requireString(input, "PolicyName");
+  const policyDocument = requireString(input, "PolicyDocument");
+  requireGroup(ctx, groupName);
+  const groupPolicy: StoredGroupPolicy = {
+    GroupName: groupName,
+    PolicyName: policyName,
+    PolicyDocument: policyDocument,
+  };
+  ctx.store.set(groupPolicyKey(groupName, policyName), groupPolicy);
+  return {};
+};
+
+const GetGroupPolicy: OperationHandler = (input, ctx) => {
+  const groupName = requireString(input, "GroupName");
+  const policyName = requireString(input, "PolicyName");
+  const groupPolicy = ctx.store.get<StoredGroupPolicy>(
+    groupPolicyKey(groupName, policyName),
+  );
+  if (groupPolicy === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `The group policy with name ${policyName} cannot be found.`,
+      404,
+    );
+  }
+  return {
+    GroupName: groupPolicy.GroupName,
+    PolicyName: groupPolicy.PolicyName,
+    PolicyDocument: groupPolicy.PolicyDocument,
+  };
+};
+
+const DeleteGroupPolicy: OperationHandler = (input, ctx) => {
+  const groupName = requireString(input, "GroupName");
+  const policyName = requireString(input, "PolicyName");
+  const key = groupPolicyKey(groupName, policyName);
+  if (ctx.store.get<StoredGroupPolicy>(key) === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `The group policy with name ${policyName} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const ListGroupPolicies: OperationHandler = (input, ctx) => {
+  const groupName = requireString(input, "GroupName");
+  requireGroup(ctx, groupName);
+  const names = ctx.store
+    .list<StoredGroupPolicy>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("grouppolicy/") &&
+        entry.value.GroupName === groupName,
+    )
+    .map((entry) => entry.value.PolicyName);
+  return { PolicyNames: names, IsTruncated: false };
 };
 
 const policyVersionsOf = (
@@ -828,6 +1414,984 @@ const CreateServiceLinkedRole: OperationHandler = (input, ctx) => {
   return { Role: role };
 };
 
+const CreateLoginProfile: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  if (
+    ctx.store.get<StoredLoginProfile>(loginProfileKey(userName)) !== undefined
+  ) {
+    throw awsError(
+      "EntityAlreadyExists",
+      `Login Profile for user ${userName} already exists.`,
+      409,
+    );
+  }
+  const profile: StoredLoginProfile = {
+    UserName: userName,
+    CreateDate: new Date().toISOString(),
+    PasswordResetRequired:
+      optionalBool(input, "PasswordResetRequired") ?? false,
+  };
+  ctx.store.set(loginProfileKey(userName), profile);
+  return {
+    LoginProfile: {
+      UserName: profile.UserName,
+      CreateDate: profile.CreateDate,
+      PasswordResetRequired: profile.PasswordResetRequired,
+    },
+  };
+};
+
+const GetLoginProfile: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  const profile = ctx.store.get<StoredLoginProfile>(loginProfileKey(userName));
+  if (profile === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Login Profile for user ${userName} cannot be found.`,
+      404,
+    );
+  }
+  return {
+    LoginProfile: {
+      UserName: profile.UserName,
+      CreateDate: profile.CreateDate,
+      PasswordResetRequired: profile.PasswordResetRequired,
+    },
+  };
+};
+
+const UpdateLoginProfile: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  const profile = ctx.store.get<StoredLoginProfile>(loginProfileKey(userName));
+  if (profile === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Login Profile for user ${userName} cannot be found.`,
+      404,
+    );
+  }
+  const passwordResetRequired = optionalBool(input, "PasswordResetRequired");
+  ctx.store.set(loginProfileKey(userName), {
+    ...profile,
+    PasswordResetRequired:
+      passwordResetRequired ?? profile.PasswordResetRequired,
+  });
+  return {};
+};
+
+const DeleteLoginProfile: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  const key = loginProfileKey(userName);
+  if (ctx.store.get<StoredLoginProfile>(key) === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `Login Profile for user ${userName} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const CreateAccountAlias: OperationHandler = (input, ctx) => {
+  const alias = requireString(input, "AccountAlias");
+  ctx.store.set("accountalias/0", { AccountAlias: alias });
+  return {};
+};
+
+const DeleteAccountAlias: OperationHandler = (input, ctx) => {
+  const alias = requireString(input, "AccountAlias");
+  const stored = ctx.store.get<{ AccountAlias: string }>("accountalias/0");
+  if (stored === undefined || stored.AccountAlias !== alias) {
+    throw awsError(
+      "NoSuchEntity",
+      `The account alias ${alias} does not exist.`,
+      404,
+    );
+  }
+  ctx.store.delete("accountalias/0");
+  return {};
+};
+
+const ListAccountAliases: OperationHandler = (input, ctx) => {
+  const stored = ctx.store.get<{ AccountAlias: string }>("accountalias/0");
+  const aliases = stored !== undefined ? [stored.AccountAlias] : [];
+  return { AccountAliases: aliases, IsTruncated: false };
+};
+
+const UpdateAccountPasswordPolicy: OperationHandler = (input, ctx) => {
+  const existing =
+    ctx.store.get<StoredPasswordPolicy>("passwordpolicy/0") ?? {};
+  const updated: StoredPasswordPolicy = {
+    ...existing,
+  };
+  const minLen = optionalNumber(input, "MinimumPasswordLength");
+  if (minLen !== undefined) updated.MinimumPasswordLength = minLen;
+  const reqSymbols = optionalBool(input, "RequireSymbols");
+  if (reqSymbols !== undefined) updated.RequireSymbols = reqSymbols;
+  const reqNumbers = optionalBool(input, "RequireNumbers");
+  if (reqNumbers !== undefined) updated.RequireNumbers = reqNumbers;
+  const reqUpper = optionalBool(input, "RequireUppercaseCharacters");
+  if (reqUpper !== undefined) updated.RequireUppercaseCharacters = reqUpper;
+  const reqLower = optionalBool(input, "RequireLowercaseCharacters");
+  if (reqLower !== undefined) updated.RequireLowercaseCharacters = reqLower;
+  const allowChange = optionalBool(input, "AllowUsersToChangePassword");
+  if (allowChange !== undefined)
+    updated.AllowUsersToChangePassword = allowChange;
+  const maxAge = optionalNumber(input, "MaxPasswordAge");
+  if (maxAge !== undefined) updated.MaxPasswordAge = maxAge;
+  const reuse = optionalNumber(input, "PasswordReusePrevention");
+  if (reuse !== undefined) updated.PasswordReusePrevention = reuse;
+  const hardExpiry = optionalBool(input, "HardExpiry");
+  if (hardExpiry !== undefined) updated.HardExpiry = hardExpiry;
+  ctx.store.set("passwordpolicy/0", updated);
+  return {};
+};
+
+const GetAccountPasswordPolicy: OperationHandler = (input, ctx) => {
+  const policy = ctx.store.get<StoredPasswordPolicy>("passwordpolicy/0");
+  if (policy === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      "The Password Policy with domain name does not exist.",
+      404,
+    );
+  }
+  return {
+    PasswordPolicy: {
+      MinimumPasswordLength: policy.MinimumPasswordLength,
+      RequireSymbols: policy.RequireSymbols,
+      RequireNumbers: policy.RequireNumbers,
+      RequireUppercaseCharacters: policy.RequireUppercaseCharacters,
+      RequireLowercaseCharacters: policy.RequireLowercaseCharacters,
+      AllowUsersToChangePassword: policy.AllowUsersToChangePassword,
+      ExpirePasswords:
+        policy.MaxPasswordAge !== undefined && policy.MaxPasswordAge > 0,
+      MaxPasswordAge: policy.MaxPasswordAge,
+      PasswordReusePrevention: policy.PasswordReusePrevention,
+      HardExpiry: policy.HardExpiry,
+    },
+  };
+};
+
+const DeleteAccountPasswordPolicy: OperationHandler = (input, ctx) => {
+  if (ctx.store.get<StoredPasswordPolicy>("passwordpolicy/0") === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      "The Password Policy with domain name does not exist.",
+      404,
+    );
+  }
+  ctx.store.delete("passwordpolicy/0");
+  return {};
+};
+
+const GetAccountSummary: OperationHandler = (input, ctx) => {
+  const users = ctx.store
+    .list<StoredUser>()
+    .filter((e) => e.key.startsWith("user/")).length;
+  const groups = ctx.store
+    .list<StoredGroup>()
+    .filter((e) => e.key.startsWith("group/")).length;
+  const roles = ctx.store
+    .list<StoredRole>()
+    .filter((e) => e.key.startsWith("role/")).length;
+  const policies = ctx.store
+    .list<StoredPolicy>()
+    .filter((e) => e.key.startsWith("policy/")).length;
+  const mfaDevices = ctx.store
+    .list<StoredEnabledMFADevice>()
+    .filter((e) => e.key.startsWith("mfaenabled/")).length;
+  const serverCerts = ctx.store
+    .list<StoredServerCertificate>()
+    .filter((e) => e.key.startsWith("servercert/")).length;
+  const instanceProfiles = ctx.store
+    .list<StoredInstanceProfile>()
+    .filter((e) => e.key.startsWith("instanceprofile/")).length;
+  return {
+    SummaryMap: {
+      Users: users,
+      UsersQuota: 5000,
+      Groups: groups,
+      GroupsQuota: 300,
+      Roles: roles,
+      RolesQuota: 1000,
+      Policies: policies,
+      PoliciesQuota: 1500,
+      MFADevices: mfaDevices,
+      MFADevicesInUse: mfaDevices,
+      AccountMFAEnabled: 0,
+      AccountAccessKeysPresent: 0,
+      AccountPasswordPresent:
+        ctx.store.get("passwordpolicy/0") !== undefined ? 1 : 0,
+      AccountSigningCertificatesPresent: 0,
+      ServerCertificates: serverCerts,
+      ServerCertificatesQuota: 20,
+      InstanceProfiles: instanceProfiles,
+      InstanceProfilesQuota: 1000,
+      GroupsPerUserQuota: 10,
+      SigningCertificatesPerUserQuota: 2,
+      AccessKeysPerUserQuota: 2,
+      AttachedPoliciesPerGroupQuota: 10,
+      AttachedPoliciesPerRoleQuota: 10,
+      AttachedPoliciesPerUserQuota: 10,
+      UserPolicySizeQuota: 2048,
+      GroupPolicySizeQuota: 5120,
+      RolePolicySizeQuota: 10240,
+      PolicySizeQuota: 6144,
+      PolicyVersionsInUse: 0,
+      PolicyVersionsInUseQuota: 10000,
+      VersionsPerPolicyQuota: 5,
+      GlobalEndpointTokenVersion: 1,
+      AssumeRolePolicySizeQuota: 2048,
+      Providers: 0,
+    },
+  };
+};
+
+const ChangePassword: OperationHandler = (input, ctx) => {
+  requireString(input, "OldPassword");
+  requireString(input, "NewPassword");
+  return {};
+};
+
+const requireServerCert = (
+  ctx: ServiceContext,
+  name: string,
+): StoredServerCertificate => {
+  const cert = ctx.store.get<StoredServerCertificate>(serverCertKey(name));
+  if (cert === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `The Server Certificate with name ${name} cannot be found.`,
+      404,
+    );
+  }
+  return cert;
+};
+
+const UploadServerCertificate: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ServerCertificateName");
+  if (
+    ctx.store.get<StoredServerCertificate>(serverCertKey(name)) !== undefined
+  ) {
+    throw awsError(
+      "EntityAlreadyExists",
+      `Server certificate ${name} already exists.`,
+      409,
+    );
+  }
+  const path = normalizePath(input);
+  const now = new Date().toISOString();
+  const cert: StoredServerCertificate = {
+    Path: path,
+    ServerCertificateName: name,
+    ServerCertificateId: `ASCA${randomHex(16)}`,
+    Arn: serverCertArnOf(ctx.account, path, name),
+    UploadDate: now,
+    CertificateBody: requireString(input, "CertificateBody"),
+    PrivateKey: requireString(input, "PrivateKey"),
+    CertificateChain: optionalString(input, "CertificateChain"),
+    Tags: toTagList(input),
+  };
+  ctx.store.set(serverCertKey(name), cert);
+  return {
+    ServerCertificateMetadata: {
+      Path: cert.Path,
+      ServerCertificateName: cert.ServerCertificateName,
+      ServerCertificateId: cert.ServerCertificateId,
+      Arn: cert.Arn,
+      UploadDate: cert.UploadDate,
+      Expiration: cert.Expiration,
+    },
+    Tags: cert.Tags,
+  };
+};
+
+const GetServerCertificate: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ServerCertificateName");
+  const cert = requireServerCert(ctx, name);
+  return {
+    ServerCertificate: {
+      ServerCertificateMetadata: {
+        Path: cert.Path,
+        ServerCertificateName: cert.ServerCertificateName,
+        ServerCertificateId: cert.ServerCertificateId,
+        Arn: cert.Arn,
+        UploadDate: cert.UploadDate,
+        Expiration: cert.Expiration,
+      },
+      CertificateBody: cert.CertificateBody,
+      CertificateChain: cert.CertificateChain,
+      Tags: cert.Tags,
+    },
+  };
+};
+
+const UpdateServerCertificate: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ServerCertificateName");
+  const cert = requireServerCert(ctx, name);
+  const newPath = optionalString(input, "NewPath");
+  const newName = optionalString(input, "NewServerCertificateName");
+  if (newName !== undefined && newName !== name) {
+    if (
+      ctx.store.get<StoredServerCertificate>(serverCertKey(newName)) !==
+      undefined
+    ) {
+      throw awsError(
+        "EntityAlreadyExists",
+        `Server certificate ${newName} already exists.`,
+        409,
+      );
+    }
+    const updatedCert: StoredServerCertificate = {
+      ...cert,
+      ServerCertificateName: newName,
+      Path: newPath ?? cert.Path,
+      Arn: serverCertArnOf(ctx.account, newPath ?? cert.Path, newName),
+    };
+    ctx.store.set(serverCertKey(newName), updatedCert);
+    ctx.store.delete(serverCertKey(name));
+  } else if (newPath !== undefined) {
+    ctx.store.set(serverCertKey(name), {
+      ...cert,
+      Path: newPath,
+      Arn: serverCertArnOf(ctx.account, newPath, name),
+    });
+  }
+  return {};
+};
+
+const DeleteServerCertificate: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ServerCertificateName");
+  requireServerCert(ctx, name);
+  ctx.store.delete(serverCertKey(name));
+  for (const entry of ctx.store.list()) {
+    if (
+      entry.key.startsWith("servercerttag/") &&
+      entry.key.startsWith(`servercerttag/${name}/`)
+    ) {
+      ctx.store.delete(entry.key);
+    }
+  }
+  return {};
+};
+
+const ListServerCertificates: OperationHandler = (input, ctx) => {
+  const prefix = optionalString(input, "PathPrefix") ?? "/";
+  const certs = ctx.store
+    .list<StoredServerCertificate>()
+    .filter((entry) => entry.key.startsWith("servercert/"))
+    .map((entry) => entry.value)
+    .filter((cert) => cert.Path.startsWith(prefix))
+    .map((cert) => ({
+      Path: cert.Path,
+      ServerCertificateName: cert.ServerCertificateName,
+      ServerCertificateId: cert.ServerCertificateId,
+      Arn: cert.Arn,
+      UploadDate: cert.UploadDate,
+      Expiration: cert.Expiration,
+    }));
+  return { ServerCertificateMetadataList: certs, IsTruncated: false };
+};
+
+const TagServerCertificate: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ServerCertificateName");
+  requireServerCert(ctx, name);
+  for (const tag of toTagList(input)) {
+    ctx.store.set(serverCertTagKey(name, tag.Key), {
+      ServerCertificateName: name,
+      ...tag,
+    });
+  }
+  return {};
+};
+
+const UntagServerCertificate: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ServerCertificateName");
+  requireServerCert(ctx, name);
+  const tagKeys = input["TagKeys"];
+  if (Array.isArray(tagKeys)) {
+    for (const key of tagKeys) {
+      if (typeof key === "string") {
+        ctx.store.delete(serverCertTagKey(name, key));
+      }
+    }
+  }
+  return {};
+};
+
+const ListServerCertificateTags: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ServerCertificateName");
+  requireServerCert(ctx, name);
+  const tags = ctx.store
+    .list<StoredTag & { ServerCertificateName: string }>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("servercerttag/") &&
+        entry.value.ServerCertificateName === name,
+    )
+    .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
+  return { Tags: tags, IsTruncated: false };
+};
+
+const UploadSSHPublicKey: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  const body = requireString(input, "SSHPublicKeyBody");
+  const now = new Date().toISOString();
+  const keyId = `APKA${randomHex(16)}`;
+  const sshKey: StoredSSHPublicKey = {
+    UserName: userName,
+    SSHPublicKeyId: keyId,
+    Fingerprint: randomHex(47),
+    SSHPublicKeyBody: body,
+    Status: "Active",
+    UploadDate: now,
+  };
+  ctx.store.set(sshPublicKeyKey(keyId), sshKey);
+  return {
+    SSHPublicKey: {
+      UserName: sshKey.UserName,
+      SSHPublicKeyId: sshKey.SSHPublicKeyId,
+      Fingerprint: sshKey.Fingerprint,
+      SSHPublicKeyBody: sshKey.SSHPublicKeyBody,
+      Status: sshKey.Status,
+      UploadDate: sshKey.UploadDate,
+    },
+  };
+};
+
+const GetSSHPublicKey: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const keyId = requireString(input, "SSHPublicKeyId");
+  const sshKey = ctx.store.get<StoredSSHPublicKey>(sshPublicKeyKey(keyId));
+  if (sshKey === undefined || sshKey.UserName !== userName) {
+    throw awsError(
+      "NoSuchEntity",
+      `The SSH public key with ID ${keyId} cannot be found.`,
+      404,
+    );
+  }
+  return {
+    SSHPublicKey: {
+      UserName: sshKey.UserName,
+      SSHPublicKeyId: sshKey.SSHPublicKeyId,
+      Fingerprint: sshKey.Fingerprint,
+      SSHPublicKeyBody: sshKey.SSHPublicKeyBody,
+      Status: sshKey.Status,
+      UploadDate: sshKey.UploadDate,
+    },
+  };
+};
+
+const UpdateSSHPublicKey: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const keyId = requireString(input, "SSHPublicKeyId");
+  const status = requireString(input, "Status");
+  const sshKey = ctx.store.get<StoredSSHPublicKey>(sshPublicKeyKey(keyId));
+  if (sshKey === undefined || sshKey.UserName !== userName) {
+    throw awsError(
+      "NoSuchEntity",
+      `The SSH public key with ID ${keyId} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.set(sshPublicKeyKey(keyId), { ...sshKey, Status: status });
+  return {};
+};
+
+const DeleteSSHPublicKey: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const keyId = requireString(input, "SSHPublicKeyId");
+  const sshKey = ctx.store.get<StoredSSHPublicKey>(sshPublicKeyKey(keyId));
+  if (sshKey === undefined || sshKey.UserName !== userName) {
+    throw awsError(
+      "NoSuchEntity",
+      `The SSH public key with ID ${keyId} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.delete(sshPublicKeyKey(keyId));
+  return {};
+};
+
+const ListSSHPublicKeys: OperationHandler = (input, ctx) => {
+  const userName = optionalString(input, "UserName");
+  const keys = ctx.store
+    .list<StoredSSHPublicKey>()
+    .filter((entry) => entry.key.startsWith("sshpublickey/"))
+    .map((entry) => entry.value)
+    .filter((key) => userName === undefined || key.UserName === userName)
+    .map((key) => ({
+      UserName: key.UserName,
+      SSHPublicKeyId: key.SSHPublicKeyId,
+      Status: key.Status,
+      UploadDate: key.UploadDate,
+    }));
+  return { SSHPublicKeys: keys, IsTruncated: false };
+};
+
+const UploadSigningCertificate: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  requireUser(ctx, userName);
+  const body = requireString(input, "CertificateBody");
+  const now = new Date().toISOString();
+  const certId = randomHex(40).toLowerCase();
+  const cert: StoredSigningCertificate = {
+    UserName: userName,
+    CertificateId: certId,
+    CertificateBody: body,
+    Status: "Active",
+    UploadDate: now,
+  };
+  ctx.store.set(signingCertKey(certId), cert);
+  return {
+    Certificate: {
+      UserName: cert.UserName,
+      CertificateId: cert.CertificateId,
+      CertificateBody: cert.CertificateBody,
+      Status: cert.Status,
+      UploadDate: cert.UploadDate,
+    },
+  };
+};
+
+const UpdateSigningCertificate: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const certId = requireString(input, "CertificateId");
+  const status = requireString(input, "Status");
+  const cert = ctx.store.get<StoredSigningCertificate>(signingCertKey(certId));
+  if (cert === undefined || cert.UserName !== userName) {
+    throw awsError(
+      "NoSuchEntity",
+      `The Signing Certificate with ID ${certId} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.set(signingCertKey(certId), { ...cert, Status: status });
+  return {};
+};
+
+const DeleteSigningCertificate: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const certId = requireString(input, "CertificateId");
+  const cert = ctx.store.get<StoredSigningCertificate>(signingCertKey(certId));
+  if (cert === undefined || cert.UserName !== userName) {
+    throw awsError(
+      "NoSuchEntity",
+      `The Signing Certificate with ID ${certId} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.delete(signingCertKey(certId));
+  return {};
+};
+
+const ListSigningCertificates: OperationHandler = (input, ctx) => {
+  const userName = optionalString(input, "UserName");
+  const certs = ctx.store
+    .list<StoredSigningCertificate>()
+    .filter((entry) => entry.key.startsWith("signingcert/"))
+    .map((entry) => entry.value)
+    .filter((cert) => userName === undefined || cert.UserName === userName)
+    .map((cert) => ({
+      UserName: cert.UserName,
+      CertificateId: cert.CertificateId,
+      CertificateBody: cert.CertificateBody,
+      Status: cert.Status,
+      UploadDate: cert.UploadDate,
+    }));
+  return { Certificates: certs, IsTruncated: false };
+};
+
+const CreateVirtualMFADevice: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "VirtualMFADeviceName");
+  const path = normalizePath(input);
+  const serialNumber = virtualMfaArnOf(ctx.account, path, name);
+  if (
+    ctx.store.get<StoredVirtualMFADevice>(virtualMfaKey(serialNumber)) !==
+    undefined
+  ) {
+    throw awsError(
+      "EntityAlreadyExists",
+      `VirtualMFADevice with name ${name} already exists.`,
+      409,
+    );
+  }
+  const device: StoredVirtualMFADevice = {
+    SerialNumber: serialNumber,
+    VirtualMFADeviceName: name,
+    Path: path,
+    Tags: toTagList(input),
+  };
+  ctx.store.set(virtualMfaKey(serialNumber), device);
+  return {
+    VirtualMFADevice: {
+      SerialNumber: device.SerialNumber,
+      Base32StringSeed: Buffer.from(randomHex(20)).toString("base64"),
+      QRCodePNG: Buffer.from(randomHex(20)).toString("base64"),
+      Tags: device.Tags,
+    },
+  };
+};
+
+const EnableMFADevice: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const serialNumber = requireString(input, "SerialNumber");
+  requireUser(ctx, userName);
+  const enabledDevice: StoredEnabledMFADevice = {
+    UserName: userName,
+    SerialNumber: serialNumber,
+    EnableDate: new Date().toISOString(),
+  };
+  ctx.store.set(enabledMfaKey(serialNumber), enabledDevice);
+  const vDevice = ctx.store.get<StoredVirtualMFADevice>(
+    virtualMfaKey(serialNumber),
+  );
+  if (vDevice !== undefined) {
+    ctx.store.set(virtualMfaKey(serialNumber), vDevice);
+  }
+  return {};
+};
+
+const DeactivateMFADevice: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const serialNumber = requireString(input, "SerialNumber");
+  requireUser(ctx, userName);
+  ctx.store.delete(enabledMfaKey(serialNumber));
+  return {};
+};
+
+const ResyncMFADevice: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const serialNumber = requireString(input, "SerialNumber");
+  requireUser(ctx, userName);
+  const device = ctx.store.get<StoredEnabledMFADevice>(
+    enabledMfaKey(serialNumber),
+  );
+  if (device === undefined || device.UserName !== userName) {
+    throw awsError(
+      "InvalidAuthenticationCode",
+      `Device ${serialNumber} not found for user ${userName}.`,
+      400,
+    );
+  }
+  return {};
+};
+
+const DeleteVirtualMFADevice: OperationHandler = (input, ctx) => {
+  const serialNumber = requireString(input, "SerialNumber");
+  if (
+    ctx.store.get<StoredVirtualMFADevice>(virtualMfaKey(serialNumber)) ===
+    undefined
+  ) {
+    throw awsError(
+      "NoSuchEntity",
+      `VirtualMFADevice with serial ${serialNumber} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.delete(virtualMfaKey(serialNumber));
+  ctx.store.delete(enabledMfaKey(serialNumber));
+  return {};
+};
+
+const GetMFADevice: OperationHandler = (input, ctx) => {
+  const serialNumber = requireString(input, "SerialNumber");
+  const device = ctx.store.get<StoredEnabledMFADevice>(
+    enabledMfaKey(serialNumber),
+  );
+  if (device === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `MFA Device ${serialNumber} cannot be found.`,
+      404,
+    );
+  }
+  return {
+    UserName: device.UserName,
+    SerialNumber: device.SerialNumber,
+    EnableDate: device.EnableDate,
+  };
+};
+
+const ListMFADevices: OperationHandler = (input, ctx) => {
+  const userName = optionalString(input, "UserName");
+  const devices = ctx.store
+    .list<StoredEnabledMFADevice>()
+    .filter((entry) => entry.key.startsWith("mfaenabled/"))
+    .map((entry) => entry.value)
+    .filter((device) => userName === undefined || device.UserName === userName)
+    .map((device) => ({
+      UserName: device.UserName,
+      SerialNumber: device.SerialNumber,
+      EnableDate: device.EnableDate,
+    }));
+  return { MFADevices: devices, IsTruncated: false };
+};
+
+const ListVirtualMFADevices: OperationHandler = (input, ctx) => {
+  const assignmentStatus = optionalString(input, "AssignmentStatus") ?? "Any";
+  const enabledSerials = new Set(
+    ctx.store
+      .list<StoredEnabledMFADevice>()
+      .filter((e) => e.key.startsWith("mfaenabled/"))
+      .map((e) => e.value.SerialNumber),
+  );
+  const devices = ctx.store
+    .list<StoredVirtualMFADevice>()
+    .filter((entry) => entry.key.startsWith("virtualmfa/"))
+    .map((entry) => entry.value)
+    .filter((device) => {
+      const isAssigned = enabledSerials.has(device.SerialNumber);
+      if (assignmentStatus === "Assigned") return isAssigned;
+      if (assignmentStatus === "Unassigned") return !isAssigned;
+      return true;
+    })
+    .map((device) => {
+      const enabled = ctx.store.get<StoredEnabledMFADevice>(
+        enabledMfaKey(device.SerialNumber),
+      );
+      const user =
+        enabled !== undefined
+          ? ctx.store.get<StoredUser>(userKey(enabled.UserName))
+          : undefined;
+      return {
+        SerialNumber: device.SerialNumber,
+        EnableDate: enabled?.EnableDate,
+        User: user,
+        Tags: device.Tags,
+      };
+    });
+  return { VirtualMFADevices: devices, IsTruncated: false };
+};
+
+const TagMFADevice: OperationHandler = (input, ctx) => {
+  const serialNumber = requireString(input, "SerialNumber");
+  if (
+    ctx.store.get<StoredVirtualMFADevice>(virtualMfaKey(serialNumber)) ===
+    undefined
+  ) {
+    throw awsError(
+      "NoSuchEntity",
+      `MFA device ${serialNumber} cannot be found.`,
+      404,
+    );
+  }
+  for (const tag of toTagList(input)) {
+    ctx.store.set(mfaTagKey(serialNumber, tag.Key), {
+      SerialNumber: serialNumber,
+      ...tag,
+    });
+  }
+  return {};
+};
+
+const UntagMFADevice: OperationHandler = (input, ctx) => {
+  const serialNumber = requireString(input, "SerialNumber");
+  if (
+    ctx.store.get<StoredVirtualMFADevice>(virtualMfaKey(serialNumber)) ===
+    undefined
+  ) {
+    throw awsError(
+      "NoSuchEntity",
+      `MFA device ${serialNumber} cannot be found.`,
+      404,
+    );
+  }
+  const tagKeys = input["TagKeys"];
+  if (Array.isArray(tagKeys)) {
+    for (const key of tagKeys) {
+      if (typeof key === "string") {
+        ctx.store.delete(mfaTagKey(serialNumber, key));
+      }
+    }
+  }
+  return {};
+};
+
+const ListMFADeviceTags: OperationHandler = (input, ctx) => {
+  const serialNumber = requireString(input, "SerialNumber");
+  if (
+    ctx.store.get<StoredVirtualMFADevice>(virtualMfaKey(serialNumber)) ===
+    undefined
+  ) {
+    throw awsError(
+      "NoSuchEntity",
+      `MFA device ${serialNumber} cannot be found.`,
+      404,
+    );
+  }
+  const tags = ctx.store
+    .list<StoredTag & { SerialNumber: string }>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("mfatag/") &&
+        entry.value.SerialNumber === serialNumber,
+    )
+    .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
+  return { Tags: tags, IsTruncated: false };
+};
+
+const CreateServiceSpecificCredential: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const serviceName = requireString(input, "ServiceName");
+  requireUser(ctx, userName);
+  const now = new Date().toISOString();
+  const credId = `AKDA${randomHex(16)}`;
+  const cred: StoredServiceSpecificCredential = {
+    UserName: userName,
+    ServiceName: serviceName,
+    ServiceSpecificCredentialId: credId,
+    ServiceUserName: `${userName}-at-${ctx.account}`,
+    ServicePassword: randomHex(40),
+    Status: "Active",
+    CreateDate: now,
+  };
+  ctx.store.set(serviceSpecCredKey(credId), cred);
+  return {
+    ServiceSpecificCredential: {
+      CreateDate: cred.CreateDate,
+      ServiceName: cred.ServiceName,
+      ServiceUserName: cred.ServiceUserName,
+      ServicePassword: cred.ServicePassword,
+      ServiceSpecificCredentialId: cred.ServiceSpecificCredentialId,
+      UserName: cred.UserName,
+      Status: cred.Status,
+    },
+  };
+};
+
+const DeleteServiceSpecificCredential: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const credId = requireString(input, "ServiceSpecificCredentialId");
+  const cred = ctx.store.get<StoredServiceSpecificCredential>(
+    serviceSpecCredKey(credId),
+  );
+  if (cred === undefined || cred.UserName !== userName) {
+    throw awsError(
+      "NoSuchEntity",
+      `Service specific credential ${credId} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.delete(serviceSpecCredKey(credId));
+  return {};
+};
+
+const ListServiceSpecificCredentials: OperationHandler = (input, ctx) => {
+  const userName = optionalString(input, "UserName");
+  const serviceName = optionalString(input, "ServiceName");
+  const creds = ctx.store
+    .list<StoredServiceSpecificCredential>()
+    .filter((entry) => entry.key.startsWith("servicespeccred/"))
+    .map((entry) => entry.value)
+    .filter((cred) => userName === undefined || cred.UserName === userName)
+    .filter(
+      (cred) => serviceName === undefined || cred.ServiceName === serviceName,
+    )
+    .map((cred) => ({
+      UserName: cred.UserName,
+      Status: cred.Status,
+      ServiceUserName: cred.ServiceUserName,
+      CreateDate: cred.CreateDate,
+      ServiceSpecificCredentialId: cred.ServiceSpecificCredentialId,
+      ServiceName: cred.ServiceName,
+    }));
+  return { ServiceSpecificCredentials: creds };
+};
+
+const ResetServiceSpecificCredential: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const credId = requireString(input, "ServiceSpecificCredentialId");
+  const cred = ctx.store.get<StoredServiceSpecificCredential>(
+    serviceSpecCredKey(credId),
+  );
+  if (cred === undefined || cred.UserName !== userName) {
+    throw awsError(
+      "NoSuchEntity",
+      `Service specific credential ${credId} cannot be found.`,
+      404,
+    );
+  }
+  const updated: StoredServiceSpecificCredential = {
+    ...cred,
+    ServicePassword: randomHex(40),
+  };
+  ctx.store.set(serviceSpecCredKey(credId), updated);
+  return {
+    ServiceSpecificCredential: {
+      CreateDate: updated.CreateDate,
+      ServiceName: updated.ServiceName,
+      ServiceUserName: updated.ServiceUserName,
+      ServicePassword: updated.ServicePassword,
+      ServiceSpecificCredentialId: updated.ServiceSpecificCredentialId,
+      UserName: updated.UserName,
+      Status: updated.Status,
+    },
+  };
+};
+
+const UpdateServiceSpecificCredential: OperationHandler = (input, ctx) => {
+  const userName = requireString(input, "UserName");
+  const credId = requireString(input, "ServiceSpecificCredentialId");
+  const status = requireString(input, "Status");
+  const cred = ctx.store.get<StoredServiceSpecificCredential>(
+    serviceSpecCredKey(credId),
+  );
+  if (cred === undefined || cred.UserName !== userName) {
+    throw awsError(
+      "NoSuchEntity",
+      `Service specific credential ${credId} cannot be found.`,
+      404,
+    );
+  }
+  ctx.store.set(serviceSpecCredKey(credId), { ...cred, Status: status });
+  return {};
+};
+
+const GenerateCredentialReport: OperationHandler = (input, ctx) => {
+  ctx.store.set("credentialreport/0", {
+    GeneratedTime: new Date().toISOString(),
+  });
+  return {
+    State: "COMPLETE",
+    Description: "No report exists. Starting a new report generation task",
+  };
+};
+
+const GetCredentialReport: OperationHandler = (input, ctx) => {
+  const report = ctx.store.get<{ GeneratedTime: string }>("credentialreport/0");
+  if (report === undefined) {
+    throw awsError(
+      "ReportNotPresent",
+      "The credential report does not exist. Use GenerateCredentialReport to create a new report.",
+      410,
+    );
+  }
+  const users = ctx.store
+    .list<StoredUser>()
+    .filter((e) => e.key.startsWith("user/"))
+    .map((e) => e.value);
+  const header =
+    "user,arn,user_creation_time,password_enabled,password_last_used,password_last_changed,password_next_rotation,mfa_active,access_key_1_active,access_key_1_last_rotated,access_key_1_last_used_date,access_key_1_last_used_region,access_key_1_last_used_service,access_key_2_active,access_key_2_last_rotated,access_key_2_last_used_date,access_key_2_last_used_region,access_key_2_last_used_service,cert_1_active,cert_1_last_rotated,cert_2_active,cert_2_last_rotated";
+  const rows = users.map(
+    (u) =>
+      `${u.UserName},${u.Arn},${u.CreateDate},false,N/A,N/A,N/A,false,false,N/A,N/A,N/A,N/A,false,N/A,N/A,N/A,N/A,false,N/A,false,N/A`,
+  );
+  const csv = [header, ...rows].join("\n");
+  return {
+    Content: Buffer.from(csv).toString("base64"),
+    ReportFormat: "text/csv",
+    GeneratedTime: report.GeneratedTime,
+  };
+};
+
 const iam = {
   name: "iam",
   protocol: "query",
@@ -840,12 +2404,28 @@ const iam = {
     GetUser,
     DeleteUser,
     ListUsers,
+    UpdateUser,
+    TagUser,
+    UntagUser,
+    ListUserTags,
+    PutUserPolicy,
+    GetUserPolicy,
+    DeleteUserPolicy,
+    ListUserPolicies,
+    AttachUserPolicy,
+    DetachUserPolicy,
+    ListAttachedUserPolicies,
+    PutUserPermissionsBoundary,
+    DeleteUserPermissionsBoundary,
     CreatePolicy,
     GetPolicy,
     AttachRolePolicy,
     ListAttachedRolePolicies,
     CreateAccessKey,
     ListAccessKeys,
+    DeleteAccessKey,
+    UpdateAccessKey,
+    GetAccessKeyLastUsed,
     PutRolePolicy,
     GetRolePolicy,
     ListRolePolicies,
@@ -860,12 +2440,68 @@ const iam = {
     GetGroup,
     ListGroups,
     DeleteGroup,
+    UpdateGroup,
     AddUserToGroup,
     RemoveUserFromGroup,
+    ListGroupsForUser,
+    AttachGroupPolicy,
+    DetachGroupPolicy,
+    ListAttachedGroupPolicies,
+    PutGroupPolicy,
+    GetGroupPolicy,
+    DeleteGroupPolicy,
+    ListGroupPolicies,
     CreatePolicyVersion,
     ListPolicyVersions,
     GetPolicyVersion,
     CreateServiceLinkedRole,
+    CreateLoginProfile,
+    GetLoginProfile,
+    UpdateLoginProfile,
+    DeleteLoginProfile,
+    CreateAccountAlias,
+    DeleteAccountAlias,
+    ListAccountAliases,
+    UpdateAccountPasswordPolicy,
+    GetAccountPasswordPolicy,
+    DeleteAccountPasswordPolicy,
+    GetAccountSummary,
+    ChangePassword,
+    UploadServerCertificate,
+    GetServerCertificate,
+    UpdateServerCertificate,
+    DeleteServerCertificate,
+    ListServerCertificates,
+    TagServerCertificate,
+    UntagServerCertificate,
+    ListServerCertificateTags,
+    UploadSSHPublicKey,
+    GetSSHPublicKey,
+    UpdateSSHPublicKey,
+    DeleteSSHPublicKey,
+    ListSSHPublicKeys,
+    UploadSigningCertificate,
+    UpdateSigningCertificate,
+    DeleteSigningCertificate,
+    ListSigningCertificates,
+    CreateVirtualMFADevice,
+    EnableMFADevice,
+    DeactivateMFADevice,
+    ResyncMFADevice,
+    DeleteVirtualMFADevice,
+    GetMFADevice,
+    ListMFADevices,
+    ListVirtualMFADevices,
+    TagMFADevice,
+    UntagMFADevice,
+    ListMFADeviceTags,
+    CreateServiceSpecificCredential,
+    DeleteServiceSpecificCredential,
+    ListServiceSpecificCredentials,
+    ResetServiceSpecificCredential,
+    UpdateServiceSpecificCredential,
+    GenerateCredentialReport,
+    GetCredentialReport,
   },
   model,
 } as const satisfies ServiceDefinition;

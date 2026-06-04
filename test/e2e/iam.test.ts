@@ -1,21 +1,44 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn } from "bun";
 import {
+  AttachGroupPolicyCommand,
   AttachRolePolicyCommand,
   CreateAccessKeyCommand,
+  CreateGroupCommand,
+  CreateLoginProfileCommand,
   CreatePolicyCommand,
   CreateRoleCommand,
   CreateUserCommand,
+  CreateVirtualMFADeviceCommand,
+  DeactivateMFADeviceCommand,
+  DeleteGroupCommand,
+  DeleteGroupPolicyCommand,
+  DeleteLoginProfileCommand,
   DeleteRoleCommand,
+  DeleteServerCertificateCommand,
   DeleteUserCommand,
+  DeleteVirtualMFADeviceCommand,
+  DetachGroupPolicyCommand,
+  EnableMFADeviceCommand,
+  GetGroupPolicyCommand,
+  GetLoginProfileCommand,
   GetPolicyCommand,
   GetRoleCommand,
+  GetServerCertificateCommand,
   GetUserCommand,
   IAMClient,
   ListAccessKeysCommand,
+  ListAttachedGroupPoliciesCommand,
   ListAttachedRolePoliciesCommand,
+  ListGroupPoliciesCommand,
+  ListMFADevicesCommand,
   ListRolesCommand,
+  ListServerCertificatesCommand,
   ListUsersCommand,
+  ListVirtualMFADevicesCommand,
+  PutGroupPolicyCommand,
+  UpdateLoginProfileCommand,
+  UploadServerCertificateCommand,
 } from "@aws-sdk/client-iam";
 
 const awsPort = 4566;
@@ -174,4 +197,209 @@ test("IAM role, user, policy and access key lifecycle", async () => {
   const rolesAfter = await client.send(new ListRolesCommand({}));
   const rolesAfterNames = (rolesAfter.Roles ?? []).map((r) => r.RoleName);
   expect(rolesAfterNames).not.toContain("bunsai-e2e-role");
+});
+
+const inlinePolicy = JSON.stringify({
+  Version: "2012-10-17",
+  Statement: [{ Effect: "Allow", Action: "s3:GetObject", Resource: "*" }],
+});
+
+test("IAM login profile lifecycle", async () => {
+  const client = iam();
+
+  await client.send(new CreateUserCommand({ UserName: "e2e-lp-user" }));
+
+  const created = await client.send(
+    new CreateLoginProfileCommand({
+      UserName: "e2e-lp-user",
+      Password: "TempPass123!",
+      PasswordResetRequired: true,
+    }),
+  );
+  expect(created.LoginProfile?.UserName).toBe("e2e-lp-user");
+  expect(created.LoginProfile?.PasswordResetRequired).toBe(true);
+
+  const got = await client.send(
+    new GetLoginProfileCommand({ UserName: "e2e-lp-user" }),
+  );
+  expect(got.LoginProfile?.UserName).toBe("e2e-lp-user");
+
+  await client.send(
+    new UpdateLoginProfileCommand({
+      UserName: "e2e-lp-user",
+      PasswordResetRequired: false,
+    }),
+  );
+
+  await client.send(new DeleteLoginProfileCommand({ UserName: "e2e-lp-user" }));
+
+  await client.send(new DeleteUserCommand({ UserName: "e2e-lp-user" }));
+});
+
+test("IAM group inline and attached policy lifecycle", async () => {
+  const client = iam();
+
+  await client.send(new CreateGroupCommand({ GroupName: "e2e-gp-group" }));
+
+  await client.send(
+    new PutGroupPolicyCommand({
+      GroupName: "e2e-gp-group",
+      PolicyName: "gp-inline",
+      PolicyDocument: inlinePolicy,
+    }),
+  );
+
+  const gotPolicy = await client.send(
+    new GetGroupPolicyCommand({
+      GroupName: "e2e-gp-group",
+      PolicyName: "gp-inline",
+    }),
+  );
+  expect(gotPolicy.PolicyName).toBe("gp-inline");
+
+  const listedInline = await client.send(
+    new ListGroupPoliciesCommand({ GroupName: "e2e-gp-group" }),
+  );
+  expect(listedInline.PolicyNames ?? []).toContain("gp-inline");
+
+  await client.send(
+    new DeleteGroupPolicyCommand({
+      GroupName: "e2e-gp-group",
+      PolicyName: "gp-inline",
+    }),
+  );
+
+  const createdPolicy = await client.send(
+    new CreatePolicyCommand({
+      PolicyName: "e2e-gp-managed",
+      PolicyDocument: managedPolicy,
+    }),
+  );
+  const policyArn = createdPolicy.Policy?.Arn;
+
+  await client.send(
+    new AttachGroupPolicyCommand({
+      GroupName: "e2e-gp-group",
+      PolicyArn: policyArn,
+    }),
+  );
+
+  const attachedPolicies = await client.send(
+    new ListAttachedGroupPoliciesCommand({ GroupName: "e2e-gp-group" }),
+  );
+  const arns = (attachedPolicies.AttachedPolicies ?? []).map(
+    (p) => p.PolicyArn,
+  );
+  expect(arns).toContain(policyArn);
+
+  await client.send(
+    new DetachGroupPolicyCommand({
+      GroupName: "e2e-gp-group",
+      PolicyArn: policyArn,
+    }),
+  );
+
+  await client.send(new DeleteGroupCommand({ GroupName: "e2e-gp-group" }));
+});
+
+test("IAM server certificate lifecycle", async () => {
+  const client = iam();
+
+  const certBody =
+    "-----BEGIN CERTIFICATE-----\nfakecertbody\n-----END CERTIFICATE-----";
+  const privateKey =
+    "-----BEGIN RSA PRIVATE KEY-----\nfakekey\n-----END RSA PRIVATE KEY-----";
+
+  const uploaded = await client.send(
+    new UploadServerCertificateCommand({
+      ServerCertificateName: "e2e-server-cert",
+      CertificateBody: certBody,
+      PrivateKey: privateKey,
+    }),
+  );
+  expect(uploaded.ServerCertificateMetadata?.ServerCertificateName).toBe(
+    "e2e-server-cert",
+  );
+  expect(uploaded.ServerCertificateMetadata?.Arn).toContain(
+    ":server-certificate/e2e-server-cert",
+  );
+
+  const got = await client.send(
+    new GetServerCertificateCommand({
+      ServerCertificateName: "e2e-server-cert",
+    }),
+  );
+  expect(
+    got.ServerCertificate?.ServerCertificateMetadata?.ServerCertificateName,
+  ).toBe("e2e-server-cert");
+  expect(got.ServerCertificate?.CertificateBody).toBe(certBody);
+
+  const listed = await client.send(new ListServerCertificatesCommand({}));
+  const certNames = (listed.ServerCertificateMetadataList ?? []).map(
+    (c) => c.ServerCertificateName,
+  );
+  expect(certNames).toContain("e2e-server-cert");
+
+  await client.send(
+    new DeleteServerCertificateCommand({
+      ServerCertificateName: "e2e-server-cert",
+    }),
+  );
+
+  const listedAfter = await client.send(new ListServerCertificatesCommand({}));
+  const certNamesAfter = (listedAfter.ServerCertificateMetadataList ?? []).map(
+    (c) => c.ServerCertificateName,
+  );
+  expect(certNamesAfter).not.toContain("e2e-server-cert");
+});
+
+test("IAM virtual MFA device lifecycle", async () => {
+  const client = iam();
+
+  await client.send(new CreateUserCommand({ UserName: "e2e-mfa-user" }));
+
+  const created = await client.send(
+    new CreateVirtualMFADeviceCommand({
+      VirtualMFADeviceName: "e2e-mfa-device",
+    }),
+  );
+  const serialNumber = created.VirtualMFADevice?.SerialNumber;
+  expect(serialNumber).toContain(":mfa/e2e-mfa-device");
+  expect(created.VirtualMFADevice?.Base32StringSeed).toBeDefined();
+
+  const unassigned = await client.send(
+    new ListVirtualMFADevicesCommand({ AssignmentStatus: "Unassigned" }),
+  );
+  const unassignedSerials = (unassigned.VirtualMFADevices ?? []).map(
+    (d) => d.SerialNumber,
+  );
+  expect(unassignedSerials).toContain(serialNumber);
+
+  await client.send(
+    new EnableMFADeviceCommand({
+      UserName: "e2e-mfa-user",
+      SerialNumber: serialNumber,
+      AuthenticationCode1: "123456",
+      AuthenticationCode2: "234567",
+    }),
+  );
+
+  const listed = await client.send(
+    new ListMFADevicesCommand({ UserName: "e2e-mfa-user" }),
+  );
+  const enabledSerials = (listed.MFADevices ?? []).map((d) => d.SerialNumber);
+  expect(enabledSerials).toContain(serialNumber);
+
+  await client.send(
+    new DeactivateMFADeviceCommand({
+      UserName: "e2e-mfa-user",
+      SerialNumber: serialNumber,
+    }),
+  );
+
+  await client.send(
+    new DeleteVirtualMFADeviceCommand({ SerialNumber: serialNumber }),
+  );
+
+  await client.send(new DeleteUserCommand({ UserName: "e2e-mfa-user" }));
 });

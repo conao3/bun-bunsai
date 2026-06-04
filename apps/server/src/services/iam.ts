@@ -210,6 +210,24 @@ type StoredOIDCProvider = {
   Tags: StoredTag[];
 };
 
+type StoredSAMLProvider = {
+  Arn: string;
+  Name: string;
+  SAMLMetadataDocument: string;
+  CreateDate: string;
+  ValidUntil?: string;
+  Tags: StoredTag[];
+};
+
+type StoredDelegationRequest = {
+  DelegationRequestId: string;
+  OwnerAccountId?: string;
+  Description?: string;
+  RequestMessage?: string;
+  State: string;
+  CreateDate: string;
+};
+
 type StoredDeletionTask = {
   TaskId: string;
   RoleName: string;
@@ -298,6 +316,13 @@ const oidcProviderKey = (arn: string): string => `oidcprovider/${arn}`;
 const oidcProviderTagKey = (arn: string, tagKey: string): string =>
   `oidcprovidertag/${arn}/${tagKey}`;
 
+const samlProviderKey = (arn: string): string => `samlprovider/${arn}`;
+
+const samlProviderTagKey = (arn: string, tagKey: string): string =>
+  `samlprovidertag/${arn}/${tagKey}`;
+
+const delegationRequestKey = (id: string): string => `delegationrequest/${id}`;
+
 const deletionTaskKey = (taskId: string): string => `deletiontask/${taskId}`;
 
 const serviceLastAccessJobKey = (jobId: string): string =>
@@ -337,6 +362,9 @@ const oidcProviderArnOf = (account: string, url: string): string => {
   const host = url.replace(/^https?:\/\//, "").split("/")[0];
   return `arn:aws:iam::${account}:oidc-provider/${host}`;
 };
+
+const samlProviderArnOf = (account: string, name: string): string =>
+  `arn:aws:iam::${account}:saml-provider/${name}`;
 
 const randomHex = (length: number): string => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -2942,6 +2970,210 @@ const ListOpenIDConnectProviderTags: OperationHandler = (input, ctx) => {
   return { Tags: combinedTags, IsTruncated: false };
 };
 
+const requireSAMLProvider = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredSAMLProvider => {
+  const provider = ctx.store.get<StoredSAMLProvider>(samlProviderKey(arn));
+  if (provider === undefined) {
+    throw awsError("NoSuchEntity", `SAMLProvider ${arn} cannot be found.`, 404);
+  }
+  return provider;
+};
+
+const CreateSAMLProvider: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const arn = samlProviderArnOf(ctx.account, name);
+  if (ctx.store.get<StoredSAMLProvider>(samlProviderKey(arn)) !== undefined) {
+    throw awsError(
+      "EntityAlreadyExists",
+      `SAMLProvider with name ${name} already exists.`,
+      409,
+    );
+  }
+  const metadataDocument = requireString(input, "SAMLMetadataDocument");
+  const tags = toTagList(input);
+  const provider: StoredSAMLProvider = {
+    Arn: arn,
+    Name: name,
+    SAMLMetadataDocument: metadataDocument,
+    CreateDate: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(samlProviderKey(arn), provider);
+  for (const tag of tags) {
+    ctx.store.set(samlProviderTagKey(arn, tag.Key), {
+      ProviderArn: arn,
+      ...tag,
+    });
+  }
+  return { SAMLProviderArn: arn };
+};
+
+const DeleteSAMLProvider: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "SAMLProviderArn");
+  requireSAMLProvider(ctx, arn);
+  ctx.store.delete(samlProviderKey(arn));
+  for (const entry of ctx.store.list()) {
+    if (entry.key.startsWith(`samlprovidertag/${arn}/`)) {
+      ctx.store.delete(entry.key);
+    }
+  }
+  return {};
+};
+
+const GetSAMLProvider: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "SAMLProviderArn");
+  const provider = requireSAMLProvider(ctx, arn);
+  const storedTags = ctx.store
+    .list<StoredTag & { ProviderArn: string }>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("samlprovidertag/") &&
+        entry.value.ProviderArn === arn,
+    )
+    .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
+  const inlineTags = provider.Tags ?? [];
+  const allTagKeys = new Set<string>(storedTags.map((t) => t.Key));
+  const tags = [
+    ...storedTags,
+    ...inlineTags.filter((t) => !allTagKeys.has(t.Key)),
+  ];
+  return {
+    SAMLMetadataDocument: provider.SAMLMetadataDocument,
+    CreateDate: provider.CreateDate,
+    ValidUntil: provider.ValidUntil,
+    Tags: tags,
+  };
+};
+
+const ListSAMLProviders: OperationHandler = (input, ctx) => {
+  const providers = ctx.store
+    .list<StoredSAMLProvider>()
+    .filter((entry) => entry.key.startsWith("samlprovider/"))
+    .map((entry) => ({
+      Arn: entry.value.Arn,
+      ValidUntil: entry.value.ValidUntil,
+      CreateDate: entry.value.CreateDate,
+    }));
+  return { SAMLProviderList: providers };
+};
+
+const ListSAMLProviderTags: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "SAMLProviderArn");
+  requireSAMLProvider(ctx, arn);
+  const storedTags = ctx.store
+    .list<StoredTag & { ProviderArn: string }>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("samlprovidertag/") &&
+        entry.value.ProviderArn === arn,
+    )
+    .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
+  const provider = ctx.store.get<StoredSAMLProvider>(samlProviderKey(arn));
+  const inlineTags = provider?.Tags ?? [];
+  const allTagKeys = new Set<string>(storedTags.map((t) => t.Key));
+  const combinedTags = [
+    ...storedTags,
+    ...inlineTags.filter((t) => !allTagKeys.has(t.Key)),
+  ];
+  return { Tags: combinedTags, IsTruncated: false };
+};
+
+const TagSAMLProvider: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "SAMLProviderArn");
+  requireSAMLProvider(ctx, arn);
+  for (const tag of toTagList(input)) {
+    ctx.store.set(samlProviderTagKey(arn, tag.Key), {
+      ProviderArn: arn,
+      ...tag,
+    });
+  }
+  return {};
+};
+
+const UntagSAMLProvider: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "SAMLProviderArn");
+  requireSAMLProvider(ctx, arn);
+  const tagKeys = input["TagKeys"];
+  if (Array.isArray(tagKeys)) {
+    for (const key of tagKeys) {
+      if (typeof key === "string") {
+        ctx.store.delete(samlProviderTagKey(arn, key));
+      }
+    }
+  }
+  return {};
+};
+
+const UpdateSAMLProvider: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "SAMLProviderArn");
+  const provider = requireSAMLProvider(ctx, arn);
+  const metadataDocument = requireString(input, "SAMLMetadataDocument");
+  ctx.store.set(samlProviderKey(arn), {
+    ...provider,
+    SAMLMetadataDocument: metadataDocument,
+  });
+  return { SAMLProviderArn: arn };
+};
+
+const requireDelegationRequest = (
+  ctx: ServiceContext,
+  id: string,
+): StoredDelegationRequest => {
+  const req = ctx.store.get<StoredDelegationRequest>(delegationRequestKey(id));
+  if (req === undefined) {
+    throw awsError(
+      "NoSuchEntity",
+      `DelegationRequest ${id} cannot be found.`,
+      404,
+    );
+  }
+  return req;
+};
+
+const CreateDelegationRequest: OperationHandler = (input, ctx) => {
+  const id = `dr-${randomHex(16)}`;
+  const req: StoredDelegationRequest = {
+    DelegationRequestId: id,
+    OwnerAccountId: optionalString(input, "OwnerAccountId"),
+    Description: optionalString(input, "Description"),
+    RequestMessage: optionalString(input, "RequestMessage"),
+    State: "REQUESTED",
+    CreateDate: new Date().toISOString(),
+  };
+  ctx.store.set(delegationRequestKey(id), req);
+  return { DelegationRequestId: id, ConsoleDeepLink: "" };
+};
+
+const GetDelegationRequest: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DelegationRequestId");
+  const req = requireDelegationRequest(ctx, id);
+  return {
+    DelegationRequest: {
+      DelegationRequestId: req.DelegationRequestId,
+      OwnerAccountId: req.OwnerAccountId,
+      Description: req.Description,
+      RequestMessage: req.RequestMessage,
+      State: req.State,
+      CreateDate: req.CreateDate,
+    },
+  };
+};
+
+const AcceptDelegationRequest: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DelegationRequestId");
+  const req = requireDelegationRequest(ctx, id);
+  ctx.store.set(delegationRequestKey(id), { ...req, State: "ACCEPTED" });
+  return {};
+};
+
+const AssociateDelegationRequest: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DelegationRequestId");
+  requireDelegationRequest(ctx, id);
+  return {};
+};
+
 const GenerateCredentialReport: OperationHandler = (input, ctx) => {
   ctx.store.set("credentialreport/0", {
     GeneratedTime: new Date().toISOString(),
@@ -3124,6 +3356,18 @@ const iam = {
     ListOpenIDConnectProviders,
     TagOpenIDConnectProvider,
     ListOpenIDConnectProviderTags,
+    CreateSAMLProvider,
+    DeleteSAMLProvider,
+    GetSAMLProvider,
+    ListSAMLProviders,
+    ListSAMLProviderTags,
+    TagSAMLProvider,
+    UntagSAMLProvider,
+    UpdateSAMLProvider,
+    AcceptDelegationRequest,
+    AssociateDelegationRequest,
+    CreateDelegationRequest,
+    GetDelegationRequest,
   },
   model,
 } as const satisfies ServiceDefinition;

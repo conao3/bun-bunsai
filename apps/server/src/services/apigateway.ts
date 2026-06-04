@@ -179,6 +179,40 @@ type StoredClientCertificate = {
   tags: Record<string, string> | undefined;
 };
 
+type StoredDomainName = {
+  domainName: string;
+  domainNameId: string | undefined;
+  domainNameArn: string;
+  certificateName: string | undefined;
+  certificateArn: string | undefined;
+  regionalDomainName: string | undefined;
+  regionalHostedZoneId: string | undefined;
+  regionalCertificateName: string | undefined;
+  regionalCertificateArn: string | undefined;
+  securityPolicy: string | undefined;
+  endpointConfiguration: { types: string[] } | undefined;
+  domainNameStatus: string;
+  tags: Record<string, string> | undefined;
+};
+
+type StoredDomainNameAccessAssociation = {
+  domainNameAccessAssociationArn: string;
+  domainNameArn: string;
+  accessAssociationSourceType: string;
+  accessAssociationSource: string;
+  tags: Record<string, string> | undefined;
+};
+
+type StoredVpcLink = {
+  id: string;
+  name: string;
+  description: string | undefined;
+  targetArns: string[];
+  status: string;
+  statusMessage: string | undefined;
+  tags: Record<string, string> | undefined;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -252,6 +286,14 @@ const basePathMappingKey = (domainName: string, basePath: string): string =>
 const clientCertificateKey = (id: string): string => `clientcertificate/${id}`;
 
 const arnTagsKey = (arn: string): string => `arntags/${arn}`;
+
+const domainNameKey = (domainName: string): string =>
+  `domainname/${domainName}`;
+
+const domainNameAccessAssociationKey = (arn: string): string =>
+  `domainnameaccessassociation/${arn}`;
+
+const vpcLinkKey = (id: string): string => `vpclink/${id}`;
 
 const requireRestApi = (
   ctx: ServiceContext,
@@ -503,6 +545,46 @@ const requireClientCertificate = (
   return c;
 };
 
+const requireDomainName = (
+  ctx: ServiceContext,
+  domainName: string,
+): StoredDomainName => {
+  const d = ctx.store.get<StoredDomainName>(domainNameKey(domainName));
+  if (d === undefined) {
+    throw awsError("NotFoundException", `Invalid domain name specified`, 404);
+  }
+  return d;
+};
+
+const requireDomainNameAccessAssociation = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredDomainNameAccessAssociation => {
+  const d = ctx.store.get<StoredDomainNameAccessAssociation>(
+    domainNameAccessAssociationKey(arn),
+  );
+  if (d === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Invalid domain name access association specified`,
+      404,
+    );
+  }
+  return d;
+};
+
+const requireVpcLink = (ctx: ServiceContext, id: string): StoredVpcLink => {
+  const v = ctx.store.get<StoredVpcLink>(vpcLinkKey(id));
+  if (v === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Invalid VPC link identifier specified`,
+      404,
+    );
+  }
+  return v;
+};
+
 const applyPatch = (
   obj: Record<string, unknown>,
   patches: unknown,
@@ -704,6 +786,42 @@ const clientCertificateView = (
   createdDate: c.createdDate,
   expirationDate: c.expirationDate,
   tags: c.tags,
+});
+
+const domainNameView = (d: StoredDomainName): Record<string, unknown> => ({
+  domainName: d.domainName,
+  domainNameId: d.domainNameId,
+  domainNameArn: d.domainNameArn,
+  certificateName: d.certificateName,
+  certificateArn: d.certificateArn,
+  regionalDomainName: d.regionalDomainName,
+  regionalHostedZoneId: d.regionalHostedZoneId,
+  regionalCertificateName: d.regionalCertificateName,
+  regionalCertificateArn: d.regionalCertificateArn,
+  securityPolicy: d.securityPolicy,
+  endpointConfiguration: d.endpointConfiguration,
+  domainNameStatus: d.domainNameStatus,
+  tags: d.tags,
+});
+
+const domainNameAccessAssociationView = (
+  d: StoredDomainNameAccessAssociation,
+): Record<string, unknown> => ({
+  domainNameAccessAssociationArn: d.domainNameAccessAssociationArn,
+  domainNameArn: d.domainNameArn,
+  accessAssociationSourceType: d.accessAssociationSourceType,
+  accessAssociationSource: d.accessAssociationSource,
+  tags: d.tags,
+});
+
+const vpcLinkView = (v: StoredVpcLink): Record<string, unknown> => ({
+  id: v.id,
+  name: v.name,
+  description: v.description,
+  targetArns: v.targetArns,
+  status: v.status,
+  statusMessage: v.statusMessage,
+  tags: v.tags,
 });
 
 const defaultAccount: StoredAccount = {
@@ -2760,6 +2878,213 @@ const UntagResource: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const CreateDomainName: OperationHandler = (input, ctx) => {
+  const domainName = stringOrUndefined(input["domainName"]);
+  if (!domainName) {
+    throw awsError("BadRequestException", "domainName is required.", 400);
+  }
+  const domainNameArn = `arn:aws:apigateway:us-east-1::/domainnames/${domainName}`;
+  const d: StoredDomainName = {
+    domainName,
+    domainNameId: undefined,
+    domainNameArn,
+    certificateName: stringOrUndefined(input["certificateName"]),
+    certificateArn: stringOrUndefined(input["certificateArn"]),
+    regionalDomainName: `${domainName}.regional.amazonaws.com`,
+    regionalHostedZoneId: "Z2FDTNDATAQYW2",
+    regionalCertificateName: stringOrUndefined(
+      input["regionalCertificateName"],
+    ),
+    regionalCertificateArn: stringOrUndefined(input["regionalCertificateArn"]),
+    securityPolicy: stringOrUndefined(input["securityPolicy"]),
+    endpointConfiguration:
+      input["endpointConfiguration"] != null &&
+      typeof input["endpointConfiguration"] === "object"
+        ? (input["endpointConfiguration"] as { types: string[] })
+        : undefined,
+    domainNameStatus: "AVAILABLE",
+    tags:
+      input["tags"] != null && typeof input["tags"] === "object"
+        ? (input["tags"] as Record<string, string>)
+        : undefined,
+  };
+  ctx.store.set(domainNameKey(domainName), d);
+  return domainNameView(d);
+};
+
+const GetDomainName: OperationHandler = (input, ctx) => {
+  const domainName = stringOrUndefined(input["domainName"]);
+  if (!domainName) {
+    throw awsError("BadRequestException", "domainName is required.", 400);
+  }
+  return domainNameView(requireDomainName(ctx, domainName));
+};
+
+const GetDomainNames: OperationHandler = (_input, ctx) => {
+  const items = ctx.store
+    .list<StoredDomainName>()
+    .filter((e) => e.key.startsWith("domainname/"))
+    .map((e) => domainNameView(e.value));
+  return { items };
+};
+
+const DeleteDomainName: OperationHandler = (input, ctx) => {
+  const domainName = stringOrUndefined(input["domainName"]);
+  if (!domainName) {
+    throw awsError("BadRequestException", "domainName is required.", 400);
+  }
+  requireDomainName(ctx, domainName);
+  ctx.store.delete(domainNameKey(domainName));
+  return {};
+};
+
+const UpdateDomainName: OperationHandler = (input, ctx) => {
+  const domainName = stringOrUndefined(input["domainName"]);
+  if (!domainName) {
+    throw awsError("BadRequestException", "domainName is required.", 400);
+  }
+  const d = requireDomainName(ctx, domainName);
+  const patched = applyPatch(
+    d as unknown as Record<string, unknown>,
+    input["patchOperations"],
+  );
+  const updated: StoredDomainName = {
+    ...d,
+    certificateName: stringOrUndefined(patched["certificateName"]),
+    certificateArn: stringOrUndefined(patched["certificateArn"]),
+    regionalCertificateName: stringOrUndefined(
+      patched["regionalCertificateName"],
+    ),
+    regionalCertificateArn: stringOrUndefined(
+      patched["regionalCertificateArn"],
+    ),
+    securityPolicy: stringOrUndefined(patched["securityPolicy"]),
+  };
+  ctx.store.set(domainNameKey(domainName), updated);
+  return domainNameView(updated);
+};
+
+const CreateDomainNameAccessAssociation: OperationHandler = (input, ctx) => {
+  const domainNameArn = stringOrUndefined(input["domainNameArn"]);
+  const accessAssociationSourceType = stringOrUndefined(
+    input["accessAssociationSourceType"],
+  );
+  const accessAssociationSource = stringOrUndefined(
+    input["accessAssociationSource"],
+  );
+  if (
+    !domainNameArn ||
+    !accessAssociationSourceType ||
+    !accessAssociationSource
+  ) {
+    throw awsError(
+      "BadRequestException",
+      "domainNameArn, accessAssociationSourceType, and accessAssociationSource are required.",
+      400,
+    );
+  }
+  const arn = `arn:aws:apigateway:us-east-1::/domainnameaccessassociations/${randomId()}`;
+  const d: StoredDomainNameAccessAssociation = {
+    domainNameAccessAssociationArn: arn,
+    domainNameArn,
+    accessAssociationSourceType,
+    accessAssociationSource,
+    tags:
+      input["tags"] != null && typeof input["tags"] === "object"
+        ? (input["tags"] as Record<string, string>)
+        : undefined,
+  };
+  ctx.store.set(domainNameAccessAssociationKey(arn), d);
+  return domainNameAccessAssociationView(d);
+};
+
+const GetDomainNameAccessAssociations: OperationHandler = (_input, ctx) => {
+  const items = ctx.store
+    .list<StoredDomainNameAccessAssociation>()
+    .filter((e) => e.key.startsWith("domainnameaccessassociation/"))
+    .map((e) => domainNameAccessAssociationView(e.value));
+  return { items };
+};
+
+const DeleteDomainNameAccessAssociation: OperationHandler = (input, ctx) => {
+  const arn = stringOrUndefined(input["domainNameAccessAssociationArn"]);
+  if (!arn) {
+    throw awsError(
+      "BadRequestException",
+      "domainNameAccessAssociationArn is required.",
+      400,
+    );
+  }
+  requireDomainNameAccessAssociation(ctx, arn);
+  ctx.store.delete(domainNameAccessAssociationKey(arn));
+  return {};
+};
+
+const RejectDomainNameAccessAssociation: OperationHandler = (input, ctx) => {
+  const arn = stringOrUndefined(input["domainNameAccessAssociationArn"]);
+  if (!arn) {
+    throw awsError(
+      "BadRequestException",
+      "domainNameAccessAssociationArn is required.",
+      400,
+    );
+  }
+  requireDomainNameAccessAssociation(ctx, arn);
+  ctx.store.delete(domainNameAccessAssociationKey(arn));
+  return {};
+};
+
+const CreateVpcLink: OperationHandler = (input, ctx) => {
+  const name = stringOrUndefined(input["name"]);
+  if (!name) {
+    throw awsError("BadRequestException", "name is required.", 400);
+  }
+  const targetArns = Array.isArray(input["targetArns"])
+    ? (input["targetArns"] as string[])
+    : [];
+  const id = randomId();
+  const v: StoredVpcLink = {
+    id,
+    name,
+    description: stringOrUndefined(input["description"]),
+    targetArns,
+    status: "AVAILABLE",
+    statusMessage: undefined,
+    tags:
+      input["tags"] != null && typeof input["tags"] === "object"
+        ? (input["tags"] as Record<string, string>)
+        : undefined,
+  };
+  ctx.store.set(vpcLinkKey(id), v);
+  return vpcLinkView(v);
+};
+
+const GetVpcLink: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["vpcLinkId"]);
+  if (!id) {
+    throw awsError("BadRequestException", "vpcLinkId is required.", 400);
+  }
+  return vpcLinkView(requireVpcLink(ctx, id));
+};
+
+const GetVpcLinks: OperationHandler = (_input, ctx) => {
+  const items = ctx.store
+    .list<StoredVpcLink>()
+    .filter((e) => e.key.startsWith("vpclink/"))
+    .map((e) => vpcLinkView(e.value));
+  return { items };
+};
+
+const DeleteVpcLink: OperationHandler = (input, ctx) => {
+  const id = stringOrUndefined(input["vpcLinkId"]);
+  if (!id) {
+    throw awsError("BadRequestException", "vpcLinkId is required.", 400);
+  }
+  requireVpcLink(ctx, id);
+  ctx.store.delete(vpcLinkKey(id));
+  return {};
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -2817,6 +3142,17 @@ const apigateway = {
     }
 
     if (parts[0] === "domainnames") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateDomainName";
+        if (req.method === "GET") return "GetDomainNames";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetDomainName";
+        if (req.method === "DELETE") return "DeleteDomainName";
+        if (req.method === "PATCH") return "UpdateDomainName";
+        return undefined;
+      }
       if (parts.length === 3 && parts[2] === "basepathmappings") {
         if (req.method === "POST") return "CreateBasePathMapping";
         if (req.method === "GET") return "GetBasePathMappings";
@@ -2826,6 +3162,41 @@ const apigateway = {
         if (req.method === "GET") return "GetBasePathMapping";
         if (req.method === "DELETE") return "DeleteBasePathMapping";
         if (req.method === "PATCH") return "UpdateBasePathMapping";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "domainnameaccessassociations") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateDomainNameAccessAssociation";
+        if (req.method === "GET") return "GetDomainNameAccessAssociations";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "DELETE") return "DeleteDomainNameAccessAssociation";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (
+      parts[0] === "rejectdomainnameaccessassociations" &&
+      parts.length === 1 &&
+      req.method === "POST"
+    ) {
+      return "RejectDomainNameAccessAssociation";
+    }
+
+    if (parts[0] === "vpclinks") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateVpcLink";
+        if (req.method === "GET") return "GetVpcLinks";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetVpcLink";
+        if (req.method === "DELETE") return "DeleteVpcLink";
         return undefined;
       }
       return undefined;
@@ -3138,6 +3509,19 @@ const apigateway = {
     DeleteBasePathMapping,
     UpdateBasePathMapping,
     GenerateClientCertificate,
+    CreateDomainName,
+    GetDomainName,
+    GetDomainNames,
+    DeleteDomainName,
+    UpdateDomainName,
+    CreateDomainNameAccessAssociation,
+    GetDomainNameAccessAssociations,
+    DeleteDomainNameAccessAssociation,
+    RejectDomainNameAccessAssociation,
+    CreateVpcLink,
+    GetVpcLink,
+    GetVpcLinks,
+    DeleteVpcLink,
     GetClientCertificate,
     GetClientCertificates,
     DeleteClientCertificate,

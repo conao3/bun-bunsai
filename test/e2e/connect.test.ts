@@ -26,6 +26,9 @@ import {
   DescribeEmailAddressCommand,
   CreateEvaluationFormCommand,
   DescribeEvaluationFormCommand,
+  UpdateAgentStatusCommand,
+  UpdateContactFlowContentCommand,
+  UpdateContactFlowNameCommand,
 } from "@aws-sdk/client-connect";
 
 const awsPort = 4566;
@@ -462,6 +465,118 @@ test("Describe operations — agent status, contact flow, hours of operation, co
     }),
   );
   expect(describedEvalForm.EvaluationForm?.EvaluationFormId).toBe(evalFormId);
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("UpdateAgentStatus — create then update name and state", async () => {
+  const client = connect();
+
+  const instance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-upd-as-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = instance.Id ?? "";
+
+  const created = await client.send(
+    new CreateAgentStatusCommand({
+      InstanceId: instanceId,
+      Name: "On Break",
+      State: "ENABLED",
+    }),
+  );
+  expect(created.AgentStatusId).toBeDefined();
+  const agentStatusId = created.AgentStatusId ?? "";
+
+  const described = await client.send(
+    new DescribeAgentStatusCommand({
+      InstanceId: instanceId,
+      AgentStatusId: agentStatusId,
+    }),
+  );
+  expect(described.AgentStatus?.Name).toBe("On Break");
+  expect(described.AgentStatus?.State).toBe("ENABLED");
+
+  await client.send(
+    new UpdateAgentStatusCommand({
+      InstanceId: instanceId,
+      AgentStatusId: agentStatusId,
+      Name: "Available",
+      State: "DISABLED",
+    }),
+  );
+
+  const updatedDesc = await client.send(
+    new DescribeAgentStatusCommand({
+      InstanceId: instanceId,
+      AgentStatusId: agentStatusId,
+    }),
+  );
+  expect(updatedDesc.AgentStatus?.Name).toBe("Available");
+  expect(updatedDesc.AgentStatus?.State).toBe("DISABLED");
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("UpdateContactFlowContent and UpdateContactFlowName — create then update", async () => {
+  const client = connect();
+
+  const instance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-upd-cf-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = instance.Id ?? "";
+
+  const created = await client.send(
+    new CreateContactFlowCommand({
+      InstanceId: instanceId,
+      Name: "OriginalFlow",
+      Type: "CONTACT_FLOW",
+      Content: '{"Version":"2019-10-30","StartAction":"s1","Actions":[]}',
+    }),
+  );
+  expect(created.ContactFlowId).toBeDefined();
+  const contactFlowId = created.ContactFlowId ?? "";
+
+  const described = await client.send(
+    new DescribeContactFlowCommand({
+      InstanceId: instanceId,
+      ContactFlowId: contactFlowId,
+    }),
+  );
+  expect(described.ContactFlow?.Name).toBe("OriginalFlow");
+
+  await client.send(
+    new UpdateContactFlowContentCommand({
+      InstanceId: instanceId,
+      ContactFlowId: contactFlowId,
+      Content: '{"Version":"2019-10-30","StartAction":"s2","Actions":[]}',
+    }),
+  );
+
+  await client.send(
+    new UpdateContactFlowNameCommand({
+      InstanceId: instanceId,
+      ContactFlowId: contactFlowId,
+      Name: "RenamedFlow",
+    }),
+  );
+
+  const updatedDesc = await client.send(
+    new DescribeContactFlowCommand({
+      InstanceId: instanceId,
+      ContactFlowId: contactFlowId,
+    }),
+  );
+  expect(updatedDesc.ContactFlow?.Name).toBe("RenamedFlow");
 
   await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
 });

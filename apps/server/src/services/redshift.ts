@@ -239,6 +239,66 @@ type StoredEndpointAuthorization = {
   EndpointCount: number;
 };
 
+type StoredHsmClientCertificate = {
+  HsmClientCertificateIdentifier: string;
+  HsmClientCertificatePublicKey: string;
+  Tags: { Key: string; Value: string }[];
+};
+
+type StoredHsmConfiguration = {
+  HsmConfigurationIdentifier: string;
+  Description: string;
+  HsmIpAddress: string;
+  HsmPartitionName: string;
+  Tags: { Key: string; Value: string }[];
+};
+
+type StoredReservedNodeOffering = {
+  ReservedNodeOfferingId: string;
+  NodeType: string;
+  Duration: number;
+  FixedPrice: number;
+  UsagePrice: number;
+  CurrencyCode: string;
+  OfferingType: string;
+  RecurringCharges: {
+    RecurringChargeAmount: number;
+    RecurringChargeFrequency: string;
+  }[];
+  ReservedNodeOfferingType: string;
+};
+
+type StoredReservedNode = {
+  ReservedNodeId: string;
+  ReservedNodeOfferingId: string;
+  NodeType: string;
+  StartTime: string;
+  Duration: number;
+  FixedPrice: number;
+  UsagePrice: number;
+  CurrencyCode: string;
+  NodeCount: number;
+  State: string;
+  OfferingType: string;
+  RecurringCharges: {
+    RecurringChargeAmount: number;
+    RecurringChargeFrequency: string;
+  }[];
+  ReservedNodeOfferingType: string;
+};
+
+type StoredReservedNodeExchangeStatus = {
+  ReservedNodeExchangeRequestId: string;
+  Status: string;
+  RequestTime: string;
+  SourceReservedNodeId: string;
+  SourceReservedNodeType: string;
+  SourceReservedNodeCount: number;
+  TargetReservedNodeOfferingId: string;
+  TargetReservedNodeType: string;
+  TargetReservedNodeCount: number;
+};
+
 const clusterKey = (id: string): string => `cluster/${id}`;
 const subnetGroupKey = (name: string): string => `subnetgroup/${name}`;
 const snapshotKey = (id: string): string => `snapshot/${id}`;
@@ -262,6 +322,13 @@ const datashareKey = (arn: string): string => `datashare/${arn}`;
 const endpointKey = (name: string): string => `endpoint/${name}`;
 const endpointAuthKey = (clusterId: string, account: string): string =>
   `endpointauth/${clusterId}/${account}`;
+const hsmClientCertKey = (id: string): string => `hsmclientcert/${id}`;
+const hsmConfigKey = (id: string): string => `hsmconfig/${id}`;
+const reservedNodeOfferingKey = (id: string): string =>
+  `reservednodeoffering/${id}`;
+const reservedNodeKey = (id: string): string => `reservednode/${id}`;
+const reservedNodeExchangeKey = (id: string): string =>
+  `reservednodeexchange/${id}`;
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -492,6 +559,68 @@ const requireScheduledAction = (
     );
   }
   return action;
+};
+
+const requireHsmClientCert = (
+  ctx: ServiceContext,
+  id: string,
+): StoredHsmClientCertificate => {
+  const cert = ctx.store.get<StoredHsmClientCertificate>(hsmClientCertKey(id));
+  if (cert === undefined) {
+    throw awsError(
+      "HsmClientCertificateNotFoundFault",
+      `HSM client certificate ${id} not found.`,
+      404,
+    );
+  }
+  return cert;
+};
+
+const requireHsmConfig = (
+  ctx: ServiceContext,
+  id: string,
+): StoredHsmConfiguration => {
+  const config = ctx.store.get<StoredHsmConfiguration>(hsmConfigKey(id));
+  if (config === undefined) {
+    throw awsError(
+      "HsmConfigurationNotFoundFault",
+      `HSM configuration ${id} not found.`,
+      404,
+    );
+  }
+  return config;
+};
+
+const requireReservedNodeOffering = (
+  ctx: ServiceContext,
+  id: string,
+): StoredReservedNodeOffering => {
+  const offering = ctx.store.get<StoredReservedNodeOffering>(
+    reservedNodeOfferingKey(id),
+  );
+  if (offering === undefined) {
+    throw awsError(
+      "ReservedNodeOfferingNotFoundFault",
+      `Reserved node offering ${id} not found.`,
+      404,
+    );
+  }
+  return offering;
+};
+
+const requireReservedNode = (
+  ctx: ServiceContext,
+  id: string,
+): StoredReservedNode => {
+  const node = ctx.store.get<StoredReservedNode>(reservedNodeKey(id));
+  if (node === undefined) {
+    throw awsError(
+      "ReservedNodeNotFoundFault",
+      `Reserved node ${id} not found.`,
+      404,
+    );
+  }
+  return node;
 };
 
 const namespaceArnOf = (region: string, account: string, id: string): string =>
@@ -2425,6 +2554,48 @@ const presentEndpointAuthorization = (auth: StoredEndpointAuthorization) => ({
   EndpointCount: auth.EndpointCount,
 });
 
+const presentHsmClientCert = (cert: StoredHsmClientCertificate) => ({
+  HsmClientCertificateIdentifier: cert.HsmClientCertificateIdentifier,
+  HsmClientCertificatePublicKey: cert.HsmClientCertificatePublicKey,
+  Tags: cert.Tags,
+});
+
+const presentHsmConfig = (config: StoredHsmConfiguration) => ({
+  HsmConfigurationIdentifier: config.HsmConfigurationIdentifier,
+  Description: config.Description,
+  HsmIpAddress: config.HsmIpAddress,
+  HsmPartitionName: config.HsmPartitionName,
+  Tags: config.Tags,
+});
+
+const presentReservedNodeOffering = (offering: StoredReservedNodeOffering) => ({
+  ReservedNodeOfferingId: offering.ReservedNodeOfferingId,
+  NodeType: offering.NodeType,
+  Duration: offering.Duration,
+  FixedPrice: offering.FixedPrice,
+  UsagePrice: offering.UsagePrice,
+  CurrencyCode: offering.CurrencyCode,
+  OfferingType: offering.OfferingType,
+  RecurringCharges: offering.RecurringCharges,
+  ReservedNodeOfferingType: offering.ReservedNodeOfferingType,
+});
+
+const presentReservedNode = (node: StoredReservedNode) => ({
+  ReservedNodeId: node.ReservedNodeId,
+  ReservedNodeOfferingId: node.ReservedNodeOfferingId,
+  NodeType: node.NodeType,
+  StartTime: node.StartTime,
+  Duration: node.Duration,
+  FixedPrice: node.FixedPrice,
+  UsagePrice: node.UsagePrice,
+  CurrencyCode: node.CurrencyCode,
+  NodeCount: node.NodeCount,
+  State: node.State,
+  OfferingType: node.OfferingType,
+  RecurringCharges: node.RecurringCharges,
+  ReservedNodeOfferingType: node.ReservedNodeOfferingType,
+});
+
 const AuthorizeDataShare: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "DataShareArn");
   const consumerIdentifier = requireString(input, "ConsumerIdentifier");
@@ -2723,6 +2894,349 @@ const DeregisterNamespace: OperationHandler = (_input, _ctx) => {
   return { Status: "Deregistering" };
 };
 
+const BUILTIN_OFFERINGS: StoredReservedNodeOffering[] = [
+  {
+    ReservedNodeOfferingId: "offering-dc2-large-1yr",
+    NodeType: "dc2.large",
+    Duration: 31536000,
+    FixedPrice: 642.0,
+    UsagePrice: 0.0,
+    CurrencyCode: "USD",
+    OfferingType: "All Upfront",
+    RecurringCharges: [
+      { RecurringChargeAmount: 0.0, RecurringChargeFrequency: "Hourly" },
+    ],
+    ReservedNodeOfferingType: "Regular",
+  },
+  {
+    ReservedNodeOfferingId: "offering-ra3-xlplus-1yr",
+    NodeType: "ra3.xlplus",
+    Duration: 31536000,
+    FixedPrice: 1380.0,
+    UsagePrice: 0.0,
+    CurrencyCode: "USD",
+    OfferingType: "All Upfront",
+    RecurringCharges: [
+      { RecurringChargeAmount: 0.0, RecurringChargeFrequency: "Hourly" },
+    ],
+    ReservedNodeOfferingType: "Regular",
+  },
+  {
+    ReservedNodeOfferingId: "offering-ra3-xlplus-1yr-upgradable",
+    NodeType: "ra3.xlplus",
+    Duration: 31536000,
+    FixedPrice: 1200.0,
+    UsagePrice: 0.05,
+    CurrencyCode: "USD",
+    OfferingType: "Partial Upfront",
+    RecurringCharges: [
+      { RecurringChargeAmount: 0.05, RecurringChargeFrequency: "Hourly" },
+    ],
+    ReservedNodeOfferingType: "Upgradable",
+  },
+] as const;
+
+const ensureBuiltinOfferings = (ctx: ServiceContext): void => {
+  for (const o of BUILTIN_OFFERINGS) {
+    if (
+      ctx.store.get<StoredReservedNodeOffering>(
+        reservedNodeOfferingKey(o.ReservedNodeOfferingId),
+      ) === undefined
+    ) {
+      ctx.store.set(reservedNodeOfferingKey(o.ReservedNodeOfferingId), o);
+    }
+  }
+};
+
+const CreateHsmClientCertificate: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "HsmClientCertificateIdentifier");
+  const existing = ctx.store.get<StoredHsmClientCertificate>(
+    hsmClientCertKey(id),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "HsmClientCertificateAlreadyExistsFault",
+      `HSM client certificate ${id} already exists.`,
+      400,
+    );
+  }
+  const cert: StoredHsmClientCertificate = {
+    HsmClientCertificateIdentifier: id,
+    HsmClientCertificatePublicKey: `-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA${id}\n-----END PUBLIC KEY-----`,
+    Tags: tagList(input),
+  };
+  ctx.store.set(hsmClientCertKey(id), cert);
+  return { HsmClientCertificate: presentHsmClientCert(cert) };
+};
+
+const CreateHsmConfiguration: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "HsmConfigurationIdentifier");
+  const existing = ctx.store.get<StoredHsmConfiguration>(hsmConfigKey(id));
+  if (existing !== undefined) {
+    throw awsError(
+      "HsmConfigurationAlreadyExistsFault",
+      `HSM configuration ${id} already exists.`,
+      400,
+    );
+  }
+  const config: StoredHsmConfiguration = {
+    HsmConfigurationIdentifier: id,
+    Description: requireString(input, "Description"),
+    HsmIpAddress: requireString(input, "HsmIpAddress"),
+    HsmPartitionName: requireString(input, "HsmPartitionName"),
+    Tags: tagList(input),
+  };
+  ctx.store.set(hsmConfigKey(id), config);
+  return { HsmConfiguration: presentHsmConfig(config) };
+};
+
+const DeleteHsmClientCertificate: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "HsmClientCertificateIdentifier");
+  requireHsmClientCert(ctx, id);
+  ctx.store.delete(hsmClientCertKey(id));
+  return {};
+};
+
+const DeleteHsmConfiguration: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "HsmConfigurationIdentifier");
+  requireHsmConfig(ctx, id);
+  ctx.store.delete(hsmConfigKey(id));
+  return {};
+};
+
+const DescribeHsmClientCertificates: OperationHandler = (input, ctx) => {
+  const id = optionalString(input, "HsmClientCertificateIdentifier");
+  if (id !== undefined) {
+    const cert = requireHsmClientCert(ctx, id);
+    return { HsmClientCertificates: [presentHsmClientCert(cert)] };
+  }
+  const certs = ctx.store
+    .list<StoredHsmClientCertificate>()
+    .filter((e) => e.key.startsWith("hsmclientcert/"))
+    .map((e) => presentHsmClientCert(e.value));
+  return { HsmClientCertificates: certs };
+};
+
+const DescribeHsmConfigurations: OperationHandler = (input, ctx) => {
+  const id = optionalString(input, "HsmConfigurationIdentifier");
+  if (id !== undefined) {
+    const config = requireHsmConfig(ctx, id);
+    return { HsmConfigurations: [presentHsmConfig(config)] };
+  }
+  const configs = ctx.store
+    .list<StoredHsmConfiguration>()
+    .filter((e) => e.key.startsWith("hsmconfig/"))
+    .map((e) => presentHsmConfig(e.value));
+  return { HsmConfigurations: configs };
+};
+
+const DescribeReservedNodeOfferings: OperationHandler = (input, ctx) => {
+  ensureBuiltinOfferings(ctx);
+  const id = optionalString(input, "ReservedNodeOfferingId");
+  if (id !== undefined) {
+    const offering = requireReservedNodeOffering(ctx, id);
+    return { ReservedNodeOfferings: [presentReservedNodeOffering(offering)] };
+  }
+  const offerings = ctx.store
+    .list<StoredReservedNodeOffering>()
+    .filter((e) => e.key.startsWith("reservednodeoffering/"))
+    .map((e) => presentReservedNodeOffering(e.value));
+  return { ReservedNodeOfferings: offerings };
+};
+
+const DescribeReservedNodes: OperationHandler = (input, ctx) => {
+  const id = optionalString(input, "ReservedNodeId");
+  if (id !== undefined) {
+    const node = requireReservedNode(ctx, id);
+    return { ReservedNodes: [presentReservedNode(node)] };
+  }
+  const nodes = ctx.store
+    .list<StoredReservedNode>()
+    .filter((e) => e.key.startsWith("reservednode/"))
+    .map((e) => presentReservedNode(e.value));
+  return { ReservedNodes: nodes };
+};
+
+const PurchaseReservedNodeOffering: OperationHandler = (input, ctx) => {
+  ensureBuiltinOfferings(ctx);
+  const offeringId = requireString(input, "ReservedNodeOfferingId");
+  const offering = requireReservedNodeOffering(ctx, offeringId);
+  const nodeCount = numberOr(input, "NodeCount", 1);
+  const reservedNodeId = crypto.randomUUID();
+  const existing = ctx.store
+    .list<StoredReservedNode>()
+    .find(
+      (e) =>
+        e.key.startsWith("reservednode/") &&
+        e.value.ReservedNodeOfferingId === offeringId &&
+        e.value.State === "active",
+    );
+  if (existing !== undefined) {
+    throw awsError(
+      "ReservedNodeAlreadyExistsFault",
+      `Reserved node for offering ${offeringId} already exists.`,
+      400,
+    );
+  }
+  const node: StoredReservedNode = {
+    ReservedNodeId: reservedNodeId,
+    ReservedNodeOfferingId: offeringId,
+    NodeType: offering.NodeType,
+    StartTime: new Date().toISOString(),
+    Duration: offering.Duration,
+    FixedPrice: offering.FixedPrice,
+    UsagePrice: offering.UsagePrice,
+    CurrencyCode: offering.CurrencyCode,
+    NodeCount: nodeCount,
+    State: "active",
+    OfferingType: offering.OfferingType,
+    RecurringCharges: offering.RecurringCharges,
+    ReservedNodeOfferingType: offering.ReservedNodeOfferingType,
+  };
+  ctx.store.set(reservedNodeKey(reservedNodeId), node);
+  return { ReservedNode: presentReservedNode(node) };
+};
+
+const AcceptReservedNodeExchange: OperationHandler = (input, ctx) => {
+  const sourceId = requireString(input, "ReservedNodeId");
+  const targetOfferingId = requireString(input, "TargetReservedNodeOfferingId");
+  ensureBuiltinOfferings(ctx);
+  const sourceNode = requireReservedNode(ctx, sourceId);
+  const targetOffering = requireReservedNodeOffering(ctx, targetOfferingId);
+  if (sourceNode.State !== "active") {
+    throw awsError(
+      "InvalidReservedNodeStateFault",
+      `Reserved node ${sourceId} is not in active state.`,
+      400,
+    );
+  }
+  const exchangeId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const exchangeStatus: StoredReservedNodeExchangeStatus = {
+    ReservedNodeExchangeRequestId: exchangeId,
+    Status: "succeeded",
+    RequestTime: now,
+    SourceReservedNodeId: sourceId,
+    SourceReservedNodeType: sourceNode.NodeType,
+    SourceReservedNodeCount: sourceNode.NodeCount,
+    TargetReservedNodeOfferingId: targetOfferingId,
+    TargetReservedNodeType: targetOffering.NodeType,
+    TargetReservedNodeCount: sourceNode.NodeCount,
+  };
+  ctx.store.set(reservedNodeExchangeKey(exchangeId), exchangeStatus);
+  sourceNode.State = "retired";
+  ctx.store.set(reservedNodeKey(sourceId), sourceNode);
+  const newNodeId = crypto.randomUUID();
+  const newNode: StoredReservedNode = {
+    ReservedNodeId: newNodeId,
+    ReservedNodeOfferingId: targetOfferingId,
+    NodeType: targetOffering.NodeType,
+    StartTime: now,
+    Duration: targetOffering.Duration,
+    FixedPrice: targetOffering.FixedPrice,
+    UsagePrice: targetOffering.UsagePrice,
+    CurrencyCode: targetOffering.CurrencyCode,
+    NodeCount: sourceNode.NodeCount,
+    State: "active",
+    OfferingType: targetOffering.OfferingType,
+    RecurringCharges: targetOffering.RecurringCharges,
+    ReservedNodeOfferingType: targetOffering.ReservedNodeOfferingType,
+  };
+  ctx.store.set(reservedNodeKey(newNodeId), newNode);
+  return { ExchangedReservedNode: presentReservedNode(newNode) };
+};
+
+const DescribeReservedNodeExchangeStatus: OperationHandler = (input, ctx) => {
+  const sourceId = optionalString(input, "ReservedNodeId");
+  const exchangeId = optionalString(input, "ReservedNodeExchangeRequestId");
+  let statuses = ctx.store
+    .list<StoredReservedNodeExchangeStatus>()
+    .filter((e) => e.key.startsWith("reservednodeexchange/"))
+    .map((e) => e.value);
+  if (sourceId !== undefined) {
+    statuses = statuses.filter((s) => s.SourceReservedNodeId === sourceId);
+  }
+  if (exchangeId !== undefined) {
+    statuses = statuses.filter(
+      (s) => s.ReservedNodeExchangeRequestId === exchangeId,
+    );
+  }
+  return {
+    ReservedNodeExchangeStatusDetails: statuses.map((s) => ({
+      ReservedNodeExchangeRequestId: s.ReservedNodeExchangeRequestId,
+      Status: s.Status,
+      RequestTime: s.RequestTime,
+      SourceReservedNodeId: s.SourceReservedNodeId,
+      SourceReservedNodeType: s.SourceReservedNodeType,
+      SourceReservedNodeCount: s.SourceReservedNodeCount,
+      TargetReservedNodeOfferingId: s.TargetReservedNodeOfferingId,
+      TargetReservedNodeType: s.TargetReservedNodeType,
+      TargetReservedNodeCount: s.TargetReservedNodeCount,
+    })),
+  };
+};
+
+const GetReservedNodeExchangeOfferings: OperationHandler = (input, ctx) => {
+  ensureBuiltinOfferings(ctx);
+  const sourceId = requireString(input, "ReservedNodeId");
+  const sourceNode = requireReservedNode(ctx, sourceId);
+  if (sourceNode.State !== "active") {
+    throw awsError(
+      "InvalidReservedNodeStateFault",
+      `Reserved node ${sourceId} is not in active state.`,
+      400,
+    );
+  }
+  const offerings = ctx.store
+    .list<StoredReservedNodeOffering>()
+    .filter((e) => e.key.startsWith("reservednodeoffering/"))
+    .map((e) => e.value)
+    .filter(
+      (o) =>
+        o.ReservedNodeOfferingType === "Upgradable" ||
+        o.NodeType !== sourceNode.NodeType,
+    );
+  return { ReservedNodeOfferings: offerings.map(presentReservedNodeOffering) };
+};
+
+const GetReservedNodeExchangeConfigurationOptions: OperationHandler = (
+  input,
+  ctx,
+) => {
+  ensureBuiltinOfferings(ctx);
+  const clusterId = optionalString(input, "ClusterIdentifier");
+  const snapshotId = optionalString(input, "SnapshotIdentifier");
+  let sourceNodes: StoredReservedNode[] = [];
+  if (clusterId !== undefined) {
+    requireCluster(ctx, clusterId);
+    sourceNodes = ctx.store
+      .list<StoredReservedNode>()
+      .filter((e) => e.key.startsWith("reservednode/"))
+      .map((e) => e.value)
+      .filter((n) => n.State === "active");
+  } else if (snapshotId !== undefined) {
+    requireSnapshot(ctx, snapshotId);
+    sourceNodes = ctx.store
+      .list<StoredReservedNode>()
+      .filter((e) => e.key.startsWith("reservednode/"))
+      .map((e) => e.value)
+      .filter((n) => n.State === "active");
+  }
+  const targetOfferings = ctx.store
+    .list<StoredReservedNodeOffering>()
+    .filter((e) => e.key.startsWith("reservednodeoffering/"))
+    .map((e) => e.value)
+    .filter((o) => o.ReservedNodeOfferingType === "Upgradable");
+  const options = sourceNodes.flatMap((src) =>
+    targetOfferings.map((tgt) => ({
+      SourceReservedNode: presentReservedNode(src),
+      TargetReservedNodeCount: src.NodeCount,
+      TargetReservedNodeOffering: presentReservedNodeOffering(tgt),
+    })),
+  );
+  return { ReservedNodeConfigurationOptionList: options };
+};
+
 const redshift: ServiceDefinition = {
   name: "redshift",
   protocol: "query",
@@ -2835,6 +3349,19 @@ const redshift: ServiceDefinition = {
     RegisterNamespace,
     RejectDataShare,
     RevokeEndpointAccess,
+    CreateHsmClientCertificate,
+    CreateHsmConfiguration,
+    DeleteHsmClientCertificate,
+    DeleteHsmConfiguration,
+    DescribeHsmClientCertificates,
+    DescribeHsmConfigurations,
+    AcceptReservedNodeExchange,
+    DescribeReservedNodeExchangeStatus,
+    DescribeReservedNodeOfferings,
+    DescribeReservedNodes,
+    GetReservedNodeExchangeConfigurationOptions,
+    GetReservedNodeExchangeOfferings,
+    PurchaseReservedNodeOffering,
   },
   model,
 } as const;

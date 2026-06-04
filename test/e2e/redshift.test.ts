@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn } from "bun";
 import {
+  AcceptReservedNodeExchangeCommand,
   AssociateDataShareConsumerCommand,
   AuthorizeClusterSecurityGroupIngressCommand,
   AuthorizeDataShareCommand,
@@ -19,6 +20,8 @@ import {
   CreateCustomDomainAssociationCommand,
   CreateEndpointAccessCommand,
   CreateEventSubscriptionCommand,
+  CreateHsmClientCertificateCommand,
+  CreateHsmConfigurationCommand,
   CreateScheduledActionCommand,
   CreateSnapshotCopyGrantCommand,
   CreateSnapshotScheduleCommand,
@@ -34,6 +37,8 @@ import {
   DeleteCustomDomainAssociationCommand,
   DeleteEndpointAccessCommand,
   DeleteEventSubscriptionCommand,
+  DeleteHsmClientCertificateCommand,
+  DeleteHsmConfigurationCommand,
   DeleteScheduledActionCommand,
   DeleteSnapshotCopyGrantCommand,
   DeleteSnapshotScheduleCommand,
@@ -61,10 +66,15 @@ import {
   DescribeEventCategoriesCommand,
   DescribeEventSubscriptionsCommand,
   DescribeEventsCommand,
+  DescribeHsmClientCertificatesCommand,
+  DescribeHsmConfigurationsCommand,
   DescribeLoggingStatusCommand,
   DescribeNodeConfigurationOptionsCommand,
   DescribeOrderableClusterOptionsCommand,
   DescribeResizeCommand,
+  DescribeReservedNodeExchangeStatusCommand,
+  DescribeReservedNodeOfferingsCommand,
+  DescribeReservedNodesCommand,
   DescribeScheduledActionsCommand,
   DescribeSnapshotCopyGrantsCommand,
   DescribeSnapshotSchedulesCommand,
@@ -79,6 +89,8 @@ import {
   EnableSnapshotCopyCommand,
   GetClusterCredentialsCommand,
   GetClusterCredentialsWithIAMCommand,
+  GetReservedNodeExchangeConfigurationOptionsCommand,
+  GetReservedNodeExchangeOfferingsCommand,
   ModifyAquaConfigurationCommand,
   ModifyAuthenticationProfileCommand,
   ModifyClusterCommand,
@@ -97,6 +109,7 @@ import {
   ModifySnapshotScheduleCommand,
   ModifyUsageLimitCommand,
   PauseClusterCommand,
+  PurchaseReservedNodeOfferingCommand,
   RebootClusterCommand,
   RedshiftClient,
   RegisterNamespaceCommand,
@@ -1321,4 +1334,145 @@ test("Redshift endpoint-access lifecycle", async () => {
       SkipFinalClusterSnapshot: true,
     }),
   );
+});
+
+test("Redshift HSM client certificate lifecycle", async () => {
+  const client = redshift();
+  const certId = "bunsai-e2e-hsm-cert";
+
+  const created = await client.send(
+    new CreateHsmClientCertificateCommand({
+      HsmClientCertificateIdentifier: certId,
+    }),
+  );
+  expect(created.HsmClientCertificate?.HsmClientCertificateIdentifier).toBe(
+    certId,
+  );
+  expect(created.HsmClientCertificate?.HsmClientCertificatePublicKey).toContain(
+    "PUBLIC KEY",
+  );
+
+  const listed = await client.send(
+    new DescribeHsmClientCertificatesCommand({
+      HsmClientCertificateIdentifier: certId,
+    }),
+  );
+  expect((listed.HsmClientCertificates ?? []).length).toBe(1);
+  expect(
+    listed.HsmClientCertificates?.[0]?.HsmClientCertificateIdentifier,
+  ).toBe(certId);
+
+  await client.send(
+    new DeleteHsmClientCertificateCommand({
+      HsmClientCertificateIdentifier: certId,
+    }),
+  );
+
+  const afterDelete = await client.send(
+    new DescribeHsmClientCertificatesCommand({}),
+  );
+  const stillFound = (afterDelete.HsmClientCertificates ?? []).find(
+    (c) => c.HsmClientCertificateIdentifier === certId,
+  );
+  expect(stillFound).toBeUndefined();
+});
+
+test("Redshift HSM configuration lifecycle", async () => {
+  const client = redshift();
+  const configId = "bunsai-e2e-hsm-config";
+
+  const created = await client.send(
+    new CreateHsmConfigurationCommand({
+      HsmConfigurationIdentifier: configId,
+      Description: "Test HSM configuration",
+      HsmIpAddress: "10.0.0.1",
+      HsmPartitionName: "bunsai-partition",
+      HsmPartitionPassword: "TestPassword123",
+      HsmServerPublicCertificate: "server.pem",
+    }),
+  );
+  expect(created.HsmConfiguration?.HsmConfigurationIdentifier).toBe(configId);
+  expect(created.HsmConfiguration?.HsmIpAddress).toBe("10.0.0.1");
+
+  const listed = await client.send(
+    new DescribeHsmConfigurationsCommand({
+      HsmConfigurationIdentifier: configId,
+    }),
+  );
+  expect((listed.HsmConfigurations ?? []).length).toBe(1);
+  expect(listed.HsmConfigurations?.[0]?.Description).toBe(
+    "Test HSM configuration",
+  );
+
+  await client.send(
+    new DeleteHsmConfigurationCommand({
+      HsmConfigurationIdentifier: configId,
+    }),
+  );
+});
+
+test("Redshift reserved node lifecycle", async () => {
+  const client = redshift();
+
+  const offerings = await client.send(
+    new DescribeReservedNodeOfferingsCommand({}),
+  );
+  expect((offerings.ReservedNodeOfferings ?? []).length).toBeGreaterThan(0);
+  const offering = offerings.ReservedNodeOfferings?.[0];
+  expect(offering?.ReservedNodeOfferingId).toBeDefined();
+  expect(offering?.NodeType).toBeDefined();
+  expect(offering?.Duration).toBeGreaterThan(0);
+
+  const purchased = await client.send(
+    new PurchaseReservedNodeOfferingCommand({
+      ReservedNodeOfferingId: offering?.ReservedNodeOfferingId ?? "",
+      NodeCount: 1,
+    }),
+  );
+  expect(purchased.ReservedNode?.ReservedNodeId).toBeDefined();
+  expect(purchased.ReservedNode?.State).toBe("active");
+  expect(purchased.ReservedNode?.NodeType).toBe(offering?.NodeType);
+
+  const reservedNodeId = purchased.ReservedNode?.ReservedNodeId ?? "";
+
+  const described = await client.send(
+    new DescribeReservedNodesCommand({ ReservedNodeId: reservedNodeId }),
+  );
+  expect((described.ReservedNodes ?? []).length).toBe(1);
+  expect(described.ReservedNodes?.[0]?.State).toBe("active");
+
+  const targetOffering = offerings.ReservedNodeOfferings?.find(
+    (o) => o.ReservedNodeOfferingId !== offering?.ReservedNodeOfferingId,
+  );
+  if (targetOffering?.ReservedNodeOfferingId !== undefined) {
+    const exchangeOfferings = await client.send(
+      new GetReservedNodeExchangeOfferingsCommand({
+        ReservedNodeId: reservedNodeId,
+      }),
+    );
+    expect(Array.isArray(exchangeOfferings.ReservedNodeOfferings)).toBe(true);
+
+    const exchanged = await client.send(
+      new AcceptReservedNodeExchangeCommand({
+        ReservedNodeId: reservedNodeId,
+        TargetReservedNodeOfferingId: targetOffering.ReservedNodeOfferingId,
+      }),
+    );
+    expect(exchanged.ExchangedReservedNode?.State).toBe("active");
+    expect(exchanged.ExchangedReservedNode?.ReservedNodeOfferingId).toBe(
+      targetOffering.ReservedNodeOfferingId,
+    );
+
+    const exchangeStatus = await client.send(
+      new DescribeReservedNodeExchangeStatusCommand({
+        ReservedNodeId: reservedNodeId,
+      }),
+    );
+    expect(
+      (exchangeStatus.ReservedNodeExchangeStatusDetails ?? []).length,
+    ).toBe(1);
+    expect(exchangeStatus.ReservedNodeExchangeStatusDetails?.[0]?.Status).toBe(
+      "succeeded",
+    );
+  }
 });

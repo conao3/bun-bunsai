@@ -2719,6 +2719,187 @@ const DeleteMonitoringSchedule: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DescribeApp: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  const appType = requireString(input, "AppType");
+  const appName = requireString(input, "AppName");
+  const stored = requireApp(ctx, domainId, appType, appName);
+  return {
+    AppArn: stored.AppArn,
+    AppType: stored.AppType,
+    AppName: stored.AppName,
+    DomainId: stored.DomainId,
+    UserProfileName: stored.UserProfileName,
+    SpaceName: stored.SpaceName,
+    Status: stored.Status,
+    CreationTime: stored.CreationTime,
+    ResourceSpec: stored.ResourceSpec,
+  };
+};
+
+const DescribeAppImageConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AppImageConfigName");
+  const stored = requireAppImageConfig(ctx, name);
+  return {
+    AppImageConfigArn: stored.AppImageConfigArn,
+    AppImageConfigName: stored.AppImageConfigName,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+    KernelGatewayImageConfig: stored.KernelGatewayImageConfig,
+    JupyterLabAppImageConfig: stored.JupyterLabAppImageConfig,
+    CodeEditorAppImageConfig: stored.CodeEditorAppImageConfig,
+  };
+};
+
+const DescribeAction: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ActionName");
+  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:action/${name}`;
+  const now = nowSeconds();
+  return {
+    ActionName: name,
+    ActionArn: arn,
+    ActionType: "ModelDeployment",
+    Status: "Completed",
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+};
+
+const DescribeAlgorithm: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AlgorithmName");
+  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:algorithm/${name}`;
+  return {
+    AlgorithmName: name,
+    AlgorithmArn: arn,
+    AlgorithmStatus: "Completed",
+    CreationTime: nowSeconds(),
+    TrainingSpecification: {
+      TrainingImage: `${ctx.account}.dkr.ecr.${ctx.region}.amazonaws.com/bunsai:latest`,
+      SupportedTrainingInstanceTypes: ["ml.m5.xlarge"],
+    },
+    AlgorithmStatusDetails: {},
+  };
+};
+
+const DescribeArtifact: OperationHandler = (input, ctx) => {
+  const artifactArn = requireString(input, "ArtifactArn");
+  const now = nowSeconds();
+  return {
+    ArtifactName: "bunsai-artifact",
+    ArtifactArn: artifactArn,
+    ArtifactType: "DataSet",
+    Source: {
+      SourceUri: `s3://bunsai-sagemaker/${ctx.account}/artifacts/data`,
+    },
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+};
+
+const DescribeAutoMLJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AutoMLJobName");
+  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:automl-job/${name}`;
+  const now = nowSeconds();
+  return {
+    AutoMLJobName: name,
+    AutoMLJobArn: arn,
+    AutoMLJobStatus: "Completed",
+    AutoMLJobSecondaryStatus: "Completed",
+    CreationTime: now,
+    LastModifiedTime: now,
+    InputDataConfig: [],
+    OutputDataConfig: { S3OutputPath: `s3://bunsai-sagemaker/${name}/output` },
+    RoleArn: `arn:aws:iam::${ctx.account}:role/SageMakerRole`,
+  };
+};
+
+const DescribeAutoMLJobV2: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AutoMLJobName");
+  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:automl-job/${name}`;
+  const now = nowSeconds();
+  return {
+    AutoMLJobName: name,
+    AutoMLJobArn: arn,
+    AutoMLJobStatus: "Completed",
+    AutoMLJobSecondaryStatus: "Completed",
+    CreationTime: now,
+    LastModifiedTime: now,
+    AutoMLJobInputDataConfig: [],
+    OutputDataConfig: { S3OutputPath: `s3://bunsai-sagemaker/${name}/output` },
+    RoleArn: `arn:aws:iam::${ctx.account}:role/SageMakerRole`,
+  };
+};
+
+const DescribeCluster: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ClusterName");
+  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:cluster/${name}`;
+  return {
+    ClusterArn: arn,
+    ClusterName: name,
+    ClusterStatus: "InService",
+    CreationTime: nowSeconds(),
+    InstanceGroups: [],
+  };
+};
+
+const DescribeClusterEvent: OperationHandler = (input, ctx) => {
+  const eventId = requireString(input, "EventId");
+  const clusterName = requireString(input, "ClusterName");
+  const clusterArn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:cluster/${clusterName}`;
+  return {
+    EventDetails: {
+      EventId: eventId,
+      ClusterArn: clusterArn,
+      ClusterName: clusterName,
+      ResourceType: "Cluster",
+      EventTime: nowSeconds(),
+      EventLevel: "Info",
+      Description: "Cluster event",
+    },
+  };
+};
+
+const DescribeAIBenchmarkJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AIBenchmarkJobName");
+  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:ai-benchmark-job/${name}`;
+  const now = nowSeconds();
+  return {
+    AIBenchmarkJobName: name,
+    AIBenchmarkJobArn: arn,
+    AIBenchmarkJobStatus: "Completed",
+    BenchmarkTarget: { BenchmarkConfig: { ModelId: `${name}-model` } },
+    CreationTime: now,
+    StartTime: now,
+    EndTime: now,
+  };
+};
+
+const DescribeAIRecommendationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AIRecommendationJobName");
+  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:ai-recommendation-job/${name}`;
+  const now = nowSeconds();
+  return {
+    AIRecommendationJobName: name,
+    AIRecommendationJobArn: arn,
+    AIRecommendationJobStatus: "Completed",
+    Recommendations: [],
+    CreationTime: now,
+    StartTime: now,
+    EndTime: now,
+  };
+};
+
+const DescribeAIWorkloadConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AIWorkloadConfigName");
+  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:ai-workload-config/${name}`;
+  return {
+    AIWorkloadConfigName: name,
+    AIWorkloadConfigArn: arn,
+    AIWorkloadConfigs: [],
+    CreationTime: nowSeconds(),
+  };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -2786,9 +2967,21 @@ const sagemaker = {
     CreateTransformJob,
     CreateDomain,
     CreateApp,
+    DescribeApp,
     DeleteApp,
     CreateAppImageConfig,
+    DescribeAppImageConfig,
     DeleteAppImageConfig,
+    DescribeAction,
+    DescribeAlgorithm,
+    DescribeArtifact,
+    DescribeAutoMLJob,
+    DescribeAutoMLJobV2,
+    DescribeCluster,
+    DescribeClusterEvent,
+    DescribeAIBenchmarkJob,
+    DescribeAIRecommendationJob,
+    DescribeAIWorkloadConfig,
     CreateSpace,
     CreateUserProfile,
     CreatePresignedDomainUrl,

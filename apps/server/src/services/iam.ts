@@ -799,6 +799,62 @@ const GetPolicy: OperationHandler = (input, ctx) => {
   return { Policy: requirePolicy(ctx, arn) };
 };
 
+const ListPolicies: OperationHandler = (input, ctx) => {
+  const scope = optionalString(input, "Scope") ?? "All";
+  const pathPrefix = optionalString(input, "PathPrefix") ?? "/";
+  const policies = ctx.store
+    .list<StoredPolicy>()
+    .filter((entry) => entry.key.startsWith("policy/"))
+    .map((entry) => entry.value)
+    .filter((p) => p.Path.startsWith(pathPrefix))
+    .filter((p) => {
+      if (scope === "Local") return !p.Arn.startsWith("arn:aws:iam::aws:");
+      if (scope === "AWS") return p.Arn.startsWith("arn:aws:iam::aws:");
+      return true;
+    });
+  return { Policies: policies, IsTruncated: false };
+};
+
+const ListPoliciesGrantingServiceAccess: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "Arn");
+  const serviceNamespaces = input["ServiceNamespaces"];
+  const namespaces = Array.isArray(serviceNamespaces)
+    ? (serviceNamespaces as string[])
+    : [];
+  const roleMatch = arn.match(/arn:aws:iam::[^:]+:role\/(.+)/);
+  const policies: Array<Record<string, unknown>> = [];
+  if (roleMatch) {
+    const roleName = roleMatch[1];
+    ctx.store
+      .list<StoredAttachment>()
+      .filter(
+        (e) => e.key.startsWith("attachment/") && e.value.RoleName === roleName,
+      )
+      .forEach((e) => {
+        policies.push({
+          PolicyName: e.value.PolicyName,
+          PolicyArn: e.value.PolicyArn,
+          PolicyType: "MANAGED",
+        });
+      });
+    ctx.store
+      .list<StoredRolePolicy>()
+      .filter(
+        (e) => e.key.startsWith("rolepolicy/") && e.value.RoleName === roleName,
+      )
+      .forEach((e) => {
+        policies.push({ PolicyName: e.value.PolicyName, PolicyType: "INLINE" });
+      });
+  }
+  return {
+    PoliciesGrantingServiceAccess: namespaces.map((ns) => ({
+      ServiceNamespace: ns,
+      Policies: policies,
+    })),
+    IsTruncated: false,
+  };
+};
+
 const AttachRolePolicy: OperationHandler = (input, ctx) => {
   const roleName = requireString(input, "RoleName");
   const policyArn = requireString(input, "PolicyArn");
@@ -1102,6 +1158,20 @@ const ListRoleTags: OperationHandler = (input, ctx) => {
     )
     .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
   return { Tags: tags, IsTruncated: false };
+};
+
+const UntagRole: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  requireRole(ctx, roleName);
+  const tagKeys = input["TagKeys"];
+  if (Array.isArray(tagKeys)) {
+    for (const key of tagKeys) {
+      if (typeof key === "string") {
+        ctx.store.delete(roleTagKey(roleName, key));
+      }
+    }
+  }
+  return {};
 };
 
 const requireGroup = (ctx: ServiceContext, name: string): StoredGroup => {
@@ -2701,6 +2771,30 @@ const UpdateAssumeRolePolicy: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const UpdateRole: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  const role = requireRole(ctx, roleName);
+  const description = optionalString(input, "Description");
+  const maxSessionDuration = optionalNumber(input, "MaxSessionDuration");
+  ctx.store.set(roleKey(roleName), {
+    ...role,
+    ...(description !== undefined ? { Description: description } : {}),
+    ...(maxSessionDuration !== undefined
+      ? { MaxSessionDuration: maxSessionDuration }
+      : {}),
+  });
+  return {};
+};
+
+const UpdateRoleDescription: OperationHandler = (input, ctx) => {
+  const roleName = requireString(input, "RoleName");
+  const description = requireString(input, "Description");
+  const role = requireRole(ctx, roleName);
+  const updated = { ...role, Description: description };
+  ctx.store.set(roleKey(roleName), updated);
+  return { Role: updated };
+};
+
 const DeleteServiceLinkedRole: OperationHandler = (input, ctx) => {
   const roleName = requireString(input, "RoleName");
   requireRole(ctx, roleName);
@@ -2970,6 +3064,20 @@ const ListOpenIDConnectProviderTags: OperationHandler = (input, ctx) => {
   return { Tags: combinedTags, IsTruncated: false };
 };
 
+const UntagOpenIDConnectProvider: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "OpenIDConnectProviderArn");
+  requireOIDCProvider(ctx, arn);
+  const tagKeys = input["TagKeys"];
+  if (Array.isArray(tagKeys)) {
+    for (const key of tagKeys) {
+      if (typeof key === "string") {
+        ctx.store.delete(oidcProviderTagKey(arn, key));
+      }
+    }
+  }
+  return {};
+};
+
 const requireSAMLProvider = (
   ctx: ServiceContext,
   arn: string,
@@ -3171,6 +3279,55 @@ const AcceptDelegationRequest: OperationHandler = (input, ctx) => {
 const AssociateDelegationRequest: OperationHandler = (input, ctx) => {
   const id = requireString(input, "DelegationRequestId");
   requireDelegationRequest(ctx, id);
+  return {};
+};
+
+const ListDelegationRequests: OperationHandler = (_input, ctx) => {
+  const requests = ctx.store
+    .list<StoredDelegationRequest>()
+    .filter((e) => e.key.startsWith("delegationrequest/"))
+    .map((e) => ({
+      DelegationRequestId: e.value.DelegationRequestId,
+      OwnerAccountId: e.value.OwnerAccountId,
+      Description: e.value.Description,
+      RequestMessage: e.value.RequestMessage,
+      State: e.value.State,
+      CreateDate: e.value.CreateDate,
+    }));
+  return { DelegationRequests: requests, IsTruncated: false };
+};
+
+const RejectDelegationRequest: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DelegationRequestId");
+  const req = requireDelegationRequest(ctx, id);
+  ctx.store.set(delegationRequestKey(id), { ...req, State: "REJECTED" });
+  return {};
+};
+
+const SendDelegationToken: OperationHandler = (input, _ctx) => {
+  requireString(input, "DelegationRequestId");
+  return {};
+};
+
+const UpdateDelegationRequest: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DelegationRequestId");
+  const req = requireDelegationRequest(ctx, id);
+  const description = optionalString(input, "Description");
+  const requestMessage = optionalString(input, "RequestMessage");
+  ctx.store.set(delegationRequestKey(id), {
+    ...req,
+    ...(description !== undefined ? { Description: description } : {}),
+    ...(requestMessage !== undefined ? { RequestMessage: requestMessage } : {}),
+  });
+  return {};
+};
+
+const SetSecurityTokenServicePreferences: OperationHandler = (input, ctx) => {
+  const version = input["GlobalEndpointTokenVersion"];
+  ctx.store.set("stsprefs/0", {
+    GlobalEndpointTokenVersion:
+      typeof version === "string" ? version : "v1Token",
+  });
   return {};
 };
 
@@ -3624,6 +3781,17 @@ const iam = {
     AssociateDelegationRequest,
     CreateDelegationRequest,
     GetDelegationRequest,
+    ListDelegationRequests,
+    RejectDelegationRequest,
+    SendDelegationToken,
+    UpdateDelegationRequest,
+    SetSecurityTokenServicePreferences,
+    UntagRole,
+    UpdateRole,
+    UpdateRoleDescription,
+    ListPolicies,
+    ListPoliciesGrantingServiceAccess,
+    UntagOpenIDConnectProvider,
     DisableOrganizationsRootCredentialsManagement,
     DisableOrganizationsRootSessions,
     EnableOrganizationsRootCredentialsManagement,

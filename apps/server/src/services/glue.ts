@@ -14,6 +14,7 @@ type StoredTable = {
   databaseName: string;
   createTime: number;
   updateTime: number;
+  partitionIndexes: Record<string, { keys: string[]; indexStatus: string }>;
 };
 
 type StoredDatabase = {
@@ -24,6 +25,13 @@ type StoredDatabase = {
 
 const crawlerPrefix = "crawler:";
 const jobPrefix = "job:";
+const connPrefix = "conn:";
+const classifierPrefix = "classifier:";
+const catalogPrefix = "catalog:";
+const partitionPrefix = "partition:";
+const colstatsTPrefix = "colstats_t:";
+const colstatsPPrefix = "colstats_p:";
+const itpPrefix = "itp:";
 
 type StoredCrawler = {
   input: Record<string, unknown>;
@@ -35,6 +43,49 @@ type StoredJob = {
   input: Record<string, unknown>;
   createdOn: number;
   lastModifiedOn: number;
+};
+
+type StoredConnection = {
+  input: Record<string, unknown>;
+  creationTime: number;
+  lastUpdatedTime: number;
+};
+
+type StoredClassifier = {
+  classifierType: "grok" | "xml" | "json" | "csv";
+  input: Record<string, unknown>;
+  creationTime: number;
+  lastUpdated: number;
+};
+
+type StoredCatalog = {
+  name: string;
+  input: Record<string, unknown>;
+  createTime: number;
+  updateTime: number;
+};
+
+type StoredPartition = {
+  input: Record<string, unknown>;
+  values: string[];
+  databaseName: string;
+  tableName: string;
+  createTime: number;
+  updateTime: number;
+};
+
+type StoredColumnStats = {
+  columnName: string;
+  columnType: string;
+  analyzedTime: number;
+  statisticsData: Record<string, unknown>;
+};
+
+type StoredITP = {
+  resourceArn: string;
+  tableName: string;
+  sourceTableConfig: Record<string, unknown> | undefined;
+  targetTableConfig: Record<string, unknown> | undefined;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -153,7 +204,14 @@ const GetDatabases: OperationHandler = (input, ctx) => {
     .filter(
       (entry) =>
         !entry.key.startsWith(crawlerPrefix) &&
-        !entry.key.startsWith(jobPrefix),
+        !entry.key.startsWith(jobPrefix) &&
+        !entry.key.startsWith(connPrefix) &&
+        !entry.key.startsWith(classifierPrefix) &&
+        !entry.key.startsWith(catalogPrefix) &&
+        !entry.key.startsWith(partitionPrefix) &&
+        !entry.key.startsWith(colstatsTPrefix) &&
+        !entry.key.startsWith(colstatsPPrefix) &&
+        !entry.key.startsWith(itpPrefix),
     )
     .map((entry) => databaseView(entry.key, entry.value, catalogId));
   return { DatabaseList: list };
@@ -187,6 +245,7 @@ const CreateTable: OperationHandler = (input, ctx) => {
     databaseName,
     createTime: now,
     updateTime: now,
+    partitionIndexes: {},
   };
   ctx.store.set(databaseName, database);
   return {};
@@ -248,6 +307,58 @@ const DeleteTable: OperationHandler = (input, ctx) => {
   delete database.tables[name];
   ctx.store.set(databaseName, database);
   return {};
+};
+
+const BatchDeleteTable: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const database = requireDatabase(ctx, databaseName);
+  const tableNames = Array.isArray(input["TablesToDelete"])
+    ? (input["TablesToDelete"] as string[])
+    : [];
+  const errors: Record<string, unknown>[] = [];
+  for (const name of tableNames) {
+    if (database.tables[name] !== undefined) {
+      delete database.tables[name];
+    } else {
+      errors.push({
+        TableName: name,
+        ErrorDetail: {
+          ErrorCode: "EntityNotFoundException",
+          ErrorMessage: `Table ${name} not found.`,
+        },
+      });
+    }
+  }
+  if (tableNames.length > 0) {
+    ctx.store.set(databaseName, database);
+  }
+  return { Errors: errors };
+};
+
+const DeleteTableVersion: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName = requireName(input);
+  requireTable(ctx, databaseName, tableName);
+  return {};
+};
+
+const BatchDeleteTableVersion: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  requireTable(ctx, databaseName, tableName);
+  return { Errors: [] };
 };
 
 const crawlerView = (
@@ -435,6 +546,953 @@ const DeleteJob: OperationHandler = (input, ctx) => {
   return { JobName: name };
 };
 
+const partitionValuesKey = (values: string[]): string =>
+  values.map((v) => encodeURIComponent(v)).join("|");
+
+const partitionStoreKey = (
+  databaseName: string,
+  tableName: string,
+  values: string[],
+): string =>
+  `${partitionPrefix}${databaseName}:${tableName}:${partitionValuesKey(values)}`;
+
+const partitionView = (
+  partition: StoredPartition,
+  catalogId: string,
+): Record<string, unknown> => ({
+  Values: partition.values,
+  DatabaseName: partition.databaseName,
+  TableName: partition.tableName,
+  ...(typeof partition.input["StorageDescriptor"] === "object" &&
+  partition.input["StorageDescriptor"] !== null
+    ? { StorageDescriptor: partition.input["StorageDescriptor"] }
+    : {}),
+  ...(typeof partition.input["Parameters"] === "object" &&
+  partition.input["Parameters"] !== null
+    ? { Parameters: partition.input["Parameters"] }
+    : {}),
+  CreationTime: partition.createTime,
+  LastAccessTime: partition.updateTime,
+  CatalogId: catalogId,
+});
+
+const requirePartitionValues = (input: Record<string, unknown>): string[] => {
+  const values = input["PartitionValues"];
+  if (!Array.isArray(values) || values.length === 0) {
+    throw awsError(
+      "InvalidInputException",
+      "PartitionValues is required.",
+      400,
+    );
+  }
+  return values as string[];
+};
+
+const CreatePartition: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  requireTable(ctx, databaseName, tableName);
+  const partitionInput = asRecord(input["PartitionInput"]);
+  const values = Array.isArray(partitionInput["Values"])
+    ? (partitionInput["Values"] as string[])
+    : [];
+  const key = partitionStoreKey(databaseName, tableName, values);
+  if (ctx.store.get<StoredPartition>(key) !== undefined) {
+    throw awsError("AlreadyExistsException", `Partition already exists.`, 400);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const partition: StoredPartition = {
+    input: partitionInput,
+    values,
+    databaseName,
+    tableName,
+    createTime: now,
+    updateTime: now,
+  };
+  ctx.store.set(key, partition);
+  return {};
+};
+
+const GetPartition: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const values = requirePartitionValues(input);
+  const key = partitionStoreKey(databaseName, tableName, values);
+  const partition = ctx.store.get<StoredPartition>(key);
+  if (partition === undefined) {
+    throw awsError("EntityNotFoundException", `Partition not found.`, 400);
+  }
+  const catalogId =
+    typeof input["CatalogId"] === "string"
+      ? (input["CatalogId"] as string)
+      : ctx.account;
+  return { Partition: partitionView(partition, catalogId) };
+};
+
+const GetPartitions: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  requireTable(ctx, databaseName, tableName);
+  const prefix = `${partitionPrefix}${databaseName}:${tableName}:`;
+  const catalogId =
+    typeof input["CatalogId"] === "string"
+      ? (input["CatalogId"] as string)
+      : ctx.account;
+  const list = ctx.store
+    .list<StoredPartition>()
+    .filter((entry) => entry.key.startsWith(prefix))
+    .map((entry) => partitionView(entry.value, catalogId));
+  return { Partitions: list };
+};
+
+const DeletePartition: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const values = requirePartitionValues(input);
+  const key = partitionStoreKey(databaseName, tableName, values);
+  if (ctx.store.get<StoredPartition>(key) === undefined) {
+    throw awsError("EntityNotFoundException", `Partition not found.`, 400);
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const BatchCreatePartition: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  requireTable(ctx, databaseName, tableName);
+  const partitionInputList = Array.isArray(input["PartitionInputList"])
+    ? (input["PartitionInputList"] as Record<string, unknown>[])
+    : [];
+  const errors: Record<string, unknown>[] = [];
+  const now = Math.floor(Date.now() / 1000);
+  for (const partitionInput of partitionInputList) {
+    const values = Array.isArray(partitionInput["Values"])
+      ? (partitionInput["Values"] as string[])
+      : [];
+    const key = partitionStoreKey(databaseName, tableName, values);
+    if (ctx.store.get<StoredPartition>(key) !== undefined) {
+      errors.push({
+        PartitionValues: values,
+        ErrorDetail: {
+          ErrorCode: "AlreadyExistsException",
+          ErrorMessage: "Partition already exists.",
+        },
+      });
+      continue;
+    }
+    const partition: StoredPartition = {
+      input: partitionInput,
+      values,
+      databaseName,
+      tableName,
+      createTime: now,
+      updateTime: now,
+    };
+    ctx.store.set(key, partition);
+  }
+  return { Errors: errors };
+};
+
+const BatchGetPartition: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  requireTable(ctx, databaseName, tableName);
+  const catalogId =
+    typeof input["CatalogId"] === "string"
+      ? (input["CatalogId"] as string)
+      : ctx.account;
+  const partitionsToGet = Array.isArray(input["PartitionsToGet"])
+    ? (input["PartitionsToGet"] as Record<string, unknown>[])
+    : [];
+  const partitions: Record<string, unknown>[] = [];
+  const unprocessedKeys: Record<string, unknown>[] = [];
+  for (const pvl of partitionsToGet) {
+    const values = Array.isArray(pvl["Values"])
+      ? (pvl["Values"] as string[])
+      : [];
+    const key = partitionStoreKey(databaseName, tableName, values);
+    const partition = ctx.store.get<StoredPartition>(key);
+    if (partition !== undefined) {
+      partitions.push(partitionView(partition, catalogId));
+    } else {
+      unprocessedKeys.push({ Values: values });
+    }
+  }
+  return { Partitions: partitions, UnprocessedKeys: unprocessedKeys };
+};
+
+const BatchDeletePartition: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  requireTable(ctx, databaseName, tableName);
+  const partitionsToDelete = Array.isArray(input["PartitionsToDelete"])
+    ? (input["PartitionsToDelete"] as Record<string, unknown>[])
+    : [];
+  const errors: Record<string, unknown>[] = [];
+  for (const pvl of partitionsToDelete) {
+    const values = Array.isArray(pvl["Values"])
+      ? (pvl["Values"] as string[])
+      : [];
+    const key = partitionStoreKey(databaseName, tableName, values);
+    if (ctx.store.get<StoredPartition>(key) !== undefined) {
+      ctx.store.delete(key);
+    } else {
+      errors.push({
+        PartitionValues: values,
+        ErrorDetail: {
+          ErrorCode: "EntityNotFoundException",
+          ErrorMessage: "Partition not found.",
+        },
+      });
+    }
+  }
+  return { Errors: errors };
+};
+
+const BatchUpdatePartition: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  requireTable(ctx, databaseName, tableName);
+  const entries = Array.isArray(input["Entries"])
+    ? (input["Entries"] as Record<string, unknown>[])
+    : [];
+  const errors: Record<string, unknown>[] = [];
+  const now = Math.floor(Date.now() / 1000);
+  for (const entry of entries) {
+    const pvl = asRecord(entry["PartitionValueList"]);
+    const oldValues = Array.isArray(pvl["Values"])
+      ? (pvl["Values"] as string[])
+      : [];
+    const partitionInput = asRecord(entry["PartitionInput"]);
+    const oldKey = partitionStoreKey(databaseName, tableName, oldValues);
+    const existing = ctx.store.get<StoredPartition>(oldKey);
+    if (existing === undefined) {
+      errors.push({
+        PartitionValueList: { Values: oldValues },
+        ErrorDetail: {
+          ErrorCode: "EntityNotFoundException",
+          ErrorMessage: "Partition not found.",
+        },
+      });
+      continue;
+    }
+    const newValues = Array.isArray(partitionInput["Values"])
+      ? (partitionInput["Values"] as string[])
+      : oldValues;
+    ctx.store.delete(oldKey);
+    const newKey = partitionStoreKey(databaseName, tableName, newValues);
+    const updated: StoredPartition = {
+      input: partitionInput,
+      values: newValues,
+      databaseName,
+      tableName,
+      createTime: existing.createTime,
+      updateTime: now,
+    };
+    ctx.store.set(newKey, updated);
+  }
+  return { Errors: errors };
+};
+
+const CreatePartitionIndex: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const database = requireDatabase(ctx, databaseName);
+  const table = requireTable(ctx, databaseName, tableName);
+  const partitionIndex = asRecord(input["PartitionIndex"]);
+  const indexName =
+    typeof partitionIndex["IndexName"] === "string"
+      ? (partitionIndex["IndexName"] as string)
+      : "";
+  if (!indexName) {
+    throw awsError("InvalidInputException", "IndexName is required.", 400);
+  }
+  if (table.partitionIndexes[indexName] !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Partition index ${indexName} already exists.`,
+      400,
+    );
+  }
+  const keys = Array.isArray(partitionIndex["Keys"])
+    ? (partitionIndex["Keys"] as string[])
+    : [];
+  table.partitionIndexes[indexName] = { keys, indexStatus: "ACTIVE" };
+  ctx.store.set(databaseName, database);
+  return {};
+};
+
+const DeletePartitionIndex: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const indexName =
+    typeof input["IndexName"] === "string"
+      ? (input["IndexName"] as string)
+      : "";
+  const database = requireDatabase(ctx, databaseName);
+  const table = requireTable(ctx, databaseName, tableName);
+  if (table.partitionIndexes[indexName] === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Partition index ${indexName} not found.`,
+      400,
+    );
+  }
+  delete table.partitionIndexes[indexName];
+  ctx.store.set(databaseName, database);
+  return {};
+};
+
+const GetPartitionIndexes: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const table = requireTable(ctx, databaseName, tableName);
+  const list = Object.entries(table.partitionIndexes).map(([name, idx]) => ({
+    IndexName: name,
+    Keys: idx.keys.map((k) => ({ Name: k, Type: "string" })),
+    IndexStatus: idx.indexStatus,
+    BackfillErrors: [],
+  }));
+  return { PartitionIndexDescriptorList: list };
+};
+
+const connectionView = (
+  name: string,
+  conn: StoredConnection,
+): Record<string, unknown> => ({
+  Name: name,
+  ...(typeof conn.input["Description"] === "string"
+    ? { Description: conn.input["Description"] }
+    : {}),
+  ...(typeof conn.input["ConnectionType"] === "string"
+    ? { ConnectionType: conn.input["ConnectionType"] }
+    : {}),
+  ...(typeof conn.input["ConnectionProperties"] === "object" &&
+  conn.input["ConnectionProperties"] !== null
+    ? { ConnectionProperties: conn.input["ConnectionProperties"] }
+    : {}),
+  ...(Array.isArray(conn.input["PhysicalConnectionRequirements"])
+    ? {
+        PhysicalConnectionRequirements:
+          conn.input["PhysicalConnectionRequirements"],
+      }
+    : {}),
+  CreationTime: conn.creationTime,
+  LastUpdatedTime: conn.lastUpdatedTime,
+});
+
+const requireConnection = (
+  ctx: ServiceContext,
+  name: string,
+): StoredConnection => {
+  const conn = ctx.store.get<StoredConnection>(`${connPrefix}${name}`);
+  if (conn === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Connection ${name} not found.`,
+      400,
+    );
+  }
+  return conn;
+};
+
+const CreateConnection: OperationHandler = (input, ctx) => {
+  const connInput = asRecord(input["ConnectionInput"]);
+  const name = requireName(connInput);
+  if (ctx.store.get<StoredConnection>(`${connPrefix}${name}`) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Connection already exists. Connection name:${name}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const conn: StoredConnection = {
+    input: connInput,
+    creationTime: now,
+    lastUpdatedTime: now,
+  };
+  ctx.store.set(`${connPrefix}${name}`, conn);
+  return { CreateConnectionStatus: "READY" };
+};
+
+const GetConnection: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const conn = requireConnection(ctx, name);
+  return { Connection: connectionView(name, conn) };
+};
+
+const GetConnections: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredConnection>()
+    .filter((entry) => entry.key.startsWith(connPrefix))
+    .map((entry) =>
+      connectionView(entry.key.slice(connPrefix.length), entry.value),
+    );
+  return { ConnectionList: list };
+};
+
+const DeleteConnection: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["ConnectionName"] === "string"
+      ? (input["ConnectionName"] as string)
+      : "";
+  if (!name) {
+    throw awsError("InvalidInputException", "ConnectionName is required.", 400);
+  }
+  requireConnection(ctx, name);
+  ctx.store.delete(`${connPrefix}${name}`);
+  return {};
+};
+
+const BatchDeleteConnection: OperationHandler = (input, ctx) => {
+  const names = Array.isArray(input["ConnectionNameList"])
+    ? (input["ConnectionNameList"] as string[])
+    : [];
+  const succeeded: string[] = [];
+  const errors: Record<string, Record<string, unknown>> = {};
+  for (const name of names) {
+    if (ctx.store.get<StoredConnection>(`${connPrefix}${name}`) !== undefined) {
+      ctx.store.delete(`${connPrefix}${name}`);
+      succeeded.push(name);
+    } else {
+      errors[name] = {
+        ErrorCode: "EntityNotFoundException",
+        ErrorMessage: `Connection ${name} not found.`,
+      };
+    }
+  }
+  return { Succeeded: succeeded, Errors: errors };
+};
+
+const DescribeConnectionType: OperationHandler = (input, _ctx) => {
+  const connectionType =
+    typeof input["ConnectionType"] === "string"
+      ? (input["ConnectionType"] as string)
+      : "";
+  return {
+    ConnectionType: connectionType,
+    Description: "",
+    Capabilities: {
+      SupportedAuthenticationTypes: [],
+      SupportedDataOperations: [],
+      SupportedComputeEnvironments: [],
+    },
+  };
+};
+
+const DeleteConnectionType: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
+const classifierName = (input: Record<string, unknown>): string => {
+  for (const key of [
+    "GrokClassifier",
+    "XMLClassifier",
+    "JsonClassifier",
+    "CsvClassifier",
+  ]) {
+    const sub = asRecord(input[key]);
+    if (sub["Name"] && typeof sub["Name"] === "string") {
+      return sub["Name"] as string;
+    }
+  }
+  throw awsError("InvalidInputException", "Classifier name is required.", 400);
+};
+
+const classifierType = (
+  input: Record<string, unknown>,
+): "grok" | "xml" | "json" | "csv" => {
+  if (input["GrokClassifier"]) return "grok";
+  if (input["XMLClassifier"]) return "xml";
+  if (input["JsonClassifier"]) return "json";
+  return "csv";
+};
+
+const classifierSubInput = (
+  input: Record<string, unknown>,
+): Record<string, unknown> => {
+  const sub =
+    asRecord(input["GrokClassifier"]) ||
+    asRecord(input["XMLClassifier"]) ||
+    asRecord(input["JsonClassifier"]) ||
+    asRecord(input["CsvClassifier"]);
+  return sub;
+};
+
+const classifierView = (stored: StoredClassifier): Record<string, unknown> => {
+  const base = {
+    Name: stored.input["Name"],
+    ...(typeof stored.input["Classification"] === "string"
+      ? { Classification: stored.input["Classification"] }
+      : {}),
+    CreationTime: stored.creationTime,
+    LastUpdated: stored.lastUpdated,
+    Version: 1,
+  };
+  if (stored.classifierType === "grok") {
+    return {
+      GrokClassifier: {
+        ...base,
+        ...(typeof stored.input["GrokPattern"] === "string"
+          ? { GrokPattern: stored.input["GrokPattern"] }
+          : {}),
+        ...(typeof stored.input["CustomPatterns"] === "string"
+          ? { CustomPatterns: stored.input["CustomPatterns"] }
+          : {}),
+      },
+    };
+  }
+  if (stored.classifierType === "xml") {
+    return {
+      XMLClassifier: {
+        ...base,
+        ...(typeof stored.input["RowTag"] === "string"
+          ? { RowTag: stored.input["RowTag"] }
+          : {}),
+      },
+    };
+  }
+  if (stored.classifierType === "json") {
+    return {
+      JsonClassifier: {
+        ...base,
+        ...(typeof stored.input["JsonPath"] === "string"
+          ? { JsonPath: stored.input["JsonPath"] }
+          : {}),
+      },
+    };
+  }
+  return {
+    CsvClassifier: {
+      ...base,
+      ...(typeof stored.input["Delimiter"] === "string"
+        ? { Delimiter: stored.input["Delimiter"] }
+        : {}),
+      ...(typeof stored.input["QuoteSymbol"] === "string"
+        ? { QuoteSymbol: stored.input["QuoteSymbol"] }
+        : {}),
+      ...(Array.isArray(stored.input["Header"])
+        ? { Header: stored.input["Header"] }
+        : {}),
+    },
+  };
+};
+
+const requireClassifier = (
+  ctx: ServiceContext,
+  name: string,
+): StoredClassifier => {
+  const c = ctx.store.get<StoredClassifier>(`${classifierPrefix}${name}`);
+  if (c === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Classifier ${name} not found.`,
+      400,
+    );
+  }
+  return c;
+};
+
+const CreateClassifier: OperationHandler = (input, ctx) => {
+  const name = classifierName(input);
+  if (
+    ctx.store.get<StoredClassifier>(`${classifierPrefix}${name}`) !== undefined
+  ) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Classifier already exists: ${name}`,
+      400,
+    );
+  }
+  const ctype = classifierType(input);
+  const sub = classifierSubInput(input);
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredClassifier = {
+    classifierType: ctype,
+    input: sub,
+    creationTime: now,
+    lastUpdated: now,
+  };
+  ctx.store.set(`${classifierPrefix}${name}`, stored);
+  return {};
+};
+
+const GetClassifier: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const stored = requireClassifier(ctx, name);
+  return { Classifier: classifierView(stored) };
+};
+
+const GetClassifiers: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredClassifier>()
+    .filter((entry) => entry.key.startsWith(classifierPrefix))
+    .map((entry) => classifierView(entry.value));
+  return { Classifiers: list };
+};
+
+const DeleteClassifier: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  requireClassifier(ctx, name);
+  ctx.store.delete(`${classifierPrefix}${name}`);
+  return {};
+};
+
+const CreateCatalog: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  if (ctx.store.get<StoredCatalog>(`${catalogPrefix}${name}`) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Catalog already exists: ${name}`,
+      400,
+    );
+  }
+  const catalogInput = asRecord(input["CatalogInput"]);
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredCatalog = {
+    name,
+    input: catalogInput,
+    createTime: now,
+    updateTime: now,
+  };
+  ctx.store.set(`${catalogPrefix}${name}`, stored);
+  return {};
+};
+
+const GetCatalog: OperationHandler = (input, ctx) => {
+  const catalogId =
+    typeof input["CatalogId"] === "string"
+      ? (input["CatalogId"] as string)
+      : "";
+  if (!catalogId) {
+    throw awsError("InvalidInputException", "CatalogId is required.", 400);
+  }
+  const stored = ctx.store.get<StoredCatalog>(`${catalogPrefix}${catalogId}`);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Catalog ${catalogId} not found.`,
+      400,
+    );
+  }
+  return {
+    Catalog: {
+      Name: stored.name,
+      CatalogId: catalogId,
+      ...(typeof stored.input["Description"] === "string"
+        ? { Description: stored.input["Description"] }
+        : {}),
+      CreateTime: stored.createTime,
+      UpdateTime: stored.updateTime,
+    },
+  };
+};
+
+const DeleteCatalog: OperationHandler = (input, ctx) => {
+  const catalogId =
+    typeof input["CatalogId"] === "string"
+      ? (input["CatalogId"] as string)
+      : "";
+  if (!catalogId) {
+    throw awsError("InvalidInputException", "CatalogId is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredCatalog>(`${catalogPrefix}${catalogId}`) === undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Catalog ${catalogId} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(`${catalogPrefix}${catalogId}`);
+  return {};
+};
+
+const colstatsTKey = (
+  databaseName: string,
+  tableName: string,
+  columnName: string,
+): string => `${colstatsTPrefix}${databaseName}:${tableName}:${columnName}`;
+
+const colstatsPKey = (
+  databaseName: string,
+  tableName: string,
+  values: string[],
+  columnName: string,
+): string =>
+  `${colstatsPPrefix}${databaseName}:${tableName}:${partitionValuesKey(values)}:${columnName}`;
+
+const columnStatsView = (
+  stored: StoredColumnStats,
+): Record<string, unknown> => ({
+  ColumnName: stored.columnName,
+  ColumnType: stored.columnType,
+  AnalyzedTime: stored.analyzedTime,
+  StatisticsData: stored.statisticsData,
+});
+
+const GetColumnStatisticsForTable: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  requireTable(ctx, databaseName, tableName);
+  const columnNames = Array.isArray(input["ColumnNames"])
+    ? (input["ColumnNames"] as string[])
+    : [];
+  const results: Record<string, unknown>[] = [];
+  const errors: Record<string, unknown>[] = [];
+  for (const colName of columnNames) {
+    const key = colstatsTKey(databaseName, tableName, colName);
+    const stored = ctx.store.get<StoredColumnStats>(key);
+    if (stored !== undefined) {
+      results.push({
+        ColumnName: colName,
+        Statistics: columnStatsView(stored),
+      });
+    } else {
+      errors.push({
+        ColumnName: colName,
+        Error: {
+          ErrorCode: "EntityNotFoundException",
+          ErrorMessage: `Column statistics for ${colName} not found.`,
+        },
+      });
+    }
+  }
+  return { ColumnStatisticsList: results, Errors: errors };
+};
+
+const DeleteColumnStatisticsForTable: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const columnName =
+    typeof input["ColumnName"] === "string"
+      ? (input["ColumnName"] as string)
+      : "";
+  requireTable(ctx, databaseName, tableName);
+  const key = colstatsTKey(databaseName, tableName, columnName);
+  ctx.store.delete(key);
+  return {};
+};
+
+const GetColumnStatisticsForPartition: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const partitionValues = Array.isArray(input["PartitionValues"])
+    ? (input["PartitionValues"] as string[])
+    : [];
+  requireTable(ctx, databaseName, tableName);
+  const columnNames = Array.isArray(input["ColumnNames"])
+    ? (input["ColumnNames"] as string[])
+    : [];
+  const results: Record<string, unknown>[] = [];
+  const errors: Record<string, unknown>[] = [];
+  for (const colName of columnNames) {
+    const key = colstatsPKey(databaseName, tableName, partitionValues, colName);
+    const stored = ctx.store.get<StoredColumnStats>(key);
+    if (stored !== undefined) {
+      results.push({
+        ColumnName: colName,
+        Statistics: columnStatsView(stored),
+      });
+    } else {
+      errors.push({
+        ColumnName: colName,
+        Error: {
+          ErrorCode: "EntityNotFoundException",
+          ErrorMessage: `Column statistics for ${colName} not found.`,
+        },
+      });
+    }
+  }
+  return { ColumnStatisticsList: results, Errors: errors };
+};
+
+const DeleteColumnStatisticsForPartition: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const columnName =
+    typeof input["ColumnName"] === "string"
+      ? (input["ColumnName"] as string)
+      : "";
+  const partitionValues = Array.isArray(input["PartitionValues"])
+    ? (input["PartitionValues"] as string[])
+    : [];
+  requireTable(ctx, databaseName, tableName);
+  const key = colstatsPKey(
+    databaseName,
+    tableName,
+    partitionValues,
+    columnName,
+  );
+  ctx.store.delete(key);
+  return {};
+};
+
+const CreateIntegrationTableProperties: OperationHandler = (input, ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string"
+      ? (input["ResourceArn"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const key = `${itpPrefix}${resourceArn}:${tableName}`;
+  const stored: StoredITP = {
+    resourceArn,
+    tableName,
+    sourceTableConfig:
+      typeof input["SourceTableConfig"] === "object" &&
+      input["SourceTableConfig"] !== null
+        ? (input["SourceTableConfig"] as Record<string, unknown>)
+        : undefined,
+    targetTableConfig:
+      typeof input["TargetTableConfig"] === "object" &&
+      input["TargetTableConfig"] !== null
+        ? (input["TargetTableConfig"] as Record<string, unknown>)
+        : undefined,
+  };
+  ctx.store.set(key, stored);
+  return {};
+};
+
+const GetIntegrationTableProperties: OperationHandler = (input, ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string"
+      ? (input["ResourceArn"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const key = `${itpPrefix}${resourceArn}:${tableName}`;
+  const stored = ctx.store.get<StoredITP>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Integration table properties not found.`,
+      400,
+    );
+  }
+  return {
+    ResourceArn: stored.resourceArn,
+    TableName: stored.tableName,
+    ...(stored.sourceTableConfig !== undefined
+      ? { SourceTableConfig: stored.sourceTableConfig }
+      : {}),
+    ...(stored.targetTableConfig !== undefined
+      ? { TargetTableConfig: stored.targetTableConfig }
+      : {}),
+  };
+};
+
+const DeleteIntegrationTableProperties: OperationHandler = (input, ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string"
+      ? (input["ResourceArn"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const key = `${itpPrefix}${resourceArn}:${tableName}`;
+  ctx.store.delete(key);
+  return {};
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -447,6 +1505,9 @@ const glue: ServiceDefinition = {
     GetTable,
     GetTables,
     DeleteTable,
+    BatchDeleteTable,
+    DeleteTableVersion,
+    BatchDeleteTableVersion,
     CreateCrawler,
     GetCrawler,
     GetCrawlers,
@@ -455,6 +1516,38 @@ const glue: ServiceDefinition = {
     GetJob,
     GetJobs,
     DeleteJob,
+    CreatePartition,
+    GetPartition,
+    GetPartitions,
+    DeletePartition,
+    BatchCreatePartition,
+    BatchGetPartition,
+    BatchDeletePartition,
+    BatchUpdatePartition,
+    CreatePartitionIndex,
+    DeletePartitionIndex,
+    GetPartitionIndexes,
+    CreateConnection,
+    GetConnection,
+    GetConnections,
+    DeleteConnection,
+    BatchDeleteConnection,
+    DescribeConnectionType,
+    DeleteConnectionType,
+    CreateClassifier,
+    GetClassifier,
+    GetClassifiers,
+    DeleteClassifier,
+    CreateCatalog,
+    GetCatalog,
+    DeleteCatalog,
+    GetColumnStatisticsForTable,
+    DeleteColumnStatisticsForTable,
+    GetColumnStatisticsForPartition,
+    DeleteColumnStatisticsForPartition,
+    CreateIntegrationTableProperties,
+    GetIntegrationTableProperties,
+    DeleteIntegrationTableProperties,
   },
   model,
 } as const;

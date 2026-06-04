@@ -400,6 +400,137 @@ type StoredLocalGatewayRoute = {
   State: string;
 };
 
+type StoredLocalGatewayRouteTableVirtualInterfaceGroupAssociation = {
+  LocalGatewayRouteTableVirtualInterfaceGroupAssociationId: string;
+  LocalGatewayVirtualInterfaceGroupId: string;
+  LocalGatewayId: string;
+  LocalGatewayRouteTableId: string;
+  LocalGatewayRouteTableArn: string;
+  OwnerId: string;
+  State: string;
+  Tags: Tag[];
+};
+
+type StoredLocalGatewayRouteTableVpcAssociation = {
+  LocalGatewayRouteTableVpcAssociationId: string;
+  LocalGatewayRouteTableId: string;
+  LocalGatewayRouteTableArn: string;
+  LocalGatewayId: string;
+  VpcId: string;
+  OwnerId: string;
+  State: string;
+  Tags: Tag[];
+};
+
+type StoredLocalGatewayVirtualInterface = {
+  LocalGatewayVirtualInterfaceId: string;
+  LocalGatewayId: string;
+  LocalGatewayVirtualInterfaceGroupId: string | undefined;
+  LocalGatewayVirtualInterfaceArn: string;
+  OutpostLagId: string | undefined;
+  Vlan: number | undefined;
+  LocalAddress: string | undefined;
+  PeerAddress: string | undefined;
+  LocalBgpAsn: number | undefined;
+  PeerBgpAsn: number | undefined;
+  OwnerId: string;
+  Tags: Tag[];
+};
+
+type StoredLocalGatewayVirtualInterfaceGroup = {
+  LocalGatewayVirtualInterfaceGroupId: string;
+  LocalGatewayVirtualInterfaceIds: string[];
+  LocalGatewayId: string;
+  OwnerId: string;
+  LocalBgpAsn: number | undefined;
+  LocalGatewayVirtualInterfaceGroupArn: string;
+  Tags: Tag[];
+};
+
+type StoredMacModificationTask = {
+  InstanceId: string;
+  MacModificationTaskId: string;
+  TaskState: string;
+  TaskType: string;
+  StartTime: string;
+  Tags: Tag[];
+};
+
+type StoredManagedPrefixList = {
+  PrefixListId: string;
+  AddressFamily: string;
+  State: string;
+  PrefixListArn: string;
+  PrefixListName: string;
+  MaxEntries: number;
+  Version: number;
+  Tags: Tag[];
+  OwnerId: string;
+};
+
+type StoredNetworkAclEntry = {
+  RuleNumber: number;
+  Protocol: string;
+  RuleAction: string;
+  Egress: boolean;
+  CidrBlock: string | undefined;
+  Ipv6CidrBlock: string | undefined;
+};
+
+type StoredNetworkAcl = {
+  NetworkAclId: string;
+  VpcId: string;
+  IsDefault: boolean;
+  OwnerId: string;
+  Entries: StoredNetworkAclEntry[];
+  Tags: Tag[];
+};
+
+type StoredNetworkInsightsAccessScope = {
+  NetworkInsightsAccessScopeId: string;
+  NetworkInsightsAccessScopeArn: string;
+  CreatedDate: string;
+  UpdatedDate: string;
+  Tags: Tag[];
+};
+
+type StoredNetworkInsightsPath = {
+  NetworkInsightsPathId: string;
+  NetworkInsightsPathArn: string;
+  CreatedDate: string;
+  Source: string;
+  Destination: string | undefined;
+  Protocol: string;
+  DestinationPort: number | undefined;
+  Tags: Tag[];
+};
+
+type StoredNetworkInterface = {
+  NetworkInterfaceId: string;
+  SubnetId: string;
+  VpcId: string;
+  AvailabilityZone: string;
+  Description: string;
+  OwnerId: string;
+  PrivateIpAddress: string;
+  PrivateDnsName: string;
+  MacAddress: string;
+  Status: string;
+  InterfaceType: string;
+  SourceDestCheck: boolean;
+  Tags: Tag[];
+  Groups: { GroupId: string; GroupName: string }[];
+};
+
+type StoredNetworkInterfacePermission = {
+  NetworkInterfacePermissionId: string;
+  NetworkInterfaceId: string;
+  AwsAccountId: string | undefined;
+  AwsService: string | undefined;
+  Permission: string;
+  PermissionState: string;
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -449,6 +580,17 @@ const launchTemplateKey = (id: string): string => `lt/${id}`;
 const launchTemplateVersionKey = (ltId: string, version: number): string =>
   `lt-version/${ltId}/${version}`;
 const localGatewayRouteTableKey = (id: string): string => `lgw-rtb/${id}`;
+const lgwVifGroupAssocKey = (id: string): string => `lgw-vif-grp-assoc/${id}`;
+const lgwVpcAssocKey = (id: string): string => `lgw-vpc-assoc/${id}`;
+const lgwVifKey = (id: string): string => `lgw-vif/${id}`;
+const lgwVifGroupKey = (id: string): string => `lgw-vif-grp/${id}`;
+const macTaskKey = (id: string): string => `mac-task/${id}`;
+const managedPrefixListKey = (id: string): string => `pl/${id}`;
+const networkAclKey = (id: string): string => `acl/${id}`;
+const niAccessScopeKey = (id: string): string => `ni-scope/${id}`;
+const niPathKey = (id: string): string => `ni-path/${id}`;
+const networkInterfaceKey = (id: string): string => `eni/${id}`;
+const niPermissionKey = (id: string): string => `ni-perm/${id}`;
 const localGatewayRouteKey = (rtbId: string, cidr: string): string =>
   `lgw-route/${rtbId}/${cidr}`;
 
@@ -3043,6 +3185,472 @@ const CreateLaunchTemplateVersion: OperationHandler = (input, ctx) => {
   };
 };
 
+const CreateLocalGatewayRouteTableVirtualInterfaceGroupAssociation: OperationHandler =
+  (input, ctx) => {
+    const localGatewayRouteTableId =
+      typeof input["LocalGatewayRouteTableId"] === "string"
+        ? input["LocalGatewayRouteTableId"]
+        : "";
+    const localGatewayVirtualInterfaceGroupId =
+      typeof input["LocalGatewayVirtualInterfaceGroupId"] === "string"
+        ? input["LocalGatewayVirtualInterfaceGroupId"]
+        : "";
+    const id = hexId("lgw-vif-grp-assoc");
+    const rtb = ctx.store.get<StoredLocalGatewayRouteTable>(
+      localGatewayRouteTableKey(localGatewayRouteTableId),
+    );
+    const localGatewayId = rtb?.LocalGatewayId ?? "lgw-unknown";
+    const routeTableArn =
+      rtb?.LocalGatewayRouteTableArn ??
+      `arn:aws:ec2:${ctx.region}:${ctx.account}:local-gateway-route-table/${localGatewayRouteTableId}`;
+    const assoc: StoredLocalGatewayRouteTableVirtualInterfaceGroupAssociation =
+      {
+        LocalGatewayRouteTableVirtualInterfaceGroupAssociationId: id,
+        LocalGatewayVirtualInterfaceGroupId:
+          localGatewayVirtualInterfaceGroupId,
+        LocalGatewayId: localGatewayId,
+        LocalGatewayRouteTableId: localGatewayRouteTableId,
+        LocalGatewayRouteTableArn: routeTableArn,
+        OwnerId: ctx.account,
+        State: "associated",
+        Tags: [],
+      };
+    ctx.store.set(lgwVifGroupAssocKey(id), assoc);
+    return {
+      LocalGatewayRouteTableVirtualInterfaceGroupAssociation: {
+        LocalGatewayRouteTableVirtualInterfaceGroupAssociationId:
+          assoc.LocalGatewayRouteTableVirtualInterfaceGroupAssociationId,
+        LocalGatewayVirtualInterfaceGroupId:
+          assoc.LocalGatewayVirtualInterfaceGroupId,
+        LocalGatewayId: assoc.LocalGatewayId,
+        LocalGatewayRouteTableId: assoc.LocalGatewayRouteTableId,
+        LocalGatewayRouteTableArn: assoc.LocalGatewayRouteTableArn,
+        OwnerId: assoc.OwnerId,
+        State: assoc.State,
+        Tags: assoc.Tags,
+      },
+    };
+  };
+
+const CreateLocalGatewayRouteTableVpcAssociation: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const localGatewayRouteTableId =
+    typeof input["LocalGatewayRouteTableId"] === "string"
+      ? input["LocalGatewayRouteTableId"]
+      : "";
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const id = hexId("lgw-vpc-assoc");
+  const rtb = ctx.store.get<StoredLocalGatewayRouteTable>(
+    localGatewayRouteTableKey(localGatewayRouteTableId),
+  );
+  const localGatewayId = rtb?.LocalGatewayId ?? "lgw-unknown";
+  const routeTableArn =
+    rtb?.LocalGatewayRouteTableArn ??
+    `arn:aws:ec2:${ctx.region}:${ctx.account}:local-gateway-route-table/${localGatewayRouteTableId}`;
+  const assoc: StoredLocalGatewayRouteTableVpcAssociation = {
+    LocalGatewayRouteTableVpcAssociationId: id,
+    LocalGatewayRouteTableId: localGatewayRouteTableId,
+    LocalGatewayRouteTableArn: routeTableArn,
+    LocalGatewayId: localGatewayId,
+    VpcId: vpcId,
+    OwnerId: ctx.account,
+    State: "associated",
+    Tags: [],
+  };
+  ctx.store.set(lgwVpcAssocKey(id), assoc);
+  return {
+    LocalGatewayRouteTableVpcAssociation: {
+      LocalGatewayRouteTableVpcAssociationId:
+        assoc.LocalGatewayRouteTableVpcAssociationId,
+      LocalGatewayRouteTableId: assoc.LocalGatewayRouteTableId,
+      LocalGatewayRouteTableArn: assoc.LocalGatewayRouteTableArn,
+      LocalGatewayId: assoc.LocalGatewayId,
+      VpcId: assoc.VpcId,
+      OwnerId: assoc.OwnerId,
+      State: assoc.State,
+      Tags: assoc.Tags,
+    },
+  };
+};
+
+const CreateLocalGatewayVirtualInterface: OperationHandler = (input, ctx) => {
+  const localGatewayVirtualInterfaceGroupId =
+    typeof input["LocalGatewayVirtualInterfaceGroupId"] === "string"
+      ? input["LocalGatewayVirtualInterfaceGroupId"]
+      : undefined;
+  const outpostLagId =
+    typeof input["OutpostLagId"] === "string"
+      ? input["OutpostLagId"]
+      : undefined;
+  const vlan = typeof input["Vlan"] === "number" ? input["Vlan"] : undefined;
+  const localAddress =
+    typeof input["LocalAddress"] === "string"
+      ? input["LocalAddress"]
+      : undefined;
+  const peerAddress =
+    typeof input["PeerAddress"] === "string" ? input["PeerAddress"] : undefined;
+  const peerBgpAsn =
+    typeof input["PeerBgpAsn"] === "number" ? input["PeerBgpAsn"] : undefined;
+  const id = hexId("lgw-vif");
+  const vif: StoredLocalGatewayVirtualInterface = {
+    LocalGatewayVirtualInterfaceId: id,
+    LocalGatewayId: "lgw-unknown",
+    LocalGatewayVirtualInterfaceGroupId: localGatewayVirtualInterfaceGroupId,
+    LocalGatewayVirtualInterfaceArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:local-gateway-virtual-interface/${id}`,
+    OutpostLagId: outpostLagId,
+    Vlan: vlan,
+    LocalAddress: localAddress,
+    PeerAddress: peerAddress,
+    LocalBgpAsn: undefined,
+    PeerBgpAsn: peerBgpAsn,
+    OwnerId: ctx.account,
+    Tags: [],
+  };
+  ctx.store.set(lgwVifKey(id), vif);
+  return {
+    LocalGatewayVirtualInterface: {
+      LocalGatewayVirtualInterfaceId: vif.LocalGatewayVirtualInterfaceId,
+      LocalGatewayId: vif.LocalGatewayId,
+      LocalGatewayVirtualInterfaceGroupId:
+        vif.LocalGatewayVirtualInterfaceGroupId,
+      LocalGatewayVirtualInterfaceArn: vif.LocalGatewayVirtualInterfaceArn,
+      OutpostLagId: vif.OutpostLagId,
+      Vlan: vif.Vlan,
+      LocalAddress: vif.LocalAddress,
+      PeerAddress: vif.PeerAddress,
+      LocalBgpAsn: vif.LocalBgpAsn,
+      PeerBgpAsn: vif.PeerBgpAsn,
+      OwnerId: vif.OwnerId,
+      Tags: vif.Tags,
+    },
+  };
+};
+
+const CreateLocalGatewayVirtualInterfaceGroup: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const localGatewayId =
+    typeof input["LocalGatewayId"] === "string" ? input["LocalGatewayId"] : "";
+  const localBgpAsn =
+    typeof input["LocalBgpAsn"] === "number" ? input["LocalBgpAsn"] : undefined;
+  const id = hexId("lgw-vif-grp");
+  const group: StoredLocalGatewayVirtualInterfaceGroup = {
+    LocalGatewayVirtualInterfaceGroupId: id,
+    LocalGatewayVirtualInterfaceIds: [],
+    LocalGatewayId: localGatewayId,
+    OwnerId: ctx.account,
+    LocalBgpAsn: localBgpAsn,
+    LocalGatewayVirtualInterfaceGroupArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:local-gateway-virtual-interface-group/${id}`,
+    Tags: [],
+  };
+  ctx.store.set(lgwVifGroupKey(id), group);
+  return {
+    LocalGatewayVirtualInterfaceGroup: {
+      LocalGatewayVirtualInterfaceGroupId:
+        group.LocalGatewayVirtualInterfaceGroupId,
+      LocalGatewayVirtualInterfaceIds: group.LocalGatewayVirtualInterfaceIds,
+      LocalGatewayId: group.LocalGatewayId,
+      OwnerId: group.OwnerId,
+      LocalBgpAsn: group.LocalBgpAsn,
+      LocalGatewayVirtualInterfaceGroupArn:
+        group.LocalGatewayVirtualInterfaceGroupArn,
+      Tags: group.Tags,
+    },
+  };
+};
+
+const CreateMacSystemIntegrityProtectionModificationTask: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const id = hexId("mac-task");
+  const task: StoredMacModificationTask = {
+    InstanceId: instanceId,
+    MacModificationTaskId: id,
+    TaskState: "successful",
+    TaskType: "sip-modification",
+    StartTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(macTaskKey(id), task);
+  return {
+    MacModificationTask: {
+      InstanceId: task.InstanceId,
+      MacModificationTaskId: task.MacModificationTaskId,
+      TaskState: task.TaskState,
+      TaskType: task.TaskType,
+      StartTime: task.StartTime,
+      Tags: task.Tags,
+    },
+  };
+};
+
+const CreateManagedPrefixList: OperationHandler = (input, ctx) => {
+  const prefixListName =
+    typeof input["PrefixListName"] === "string" ? input["PrefixListName"] : "";
+  const addressFamily =
+    typeof input["AddressFamily"] === "string"
+      ? input["AddressFamily"]
+      : "IPv4";
+  const maxEntries =
+    typeof input["MaxEntries"] === "number" ? input["MaxEntries"] : 10;
+  const id = hexId("pl");
+  const pl: StoredManagedPrefixList = {
+    PrefixListId: id,
+    AddressFamily: addressFamily,
+    State: "create-complete",
+    PrefixListArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:managed-prefix-list/${id}`,
+    PrefixListName: prefixListName,
+    MaxEntries: maxEntries,
+    Version: 1,
+    Tags: [],
+    OwnerId: ctx.account,
+  };
+  ctx.store.set(managedPrefixListKey(id), pl);
+  return {
+    PrefixList: {
+      PrefixListId: pl.PrefixListId,
+      AddressFamily: pl.AddressFamily,
+      State: pl.State,
+      PrefixListArn: pl.PrefixListArn,
+      PrefixListName: pl.PrefixListName,
+      MaxEntries: pl.MaxEntries,
+      Version: pl.Version,
+      Tags: pl.Tags,
+      OwnerId: pl.OwnerId,
+    },
+  };
+};
+
+const CreateNetworkAcl: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const id = hexId("acl");
+  const acl: StoredNetworkAcl = {
+    NetworkAclId: id,
+    VpcId: vpcId,
+    IsDefault: false,
+    OwnerId: ctx.account,
+    Entries: [],
+    Tags: [],
+  };
+  ctx.store.set(networkAclKey(id), acl);
+  return {
+    NetworkAcl: {
+      NetworkAclId: acl.NetworkAclId,
+      VpcId: acl.VpcId,
+      IsDefault: acl.IsDefault,
+      OwnerId: acl.OwnerId,
+      Entries: acl.Entries,
+      Associations: [],
+      Tags: acl.Tags,
+    },
+  };
+};
+
+const CreateNetworkAclEntry: OperationHandler = (input, ctx) => {
+  const networkAclId =
+    typeof input["NetworkAclId"] === "string" ? input["NetworkAclId"] : "";
+  const ruleNumber =
+    typeof input["RuleNumber"] === "number" ? input["RuleNumber"] : 100;
+  const protocol =
+    typeof input["Protocol"] === "string" ? input["Protocol"] : "-1";
+  const ruleAction =
+    typeof input["RuleAction"] === "string" ? input["RuleAction"] : "allow";
+  const egress = typeof input["Egress"] === "boolean" ? input["Egress"] : false;
+  const cidrBlock =
+    typeof input["CidrBlock"] === "string" ? input["CidrBlock"] : undefined;
+  const ipv6CidrBlock =
+    typeof input["Ipv6CidrBlock"] === "string"
+      ? input["Ipv6CidrBlock"]
+      : undefined;
+  const acl = ctx.store.get<StoredNetworkAcl>(networkAclKey(networkAclId));
+  if (acl === undefined) {
+    throw awsError(
+      "InvalidNetworkAclID.NotFound",
+      `The network ACL '${networkAclId}' does not exist`,
+      400,
+    );
+  }
+  const entry: StoredNetworkAclEntry = {
+    RuleNumber: ruleNumber,
+    Protocol: protocol,
+    RuleAction: ruleAction,
+    Egress: egress,
+    CidrBlock: cidrBlock,
+    Ipv6CidrBlock: ipv6CidrBlock,
+  };
+  acl.Entries.push(entry);
+  ctx.store.set(networkAclKey(networkAclId), acl);
+  return {};
+};
+
+const CreateNetworkInsightsAccessScope: OperationHandler = (_input, ctx) => {
+  const id = hexId("nis");
+  const now = new Date().toISOString();
+  const scope: StoredNetworkInsightsAccessScope = {
+    NetworkInsightsAccessScopeId: id,
+    NetworkInsightsAccessScopeArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:network-insights-access-scope/${id}`,
+    CreatedDate: now,
+    UpdatedDate: now,
+    Tags: [],
+  };
+  ctx.store.set(niAccessScopeKey(id), scope);
+  return {
+    NetworkInsightsAccessScope: {
+      NetworkInsightsAccessScopeId: scope.NetworkInsightsAccessScopeId,
+      NetworkInsightsAccessScopeArn: scope.NetworkInsightsAccessScopeArn,
+      CreatedDate: scope.CreatedDate,
+      UpdatedDate: scope.UpdatedDate,
+      Tags: scope.Tags,
+    },
+    NetworkInsightsAccessScopeContent: {
+      NetworkInsightsAccessScopeId: scope.NetworkInsightsAccessScopeId,
+      MatchPaths: [],
+      ExcludePaths: [],
+    },
+  };
+};
+
+const CreateNetworkInsightsPath: OperationHandler = (input, ctx) => {
+  const source = typeof input["Source"] === "string" ? input["Source"] : "";
+  const destination =
+    typeof input["Destination"] === "string" ? input["Destination"] : undefined;
+  const protocol =
+    typeof input["Protocol"] === "string" ? input["Protocol"] : "tcp";
+  const destinationPort =
+    typeof input["DestinationPort"] === "number"
+      ? input["DestinationPort"]
+      : undefined;
+  const id = hexId("nip");
+  const now = new Date().toISOString();
+  const path: StoredNetworkInsightsPath = {
+    NetworkInsightsPathId: id,
+    NetworkInsightsPathArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:network-insights-path/${id}`,
+    CreatedDate: now,
+    Source: source,
+    Destination: destination,
+    Protocol: protocol,
+    DestinationPort: destinationPort,
+    Tags: [],
+  };
+  ctx.store.set(niPathKey(id), path);
+  return {
+    NetworkInsightsPath: {
+      NetworkInsightsPathId: path.NetworkInsightsPathId,
+      NetworkInsightsPathArn: path.NetworkInsightsPathArn,
+      CreatedDate: path.CreatedDate,
+      Source: path.Source,
+      Destination: path.Destination,
+      Protocol: path.Protocol,
+      DestinationPort: path.DestinationPort,
+      Tags: path.Tags,
+    },
+  };
+};
+
+const CreateNetworkInterface: OperationHandler = (input, ctx) => {
+  const subnetId =
+    typeof input["SubnetId"] === "string" ? input["SubnetId"] : "";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const privateIpAddress =
+    typeof input["PrivateIpAddress"] === "string"
+      ? input["PrivateIpAddress"]
+      : randomIpv4();
+  const interfaceType =
+    typeof input["InterfaceType"] === "string"
+      ? input["InterfaceType"]
+      : "interface";
+  const subnet = ctx.store.get<StoredSubnet>(subnetKey(subnetId));
+  const vpcId = subnet?.VpcId ?? "";
+  const az = subnet?.AvailabilityZone ?? `${ctx.region}a`;
+  const id = hexId("eni");
+  const macAddr = [0, 0, 0, 0, 0, 0]
+    .map(() =>
+      Math.floor(Math.random() * 256)
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join(":");
+  const ni: StoredNetworkInterface = {
+    NetworkInterfaceId: id,
+    SubnetId: subnetId,
+    VpcId: vpcId,
+    AvailabilityZone: az,
+    Description: description,
+    OwnerId: ctx.account,
+    PrivateIpAddress: privateIpAddress,
+    PrivateDnsName: `ip-${privateIpAddress.replace(/\./g, "-")}.${az}.compute.internal`,
+    MacAddress: macAddr,
+    Status: "available",
+    InterfaceType: interfaceType,
+    SourceDestCheck: true,
+    Tags: [],
+    Groups: [],
+  };
+  ctx.store.set(networkInterfaceKey(id), ni);
+  return {
+    NetworkInterface: {
+      NetworkInterfaceId: ni.NetworkInterfaceId,
+      SubnetId: ni.SubnetId,
+      VpcId: ni.VpcId,
+      AvailabilityZone: ni.AvailabilityZone,
+      Description: ni.Description,
+      OwnerId: ni.OwnerId,
+      PrivateIpAddress: ni.PrivateIpAddress,
+      PrivateDnsName: ni.PrivateDnsName,
+      MacAddress: ni.MacAddress,
+      Status: ni.Status,
+      InterfaceType: ni.InterfaceType,
+      SourceDestCheck: ni.SourceDestCheck,
+      TagSet: ni.Tags,
+      Groups: ni.Groups,
+    },
+  };
+};
+
+const CreateNetworkInterfacePermission: OperationHandler = (input, ctx) => {
+  const networkInterfaceId =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const awsAccountId =
+    typeof input["AwsAccountId"] === "string"
+      ? input["AwsAccountId"]
+      : undefined;
+  const awsService =
+    typeof input["AwsService"] === "string" ? input["AwsService"] : undefined;
+  const permission =
+    typeof input["Permission"] === "string" ? input["Permission"] : "";
+  const id = hexId("ni-perm");
+  const perm: StoredNetworkInterfacePermission = {
+    NetworkInterfacePermissionId: id,
+    NetworkInterfaceId: networkInterfaceId,
+    AwsAccountId: awsAccountId,
+    AwsService: awsService,
+    Permission: permission,
+    PermissionState: "granted",
+  };
+  ctx.store.set(niPermissionKey(id), perm);
+  return {
+    InterfacePermission: {
+      NetworkInterfacePermissionId: perm.NetworkInterfacePermissionId,
+      NetworkInterfaceId: perm.NetworkInterfaceId,
+      AwsAccountId: perm.AwsAccountId,
+      AwsService: perm.AwsService,
+      Permission: perm.Permission,
+      PermissionState: {
+        State: perm.PermissionState,
+      },
+    },
+  };
+};
+
 const CreateLocalGatewayRoute: OperationHandler = (input, ctx) => {
   const destinationCidrBlock =
     typeof input["DestinationCidrBlock"] === "string"
@@ -3197,6 +3805,18 @@ const ec2: ServiceDefinition = {
     CreateLaunchTemplateVersion,
     CreateLocalGatewayRoute,
     CreateLocalGatewayRouteTable,
+    CreateLocalGatewayRouteTableVirtualInterfaceGroupAssociation,
+    CreateLocalGatewayRouteTableVpcAssociation,
+    CreateLocalGatewayVirtualInterface,
+    CreateLocalGatewayVirtualInterfaceGroup,
+    CreateMacSystemIntegrityProtectionModificationTask,
+    CreateManagedPrefixList,
+    CreateNetworkAcl,
+    CreateNetworkAclEntry,
+    CreateNetworkInsightsAccessScope,
+    CreateNetworkInsightsPath,
+    CreateNetworkInterface,
+    CreateNetworkInterfacePermission,
   },
   model,
 } as const;

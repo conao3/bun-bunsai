@@ -605,7 +605,9 @@ const jobRunView = (run: StoredJobRun): Record<string, unknown> => ({
   StartedOn: run.startedOn,
   ...(run.completedOn !== undefined ? { CompletedOn: run.completedOn } : {}),
   JobRunState: run.jobRunState,
-  ...(Object.keys(run.arguments).length > 0 ? { Arguments: run.arguments } : {}),
+  ...(Object.keys(run.arguments).length > 0
+    ? { Arguments: run.arguments }
+    : {}),
 });
 
 const GetJobRun: OperationHandler = (input, ctx) => {
@@ -741,10 +743,7 @@ const triggerView = (
   CreateTime: trigger.createTime,
 });
 
-const requireTrigger = (
-  ctx: ServiceContext,
-  name: string,
-): StoredTrigger => {
+const requireTrigger = (ctx: ServiceContext, name: string): StoredTrigger => {
   const trigger = ctx.store.get<StoredTrigger>(`${triggerPrefix}${name}`);
   if (trigger === undefined) {
     throw awsError(

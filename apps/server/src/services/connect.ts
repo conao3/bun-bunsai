@@ -1257,6 +1257,217 @@ const DescribeInstanceStorageConfig: OperationHandler = (input, ctx) => {
   };
 };
 
+const UpdateAgentStatus: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const agentStatusId = requireString(input, "AgentStatusId");
+  const stored = ctx.store.get<StoredAgentStatus>(
+    agentStatusKey(instanceId, agentStatusId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `AgentStatus ${agentStatusId} not found.`,
+      404,
+    );
+  }
+  const name = stringOrUndefined(input["Name"]) ?? stored.Name;
+  const state =
+    typeof input["State"] === "string" ? input["State"] : stored.State;
+  ctx.store.set(agentStatusKey(instanceId, agentStatusId), {
+    ...stored,
+    Name: name,
+    State: state,
+  });
+  return {};
+};
+
+const UpdateAttachedFilesConfiguration: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const UpdateAuthenticationProfile: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const UpdateContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateContactAttributes: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const UpdateContactEvaluation: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const evaluationId = requireString(input, "EvaluationId");
+  return {
+    EvaluationId: evaluationId,
+    EvaluationArn: `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact-evaluation/${evaluationId}`,
+  };
+};
+
+const UpdateContactFlowContent: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactFlowId = requireString(input, "ContactFlowId");
+  const stored = ctx.store.get<StoredContactFlow>(
+    contactFlowKey(instanceId, contactFlowId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlow ${contactFlowId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateContactFlowMetadata: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactFlowId = requireString(input, "ContactFlowId");
+  const stored = ctx.store.get<StoredContactFlow>(
+    contactFlowKey(instanceId, contactFlowId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlow ${contactFlowId} not found.`,
+      404,
+    );
+  }
+  const name = stringOrUndefined(input["Name"]) ?? stored.Name;
+  ctx.store.set(contactFlowKey(instanceId, contactFlowId), {
+    ...stored,
+    Name: name,
+  });
+  return {};
+};
+
+const UpdateContactFlowModuleAlias: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const moduleId = requireString(input, "ContactFlowModuleId");
+  const aliasId = requireString(input, "AliasId");
+  const stored = ctx.store.get<StoredContactFlowModuleAlias>(
+    contactFlowModuleAliasKey(instanceId, moduleId, aliasId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlowModuleAlias ${aliasId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateContactFlowModuleContent: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const moduleId = requireString(input, "ContactFlowModuleId");
+  const stored = ctx.store.get<StoredContactFlowModule>(
+    contactFlowModuleKey(instanceId, moduleId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlowModule ${moduleId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateContactFlowModuleMetadata: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const moduleId = requireString(input, "ContactFlowModuleId");
+  const stored = ctx.store.get<StoredContactFlowModule>(
+    contactFlowModuleKey(instanceId, moduleId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlowModule ${moduleId} not found.`,
+      404,
+    );
+  }
+  const name = stringOrUndefined(input["Name"]) ?? stored.Name;
+  ctx.store.set(contactFlowModuleKey(instanceId, moduleId), {
+    ...stored,
+    Name: name,
+  });
+  return {};
+};
+
+const UpdateContactFlowName: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactFlowId = requireString(input, "ContactFlowId");
+  const stored = ctx.store.get<StoredContactFlow>(
+    contactFlowKey(instanceId, contactFlowId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ContactFlow ${contactFlowId} not found.`,
+      404,
+    );
+  }
+  const name = stringOrUndefined(input["Name"]) ?? stored.Name;
+  ctx.store.set(contactFlowKey(instanceId, contactFlowId), {
+    ...stored,
+    Name: name,
+  });
+  return {};
+};
+
+const UpdateContactRoutingData: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateContactSchedule: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -1341,12 +1552,11 @@ const connect = {
       case "contacts":
         if (parts.length === 3 && req.method === "GET")
           return "DescribeContact";
-        if (
-          parts.length === 4 &&
-          parts[3] === "associate-user" &&
-          req.method === "POST"
-        )
-          return "AssociateContactWithUser";
+        if (parts.length === 3 && req.method === "POST") return "UpdateContact";
+        if (parts.length === 4 && req.method === "POST") {
+          if (parts[3] === "associate-user") return "AssociateContactWithUser";
+          if (parts[3] === "routing-data") return "UpdateContactRoutingData";
+        }
         return undefined;
 
       case "default-vocabulary":
@@ -1471,6 +1681,8 @@ const connect = {
           return "CreateAgentStatus";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeAgentStatus";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdateAgentStatus";
         return undefined;
 
       case "contact":
@@ -1479,6 +1691,10 @@ const connect = {
             return "CreateContact";
           if (parts[1] === "create-participant" && req.method === "POST")
             return "CreateParticipant";
+          if (parts[1] === "attributes" && req.method === "POST")
+            return "UpdateContactAttributes";
+          if (parts[1] === "schedule" && req.method === "POST")
+            return "UpdateContactSchedule";
         }
         if (
           parts.length === 4 &&
@@ -1495,10 +1711,15 @@ const connect = {
           return "DescribeContactFlow";
         if (
           parts.length === 4 &&
-          parts[3] === "version" &&
-          req.method === "PUT"
+          req.method === "PUT" &&
+          parts[3] === "version"
         )
           return "CreateContactFlowVersion";
+        if (parts.length === 4 && req.method === "POST") {
+          if (parts[3] === "content") return "UpdateContactFlowContent";
+          if (parts[3] === "metadata") return "UpdateContactFlowMetadata";
+          if (parts[3] === "name") return "UpdateContactFlowName";
+        }
         return undefined;
 
       case "contact-flow-modules":
@@ -1510,8 +1731,14 @@ const connect = {
           if (parts[3] === "alias") return "CreateContactFlowModuleAlias";
           if (parts[3] === "version") return "CreateContactFlowModuleVersion";
         }
-        if (parts.length === 5 && parts[3] === "alias" && req.method === "GET")
-          return "DescribeContactFlowModuleAlias";
+        if (parts.length === 4 && req.method === "POST") {
+          if (parts[3] === "content") return "UpdateContactFlowModuleContent";
+          if (parts[3] === "metadata") return "UpdateContactFlowModuleMetadata";
+        }
+        if (parts.length === 5 && parts[3] === "alias") {
+          if (req.method === "GET") return "DescribeContactFlowModuleAlias";
+          if (req.method === "POST") return "UpdateContactFlowModuleAlias";
+        }
         return undefined;
 
       case "data-tables":
@@ -1572,16 +1799,22 @@ const connect = {
       case "attached-files-configurations":
         if (parts.length === 3 && req.method === "GET")
           return "DescribeAttachedFilesConfiguration";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdateAttachedFilesConfiguration";
         return undefined;
 
       case "authentication-profiles":
         if (parts.length === 3 && req.method === "GET")
           return "DescribeAuthenticationProfile";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdateAuthenticationProfile";
         return undefined;
 
       case "contact-evaluations":
         if (parts.length === 3 && req.method === "GET")
           return "DescribeContactEvaluation";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdateContactEvaluation";
         return undefined;
 
       default:
@@ -1664,6 +1897,20 @@ const connect = {
     DescribeHoursOfOperationOverride,
     DescribeInstanceAttribute,
     DescribeInstanceStorageConfig,
+    UpdateAgentStatus,
+    UpdateAttachedFilesConfiguration,
+    UpdateAuthenticationProfile,
+    UpdateContact,
+    UpdateContactAttributes,
+    UpdateContactEvaluation,
+    UpdateContactFlowContent,
+    UpdateContactFlowMetadata,
+    UpdateContactFlowModuleAlias,
+    UpdateContactFlowModuleContent,
+    UpdateContactFlowModuleMetadata,
+    UpdateContactFlowName,
+    UpdateContactRoutingData,
+    UpdateContactSchedule,
   },
   model,
 } as const satisfies ServiceDefinition;

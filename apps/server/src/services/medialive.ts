@@ -27,6 +27,8 @@ const cwAlarmTemplateGroupPrefix = "cwalarmtemplgrp:" as const;
 const ebRuleTemplatePrefix = "ebruletempl:" as const;
 const ebRuleTemplateGroupPrefix = "ebruletemplgrp:" as const;
 const signalMapPrefix = "signalmap:" as const;
+const sdiSourcePrefix = "sdiSource:" as const;
+const channelPlacementGroupPrefix = "channelPlacementGroup:" as const;
 
 type StoredChannel = {
   Id: string;
@@ -197,6 +199,26 @@ type StoredSignalMap = {
   ModifiedAt: string;
 };
 
+type StoredSdiSource = {
+  Id: string;
+  Arn: string;
+  Name: string;
+  State: string;
+  Type: string;
+  Mode: string;
+  Inputs: string[];
+};
+
+type StoredChannelPlacementGroup = {
+  Id: string;
+  Arn: string;
+  Name: string;
+  State: string;
+  ClusterId: string;
+  Nodes: string[];
+  Channels: string[];
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -241,6 +263,9 @@ const ebRuleTemplateKey = (id: string): string =>
 const ebRuleTemplateGroupKey = (id: string): string =>
   `${ebRuleTemplateGroupPrefix}${id}`;
 const signalMapKey = (id: string): string => `${signalMapPrefix}${id}`;
+const sdiSourceKey = (id: string): string => `${sdiSourcePrefix}${id}`;
+const channelPlacementGroupKey = (clusterId: string, id: string): string =>
+  `${channelPlacementGroupPrefix}${clusterId}:${id}`;
 
 const channelArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:medialive:${ctx.region}:${ctx.account}:channel:${id}`;
@@ -277,6 +302,12 @@ const ebRuleTemplateGroupArn = (ctx: ServiceContext, id: string): string =>
 
 const signalMapArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:medialive:${ctx.region}:${ctx.account}:signal-map:${id}`;
+
+const sdiSourceArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:medialive:${ctx.region}:${ctx.account}:sdiSource:${id}`;
+
+const channelPlacementGroupArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:medialive:${ctx.region}:${ctx.account}:channelPlacementGroup:${id}`;
 
 const nextChannelId = (ctx: ServiceContext): string => {
   const used = ctx.store
@@ -346,6 +377,22 @@ const nextSignalMapId = (ctx: ServiceContext): string => {
     .list<StoredSignalMap>()
     .filter((entry) => entry.key.startsWith(signalMapPrefix)).length;
   return String(10000000 + used + 1);
+};
+
+const nextSdiSourceId = (ctx: ServiceContext): string => {
+  const used = ctx.store
+    .list<StoredSdiSource>()
+    .filter((entry) => entry.key.startsWith(sdiSourcePrefix)).length;
+  return String(11000000 + used + 1);
+};
+
+const nextChannelPlacementGroupId = (ctx: ServiceContext): string => {
+  const used = ctx.store
+    .list<StoredChannelPlacementGroup>()
+    .filter((entry) =>
+      entry.key.startsWith(channelPlacementGroupPrefix),
+    ).length;
+  return String(12000000 + used + 1);
 };
 
 const requireChannel = (ctx: ServiceContext, id: string): StoredChannel => {
@@ -493,6 +540,32 @@ const requireSignalMap = (
     throw awsError(
       "NotFoundException",
       `SignalMap ${identifier} not found.`,
+      404,
+    );
+  }
+  return stored;
+};
+
+const requireSdiSource = (ctx: ServiceContext, id: string): StoredSdiSource => {
+  const stored = ctx.store.get<StoredSdiSource>(sdiSourceKey(id));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `SdiSource ${id} not found.`, 404);
+  }
+  return stored;
+};
+
+const requireChannelPlacementGroup = (
+  ctx: ServiceContext,
+  clusterId: string,
+  id: string,
+): StoredChannelPlacementGroup => {
+  const stored = ctx.store.get<StoredChannelPlacementGroup>(
+    channelPlacementGroupKey(clusterId, id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `ChannelPlacementGroup ${id} not found.`,
       404,
     );
   }
@@ -1706,6 +1779,157 @@ const ListVersions: OperationHandler = (_input, _ctx) => {
   return { Versions: [] };
 };
 
+const CreateSdiSource: OperationHandler = (input, ctx) => {
+  const id = nextSdiSourceId(ctx);
+  const sdi: StoredSdiSource = {
+    Id: id,
+    Arn: sdiSourceArn(ctx, id),
+    Name: stringOrUndefined(input["Name"]) ?? "",
+    State: "IDLE",
+    Type: stringOrUndefined(input["Type"]) ?? "SINGLE",
+    Mode: stringOrUndefined(input["Mode"]) ?? "QUADRANT",
+    Inputs: [],
+  };
+  ctx.store.set(sdiSourceKey(id), sdi);
+  return { SdiSource: sdi };
+};
+
+const DeleteSdiSource: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "SdiSourceId");
+  const sdi = requireSdiSource(ctx, id);
+  const deleted: StoredSdiSource = { ...sdi, State: "DELETED" };
+  ctx.store.set(sdiSourceKey(id), deleted);
+  return { SdiSource: deleted };
+};
+
+const DescribeSdiSource: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "SdiSourceId");
+  return { SdiSource: requireSdiSource(ctx, id) };
+};
+
+const ListSdiSources: OperationHandler = (_input, ctx) => {
+  const sources = ctx.store
+    .list<StoredSdiSource>()
+    .filter((entry) => entry.key.startsWith(sdiSourcePrefix))
+    .map((entry) => entry.value);
+  return { SdiSources: sources };
+};
+
+const UpdateSdiSource: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "SdiSourceId");
+  const existing = requireSdiSource(ctx, id);
+  const updated: StoredSdiSource = {
+    ...existing,
+    Name: stringOrUndefined(input["Name"]) ?? existing.Name,
+    Type: stringOrUndefined(input["Type"]) ?? existing.Type,
+    Mode: stringOrUndefined(input["Mode"]) ?? existing.Mode,
+  };
+  ctx.store.set(sdiSourceKey(id), updated);
+  return { SdiSource: updated };
+};
+
+const ListAlerts: OperationHandler = (_input, _ctx) => {
+  return { Alerts: [] };
+};
+
+const ListClusterAlerts: OperationHandler = (_input, _ctx) => {
+  return { Alerts: [] };
+};
+
+const ListMultiplexAlerts: OperationHandler = (_input, _ctx) => {
+  return { Alerts: [] };
+};
+
+const CreateChannelPlacementGroup: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  const id = nextChannelPlacementGroupId(ctx);
+  const group: StoredChannelPlacementGroup = {
+    Id: id,
+    Arn: channelPlacementGroupArn(ctx, id),
+    Name: stringOrUndefined(input["Name"]) ?? "",
+    State: "UNASSIGNED",
+    ClusterId: clusterId,
+    Nodes: arrayOrEmpty(input["Nodes"]).filter(
+      (n) => typeof n === "string",
+    ) as string[],
+    Channels: [],
+  };
+  ctx.store.set(channelPlacementGroupKey(clusterId, id), group);
+  return {
+    Arn: group.Arn,
+    Channels: group.Channels,
+    ClusterId: group.ClusterId,
+    Id: group.Id,
+    Name: group.Name,
+    Nodes: group.Nodes,
+    State: group.State,
+  };
+};
+
+const DeleteChannelPlacementGroup: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  const id = requireString(input, "ChannelPlacementGroupId");
+  const group = requireChannelPlacementGroup(ctx, clusterId, id);
+  ctx.store.delete(channelPlacementGroupKey(clusterId, id));
+  return {
+    Arn: group.Arn,
+    Channels: group.Channels,
+    ClusterId: group.ClusterId,
+    Id: group.Id,
+    Name: group.Name,
+    Nodes: group.Nodes,
+    State: "DELETED",
+  };
+};
+
+const DescribeChannelPlacementGroup: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  const id = requireString(input, "ChannelPlacementGroupId");
+  const group = requireChannelPlacementGroup(ctx, clusterId, id);
+  return {
+    Arn: group.Arn,
+    Channels: group.Channels,
+    ClusterId: group.ClusterId,
+    Id: group.Id,
+    Name: group.Name,
+    Nodes: group.Nodes,
+    State: group.State,
+  };
+};
+
+const ListChannelPlacementGroups: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  const prefix = channelPlacementGroupKey(clusterId, "");
+  const groups = ctx.store
+    .list<StoredChannelPlacementGroup>()
+    .filter((entry) => entry.key.startsWith(prefix))
+    .map((entry) => entry.value);
+  return { ChannelPlacementGroups: groups };
+};
+
+const UpdateChannelPlacementGroup: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  const id = requireString(input, "ChannelPlacementGroupId");
+  const existing = requireChannelPlacementGroup(ctx, clusterId, id);
+  const updated: StoredChannelPlacementGroup = {
+    ...existing,
+    Name: stringOrUndefined(input["Name"]) ?? existing.Name,
+    Nodes: Array.isArray(input["Nodes"])
+      ? (input["Nodes"] as string[])
+      : existing.Nodes,
+  };
+  ctx.store.set(channelPlacementGroupKey(clusterId, id), updated);
+  return {
+    Arn: updated.Arn,
+    Channels: updated.Channels,
+    ClusterId: updated.ClusterId,
+    Id: updated.Id,
+    Name: updated.Name,
+    Nodes: updated.Nodes,
+    State: updated.State,
+  };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -1763,6 +1987,7 @@ const medialive = {
           return "UpdateChannelClass";
         if (action === "restartChannelPipelines" && m === "POST")
           return "RestartChannelPipelines";
+        if (action === "alerts" && m === "GET") return "ListAlerts";
         return undefined;
       }
       return undefined;
@@ -1816,6 +2041,7 @@ const medialive = {
         const action = parts[3];
         if (action === "start" && m === "POST") return "StartMultiplex";
         if (action === "stop" && m === "POST") return "StopMultiplex";
+        if (action === "alerts" && m === "GET") return "ListMultiplexAlerts";
         if (action === "programs") {
           if (m === "POST") return "CreateMultiplexProgram";
           if (m === "GET") return "ListMultiplexPrograms";
@@ -1865,6 +2091,41 @@ const medialive = {
 
     if (r1 === "inputDeviceTransfers" && parts.length === 2) {
       if (m === "GET") return "ListInputDeviceTransfers";
+      return undefined;
+    }
+
+    if (r1 === "sdiSources") {
+      if (parts.length === 2) {
+        if (m === "POST") return "CreateSdiSource";
+        if (m === "GET") return "ListSdiSources";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (m === "GET") return "DescribeSdiSource";
+        if (m === "DELETE") return "DeleteSdiSource";
+        if (m === "PUT") return "UpdateSdiSource";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (r1 === "clusters") {
+      if (parts.length === 4) {
+        const section = parts[3];
+        if (section === "alerts" && m === "GET") return "ListClusterAlerts";
+        if (section === "channelplacementgroups") {
+          if (m === "POST") return "CreateChannelPlacementGroup";
+          if (m === "GET") return "ListChannelPlacementGroups";
+          return undefined;
+        }
+        return undefined;
+      }
+      if (parts.length === 5 && parts[3] === "channelplacementgroups") {
+        if (m === "GET") return "DescribeChannelPlacementGroup";
+        if (m === "DELETE") return "DeleteChannelPlacementGroup";
+        if (m === "PUT") return "UpdateChannelPlacementGroup";
+        return undefined;
+      }
       return undefined;
     }
 
@@ -2075,6 +2336,19 @@ const medialive = {
     StartMonitorDeployment,
     StartDeleteMonitorDeployment,
     ListVersions,
+    CreateSdiSource,
+    DeleteSdiSource,
+    DescribeSdiSource,
+    ListSdiSources,
+    UpdateSdiSource,
+    ListAlerts,
+    ListClusterAlerts,
+    ListMultiplexAlerts,
+    CreateChannelPlacementGroup,
+    DeleteChannelPlacementGroup,
+    DescribeChannelPlacementGroup,
+    ListChannelPlacementGroups,
+    UpdateChannelPlacementGroup,
   },
   model,
 } as const satisfies ServiceDefinition;

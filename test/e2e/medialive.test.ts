@@ -6,6 +6,7 @@ import {
   CloudWatchAlarmTemplateStatistic,
   CloudWatchAlarmTemplateTargetResourceType,
   CreateChannelCommand,
+  CreateChannelPlacementGroupCommand,
   CreateCloudWatchAlarmTemplateCommand,
   CreateCloudWatchAlarmTemplateGroupCommand,
   CreateEventBridgeRuleTemplateCommand,
@@ -14,8 +15,10 @@ import {
   CreateInputSecurityGroupCommand,
   CreateMultiplexCommand,
   CreateMultiplexProgramCommand,
+  CreateSdiSourceCommand,
   CreateSignalMapCommand,
   DeleteChannelCommand,
+  DeleteChannelPlacementGroupCommand,
   DeleteCloudWatchAlarmTemplateCommand,
   DeleteCloudWatchAlarmTemplateGroupCommand,
   DeleteEventBridgeRuleTemplateCommand,
@@ -25,19 +28,24 @@ import {
   DeleteMultiplexCommand,
   DeleteMultiplexProgramCommand,
   DeleteReservationCommand,
+  DeleteSdiSourceCommand,
   DeleteSignalMapCommand,
   DescribeChannelCommand,
+  DescribeChannelPlacementGroupCommand,
   DescribeInputCommand,
   DescribeInputSecurityGroupCommand,
   DescribeMultiplexCommand,
   DescribeMultiplexProgramCommand,
   DescribeReservationCommand,
+  DescribeSdiSourceCommand,
   EventBridgeRuleTemplateEventType,
   GetCloudWatchAlarmTemplateCommand,
   GetCloudWatchAlarmTemplateGroupCommand,
   GetEventBridgeRuleTemplateCommand,
   GetEventBridgeRuleTemplateGroupCommand,
   GetSignalMapCommand,
+  ListAlertsCommand,
+  ListChannelPlacementGroupsCommand,
   ListChannelsCommand,
   ListCloudWatchAlarmTemplateGroupsCommand,
   ListCloudWatchAlarmTemplatesCommand,
@@ -45,21 +53,27 @@ import {
   ListEventBridgeRuleTemplatesCommand,
   ListInputSecurityGroupsCommand,
   ListInputsCommand,
+  ListMultiplexAlertsCommand,
   ListMultiplexProgramsCommand,
   ListMultiplexesCommand,
   ListOfferingsCommand,
   ListReservationsCommand,
+  ListSdiSourcesCommand,
   ListSignalMapsCommand,
   ListVersionsCommand,
   MediaLiveClient,
   PurchaseOfferingCommand,
+  SdiSourceMode,
+  SdiSourceType,
   StartDeleteMonitorDeploymentCommand,
   StartMonitorDeploymentCommand,
   StartUpdateSignalMapCommand,
+  UpdateChannelPlacementGroupCommand,
   UpdateCloudWatchAlarmTemplateCommand,
   UpdateCloudWatchAlarmTemplateGroupCommand,
   UpdateEventBridgeRuleTemplateCommand,
   UpdateEventBridgeRuleTemplateGroupCommand,
+  UpdateSdiSourceCommand,
 } from "@aws-sdk/client-medialive";
 
 const awsPort = 4566;
@@ -548,4 +562,139 @@ test("MediaLive list versions", async () => {
   const client = medialive();
   const result = await client.send(new ListVersionsCommand({}));
   expect(result.Versions).toBeDefined();
+});
+
+test("MediaLive SdiSource lifecycle", async () => {
+  const client = medialive();
+
+  const created = await client.send(
+    new CreateSdiSourceCommand({
+      Name: "e2e-sdi-source",
+      Type: SdiSourceType.SINGLE,
+      Mode: SdiSourceMode.QUADRANT,
+    }),
+  );
+  const id = created.SdiSource?.Id;
+  expect(id).toBeDefined();
+  expect(created.SdiSource?.Arn).toBeDefined();
+  expect(created.SdiSource?.Name).toBe("e2e-sdi-source");
+  expect(created.SdiSource?.State).toBe("IDLE");
+  expect(created.SdiSource?.Type).toBe(SdiSourceType.SINGLE);
+
+  const described = await client.send(
+    new DescribeSdiSourceCommand({ SdiSourceId: id }),
+  );
+  expect(described.SdiSource?.Id).toBe(id);
+  expect(described.SdiSource?.Name).toBe("e2e-sdi-source");
+
+  const listed = await client.send(new ListSdiSourcesCommand({}));
+  expect((listed.SdiSources ?? []).map((s) => s.Id)).toContain(id);
+
+  const updated = await client.send(
+    new UpdateSdiSourceCommand({
+      SdiSourceId: id,
+      Name: "e2e-sdi-source-updated",
+    }),
+  );
+  expect(updated.SdiSource?.Name).toBe("e2e-sdi-source-updated");
+
+  const deleted = await client.send(
+    new DeleteSdiSourceCommand({ SdiSourceId: id }),
+  );
+  expect(deleted.SdiSource?.State).toBe("DELETED");
+});
+
+test("MediaLive channel alerts", async () => {
+  const client = medialive();
+
+  const ch = await client.send(
+    new CreateChannelCommand({ Name: "e2e-alerts-channel" }),
+  );
+  const channelId = ch.Channel?.Id!;
+
+  const alerts = await client.send(
+    new ListAlertsCommand({ ChannelId: channelId }),
+  );
+  expect(Array.isArray(alerts.Alerts)).toBe(true);
+
+  const mxCreated = await client.send(
+    new CreateMultiplexCommand({
+      Name: "e2e-alerts-multiplex",
+      AvailabilityZones: ["us-east-1a", "us-east-1b"],
+      MultiplexSettings: {
+        TransportStreamBitrate: 1000000,
+        TransportStreamId: 2,
+      },
+      RequestId: "req-alerts-mx",
+    }),
+  );
+  const mxId = mxCreated.Multiplex?.Id!;
+
+  const mxAlerts = await client.send(
+    new ListMultiplexAlertsCommand({ MultiplexId: mxId }),
+  );
+  expect(Array.isArray(mxAlerts.Alerts)).toBe(true);
+
+  await client.send(new DeleteChannelCommand({ ChannelId: channelId }));
+  await client.send(new DeleteMultiplexCommand({ MultiplexId: mxId }));
+});
+
+test("MediaLive ChannelPlacementGroup lifecycle", async () => {
+  const client = medialive();
+
+  const clusterId = "test-cluster-id";
+
+  const created = await client.send(
+    new CreateChannelPlacementGroupCommand({
+      ClusterId: clusterId,
+      Name: "e2e-placement-group",
+      Nodes: [],
+    }),
+  );
+  const id = created.Id;
+  expect(id).toBeDefined();
+  expect(created.Arn).toBeDefined();
+  expect(created.Name).toBe("e2e-placement-group");
+  expect(created.State).toBe("UNASSIGNED");
+  expect(created.ClusterId).toBe(clusterId);
+
+  const described = await client.send(
+    new DescribeChannelPlacementGroupCommand({
+      ClusterId: clusterId,
+      ChannelPlacementGroupId: id,
+    }),
+  );
+  expect(described.Id).toBe(id);
+  expect(described.Name).toBe("e2e-placement-group");
+
+  const listed = await client.send(
+    new ListChannelPlacementGroupsCommand({ ClusterId: clusterId }),
+  );
+  expect((listed.ChannelPlacementGroups ?? []).map((g) => g.Id)).toContain(id);
+
+  const updated = await client.send(
+    new UpdateChannelPlacementGroupCommand({
+      ClusterId: clusterId,
+      ChannelPlacementGroupId: id,
+      Name: "e2e-placement-group-updated",
+    }),
+  );
+  expect(updated.Name).toBe("e2e-placement-group-updated");
+
+  const deleted = await client.send(
+    new DeleteChannelPlacementGroupCommand({
+      ClusterId: clusterId,
+      ChannelPlacementGroupId: id,
+    }),
+  );
+  expect(deleted.State).toBe("DELETED");
+
+  await expect(
+    client.send(
+      new DescribeChannelPlacementGroupCommand({
+        ClusterId: clusterId,
+        ChannelPlacementGroupId: id,
+      }),
+    ),
+  ).rejects.toThrow();
 });

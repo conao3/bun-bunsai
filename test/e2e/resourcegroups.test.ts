@@ -328,7 +328,7 @@ test("ResourceGroups StartTagSyncTask, GetTagSyncTask, ListTagSyncTasks, CancelT
   const afterCancel = await client.send(
     new GetTagSyncTaskCommand({ TaskArn: taskArn }),
   );
-  expect(afterCancel.Status).toBe("CANCELLED");
+  expect(String(afterCancel.Status)).toBe("CANCELLED");
 
   await client.send(new DeleteGroupCommand({ GroupName: name }));
 });

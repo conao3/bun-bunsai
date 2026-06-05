@@ -235,7 +235,7 @@ test("Wisdom quick response lifecycle", async () => {
     new CreateQuickResponseCommand({
       knowledgeBaseId,
       name: "bunsai-e2e-qr",
-      content: { plainText: "Hello, how can I help?" },
+      content: { content: "Hello, how can I help?" },
     }),
   );
   const quickResponseId = created.quickResponse?.quickResponseId;

@@ -102,7 +102,7 @@ describe("athena data catalogs and named queries e2e", () => {
     const listed = await client.send(
       new ListNamedQueriesCommand({ WorkGroup: workGroup }),
     );
-    expect(listed.NamedQueryIds ?? []).toContain(id);
+    expect(listed.NamedQueryIds ?? []).toContain(id ?? "");
 
     const deleted = await client.send(
       new DeleteNamedQueryCommand({ NamedQueryId: id }),

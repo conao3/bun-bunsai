@@ -459,7 +459,9 @@ test("CodeBuild sandbox lifecycle", async () => {
   const started = await client.send(new StartSandboxCommand({}));
   const sandboxId = started.sandbox?.id ?? "";
   expect(sandboxId).toBeTruthy();
-  expect(started.sandbox?.status?.statusCode).toBe("READY");
+  expect((started.sandbox?.status as { statusCode?: string })?.statusCode).toBe(
+    "READY",
+  );
 
   const fetched = await client.send(
     new BatchGetSandboxesCommand({ ids: [sandboxId, "missing-sandbox"] }),
@@ -479,7 +481,7 @@ test("CodeBuild sandbox lifecycle", async () => {
     new StartCommandExecutionCommand({
       sandboxId,
       command: "echo hello",
-      type: "COMMAND",
+      type: "SHELL",
     }),
   );
   const cmdId = cmdStarted.commandExecution?.id ?? "";
@@ -503,7 +505,9 @@ test("CodeBuild sandbox lifecycle", async () => {
   );
 
   const stopped = await client.send(new StopSandboxCommand({ id: sandboxId }));
-  expect(stopped.sandbox?.status?.statusCode).toBe("STOPPED");
+  expect((stopped.sandbox?.status as { statusCode?: string })?.statusCode).toBe(
+    "STOPPED",
+  );
 });
 
 test("CodeBuild sandbox for project", async () => {

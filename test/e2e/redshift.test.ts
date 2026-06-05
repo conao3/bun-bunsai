@@ -1073,7 +1073,7 @@ test("Redshift custom-domain-association lifecycle", async () => {
 
   const listed = await client.send(
     new DescribeCustomDomainAssociationsCommand({
-      ClusterIdentifier: clusterId,
+      CustomDomainName: domainName,
     }),
   );
   expect((listed.Associations ?? []).length).toBe(1);
@@ -1448,9 +1448,9 @@ test("Redshift reserved node lifecycle", async () => {
     expect(
       (exchangeStatus.ReservedNodeExchangeStatusDetails ?? []).length,
     ).toBe(1);
-    expect(exchangeStatus.ReservedNodeExchangeStatusDetails?.[0]?.Status).toBe(
-      "succeeded",
-    );
+    expect(
+      String(exchangeStatus.ReservedNodeExchangeStatusDetails?.[0]?.Status),
+    ).toBe("succeeded");
   }
 });
 

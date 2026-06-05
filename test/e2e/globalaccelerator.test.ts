@@ -322,7 +322,7 @@ test("GlobalAccelerator BYOIP CIDR lifecycle", async () => {
   const withdrawn = await client.send(
     new WithdrawByoipCidrCommand({ Cidr: cidr }),
   );
-  expect(withdrawn.ByoipCidr?.State).toBe("PROVISIONED");
+  expect(withdrawn.ByoipCidr?.State as string).toBe("PROVISIONED");
 
   const listed = await client.send(new ListByoipCidrsCommand({}));
   expect((listed.ByoipCidrs ?? []).some((c) => c.Cidr === cidr)).toBe(true);

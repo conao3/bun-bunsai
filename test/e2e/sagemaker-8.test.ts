@@ -34,8 +34,8 @@ test("CreateAIBenchmarkJob → DescribeAIBenchmarkJob → AddTags lifecycle", as
     new CreateAIBenchmarkJobCommand({
       AIBenchmarkJobName: jobName,
       BenchmarkTarget: {
-        BenchmarkConfig: {
-          ModelId: "test-model-id",
+        Endpoint: {
+          Identifier: "test-model-id",
         },
       },
       OutputConfig: {
@@ -98,7 +98,7 @@ test("CreateAIRecommendationJob → DescribeAIRecommendationJob lifecycle", asyn
       },
       AIWorkloadConfigIdentifier: "bunsai-workload-config",
       PerformanceTarget: {
-        Constraints: {},
+        Constraints: [{ Metric: "throughput" }],
       },
       RoleArn: `arn:aws:iam::123456789012:role/SageMakerRole`,
     }),

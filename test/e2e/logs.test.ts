@@ -39,6 +39,7 @@ import {
   ListTagsForResourceCommand,
   UntagResourceCommand,
 } from "@aws-sdk/client-cloudwatch-logs";
+import type { AnomalyDetectorStatus } from "@aws-sdk/client-cloudwatch-logs";
 
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
@@ -375,7 +376,7 @@ describe("logs e2e", () => {
         anomalyDetectorArn: created.anomalyDetectorArn!,
       }),
     );
-    expect(got.anomalyDetectorStatus).toBe("ACTIVE");
+    expect(got.anomalyDetectorStatus).toBe("ACTIVE" as AnomalyDetectorStatus);
 
     await client.send(
       new DeleteLogAnomalyDetectorCommand({

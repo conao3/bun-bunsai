@@ -312,6 +312,15 @@ test("CodePipeline custom action type lifecycle", async () => {
     new UpdateActionTypeCommand({
       actionType: {
         id: { category: "Build", owner: "Custom", provider, version: "1" },
+        executor: {
+          configuration: {
+            lambdaExecutorConfiguration: {
+              lambdaFunctionArn:
+                "arn:aws:lambda:us-east-1:123456789012:function:bunsai-e2e",
+            },
+          },
+          type: "Lambda",
+        },
         inputArtifactDetails: { minimumCount: 0, maximumCount: 2 },
         outputArtifactDetails: { minimumCount: 0, maximumCount: 2 },
       },

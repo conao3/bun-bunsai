@@ -82,7 +82,7 @@ export function createBunsaiApp() {
 export function createBunsaiServers(options: {
   awsPort: number;
   uiPort: number;
-  dashboard?: unknown;
+  dashboard?: import("bun").HTMLBundle;
   hmr?: boolean;
 }) {
   const app = createBunsaiApp();
@@ -92,14 +92,21 @@ export function createBunsaiServers(options: {
     fetch: app.gatewayFetch,
   });
 
-  const uiServer = Bun.serve({
-    port: options.uiPort,
-    development: { hmr: options.hmr ?? false },
-    routes:
-      options.dashboard === undefined
-        ? { "/__bunsai/*": app.managementFetch }
-        : { "/__bunsai/*": app.managementFetch, "/*": options.dashboard },
-  });
+  const uiServer =
+    options.dashboard === undefined
+      ? Bun.serve({
+          port: options.uiPort,
+          development: { hmr: options.hmr ?? false },
+          routes: { "/__bunsai/*": app.managementFetch },
+        })
+      : Bun.serve({
+          port: options.uiPort,
+          development: { hmr: options.hmr ?? false },
+          routes: {
+            "/__bunsai/*": app.managementFetch,
+            "/*": options.dashboard,
+          },
+        });
 
   return { awsServer, uiServer, store: app.store, log: app.log };
 }

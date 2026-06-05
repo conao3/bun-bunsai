@@ -18,7 +18,6 @@ import {
   EvaluateSessionCommand,
   ListDomainsCommand,
   ListFraudsterRegistrationJobsCommand,
-  ListFraudsterRegistrationJobsCommandInput,
   ListFraudstersCommand,
   ListSpeakerEnrollmentJobsCommand,
   ListSpeakersCommand,
@@ -316,7 +315,9 @@ test("VoiceID speaker operations via EvaluateSession", async () => {
   expect(sessionResult.DomainId).toBe(domainId);
   expect(sessionResult.StreamingStatus).toBe("ENDED");
   expect(sessionResult.AuthenticationResult?.Decision).toBe("ACCEPT");
-  expect(sessionResult.FraudDetectionResult?.Decision).toBe("NOT_FRAUD");
+  expect(sessionResult.FraudDetectionResult?.Decision as string).toBe(
+    "NOT_FRAUD",
+  );
   const speakerId = sessionResult.AuthenticationResult?.GeneratedSpeakerId;
   expect(speakerId).toBeDefined();
 

@@ -600,13 +600,13 @@ test("WAFv2 static query operations", async () => {
   expect(typeof ruleGroup.Capacity).toBe("number");
 
   const mobileSdkReleases = await client.send(
-    new ListMobileSdkReleasesCommand({ Platform: "Android" }),
+    new ListMobileSdkReleasesCommand({ Platform: "ANDROID" }),
   );
   expect(Array.isArray(mobileSdkReleases.ReleaseSummaries)).toBe(true);
 
   const mobileSdkRelease = await client.send(
     new GetMobileSdkReleaseCommand({
-      Platform: "Android",
+      Platform: "ANDROID",
       ReleaseVersion: "1.0.0",
     }),
   );
@@ -614,7 +614,7 @@ test("WAFv2 static query operations", async () => {
 
   const mobileSdkUrl = await client.send(
     new GenerateMobileSdkReleaseUrlCommand({
-      Platform: "Android",
+      Platform: "ANDROID",
       ReleaseVersion: "1.0.0",
     }),
   );

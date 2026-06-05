@@ -340,7 +340,10 @@ test("AccessAnalyzer update analyzer", async () => {
   );
 
   const result = await client.send(
-    new UpdateAnalyzerCommand({ analyzerName: name, configuration: {} }),
+    new UpdateAnalyzerCommand({
+      analyzerName: name,
+      configuration: { unusedAccess: {} },
+    }),
   );
   expect(result.configuration).toBeDefined();
 

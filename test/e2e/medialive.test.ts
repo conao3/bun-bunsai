@@ -752,7 +752,7 @@ test("cluster + node lifecycle", async () => {
   const deletedNode = await client.send(
     new DeleteNodeCommand({ ClusterId: clusterId, NodeId: nodeId }),
   );
-  expect(deletedNode.State).toBe("DELETED");
+  expect(deletedNode.State as string).toBe("DELETED");
 
   const deletedCluster = await client.send(
     new DeleteClusterCommand({ ClusterId: clusterId }),

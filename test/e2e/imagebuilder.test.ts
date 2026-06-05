@@ -32,6 +32,7 @@ import {
   GetLifecyclePolicyCommand,
   GetWorkflowCommand,
   ImagebuilderClient,
+  type LifecyclePolicyDetail,
   ListComponentBuildVersionsCommand,
   ListComponentsCommand,
   ListContainerRecipesCommand,
@@ -483,9 +484,9 @@ test("Imagebuilder lifecycle policy create/get/list/update/delete", async () => 
   const name = `lc-policy-${Date.now()}`;
   const executionRole = `arn:aws:iam::000000000000:role/ImageBuilderLifecycleRole`;
   const resourceSelection = { tagMap: { lifecycle: "true" } };
-  const policyDetails = [
+  const policyDetails: LifecyclePolicyDetail[] = [
     {
-      action: { name: "DELETE" },
+      action: { type: "DELETE" },
       filter: { type: "AGE", value: 6, unit: "MONTHS" },
     },
   ];
@@ -658,7 +659,7 @@ test("Imagebuilder workflow create→get→list lifecycle", async () => {
   expect(got.workflow?.name).toBe(name);
   expect(got.workflow?.version).toBe(version);
   expect(got.workflow?.type).toBe("BUILD");
-  expect(got.workflow?.state?.status).toBe("AVAILABLE");
+  expect(String(got.workflow?.state?.status)).toBe("AVAILABLE");
   expect(got.workflow?.owner).toBe("Self");
 
   const listed = await client.send(new ListWorkflowsCommand({}));

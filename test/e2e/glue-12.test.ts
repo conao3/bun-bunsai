@@ -198,7 +198,7 @@ describe("glue chunk-11 ops e2e", () => {
         DatabaseName: "e2e_db_chunk11",
         TableName: "e2e_tbl_chunk11",
         Type: "compaction",
-        TableOptimizerConfiguration: { Enabled: true },
+        TableOptimizerConfiguration: { enabled: true },
       }),
     );
 

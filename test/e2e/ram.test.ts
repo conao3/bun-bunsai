@@ -301,7 +301,7 @@ test("RAM Permissions CRUD", async () => {
   const setDefault = await client.send(
     new SetDefaultPermissionVersionCommand({
       permissionArn: pArn,
-      permissionVersion: "2",
+      permissionVersion: 2,
     }),
   );
   expect(setDefault.returnValue).toBe(true);
@@ -309,7 +309,7 @@ test("RAM Permissions CRUD", async () => {
   const deleteV2 = await client.send(
     new DeletePermissionVersionCommand({
       permissionArn: pArn,
-      permissionVersion: "2",
+      permissionVersion: 2,
     }),
   );
   expect(deleteV2.returnValue).toBe(true);

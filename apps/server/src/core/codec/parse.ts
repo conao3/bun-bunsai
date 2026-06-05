@@ -764,9 +764,7 @@ export const parseShapeInput = (req: ParseRequest): Record<string, unknown> => {
       ? parseBodyJson(registry, shape, req.bodyText)
       : parseXmlStructure(
           registry,
-          shape !== undefined && shape.type === "structure"
-            ? shape
-            : { type: "structure", members: {} },
+          { type: "structure", members: {} },
           parseXmlRoot(req.bodyText).children,
         );
   }

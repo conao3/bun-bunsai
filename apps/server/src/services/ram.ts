@@ -229,7 +229,7 @@ const permDetailView = (
   isResourceTypeDefault: p.isResourceTypeDefault,
   permissionType: p.permissionType,
   featureSet: p.featureSet,
-  status: p.defaultVersion ? p.status : "UNATTACHABLE",
+  status: pv.defaultVersion ? p.status : "UNATTACHABLE",
   tags: p.tags,
 });
 

@@ -479,7 +479,7 @@ test("fsx backup copy and restore round-trip", async () => {
   const copiedBackupId = copyResult.Backup?.BackupId;
   expect(copiedBackupId).toMatch(/^backup-[0-9a-f]{16}$/);
   expect(copiedBackupId).not.toBe(backupId);
-  expect(copyResult.Backup?.Type).toBe("COPY");
+  expect(String(copyResult.Backup?.Type)).toBe("COPY");
 
   const restoredFs = await fsx.send(
     new CreateFileSystemFromBackupCommand({

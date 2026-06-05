@@ -92,6 +92,7 @@ describe("ecs e2e", () => {
       }),
     );
     const task = (run.tasks ?? [])[0];
+    const taskArn = task?.taskArn ?? "";
     expect(task?.taskArn).toBeDefined();
     expect(task?.lastStatus).toBe("PENDING");
     expect(task?.taskDefinitionArn).toBe(taskDefArn);
@@ -99,12 +100,12 @@ describe("ecs e2e", () => {
     const listed = await client.send(
       new ListTasksCommand({ cluster: clusterName }),
     );
-    expect(listed.taskArns ?? []).toContain(task?.taskArn);
+    expect(listed.taskArns ?? []).toContain(taskArn);
 
     const stopped = await client.send(
       new StopTaskCommand({
         cluster: clusterName,
-        task: task?.taskArn ?? "",
+        task: taskArn,
         reason: "test",
       }),
     );

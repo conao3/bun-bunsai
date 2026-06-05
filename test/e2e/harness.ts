@@ -8,7 +8,7 @@ type SerializedHttpRequest = {
   path: string;
   query?: Record<string, string | string[] | null>;
   headers: Record<string, string>;
-  body?: BodyInit;
+  body?: RequestInit["body"];
 };
 
 export type TestApp = {

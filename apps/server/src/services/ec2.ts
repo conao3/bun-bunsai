@@ -580,6 +580,93 @@ type StoredBundleTask = {
   Progress: string;
 };
 
+type StoredDhcpOptions = {
+  DhcpOptionsId: string;
+  OwnerId: string;
+  DhcpConfigurations: { Key: string; Values: string[] }[];
+  Tags: Tag[];
+};
+
+type StoredEgressOnlyInternetGateway = {
+  EgressOnlyInternetGatewayId: string;
+  Attachments: { State: string; VpcId: string }[];
+  Tags: Tag[];
+};
+
+type StoredFleet = {
+  FleetId: string;
+  FleetState: string;
+  CreateTime: string;
+  Tags: Tag[];
+};
+
+type StoredFlowLog = {
+  FlowLogId: string;
+  ResourceId: string;
+  TrafficType: string;
+  LogGroupName: string;
+  LogDestination: string;
+  FlowLogStatus: string;
+  CreationTime: string;
+  Tags: Tag[];
+};
+
+type StoredFpgaImage = {
+  FpgaImageId: string;
+  FpgaImageGlobalId: string;
+  Name: string;
+  Description: string;
+  State: string;
+  OwnerId: string;
+  CreateTime: string;
+  Tags: Tag[];
+};
+
+type StoredImage = {
+  ImageId: string;
+  Name: string;
+  Description: string;
+  InstanceId: string;
+  State: string;
+  OwnerId: string;
+  CreationDate: string;
+  Tags: Tag[];
+};
+
+type StoredInstanceConnectEndpoint = {
+  InstanceConnectEndpointId: string;
+  InstanceConnectEndpointArn: string;
+  OwnerId: string;
+  State: string;
+  SubnetId: string;
+  VpcId: string;
+  PreserveClientIp: boolean;
+  SecurityGroupIds: string[];
+  CreatedAt: string;
+  Tags: Tag[];
+};
+
+type StoredInstanceEventWindow = {
+  InstanceEventWindowId: string;
+  Name: string;
+  CronExpression: string | undefined;
+  TimeRanges: { StartWeekDay: string; StartHour: number; EndWeekDay: string; EndHour: number }[];
+  State: string;
+  Tags: Tag[];
+};
+
+type StoredExportTask = {
+  ExportTaskId: string;
+  Description: string;
+  InstanceId: string;
+  TargetEnvironment: string;
+  State: string;
+  StatusMessage: string;
+  S3Bucket: string;
+  S3Key: string;
+  Tags: Tag[];
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -647,6 +734,15 @@ const ipamByoasnKey = (ipamId: string, asn: string): string =>
   `ipam-byoasn/${ipamId}/${asn}`;
 const ipamRdAssocKey = (id: string): string => `ipam-rd-assoc/${id}`;
 const bundleTaskKey = (id: string): string => `bundle/${id}`;
+const dhcpOptionsKey = (id: string): string => `dhcp/${id}`;
+const egressOnlyIgwKey = (id: string): string => `eigw/${id}`;
+const fleetKey = (id: string): string => `fleet/${id}`;
+const flowLogKey = (id: string): string => `fl/${id}`;
+const fpgaImageKey = (id: string): string => `fpga/${id}`;
+const imageKey = (id: string): string => `ami/${id}`;
+const instanceConnectEndpointKey = (id: string): string => `ice/${id}`;
+const instanceEventWindowKey = (id: string): string => `iew/${id}`;
+const exportTaskKey = (id: string): string => `export/${id}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -4424,6 +4520,331 @@ const CopySnapshot: OperationHandler = (input, ctx) => {
   return { SnapshotId: id, Tags: [] };
 };
 
+const CopyVolumes: OperationHandler = (input, ctx) => {
+  const sourceVolumeId =
+    typeof input["SourceVolumeId"] === "string" ? input["SourceVolumeId"] : "";
+  const source = ctx.store.get<StoredVolume>(volumeKey(sourceVolumeId));
+  const id = hexId("vol");
+  const volume: StoredVolume = {
+    VolumeId: id,
+    Size: source?.Size ?? 8,
+    VolumeType: source?.VolumeType ?? "gp3",
+    AvailabilityZone: source?.AvailabilityZone ?? `${ctx.region}a`,
+    State: "available",
+    SnapshotId: source?.SnapshotId ?? "",
+    Iops: source?.Iops ?? 3000,
+    Encrypted: source?.Encrypted ?? false,
+    CreateTime: new Date().toISOString(),
+    Tags: [],
+    Attachments: [],
+  };
+  ctx.store.set(volumeKey(id), volume);
+  return { Volumes: [volumeView(volume)] };
+};
+
+const CreateDelegateMacVolumeOwnershipTask: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const id = hexId("mac-task");
+  const task: StoredMacModificationTask = {
+    InstanceId: instanceId,
+    MacModificationTaskId: id,
+    TaskState: "successful",
+    TaskType: "volume-ownership-delegation",
+    StartTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(macTaskKey(id), task);
+  return {
+    MacModificationTask: {
+      InstanceId: task.InstanceId,
+      MacModificationTaskId: task.MacModificationTaskId,
+      TaskState: task.TaskState,
+      TaskType: task.TaskType,
+      StartTime: task.StartTime,
+      Tags: task.Tags,
+    },
+  };
+};
+
+const CreateDhcpOptions: OperationHandler = (input, ctx) => {
+  const rawConfigs = Array.isArray(input["DhcpConfigurations"])
+    ? (input["DhcpConfigurations"] as Record<string, unknown>[])
+    : [];
+  const dhcpConfigurations = rawConfigs.map((c) => ({
+    Key: typeof c["Key"] === "string" ? c["Key"] : "",
+    Values: stringList(c["Values"]),
+  }));
+  const id = hexId("dopt");
+  const dhcpOptions: StoredDhcpOptions = {
+    DhcpOptionsId: id,
+    OwnerId: ctx.account,
+    DhcpConfigurations: dhcpConfigurations,
+    Tags: [],
+  };
+  ctx.store.set(dhcpOptionsKey(id), dhcpOptions);
+  return {
+    DhcpOptions: {
+      DhcpOptionsId: dhcpOptions.DhcpOptionsId,
+      OwnerId: dhcpOptions.OwnerId,
+      DhcpConfigurations: dhcpOptions.DhcpConfigurations.map((c) => ({
+        Key: c.Key,
+        Values: c.Values.map((v) => ({ Value: v })),
+      })),
+      Tags: dhcpOptions.Tags,
+    },
+  };
+};
+
+const CreateEgressOnlyInternetGateway: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : "";
+  const id = hexId("eigw");
+  const gateway: StoredEgressOnlyInternetGateway = {
+    EgressOnlyInternetGatewayId: id,
+    Attachments: vpcId
+      ? [{ State: "attached", VpcId: vpcId }]
+      : [],
+    Tags: [],
+  };
+  ctx.store.set(egressOnlyIgwKey(id), gateway);
+  return {
+    ClientToken: clientToken,
+    EgressOnlyInternetGateway: {
+      EgressOnlyInternetGatewayId: gateway.EgressOnlyInternetGatewayId,
+      Attachments: gateway.Attachments,
+      Tags: gateway.Tags,
+    },
+  };
+};
+
+const CreateFleet: OperationHandler = (input, ctx) => {
+  const id = hexId("fleet");
+  const fleet: StoredFleet = {
+    FleetId: id,
+    FleetState: "active",
+    CreateTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(fleetKey(id), fleet);
+  return { FleetId: id, Errors: [], Instances: [] };
+};
+
+const CreateFlowLogs: OperationHandler = (input, ctx) => {
+  const resourceIds = stringList(input["ResourceIds"]);
+  const trafficType =
+    typeof input["TrafficType"] === "string" ? input["TrafficType"] : "ALL";
+  const logGroupName =
+    typeof input["LogGroupName"] === "string" ? input["LogGroupName"] : "";
+  const logDestination =
+    typeof input["LogDestination"] === "string"
+      ? input["LogDestination"]
+      : logGroupName;
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : "";
+  const flowLogIds: string[] = [];
+  for (const resourceId of resourceIds.length > 0 ? resourceIds : [""]) {
+    const id = hexId("fl");
+    const flowLog: StoredFlowLog = {
+      FlowLogId: id,
+      ResourceId: resourceId,
+      TrafficType: trafficType,
+      LogGroupName: logGroupName,
+      LogDestination: logDestination,
+      FlowLogStatus: "ACTIVE",
+      CreationTime: new Date().toISOString(),
+      Tags: [],
+    };
+    ctx.store.set(flowLogKey(id), flowLog);
+    flowLogIds.push(id);
+  }
+  return { ClientToken: clientToken, FlowLogIds: flowLogIds, Unsuccessful: [] };
+};
+
+const CreateFpgaImage: OperationHandler = (input, ctx) => {
+  const name = typeof input["Name"] === "string" ? input["Name"] : "";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const id = hexId("afi");
+  const globalId = hexId("agfi");
+  const image: StoredFpgaImage = {
+    FpgaImageId: id,
+    FpgaImageGlobalId: globalId,
+    Name: name,
+    Description: description,
+    State: "available",
+    OwnerId: ctx.account,
+    CreateTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(fpgaImageKey(id), image);
+  return { FpgaImageId: id, FpgaImageGlobalId: globalId };
+};
+
+const CreateImage: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const name = typeof input["Name"] === "string" ? input["Name"] : "";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const id = hexId("ami");
+  const image: StoredImage = {
+    ImageId: id,
+    Name: name,
+    Description: description,
+    InstanceId: instanceId,
+    State: "available",
+    OwnerId: ctx.account,
+    CreationDate: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(imageKey(id), image);
+  return { ImageId: id };
+};
+
+const CreateImageUsageReport: OperationHandler = (_input, _ctx) => {
+  const reportId = hexId("iur");
+  return { ReportId: reportId };
+};
+
+const CreateInstanceConnectEndpoint: OperationHandler = (input, ctx) => {
+  const subnetId =
+    typeof input["SubnetId"] === "string" ? input["SubnetId"] : "";
+  const subnet = ctx.store.get<StoredSubnet>(subnetKey(subnetId));
+  const vpcId = subnet?.VpcId ?? "";
+  const preserveClientIp = input["PreserveClientIp"] !== false;
+  const securityGroupIds = stringList(input["SecurityGroupIds"]);
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : "";
+  const id = hexId("eice");
+  const endpoint: StoredInstanceConnectEndpoint = {
+    InstanceConnectEndpointId: id,
+    InstanceConnectEndpointArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:instance-connect-endpoint/${id}`,
+    OwnerId: ctx.account,
+    State: "create-complete",
+    SubnetId: subnetId,
+    VpcId: vpcId,
+    PreserveClientIp: preserveClientIp,
+    SecurityGroupIds: securityGroupIds,
+    CreatedAt: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(instanceConnectEndpointKey(id), endpoint);
+  return {
+    InstanceConnectEndpoint: {
+      OwnerId: endpoint.OwnerId,
+      InstanceConnectEndpointId: endpoint.InstanceConnectEndpointId,
+      InstanceConnectEndpointArn: endpoint.InstanceConnectEndpointArn,
+      State: endpoint.State,
+      SubnetId: endpoint.SubnetId,
+      VpcId: endpoint.VpcId,
+      PreserveClientIp: endpoint.PreserveClientIp,
+      SecurityGroupIds: endpoint.SecurityGroupIds,
+      CreatedAt: endpoint.CreatedAt,
+      Tags: endpoint.Tags,
+    },
+    ClientToken: clientToken,
+  };
+};
+
+const CreateInstanceEventWindow: OperationHandler = (input, ctx) => {
+  const name = typeof input["Name"] === "string" ? input["Name"] : "";
+  const cronExpression =
+    typeof input["CronExpression"] === "string"
+      ? input["CronExpression"]
+      : undefined;
+  const rawRanges = Array.isArray(input["TimeRanges"])
+    ? (input["TimeRanges"] as Record<string, unknown>[])
+    : [];
+  const timeRanges = rawRanges.map((r) => ({
+    StartWeekDay:
+      typeof r["StartWeekDay"] === "string" ? r["StartWeekDay"] : "sunday",
+    StartHour: typeof r["StartHour"] === "number" ? r["StartHour"] : 0,
+    EndWeekDay:
+      typeof r["EndWeekDay"] === "string" ? r["EndWeekDay"] : "sunday",
+    EndHour: typeof r["EndHour"] === "number" ? r["EndHour"] : 0,
+  }));
+  const id = hexId("iew");
+  const eventWindow: StoredInstanceEventWindow = {
+    InstanceEventWindowId: id,
+    Name: name,
+    CronExpression: cronExpression,
+    TimeRanges: timeRanges,
+    State: "active",
+    Tags: [],
+  };
+  ctx.store.set(instanceEventWindowKey(id), eventWindow);
+  return {
+    InstanceEventWindow: {
+      InstanceEventWindowId: eventWindow.InstanceEventWindowId,
+      Name: eventWindow.Name,
+      CronExpression: eventWindow.CronExpression,
+      TimeRanges: eventWindow.TimeRanges,
+      State: eventWindow.State,
+      Tags: eventWindow.Tags,
+    },
+  };
+};
+
+const CreateInstanceExportTask: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const targetEnvironment =
+    typeof input["TargetEnvironment"] === "string"
+      ? input["TargetEnvironment"]
+      : "vmware";
+  const exportToS3 =
+    typeof input["ExportToS3Task"] === "object" &&
+    input["ExportToS3Task"] !== null
+      ? (input["ExportToS3Task"] as Record<string, unknown>)
+      : {};
+  const s3Bucket =
+    typeof exportToS3["S3Bucket"] === "string" ? exportToS3["S3Bucket"] : "";
+  const s3Key =
+    typeof exportToS3["S3Key"] === "string" ? exportToS3["S3Key"] : "";
+  const diskImageFormat =
+    typeof exportToS3["DiskImageFormat"] === "string"
+      ? exportToS3["DiskImageFormat"]
+      : "VMDK";
+  const id = hexId("export");
+  const task: StoredExportTask = {
+    ExportTaskId: id,
+    Description: description,
+    InstanceId: instanceId,
+    TargetEnvironment: targetEnvironment,
+    State: "active",
+    StatusMessage: "",
+    S3Bucket: s3Bucket,
+    S3Key: s3Key,
+    Tags: [],
+  };
+  ctx.store.set(exportTaskKey(id), task);
+  return {
+    ExportTask: {
+      ExportTaskId: task.ExportTaskId,
+      Description: task.Description,
+      State: task.State,
+      StatusMessage: task.StatusMessage,
+      InstanceExportDetails: {
+        InstanceId: task.InstanceId,
+        TargetEnvironment: task.TargetEnvironment,
+      },
+      ExportToS3Task: {
+        DiskImageFormat: diskImageFormat,
+        S3Bucket: task.S3Bucket,
+        S3Key: task.S3Key,
+      },
+      Tags: task.Tags,
+    },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -4565,6 +4986,18 @@ const ec2: ServiceDefinition = {
     CopyFpgaImage,
     CopyImage,
     CopySnapshot,
+    CopyVolumes,
+    CreateDelegateMacVolumeOwnershipTask,
+    CreateDhcpOptions,
+    CreateEgressOnlyInternetGateway,
+    CreateFleet,
+    CreateFlowLogs,
+    CreateFpgaImage,
+    CreateImage,
+    CreateImageUsageReport,
+    CreateInstanceConnectEndpoint,
+    CreateInstanceEventWindow,
+    CreateInstanceExportTask,
   },
   model,
 } as const;

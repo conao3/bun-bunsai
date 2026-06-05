@@ -8,7 +8,7 @@ import type {
 } from "../types.ts";
 
 export type CodecResult = {
-  body: string;
+  body: string | Uint8Array;
   contentType: string;
   headers?: Record<string, string>;
   statusCode?: number;

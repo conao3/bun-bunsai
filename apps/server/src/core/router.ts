@@ -62,19 +62,27 @@ export const routeRequest = (req: Request, url: URL): RouteResult => {
 export const buildParsedRequest = (
   req: Request,
   url: URL,
-  bodyText: string,
+  bodyBytes: Uint8Array,
   route: RouteResult,
   protocol: Protocol,
-): ParsedRequest => ({
-  method: req.method,
-  url,
-  path: url.pathname,
-  query: url.searchParams,
-  headers: req.headers,
-  bodyText,
-  service: route.service ?? "",
-  region: route.region,
-  account: route.account,
-  protocol,
-  target: route.target,
-});
+): ParsedRequest => {
+  let bodyTextCache: string | undefined;
+  return {
+    method: req.method,
+    url,
+    path: url.pathname,
+    query: url.searchParams,
+    headers: req.headers,
+    bodyBytes,
+    get bodyText() {
+      if (bodyTextCache === undefined)
+        bodyTextCache = new TextDecoder().decode(bodyBytes);
+      return bodyTextCache;
+    },
+    service: route.service ?? "",
+    region: route.region,
+    account: route.account,
+    protocol,
+    target: route.target,
+  };
+};

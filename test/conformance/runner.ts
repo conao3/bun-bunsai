@@ -83,6 +83,7 @@ const isSupportedProtocol = (value: string): value is Protocol =>
   (supportedProtocols as readonly string[]).includes(value);
 
 const stripMetadata = (value: unknown): unknown => {
+  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
   if (Array.isArray(value)) return value.map(stripMetadata);
   if (value !== null && typeof value === "object") {
     const result: Record<string, unknown> = {};
@@ -133,9 +134,13 @@ const normalizeXml = (text: string): string =>
 const compareBody = (
   protocol: Protocol,
   direction: "input" | "output",
-  actual: string,
+  actualBody: string | Uint8Array,
   expected: string,
 ): void => {
+  const actual =
+    typeof actualBody === "string"
+      ? actualBody
+      : new TextDecoder().decode(actualBody);
   switch (protocol) {
     case "json":
     case "rest-json": {
@@ -196,6 +201,7 @@ const buildRequest = (
     path: url.pathname,
     query: url.searchParams,
     headers,
+    bodyBytes: new TextEncoder().encode(serialized.body ?? ""),
     bodyText: serialized.body ?? "",
     service: "conformance",
     region: "us-east-1",

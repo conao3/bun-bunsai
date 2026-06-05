@@ -51,7 +51,7 @@ export type DispatchResult = {
   service: string;
   operation: string;
   statusCode: number;
-  body: string;
+  body: string | Uint8Array;
   contentType: string;
   headers?: Record<string, string>;
 };

@@ -8,6 +8,7 @@ export type ParsedRequest = {
   path: string;
   query: URLSearchParams;
   headers: Headers;
+  bodyBytes: Uint8Array;
   bodyText: string;
   service: string;
   region: string;

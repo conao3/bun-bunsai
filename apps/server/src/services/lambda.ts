@@ -172,7 +172,10 @@ const Invoke: OperationHandler = (input, ctx) => {
   const payload = input["Payload"];
   return {
     StatusCode: 200,
-    Payload: typeof payload === "string" ? payload : "",
+    Payload:
+      typeof payload === "string" || payload instanceof Uint8Array
+        ? payload
+        : "",
     ExecutedVersion: fn.Version,
   };
 };
@@ -1486,7 +1489,10 @@ const InvokeWithResponseStream: OperationHandler = (input, ctx) => {
     StatusCode: 200,
     ExecutedVersion: fn.Version,
     ResponseStreamContentType: "application/vnd.amazon.eventstream",
-    Payload: typeof payload === "string" ? payload : "",
+    Payload:
+      typeof payload === "string" || payload instanceof Uint8Array
+        ? payload
+        : "",
   };
 };
 

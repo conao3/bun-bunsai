@@ -11,7 +11,7 @@ const model = loadServiceModel(s3Model);
 
 type S3Object = {
   key: string;
-  body: string;
+  body: Uint8Array;
   contentType: string;
   etag: string;
   size: number;
@@ -26,7 +26,7 @@ type S3Tag = {
 
 type S3Part = {
   partNumber: number;
-  body: string;
+  body: Uint8Array;
   etag: string;
   size: number;
   lastModified: number;
@@ -62,15 +62,29 @@ type S3Bucket = {
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
-const hashBody = (value: string): string => {
+const hashBody = (value: Uint8Array): string => {
   let hash = 0x811c9dc5;
   for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
+    hash ^= value[i];
     hash = Math.imul(hash, 0x01000193);
   }
   const unsigned = hash >>> 0;
   return unsigned.toString(16).padStart(8, "0").repeat(4).slice(0, 32);
 };
+
+const concatBytes = (parts: Uint8Array[]): Uint8Array => {
+  const total = parts.reduce((sum, part) => sum + part.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out;
+};
+
+const hashWithPrefix = (prefix: string, body: Uint8Array): string =>
+  hashBody(concatBytes([new TextEncoder().encode(prefix), body]));
 
 const bucketKeyFromPath = (
   path: string,
@@ -277,15 +291,15 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
-      const body = req.bodyText;
-      const etag = `"${hashBody(`${key}:${body}`)}"`;
+      const body = req.bodyBytes;
+      const etag = `"${hashWithPrefix(`${key}:`, body)}"`;
       const object: S3Object = {
         key,
         body,
         contentType:
           req.headers.get("content-type") ?? "application/octet-stream",
         etag,
-        size: Buffer.byteLength(body),
+        size: body.byteLength,
         lastModified: nowSeconds(),
         tagSet: [],
       };
@@ -485,7 +499,10 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
-      const uploadId = hashBody(`${key}:${Date.now()}:${Math.random()}`);
+      const uploadId = hashWithPrefix(
+        `${key}:${Date.now()}:${Math.random()}`,
+        new Uint8Array(0),
+      );
       const upload: S3Upload = {
         uploadId,
         key,
@@ -520,13 +537,13 @@ const s3: ServiceDefinition = {
       if (!Number.isInteger(partNumber) || partNumber < 1) {
         throw awsError("InvalidArgument", "invalid partNumber", 400);
       }
-      const body = req.bodyText;
-      const etag = `"${hashBody(`${uploadId}:${partNumber}:${body}`)}"`;
+      const body = req.bodyBytes;
+      const etag = `"${hashWithPrefix(`${uploadId}:${partNumber}:`, body)}"`;
       const part: S3Part = {
         partNumber,
         body,
         etag,
-        size: Buffer.byteLength(body),
+        size: body.byteLength,
         lastModified: nowSeconds(),
       };
       const nextUpload: S3Upload = {
@@ -570,8 +587,8 @@ const s3: ServiceDefinition = {
         : Object.values(upload.parts)
             .map((p) => p.partNumber)
             .sort((a, b) => a - b);
-      const combined = requested
-        .map((partNumber) => {
+      const combined = concatBytes(
+        requested.map((partNumber) => {
           const part = upload.parts[String(partNumber)];
           if (part === undefined) {
             throw awsError(
@@ -581,15 +598,15 @@ const s3: ServiceDefinition = {
             );
           }
           return part.body;
-        })
-        .join("");
-      const etag = `"${hashBody(`${key}:${combined}`)}-${requested.length}"`;
+        }),
+      );
+      const etag = `"${hashWithPrefix(`${key}:`, combined)}-${requested.length}"`;
       const object: S3Object = {
         key,
         body: combined,
         contentType: upload.contentType,
         etag,
-        size: Buffer.byteLength(combined),
+        size: combined.byteLength,
         lastModified: nowSeconds(),
         tagSet: [],
       };

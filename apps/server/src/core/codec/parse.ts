@@ -24,6 +24,7 @@ export type ParseRequest = {
   query: URLSearchParams;
   headers: Headers;
   bodyText: string;
+  bodyBytes: Uint8Array;
 };
 
 const parseValueFromString = (
@@ -306,7 +307,12 @@ const parseRestStructure = (
     if (Object.keys(collected).length > 0) out[mapAllQueryMember] = collected;
   }
 
-  if (payloadMember !== undefined && req.bodyText.trim() !== "") {
+  if (
+    payloadMember !== undefined &&
+    memberShape(registry, shape.members[payloadMember])?.type === "blob"
+  ) {
+    if (req.bodyBytes.byteLength > 0) out[payloadMember] = req.bodyBytes;
+  } else if (payloadMember !== undefined && req.bodyText.trim() !== "") {
     const member = shape.members[payloadMember];
     const memberSh = memberShape(registry, member);
     const isDocument =
@@ -331,8 +337,6 @@ const parseRestStructure = (
       } else {
         out[payloadMember] = parseBodyJson(registry, memberSh, req.bodyText);
       }
-    } else if (memberSh !== undefined && memberSh.type === "blob") {
-      out[payloadMember] = req.bodyText;
     } else {
       out[payloadMember] = req.bodyText;
     }

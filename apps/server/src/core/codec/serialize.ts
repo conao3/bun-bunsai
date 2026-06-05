@@ -428,7 +428,10 @@ const serializeRest = (req: SerializeRequest): CodecResult => {
     }
     if (memberSh !== undefined && memberSh.type === "blob")
       return {
-        body: typeof v === "string" ? v : blobToBase64(v),
+        body:
+          typeof v === "string" || v instanceof Uint8Array
+            ? v
+            : blobToBase64(v),
         contentType: "application/octet-stream",
         headers,
         ...(statusCode !== undefined ? { statusCode } : {}),

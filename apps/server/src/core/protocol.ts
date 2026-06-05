@@ -186,6 +186,7 @@ export const parseInput = (
       query: req.query,
       headers: req.headers,
       bodyText: req.bodyText,
+      bodyBytes: req.bodyBytes,
     });
   }
   return fallbackParseInput(req);

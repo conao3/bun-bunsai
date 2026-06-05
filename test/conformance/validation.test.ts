@@ -38,6 +38,7 @@ const makeRequest = (init: RequestInit): ParsedRequest => {
     path: url.pathname,
     query: url.searchParams,
     headers,
+    bodyBytes: new TextEncoder().encode(init.bodyText ?? ""),
     bodyText: init.bodyText ?? "",
     service: init.service,
     region: "us-east-1",
@@ -52,6 +53,9 @@ const run = async (
   init: RequestInit,
 ): Promise<Awaited<ReturnType<typeof dispatch>>> =>
   dispatch(service, makeRequest(init), createStateStore());
+
+const bodyText = (body: string | Uint8Array): string =>
+  typeof body === "string" ? body : new TextDecoder().decode(body);
 
 describe("L2 validation: required member omission", () => {
   it("query (sts AssumeRole) missing RoleArn returns MissingParameter Sender fault 400", async () => {
@@ -75,7 +79,10 @@ describe("L2 validation: required member omission", () => {
       bodyText: JSON.stringify({ MessageBody: "hello" }),
     });
     expect(result.statusCode).toBe(400);
-    const payload = JSON.parse(result.body) as Record<string, unknown>;
+    const payload = JSON.parse(bodyText(result.body)) as Record<
+      string,
+      unknown
+    >;
     expect(payload.__type).toBe("ValidationException");
     expect(String(payload.Message)).toContain("QueueUrl");
   });
@@ -89,7 +96,10 @@ describe("L2 validation: required member omission", () => {
       bodyText: JSON.stringify({ Role: "arn:role", Code: {} }),
     });
     expect(result.statusCode).toBe(400);
-    const payload = JSON.parse(result.body) as Record<string, unknown>;
+    const payload = JSON.parse(bodyText(result.body)) as Record<
+      string,
+      unknown
+    >;
     expect(String(payload.message)).toContain("FunctionName");
     expect(result.headers?.["X-Amzn-Errortype"]).toBe("ValidationException");
   });
@@ -148,7 +158,10 @@ describe("L2 validation: malformed operation resolution", () => {
       bodyText: "{}",
     });
     expect(result.statusCode).toBe(400);
-    const payload = JSON.parse(result.body) as Record<string, unknown>;
+    const payload = JSON.parse(bodyText(result.body)) as Record<
+      string,
+      unknown
+    >;
     expect(payload.__type).toBe("InvalidAction");
   });
 });

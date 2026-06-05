@@ -7,6 +7,15 @@ import type { Protocol } from "./core/types.ts";
 import { handleManagement } from "./management/api.ts";
 import { findService } from "./services/index.ts";
 
+const bodyTextForLog = (body: string | Uint8Array): string => {
+  if (typeof body === "string") return body;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(body);
+  } catch {
+    return `(binary ${body.byteLength} bytes)`;
+  }
+};
+
 export function createBunsaiApp() {
   const store = createStateStore();
   const log = createRequestLog();
@@ -14,7 +23,7 @@ export function createBunsaiApp() {
   const gatewayFetch = async (req: Request): Promise<Response> => {
     const start = performance.now();
     const url = new URL(req.url);
-    const bodyText = await req.text();
+    const bodyBytes = new Uint8Array(await req.arrayBuffer());
     const route = routeRequest(req, url);
     const service =
       route.service === undefined ? undefined : findService(route.service);
@@ -36,8 +45,8 @@ export function createBunsaiApp() {
         account: route.account,
         region: route.region,
         protocol: "unknown",
-        requestBodyText: bodyText,
-        responseBodyText: serialized.body,
+        requestBodyText: bodyTextForLog(bodyBytes),
+        responseBodyText: bodyTextForLog(serialized.body),
       });
       return new Response(serialized.body, {
         status: error.statusCode,
@@ -48,7 +57,7 @@ export function createBunsaiApp() {
     const parsed = buildParsedRequest(
       req,
       url,
-      bodyText,
+      bodyBytes,
       route,
       service.protocol,
     );
@@ -61,8 +70,8 @@ export function createBunsaiApp() {
       account: route.account,
       region: route.region,
       protocol: service.protocol,
-      requestBodyText: bodyText,
-      responseBodyText: result.body,
+      requestBodyText: bodyTextForLog(bodyBytes),
+      responseBodyText: bodyTextForLog(result.body),
     });
     return new Response(result.body, {
       status: result.statusCode,

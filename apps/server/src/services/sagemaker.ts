@@ -3545,6 +3545,196 @@ const DescribeAIWorkloadConfig: OperationHandler = (input, ctx) => {
   };
 };
 
+const DeregisterDevices: OperationHandler = (input, _ctx) => {
+  void requireString(input, "DeviceFleetName");
+  return {};
+};
+
+const DescribeClusterNode: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "ClusterName");
+  const nodeId = requireString(input, "NodeId");
+  const stored = ctx.store.get<StoredClusterNode>(
+    clusterNodeKey(clusterName, nodeId),
+  );
+  const clusterArn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:cluster/${clusterName}`;
+  return {
+    NodeDetails: {
+      ClusterArn: clusterArn,
+      NodeId: nodeId,
+      InstanceGroupName: stored?.InstanceGroupName ?? "default-group",
+      InstanceType: "ml.p4d.24xlarge",
+      LaunchTime: nowSeconds(),
+      LifeCycleConfig: { SourceS3Uri: "", OnCreate: "" },
+      InstanceStorageConfigs: [],
+      ThreadsPerCore: 1,
+      NodeStatus: stored?.Status ?? "Running",
+    },
+  };
+};
+
+const DescribeClusterSchedulerConfig: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ClusterSchedulerConfigId");
+  const stored = requireClusterSchedulerConfig(ctx, id);
+  return {
+    ClusterSchedulerConfigName: stored.ClusterSchedulerConfigName,
+    ClusterSchedulerConfigArn: stored.ClusterSchedulerConfigArn,
+    ClusterSchedulerConfigId: stored.ClusterSchedulerConfigId,
+    ClusterArn: stored.ClusterArn,
+    SchedulerConfig: stored.SchedulerConfig,
+    Description: stored.Description,
+    Status: stored.Status,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeCodeRepository: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CodeRepositoryName");
+  const stored = requireCodeRepository(ctx, name);
+  return {
+    CodeRepositoryName: stored.CodeRepositoryName,
+    CodeRepositoryArn: stored.CodeRepositoryArn,
+    GitConfig: stored.GitConfig,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeCompilationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CompilationJobName");
+  const stored = requireCompilationJob(ctx, name);
+  return {
+    CompilationJobName: stored.CompilationJobName,
+    CompilationJobArn: stored.CompilationJobArn,
+    CompilationJobStatus: stored.CompilationJobStatus,
+    RoleArn: stored.RoleArn,
+    InputConfig: stored.InputConfig,
+    OutputConfig: stored.OutputConfig,
+    StoppingCondition: stored.StoppingCondition,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeComputeQuota: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ComputeQuotaId");
+  const stored = requireComputeQuota(ctx, id);
+  return {
+    ComputeQuotaName: stored.ComputeQuotaName,
+    ComputeQuotaArn: stored.ComputeQuotaArn,
+    ComputeQuotaId: stored.ComputeQuotaId,
+    ClusterArn: stored.ClusterArn,
+    ComputeQuotaConfig: stored.ComputeQuotaConfig,
+    Description: stored.Description,
+    Status: stored.Status,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeContext: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ContextName");
+  const stored = requireContext(ctx, name);
+  return {
+    ContextName: stored.ContextName,
+    ContextArn: stored.ContextArn,
+    ContextType: stored.ContextType,
+    Source: stored.Source,
+    Properties: stored.Properties,
+    Description: stored.Description,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeDataQualityJobDefinition: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "JobDefinitionName");
+  const stored = requireDataQualityJobDefinition(ctx, name);
+  return {
+    JobDefinitionName: stored.JobDefinitionName,
+    JobDefinitionArn: stored.JobDefinitionArn,
+    DataQualityBaselineConfig: stored.DataQualityBaselineConfig,
+    DataQualityAppSpecification: stored.DataQualityAppSpecification,
+    DataQualityJobInput: stored.DataQualityJobInput,
+    DataQualityJobOutputConfig: stored.DataQualityJobOutputConfig,
+    JobResources: stored.JobResources,
+    NetworkConfig: stored.NetworkConfig,
+    RoleArn: stored.RoleArn,
+    StoppingCondition: stored.StoppingCondition,
+    CreationTime: stored.CreationTime,
+  };
+};
+
+const DescribeDevice: OperationHandler = (input, ctx) => {
+  const deviceFleetName = requireString(input, "DeviceFleetName");
+  const deviceName = requireString(input, "DeviceName");
+  const now = nowSeconds();
+  return {
+    DeviceName: deviceName,
+    DeviceFleetName: deviceFleetName,
+    DeviceArn: `arn:aws:sagemaker:${ctx.region}:${ctx.account}:device-fleet/${deviceFleetName}/device/${deviceName}`,
+    RegistrationTime: now,
+    LatestHeartbeat: now,
+    Models: [],
+    MaxModels: 10,
+    NextToken: undefined,
+  };
+};
+
+const DescribeDeviceFleet: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "DeviceFleetName");
+  const stored = requireDeviceFleet(ctx, name);
+  return {
+    DeviceFleetName: stored.DeviceFleetName,
+    DeviceFleetArn: stored.DeviceFleetArn,
+    OutputConfig: stored.OutputConfig,
+    Description: stored.Description,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+    RoleArn: stored.RoleArn,
+    IotRoleAlias: undefined,
+  };
+};
+
+const DescribeDomain: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DomainId");
+  const stored = requireDomain(ctx, id);
+  return {
+    DomainId: stored.DomainId,
+    DomainArn: stored.DomainArn,
+    DomainName: stored.DomainName,
+    AuthMode: stored.AuthMode,
+    Status: stored.Status,
+    Url: stored.Url,
+    DefaultUserSettings: stored.DefaultUserSettings,
+    DomainSettings: stored.DomainSettings,
+    SubnetIds: stored.SubnetIds,
+    VpcId: stored.VpcId,
+    AppNetworkAccessType: stored.AppNetworkAccessType,
+    DefaultSpaceSettings: stored.DefaultSpaceSettings,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeEdgeDeploymentPlan: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "EdgeDeploymentPlanName");
+  const stored = requireEdgeDeploymentPlan(ctx, name);
+  const now = nowSeconds();
+  return {
+    EdgeDeploymentPlanArn: stored.EdgeDeploymentPlanArn,
+    EdgeDeploymentPlanName: stored.EdgeDeploymentPlanName,
+    DeviceFleetName: stored.DeviceFleetName,
+    ModelConfigs: stored.ModelConfigs,
+    EdgeDeploymentCreationTime: stored.CreationTime,
+    EdgeDeploymentLastUpdateTime: now,
+    Stages: stored.Stages ?? [],
+    EdgeDeploymentSuccess: 0,
+    EdgeDeploymentPending: 0,
+    EdgeDeploymentFailed: 0,
+  };
+};
+
 const AddAssociation: OperationHandler = (input, ctx) => {
   const sourceArn = requireString(input, "SourceArn");
   const destinationArn = requireString(input, "DestinationArn");
@@ -5384,6 +5574,18 @@ const sagemaker = {
     DescribeAIBenchmarkJob,
     DescribeAIRecommendationJob,
     DescribeAIWorkloadConfig,
+    DeregisterDevices,
+    DescribeClusterNode,
+    DescribeClusterSchedulerConfig,
+    DescribeCodeRepository,
+    DescribeCompilationJob,
+    DescribeComputeQuota,
+    DescribeContext,
+    DescribeDataQualityJobDefinition,
+    DescribeDevice,
+    DescribeDeviceFleet,
+    DescribeDomain,
+    DescribeEdgeDeploymentPlan,
     CreateSpace,
     CreateUserProfile,
     CreatePresignedDomainUrl,

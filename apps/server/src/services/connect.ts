@@ -34,6 +34,12 @@ const viewPrefix = "view:" as const;
 const vocabularyPrefix = "vocabulary:" as const;
 const workspacePrefix = "workspace:" as const;
 const dataTableValuePrefix = "data-table-value:" as const;
+const notificationPrefix = "notification:" as const;
+const promptPrefix = "prompt:" as const;
+const rulePrefix = "rule:" as const;
+const testCasePrefix = "test-case:" as const;
+const trafficDistributionGroupPrefix = "traffic-distribution-group:" as const;
+const predefinedAttributePrefix = "predefined-attribute:" as const;
 
 type StoredInstance = {
   Id: string;
@@ -208,6 +214,41 @@ type StoredDataTableValue = {
   Value: Record<string, unknown>;
 };
 
+type StoredNotification = {
+  NotificationId: string;
+  NotificationArn: string;
+  InstanceId: string;
+};
+
+type StoredPrompt = {
+  PromptId: string;
+  PromptArn: string;
+  Name: string;
+  InstanceId: string;
+};
+
+type StoredRule = {
+  RuleId: string;
+  RuleArn: string;
+  InstanceId: string;
+};
+
+type StoredTestCase = {
+  TestCaseId: string;
+  TestCaseArn: string;
+  InstanceId: string;
+};
+
+type StoredTrafficDistributionGroup = {
+  Id: string;
+  Arn: string;
+};
+
+type StoredPredefinedAttribute = {
+  Name: string;
+  InstanceId: string;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -287,6 +328,18 @@ const dataTableValueKey = (
   tableId: string,
   key: string,
 ): string => `${dataTableValuePrefix}${instanceId}:${tableId}:${key}`;
+const notificationKey = (instanceId: string, id: string): string =>
+  `${notificationPrefix}${instanceId}:${id}`;
+const promptKey = (instanceId: string, id: string): string =>
+  `${promptPrefix}${instanceId}:${id}`;
+const ruleKey = (instanceId: string, id: string): string =>
+  `${rulePrefix}${instanceId}:${id}`;
+const testCaseKey = (instanceId: string, id: string): string =>
+  `${testCasePrefix}${instanceId}:${id}`;
+const trafficDistributionGroupKey = (id: string): string =>
+  `${trafficDistributionGroupPrefix}${id}`;
+const predefinedAttributeKey = (instanceId: string, name: string): string =>
+  `${predefinedAttributePrefix}${instanceId}:${name}`;
 
 const requireInstance = (ctx: ServiceContext, id: string): StoredInstance => {
   const stored = ctx.store.get<StoredInstance>(instanceKey(id));
@@ -1246,6 +1299,12 @@ const CreateNotification: OperationHandler = (input, ctx) => {
   requireInstance(ctx, instanceId);
   const id = crypto.randomUUID();
   const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/notification/${id}`;
+  const stored: StoredNotification = {
+    NotificationId: id,
+    NotificationArn: arn,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(notificationKey(instanceId, id), stored);
   return { NotificationId: id, NotificationArn: arn };
 };
 
@@ -1272,14 +1331,28 @@ const CreatePersistentContactAssociation: OperationHandler = (input, ctx) => {
 const CreatePredefinedAttribute: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const name = requireString(input, "Name");
+  const stored: StoredPredefinedAttribute = {
+    Name: name,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(predefinedAttributeKey(instanceId, name), stored);
   return {};
 };
 
 const CreatePrompt: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const name = requireString(input, "Name");
   const id = crypto.randomUUID();
   const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/prompt/${id}`;
+  const stored: StoredPrompt = {
+    PromptId: id,
+    PromptArn: arn,
+    Name: name,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(promptKey(instanceId, id), stored);
   return { PromptARN: arn, PromptId: id };
 };
 
@@ -1343,6 +1416,12 @@ const CreateRule: OperationHandler = (input, ctx) => {
   requireInstance(ctx, instanceId);
   const id = crypto.randomUUID();
   const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/rule/${id}`;
+  const stored: StoredRule = {
+    RuleId: id,
+    RuleArn: arn,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(ruleKey(instanceId, id), stored);
   return { RuleArn: arn, RuleId: id };
 };
 
@@ -1375,12 +1454,20 @@ const CreateTestCase: OperationHandler = (input, ctx) => {
   requireInstance(ctx, instanceId);
   const id = crypto.randomUUID();
   const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/test-case/${id}`;
+  const stored: StoredTestCase = {
+    TestCaseId: id,
+    TestCaseArn: arn,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(testCaseKey(instanceId, id), stored);
   return { TestCaseId: id, TestCaseArn: arn };
 };
 
 const CreateTrafficDistributionGroup: OperationHandler = (input, ctx) => {
   const id = crypto.randomUUID();
   const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:traffic-distribution-group/${id}`;
+  const stored: StoredTrafficDistributionGroup = { Id: id, Arn: arn };
+  ctx.store.set(trafficDistributionGroupKey(id), stored);
   return { Id: id, Arn: arn };
 };
 
@@ -2186,6 +2273,256 @@ const UpdateContactSchedule: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DeleteWorkspacePage: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DescribeNotification: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const notificationId = requireString(input, "NotificationId");
+  const stored = ctx.store.get<StoredNotification>(
+    notificationKey(instanceId, notificationId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Notification ${notificationId} not found.`,
+      404,
+    );
+  }
+  return {
+    Notification: {
+      NotificationId: stored.NotificationId,
+      NotificationArn: stored.NotificationArn,
+    },
+  };
+};
+
+const DescribePhoneNumber: OperationHandler = (input, ctx) => {
+  const phoneNumberId = requireString(input, "PhoneNumberId");
+  const stored = ctx.store.get<StoredPhoneNumber>(
+    phoneNumberKey(phoneNumberId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `PhoneNumber ${phoneNumberId} not found.`,
+      404,
+    );
+  }
+  return {
+    ClaimedPhoneNumberSummary: {
+      PhoneNumberId: stored.PhoneNumberId,
+      PhoneNumberArn: stored.PhoneNumberArn,
+      PhoneNumber: stored.PhoneNumber,
+      PhoneNumberStatus: { Status: "CLAIMED" },
+    },
+  };
+};
+
+const DescribePredefinedAttribute: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const name = requireString(input, "Name");
+  const stored = ctx.store.get<StoredPredefinedAttribute>(
+    predefinedAttributeKey(instanceId, name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `PredefinedAttribute ${name} not found.`,
+      404,
+    );
+  }
+  return {
+    PredefinedAttribute: {
+      Name: stored.Name,
+    },
+  };
+};
+
+const DescribePrompt: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const promptId = requireString(input, "PromptId");
+  const stored = ctx.store.get<StoredPrompt>(promptKey(instanceId, promptId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Prompt ${promptId} not found.`,
+      404,
+    );
+  }
+  return {
+    Prompt: {
+      PromptARN: stored.PromptArn,
+      PromptId: stored.PromptId,
+      Name: stored.Name,
+    },
+  };
+};
+
+const DescribeQueue: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const queueId = requireString(input, "QueueId");
+  const stored = ctx.store.get<StoredQueue>(queueKey(instanceId, queueId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Queue ${queueId} not found.`,
+      404,
+    );
+  }
+  return {
+    Queue: {
+      QueueId: stored.QueueId,
+      QueueArn: stored.QueueArn,
+      Name: stored.Name,
+    },
+  };
+};
+
+const DescribeQuickConnect: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const quickConnectId = requireString(input, "QuickConnectId");
+  const stored = ctx.store.get<StoredQuickConnect>(
+    quickConnectKey(instanceId, quickConnectId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `QuickConnect ${quickConnectId} not found.`,
+      404,
+    );
+  }
+  return {
+    QuickConnect: {
+      QuickConnectId: stored.QuickConnectId,
+      QuickConnectARN: stored.QuickConnectARN,
+      Name: stored.Name,
+    },
+  };
+};
+
+const DescribeRoutingProfile: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const routingProfileId = requireString(input, "RoutingProfileId");
+  const stored = ctx.store.get<StoredRoutingProfile>(
+    routingProfileKey(instanceId, routingProfileId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `RoutingProfile ${routingProfileId} not found.`,
+      404,
+    );
+  }
+  return {
+    RoutingProfile: {
+      RoutingProfileId: stored.RoutingProfileId,
+      RoutingProfileArn: stored.RoutingProfileArn,
+      Name: stored.Name,
+      InstanceId: stored.InstanceId,
+    },
+  };
+};
+
+const DescribeRule: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const ruleId = requireString(input, "RuleId");
+  const stored = ctx.store.get<StoredRule>(ruleKey(instanceId, ruleId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Rule ${ruleId} not found.`,
+      404,
+    );
+  }
+  return {
+    Rule: {
+      RuleId: stored.RuleId,
+      RuleArn: stored.RuleArn,
+      InstanceId: stored.InstanceId,
+    },
+  };
+};
+
+const DescribeSecurityProfile: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const securityProfileId = requireString(input, "SecurityProfileId");
+  const stored = ctx.store.get<StoredSecurityProfile>(
+    securityProfileKey(instanceId, securityProfileId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `SecurityProfile ${securityProfileId} not found.`,
+      404,
+    );
+  }
+  return {
+    SecurityProfile: {
+      Id: stored.SecurityProfileId,
+      Arn: stored.SecurityProfileArn,
+      SecurityProfileName: stored.SecurityProfileName,
+    },
+  };
+};
+
+const DescribeTestCase: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const testCaseId = requireString(input, "TestCaseId");
+  const stored = ctx.store.get<StoredTestCase>(
+    testCaseKey(instanceId, testCaseId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `TestCase ${testCaseId} not found.`,
+      404,
+    );
+  }
+  return {
+    TestCase: {
+      TestCaseId: stored.TestCaseId,
+      TestCaseArn: stored.TestCaseArn,
+    },
+  };
+};
+
+const DescribeTrafficDistributionGroup: OperationHandler = (input, ctx) => {
+  const trafficDistributionGroupId = requireString(
+    input,
+    "TrafficDistributionGroupId",
+  );
+  const stored = ctx.store.get<StoredTrafficDistributionGroup>(
+    trafficDistributionGroupKey(trafficDistributionGroupId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `TrafficDistributionGroup ${trafficDistributionGroupId} not found.`,
+      404,
+    );
+  }
+  return {
+    TrafficDistributionGroup: {
+      Id: stored.Id,
+      Arn: stored.Arn,
+      Status: "ACTIVE",
+    },
+  };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -2364,6 +2701,8 @@ const connect = {
       case "phone-number":
         if (parts.length === 2 && parts[1] === "claim" && req.method === "POST")
           return "ClaimPhoneNumber";
+        if (parts.length === 2 && req.method === "GET")
+          return "DescribePhoneNumber";
         if (
           parts.length === 3 &&
           parts[2] === "contact-flow" &&
@@ -2374,6 +2713,7 @@ const connect = {
 
       case "queues":
         if (parts.length === 2 && req.method === "PUT") return "CreateQueue";
+        if (parts.length === 3 && req.method === "GET") return "DescribeQueue";
         if (parts.length === 3 && req.method === "DELETE") return "DeleteQueue";
         if (parts.length === 4 && req.method === "POST") {
           if (parts[3] === "associate-email-addresses")
@@ -2386,6 +2726,8 @@ const connect = {
       case "routing-profiles":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateRoutingProfile";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeRoutingProfile";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteRoutingProfile";
         if (
@@ -2399,6 +2741,8 @@ const connect = {
       case "security-profiles":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateSecurityProfile";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeSecurityProfile";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteSecurityProfile";
         return undefined;
@@ -2411,6 +2755,8 @@ const connect = {
       case "traffic-distribution-group":
         if (parts.length === 1 && req.method === "PUT")
           return "CreateTrafficDistributionGroup";
+        if (parts.length === 2 && req.method === "GET")
+          return "DescribeTrafficDistributionGroup";
         if (parts.length === 2 && req.method === "DELETE")
           return "DeleteTrafficDistributionGroup";
         if (parts.length === 3 && parts[2] === "user" && req.method === "PUT")
@@ -2566,6 +2912,8 @@ const connect = {
       case "notifications":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateNotification";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeNotification";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteNotification";
         return undefined;
@@ -2573,12 +2921,15 @@ const connect = {
       case "predefined-attributes":
         if (parts.length === 2 && req.method === "PUT")
           return "CreatePredefinedAttribute";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribePredefinedAttribute";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeletePredefinedAttribute";
         return undefined;
 
       case "prompts":
         if (parts.length === 2 && req.method === "PUT") return "CreatePrompt";
+        if (parts.length === 3 && req.method === "GET") return "DescribePrompt";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeletePrompt";
         return undefined;
@@ -2601,17 +2952,22 @@ const connect = {
       case "quick-connects":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateQuickConnect";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeQuickConnect";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteQuickConnect";
         return undefined;
 
       case "rules":
         if (parts.length === 2 && req.method === "POST") return "CreateRule";
+        if (parts.length === 3 && req.method === "GET") return "DescribeRule";
         if (parts.length === 3 && req.method === "DELETE") return "DeleteRule";
         return undefined;
 
       case "test-cases":
         if (parts.length === 2 && req.method === "PUT") return "CreateTestCase";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeTestCase";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteTestCase";
         return undefined;
@@ -2687,6 +3043,12 @@ const connect = {
         if (parts.length === 4 && parts[3] === "pages" && req.method === "PUT")
           return "CreateWorkspacePage";
         if (
+          parts.length === 5 &&
+          parts[3] === "pages" &&
+          req.method === "DELETE"
+        )
+          return "DeleteWorkspacePage";
+        if (
           parts.length === 4 &&
           parts[3] === "media" &&
           req.method === "DELETE"
@@ -2737,6 +3099,7 @@ const connect = {
     DeleteVocabulary,
     DeleteWorkspace,
     DeleteWorkspaceMedia,
+    DeleteWorkspacePage,
     ActivateEvaluationForm,
     DeactivateEvaluationForm,
     AssociateAnalyticsDataSet,
@@ -2822,6 +3185,17 @@ const connect = {
     DescribeHoursOfOperationOverride,
     DescribeInstanceAttribute,
     DescribeInstanceStorageConfig,
+    DescribeNotification,
+    DescribePhoneNumber,
+    DescribePredefinedAttribute,
+    DescribePrompt,
+    DescribeQueue,
+    DescribeQuickConnect,
+    DescribeRoutingProfile,
+    DescribeRule,
+    DescribeSecurityProfile,
+    DescribeTestCase,
+    DescribeTrafficDistributionGroup,
     UpdateAgentStatus,
     UpdateAttachedFilesConfiguration,
     UpdateAuthenticationProfile,

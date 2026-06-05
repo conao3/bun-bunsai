@@ -2027,6 +2027,164 @@ const DescribeHoursOfOperationOverride: OperationHandler = (input, ctx) => {
   };
 };
 
+const DescribeUser: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const userId = requireString(input, "UserId");
+  const stored = ctx.store.get<StoredUser>(userKey(instanceId, userId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `User ${userId} not found.`,
+      404,
+    );
+  }
+  return {
+    User: {
+      Id: stored.UserId,
+      Arn: stored.UserArn,
+      Username: stored.Username,
+    },
+  };
+};
+
+const DescribeUserHierarchyGroup: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hierarchyGroupId = requireString(input, "HierarchyGroupId");
+  const stored = ctx.store.get<StoredUserHierarchyGroup>(
+    userHierarchyGroupKey(instanceId, hierarchyGroupId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `UserHierarchyGroup ${hierarchyGroupId} not found.`,
+      404,
+    );
+  }
+  return {
+    HierarchyGroup: {
+      HierarchyGroupId: stored.HierarchyGroupId,
+      Arn: stored.HierarchyGroupArn,
+      Name: stored.Name,
+    },
+  };
+};
+
+const DescribeUserHierarchyStructure: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {
+    HierarchyStructure: {},
+  };
+};
+
+const DescribeView: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const viewId = requireString(input, "ViewId");
+  const stored = ctx.store.get<StoredView>(viewKey(instanceId, viewId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `View ${viewId} not found.`,
+      404,
+    );
+  }
+  return {
+    View: {
+      Id: stored.Id,
+      Arn: stored.Arn,
+      Name: stored.Name,
+      Status: stored.Status,
+      Version: 1,
+    },
+  };
+};
+
+const DescribeVocabulary: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const vocabularyId = requireString(input, "VocabularyId");
+  const stored = ctx.store.get<StoredVocabulary>(
+    vocabularyKey(instanceId, vocabularyId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Vocabulary ${vocabularyId} not found.`,
+      404,
+    );
+  }
+  return {
+    Vocabulary: {
+      VocabularyId: stored.VocabularyId,
+      Arn: stored.VocabularyArn,
+      Name: stored.VocabularyName,
+      State: "ACTIVE",
+    },
+  };
+};
+
+const DescribeWorkspace: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const workspaceId = requireString(input, "WorkspaceId");
+  const stored = ctx.store.get<StoredWorkspace>(
+    workspaceKey(instanceId, workspaceId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Workspace ${workspaceId} not found.`,
+      404,
+    );
+  }
+  return {
+    Workspace: {
+      WorkspaceId: stored.WorkspaceId,
+      Arn: stored.WorkspaceArn,
+      Name: stored.Name,
+    },
+  };
+};
+
+const DisassociateAnalyticsDataSet: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateApprovedOrigin: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateBot: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateEmailAddressAlias: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateFlow: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateHoursOfOperations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
 const DescribeInstanceAttribute: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
@@ -2557,6 +2715,13 @@ const connect = {
             if (parts[2] === "integration-associations")
               return "CreateIntegrationAssociation";
           }
+          if (req.method === "DELETE") {
+            if (parts[2] === "approved-origin")
+              return "DisassociateApprovedOrigin";
+          }
+          if (req.method === "POST") {
+            if (parts[2] === "bot") return "DisassociateBot";
+          }
         }
         if (parts.length === 4) {
           if (
@@ -2624,6 +2789,8 @@ const connect = {
         if (parts[1] === "instance" && parts.length === 4) {
           if (parts[3] === "association" && req.method === "PUT")
             return "AssociateAnalyticsDataSet";
+          if (parts[3] === "association" && req.method === "POST")
+            return "DisassociateAnalyticsDataSet";
           if (parts[3] === "associations" && req.method === "PUT")
             return "BatchAssociateAnalyticsDataSet";
           if (parts[3] === "associations" && req.method === "POST")
@@ -2659,10 +2826,18 @@ const connect = {
           req.method === "POST"
         )
           return "AssociateEmailAddressAlias";
+        if (
+          parts.length === 4 &&
+          parts[3] === "disassociate-alias" &&
+          req.method === "POST"
+        )
+          return "DisassociateEmailAddressAlias";
         return undefined;
 
       case "flow-associations":
         if (parts.length === 2 && req.method === "PUT") return "AssociateFlow";
+        if (parts.length === 4 && req.method === "DELETE")
+          return "DisassociateFlow";
         return undefined;
 
       case "hours-of-operations":
@@ -2678,6 +2853,12 @@ const connect = {
           req.method === "POST"
         )
           return "AssociateHoursOfOperations";
+        if (
+          parts.length === 4 &&
+          parts[3] === "disassociate-hours" &&
+          req.method === "POST"
+        )
+          return "DisassociateHoursOfOperations";
         if (
           parts.length === 4 &&
           parts[3] === "overrides" &&
@@ -2765,6 +2946,7 @@ const connect = {
 
       case "users":
         if (parts.length === 2 && req.method === "PUT") return "CreateUser";
+        if (parts.length === 3 && req.method === "GET") return "DescribeUser";
         if (parts.length === 3 && req.method === "DELETE") return "DeleteUser";
         if (
           parts.length === 4 &&
@@ -2772,6 +2954,20 @@ const connect = {
           req.method === "POST"
         )
           return "AssociateUserProficiencies";
+        return undefined;
+
+      case "user-hierarchy-groups":
+        if (parts.length === 2 && req.method === "PUT")
+          return "CreateUserHierarchyGroup";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeUserHierarchyGroup";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteUserHierarchyGroup";
+        return undefined;
+
+      case "user-hierarchy-structure":
+        if (parts.length === 2 && req.method === "GET")
+          return "DescribeUserHierarchyStructure";
         return undefined;
 
       case "attached-files":
@@ -2995,15 +3191,9 @@ const connect = {
           return "DeleteContactEvaluation";
         return undefined;
 
-      case "user-hierarchy-groups":
-        if (parts.length === 2 && req.method === "PUT")
-          return "CreateUserHierarchyGroup";
-        if (parts.length === 3 && req.method === "DELETE")
-          return "DeleteUserHierarchyGroup";
-        return undefined;
-
       case "views":
         if (parts.length === 2 && req.method === "PUT") return "CreateView";
+        if (parts.length === 3 && req.method === "GET") return "DescribeView";
         if (parts.length === 3 && req.method === "DELETE") return "DeleteView";
         if (
           parts.length === 4 &&
@@ -3022,6 +3212,8 @@ const connect = {
       case "vocabulary":
         if (parts.length === 2 && req.method === "POST")
           return "CreateVocabulary";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeVocabulary";
         return undefined;
 
       case "vocabulary-remove":
@@ -3032,6 +3224,8 @@ const connect = {
       case "workspaces":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateWorkspace";
+        if (parts.length === 3 && req.method === "GET")
+          return "DescribeWorkspace";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteWorkspace";
         if (
@@ -3196,6 +3390,18 @@ const connect = {
     DescribeSecurityProfile,
     DescribeTestCase,
     DescribeTrafficDistributionGroup,
+    DescribeUser,
+    DescribeUserHierarchyGroup,
+    DescribeUserHierarchyStructure,
+    DescribeView,
+    DescribeVocabulary,
+    DescribeWorkspace,
+    DisassociateAnalyticsDataSet,
+    DisassociateApprovedOrigin,
+    DisassociateBot,
+    DisassociateEmailAddressAlias,
+    DisassociateFlow,
+    DisassociateHoursOfOperations,
     UpdateAgentStatus,
     UpdateAttachedFilesConfiguration,
     UpdateAuthenticationProfile,

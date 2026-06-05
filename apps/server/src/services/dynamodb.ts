@@ -1479,24 +1479,20 @@ const partiQLWhereMatch = (
   whereClause: string,
   params: AttributeValue[],
 ): boolean => {
-  let paramIdx = 0;
-  const conditions = whereClause.trim().split(/\s+AND\s+/i);
-  for (const condition of conditions) {
-    const m = /^"?(\w+)"?\s*(=|<>)\s*\?/.exec(condition.trim());
-    if (m === null) continue;
-    const attrName = m[1];
-    const op = m[2];
-    const param = params[paramIdx++] ?? {};
-    const actual = item[attrName];
-    if (actual === undefined) {
-      if (op === "=") return false;
-      continue;
-    }
-    const equal = scalarOf(actual) === scalarOf(param);
-    if (op === "=" && !equal) return false;
-    if (op === "<>" && equal) return false;
-  }
-  return true;
+  const trimmed = whereClause.trim();
+  if (trimmed === "") return true;
+  const values: Record<string, AttributeValue> = {};
+  let counter = 0;
+  const replaced = trimmed
+    .replace(/"([A-Za-z_][A-Za-z0-9_]*)"/g, "$1")
+    .replace(/\?/g, () => {
+      const name = `:_p_${counter}`;
+      const v = params[counter++];
+      if (v !== undefined) values[name] = v;
+      return name;
+    });
+  const ast = parseConditionExpression(replaced, { names: {}, values });
+  return evaluateCondition(ast, item);
 };
 
 const parsePartiQLValue = (expr: string, params: AttributeValue[]): Item => {

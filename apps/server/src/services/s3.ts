@@ -113,6 +113,58 @@ const bucketKeyFromPath = (
   };
 };
 
+const normalizeEtag = (value: string): string =>
+  value.startsWith("W/") ? value.slice(2) : value;
+
+const etagMatches = (header: string, etag: string): boolean =>
+  header
+    .split(",")
+    .map((entry) => entry.trim())
+    .some(
+      (entry) => entry === "*" || normalizeEtag(entry) === normalizeEtag(etag),
+    );
+
+const asSeconds = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const evaluateConditional = (
+  input: Record<string, unknown>,
+  object: S3Object,
+): void => {
+  const ifMatch = input["IfMatch"];
+  const ifNoneMatch = input["IfNoneMatch"];
+  const ifModifiedSince = asSeconds(input["IfModifiedSince"]);
+  const ifUnmodifiedSince = asSeconds(input["IfUnmodifiedSince"]);
+  if (typeof ifMatch === "string") {
+    if (!etagMatches(ifMatch, object.etag)) {
+      throw awsError(
+        "PreconditionFailed",
+        "At least one of the pre-conditions you specified did not hold",
+        412,
+      );
+    }
+  } else if (
+    ifUnmodifiedSince !== undefined &&
+    object.lastModified > ifUnmodifiedSince
+  ) {
+    throw awsError(
+      "PreconditionFailed",
+      "At least one of the pre-conditions you specified did not hold",
+      412,
+    );
+  }
+  if (typeof ifNoneMatch === "string") {
+    if (etagMatches(ifNoneMatch, object.etag)) {
+      throw awsError("NotModified", "Not Modified", 304);
+    }
+  } else if (
+    ifModifiedSince !== undefined &&
+    object.lastModified <= ifModifiedSince
+  ) {
+    throw awsError("NotModified", "Not Modified", 304);
+  }
+};
+
 const getBucket = (ctx: ServiceContext, name: string): S3Bucket => {
   const bucket = ctx.store.get<S3Bucket>(name);
   if (bucket === undefined) {
@@ -328,7 +380,7 @@ const s3: ServiceDefinition = {
       ctx.store.set<S3Bucket>(bucket, next);
       return { ETag: object.etag };
     },
-    GetObject: (_input, ctx, req) => {
+    GetObject: (input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
       if (bucket === undefined || key === undefined) {
         throw awsError("InvalidRequest", "bucket and key required", 400);
@@ -338,6 +390,7 @@ const s3: ServiceDefinition = {
       if (object === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
+      evaluateConditional(input, object);
       return {
         Body: object.body,
         ContentType: object.contentType,
@@ -350,7 +403,7 @@ const s3: ServiceDefinition = {
           : { StorageClass: object.storageClass }),
       };
     },
-    HeadObject: (_input, ctx, req) => {
+    HeadObject: (input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
       if (bucket === undefined || key === undefined) {
         throw awsError("InvalidRequest", "bucket and key required", 400);
@@ -360,6 +413,7 @@ const s3: ServiceDefinition = {
       if (object === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
+      evaluateConditional(input, object);
       return {
         ContentType: object.contentType,
         ContentLength: object.size,
@@ -371,29 +425,83 @@ const s3: ServiceDefinition = {
           : { StorageClass: object.storageClass }),
       };
     },
-    ListObjectsV2: (_input, ctx, req) => {
+    ListObjectsV2: (input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);
       if (bucket === undefined) {
         throw awsError("InvalidBucketName", "bucket name required", 400);
       }
       const target = getBucket(ctx, bucket);
-      const prefix = req.query.get("prefix") ?? "";
-      const all = Object.values(target.objects)
+      const prefix = typeof input["Prefix"] === "string" ? input["Prefix"] : "";
+      const delimiter =
+        typeof input["Delimiter"] === "string" ? input["Delimiter"] : "";
+      const startAfter =
+        typeof input["StartAfter"] === "string" ? input["StartAfter"] : "";
+      const continuationToken =
+        typeof input["ContinuationToken"] === "string"
+          ? Buffer.from(input["ContinuationToken"], "base64").toString("utf8")
+          : "";
+      const after = continuationToken !== "" ? continuationToken : startAfter;
+      const maxKeys =
+        typeof input["MaxKeys"] === "number" && input["MaxKeys"] >= 0
+          ? Math.min(input["MaxKeys"], 1000)
+          : 1000;
+      const candidates = Object.values(target.objects)
         .filter((o) => o.key.startsWith(prefix))
+        .filter((o) => o.key > after)
         .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      const contents: S3Object[] = [];
+      const commonPrefixes: string[] = [];
+      const seenPrefixes = new Set<string>();
+      let isTruncated = false;
+      let nextToken: string | undefined;
+      for (const object of candidates) {
+        const rest = object.key.slice(prefix.length);
+        const boundary = delimiter === "" ? -1 : rest.indexOf(delimiter);
+        const group =
+          boundary === -1
+            ? undefined
+            : prefix + rest.slice(0, boundary + delimiter.length);
+        if (group !== undefined && seenPrefixes.has(group)) continue;
+        if (contents.length + commonPrefixes.length >= maxKeys) {
+          isTruncated = maxKeys > 0;
+          break;
+        }
+        if (group !== undefined) {
+          seenPrefixes.add(group);
+          commonPrefixes.push(group);
+          nextToken =
+            group.slice(0, -1) +
+            String.fromCodePoint(
+              (group.codePointAt(group.length - 1) ?? 0) + 1,
+            );
+        } else {
+          contents.push(object);
+          nextToken = object.key;
+        }
+      }
       return {
         Name: bucket,
         Prefix: prefix,
-        KeyCount: all.length,
-        MaxKeys: 1000,
-        IsTruncated: false,
-        Contents: all.map((o) => ({
+        ...(delimiter === "" ? {} : { Delimiter: delimiter }),
+        MaxKeys: maxKeys,
+        KeyCount: contents.length + commonPrefixes.length,
+        IsTruncated: isTruncated,
+        ...(startAfter === "" ? {} : { StartAfter: startAfter }),
+        Contents: contents.map((o) => ({
           Key: o.key,
           LastModified: o.lastModified,
           ETag: o.etag,
           Size: o.size,
           StorageClass: o.storageClass,
         })),
+        ...(commonPrefixes.length === 0
+          ? {}
+          : { CommonPrefixes: commonPrefixes.map((p) => ({ Prefix: p })) }),
+        ...(isTruncated && nextToken !== undefined
+          ? {
+              NextContinuationToken: Buffer.from(nextToken).toString("base64"),
+            }
+          : {}),
       };
     },
     DeleteObject: (_input, ctx, req) => {

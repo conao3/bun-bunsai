@@ -66,6 +66,15 @@ type StoredSubnet = {
   Tags: Tag[];
 };
 
+type StoredRouteTableAssociation = {
+  RouteTableAssociationId: string;
+  RouteTableId: string;
+  SubnetId: string | undefined;
+  GatewayId: string | undefined;
+  Main: boolean;
+  AssociationState: { State: string };
+};
+
 type StoredRouteTable = {
   RouteTableId: string;
   VpcId: string;
@@ -76,6 +85,7 @@ type StoredRouteTable = {
     State: string;
   }[];
   Tags: Tag[];
+  Associations: StoredRouteTableAssociation[];
 };
 
 type StoredInternetGateway = {
@@ -531,6 +541,35 @@ type StoredNetworkInterfacePermission = {
   PermissionState: string;
 };
 
+type StoredIamInstanceProfileAssociation = {
+  AssociationId: string;
+  InstanceId: string;
+  IamInstanceProfile: { Arn: string; Id: string };
+  State: string;
+  Timestamp: string;
+};
+
+type StoredIpamByoasnAssociation = {
+  Asn: string;
+  IpamId: string;
+  IpamArn: string;
+  StatusMessage: string;
+  State: string;
+};
+
+type StoredIpamResourceDiscoveryAssociation = {
+  IpamResourceDiscoveryAssociationId: string;
+  IpamResourceDiscoveryAssociationArn: string;
+  IpamResourceDiscoveryId: string;
+  IpamId: string;
+  IpamArn: string;
+  OwnerId: string;
+  IsDefault: boolean;
+  ResourceDiscoveryStatus: string;
+  State: string;
+  Tags: Tag[];
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -593,6 +632,10 @@ const networkInterfaceKey = (id: string): string => `eni/${id}`;
 const niPermissionKey = (id: string): string => `ni-perm/${id}`;
 const localGatewayRouteKey = (rtbId: string, cidr: string): string =>
   `lgw-route/${rtbId}/${cidr}`;
+const iamProfileAssocKey = (id: string): string => `iam-profile-assoc/${id}`;
+const ipamByoasnKey = (ipamId: string, asn: string): string =>
+  `ipam-byoasn/${ipamId}/${asn}`;
+const ipamRdAssocKey = (id: string): string => `ipam-rd-assoc/${id}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -1140,7 +1183,7 @@ const routeTableView = (table: StoredRouteTable, ownerId: string): unknown => ({
   VpcId: table.VpcId,
   OwnerId: ownerId,
   Routes: table.Routes,
-  Associations: [],
+  Associations: table.Associations ?? [],
   PropagatingVgws: [],
   Tags: table.Tags,
 });
@@ -1168,6 +1211,7 @@ const CreateRouteTable: OperationHandler = (input, ctx) => {
       },
     ],
     Tags: [],
+    Associations: [],
   };
   ctx.store.set(routeTableKey(id), table);
   return { RouteTable: routeTableView(table, ctx.account) };
@@ -2083,6 +2127,252 @@ const AssociateClientVpnTargetNetwork: OperationHandler = (input, _ctx) => {
     AssociationId: associationId,
     Status: { Code: "associated", Message: "" },
   };
+};
+
+const AcceptTransitGatewayClientVpnAttachment: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const stored = ctx.store.get<StoredTgwAttachment>(
+    tgwAttachmentKey(attachmentId),
+  );
+  const tgwId = stored?.TransitGatewayId ?? hexId("tgw");
+  if (stored !== undefined) {
+    stored.State = "available";
+    ctx.store.set(tgwAttachmentKey(attachmentId), stored);
+  }
+  return {
+    TransitGatewayClientVpnAttachment: {
+      TransitGatewayAttachmentId: attachmentId,
+      TransitGatewayId: tgwId,
+      ClientVpnEndpointId: stored?.ResourceId ?? hexId("cvpn"),
+      Region: ctx.region,
+      Status: { Code: "available", Message: "" },
+      State: "available",
+      CreationTime: new Date().toISOString(),
+      Tags: stored?.Tags ?? [],
+    },
+  };
+};
+
+const ApplySecurityGroupsToClientVpnTargetNetwork: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const groups = stringList(input["SecurityGroupIds"]);
+  return { SecurityGroupIds: groups };
+};
+
+const AssociateDhcpOptions: OperationHandler = (input, ctx) => {
+  const dhcpOptionsId =
+    typeof input["DhcpOptionsId"] === "string" ? input["DhcpOptionsId"] : "";
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const vpc = ctx.store.get<StoredVpc>(vpcKey(vpcId));
+  if (vpc === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${vpcId}' does not exist`,
+      400,
+    );
+  }
+  vpc.DhcpOptionsId = dhcpOptionsId;
+  ctx.store.set(vpcKey(vpcId), vpc);
+  return {};
+};
+
+const AssociateEnclaveCertificateIamRole: OperationHandler = (_input, _ctx) => {
+  return {
+    CertificateS3BucketName: `aws-ec2-enclave-certificate-${hexId("s3")}`,
+    CertificateS3ObjectKey: `enclaves/certificate/iam-role-association`,
+    EncryptionKmsKeyId: hexId("key"),
+  };
+};
+
+const AssociateIamInstanceProfile: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const profile = input["IamInstanceProfile"];
+  const profileArn =
+    typeof profile === "object" &&
+    profile !== null &&
+    typeof (profile as Record<string, unknown>)["Arn"] === "string"
+      ? (profile as Record<string, unknown>)["Arn"]
+      : `arn:aws:iam::${ctx.account}:instance-profile/default`;
+  const profileId = hexId("AIPA");
+  const associationId = hexId("iip-assoc");
+  const association: StoredIamInstanceProfileAssociation = {
+    AssociationId: associationId,
+    InstanceId: instanceId,
+    IamInstanceProfile: { Arn: profileArn as string, Id: profileId },
+    State: "associated",
+    Timestamp: new Date().toISOString(),
+  };
+  ctx.store.set(iamProfileAssocKey(associationId), association);
+  return {
+    IamInstanceProfileAssociation: {
+      AssociationId: association.AssociationId,
+      InstanceId: association.InstanceId,
+      IamInstanceProfile: association.IamInstanceProfile,
+      State: association.State,
+      Timestamp: association.Timestamp,
+    },
+  };
+};
+
+const AssociateInstanceEventWindow: OperationHandler = (input, _ctx) => {
+  const eventWindowId =
+    typeof input["InstanceEventWindowId"] === "string"
+      ? input["InstanceEventWindowId"]
+      : hexId("iew");
+  return {
+    InstanceEventWindow: {
+      InstanceEventWindowId: eventWindowId,
+      AssociationTarget: {
+        InstanceIds: stringList(
+          (input["AssociationTarget"] as Record<string, unknown> | undefined)?.[
+            "InstanceIds"
+          ],
+        ),
+        Tags: [],
+        DedicatedHostIds: [],
+      },
+      State: "active",
+    },
+  };
+};
+
+const AssociateIpamByoasn: OperationHandler = (input, ctx) => {
+  const ipamId =
+    typeof input["IpamId"] === "string" ? input["IpamId"] : hexId("ipam");
+  const asn = typeof input["Asn"] === "string" ? input["Asn"] : "65000";
+  const ipam = ctx.store.get<StoredIpam>(ipamKey(ipamId));
+  const ipamArn =
+    ipam?.IpamArn ?? `arn:aws:ec2:${ctx.region}:${ctx.account}:ipam/${ipamId}`;
+  const association: StoredIpamByoasnAssociation = {
+    Asn: asn,
+    IpamId: ipamId,
+    IpamArn: ipamArn,
+    StatusMessage: "BYOASN associated",
+    State: "associate-complete",
+  };
+  ctx.store.set(ipamByoasnKey(ipamId, asn), association);
+  return {
+    AsnAssociation: {
+      Asn: association.Asn,
+      IpamId: association.IpamId,
+      IpamArn: association.IpamArn,
+      StatusMessage: association.StatusMessage,
+      State: association.State,
+    },
+  };
+};
+
+const AssociateIpamResourceDiscovery: OperationHandler = (input, ctx) => {
+  const ipamId =
+    typeof input["IpamId"] === "string" ? input["IpamId"] : hexId("ipam");
+  const rdId =
+    typeof input["IpamResourceDiscoveryId"] === "string"
+      ? input["IpamResourceDiscoveryId"]
+      : hexId("ipam-rd");
+  const assocId = hexId("ipam-res-disco-assoc");
+  const ipam = ctx.store.get<StoredIpam>(ipamKey(ipamId));
+  const ipamArn =
+    ipam?.IpamArn ?? `arn:aws:ec2:${ctx.region}:${ctx.account}:ipam/${ipamId}`;
+  const association: StoredIpamResourceDiscoveryAssociation = {
+    IpamResourceDiscoveryAssociationId: assocId,
+    IpamResourceDiscoveryAssociationArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:ipam-resource-discovery-association/${assocId}`,
+    IpamResourceDiscoveryId: rdId,
+    IpamId: ipamId,
+    IpamArn: ipamArn,
+    OwnerId: ctx.account,
+    IsDefault: false,
+    ResourceDiscoveryStatus: "active",
+    State: "associate-complete",
+    Tags: [],
+  };
+  ctx.store.set(ipamRdAssocKey(assocId), association);
+  return { IpamResourceDiscoveryAssociation: association };
+};
+
+const AssociateNatGatewayAddress: OperationHandler = (input, ctx) => {
+  const natGatewayId =
+    typeof input["NatGatewayId"] === "string" ? input["NatGatewayId"] : "";
+  const allocationIds = stringList(input["AllocationIds"]);
+  const gateway = ctx.store.get<StoredNatGateway>(natGatewayKey(natGatewayId));
+  if (gateway === undefined) {
+    throw awsError(
+      "NatGatewayNotFound",
+      `The Nat Gateway '${natGatewayId}' does not exist`,
+      400,
+    );
+  }
+  const newAddresses = allocationIds.map((allocId) => ({
+    AllocationId: allocId,
+    PublicIp: randomIpv4(),
+    PrivateIp: "10.0.0.20",
+    NetworkInterfaceId: hexId("eni"),
+    AssociationId: hexId("eipassoc"),
+    IsPrimary: false,
+    Status: "succeeded",
+  }));
+  gateway.NatGatewayAddresses = [
+    ...gateway.NatGatewayAddresses,
+    ...newAddresses,
+  ];
+  ctx.store.set(natGatewayKey(natGatewayId), gateway);
+  return { NatGatewayId: natGatewayId, NatGatewayAddresses: newAddresses };
+};
+
+const AssociateRouteServer: OperationHandler = (input, _ctx) => {
+  const routeServerId =
+    typeof input["RouteServerId"] === "string"
+      ? input["RouteServerId"]
+      : hexId("rs");
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  return {
+    RouteServerAssociation: {
+      RouteServerId: routeServerId,
+      VpcId: vpcId,
+      State: "associating",
+    },
+  };
+};
+
+const AssociateRouteTable: OperationHandler = (input, ctx) => {
+  const routeTableId =
+    typeof input["RouteTableId"] === "string" ? input["RouteTableId"] : "";
+  const subnetId =
+    typeof input["SubnetId"] === "string" ? input["SubnetId"] : undefined;
+  const gatewayId =
+    typeof input["GatewayId"] === "string" ? input["GatewayId"] : undefined;
+  const table = ctx.store.get<StoredRouteTable>(routeTableKey(routeTableId));
+  if (table === undefined) {
+    throw awsError(
+      "InvalidRouteTableID.NotFound",
+      `The routeTable ID '${routeTableId}' does not exist`,
+      400,
+    );
+  }
+  const assocId = hexId("rtbassoc");
+  const assoc: StoredRouteTableAssociation = {
+    RouteTableAssociationId: assocId,
+    RouteTableId: routeTableId,
+    SubnetId: subnetId,
+    GatewayId: gatewayId,
+    Main: false,
+    AssociationState: { State: "associated" },
+  };
+  table.Associations = [...(table.Associations ?? []), assoc];
+  ctx.store.set(routeTableKey(routeTableId), table);
+  return { AssociationId: assocId, AssociationState: { State: "associated" } };
+};
+
+const AssociateSecurityGroupVpc: OperationHandler = (_input, _ctx) => {
+  return { State: "associating" };
 };
 
 const AttachVolume: OperationHandler = (input, ctx) => {
@@ -3770,6 +4060,18 @@ const ec2: ServiceDefinition = {
     AssociateAddress,
     AssociateCapacityReservationBillingOwner,
     AssociateClientVpnTargetNetwork,
+    AcceptTransitGatewayClientVpnAttachment,
+    ApplySecurityGroupsToClientVpnTargetNetwork,
+    AssociateDhcpOptions,
+    AssociateEnclaveCertificateIamRole,
+    AssociateIamInstanceProfile,
+    AssociateInstanceEventWindow,
+    AssociateIpamByoasn,
+    AssociateIpamResourceDiscovery,
+    AssociateNatGatewayAddress,
+    AssociateRouteServer,
+    AssociateRouteTable,
+    AssociateSecurityGroupVpc,
     AttachVolume,
     DetachVolume,
     AttachNetworkInterface,

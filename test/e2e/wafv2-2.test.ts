@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
-import { spawn } from "bun";
+import { expect, test } from "bun:test";
+import { startApp } from "./harness.ts";
 import {
   AssociateWebACLCommand,
   CheckCapacityCommand,
@@ -55,60 +55,17 @@ import {
   UpdateRuleGroupCommand,
   WAFV2Client,
 } from "@aws-sdk/client-wafv2";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const awsPort = 4609;
-const uiPort = 5709;
-const endpoint = `http://localhost:${awsPort}`;
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
-
-const serverEntry = new URL("../../apps/server/src/index.ts", import.meta.url)
-  .pathname;
-
-let proc: ReturnType<typeof spawn> | undefined;
-
-const waitForServer = async (): Promise<void> => {
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      const res = await fetch(`http://localhost:${uiPort}/__bunsai/logs`);
-      if (res.ok) {
-        await res.body?.cancel();
-        return;
-      }
-    } catch {
-      void 0;
-    }
-    await Bun.sleep(100);
-  }
-  throw new Error("server did not become ready");
-};
-
-beforeAll(async () => {
-  proc = spawn({
-    cmd: ["bun", serverEntry],
-    env: {
-      ...process.env,
-      BUNSAI_PORT: String(awsPort),
-      BUNSAI_UI_PORT: String(uiPort),
-      NODE_ENV: "production",
-    },
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  await waitForServer();
-});
-
-afterAll(() => {
-  proc?.kill();
-});
 
 const wafv2 = () =>
   new WAFV2Client({
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 const visibilityConfig = {

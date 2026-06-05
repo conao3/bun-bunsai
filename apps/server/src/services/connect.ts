@@ -2772,6 +2772,87 @@ const DescribeTrafficDistributionGroup: OperationHandler = (input, ctx) => {
   };
 };
 
+const DismissUserContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const EvaluateDataTableValues: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { Results: [] };
+};
+
+const GetAttachedFile: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const GetContactAttributes: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { Attributes: {} };
+};
+
+const GetContactMetrics: OperationHandler = (_input, _ctx) => {
+  return { MetricResults: [] };
+};
+
+const GetCurrentMetricData: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { MetricResults: [], ApproximateTotalCount: 0 };
+};
+
+const GetCurrentUserData: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { UserDataList: [], ApproximateTotalCount: 0 };
+};
+
+const GetEffectiveHoursOfOperations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {
+    EffectiveHoursOfOperationList: [],
+    EffectiveOverrideHoursList: [],
+    TimeZone: "UTC",
+  };
+};
+
+const GetFederationToken: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {
+    Credentials: {
+      AccessToken: "access-token",
+      AccessTokenExpiration: new Date().toISOString(),
+      RefreshToken: "refresh-token",
+      RefreshTokenExpiration: new Date().toISOString(),
+    },
+    UserArn: `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/agent/federation`,
+    UserId: "federation-user",
+  };
+};
+
+const GetFlowAssociation: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const GetMetricData: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { MetricResults: [] };
+};
+
+const GetMetricDataV2: OperationHandler = (_input, _ctx) => {
+  return { MetricResults: [] };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -2934,6 +3015,8 @@ const connect = {
 
       case "flow-associations":
         if (parts.length === 2 && req.method === "PUT") return "AssociateFlow";
+        if (parts.length === 4 && req.method === "GET")
+          return "GetFlowAssociation";
         if (parts.length === 4 && req.method === "DELETE")
           return "DisassociateFlow";
         return undefined;
@@ -3085,6 +3168,12 @@ const connect = {
           req.method === "POST"
         )
           return "DisassociateUserProficiencies";
+        if (
+          parts.length === 4 &&
+          parts[3] === "contact" &&
+          req.method === "POST"
+        )
+          return "DismissUserContact";
         return undefined;
 
       case "user-hierarchy-groups":
@@ -3104,6 +3193,8 @@ const connect = {
       case "attached-files":
         if (parts.length === 2 && req.method === "POST")
           return "BatchGetAttachedFileMetadata";
+        if (parts.length === 3 && req.method === "GET")
+          return "GetAttachedFile";
         if (parts.length === 3 && req.method === "POST")
           return "CompleteAttachedFileUpload";
         if (parts.length === 3 && req.method === "DELETE")
@@ -3137,6 +3228,12 @@ const connect = {
         }
         if (parts.length === 3 && parts[1] === "batch" && req.method === "PUT")
           return "BatchPutContact";
+        if (
+          parts.length === 4 &&
+          parts[1] === "attributes" &&
+          req.method === "GET"
+        )
+          return "GetContactAttributes";
         if (
           parts.length === 4 &&
           parts[1] === "persistent-contact-association" &&
@@ -3233,6 +3330,7 @@ const connect = {
           if (parts[4] === "delete") return "BatchDeleteDataTableValue";
           if (parts[4] === "describe") return "BatchDescribeDataTableValue";
           if (parts[4] === "update") return "BatchUpdateDataTableValue";
+          if (parts[4] === "evaluate") return "EvaluateDataTableValues";
         }
         return undefined;
 
@@ -3387,6 +3485,49 @@ const connect = {
           return "DeleteWorkspaceMedia";
         return undefined;
 
+      case "metrics":
+        if (
+          parts[1] === "contact" &&
+          parts.length === 2 &&
+          req.method === "POST"
+        )
+          return "GetContactMetrics";
+        if (
+          parts[1] === "current" &&
+          parts.length === 3 &&
+          req.method === "POST"
+        )
+          return "GetCurrentMetricData";
+        if (
+          parts[1] === "userdata" &&
+          parts.length === 3 &&
+          req.method === "POST"
+        )
+          return "GetCurrentUserData";
+        if (
+          parts[1] === "historical" &&
+          parts.length === 3 &&
+          req.method === "POST"
+        )
+          return "GetMetricData";
+        if (parts[1] === "data" && parts.length === 2 && req.method === "POST")
+          return "GetMetricDataV2";
+        return undefined;
+
+      case "effective-hours-of-operations":
+        if (parts.length === 3 && req.method === "GET")
+          return "GetEffectiveHoursOfOperations";
+        return undefined;
+
+      case "user":
+        if (
+          parts.length === 3 &&
+          parts[1] === "federate" &&
+          req.method === "GET"
+        )
+          return "GetFederationToken";
+        return undefined;
+
       default:
         return undefined;
     }
@@ -3397,6 +3538,7 @@ const connect = {
     ListInstances,
     DeleteInstance,
     DeleteAttachedFile,
+    DismissUserContact,
     DeleteContactEvaluation,
     DeleteContactFlow,
     DeleteContactFlowModule,
@@ -3460,6 +3602,7 @@ const connect = {
     BatchDescribeDataTableValue,
     BatchGetAttachedFileMetadata,
     BatchGetFlowAssociation,
+    EvaluateDataTableValues,
     BatchPutContact,
     BatchUpdateDataTableValue,
     ClaimPhoneNumber,
@@ -3502,6 +3645,16 @@ const connect = {
     CreateWorkspacePage,
     DescribeAgentStatus,
     DescribeAttachedFilesConfiguration,
+    GetAttachedFile,
+    GetContactAttributes,
+    GetContactMetrics,
+    GetCurrentMetricData,
+    GetCurrentUserData,
+    GetEffectiveHoursOfOperations,
+    GetFederationToken,
+    GetFlowAssociation,
+    GetMetricData,
+    GetMetricDataV2,
     DescribeAuthenticationProfile,
     DescribeContact,
     DescribeContactEvaluation,

@@ -22,8 +22,8 @@ const detailTabs = [
 ] as const;
 type DetailTab = (typeof detailTabs)[number]["id"];
 
-const statusFilters = ["all", "2xx", "4xx", "5xx"] as const;
-type StatusFilter = (typeof statusFilters)[number];
+export const statusFilters = ["all", "2xx", "4xx", "5xx"] as const;
+export type StatusFilter = (typeof statusFilters)[number];
 
 function statusClass(code: number): StatusFilter {
   return code < 400 ? "2xx" : code < 500 ? "4xx" : "5xx";
@@ -189,20 +189,42 @@ export function RequestLog({
   setLive,
   clearRequests,
   connected,
+  selId,
+  onSelect,
+  svcFilter,
+  onSvcFilter,
+  statusFilter,
+  onStatusFilter,
+  q,
+  onQ,
 }: {
   requests: RequestLogEntry[];
   live: boolean;
   setLive: (v: boolean) => void;
   clearRequests: () => void;
   connected: boolean;
+  selId: string | null;
+  onSelect: (id: string | null) => void;
+  svcFilter: string[];
+  onSvcFilter: (v: string[]) => void;
+  statusFilter: string;
+  onStatusFilter: (v: StatusFilter) => void;
+  q: string;
+  onQ: (v: string) => void;
 }) {
-  const [svcFilter, setSvcFilter] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [q, setQ] = useState("");
-  const [selId, setSelId] = useState<string | null>(null);
+  const [qInput, setQInput] = useState(q);
   const [stick, setStick] = useState(true);
   const [newCount, setNewCount] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setQInput(q);
+  }, [q]);
+  useEffect(() => {
+    if (qInput === q) return;
+    const timer = setTimeout(() => onQ(qInput), 300);
+    return () => clearTimeout(timer);
+  }, [qInput, q, onQ]);
 
   const serviceOptions = useMemo(
     () => [...new Set(requests.map((r) => r.service))].sort(),
@@ -210,7 +232,7 @@ export function RequestLog({
   );
 
   const filtered = useMemo(() => {
-    const needle = q.toLowerCase();
+    const needle = qInput.toLowerCase();
     return requests.filter((r) => {
       if (svcFilter.length && !svcFilter.includes(r.service)) return false;
       if (statusFilter !== "all" && statusClass(r.statusCode) !== statusFilter)
@@ -224,7 +246,7 @@ export function RequestLog({
         return false;
       return true;
     });
-  }, [requests, svcFilter, statusFilter, q]);
+  }, [requests, svcFilter, statusFilter, qInput]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -280,7 +302,7 @@ export function RequestLog({
           label="Service"
           options={serviceOptions}
           selected={svcFilter}
-          onChange={setSvcFilter}
+          onChange={onSvcFilter}
           render={(o) => svcInfo(o).name}
         />
         <div className="segmented">
@@ -288,7 +310,7 @@ export function RequestLog({
             <button
               key={s}
               className={statusFilter === s ? "on" : ""}
-              onClick={() => setStatusFilter(s)}
+              onClick={() => onStatusFilter(s)}
             >
               {s === "all" ? "All" : s}
             </button>
@@ -304,8 +326,8 @@ export function RequestLog({
           <input
             className="input"
             placeholder="operation, service, request id を検索…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
           />
         </div>
 
@@ -389,7 +411,7 @@ export function RequestLog({
                   <div
                     key={r.id}
                     className={`log-row${r.id === selId ? " sel" : ""}${r.statusCode >= 500 ? " r5xx" : r.statusCode >= 400 ? " r4xx" : ""}`}
-                    onClick={() => setSelId(r.id)}
+                    onClick={() => onSelect(r.id)}
                   >
                     <span className="c-time mono">{fmtTime(r.time)}</span>
                     <span className="c-svc">
@@ -417,7 +439,7 @@ export function RequestLog({
           )}
         </div>
 
-        {sel && <RequestDetail req={sel} onClose={() => setSelId(null)} />}
+        {sel && <RequestDetail req={sel} onClose={() => onSelect(null)} />}
       </div>
     </div>
   );

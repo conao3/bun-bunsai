@@ -142,13 +142,16 @@ export function ResourceBrowser({
   scope,
   connected,
   refreshToken,
+  sel,
+  onSelect,
 }: {
   scope: Scope;
   connected: boolean;
   refreshToken: number;
+  sel: Selection | null;
+  onSelect: (s: Selection | null, replace?: boolean) => void;
 }) {
   const [entries, setEntries] = useState<ResourceEntry[]>([]);
-  const [sel, setSel] = useState<Selection | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -182,14 +185,16 @@ export function ResourceBrowser({
   }, [scoped]);
 
   useEffect(() => {
+    if (!loaded) return;
     if (
       sel &&
       scoped.some((e) => e.service === sel.service && e.key === sel.key)
     )
       return;
+    if (sel && scoped.length === 0) return;
     const first = scoped[0];
-    setSel(first ? { service: first.service, key: first.key } : null);
-  }, [scoped, sel]);
+    onSelect(first ? { service: first.service, key: first.key } : null, true);
+  }, [scoped, sel, loaded, onSelect]);
 
   const selEntry = sel
     ? (scoped.find((e) => e.service === sel.service && e.key === sel.key) ??
@@ -203,7 +208,7 @@ export function ResourceBrowser({
           scope={scope}
           grouped={grouped}
           sel={sel}
-          setSel={setSel}
+          setSel={(s) => onSelect(s)}
         />
       </div>
       <div className="res-main scroll-y">

@@ -4,8 +4,17 @@ import type { RequestLogEntry, ResourceEntry, ServiceSummary } from "./api";
 import { fetchLogs, fetchResources, fetchServices, openLogStream } from "./api";
 import { GlobalBar, Sidebar } from "./Chrome";
 import { Overview } from "./Overview";
-import { RequestLog } from "./RequestLog";
+import { RequestLog, statusFilters } from "./RequestLog";
+import type { StatusFilter } from "./RequestLog";
 import { ResourceBrowser } from "./ResourceBrowser";
+import {
+  buildLogPath,
+  buildResourcePath,
+  parseRoute,
+  router,
+  useLocation,
+  withQuery,
+} from "./router";
 import type { Screen, Theme } from "./types";
 
 type Scope = { account: string; region: string };
@@ -33,14 +42,11 @@ const ls = {
 } as const;
 
 export function App() {
+  const loc = useLocation();
+  const route = parseRoute(loc.path);
+
   const [theme, setThemeState] = useState<Theme>(() =>
     ls.get<Theme>("theme", "dark"),
-  );
-  const [screen, setScreenState] = useState<Screen>(() =>
-    ls.get<Screen>("screen", "log"),
-  );
-  const [scope, setScopeState] = useState<Scope>(() =>
-    ls.get<Scope>("scope", { ...defaultScope }),
   );
   const [live, setLive] = useState(true);
 
@@ -53,18 +59,87 @@ export function App() {
   const liveRef = useRef(live);
   liveRef.current = live;
 
+  const screen: Screen = route ? route.screen : "log";
+  const selId = route && route.screen === "log" ? route.requestId : null;
+  const sel = route && route.screen === "resources" ? route.sel : null;
+
+  const scope: Scope = useMemo(() => {
+    const stored = ls.get<Scope>("scope", { ...defaultScope });
+    return {
+      account: loc.query.get("account") ?? stored.account,
+      region: loc.query.get("region") ?? stored.region,
+    };
+  }, [loc.query]);
+
   const setTheme = useCallback((v: Theme) => {
     setThemeState(v);
     ls.set("theme", v);
   }, []);
-  const setScreen = useCallback((v: Screen) => {
-    setScreenState(v);
-    ls.set("screen", v);
-  }, []);
-  const setScope = useCallback((v: Scope) => {
-    setScopeState(v);
-    ls.set("scope", v);
-  }, []);
+
+  const setScreen = useCallback(
+    (v: Screen) => {
+      const path =
+        v === "overview"
+          ? "/overview"
+          : v === "resources"
+            ? buildResourcePath(null)
+            : buildLogPath(null);
+      const url = withQuery(path, loc.query);
+      if (url === router.getSnapshot()) return;
+      router.push(url);
+    },
+    [loc.query],
+  );
+
+  const setScope = useCallback(
+    (v: Scope) => {
+      ls.set("scope", v);
+      const next = new URLSearchParams(loc.query);
+      next.set("account", v.account);
+      next.set("region", v.region);
+      router.push(withQuery(loc.path, next));
+    },
+    [loc.query, loc.path],
+  );
+
+  const setSelId = useCallback(
+    (id: string | null) => {
+      if (id === null)
+        router.closeDrawer(withQuery(buildLogPath(null), loc.query));
+      else router.push(withQuery(buildLogPath(id), loc.query));
+    },
+    [loc.query],
+  );
+
+  const setSel = useCallback(
+    (next: { service: string; key: string } | null, replace?: boolean) => {
+      const url = withQuery(buildResourcePath(next), loc.query);
+      if (replace) router.replace(url);
+      else router.push(url);
+    },
+    [loc.query],
+  );
+
+  const setQuery = useCallback(
+    (key: string, value: string | null, replace?: boolean) => {
+      const next = new URLSearchParams(loc.query);
+      if (value) next.set(key, value);
+      else next.delete(key);
+      const url = withQuery(loc.path, next);
+      if (replace) router.replace(url);
+      else router.push(url);
+    },
+    [loc.query, loc.path],
+  );
+
+  useEffect(() => {
+    const path = route === null || loc.path === "/" ? "/log" : loc.path;
+    const next = new URLSearchParams(loc.query);
+    if (!next.has("account")) next.set("account", scope.account);
+    if (!next.has("region")) next.set("region", scope.region);
+    const url = withQuery(path, next);
+    if (url !== router.getSnapshot()) router.replace(url);
+  }, [route, loc.path, loc.query, scope.account, scope.region]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -150,6 +225,31 @@ export function App() {
     [resources, scope],
   );
 
+  const svcFilter = useMemo(() => {
+    const raw = loc.query.get("svc");
+    return raw ? raw.split(",").filter(Boolean) : [];
+  }, [loc.query]);
+  const statusFilter = statusFilters.includes(
+    loc.query.get("status") as StatusFilter,
+  )
+    ? (loc.query.get("status") as StatusFilter)
+    : "all";
+  const q = loc.query.get("q") ?? "";
+
+  const onSvcFilter = useCallback(
+    (next: string[]) =>
+      setQuery("svc", next.length ? next.join(",") : null, true),
+    [setQuery],
+  );
+  const onStatusFilter = useCallback(
+    (next: string) => setQuery("status", next === "all" ? null : next, true),
+    [setQuery],
+  );
+  const onQ = useCallback(
+    (next: string) => setQuery("q", next || null, true),
+    [setQuery],
+  );
+
   return (
     <div className="app">
       <Sidebar
@@ -187,6 +287,14 @@ export function App() {
             setLive={setLive}
             clearRequests={clearRequests}
             connected={connected}
+            selId={selId}
+            onSelect={setSelId}
+            svcFilter={svcFilter}
+            onSvcFilter={onSvcFilter}
+            statusFilter={statusFilter}
+            onStatusFilter={onStatusFilter}
+            q={q}
+            onQ={onQ}
           />
         )}
         {screen === "resources" && (
@@ -194,6 +302,8 @@ export function App() {
             scope={scope}
             connected={connected}
             refreshToken={resourceToken}
+            sel={sel}
+            onSelect={setSel}
           />
         )}
       </div>

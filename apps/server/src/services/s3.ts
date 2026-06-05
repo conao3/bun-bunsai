@@ -17,6 +17,8 @@ type S3Object = {
   size: number;
   lastModified: number;
   tagSet: S3Tag[];
+  userMetadata: Record<string, string>;
+  storageClass: string;
 };
 
 type S3Tag = {
@@ -38,6 +40,8 @@ type S3Upload = {
   initiated: number;
   contentType: string;
   parts: Record<string, S3Part>;
+  userMetadata: Record<string, string>;
+  storageClass: string;
 };
 
 type S3Bucket = {
@@ -61,6 +65,12 @@ type S3Bucket = {
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
+
+const md5Hex = (value: Uint8Array): string =>
+  new Bun.CryptoHasher("md5").update(value).digest("hex");
+
+const md5Bytes = (value: Uint8Array): Uint8Array =>
+  new Bun.CryptoHasher("md5").update(value).digest();
 
 const hashBody = (value: Uint8Array): string => {
   let hash = 0x811c9dc5;
@@ -285,14 +295,16 @@ const s3: ServiceDefinition = {
       getBucket(ctx, bucket);
       return {};
     },
-    PutObject: (_input, ctx, req) => {
+    PutObject: (input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
       if (bucket === undefined || key === undefined) {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
       const body = req.bodyBytes;
-      const etag = `"${hashWithPrefix(`${key}:`, body)}"`;
+      const etag = `"${md5Hex(body)}"`;
+      const metadata = input["Metadata"];
+      const storageClass = input["StorageClass"];
       const object: S3Object = {
         key,
         body,
@@ -302,6 +314,12 @@ const s3: ServiceDefinition = {
         size: body.byteLength,
         lastModified: nowSeconds(),
         tagSet: [],
+        userMetadata:
+          typeof metadata === "object" && metadata !== null
+            ? (metadata as Record<string, string>)
+            : {},
+        storageClass:
+          typeof storageClass === "string" ? storageClass : "STANDARD",
       };
       const next: S3Bucket = {
         ...target,
@@ -322,9 +340,14 @@ const s3: ServiceDefinition = {
       }
       return {
         Body: object.body,
+        ContentType: object.contentType,
         ContentLength: object.size,
         ETag: object.etag,
         LastModified: object.lastModified,
+        Metadata: object.userMetadata,
+        ...(object.storageClass === "STANDARD"
+          ? {}
+          : { StorageClass: object.storageClass }),
       };
     },
     HeadObject: (_input, ctx, req) => {
@@ -338,9 +361,14 @@ const s3: ServiceDefinition = {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
       return {
+        ContentType: object.contentType,
         ContentLength: object.size,
         ETag: object.etag,
         LastModified: object.lastModified,
+        Metadata: object.userMetadata,
+        ...(object.storageClass === "STANDARD"
+          ? {}
+          : { StorageClass: object.storageClass }),
       };
     },
     ListObjectsV2: (_input, ctx, req) => {
@@ -364,7 +392,7 @@ const s3: ServiceDefinition = {
           LastModified: o.lastModified,
           ETag: o.etag,
           Size: o.size,
-          StorageClass: "STANDARD",
+          StorageClass: o.storageClass,
         })),
       };
     },
@@ -404,7 +432,7 @@ const s3: ServiceDefinition = {
           LastModified: o.lastModified,
           ETag: o.etag,
           Size: o.size,
-          StorageClass: "STANDARD",
+          StorageClass: o.storageClass,
         })),
       };
     },
@@ -441,6 +469,8 @@ const s3: ServiceDefinition = {
         size: source.size,
         lastModified,
         tagSet: [],
+        userMetadata: source.userMetadata,
+        storageClass: source.storageClass,
       };
       ctx.store.set<S3Bucket>(bucket, {
         ...target,
@@ -493,7 +523,7 @@ const s3: ServiceDefinition = {
       getBucket(ctx, bucket);
       return { LocationConstraint: req.region };
     },
-    CreateMultipartUpload: (_input, ctx, req) => {
+    CreateMultipartUpload: (input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
       if (bucket === undefined || key === undefined) {
         throw awsError("InvalidRequest", "bucket and key required", 400);
@@ -503,6 +533,8 @@ const s3: ServiceDefinition = {
         `${key}:${Date.now()}:${Math.random()}`,
         new Uint8Array(0),
       );
+      const metadata = input["Metadata"];
+      const storageClass = input["StorageClass"];
       const upload: S3Upload = {
         uploadId,
         key,
@@ -510,6 +542,12 @@ const s3: ServiceDefinition = {
         contentType:
           req.headers.get("content-type") ?? "application/octet-stream",
         parts: {},
+        userMetadata:
+          typeof metadata === "object" && metadata !== null
+            ? (metadata as Record<string, string>)
+            : {},
+        storageClass:
+          typeof storageClass === "string" ? storageClass : "STANDARD",
       };
       ctx.store.set<S3Bucket>(bucket, {
         ...target,
@@ -538,7 +576,7 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidArgument", "invalid partNumber", 400);
       }
       const body = req.bodyBytes;
-      const etag = `"${hashWithPrefix(`${uploadId}:${partNumber}:`, body)}"`;
+      const etag = `"${md5Hex(body)}"`;
       const part: S3Part = {
         partNumber,
         body,
@@ -587,20 +625,19 @@ const s3: ServiceDefinition = {
         : Object.values(upload.parts)
             .map((p) => p.partNumber)
             .sort((a, b) => a - b);
-      const combined = concatBytes(
-        requested.map((partNumber) => {
-          const part = upload.parts[String(partNumber)];
-          if (part === undefined) {
-            throw awsError(
-              "InvalidPart",
-              "One or more of the specified parts could not be found.",
-              400,
-            );
-          }
-          return part.body;
-        }),
-      );
-      const etag = `"${hashWithPrefix(`${key}:`, combined)}-${requested.length}"`;
+      const bodies = requested.map((partNumber) => {
+        const part = upload.parts[String(partNumber)];
+        if (part === undefined) {
+          throw awsError(
+            "InvalidPart",
+            "One or more of the specified parts could not be found.",
+            400,
+          );
+        }
+        return part.body;
+      });
+      const combined = concatBytes(bodies);
+      const etag = `"${md5Hex(concatBytes(bodies.map(md5Bytes)))}-${requested.length}"`;
       const object: S3Object = {
         key,
         body: combined,
@@ -609,6 +646,8 @@ const s3: ServiceDefinition = {
         size: combined.byteLength,
         lastModified: nowSeconds(),
         tagSet: [],
+        userMetadata: upload.userMetadata,
+        storageClass: upload.storageClass,
       };
       const rest = { ...target.uploads };
       delete rest[uploadId];

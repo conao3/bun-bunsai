@@ -657,6 +657,148 @@ const DeleteRule: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DeleteSecurityProfile: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const securityProfileId = requireString(input, "SecurityProfileId");
+  const stored = ctx.store.get<StoredSecurityProfile>(
+    securityProfileKey(instanceId, securityProfileId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `SecurityProfile ${securityProfileId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(securityProfileKey(instanceId, securityProfileId));
+  return {};
+};
+
+const DeleteTaskTemplate: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeleteTestCase: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeleteTrafficDistributionGroup: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
+const DeleteUseCase: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeleteUser: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const userId = requireString(input, "UserId");
+  const stored = ctx.store.get<StoredUser>(userKey(instanceId, userId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `User ${userId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(userKey(instanceId, userId));
+  return {};
+};
+
+const DeleteUserHierarchyGroup: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hierarchyGroupId = requireString(input, "HierarchyGroupId");
+  const stored = ctx.store.get<StoredUserHierarchyGroup>(
+    userHierarchyGroupKey(instanceId, hierarchyGroupId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `UserHierarchyGroup ${hierarchyGroupId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(userHierarchyGroupKey(instanceId, hierarchyGroupId));
+  return {};
+};
+
+const DeleteView: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const viewId = requireString(input, "ViewId");
+  const stored = ctx.store.get<StoredView>(viewKey(instanceId, viewId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `View ${viewId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(viewKey(instanceId, viewId));
+  return {};
+};
+
+const DeleteViewVersion: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeleteVocabulary: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const vocabularyId = requireString(input, "VocabularyId");
+  const stored = ctx.store.get<StoredVocabulary>(
+    vocabularyKey(instanceId, vocabularyId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Vocabulary ${vocabularyId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(vocabularyKey(instanceId, vocabularyId));
+  return {
+    VocabularyArn: stored.VocabularyArn,
+    VocabularyId: stored.VocabularyId,
+    State: "DELETE_IN_PROGRESS",
+  };
+};
+
+const DeleteWorkspace: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const workspaceId = requireString(input, "WorkspaceId");
+  const stored = ctx.store.get<StoredWorkspace>(
+    workspaceKey(instanceId, workspaceId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Workspace ${workspaceId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(workspaceKey(instanceId, workspaceId));
+  return {};
+};
+
+const DeleteWorkspaceMedia: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
 const ActivateEvaluationForm: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
@@ -2103,6 +2245,20 @@ const connect = {
             parts[4] === "use-cases"
           )
             return "CreateUseCase";
+          if (
+            req.method === "DELETE" &&
+            parts[2] === "task" &&
+            parts[3] === "template"
+          )
+            return "DeleteTaskTemplate";
+        }
+        if (parts.length === 6) {
+          if (
+            req.method === "DELETE" &&
+            parts[2] === "integration-associations" &&
+            parts[4] === "use-cases"
+          )
+            return "DeleteUseCase";
         }
         return undefined;
 
@@ -2243,6 +2399,8 @@ const connect = {
       case "security-profiles":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateSecurityProfile";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteSecurityProfile";
         return undefined;
 
       case "associate-security-profiles":
@@ -2253,12 +2411,15 @@ const connect = {
       case "traffic-distribution-group":
         if (parts.length === 1 && req.method === "PUT")
           return "CreateTrafficDistributionGroup";
+        if (parts.length === 2 && req.method === "DELETE")
+          return "DeleteTrafficDistributionGroup";
         if (parts.length === 3 && parts[2] === "user" && req.method === "PUT")
           return "AssociateTrafficDistributionGroupUser";
         return undefined;
 
       case "users":
         if (parts.length === 2 && req.method === "PUT") return "CreateUser";
+        if (parts.length === 3 && req.method === "DELETE") return "DeleteUser";
         if (
           parts.length === 4 &&
           parts[3] === "associate-proficiencies" &&
@@ -2451,6 +2612,8 @@ const connect = {
 
       case "test-cases":
         if (parts.length === 2 && req.method === "PUT") return "CreateTestCase";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteTestCase";
         return undefined;
 
       case "attached-files-configurations":
@@ -2479,16 +2642,25 @@ const connect = {
       case "user-hierarchy-groups":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateUserHierarchyGroup";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteUserHierarchyGroup";
         return undefined;
 
       case "views":
         if (parts.length === 2 && req.method === "PUT") return "CreateView";
+        if (parts.length === 3 && req.method === "DELETE") return "DeleteView";
         if (
           parts.length === 4 &&
           parts[3] === "versions" &&
           req.method === "PUT"
         )
           return "CreateViewVersion";
+        if (
+          parts.length === 5 &&
+          parts[3] === "versions" &&
+          req.method === "DELETE"
+        )
+          return "DeleteViewVersion";
         return undefined;
 
       case "vocabulary":
@@ -2496,9 +2668,16 @@ const connect = {
           return "CreateVocabulary";
         return undefined;
 
+      case "vocabulary-remove":
+        if (parts.length === 3 && req.method === "POST")
+          return "DeleteVocabulary";
+        return undefined;
+
       case "workspaces":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateWorkspace";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteWorkspace";
         if (
           parts.length === 4 &&
           parts[3] === "associate" &&
@@ -2507,6 +2686,12 @@ const connect = {
           return "AssociateWorkspace";
         if (parts.length === 4 && parts[3] === "pages" && req.method === "PUT")
           return "CreateWorkspacePage";
+        if (
+          parts.length === 4 &&
+          parts[3] === "media" &&
+          req.method === "DELETE"
+        )
+          return "DeleteWorkspaceMedia";
         return undefined;
 
       default:
@@ -2540,6 +2725,18 @@ const connect = {
     DeleteQuickConnect,
     DeleteRoutingProfile,
     DeleteRule,
+    DeleteSecurityProfile,
+    DeleteTaskTemplate,
+    DeleteTestCase,
+    DeleteTrafficDistributionGroup,
+    DeleteUseCase,
+    DeleteUser,
+    DeleteUserHierarchyGroup,
+    DeleteView,
+    DeleteViewVersion,
+    DeleteVocabulary,
+    DeleteWorkspace,
+    DeleteWorkspaceMedia,
     ActivateEvaluationForm,
     DeactivateEvaluationForm,
     AssociateAnalyticsDataSet,

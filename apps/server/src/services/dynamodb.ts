@@ -1,11 +1,18 @@
 import { compareAV, equalsAV } from "../core/expressions/attribute.ts";
 import { evaluateCondition } from "../core/expressions/evaluator-condition.ts";
 import { resolveKeyCondition } from "../core/expressions/evaluator-key-condition.ts";
+import { projectItem } from "../core/expressions/evaluator-projection.ts";
 import { applyUpdate } from "../core/expressions/evaluator-update.ts";
 import { parseConditionExpression } from "../core/expressions/parser-condition.ts";
 import { parseKeyConditionExpression } from "../core/expressions/parser-key-condition.ts";
+import { parseProjectionExpression } from "../core/expressions/parser-projection.ts";
 import { parseUpdateExpression } from "../core/expressions/parser-update.ts";
-import type { KeyConditionResult } from "../core/expressions/types.ts";
+import type {
+  AttributePath,
+  KeyConditionResult,
+  ProjectionAST,
+  UpdateAST,
+} from "../core/expressions/types.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import dynamodbModel from "../../../../test/vendor/aws-models/dynamodb.json" with { type: "json" };
@@ -306,6 +313,62 @@ const tableDescription = (
 const asItem = (value: unknown): Item =>
   typeof value === "object" && value !== null ? (value as Item) : ({} as Item);
 
+const buildProjection = (
+  input: Record<string, unknown>,
+): ProjectionAST | undefined => {
+  const expression = input["ProjectionExpression"];
+  if (typeof expression !== "string" || expression === "") return undefined;
+  const names = asRecord(input["ExpressionAttributeNames"]) as Record<
+    string,
+    string
+  >;
+  return parseProjectionExpression(expression, { names });
+};
+
+const applyProjection = (ast: ProjectionAST | undefined, item: Item): Item =>
+  ast === undefined ? item : projectItem(ast, item);
+
+const collectUpdatePaths = (ast: UpdateAST): AttributePath[] => {
+  const out: AttributePath[] = [];
+  for (const section of ast.sections) {
+    for (const action of section.actions) {
+      out.push(action.target);
+    }
+  }
+  return out;
+};
+
+const updateReturnAttributes = (
+  returnValues: unknown,
+  previous: Item | undefined,
+  updated: Item,
+  updatedPaths: AttributePath[],
+): { Attributes?: Item } => {
+  if (
+    typeof returnValues !== "string" ||
+    returnValues === "" ||
+    returnValues === "NONE"
+  ) {
+    return {};
+  }
+  if (returnValues === "ALL_NEW") {
+    return { Attributes: updated };
+  }
+  if (returnValues === "ALL_OLD") {
+    return previous === undefined ? {} : { Attributes: previous };
+  }
+  if (returnValues === "UPDATED_NEW") {
+    return { Attributes: projectItem({ paths: updatedPaths }, updated) };
+  }
+  if (returnValues === "UPDATED_OLD") {
+    if (previous === undefined) return {};
+    return {
+      Attributes: projectItem({ paths: updatedPaths }, previous),
+    };
+  }
+  return {};
+};
+
 const ensureConditionPasses = (
   input: Record<string, unknown>,
   current: Item | undefined,
@@ -434,7 +497,9 @@ const GetItem: OperationHandler = (input, ctx) => {
   const table = requireTable(ctx, name);
   const key = keyFromKeyInput(table, asItem(input["Key"]));
   const item = table.items[key];
-  return item === undefined ? {} : { Item: item };
+  if (item === undefined) return {};
+  const projection = buildProjection(input);
+  return { Item: applyProjection(projection, item) };
 };
 
 const DeleteItem: OperationHandler = (input, ctx) => {
@@ -491,6 +556,7 @@ const UpdateItem: OperationHandler = (input, ctx) => {
   ensureConditionPasses(input, previous);
   const existing = previous ?? { ...asItem(input["Key"]) };
   let updated: Item;
+  let touchedPaths: AttributePath[] = [];
   const expression = input["UpdateExpression"];
   if (typeof expression === "string" && expression !== "") {
     const values = asRecord(input["ExpressionAttributeValues"]) as Record<
@@ -506,6 +572,7 @@ const UpdateItem: OperationHandler = (input, ctx) => {
       values,
     });
     updated = applyUpdate(ast, existing);
+    touchedPaths = collectUpdatePaths(ast);
   } else {
     updated = { ...existing };
     const updates = input["AttributeUpdates"];
@@ -513,6 +580,7 @@ const UpdateItem: OperationHandler = (input, ctx) => {
       for (const [attribute, action] of Object.entries(
         updates as Record<string, Record<string, unknown>>,
       )) {
+        touchedPaths.push({ root: attribute, steps: [] });
         const operation = action["Action"];
         if (operation === "DELETE") {
           delete updated[attribute];
@@ -535,7 +603,12 @@ const UpdateItem: OperationHandler = (input, ctx) => {
   }
   table.items[key] = updated;
   ctx.store.set(name, table);
-  return input["ReturnValues"] === "ALL_NEW" ? { Attributes: updated } : {};
+  return updateReturnAttributes(
+    input["ReturnValues"],
+    previous,
+    updated,
+    touchedPaths,
+  );
 };
 
 const matchesKeyConditions = (
@@ -780,8 +853,9 @@ const Query: OperationHandler = (input, ctx) => {
       : remainder.length;
   const window = remainder.slice(0, limit);
   const filtered = filterByExpression(window, input);
+  const projection = buildProjection(input);
   const result: Record<string, unknown> = {
-    Items: filtered,
+    Items: filtered.map((item) => applyProjection(projection, item)),
     Count: filtered.length,
     ScannedCount: window.length,
   };
@@ -807,8 +881,9 @@ const Scan: OperationHandler = (input, ctx) => {
   const all = Object.values(table.items);
   const matched = all.filter((item) => matchesKeyConditions(item, filter));
   const items = filterByExpression(matched, input);
+  const projection = buildProjection(input);
   return {
-    Items: items,
+    Items: items.map((item) => applyProjection(projection, item)),
     Count: items.length,
     ScannedCount: all.length,
   };
@@ -860,13 +935,15 @@ const BatchGetItem: OperationHandler = (input, ctx) => {
   const responses: Record<string, Item[]> = {};
   for (const [name, spec] of Object.entries(requestItems)) {
     const table = requireTable(ctx, name);
-    const keys = Array.isArray(asRecord(spec)["Keys"])
-      ? (asRecord(spec)["Keys"] as Item[])
+    const specRecord = asRecord(spec);
+    const keys = Array.isArray(specRecord["Keys"])
+      ? (specRecord["Keys"] as Item[])
       : [];
+    const projection = buildProjection(specRecord);
     const found: Item[] = [];
     for (const key of keys) {
       const item = table.items[keyFromKeyInput(table, asItem(key))];
-      if (item !== undefined) found.push(item);
+      if (item !== undefined) found.push(applyProjection(projection, item));
     }
     responses[name] = found;
   }

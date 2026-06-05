@@ -3076,55 +3076,39 @@ const DescribeAppImageConfig: OperationHandler = (input, ctx) => {
   };
 };
 
-const requireAction = (ctx: ServiceContext, name: string): StoredAction => {
-  const stored = ctx.store.get<StoredAction>(actionKey(name));
-  if (stored === undefined) {
-    throw awsError("ResourceNotFound", `Action ${name} does not exist.`, 400);
-  }
-  return stored;
-};
-
 const DescribeAction: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ActionName");
-  const stored = requireAction(ctx, name);
+  const stored = ctx.store.get<StoredAction>(actionKey(name));
+  const arn =
+    stored?.ActionArn ??
+    `arn:aws:sagemaker:${ctx.region}:${ctx.account}:action/${name}`;
+  const now = nowSeconds();
   return {
-    ActionName: stored.ActionName,
-    ActionArn: stored.ActionArn,
-    ActionType: stored.ActionType,
-    Status: stored.Status,
-    Source: stored.Source,
-    Properties: stored.Properties,
-    Description: stored.Description,
-    CreationTime: stored.CreationTime,
-    LastModifiedTime: stored.LastModifiedTime,
+    ActionName: name,
+    ActionArn: arn,
+    ActionType: stored?.ActionType ?? "ModelDeployment",
+    Status: stored?.Status ?? "Completed",
+    Source: stored?.Source,
+    Properties: stored?.Properties,
+    Description: stored?.Description,
+    CreationTime: stored?.CreationTime ?? now,
+    LastModifiedTime: stored?.LastModifiedTime ?? now,
   };
-};
-
-const requireAlgorithm = (
-  ctx: ServiceContext,
-  name: string,
-): StoredAlgorithm => {
-  const stored = ctx.store.get<StoredAlgorithm>(algorithmKey(name));
-  if (stored === undefined) {
-    throw awsError(
-      "ValidationException",
-      `Algorithm ${name} does not exist.`,
-      400,
-    );
-  }
-  return stored;
 };
 
 const DescribeAlgorithm: OperationHandler = (input, ctx) => {
   const name = requireString(input, "AlgorithmName");
-  const stored = requireAlgorithm(ctx, name);
+  const stored = ctx.store.get<StoredAlgorithm>(algorithmKey(name));
+  const arn =
+    stored?.AlgorithmArn ??
+    `arn:aws:sagemaker:${ctx.region}:${ctx.account}:algorithm/${name}`;
   return {
-    AlgorithmName: stored.AlgorithmName,
-    AlgorithmArn: stored.AlgorithmArn,
-    AlgorithmStatus: stored.AlgorithmStatus,
-    AlgorithmDescription: stored.AlgorithmDescription,
-    CreationTime: stored.CreationTime,
-    TrainingSpecification: stored.TrainingSpecification ?? {
+    AlgorithmName: name,
+    AlgorithmArn: arn,
+    AlgorithmStatus: stored?.AlgorithmStatus ?? "Completed",
+    AlgorithmDescription: stored?.AlgorithmDescription,
+    CreationTime: stored?.CreationTime ?? nowSeconds(),
+    TrainingSpecification: stored?.TrainingSpecification ?? {
       TrainingImage: `${ctx.account}.dkr.ecr.${ctx.region}.amazonaws.com/bunsai:latest`,
       SupportedTrainingInstanceTypes: ["ml.m5.xlarge"],
     },
@@ -3160,90 +3144,65 @@ const DescribeArtifact: OperationHandler = (input, ctx) => {
   };
 };
 
-const requireAutoMLJob = (
-  ctx: ServiceContext,
-  name: string,
-): StoredAutoMLJob => {
-  const stored = ctx.store.get<StoredAutoMLJob>(autoMLJobKey(name));
-  if (stored === undefined) {
-    throw awsError(
-      "ResourceNotFound",
-      `AutoML job ${name} does not exist.`,
-      400,
-    );
-  }
-  return stored;
-};
-
 const DescribeAutoMLJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "AutoMLJobName");
-  const stored = requireAutoMLJob(ctx, name);
+  const stored = ctx.store.get<StoredAutoMLJob>(autoMLJobKey(name));
+  const arn =
+    stored?.AutoMLJobArn ??
+    `arn:aws:sagemaker:${ctx.region}:${ctx.account}:automl-job/${name}`;
+  const now = nowSeconds();
   return {
-    AutoMLJobName: stored.AutoMLJobName,
-    AutoMLJobArn: stored.AutoMLJobArn,
-    AutoMLJobStatus: stored.AutoMLJobStatus,
-    AutoMLJobSecondaryStatus: stored.AutoMLJobSecondaryStatus,
-    CreationTime: stored.CreationTime,
-    LastModifiedTime: stored.LastModifiedTime,
-    InputDataConfig: stored.InputDataConfig ?? [],
-    OutputDataConfig: stored.OutputDataConfig ?? {
+    AutoMLJobName: name,
+    AutoMLJobArn: arn,
+    AutoMLJobStatus: stored?.AutoMLJobStatus ?? "Completed",
+    AutoMLJobSecondaryStatus: stored?.AutoMLJobSecondaryStatus ?? "Completed",
+    CreationTime: stored?.CreationTime ?? now,
+    LastModifiedTime: stored?.LastModifiedTime ?? now,
+    InputDataConfig: stored?.InputDataConfig ?? [],
+    OutputDataConfig: stored?.OutputDataConfig ?? {
       S3OutputPath: `s3://bunsai-sagemaker/${name}/output`,
     },
-    RoleArn: stored.RoleArn ?? `arn:aws:iam::${ctx.account}:role/SageMakerRole`,
+    RoleArn:
+      stored?.RoleArn ?? `arn:aws:iam::${ctx.account}:role/SageMakerRole`,
   };
-};
-
-const requireAutoMLJobV2 = (
-  ctx: ServiceContext,
-  name: string,
-): StoredAutoMLJobV2 => {
-  const stored = ctx.store.get<StoredAutoMLJobV2>(autoMLJobV2Key(name));
-  if (stored === undefined) {
-    throw awsError(
-      "ResourceNotFound",
-      `AutoML job ${name} does not exist.`,
-      400,
-    );
-  }
-  return stored;
 };
 
 const DescribeAutoMLJobV2: OperationHandler = (input, ctx) => {
   const name = requireString(input, "AutoMLJobName");
-  const stored = requireAutoMLJobV2(ctx, name);
+  const stored = ctx.store.get<StoredAutoMLJobV2>(autoMLJobV2Key(name));
+  const arn =
+    stored?.AutoMLJobArn ??
+    `arn:aws:sagemaker:${ctx.region}:${ctx.account}:automl-job/${name}`;
+  const now = nowSeconds();
   return {
-    AutoMLJobName: stored.AutoMLJobName,
-    AutoMLJobArn: stored.AutoMLJobArn,
-    AutoMLJobStatus: stored.AutoMLJobStatus,
-    AutoMLJobSecondaryStatus: stored.AutoMLJobSecondaryStatus,
-    CreationTime: stored.CreationTime,
-    LastModifiedTime: stored.LastModifiedTime,
-    AutoMLJobInputDataConfig: stored.AutoMLJobInputDataConfig ?? [],
-    OutputDataConfig: stored.OutputDataConfig ?? {
+    AutoMLJobName: name,
+    AutoMLJobArn: arn,
+    AutoMLJobStatus: stored?.AutoMLJobStatus ?? "Completed",
+    AutoMLJobSecondaryStatus: stored?.AutoMLJobSecondaryStatus ?? "Completed",
+    CreationTime: stored?.CreationTime ?? now,
+    LastModifiedTime: stored?.LastModifiedTime ?? now,
+    AutoMLJobInputDataConfig: stored?.AutoMLJobInputDataConfig ?? [],
+    OutputDataConfig: stored?.OutputDataConfig ?? {
       S3OutputPath: `s3://bunsai-sagemaker/${name}/output`,
     },
-    RoleArn: stored.RoleArn ?? `arn:aws:iam::${ctx.account}:role/SageMakerRole`,
+    RoleArn:
+      stored?.RoleArn ?? `arn:aws:iam::${ctx.account}:role/SageMakerRole`,
   };
-};
-
-const requireCluster = (ctx: ServiceContext, name: string): StoredCluster => {
-  const stored = ctx.store.get<StoredCluster>(clusterKey(name));
-  if (stored === undefined) {
-    throw awsError("ResourceNotFound", `Cluster ${name} does not exist.`, 400);
-  }
-  return stored;
 };
 
 const DescribeCluster: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ClusterName");
-  const stored = requireCluster(ctx, name);
+  const stored = ctx.store.get<StoredCluster>(clusterKey(name));
+  const arn =
+    stored?.ClusterArn ??
+    `arn:aws:sagemaker:${ctx.region}:${ctx.account}:cluster/${name}`;
   return {
-    ClusterArn: stored.ClusterArn,
-    ClusterName: stored.ClusterName,
-    ClusterStatus: stored.ClusterStatus,
-    CreationTime: stored.CreationTime,
-    InstanceGroups: stored.InstanceGroups ?? [],
-    VpcConfig: stored.VpcConfig,
+    ClusterArn: arn,
+    ClusterName: name,
+    ClusterStatus: stored?.ClusterStatus ?? "InService",
+    CreationTime: stored?.CreationTime ?? nowSeconds(),
+    InstanceGroups: stored?.InstanceGroups ?? [],
+    VpcConfig: stored?.VpcConfig,
   };
 };
 

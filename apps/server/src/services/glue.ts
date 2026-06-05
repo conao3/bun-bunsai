@@ -3695,6 +3695,237 @@ const GetEntityRecords: OperationHandler = (input, _ctx) => {
   return { Records: [], NextToken: undefined };
 };
 
+const GetGlueIdentityCenterConfiguration: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<StoredGlueIdc>(glueIdcPrefix);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      "GlueIdentityCenterConfiguration not found.",
+      400,
+    );
+  }
+  return {
+    InstanceArn: stored.instanceArn,
+    ApplicationArn: stored.applicationArn,
+    ...(typeof stored.input["CatalogId"] === "string"
+      ? { CatalogId: stored.input["CatalogId"] }
+      : {}),
+  };
+};
+
+const GetIntegrationResourceProperty: OperationHandler = (input, ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string" ? input["ResourceArn"] : "";
+  if (resourceArn === "") {
+    throw awsError("InvalidInputException", "ResourceArn is required.", 400);
+  }
+  const key = `${integrationResourcePropertyPrefix}${resourceArn}`;
+  const stored = ctx.store.get<StoredIntegrationResourceProperty>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `IntegrationResourceProperty for ${resourceArn} not found.`,
+      400,
+    );
+  }
+  return {
+    ResourceArn: stored.resourceArn,
+    ResourcePropertyArn: stored.resourcePropertyArn,
+    ...(stored.sourceProcessingProperties !== undefined
+      ? { SourceProcessingProperties: stored.sourceProcessingProperties }
+      : {}),
+    ...(stored.targetProcessingProperties !== undefined
+      ? { TargetProcessingProperties: stored.targetProcessingProperties }
+      : {}),
+  };
+};
+
+const GetMLTaskRun: OperationHandler = (input, ctx) => {
+  const transformId =
+    typeof input["TransformId"] === "string" ? input["TransformId"] : "";
+  const taskRunId =
+    typeof input["TaskRunId"] === "string" ? input["TaskRunId"] : "";
+  if (transformId === "") {
+    throw awsError("InvalidInputException", "TransformId is required.", 400);
+  }
+  if (taskRunId === "") {
+    throw awsError("InvalidInputException", "TaskRunId is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredMLTransform>(`${mlTransformPrefix}${transformId}`) ===
+    undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `MLTransform ${transformId} not found.`,
+      400,
+    );
+  }
+  return {
+    TransformId: transformId,
+    TaskRunId: taskRunId,
+    Status: "SUCCEEDED",
+    StartedOn: Math.floor(Date.now() / 1000) - 120,
+    CompletedOn: Math.floor(Date.now() / 1000),
+    Properties: { TaskType: "LABELING_SET_GENERATION" },
+  };
+};
+
+const GetMLTaskRuns: OperationHandler = (input, ctx) => {
+  const transformId =
+    typeof input["TransformId"] === "string" ? input["TransformId"] : "";
+  if (transformId === "") {
+    throw awsError("InvalidInputException", "TransformId is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredMLTransform>(`${mlTransformPrefix}${transformId}`) ===
+    undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `MLTransform ${transformId} not found.`,
+      400,
+    );
+  }
+  return { TaskRuns: [] };
+};
+
+const mlTransformView = (
+  stored: StoredMLTransform,
+): Record<string, unknown> => ({
+  TransformId: stored.transformId,
+  ...(typeof stored.input["Name"] === "string"
+    ? { Name: stored.input["Name"] }
+    : {}),
+  ...(typeof stored.input["Description"] === "string"
+    ? { Description: stored.input["Description"] }
+    : {}),
+  ...(typeof stored.input["Role"] === "string"
+    ? { Role: stored.input["Role"] }
+    : {}),
+  ...(typeof stored.input["GlueVersion"] === "string"
+    ? { GlueVersion: stored.input["GlueVersion"] }
+    : {}),
+  ...(typeof stored.input["WorkerType"] === "string"
+    ? { WorkerType: stored.input["WorkerType"] }
+    : {}),
+  ...(typeof stored.input["NumberOfWorkers"] === "number"
+    ? { NumberOfWorkers: stored.input["NumberOfWorkers"] }
+    : {}),
+  ...(typeof stored.input["InputRecordTables"] === "object" &&
+  stored.input["InputRecordTables"] !== null
+    ? { InputRecordTables: stored.input["InputRecordTables"] }
+    : {}),
+  ...(typeof stored.input["Parameters"] === "object" &&
+  stored.input["Parameters"] !== null
+    ? { Parameters: stored.input["Parameters"] }
+    : {}),
+  TransformType: "FIND_MATCHES",
+  Status: "READY",
+  CreatedOn: stored.createdOn,
+  LastModifiedOn: stored.lastModifiedOn,
+});
+
+const GetMLTransform: OperationHandler = (input, ctx) => {
+  const transformId =
+    typeof input["TransformId"] === "string" ? input["TransformId"] : "";
+  if (transformId === "") {
+    throw awsError("InvalidInputException", "TransformId is required.", 400);
+  }
+  const stored = ctx.store.get<StoredMLTransform>(
+    `${mlTransformPrefix}${transformId}`,
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `MLTransform ${transformId} not found.`,
+      400,
+    );
+  }
+  return mlTransformView(stored);
+};
+
+const GetMLTransforms: OperationHandler = (_input, ctx) => {
+  const transforms = ctx.store
+    .list<StoredMLTransform>()
+    .filter((entry) => entry.key.startsWith(mlTransformPrefix))
+    .map((entry) => mlTransformView(entry.value));
+  return { Transforms: transforms };
+};
+
+const GetMapping: OperationHandler = (input, _ctx) => {
+  const source =
+    typeof input["Source"] === "object" && input["Source"] !== null
+      ? input["Source"]
+      : {};
+  if (Object.keys(source).length === 0) {
+    throw awsError("InvalidInputException", "Source is required.", 400);
+  }
+  return { Mapping: [] };
+};
+
+const GetMaterializedViewRefreshTaskRun: OperationHandler = (input, _ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  const taskRunId =
+    typeof input["TaskRunId"] === "string" ? input["TaskRunId"] : "";
+  if (databaseName === "" || tableName === "" || taskRunId === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName, TableName, and TaskRunId are required.",
+      400,
+    );
+  }
+  return {
+    RefreshTaskRunId: taskRunId,
+    Status: "SUCCEEDED",
+    StartTime: Math.floor(Date.now() / 1000) - 60,
+    EndTime: Math.floor(Date.now() / 1000),
+  };
+};
+
+const GetPlan: OperationHandler = (input, _ctx) => {
+  const mapping = Array.isArray(input["Mapping"]) ? input["Mapping"] : [];
+  const language =
+    typeof input["Language"] === "string" ? input["Language"] : "PYTHON";
+  if (language === "SCALA") {
+    return {
+      ScalaCode: `// Generated Scala plan for ${mapping.length} mappings`,
+    };
+  }
+  return {
+    PythonScript: `# Generated Python plan for ${mapping.length} mappings\n`,
+  };
+};
+
+const GetRegistry: OperationHandler = (input, ctx) => {
+  const registryId = asRecord(input["RegistryId"] ?? {});
+  const { name, stored } = requireRegistryByid(ctx, registryId);
+  return {
+    RegistryName: name,
+    RegistryArn: stored.registryArn,
+    Description: stored.description,
+    Status: "AVAILABLE",
+    CreatedTime: String(Math.floor(Date.now() / 1000)),
+    UpdatedTime: String(Math.floor(Date.now() / 1000)),
+  };
+};
+
+const GetResourcePolicies: OperationHandler = (_input, _ctx) => {
+  return { GetResourcePoliciesResponseList: [] };
+};
+
+const GetResourcePolicy: OperationHandler = (_input, _ctx) => {
+  return {
+    PolicyInJson: JSON.stringify({ Version: "2012-10-17", Statement: [] }),
+    PolicyHash: "abc123",
+    CreateTime: Math.floor(Date.now() / 1000),
+    UpdateTime: Math.floor(Date.now() / 1000),
+  };
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -3838,6 +4069,18 @@ const glue: ServiceDefinition = {
     GetDevEndpoint,
     GetDevEndpoints,
     GetEntityRecords,
+    GetGlueIdentityCenterConfiguration,
+    GetIntegrationResourceProperty,
+    GetMLTaskRun,
+    GetMLTaskRuns,
+    GetMLTransform,
+    GetMLTransforms,
+    GetMapping,
+    GetMaterializedViewRefreshTaskRun,
+    GetPlan,
+    GetRegistry,
+    GetResourcePolicies,
+    GetResourcePolicy,
   },
   model,
 } as const;

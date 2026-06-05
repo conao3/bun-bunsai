@@ -3388,8 +3388,7 @@ const GetBlueprint: OperationHandler = (input, ctx) => {
 const GetBlueprintRun: OperationHandler = (input, _ctx) => {
   const blueprintName =
     typeof input["BlueprintName"] === "string" ? input["BlueprintName"] : "";
-  const runId =
-    typeof input["RunId"] === "string" ? input["RunId"] : "";
+  const runId = typeof input["RunId"] === "string" ? input["RunId"] : "";
   if (blueprintName === "" || runId === "") {
     throw awsError(
       "InvalidInputException",
@@ -3523,6 +3522,179 @@ const GetColumnStatisticsTaskSettings: OperationHandler = (input, ctx) => {
   };
 };
 
+const GetCustomEntityType: OperationHandler = (input, ctx) => {
+  const name = requireName(asRecord(input));
+  const key = `${customEntityTypePrefix}${name}`;
+  const stored = ctx.store.get<StoredCustomEntityType>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `CustomEntityType ${name} not found.`,
+      400,
+    );
+  }
+  return {
+    Name: stored.name,
+    RegexString: stored.regexString,
+    ...(stored.contextWords.length > 0
+      ? { ContextWords: stored.contextWords }
+      : {}),
+  };
+};
+
+const GetDataCatalogEncryptionSettings: OperationHandler = (_input, _ctx) => {
+  return {
+    DataCatalogEncryptionSettings: {
+      EncryptionAtRest: { CatalogEncryptionMode: "DISABLED" },
+      ConnectionPasswordEncryption: {
+        ReturnConnectionPasswordEncrypted: false,
+      },
+    },
+  };
+};
+
+const GetDataQualityModel: OperationHandler = (input, _ctx) => {
+  const profileId =
+    typeof input["ProfileId"] === "string" ? input["ProfileId"] : "";
+  if (profileId === "") {
+    throw awsError("InvalidInputException", "ProfileId is required.", 400);
+  }
+  return {
+    Status: "SUCCEEDED",
+    StartedOn: Math.floor(Date.now() / 1000) - 60,
+    CompletedOn: Math.floor(Date.now() / 1000),
+  };
+};
+
+const GetDataQualityModelResult: OperationHandler = (input, _ctx) => {
+  const profileId =
+    typeof input["ProfileId"] === "string" ? input["ProfileId"] : "";
+  if (profileId === "") {
+    throw awsError("InvalidInputException", "ProfileId is required.", 400);
+  }
+  return {
+    ProfileId: profileId,
+    CompletedOn: Math.floor(Date.now() / 1000),
+    Model: [],
+  };
+};
+
+const GetDataQualityResult: OperationHandler = (input, _ctx) => {
+  const resultId =
+    typeof input["ResultId"] === "string" ? input["ResultId"] : "";
+  if (resultId === "") {
+    throw awsError("InvalidInputException", "ResultId is required.", 400);
+  }
+  return {
+    ResultId: resultId,
+    Score: 1.0,
+    RuleResults: [],
+  };
+};
+
+const GetDataQualityRuleRecommendationRun: OperationHandler = (input, _ctx) => {
+  const runId = typeof input["RunId"] === "string" ? input["RunId"] : "";
+  if (runId === "") {
+    throw awsError("InvalidInputException", "RunId is required.", 400);
+  }
+  return {
+    RunId: runId,
+    Status: "SUCCEEDED",
+    StartedOn: Math.floor(Date.now() / 1000) - 60,
+    CompletedOn: Math.floor(Date.now() / 1000),
+    RecommendedRuleset: "",
+  };
+};
+
+const GetDataQualityRuleset: OperationHandler = (input, ctx) => {
+  const name = requireName(asRecord(input));
+  const key = `${dqRulesetPrefix}${name}`;
+  const stored = ctx.store.get<StoredDataQualityRuleset>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `DataQualityRuleset ${name} not found.`,
+      400,
+    );
+  }
+  return {
+    Name: stored.name,
+    Ruleset:
+      typeof stored.input["Ruleset"] === "string"
+        ? stored.input["Ruleset"]
+        : "",
+    CreatedOn: stored.createdOn,
+    ...(typeof stored.input["Description"] === "string"
+      ? { Description: stored.input["Description"] }
+      : {}),
+    ...(typeof stored.input["TargetTable"] === "object" &&
+    stored.input["TargetTable"] !== null
+      ? { TargetTable: stored.input["TargetTable"] }
+      : {}),
+  };
+};
+
+const GetDataQualityRulesetEvaluationRun: OperationHandler = (input, _ctx) => {
+  const runId = typeof input["RunId"] === "string" ? input["RunId"] : "";
+  if (runId === "") {
+    throw awsError("InvalidInputException", "RunId is required.", 400);
+  }
+  return {
+    RunId: runId,
+    Status: "SUCCEEDED",
+    StartedOn: Math.floor(Date.now() / 1000) - 60,
+    CompletedOn: Math.floor(Date.now() / 1000),
+    RulesetNames: [],
+  };
+};
+
+const GetDataflowGraph: OperationHandler = (_input, _ctx) => {
+  return {
+    DagNodes: [],
+    DagEdges: [],
+  };
+};
+
+const GetDevEndpoint: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["EndpointName"] === "string"
+      ? (input["EndpointName"] as string)
+      : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "EndpointName is required.", 400);
+  }
+  const stored = ctx.store.get<StoredDevEndpoint>(
+    `${devEndpointPrefix}${name}`,
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `DevEndpoint ${name} not found.`,
+      400,
+    );
+  }
+  return { DevEndpoint: devEndpointView(name, stored) };
+};
+
+const GetDevEndpoints: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredDevEndpoint>()
+    .filter((entry) => entry.key.startsWith(devEndpointPrefix))
+    .map((entry) =>
+      devEndpointView(entry.key.slice(devEndpointPrefix.length), entry.value),
+    );
+  return { DevEndpoints: list };
+};
+
+const GetEntityRecords: OperationHandler = (input, _ctx) => {
+  const connectionName =
+    typeof input["ConnectionName"] === "string" ? input["ConnectionName"] : "";
+  if (connectionName === "") {
+    throw awsError("InvalidInputException", "ConnectionName is required.", 400);
+  }
+  return { Records: [], NextToken: undefined };
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -3654,6 +3826,18 @@ const glue: ServiceDefinition = {
     GetColumnStatisticsTaskRun,
     GetColumnStatisticsTaskRuns,
     GetColumnStatisticsTaskSettings,
+    GetCustomEntityType,
+    GetDataCatalogEncryptionSettings,
+    GetDataQualityModel,
+    GetDataQualityModelResult,
+    GetDataQualityResult,
+    GetDataQualityRuleRecommendationRun,
+    GetDataQualityRuleset,
+    GetDataQualityRulesetEvaluationRun,
+    GetDataflowGraph,
+    GetDevEndpoint,
+    GetDevEndpoints,
+    GetEntityRecords,
   },
   model,
 } as const;

@@ -7341,6 +7341,235 @@ const DeleteCapacityManagerDataExport: OperationHandler = (input, ctx) => {
   return { CapacityManagerDataExportId: id };
 };
 
+const DeleteCarrierGateway: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["CarrierGatewayId"] === "string"
+      ? input["CarrierGatewayId"]
+      : "";
+  const gateway = ctx.store.get<StoredCarrierGateway>(carrierGatewayKey(id));
+  if (gateway === undefined) {
+    throw awsError(
+      "InvalidCarrierGatewayID.NotFound",
+      `The carrier gateway ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(carrierGatewayKey(id));
+  return {
+    CarrierGateway: {
+      CarrierGatewayId: gateway.CarrierGatewayId,
+      VpcId: gateway.VpcId,
+      State: "deleted",
+      OwnerId: gateway.OwnerId,
+      Tags: gateway.Tags,
+    },
+  };
+};
+
+const DeleteClientVpnEndpoint: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["ClientVpnEndpointId"] === "string"
+      ? input["ClientVpnEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredClientVpnEndpoint>(
+    clientVpnEndpointKey(id),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidClientVpnEndpointId.NotFound",
+      `The Client VPN endpoint ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(clientVpnEndpointKey(id));
+  return { Status: { Code: "deleting", Message: "" } };
+};
+
+const DeleteClientVpnRoute: OperationHandler = (input, ctx) => {
+  const endpointId =
+    typeof input["ClientVpnEndpointId"] === "string"
+      ? input["ClientVpnEndpointId"]
+      : "";
+  const cidr =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "";
+  const route = ctx.store.get<StoredClientVpnRoute>(
+    clientVpnRouteKey(endpointId, cidr),
+  );
+  if (route === undefined) {
+    throw awsError(
+      "InvalidClientVpnRouteNotFound",
+      `The route '${cidr}' does not exist for endpoint '${endpointId}'`,
+      400,
+    );
+  }
+  ctx.store.delete(clientVpnRouteKey(endpointId, cidr));
+  return { Status: { Code: "deleting", Message: "" } };
+};
+
+const DeleteCoipCidr: OperationHandler = (input, ctx) => {
+  const cidr = typeof input["Cidr"] === "string" ? input["Cidr"] : "";
+  const poolId =
+    typeof input["CoipPoolId"] === "string" ? input["CoipPoolId"] : "";
+  const coipCidr = ctx.store.get<StoredCoipCidr>(coipCidrKey(poolId, cidr));
+  if (coipCidr === undefined) {
+    throw awsError(
+      "InvalidCoipCidr.NotFound",
+      `The COIP CIDR '${cidr}' does not exist in pool '${poolId}'`,
+      400,
+    );
+  }
+  ctx.store.delete(coipCidrKey(poolId, cidr));
+  const pool = ctx.store.get<StoredCoipPool>(coipPoolKey(poolId));
+  if (pool !== undefined) {
+    pool.PoolCidrs = pool.PoolCidrs.filter((c) => c !== cidr);
+    ctx.store.set(coipPoolKey(poolId), pool);
+  }
+  return {
+    CoipCidr: {
+      Cidr: coipCidr.Cidr,
+      CoipPoolId: coipCidr.CoipPoolId,
+      LocalGatewayRouteTableId: coipCidr.LocalGatewayRouteTableId,
+    },
+  };
+};
+
+const DeleteCoipPool: OperationHandler = (input, ctx) => {
+  const poolId =
+    typeof input["CoipPoolId"] === "string" ? input["CoipPoolId"] : "";
+  const pool = ctx.store.get<StoredCoipPool>(coipPoolKey(poolId));
+  if (pool === undefined) {
+    throw awsError(
+      "InvalidCoipPoolId.NotFound",
+      `The COIP pool ID '${poolId}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(coipPoolKey(poolId));
+  return {
+    CoipPool: {
+      PoolId: pool.PoolId,
+      PoolCidrs: pool.PoolCidrs,
+      LocalGatewayRouteTableId: pool.LocalGatewayRouteTableId,
+      Tags: pool.Tags,
+      PoolArn: pool.PoolArn,
+    },
+  };
+};
+
+const DeleteCustomerGateway: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["CustomerGatewayId"] === "string"
+      ? input["CustomerGatewayId"]
+      : "";
+  const gateway = ctx.store.get<StoredCustomerGateway>(customerGatewayKey(id));
+  if (gateway === undefined) {
+    throw awsError(
+      "InvalidCustomerGatewayID.NotFound",
+      `The customer gateway ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(customerGatewayKey(id));
+  return {};
+};
+
+const DeleteDhcpOptions: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["DhcpOptionsId"] === "string" ? input["DhcpOptionsId"] : "";
+  const dhcpOptions = ctx.store.get<StoredDhcpOptions>(dhcpOptionsKey(id));
+  if (dhcpOptions === undefined) {
+    throw awsError(
+      "InvalidDhcpOptionID.NotFound",
+      `The dhcp option ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(dhcpOptionsKey(id));
+  return {};
+};
+
+const DeleteEgressOnlyInternetGateway: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["EgressOnlyInternetGatewayId"] === "string"
+      ? input["EgressOnlyInternetGatewayId"]
+      : "";
+  const gateway = ctx.store.get<StoredEgressOnlyInternetGateway>(
+    egressOnlyIgwKey(id),
+  );
+  if (gateway === undefined) {
+    return { ReturnCode: false };
+  }
+  ctx.store.delete(egressOnlyIgwKey(id));
+  return { ReturnCode: true };
+};
+
+const DeleteFleets: OperationHandler = (input, ctx) => {
+  const fleetIds = stringList(input["FleetIds"]);
+  const successful: {
+    CurrentFleetState: string;
+    PreviousFleetState: string;
+    FleetId: string;
+  }[] = [];
+  const unsuccessful: {
+    Error: { Code: string; Message: string };
+    FleetId: string;
+  }[] = [];
+  for (const fleetId of fleetIds) {
+    const fleet = ctx.store.get<StoredFleet>(fleetKey(fleetId));
+    if (fleet === undefined) {
+      unsuccessful.push({
+        Error: {
+          Code: "fleetIdDoesNotExist",
+          Message: `The fleet ID '${fleetId}' does not exist`,
+        },
+        FleetId: fleetId,
+      });
+    } else {
+      const previousState = fleet.FleetState;
+      fleet.FleetState = "deleted";
+      ctx.store.set(fleetKey(fleetId), fleet);
+      successful.push({
+        CurrentFleetState: "deleted",
+        PreviousFleetState: previousState,
+        FleetId: fleetId,
+      });
+    }
+  }
+  return {
+    SuccessfulFleetDeletions: successful,
+    UnsuccessfulFleetDeletions: unsuccessful,
+  };
+};
+
+const DeleteFlowLogs: OperationHandler = (input, ctx) => {
+  const flowLogIds = stringList(input["FlowLogIds"]);
+  for (const id of flowLogIds) {
+    ctx.store.delete(flowLogKey(id));
+  }
+  return { Unsuccessful: [] };
+};
+
+const DeleteFpgaImage: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["FpgaImageId"] === "string" ? input["FpgaImageId"] : "";
+  const image = ctx.store.get<StoredFpgaImage>(fpgaImageKey(id));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidFpgaImageID.NotFound",
+      `The FPGA image ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(fpgaImageKey(id));
+  return { Return: true };
+};
+
+const DeleteImageUsageReport: OperationHandler = (_input, _ctx) => {
+  return { Return: true };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -7542,6 +7771,18 @@ const ec2: ServiceDefinition = {
     CreateVpnConnectionRoute,
     CreateVpnGateway,
     DeleteCapacityManagerDataExport,
+    DeleteCarrierGateway,
+    DeleteClientVpnEndpoint,
+    DeleteClientVpnRoute,
+    DeleteCoipCidr,
+    DeleteCoipPool,
+    DeleteCustomerGateway,
+    DeleteDhcpOptions,
+    DeleteEgressOnlyInternetGateway,
+    DeleteFleets,
+    DeleteFlowLogs,
+    DeleteFpgaImage,
+    DeleteImageUsageReport,
   },
   model,
 } as const;

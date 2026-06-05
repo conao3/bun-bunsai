@@ -4976,6 +4976,154 @@ const DeleteEdgeDeploymentStage: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DeleteExperiment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ExperimentName");
+  const stored = ctx.store.get<StoredExperiment>(experimentKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Experiment ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(experimentKey(name));
+  return { ExperimentArn: stored.ExperimentArn };
+};
+
+const DeleteFlowDefinition: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "FlowDefinitionName");
+  const stored = ctx.store.get<StoredFlowDefinition>(flowDefinitionKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `FlowDefinition ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(flowDefinitionKey(name));
+  return {};
+};
+
+const DeleteHub: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "HubName");
+  requireHub(ctx, name);
+  ctx.store.delete(hubKey(name));
+  return {};
+};
+
+const DeleteHubContent: OperationHandler = (input, ctx) => {
+  const hubName = requireString(input, "HubName");
+  requireHub(ctx, hubName);
+  return {};
+};
+
+const DeleteHubContentReference: OperationHandler = (input, ctx) => {
+  const hubName = requireString(input, "HubName");
+  requireHub(ctx, hubName);
+  return {};
+};
+
+const DeleteHumanTaskUi: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "HumanTaskUiName");
+  const stored = ctx.store.get<StoredHumanTaskUi>(humanTaskUiKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `HumanTaskUi ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(humanTaskUiKey(name));
+  return {};
+};
+
+const DeleteHyperParameterTuningJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "HyperParameterTuningJobName");
+  const stored = ctx.store.get<StoredHyperParameterTuningJob>(
+    hyperParameterTuningJobKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `HyperParameterTuningJob ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(hyperParameterTuningJobKey(name));
+  return {};
+};
+
+const DeleteImage: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ImageName");
+  requireImage(ctx, name);
+  ctx.store.delete(imageKey(name));
+  return {};
+};
+
+const DeleteImageVersion: OperationHandler = (input, ctx) => {
+  const imageName = requireString(input, "ImageName");
+  const version =
+    typeof input["Version"] === "number" ? (input["Version"] as number) : 0;
+  const stored = ctx.store.get<StoredImageVersion>(
+    imageVersionKey(imageName, version),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `ImageVersion ${imageName}/${version} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(imageVersionKey(imageName, version));
+  return { ImageVersionArn: stored.ImageVersionArn };
+};
+
+const DeleteInferenceComponent: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InferenceComponentName");
+  const stored = ctx.store.get<StoredInferenceComponent>(
+    inferenceComponentKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `InferenceComponent ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(inferenceComponentKey(name));
+  return {};
+};
+
+const DeleteInferenceExperiment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const stored = ctx.store.get<StoredInferenceExperiment>(
+    inferenceExperimentKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `InferenceExperiment ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(inferenceExperimentKey(name));
+  return { InferenceExperimentArn: stored.InferenceExperimentArn };
+};
+
+const DeleteMlflowApp: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const stored = ctx.store.get<StoredMlflowApp>(mlflowAppKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `MlflowApp ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(mlflowAppKey(name));
+  return {};
+};
+
 const CreatePresignedMlflowTrackingServerUrl: OperationHandler = (
   input,
   ctx,
@@ -5156,6 +5304,18 @@ const sagemaker = {
     DeleteDomain,
     DeleteEdgeDeploymentPlan,
     DeleteEdgeDeploymentStage,
+    DeleteExperiment,
+    DeleteFlowDefinition,
+    DeleteHub,
+    DeleteHubContent,
+    DeleteHubContentReference,
+    DeleteHumanTaskUi,
+    DeleteHyperParameterTuningJob,
+    DeleteImage,
+    DeleteImageVersion,
+    DeleteInferenceComponent,
+    DeleteInferenceExperiment,
+    DeleteMlflowApp,
   },
   model,
 } as const satisfies ServiceDefinition;

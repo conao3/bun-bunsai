@@ -43,6 +43,7 @@ type StoredSecurityGroup = {
   VpcId: string | undefined;
   Tags: Tag[];
   IngressRules: StoredSecurityGroupRule[];
+  EgressRules: StoredSecurityGroupRule[];
 };
 
 type StoredSecurityGroupRule = {
@@ -570,6 +571,15 @@ type StoredIpamResourceDiscoveryAssociation = {
   Tags: Tag[];
 };
 
+type StoredBundleTask = {
+  BundleId: string;
+  InstanceId: string;
+  State: string;
+  StartTime: string;
+  UpdateTime: string;
+  Progress: string;
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -636,6 +646,7 @@ const iamProfileAssocKey = (id: string): string => `iam-profile-assoc/${id}`;
 const ipamByoasnKey = (ipamId: string, asn: string): string =>
   `ipam-byoasn/${ipamId}/${asn}`;
 const ipamRdAssocKey = (id: string): string => `ipam-rd-assoc/${id}`;
+const bundleTaskKey = (id: string): string => `bundle/${id}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -1004,6 +1015,7 @@ const CreateSecurityGroup: OperationHandler = (input, ctx) => {
     VpcId: vpcId,
     Tags: [],
     IngressRules: [],
+    EgressRules: [],
   };
   ctx.store.set(sgKey(id), group);
   return {
@@ -4002,6 +4014,298 @@ const CreateLocalGatewayRouteTable: OperationHandler = (input, ctx) => {
   };
 };
 
+const AssociateSubnetCidrBlock: OperationHandler = (input, _ctx) => {
+  const subnetId =
+    typeof input["SubnetId"] === "string" ? input["SubnetId"] : "";
+  const ipv6CidrBlock =
+    typeof input["Ipv6CidrBlock"] === "string"
+      ? input["Ipv6CidrBlock"]
+      : "::/0";
+  const assocId = hexId("subnet-cidr-assoc");
+  return {
+    SubnetId: subnetId,
+    Ipv6CidrBlockAssociation: {
+      AssociationId: assocId,
+      Ipv6CidrBlock: ipv6CidrBlock,
+      Ipv6CidrBlockState: { State: "associated", StatusMessage: "" },
+    },
+  };
+};
+
+const AssociateTransitGatewayMulticastDomain: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const domainId =
+    typeof input["TransitGatewayMulticastDomainId"] === "string"
+      ? input["TransitGatewayMulticastDomainId"]
+      : hexId("tgw-mcast");
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : hexId("tgw-attach");
+  const subnetIds = stringList(input["SubnetIds"]);
+  return {
+    Associations: {
+      TransitGatewayMulticastDomainId: domainId,
+      TransitGatewayAttachmentId: attachmentId,
+      ResourceId: hexId("vpc"),
+      ResourceType: "vpc",
+      Subnets: subnetIds.map((id) => ({ SubnetId: id, State: "associated" })),
+    },
+  };
+};
+
+const AssociateTransitGatewayPolicyTable: OperationHandler = (input, _ctx) => {
+  const tableId =
+    typeof input["TransitGatewayPolicyTableId"] === "string"
+      ? input["TransitGatewayPolicyTableId"]
+      : hexId("tgw-policy-table");
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : hexId("tgw-attach");
+  return {
+    Association: {
+      TransitGatewayPolicyTableId: tableId,
+      TransitGatewayAttachmentId: attachmentId,
+      ResourceId: hexId("vpc"),
+      ResourceType: "vpc",
+      State: "associated",
+    },
+  };
+};
+
+const AssociateTransitGatewayRouteTable: OperationHandler = (input, _ctx) => {
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : hexId("tgw-rtb");
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : hexId("tgw-attach");
+  return {
+    Association: {
+      TransitGatewayRouteTableId: routeTableId,
+      TransitGatewayAttachmentId: attachmentId,
+      ResourceId: hexId("vpc"),
+      ResourceType: "vpc",
+      State: "associated",
+    },
+  };
+};
+
+const AssociateTrunkInterface: OperationHandler = (input, _ctx) => {
+  const branchInterfaceId =
+    typeof input["BranchInterfaceId"] === "string"
+      ? input["BranchInterfaceId"]
+      : hexId("eni");
+  const trunkInterfaceId =
+    typeof input["TrunkInterfaceId"] === "string"
+      ? input["TrunkInterfaceId"]
+      : hexId("eni");
+  const interfaceProtocol =
+    typeof input["InterfaceProtocol"] === "string"
+      ? input["InterfaceProtocol"]
+      : "VLAN";
+  const vlanId = integerOf(input["VlanId"]);
+  const greKey = integerOf(input["GreKey"]);
+  const assocId = hexId("trunk-assoc");
+  return {
+    InterfaceAssociation: {
+      AssociationId: assocId,
+      BranchInterfaceId: branchInterfaceId,
+      TrunkInterfaceId: trunkInterfaceId,
+      InterfaceProtocol: interfaceProtocol,
+      VlanId: vlanId,
+      GreKey: greKey,
+      Tags: [],
+    },
+    ClientToken: hexId("token"),
+  };
+};
+
+const AssociateVpcCidrBlock: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const vpc = ctx.store.get<StoredVpc>(vpcKey(vpcId));
+  if (vpc === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${vpcId}' does not exist`,
+      400,
+    );
+  }
+  const cidrBlock =
+    typeof input["CidrBlock"] === "string" ? input["CidrBlock"] : undefined;
+  const ipv6CidrBlock =
+    typeof input["Ipv6CidrBlock"] === "string"
+      ? input["Ipv6CidrBlock"]
+      : undefined;
+  const assocId = hexId("vpc-cidr-assoc");
+  const result: Record<string, unknown> = { VpcId: vpcId };
+  if (cidrBlock !== undefined) {
+    result["CidrBlockAssociation"] = {
+      AssociationId: assocId,
+      CidrBlock: cidrBlock,
+      CidrBlockState: { State: "associated", StatusMessage: "" },
+    };
+  } else {
+    result["Ipv6CidrBlockAssociation"] = {
+      AssociationId: assocId,
+      Ipv6CidrBlock: ipv6CidrBlock ?? "::/0",
+      Ipv6CidrBlockState: { State: "associated", StatusMessage: "" },
+      NetworkBorderGroup: ctx.region,
+    };
+  }
+  return result;
+};
+
+const AuthorizeClientVpnIngress: OperationHandler = (_input, _ctx) => {
+  return { Status: { Code: "active", Message: "" } };
+};
+
+const AuthorizeSecurityGroupEgress: OperationHandler = (input, ctx) => {
+  const group = findSecurityGroup(ctx, input);
+  const permissions = ipPermissionList(input["IpPermissions"]);
+  const created: StoredSecurityGroupRule[] = [];
+  const addRule = (
+    ipProtocol: string,
+    fromPort: number | undefined,
+    toPort: number | undefined,
+    cidr: string | undefined,
+  ): void => {
+    const rule: StoredSecurityGroupRule = {
+      SecurityGroupRuleId: hexId("sgr"),
+      IsEgress: true,
+      IpProtocol: ipProtocol,
+      FromPort: fromPort,
+      ToPort: toPort,
+      CidrIpv4: cidr,
+    };
+    group.EgressRules.push(rule);
+    created.push(rule);
+  };
+  if (permissions.length === 0) {
+    const cidrIp =
+      typeof input["CidrIp"] === "string" ? input["CidrIp"] : "0.0.0.0/0";
+    const ipProtocol =
+      typeof input["IpProtocol"] === "string" ? input["IpProtocol"] : "-1";
+    addRule(
+      ipProtocol,
+      integerOf(input["FromPort"]),
+      integerOf(input["ToPort"]),
+      cidrIp,
+    );
+  } else {
+    for (const permission of permissions) {
+      const ipProtocol =
+        typeof permission["IpProtocol"] === "string"
+          ? permission["IpProtocol"]
+          : "-1";
+      const fromPort = integerOf(permission["FromPort"]);
+      const toPort = integerOf(permission["ToPort"]);
+      const cidrs = cidrsOfPermission(permission);
+      if (cidrs.length === 0) addRule(ipProtocol, fromPort, toPort, undefined);
+      else
+        for (const cidr of cidrs) addRule(ipProtocol, fromPort, toPort, cidr);
+    }
+  }
+  ctx.store.set(sgKey(group.GroupId), group);
+  return {
+    Return: true,
+    SecurityGroupRules: created.map((rule) =>
+      securityGroupRuleView(rule, group, ctx.account),
+    ),
+  };
+};
+
+const BundleInstance: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const bundleId = hexId("bun");
+  const now = new Date().toISOString();
+  const task: StoredBundleTask = {
+    BundleId: bundleId,
+    InstanceId: instanceId,
+    State: "bundling",
+    StartTime: now,
+    UpdateTime: now,
+    Progress: "0%",
+  };
+  ctx.store.set(bundleTaskKey(bundleId), task);
+  return {
+    BundleTask: {
+      InstanceId: task.InstanceId,
+      BundleId: task.BundleId,
+      State: task.State,
+      StartTime: task.StartTime,
+      UpdateTime: task.UpdateTime,
+      Progress: task.Progress,
+      Storage: input["Storage"] ?? {},
+    },
+  };
+};
+
+const CancelBundleTask: OperationHandler = (input, ctx) => {
+  const bundleId =
+    typeof input["BundleId"] === "string" ? input["BundleId"] : "";
+  const task = ctx.store.get<StoredBundleTask>(bundleTaskKey(bundleId));
+  if (task === undefined) {
+    throw awsError(
+      "InvalidBundleTaskId.NotFound",
+      `The bundle task '${bundleId}' does not exist`,
+      400,
+    );
+  }
+  task.State = "cancelling";
+  task.UpdateTime = new Date().toISOString();
+  ctx.store.set(bundleTaskKey(bundleId), task);
+  return {
+    BundleTask: {
+      InstanceId: task.InstanceId,
+      BundleId: task.BundleId,
+      State: task.State,
+      StartTime: task.StartTime,
+      UpdateTime: task.UpdateTime,
+      Progress: task.Progress,
+      Storage: {},
+    },
+  };
+};
+
+const CancelCapacityReservation: OperationHandler = (input, ctx) => {
+  const reservationId =
+    typeof input["CapacityReservationId"] === "string"
+      ? input["CapacityReservationId"]
+      : "";
+  const reservation = ctx.store.get<StoredCapacityReservation>(
+    capacityReservationKey(reservationId),
+  );
+  if (reservation === undefined) {
+    throw awsError(
+      "InvalidCapacityReservationId.NotFound",
+      `The capacity reservation '${reservationId}' does not exist`,
+      400,
+    );
+  }
+  reservation.State = "cancelled";
+  ctx.store.set(capacityReservationKey(reservationId), reservation);
+  return { Return: true };
+};
+
+const CancelCapacityReservationFleets: OperationHandler = (input, _ctx) => {
+  const fleetIds = stringList(input["CapacityReservationFleetIds"]);
+  return {
+    SuccessfulFleetCancellations: fleetIds.map((id) => ({
+      CurrentFleetState: "cancelled_running",
+      PreviousFleetState: "active",
+      CapacityReservationFleetId: id,
+    })),
+    FailedFleetCancellations: [],
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -4072,6 +4376,18 @@ const ec2: ServiceDefinition = {
     AssociateRouteServer,
     AssociateRouteTable,
     AssociateSecurityGroupVpc,
+    AssociateSubnetCidrBlock,
+    AssociateTransitGatewayMulticastDomain,
+    AssociateTransitGatewayPolicyTable,
+    AssociateTransitGatewayRouteTable,
+    AssociateTrunkInterface,
+    AssociateVpcCidrBlock,
+    AuthorizeClientVpnIngress,
+    AuthorizeSecurityGroupEgress,
+    BundleInstance,
+    CancelBundleTask,
+    CancelCapacityReservation,
+    CancelCapacityReservationFleets,
     AttachVolume,
     DetachVolume,
     AttachNetworkInterface,

@@ -96,11 +96,13 @@ export function createBunsaiServers(options: {
     options.dashboard === undefined
       ? Bun.serve({
           port: options.uiPort,
+          idleTimeout: 0,
           development: { hmr: options.hmr ?? false },
           routes: { "/__bunsai/*": app.managementFetch },
         })
       : Bun.serve({
           port: options.uiPort,
+          idleTimeout: 0,
           development: { hmr: options.hmr ?? false },
           routes: {
             "/__bunsai/*": app.managementFetch,

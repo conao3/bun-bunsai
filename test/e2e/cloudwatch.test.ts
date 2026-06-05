@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
-import { spawn } from "bun";
+import { expect, test } from "bun:test";
+import { startServer } from "./harness.ts";
 import {
   CloudWatchClient,
   DeleteAlarmMuteRuleCommand,
@@ -42,51 +42,9 @@ import {
   UntagResourceCommand,
 } from "@aws-sdk/client-cloudwatch";
 
-const awsPort = 4566;
-const uiPort = 5666;
-const endpoint = `http://localhost:${awsPort}`;
+const { endpoint } = startServer();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
-
-const serverEntry = new URL("../../apps/server/src/index.ts", import.meta.url)
-  .pathname;
-
-let proc: ReturnType<typeof spawn> | undefined;
-
-const waitForServer = async (): Promise<void> => {
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      const res = await fetch(`http://localhost:${uiPort}/__bunsai/logs`);
-      if (res.ok) {
-        await res.body?.cancel();
-        return;
-      }
-    } catch {
-      void 0;
-    }
-    await Bun.sleep(100);
-  }
-  throw new Error("server did not become ready");
-};
-
-beforeAll(async () => {
-  proc = spawn({
-    cmd: ["bun", serverEntry],
-    env: {
-      ...process.env,
-      BUNSAI_PORT: String(awsPort),
-      BUNSAI_UI_PORT: String(uiPort),
-      NODE_ENV: "production",
-    },
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  await waitForServer();
-});
-
-afterAll(() => {
-  proc?.kill();
-});
 
 const cw = () => new CloudWatchClient({ endpoint, region, credentials });
 

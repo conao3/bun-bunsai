@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
-import { spawn } from "bun";
+import { expect, test } from "bun:test";
+import { startServer } from "./e2e/harness.ts";
 import {
   CreateBucketCommand,
   DeleteBucketCommand,
@@ -19,51 +19,9 @@ import {
 } from "@aws-sdk/client-sqs";
 import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 
-const awsPort = 4566;
-const uiPort = 5666;
-const endpoint = `http://localhost:${awsPort}`;
+const { endpoint, uiEndpoint } = startServer();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
-
-const serverEntry = new URL("../apps/server/src/index.ts", import.meta.url)
-  .pathname;
-
-let proc: ReturnType<typeof spawn> | undefined;
-
-const waitForServer = async (): Promise<void> => {
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      const res = await fetch(`http://localhost:${uiPort}/__bunsai/logs`);
-      if (res.ok) {
-        await res.body?.cancel();
-        return;
-      }
-    } catch {
-      void 0;
-    }
-    await Bun.sleep(100);
-  }
-  throw new Error("server did not become ready");
-};
-
-beforeAll(async () => {
-  proc = spawn({
-    cmd: ["bun", serverEntry],
-    env: {
-      ...process.env,
-      BUNSAI_PORT: String(awsPort),
-      BUNSAI_UI_PORT: String(uiPort),
-      NODE_ENV: "production",
-    },
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  await waitForServer();
-});
-
-afterAll(() => {
-  proc?.kill();
-});
 
 const sts = () => new STSClient({ endpoint, region, credentials });
 const s3 = () =>
@@ -140,7 +98,7 @@ test("SQS queue and message lifecycle", async () => {
 });
 
 test("management logs recorded the SDK calls", async () => {
-  const res = await fetch(`http://localhost:${uiPort}/__bunsai/logs`);
+  const res = await fetch(`${uiEndpoint}/__bunsai/logs`);
   expect(res.ok).toBe(true);
   const logs = (await res.json()) as { service: string; operation: string }[];
   const seen = new Set(logs.map((l) => `${l.service}:${l.operation}`));

@@ -4306,6 +4306,124 @@ const CancelCapacityReservationFleets: OperationHandler = (input, _ctx) => {
   };
 };
 
+const CancelConversionTask: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
+const CancelDeclarativePoliciesReport: OperationHandler = (_input, _ctx) => {
+  return { Return: true };
+};
+
+const CancelExportTask: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
+const CancelImageLaunchPermission: OperationHandler = (_input, _ctx) => {
+  return { Return: true };
+};
+
+const CancelImportTask: OperationHandler = (input, _ctx) => {
+  const id =
+    typeof input["ImportTaskId"] === "string"
+      ? input["ImportTaskId"]
+      : hexId("import");
+  return {
+    ImportTaskId: id,
+    PreviousState: "active",
+    State: "cancelled",
+  };
+};
+
+const CancelReservedInstancesListing: OperationHandler = (input, _ctx) => {
+  const listingId =
+    typeof input["ReservedInstancesListingId"] === "string"
+      ? input["ReservedInstancesListingId"]
+      : "";
+  return {
+    ReservedInstancesListings: [
+      {
+        ReservedInstancesListingId: listingId,
+        Status: "cancelled",
+        StatusMessage: "The listing was cancelled.",
+        CreateDate: new Date().toISOString(),
+        UpdateDate: new Date().toISOString(),
+        PriceSchedules: [],
+        InstanceCounts: [],
+        Tags: [],
+      },
+    ],
+  };
+};
+
+const CancelSpotFleetRequests: OperationHandler = (input, _ctx) => {
+  const ids = stringList(input["SpotFleetRequestIds"]);
+  return {
+    SuccessfulFleetRequests: ids.map((id) => ({
+      SpotFleetRequestId: id,
+      CurrentSpotFleetRequestState: "cancelled_running",
+      PreviousSpotFleetRequestState: "active",
+    })),
+    UnsuccessfulFleetRequests: [],
+  };
+};
+
+const CancelSpotInstanceRequests: OperationHandler = (input, _ctx) => {
+  const ids = stringList(input["SpotInstanceRequestIds"]);
+  return {
+    CancelledSpotInstanceRequests: ids.map((id) => ({
+      SpotInstanceRequestId: id,
+      State: "cancelled",
+    })),
+  };
+};
+
+const ConfirmProductInstance: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(instanceId));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${instanceId}' does not exist`,
+      400,
+    );
+  }
+  return { Return: true, OwnerId: ctx.account };
+};
+
+const CopyFpgaImage: OperationHandler = (_input, _ctx) => {
+  return { FpgaImageId: hexId("afi") };
+};
+
+const CopyImage: OperationHandler = (_input, _ctx) => {
+  return { ImageId: hexId("ami") };
+};
+
+const CopySnapshot: OperationHandler = (input, ctx) => {
+  const sourceId =
+    typeof input["SourceSnapshotId"] === "string"
+      ? input["SourceSnapshotId"]
+      : "";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const source = ctx.store.get<StoredSnapshot>(snapshotKey(sourceId));
+  const id = hexId("snap");
+  const snapshot: StoredSnapshot = {
+    SnapshotId: id,
+    VolumeId: source?.VolumeId ?? "vol-unknown",
+    VolumeSize: source?.VolumeSize ?? 8,
+    State: "completed",
+    Progress: "100%",
+    StartTime: new Date().toISOString(),
+    Description: description || source?.Description || "",
+    Encrypted: source?.Encrypted ?? false,
+    OwnerId: ctx.account,
+    Tags: [],
+  };
+  ctx.store.set(snapshotKey(id), snapshot);
+  return { SnapshotId: id, Tags: [] };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -4435,6 +4553,18 @@ const ec2: ServiceDefinition = {
     CreateNetworkInsightsPath,
     CreateNetworkInterface,
     CreateNetworkInterfacePermission,
+    CancelConversionTask,
+    CancelDeclarativePoliciesReport,
+    CancelExportTask,
+    CancelImageLaunchPermission,
+    CancelImportTask,
+    CancelReservedInstancesListing,
+    CancelSpotFleetRequests,
+    CancelSpotInstanceRequests,
+    ConfirmProductInstance,
+    CopyFpgaImage,
+    CopyImage,
+    CopySnapshot,
   },
   model,
 } as const;

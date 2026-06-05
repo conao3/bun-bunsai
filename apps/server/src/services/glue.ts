@@ -3926,6 +3926,274 @@ const GetResourcePolicy: OperationHandler = (_input, _ctx) => {
   };
 };
 
+const GetSchema: OperationHandler = (input, ctx) => {
+  const schemaId = asRecord(input["SchemaId"] ?? {});
+  const key = resolveSchemaKey(schemaId);
+  const stored = ctx.store.get<StoredSchema>(key);
+  if (stored === undefined) {
+    throw awsError("EntityNotFoundException", `Schema not found.`, 400);
+  }
+  return {
+    RegistryName: stored.registryName,
+    RegistryArn: stored.registryArn,
+    SchemaName: stored.schemaName,
+    SchemaArn: stored.schemaArn,
+    DataFormat: stored.dataFormat,
+    Compatibility: stored.compatibility,
+    Description: stored.description,
+    SchemaCheckpoint: stored.schemaCheckpoint,
+    LatestSchemaVersion: stored.latestSchemaVersion,
+    NextSchemaVersion: stored.nextSchemaVersion,
+    SchemaStatus: "AVAILABLE",
+    CreatedTime: String(Math.floor(Date.now() / 1000)),
+    UpdatedTime: String(Math.floor(Date.now() / 1000)),
+  };
+};
+
+const GetSchemaByDefinition: OperationHandler = (input, ctx) => {
+  const schemaId = asRecord(input["SchemaId"] ?? {});
+  const key = resolveSchemaKey(schemaId);
+  const stored = ctx.store.get<StoredSchema>(key);
+  if (stored === undefined) {
+    throw awsError("EntityNotFoundException", `Schema not found.`, 400);
+  }
+  return {
+    SchemaVersionId: stored.firstSchemaVersionId,
+    SchemaArn: stored.schemaArn,
+    DataFormat: stored.dataFormat,
+    Status: "AVAILABLE",
+    CreatedTime: String(Math.floor(Date.now() / 1000)),
+  };
+};
+
+const GetSchemaVersion: OperationHandler = (input, ctx) => {
+  const schemaId = asRecord(input["SchemaId"] ?? {});
+  const schemaVersionId =
+    typeof input["SchemaVersionId"] === "string"
+      ? (input["SchemaVersionId"] as string)
+      : "";
+  if (schemaVersionId !== "") {
+    const allSchemas = ctx.store
+      .list<StoredSchema>()
+      .filter((e) => e.key.startsWith(schemaPrefix));
+    const match = allSchemas.find(
+      (e) => e.value.firstSchemaVersionId === schemaVersionId,
+    );
+    if (match === undefined) {
+      throw awsError(
+        "EntityNotFoundException",
+        `SchemaVersion ${schemaVersionId} not found.`,
+        400,
+      );
+    }
+    return {
+      SchemaVersionId: schemaVersionId,
+      SchemaArn: match.value.schemaArn,
+      DataFormat: match.value.dataFormat,
+      Status: "AVAILABLE",
+      VersionNumber: 1,
+      CreatedTime: String(Math.floor(Date.now() / 1000)),
+    };
+  }
+  const key = resolveSchemaKey(schemaId);
+  const stored = ctx.store.get<StoredSchema>(key);
+  if (stored === undefined) {
+    throw awsError("EntityNotFoundException", `Schema not found.`, 400);
+  }
+  return {
+    SchemaVersionId: stored.firstSchemaVersionId,
+    SchemaArn: stored.schemaArn,
+    DataFormat: stored.dataFormat,
+    Status: "AVAILABLE",
+    VersionNumber: stored.latestSchemaVersion,
+    CreatedTime: String(Math.floor(Date.now() / 1000)),
+  };
+};
+
+const GetSchemaVersionsDiff: OperationHandler = (input, ctx) => {
+  const schemaId = asRecord(input["SchemaId"] ?? {});
+  const key = resolveSchemaKey(schemaId);
+  if (ctx.store.get<StoredSchema>(key) === undefined) {
+    throw awsError("EntityNotFoundException", `Schema not found.`, 400);
+  }
+  return { Diff: "" };
+};
+
+const GetSecurityConfiguration: OperationHandler = (input, ctx) => {
+  const name = requireName(asRecord(input));
+  const key = `${securityConfigPrefix}${name}`;
+  const stored = ctx.store.get<StoredSecurityConfig>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `SecurityConfiguration ${name} not found.`,
+      400,
+    );
+  }
+  return {
+    SecurityConfiguration: {
+      Name: stored.name,
+      EncryptionConfiguration: stored.input["EncryptionConfiguration"] ?? {},
+      CreatedTimeStamp: stored.createdTimestamp,
+    },
+  };
+};
+
+const GetSecurityConfigurations: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredSecurityConfig>()
+    .filter((e) => e.key.startsWith(securityConfigPrefix))
+    .map((e) => ({
+      Name: e.value.name,
+      EncryptionConfiguration: e.value.input["EncryptionConfiguration"] ?? {},
+      CreatedTimeStamp: e.value.createdTimestamp,
+    }));
+  return { SecurityConfigurations: list };
+};
+
+const GetSession: OperationHandler = (input, ctx) => {
+  const id = typeof input["Id"] === "string" ? (input["Id"] as string) : "";
+  if (id === "") {
+    throw awsError("InvalidInputException", "Id is required.", 400);
+  }
+  const stored = ctx.store.get<StoredSession>(`${sessionPrefix}${id}`);
+  if (stored === undefined) {
+    throw awsError("EntityNotFoundException", `Session ${id} not found.`, 400);
+  }
+  return { Session: sessionView(stored) };
+};
+
+const GetStatement: OperationHandler = (input, ctx) => {
+  const sessionId =
+    typeof input["SessionId"] === "string"
+      ? (input["SessionId"] as string)
+      : "";
+  if (sessionId === "") {
+    throw awsError("InvalidInputException", "SessionId is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredSession>(`${sessionPrefix}${sessionId}`) === undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Session ${sessionId} not found.`,
+      400,
+    );
+  }
+  const id = typeof input["Id"] === "number" ? (input["Id"] as number) : 0;
+  return {
+    Statement: {
+      Id: id,
+      SessionId: sessionId,
+      State: "AVAILABLE",
+      Output: { Data: { TextPlain: "" }, Status: "OK" },
+      Progress: 1.0,
+    },
+  };
+};
+
+const GetTableOptimizer: OperationHandler = (input, ctx) => {
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : ctx.account;
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  const type = typeof input["Type"] === "string" ? input["Type"] : "";
+  if (databaseName === "" || tableName === "" || type === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName, TableName, and Type are required.",
+      400,
+    );
+  }
+  const key = `${tableOptimizerPrefix}${catalogId}:${databaseName}:${tableName}:${type}`;
+  const stored = ctx.store.get<StoredTableOptimizer>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `TableOptimizer not found for ${databaseName}.${tableName} type ${type}`,
+      400,
+    );
+  }
+  return {
+    CatalogId: stored.catalogId,
+    DatabaseName: stored.databaseName,
+    TableName: stored.tableName,
+    TableOptimizer: {
+      type: stored.type,
+      configuration: stored.configuration,
+      lastRun: {
+        eventType: "completed",
+        startTimestamp: Math.floor(Date.now() / 1000),
+        endTimestamp: Math.floor(Date.now() / 1000),
+        metrics: {},
+      },
+    },
+  };
+};
+
+const GetTableVersion: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const versionId =
+    typeof input["VersionId"] === "string"
+      ? (input["VersionId"] as string)
+      : "1";
+  const table = requireTable(ctx, databaseName, tableName);
+  const catalogId =
+    typeof input["CatalogId"] === "string"
+      ? (input["CatalogId"] as string)
+      : ctx.account;
+  return {
+    TableVersion: {
+      Table: tableView(tableName, table, catalogId),
+      VersionId: versionId,
+    },
+  };
+};
+
+const GetTableVersions: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const table = requireTable(ctx, databaseName, tableName);
+  const catalogId =
+    typeof input["CatalogId"] === "string"
+      ? (input["CatalogId"] as string)
+      : ctx.account;
+  return {
+    TableVersions: [
+      {
+        Table: tableView(tableName, table, catalogId),
+        VersionId: "1",
+      },
+    ],
+  };
+};
+
+const GetTags: OperationHandler = (input, _ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string"
+      ? (input["ResourceArn"] as string)
+      : "";
+  if (resourceArn === "") {
+    throw awsError("InvalidInputException", "ResourceArn is required.", 400);
+  }
+  return { Tags: {} };
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -4081,6 +4349,18 @@ const glue: ServiceDefinition = {
     GetRegistry,
     GetResourcePolicies,
     GetResourcePolicy,
+    GetSchema,
+    GetSchemaByDefinition,
+    GetSchemaVersion,
+    GetSchemaVersionsDiff,
+    GetSecurityConfiguration,
+    GetSecurityConfigurations,
+    GetSession,
+    GetStatement,
+    GetTableOptimizer,
+    GetTableVersion,
+    GetTableVersions,
+    GetTags,
   },
   model,
 } as const;

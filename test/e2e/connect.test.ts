@@ -33,6 +33,9 @@ import {
   DeleteHoursOfOperationCommand,
   DeleteEmailAddressCommand,
   DeleteEvaluationFormCommand,
+  CreateUserCommand,
+  CreateViewCommand,
+  CreateViewVersionCommand,
 } from "@aws-sdk/client-connect";
 
 const awsPort = 4566;
@@ -700,6 +703,77 @@ test("Delete operations — contact-flow create then delete", async () => {
       }),
     ),
   ).rejects.toThrow();
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("CreateUser — user lifecycle", async () => {
+  const client = connect();
+
+  const instance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-user-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = instance.Id ?? "";
+
+  const created = await client.send(
+    new CreateUserCommand({
+      InstanceId: instanceId,
+      Username: "john.doe",
+      SecurityProfileIds: [crypto.randomUUID()],
+      RoutingProfileId: crypto.randomUUID(),
+      PhoneConfig: { PhoneType: "SOFT_PHONE" },
+    }),
+  );
+  expect(created.UserId).toBeDefined();
+  expect(created.UserArn).toBeDefined();
+  expect(created.UserArn).toContain(instanceId);
+  expect(created.UserArn).toContain("agent");
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("CreateView and CreateViewVersion — view lifecycle", async () => {
+  const client = connect();
+
+  const instance = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-view-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = instance.Id ?? "";
+
+  const createdView = await client.send(
+    new CreateViewCommand({
+      InstanceId: instanceId,
+      Name: "MyView",
+      Status: "SAVED",
+      Content: { Template: "{}" },
+    }),
+  );
+  expect(createdView.View?.Id).toBeDefined();
+  expect(createdView.View?.Arn).toContain(instanceId);
+  expect(createdView.View?.Arn).toContain("view");
+  expect(createdView.View?.Name).toBe("MyView");
+  expect(createdView.View?.Status).toBe("SAVED");
+  const viewId = createdView.View?.Id ?? "";
+
+  const createdVersion = await client.send(
+    new CreateViewVersionCommand({
+      InstanceId: instanceId,
+      ViewId: viewId,
+      VersionDescription: "v1",
+    }),
+  );
+  expect(createdVersion.View?.Id).toBe(viewId);
+  expect(createdVersion.View?.Version).toBe(1);
 
   await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
 });

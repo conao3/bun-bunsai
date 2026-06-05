@@ -28,6 +28,12 @@ const dataTableAttributePrefix = "data-table-attribute:" as const;
 const contactFlowModuleAliasPrefix = "contact-flow-module-alias:" as const;
 const hoursOfOperationOverridePrefix = "hours-of-operation-override:" as const;
 const instanceStorageConfigPrefix = "instance-storage-config:" as const;
+const userPrefix = "user:" as const;
+const userHierarchyGroupPrefix = "user-hierarchy-group:" as const;
+const viewPrefix = "view:" as const;
+const vocabularyPrefix = "vocabulary:" as const;
+const workspacePrefix = "workspace:" as const;
+const dataTableValuePrefix = "data-table-value:" as const;
 
 type StoredInstance = {
   Id: string;
@@ -159,6 +165,49 @@ type StoredInstanceStorageConfig = {
   ResourceType: string;
 };
 
+type StoredUser = {
+  UserId: string;
+  UserArn: string;
+  Username: string;
+  InstanceId: string;
+};
+
+type StoredUserHierarchyGroup = {
+  HierarchyGroupId: string;
+  HierarchyGroupArn: string;
+  Name: string;
+  InstanceId: string;
+};
+
+type StoredView = {
+  Id: string;
+  Arn: string;
+  Name: string;
+  Status: string;
+  InstanceId: string;
+};
+
+type StoredVocabulary = {
+  VocabularyId: string;
+  VocabularyArn: string;
+  VocabularyName: string;
+  InstanceId: string;
+};
+
+type StoredWorkspace = {
+  WorkspaceId: string;
+  WorkspaceArn: string;
+  Name: string;
+  InstanceId: string;
+};
+
+type StoredDataTableValue = {
+  InstanceId: string;
+  DataTableId: string;
+  Key: string;
+  Value: Record<string, unknown>;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -223,6 +272,21 @@ const instanceStorageConfigKey = (
   instanceId: string,
   associationId: string,
 ): string => `${instanceStorageConfigPrefix}${instanceId}:${associationId}`;
+const userKey = (instanceId: string, userId: string): string =>
+  `${userPrefix}${instanceId}:${userId}`;
+const userHierarchyGroupKey = (instanceId: string, id: string): string =>
+  `${userHierarchyGroupPrefix}${instanceId}:${id}`;
+const viewKey = (instanceId: string, id: string): string =>
+  `${viewPrefix}${instanceId}:${id}`;
+const vocabularyKey = (instanceId: string, id: string): string =>
+  `${vocabularyPrefix}${instanceId}:${id}`;
+const workspaceKey = (instanceId: string, id: string): string =>
+  `${workspacePrefix}${instanceId}:${id}`;
+const dataTableValueKey = (
+  instanceId: string,
+  tableId: string,
+  key: string,
+): string => `${dataTableValuePrefix}${instanceId}:${tableId}:${key}`;
 
 const requireInstance = (ctx: ServiceContext, id: string): StoredInstance => {
   const stored = ctx.store.get<StoredInstance>(instanceKey(id));
@@ -1064,6 +1128,216 @@ const CreateUseCase: OperationHandler = (input, ctx) => {
   return { UseCaseId: id, UseCaseArn: arn };
 };
 
+const AssociateWorkspace: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { SuccessfulList: [], FailedList: [] };
+};
+
+const BatchCreateDataTableValue: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
+  const values = Array.isArray(input["Values"])
+    ? (input["Values"] as Array<Record<string, unknown>>)
+    : [];
+  const successful = values.map((v) => {
+    const key = typeof v["Key"] === "string" ? v["Key"] : crypto.randomUUID();
+    const stored: StoredDataTableValue = {
+      InstanceId: instanceId,
+      DataTableId: dataTableId,
+      Key: key,
+      Value: v,
+    };
+    ctx.store.set(dataTableValueKey(instanceId, dataTableId, key), stored);
+    return { Key: key };
+  });
+  return { Successful: successful, Failed: [] };
+};
+
+const BatchDeleteDataTableValue: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
+  const values = Array.isArray(input["Values"])
+    ? (input["Values"] as Array<Record<string, unknown>>)
+    : [];
+  const successful = values.map((v) => {
+    const key = typeof v["Key"] === "string" ? v["Key"] : "";
+    ctx.store.delete(dataTableValueKey(instanceId, dataTableId, key));
+    return { Key: key };
+  });
+  return { Successful: successful, Failed: [] };
+};
+
+const BatchDescribeDataTableValue: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
+  const values = Array.isArray(input["Values"])
+    ? (input["Values"] as Array<Record<string, unknown>>)
+    : [];
+  const successful = values.map((v) => {
+    const key = typeof v["Key"] === "string" ? v["Key"] : "";
+    const stored = ctx.store.get<StoredDataTableValue>(
+      dataTableValueKey(instanceId, dataTableId, key),
+    );
+    return stored ?? { Key: key };
+  });
+  return { Successful: successful, Failed: [] };
+};
+
+const BatchPutContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contacts = Array.isArray(input["ContactDataRequestList"])
+    ? (input["ContactDataRequestList"] as Array<Record<string, unknown>>)
+    : [];
+  const successful = contacts.map(() => {
+    const id = crypto.randomUUID();
+    return { RequestIdentifier: id, ContactId: id };
+  });
+  return { SuccessfulRequestList: successful, FailedRequestList: [] };
+};
+
+const BatchUpdateDataTableValue: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
+  const values = Array.isArray(input["Values"])
+    ? (input["Values"] as Array<Record<string, unknown>>)
+    : [];
+  const successful = values.map((v) => {
+    const key = typeof v["Key"] === "string" ? v["Key"] : "";
+    const existing = ctx.store.get<StoredDataTableValue>(
+      dataTableValueKey(instanceId, dataTableId, key),
+    );
+    const updated: StoredDataTableValue = {
+      InstanceId: instanceId,
+      DataTableId: dataTableId,
+      Key: key,
+      Value: { ...(existing?.Value ?? {}), ...v },
+    };
+    ctx.store.set(dataTableValueKey(instanceId, dataTableId, key), updated);
+    return { Key: key };
+  });
+  return { Successful: successful, Failed: [] };
+};
+
+const CreateUser: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const username = requireString(input, "Username");
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/agent/${id}`;
+  const stored: StoredUser = {
+    UserId: id,
+    UserArn: arn,
+    Username: username,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(userKey(instanceId, id), stored);
+  return { UserId: id, UserArn: arn };
+};
+
+const CreateUserHierarchyGroup: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const name = requireString(input, "Name");
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/agent-group/${id}`;
+  const stored: StoredUserHierarchyGroup = {
+    HierarchyGroupId: id,
+    HierarchyGroupArn: arn,
+    Name: name,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(userHierarchyGroupKey(instanceId, id), stored);
+  return { HierarchyGroupId: id, HierarchyGroupArn: arn };
+};
+
+const CreateView: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const name = requireString(input, "Name");
+  const status =
+    typeof input["Status"] === "string" ? input["Status"] : "SAVED";
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/view/${id}`;
+  const stored: StoredView = {
+    Id: id,
+    Arn: arn,
+    Name: name,
+    Status: status,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(viewKey(instanceId, id), stored);
+  return {
+    View: {
+      Id: id,
+      Arn: arn,
+      Name: name,
+      Status: status,
+      Version: 1,
+      ViewContentSha256: crypto.randomUUID(),
+    },
+  };
+};
+
+const CreateViewVersion: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const viewId = requireString(input, "ViewId");
+  const stored = ctx.store.get<StoredView>(viewKey(instanceId, viewId));
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/view/${viewId}`;
+  return {
+    View: {
+      Id: viewId,
+      Arn: arn,
+      Name: stored?.Name ?? "",
+      Status: stored?.Status ?? "SAVED",
+      Version: 1,
+      ViewContentSha256: crypto.randomUUID(),
+    },
+  };
+};
+
+const CreateVocabulary: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const vocabularyName = requireString(input, "VocabularyName");
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/vocabulary/${id}`;
+  const stored: StoredVocabulary = {
+    VocabularyId: id,
+    VocabularyArn: arn,
+    VocabularyName: vocabularyName,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(vocabularyKey(instanceId, id), stored);
+  return {
+    VocabularyArn: arn,
+    VocabularyId: id,
+    State: "CREATION_IN_PROGRESS",
+  };
+};
+
+const CreateWorkspace: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const name = requireString(input, "Name");
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/workspace/${id}`;
+  const stored: StoredWorkspace = {
+    WorkspaceId: id,
+    WorkspaceArn: arn,
+    Name: name,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(workspaceKey(instanceId, id), stored);
+  return { WorkspaceId: id, WorkspaceArn: arn };
+};
+
 const DescribeAgentStatus: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
@@ -1836,6 +2110,7 @@ const connect = {
         return undefined;
 
       case "users":
+        if (parts.length === 2 && req.method === "PUT") return "CreateUser";
         if (
           parts.length === 4 &&
           parts[3] === "associate-proficiencies" &&
@@ -1878,6 +2153,8 @@ const connect = {
           if (parts[1] === "schedule" && req.method === "POST")
             return "UpdateContactSchedule";
         }
+        if (parts.length === 3 && parts[1] === "batch" && req.method === "PUT")
+          return "BatchPutContact";
         if (
           parts.length === 4 &&
           parts[1] === "persistent-contact-association" &&
@@ -1965,6 +2242,16 @@ const connect = {
           req.method === "DELETE"
         )
           return "DeleteDataTableAttribute";
+        if (
+          parts.length === 5 &&
+          parts[3] === "values" &&
+          req.method === "POST"
+        ) {
+          if (parts[4] === "create") return "BatchCreateDataTableValue";
+          if (parts[4] === "delete") return "BatchDeleteDataTableValue";
+          if (parts[4] === "describe") return "BatchDescribeDataTableValue";
+          if (parts[4] === "update") return "BatchUpdateDataTableValue";
+        }
         return undefined;
 
       case "notifications":
@@ -2026,6 +2313,37 @@ const connect = {
           return "DeleteContactEvaluation";
         return undefined;
 
+      case "user-hierarchy-groups":
+        if (parts.length === 2 && req.method === "PUT")
+          return "CreateUserHierarchyGroup";
+        return undefined;
+
+      case "views":
+        if (parts.length === 2 && req.method === "PUT") return "CreateView";
+        if (
+          parts.length === 4 &&
+          parts[3] === "versions" &&
+          req.method === "PUT"
+        )
+          return "CreateViewVersion";
+        return undefined;
+
+      case "vocabulary":
+        if (parts.length === 2 && req.method === "POST")
+          return "CreateVocabulary";
+        return undefined;
+
+      case "workspaces":
+        if (parts.length === 2 && req.method === "PUT")
+          return "CreateWorkspace";
+        if (
+          parts.length === 4 &&
+          parts[3] === "associate" &&
+          req.method === "POST"
+        )
+          return "AssociateWorkspace";
+        return undefined;
+
       default:
         return undefined;
     }
@@ -2067,10 +2385,16 @@ const connect = {
     AssociateSecurityProfiles,
     AssociateTrafficDistributionGroupUser,
     AssociateUserProficiencies,
+    AssociateWorkspace,
     BatchAssociateAnalyticsDataSet,
     BatchDisassociateAnalyticsDataSet,
+    BatchCreateDataTableValue,
+    BatchDeleteDataTableValue,
+    BatchDescribeDataTableValue,
     BatchGetAttachedFileMetadata,
     BatchGetFlowAssociation,
+    BatchPutContact,
+    BatchUpdateDataTableValue,
     ClaimPhoneNumber,
     CompleteAttachedFileUpload,
     CreateAgentStatus,
@@ -2102,6 +2426,12 @@ const connect = {
     CreateTestCase,
     CreateTrafficDistributionGroup,
     CreateUseCase,
+    CreateUser,
+    CreateUserHierarchyGroup,
+    CreateView,
+    CreateViewVersion,
+    CreateVocabulary,
+    CreateWorkspace,
     DescribeAgentStatus,
     DescribeAttachedFilesConfiguration,
     DescribeAuthenticationProfile,

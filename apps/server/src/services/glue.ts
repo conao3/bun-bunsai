@@ -43,6 +43,15 @@ const blueprintPrefix = "blueprint:";
 const workflowPrefix = "workflow:";
 const sessionPrefix = "session:";
 const dqRulesetPrefix = "dqRuleset:";
+const customEntityTypePrefix = "customEntityType:";
+const tableOptimizerPrefix = "tableOptimizer:";
+const colStatsTaskSettingsPrefix = "colStatsTaskSettings:";
+const integrationPrefix = "integration:";
+const integrationResourcePropertyPrefix = "integrationResourceProperty:";
+const securityConfigPrefix = "securityConfig:";
+const usageProfilePrefix = "usageProfile:";
+const udfPrefix = "udf:";
+const glueIdcPrefix = "glueIdc:";
 
 type StoredCrawler = {
   input: Record<string, unknown>;
@@ -182,6 +191,69 @@ type StoredDataQualityRuleset = {
   name: string;
   input: Record<string, unknown>;
   createdOn: number;
+};
+
+type StoredCustomEntityType = {
+  name: string;
+  regexString: string;
+  contextWords: string[];
+  tags: Record<string, string>;
+};
+
+type StoredTableOptimizer = {
+  catalogId: string;
+  databaseName: string;
+  tableName: string;
+  type: string;
+  configuration: Record<string, unknown>;
+};
+
+type StoredColStatsTaskSettings = {
+  databaseName: string;
+  tableName: string;
+  role: string;
+  input: Record<string, unknown>;
+  createdOn: number;
+};
+
+type StoredIntegration = {
+  integrationArn: string;
+  integrationName: string;
+  sourceArn: string;
+  targetArn: string;
+  input: Record<string, unknown>;
+  createTime: number;
+};
+
+type StoredIntegrationResourceProperty = {
+  resourceArn: string;
+  resourcePropertyArn: string;
+  sourceProcessingProperties: Record<string, unknown> | undefined;
+  targetProcessingProperties: Record<string, unknown> | undefined;
+};
+
+type StoredSecurityConfig = {
+  name: string;
+  input: Record<string, unknown>;
+  createdTimestamp: number;
+};
+
+type StoredUsageProfile = {
+  name: string;
+  input: Record<string, unknown>;
+  createdOn: number;
+};
+
+type StoredUDF = {
+  databaseName: string;
+  input: Record<string, unknown>;
+  createTime: number;
+};
+
+type StoredGlueIdc = {
+  instanceArn: string;
+  applicationArn: string;
+  input: Record<string, unknown>;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -2606,6 +2678,393 @@ const CancelDataQualityRulesetEvaluationRun: OperationHandler = (
   return {};
 };
 
+const CreateCustomEntityType: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const name = requireName(record);
+  const regexString =
+    typeof record["RegexString"] === "string" ? record["RegexString"] : "";
+  if (regexString === "") {
+    throw awsError("InvalidInputException", "RegexString is required.", 400);
+  }
+  const key = `${customEntityTypePrefix}${name}`;
+  if (ctx.store.get<StoredCustomEntityType>(key) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `CustomEntityType already exists: ${name}`,
+      400,
+    );
+  }
+  const contextWords = Array.isArray(record["ContextWords"])
+    ? (record["ContextWords"] as string[])
+    : [];
+  const tags =
+    typeof record["Tags"] === "object" && record["Tags"] !== null
+      ? (record["Tags"] as Record<string, string>)
+      : {};
+  const stored: StoredCustomEntityType = {
+    name,
+    regexString,
+    contextWords,
+    tags,
+  };
+  ctx.store.set(key, stored);
+  return { Name: name };
+};
+
+const BatchGetCustomEntityTypes: OperationHandler = (input, ctx) => {
+  const names = Array.isArray(input["Names"])
+    ? (input["Names"] as string[])
+    : [];
+  const customEntityTypes: Record<string, unknown>[] = [];
+  const customEntityTypesNotFound: string[] = [];
+  for (const name of names) {
+    const stored = ctx.store.get<StoredCustomEntityType>(
+      `${customEntityTypePrefix}${name}`,
+    );
+    if (stored === undefined) {
+      customEntityTypesNotFound.push(name);
+    } else {
+      customEntityTypes.push({
+        Name: stored.name,
+        RegexString: stored.regexString,
+        ...(stored.contextWords.length > 0
+          ? { ContextWords: stored.contextWords }
+          : {}),
+      });
+    }
+  }
+  return {
+    CustomEntityTypes: customEntityTypes,
+    CustomEntityTypesNotFound: customEntityTypesNotFound,
+  };
+};
+
+const CreateTableOptimizer: OperationHandler = (input, ctx) => {
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : "";
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  const type = typeof input["Type"] === "string" ? input["Type"] : "";
+  if (
+    catalogId === "" ||
+    databaseName === "" ||
+    tableName === "" ||
+    type === ""
+  ) {
+    throw awsError(
+      "InvalidInputException",
+      "CatalogId, DatabaseName, TableName, and Type are required.",
+      400,
+    );
+  }
+  const key = `${tableOptimizerPrefix}${catalogId}:${databaseName}:${tableName}:${type}`;
+  if (ctx.store.get<StoredTableOptimizer>(key) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `TableOptimizer already exists for ${databaseName}.${tableName} type ${type}`,
+      400,
+    );
+  }
+  const configuration =
+    typeof input["TableOptimizerConfiguration"] === "object" &&
+    input["TableOptimizerConfiguration"] !== null
+      ? (input["TableOptimizerConfiguration"] as Record<string, unknown>)
+      : {};
+  const stored: StoredTableOptimizer = {
+    catalogId,
+    databaseName,
+    tableName,
+    type,
+    configuration,
+  };
+  ctx.store.set(key, stored);
+  return {};
+};
+
+const BatchGetTableOptimizer: OperationHandler = (input, ctx) => {
+  const entries = Array.isArray(input["Entries"])
+    ? (input["Entries"] as Record<string, unknown>[])
+    : [];
+  const tableOptimizers: Record<string, unknown>[] = [];
+  const failures: Record<string, unknown>[] = [];
+  for (const entry of entries) {
+    const catalogId =
+      typeof entry["catalogId"] === "string" ? entry["catalogId"] : "";
+    const databaseName =
+      typeof entry["databaseName"] === "string" ? entry["databaseName"] : "";
+    const tableName =
+      typeof entry["tableName"] === "string" ? entry["tableName"] : "";
+    const type = typeof entry["type"] === "string" ? entry["type"] : "";
+    const key = `${tableOptimizerPrefix}${catalogId}:${databaseName}:${tableName}:${type}`;
+    const stored = ctx.store.get<StoredTableOptimizer>(key);
+    if (stored === undefined) {
+      failures.push({
+        error: {
+          ErrorCode: "EntityNotFoundException",
+          ErrorMessage: `TableOptimizer not found for ${databaseName}.${tableName} type ${type}`,
+        },
+        catalogId,
+        databaseName,
+        tableName,
+        type,
+      });
+    } else {
+      tableOptimizers.push({
+        catalogId: stored.catalogId,
+        databaseName: stored.databaseName,
+        tableName: stored.tableName,
+        tableOptimizer: {
+          type: stored.type,
+          configuration: stored.configuration,
+        },
+      });
+    }
+  }
+  return { TableOptimizers: tableOptimizers, Failures: failures };
+};
+
+const CreateColumnStatisticsTaskSettings: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  const role = typeof input["Role"] === "string" ? input["Role"] : "";
+  if (databaseName === "" || tableName === "" || role === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName, TableName, and Role are required.",
+      400,
+    );
+  }
+  const key = `${colStatsTaskSettingsPrefix}${databaseName}:${tableName}`;
+  if (ctx.store.get<StoredColStatsTaskSettings>(key) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `ColumnStatisticsTaskSettings already exists for ${databaseName}.${tableName}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredColStatsTaskSettings = {
+    databaseName,
+    tableName,
+    role,
+    input: asRecord(input),
+    createdOn: now,
+  };
+  ctx.store.set(key, stored);
+  return {};
+};
+
+const CreateGlueIdentityCenterConfiguration: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const instanceArn =
+    typeof input["InstanceArn"] === "string" ? input["InstanceArn"] : "";
+  if (instanceArn === "") {
+    throw awsError("InvalidInputException", "InstanceArn is required.", 400);
+  }
+  const applicationArn = `arn:aws:sso::123456789012:application/ins-${instanceArn.split("/").pop() ?? "default"}/apl-glue`;
+  const stored: StoredGlueIdc = {
+    instanceArn,
+    applicationArn,
+    input: asRecord(input),
+  };
+  ctx.store.set(glueIdcPrefix, stored);
+  return { ApplicationArn: applicationArn };
+};
+
+const CreateIntegration: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const integrationName =
+    typeof record["IntegrationName"] === "string"
+      ? record["IntegrationName"]
+      : "";
+  const sourceArn =
+    typeof record["SourceArn"] === "string" ? record["SourceArn"] : "";
+  const targetArn =
+    typeof record["TargetArn"] === "string" ? record["TargetArn"] : "";
+  if (integrationName === "" || sourceArn === "" || targetArn === "") {
+    throw awsError(
+      "InvalidInputException",
+      "IntegrationName, SourceArn, and TargetArn are required.",
+      400,
+    );
+  }
+  const key = `${integrationPrefix}${integrationName}`;
+  if (ctx.store.get<StoredIntegration>(key) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Integration already exists: ${integrationName}`,
+      400,
+    );
+  }
+  const integrationArn = `arn:aws:glue:us-east-1:123456789012:integration/${integrationName}`;
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredIntegration = {
+    integrationArn,
+    integrationName,
+    sourceArn,
+    targetArn,
+    input: record,
+    createTime: now,
+  };
+  ctx.store.set(key, stored);
+  return {
+    SourceArn: sourceArn,
+    TargetArn: targetArn,
+    IntegrationName: integrationName,
+    IntegrationArn: integrationArn,
+    Status: "CREATING",
+    CreateTime: now,
+    ...(typeof record["Description"] === "string"
+      ? { Description: record["Description"] }
+      : {}),
+    ...(typeof record["KmsKeyId"] === "string"
+      ? { KmsKeyId: record["KmsKeyId"] }
+      : {}),
+    Tags: Array.isArray(record["Tags"]) ? record["Tags"] : [],
+    Errors: [],
+  };
+};
+
+const CreateIntegrationResourceProperty: OperationHandler = (input, ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string" ? input["ResourceArn"] : "";
+  if (resourceArn === "") {
+    throw awsError("InvalidInputException", "ResourceArn is required.", 400);
+  }
+  const key = `${integrationResourcePropertyPrefix}${resourceArn}`;
+  const resourcePropertyArn = `arn:aws:glue:us-east-1:123456789012:integration-resource-property/${encodeURIComponent(resourceArn)}`;
+  const sourceProcessingProperties =
+    typeof input["SourceProcessingProperties"] === "object" &&
+    input["SourceProcessingProperties"] !== null
+      ? (input["SourceProcessingProperties"] as Record<string, unknown>)
+      : undefined;
+  const targetProcessingProperties =
+    typeof input["TargetProcessingProperties"] === "object" &&
+    input["TargetProcessingProperties"] !== null
+      ? (input["TargetProcessingProperties"] as Record<string, unknown>)
+      : undefined;
+  const stored: StoredIntegrationResourceProperty = {
+    resourceArn,
+    resourcePropertyArn,
+    sourceProcessingProperties,
+    targetProcessingProperties,
+  };
+  ctx.store.set(key, stored);
+  return {
+    ResourceArn: resourceArn,
+    ResourcePropertyArn: resourcePropertyArn,
+    ...(sourceProcessingProperties !== undefined
+      ? { SourceProcessingProperties: sourceProcessingProperties }
+      : {}),
+    ...(targetProcessingProperties !== undefined
+      ? { TargetProcessingProperties: targetProcessingProperties }
+      : {}),
+  };
+};
+
+const CreateScript: OperationHandler = (input, _ctx) => {
+  const language =
+    typeof input["Language"] === "string" ? input["Language"] : "PYTHON";
+  const dagNodes = Array.isArray(input["DagNodes"]) ? input["DagNodes"] : [];
+  if (language === "SCALA") {
+    return {
+      ScalaCode: `// Generated Scala code for ${dagNodes.length} nodes`,
+    };
+  }
+  return {
+    PythonScript: `# Generated Python script for ${dagNodes.length} nodes\n`,
+  };
+};
+
+const CreateSecurityConfiguration: OperationHandler = (input, ctx) => {
+  const name = requireName(asRecord(input));
+  const key = `${securityConfigPrefix}${name}`;
+  if (ctx.store.get<StoredSecurityConfig>(key) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `SecurityConfiguration already exists: ${name}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredSecurityConfig = {
+    name,
+    input: asRecord(input),
+    createdTimestamp: now,
+  };
+  ctx.store.set(key, stored);
+  return { Name: name, CreatedTimestamp: now };
+};
+
+const CreateUsageProfile: OperationHandler = (input, ctx) => {
+  const record = asRecord(input);
+  const name = requireName(record);
+  const key = `${usageProfilePrefix}${name}`;
+  if (ctx.store.get<StoredUsageProfile>(key) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `UsageProfile already exists: ${name}`,
+      400,
+    );
+  }
+  if (
+    typeof record["Configuration"] !== "object" ||
+    record["Configuration"] === null
+  ) {
+    throw awsError("InvalidInputException", "Configuration is required.", 400);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredUsageProfile = {
+    name,
+    input: record,
+    createdOn: now,
+  };
+  ctx.store.set(key, stored);
+  return { Name: name };
+};
+
+const CreateUserDefinedFunction: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  if (databaseName === "") {
+    throw awsError("InvalidInputException", "DatabaseName is required.", 400);
+  }
+  const functionInput = asRecord(input["FunctionInput"]);
+  const functionName =
+    typeof functionInput["FunctionName"] === "string"
+      ? functionInput["FunctionName"]
+      : "";
+  if (functionName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "FunctionInput.FunctionName is required.",
+      400,
+    );
+  }
+  const key = `${udfPrefix}${databaseName}:${functionName}`;
+  if (ctx.store.get<StoredUDF>(key) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `UserDefinedFunction already exists: ${databaseName}.${functionName}`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const stored: StoredUDF = {
+    databaseName,
+    input: functionInput,
+    createTime: now,
+  };
+  ctx.store.set(key, stored);
+  return {};
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -2701,6 +3160,18 @@ const glue: ServiceDefinition = {
     BatchPutDataQualityStatisticAnnotation,
     CancelDataQualityRuleRecommendationRun,
     CancelDataQualityRulesetEvaluationRun,
+    CreateCustomEntityType,
+    BatchGetCustomEntityTypes,
+    CreateTableOptimizer,
+    BatchGetTableOptimizer,
+    CreateColumnStatisticsTaskSettings,
+    CreateGlueIdentityCenterConfiguration,
+    CreateIntegration,
+    CreateIntegrationResourceProperty,
+    CreateScript,
+    CreateSecurityConfiguration,
+    CreateUsageProfile,
+    CreateUserDefinedFunction,
   },
   model,
 } as const;

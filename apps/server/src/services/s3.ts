@@ -113,6 +113,23 @@ const bucketKeyFromPath = (
   };
 };
 
+const endpointBaseNames = new Set(["localhost", "bunsai.test"]);
+
+export const virtualHostBucket = (host: string | null): string | undefined => {
+  if (host === null) return undefined;
+  const hostname = host.split(":")[0];
+  if (endpointBaseNames.has(hostname) || /^[\d.]+$/.test(hostname))
+    return undefined;
+  const dot = hostname.indexOf(".");
+  if (dot === -1) return undefined;
+  const first = hostname.slice(0, dot);
+  const rest = hostname.slice(dot + 1);
+  if (first === "" || first === "s3" || first.startsWith("s3-"))
+    return undefined;
+  if (endpointBaseNames.has(rest) || rest.startsWith("s3.")) return first;
+  return undefined;
+};
+
 const normalizeEtag = (value: string): string =>
   value.startsWith("W/") ? value.slice(2) : value;
 
@@ -268,7 +285,11 @@ const s3: ServiceDefinition = {
       return undefined;
     }
     if (req.method === "PUT") {
-      if (hasUploadId) return "UploadPart";
+      if (hasUploadId) {
+        if (req.headers.get("x-amz-copy-source") !== null)
+          return "UploadPartCopy";
+        return "UploadPart";
+      }
       if (hasObjectTagging) return "PutObjectTagging";
       if (req.headers.get("x-amz-copy-source") !== null) return "CopyObject";
       return "PutObject";
@@ -702,6 +723,72 @@ const s3: ServiceDefinition = {
       });
       return { ETag: etag };
     },
+    UploadPartCopy: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const uploadId = req.query.get("uploadId") ?? "";
+      const upload = target.uploads[uploadId];
+      if (upload === undefined) {
+        throw awsError(
+          "NoSuchUpload",
+          "The specified multipart upload does not exist.",
+          404,
+        );
+      }
+      const partNumberRaw = req.query.get("partNumber") ?? "";
+      const partNumber = Number.parseInt(partNumberRaw, 10);
+      if (!Number.isInteger(partNumber) || partNumber < 1) {
+        throw awsError("InvalidArgument", "invalid partNumber", 400);
+      }
+      const copySource = input["CopySource"];
+      if (typeof copySource !== "string" || copySource === "") {
+        throw awsError(
+          "InvalidArgument",
+          "x-amz-copy-source header is required",
+          400,
+        );
+      }
+      const { bucket: srcBucket, key: srcKey } = bucketKeyFromPath(
+        copySource.split("?")[0],
+      );
+      if (srcBucket === undefined || srcKey === undefined) {
+        throw awsError("InvalidArgument", "invalid copy source", 400);
+      }
+      const source = getBucket(ctx, srcBucket).objects[srcKey];
+      if (source === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const range = input["CopySourceRange"];
+      const match =
+        typeof range === "string" ? range.match(/^bytes=(\d+)-(\d+)$/) : null;
+      const body =
+        match === null
+          ? source.body
+          : source.body.slice(Number(match[1]), Number(match[2]) + 1);
+      const lastModified = nowSeconds();
+      const etag = `"${md5Hex(body)}"`;
+      const part: S3Part = {
+        partNumber,
+        body,
+        etag,
+        size: body.byteLength,
+        lastModified,
+      };
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        uploads: {
+          ...target.uploads,
+          [uploadId]: {
+            ...upload,
+            parts: { ...upload.parts, [String(partNumber)]: part },
+          },
+        },
+      });
+      return { CopyPartResult: { ETag: etag, LastModified: lastModified } };
+    },
     CompleteMultipartUpload: (input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
       if (bucket === undefined || key === undefined) {
@@ -728,17 +815,33 @@ const s3: ServiceDefinition = {
             const record = entry as Record<string, unknown>;
             const partNumber = Number(record["PartNumber"]);
             if (!Number.isInteger(partNumber)) return [];
-            return [partNumber];
+            const etag = record["ETag"];
+            return [
+              { partNumber, etag: typeof etag === "string" ? etag : undefined },
+            ];
           })
         : Object.values(upload.parts)
-            .map((p) => p.partNumber)
-            .sort((a, b) => a - b);
-      const bodies = requested.map((partNumber) => {
-        const part = upload.parts[String(partNumber)];
-        if (part === undefined) {
+            .map((p) => ({ partNumber: p.partNumber, etag: p.etag }))
+            .sort((a, b) => a.partNumber - b.partNumber);
+      for (let i = 1; i < requested.length; i += 1) {
+        if (requested[i].partNumber <= requested[i - 1].partNumber) {
+          throw awsError(
+            "InvalidPartOrder",
+            "The list of parts was not in ascending order. Parts must be ordered by part number.",
+            400,
+          );
+        }
+      }
+      const bodies = requested.map((entry) => {
+        const part = upload.parts[String(entry.partNumber)];
+        if (
+          part === undefined ||
+          (entry.etag !== undefined &&
+            normalizeEtag(entry.etag) !== normalizeEtag(part.etag))
+        ) {
           throw awsError(
             "InvalidPart",
-            "One or more of the specified parts could not be found.",
+            "One or more of the specified parts could not be found. The part might not have been uploaded, or the specified entity tag might not have matched the part's entity tag.",
             400,
           );
         }

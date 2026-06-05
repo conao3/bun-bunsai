@@ -6,6 +6,7 @@ import { createStateStore } from "./core/state.ts";
 import type { Protocol } from "./core/types.ts";
 import { handleManagement } from "./management/api.ts";
 import { findService } from "./services/index.ts";
+import { virtualHostBucket } from "./services/s3.ts";
 
 const bodyTextForLog = (body: string | Uint8Array): string => {
   if (typeof body === "string") return body;
@@ -52,6 +53,38 @@ export function createBunsaiApp() {
         status: error.statusCode,
         headers: { "content-type": serialized.contentType },
       });
+    }
+
+    if (route.presignedExpired) {
+      const error = {
+        __awsError: true as const,
+        code: "AccessDenied",
+        message: "Request has expired",
+        statusCode: 403,
+      };
+      const serialized = serializeError(service.protocol, error);
+      recordLog(log, {
+        service: route.service,
+        operation: route.target ?? "unknown",
+        statusCode: error.statusCode,
+        latencyMs: performance.now() - start,
+        account: route.account,
+        region: route.region,
+        protocol: service.protocol,
+        requestBodyText: bodyTextForLog(bodyBytes),
+        responseBodyText: bodyTextForLog(serialized.body),
+      });
+      return new Response(serialized.body, {
+        status: error.statusCode,
+        headers: { "content-type": serialized.contentType },
+      });
+    }
+
+    if (route.service === "s3") {
+      const bucket = virtualHostBucket(req.headers.get("host"));
+      if (bucket !== undefined) {
+        url.pathname = `/${bucket}${url.pathname === "/" ? "" : url.pathname}`;
+      }
     }
 
     const parsed = buildParsedRequest(

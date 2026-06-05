@@ -571,6 +571,105 @@ type StoredDataQualityJobDefinition = {
   CreationTime: number;
 };
 
+type StoredDeviceFleet = {
+  DeviceFleetName: string;
+  DeviceFleetArn: string;
+  RoleArn?: string;
+  Description?: string;
+  OutputConfig?: unknown;
+  CreationTime: number;
+};
+
+type StoredEdgeDeploymentPlan = {
+  EdgeDeploymentPlanName: string;
+  EdgeDeploymentPlanArn: string;
+  DeviceFleetName?: string;
+  ModelConfigs?: unknown;
+  Stages?: unknown[];
+  CreationTime: number;
+};
+
+type StoredEdgePackagingJob = {
+  EdgePackagingJobName: string;
+  EdgePackagingJobArn: string;
+  CompilationJobName?: string;
+  ModelName?: string;
+  ModelVersion?: string;
+  RoleArn?: string;
+  OutputConfig?: unknown;
+  CreationTime: number;
+};
+
+type StoredExperiment = {
+  ExperimentName: string;
+  ExperimentArn: string;
+  DisplayName?: string;
+  Description?: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredFlowDefinition = {
+  FlowDefinitionName: string;
+  FlowDefinitionArn: string;
+  RoleArn?: string;
+  HumanLoopConfig?: unknown;
+  OutputConfig?: unknown;
+  CreationTime: number;
+};
+
+type StoredHumanTaskUi = {
+  HumanTaskUiName: string;
+  HumanTaskUiArn: string;
+  UiTemplate?: unknown;
+  CreationTime: number;
+};
+
+type StoredHyperParameterTuningJob = {
+  HyperParameterTuningJobName: string;
+  HyperParameterTuningJobArn: string;
+  HyperParameterTuningJobStatus: string;
+  HyperParameterTuningJobConfig?: unknown;
+  TrainingJobDefinition?: unknown;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredLabelingJob = {
+  LabelingJobName: string;
+  LabelingJobArn: string;
+  LabelingJobStatus: string;
+  LabelAttributeName?: string;
+  InputConfig?: unknown;
+  OutputConfig?: unknown;
+  RoleArn?: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredMlflowTrackingServer = {
+  TrackingServerName: string;
+  TrackingServerArn: string;
+  ArtifactStoreUri?: string;
+  TrackingServerSize?: string;
+  MlflowVersion?: string;
+  RoleArn?: string;
+  CreationTime: number;
+};
+
+type StoredOptimizationJob = {
+  OptimizationJobName: string;
+  OptimizationJobArn: string;
+  OptimizationJobStatus: string;
+  RoleArn?: string;
+  ModelSource?: unknown;
+  DeploymentInstanceType?: string;
+  OptimizationConfigs?: unknown;
+  OutputConfig?: unknown;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
 const modelKey = (name: string): string => `model/${name}`;
 
 const configKey = (name: string): string => `endpoint-config/${name}`;
@@ -699,6 +798,30 @@ const contextKey = (name: string): string => `context/${name}`;
 
 const dataQualityJobDefinitionKey = (name: string): string =>
   `data-quality-job-definition/${name}`;
+
+const deviceFleetKey = (name: string): string => `device-fleet/${name}`;
+
+const edgeDeploymentPlanKey = (name: string): string =>
+  `edge-deployment-plan/${name}`;
+
+const edgePackagingJobKey = (name: string): string =>
+  `edge-packaging-job/${name}`;
+
+const experimentKey = (name: string): string => `experiment/${name}`;
+
+const flowDefinitionKey = (name: string): string => `flow-definition/${name}`;
+
+const humanTaskUiKey = (name: string): string => `human-task-ui/${name}`;
+
+const hyperParameterTuningJobKey = (name: string): string =>
+  `hyper-parameter-tuning-job/${name}`;
+
+const labelingJobKey = (name: string): string => `labeling-job/${name}`;
+
+const mlflowTrackingServerKey = (name: string): string =>
+  `mlflow-tracking-server/${name}`;
+
+const optimizationJobKey = (name: string): string => `optimization-job/${name}`;
 
 const trainingJobArnOf = (
   region: string,
@@ -985,6 +1108,70 @@ const dataQualityJobDefinitionArnOf = (
   name: string,
 ): string =>
   `arn:aws:sagemaker:${region}:${account}:data-quality-job-definition/${name}`;
+
+const deviceFleetArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:device-fleet/${name}`;
+
+const edgeDeploymentPlanArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:edge-deployment-plan/${name}`;
+
+const edgePackagingJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:edge-packaging-job/${name}`;
+
+const experimentArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:experiment/${name}`;
+
+const flowDefinitionArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:flow-definition/${name}`;
+
+const humanTaskUiArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:human-task-ui/${name}`;
+
+const hyperParameterTuningJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:hyper-parameter-tuning-job/${name}`;
+
+const labelingJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:labeling-job/${name}`;
+
+const mlflowTrackingServerArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:mlflow-tracking-server/${name}`;
+
+const optimizationJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:optimization-job/${name}`;
 
 const trialComponentArnOf = (
   region: string,
@@ -3868,6 +4055,340 @@ const CreateDataQualityJobDefinition: OperationHandler = (input, ctx) => {
   return { JobDefinitionArn: arn };
 };
 
+const CreateDeviceFleet: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "DeviceFleetName");
+  const existing = ctx.store.get<StoredDeviceFleet>(deviceFleetKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `DeviceFleet ${name} already exists.`, 400);
+  }
+  const arn = deviceFleetArnOf(ctx.region, ctx.account, name);
+  const stored: StoredDeviceFleet = {
+    DeviceFleetName: name,
+    DeviceFleetArn: arn,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : undefined,
+    OutputConfig: input["OutputConfig"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(deviceFleetKey(name), stored);
+  return {};
+};
+
+const CreateEdgeDeploymentPlan: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "EdgeDeploymentPlanName");
+  const existing = ctx.store.get<StoredEdgeDeploymentPlan>(
+    edgeDeploymentPlanKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `EdgeDeploymentPlan ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = edgeDeploymentPlanArnOf(ctx.region, ctx.account, name);
+  const stored: StoredEdgeDeploymentPlan = {
+    EdgeDeploymentPlanName: name,
+    EdgeDeploymentPlanArn: arn,
+    DeviceFleetName:
+      typeof input["DeviceFleetName"] === "string"
+        ? (input["DeviceFleetName"] as string)
+        : undefined,
+    ModelConfigs: input["ModelConfigs"],
+    Stages: Array.isArray(input["Stages"])
+      ? (input["Stages"] as unknown[])
+      : [],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(edgeDeploymentPlanKey(name), stored);
+  return { EdgeDeploymentPlanArn: arn };
+};
+
+const CreateEdgeDeploymentStage: OperationHandler = (input, ctx) => {
+  const planName = requireString(input, "EdgeDeploymentPlanName");
+  const stored = ctx.store.get<StoredEdgeDeploymentPlan>(
+    edgeDeploymentPlanKey(planName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `EdgeDeploymentPlan ${planName} does not exist.`,
+      400,
+    );
+  }
+  const newStages = Array.isArray(input["Stages"])
+    ? (input["Stages"] as unknown[])
+    : [];
+  ctx.store.set(edgeDeploymentPlanKey(planName), {
+    ...stored,
+    Stages: [...(stored.Stages ?? []), ...newStages],
+  });
+  return {};
+};
+
+const CreateEdgePackagingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "EdgePackagingJobName");
+  const existing = ctx.store.get<StoredEdgePackagingJob>(
+    edgePackagingJobKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `EdgePackagingJob ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = edgePackagingJobArnOf(ctx.region, ctx.account, name);
+  const stored: StoredEdgePackagingJob = {
+    EdgePackagingJobName: name,
+    EdgePackagingJobArn: arn,
+    CompilationJobName:
+      typeof input["CompilationJobName"] === "string"
+        ? (input["CompilationJobName"] as string)
+        : undefined,
+    ModelName:
+      typeof input["ModelName"] === "string"
+        ? (input["ModelName"] as string)
+        : undefined,
+    ModelVersion:
+      typeof input["ModelVersion"] === "string"
+        ? (input["ModelVersion"] as string)
+        : undefined,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    OutputConfig: input["OutputConfig"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(edgePackagingJobKey(name), stored);
+  return {};
+};
+
+const CreateExperiment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ExperimentName");
+  const existing = ctx.store.get<StoredExperiment>(experimentKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `Experiment ${name} already exists.`, 400);
+  }
+  const arn = experimentArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredExperiment = {
+    ExperimentName: name,
+    ExperimentArn: arn,
+    DisplayName:
+      typeof input["DisplayName"] === "string"
+        ? (input["DisplayName"] as string)
+        : undefined,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : undefined,
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(experimentKey(name), stored);
+  return { ExperimentArn: arn };
+};
+
+const CreateFlowDefinition: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "FlowDefinitionName");
+  const existing = ctx.store.get<StoredFlowDefinition>(flowDefinitionKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `FlowDefinition ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = flowDefinitionArnOf(ctx.region, ctx.account, name);
+  const stored: StoredFlowDefinition = {
+    FlowDefinitionName: name,
+    FlowDefinitionArn: arn,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    HumanLoopConfig: input["HumanLoopConfig"],
+    OutputConfig: input["OutputConfig"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(flowDefinitionKey(name), stored);
+  return { FlowDefinitionArn: arn };
+};
+
+const CreateHumanTaskUi: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "HumanTaskUiName");
+  const existing = ctx.store.get<StoredHumanTaskUi>(humanTaskUiKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `HumanTaskUi ${name} already exists.`, 400);
+  }
+  const arn = humanTaskUiArnOf(ctx.region, ctx.account, name);
+  const stored: StoredHumanTaskUi = {
+    HumanTaskUiName: name,
+    HumanTaskUiArn: arn,
+    UiTemplate: input["UiTemplate"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(humanTaskUiKey(name), stored);
+  return { HumanTaskUiArn: arn };
+};
+
+const CreateHyperParameterTuningJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "HyperParameterTuningJobName");
+  const existing = ctx.store.get<StoredHyperParameterTuningJob>(
+    hyperParameterTuningJobKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `HyperParameterTuningJob ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = hyperParameterTuningJobArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredHyperParameterTuningJob = {
+    HyperParameterTuningJobName: name,
+    HyperParameterTuningJobArn: arn,
+    HyperParameterTuningJobStatus: "InProgress",
+    HyperParameterTuningJobConfig: input["HyperParameterTuningJobConfig"],
+    TrainingJobDefinition: input["TrainingJobDefinition"],
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(hyperParameterTuningJobKey(name), stored);
+  return { HyperParameterTuningJobArn: arn };
+};
+
+const CreateLabelingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "LabelingJobName");
+  const existing = ctx.store.get<StoredLabelingJob>(labelingJobKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `LabelingJob ${name} already exists.`, 400);
+  }
+  const arn = labelingJobArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredLabelingJob = {
+    LabelingJobName: name,
+    LabelingJobArn: arn,
+    LabelingJobStatus: "InProgress",
+    LabelAttributeName:
+      typeof input["LabelAttributeName"] === "string"
+        ? (input["LabelAttributeName"] as string)
+        : undefined,
+    InputConfig: input["InputConfig"],
+    OutputConfig: input["OutputConfig"],
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(labelingJobKey(name), stored);
+  return { LabelingJobArn: arn };
+};
+
+const CreateMlflowTrackingServer: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrackingServerName");
+  const existing = ctx.store.get<StoredMlflowTrackingServer>(
+    mlflowTrackingServerKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `MlflowTrackingServer ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = mlflowTrackingServerArnOf(ctx.region, ctx.account, name);
+  const stored: StoredMlflowTrackingServer = {
+    TrackingServerName: name,
+    TrackingServerArn: arn,
+    ArtifactStoreUri:
+      typeof input["ArtifactStoreUri"] === "string"
+        ? (input["ArtifactStoreUri"] as string)
+        : undefined,
+    TrackingServerSize:
+      typeof input["TrackingServerSize"] === "string"
+        ? (input["TrackingServerSize"] as string)
+        : undefined,
+    MlflowVersion:
+      typeof input["MlflowVersion"] === "string"
+        ? (input["MlflowVersion"] as string)
+        : undefined,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(mlflowTrackingServerKey(name), stored);
+  return { TrackingServerArn: arn };
+};
+
+const CreateOptimizationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "OptimizationJobName");
+  const existing = ctx.store.get<StoredOptimizationJob>(
+    optimizationJobKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `OptimizationJob ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = optimizationJobArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredOptimizationJob = {
+    OptimizationJobName: name,
+    OptimizationJobArn: arn,
+    OptimizationJobStatus: "INPROGRESS",
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    ModelSource: input["ModelSource"],
+    DeploymentInstanceType:
+      typeof input["DeploymentInstanceType"] === "string"
+        ? (input["DeploymentInstanceType"] as string)
+        : undefined,
+    OptimizationConfigs: input["OptimizationConfigs"],
+    OutputConfig: input["OutputConfig"],
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(optimizationJobKey(name), stored);
+  return { OptimizationJobArn: arn };
+};
+
+const CreatePresignedMlflowTrackingServerUrl: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const name = requireString(input, "TrackingServerName");
+  const stored = ctx.store.get<StoredMlflowTrackingServer>(
+    mlflowTrackingServerKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `MlflowTrackingServer ${name} does not exist.`,
+      400,
+    );
+  }
+  const url = `https://${name}.mlflow.${ctx.region}.sagemaker.aws/?token=bunsai-presigned-token`;
+  return { AuthorizedUrl: url };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -3993,6 +4514,18 @@ const sagemaker = {
     CreateComputeQuota,
     CreateContext,
     CreateDataQualityJobDefinition,
+    CreateDeviceFleet,
+    CreateEdgeDeploymentPlan,
+    CreateEdgeDeploymentStage,
+    CreateEdgePackagingJob,
+    CreateExperiment,
+    CreateFlowDefinition,
+    CreateHumanTaskUi,
+    CreateHyperParameterTuningJob,
+    CreateLabelingJob,
+    CreateMlflowTrackingServer,
+    CreateOptimizationJob,
+    CreatePresignedMlflowTrackingServerUrl,
   },
   model,
 } as const satisfies ServiceDefinition;

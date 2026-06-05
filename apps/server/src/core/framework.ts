@@ -21,7 +21,14 @@ export const awsError = (
   code: string,
   message: string,
   statusCode = 400,
-): AwsError => ({ __awsError: true, code, message, statusCode });
+  data?: Record<string, unknown>,
+): AwsError => ({
+  __awsError: true,
+  code,
+  message,
+  statusCode,
+  ...(data !== undefined ? { data } : {}),
+});
 
 const isAwsError = (value: unknown): value is AwsError =>
   typeof value === "object" &&
@@ -90,6 +97,7 @@ export const dispatch = async (
         shape: err.shape,
         code: err.wireCode,
         jsonVersion: model.metadata.jsonVersion,
+        ...(error.data !== undefined ? { data: error.data } : {}),
       });
     }
     return {

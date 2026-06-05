@@ -950,6 +950,49 @@ const BatchGetItem: OperationHandler = (input, ctx) => {
   return { Responses: responses, UnprocessedKeys: {} };
 };
 
+type CancellationReason = {
+  Code: string;
+  Message?: string;
+  Item?: Item;
+};
+
+const NONE_REASON: CancellationReason = { Code: "None" };
+
+const evaluateOptionalCondition = (
+  spec: Record<string, unknown>,
+  current: Item | undefined,
+): { ok: true } | { ok: false; reason: CancellationReason } => {
+  const expression = spec["ConditionExpression"];
+  if (typeof expression !== "string" || expression === "") return { ok: true };
+  const values = asRecord(spec["ExpressionAttributeValues"]) as Record<
+    string,
+    AttributeValue
+  >;
+  const names = asRecord(spec["ExpressionAttributeNames"]) as Record<
+    string,
+    string
+  >;
+  const ast = parseConditionExpression(expression, { names, values });
+  if (evaluateCondition(ast, current ?? {})) return { ok: true };
+  const reason: CancellationReason = {
+    Code: "ConditionalCheckFailed",
+    Message: "The conditional request failed",
+  };
+  if (
+    current !== undefined &&
+    spec["ReturnValuesOnConditionCheckFailure"] === "ALL_OLD"
+  ) {
+    reason.Item = current;
+  }
+  return { ok: false, reason };
+};
+
+type TransactPlan =
+  | { kind: "Put"; table: StoredTable; key: string; value: Item }
+  | { kind: "Update"; table: StoredTable; key: string; value: Item }
+  | { kind: "Delete"; table: StoredTable; key: string }
+  | { kind: "Skip" };
+
 const TransactWriteItems: OperationHandler = (input, ctx) => {
   const transactItems = Array.isArray(input["TransactItems"])
     ? (input["TransactItems"] as Record<string, unknown>[])
@@ -959,33 +1002,110 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
     const existing = snapshots.get(name);
     if (existing !== undefined) return existing;
     const table = requireTable(ctx, name);
-    snapshots.set(name, {
-      ...table,
-      items: { ...table.items },
-    });
+    snapshots.set(name, { ...table, items: { ...table.items } });
     return snapshots.get(name) as StoredTable;
   };
-  for (const entry of transactItems) {
-    const item = asRecord(entry);
-    const put = item["Put"];
-    const del = item["Delete"];
-    const update = item["Update"];
+  const reasons: CancellationReason[] = new Array(transactItems.length).fill(
+    NONE_REASON,
+  );
+  const plans: TransactPlan[] = new Array(transactItems.length).fill({
+    kind: "Skip",
+  });
+  let hasFailure = false;
+  for (let i = 0; i < transactItems.length; i++) {
+    const entry = asRecord(transactItems[i]);
+    const conditionCheck = entry["ConditionCheck"];
+    const put = entry["Put"];
+    const del = entry["Delete"];
+    const update = entry["Update"];
+    if (conditionCheck !== undefined) {
+      const spec = asRecord(conditionCheck);
+      const table = tableFor(requireString(spec, "TableName"));
+      const key = keyFromKeyInput(table, asItem(spec["Key"]));
+      const current = table.items[key];
+      const verdict = evaluateOptionalCondition(spec, current);
+      if (!verdict.ok) {
+        reasons[i] = verdict.reason;
+        hasFailure = true;
+      }
+      continue;
+    }
     if (put !== undefined) {
       const spec = asRecord(put);
       const table = tableFor(requireString(spec, "TableName"));
       const value = asItem(spec["Item"]);
-      table.items[keyOf(table, value)] = value;
-    } else if (del !== undefined) {
+      const key = keyOf(table, value);
+      const current = table.items[key];
+      const verdict = evaluateOptionalCondition(spec, current);
+      if (!verdict.ok) {
+        reasons[i] = verdict.reason;
+        hasFailure = true;
+      }
+      plans[i] = { kind: "Put", table, key, value };
+      continue;
+    }
+    if (del !== undefined) {
       const spec = asRecord(del);
       const table = tableFor(requireString(spec, "TableName"));
-      delete table.items[keyFromKeyInput(table, asItem(spec["Key"]))];
-    } else if (update !== undefined) {
+      const key = keyFromKeyInput(table, asItem(spec["Key"]));
+      const current = table.items[key];
+      const verdict = evaluateOptionalCondition(spec, current);
+      if (!verdict.ok) {
+        reasons[i] = verdict.reason;
+        hasFailure = true;
+      }
+      plans[i] = { kind: "Delete", table, key };
+      continue;
+    }
+    if (update !== undefined) {
       const spec = asRecord(update);
       const table = tableFor(requireString(spec, "TableName"));
       const key = keyFromKeyInput(table, asItem(spec["Key"]));
-      const existing = table.items[key] ?? { ...asItem(spec["Key"]) };
-      const values = asRecord(spec["ExpressionAttributeValues"]);
-      table.items[key] = { ...existing, ...(values as Item) };
+      const current = table.items[key];
+      const verdict = evaluateOptionalCondition(spec, current);
+      if (!verdict.ok) {
+        reasons[i] = verdict.reason;
+        hasFailure = true;
+      }
+      const existing = current ?? { ...asItem(spec["Key"]) };
+      const expression = spec["UpdateExpression"];
+      let updated: Item;
+      if (typeof expression === "string" && expression !== "") {
+        const values = asRecord(spec["ExpressionAttributeValues"]) as Record<
+          string,
+          AttributeValue
+        >;
+        const names = asRecord(spec["ExpressionAttributeNames"]) as Record<
+          string,
+          string
+        >;
+        const ast = parseUpdateExpression(expression, { names, values });
+        updated = applyUpdate(ast, existing);
+      } else {
+        updated = existing;
+      }
+      plans[i] = { kind: "Update", table, key, value: updated };
+      continue;
+    }
+  }
+  if (hasFailure) {
+    throw awsError(
+      "TransactionCanceledException",
+      "Transaction cancelled, please refer cancellation reasons for specific reasons [" +
+        reasons.map((r) => r.Code).join(", ") +
+        "]",
+      400,
+      { CancellationReasons: reasons },
+    );
+  }
+  for (const plan of plans) {
+    if (plan.kind === "Skip") continue;
+    if (plan.kind === "Put") {
+      plan.table.items[plan.key] = plan.value;
+    } else if (plan.kind === "Update") {
+      plan.table.items[plan.key] = plan.value;
+    } else {
+      delete plan.table.items[plan.key];
     }
   }
   for (const [name, table] of snapshots) {

@@ -22,6 +22,7 @@ export type AwsError = {
   code: string;
   message: string;
   statusCode: number;
+  data?: Record<string, unknown>;
 };
 
 export type StateScope = {

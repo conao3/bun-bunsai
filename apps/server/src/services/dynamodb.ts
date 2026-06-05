@@ -1,3 +1,5 @@
+import { evaluateCondition } from "../core/expressions/evaluator-condition.ts";
+import { parseConditionExpression } from "../core/expressions/parser-condition.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import dynamodbModel from "../../../../test/vendor/aws-models/dynamodb.json" with { type: "json" };
@@ -298,6 +300,35 @@ const tableDescription = (
 const asItem = (value: unknown): Item =>
   typeof value === "object" && value !== null ? (value as Item) : ({} as Item);
 
+const ensureConditionPasses = (
+  input: Record<string, unknown>,
+  current: Item | undefined,
+): void => {
+  const expression = input["ConditionExpression"];
+  if (typeof expression !== "string" || expression === "") return;
+  const values = (
+    typeof input["ExpressionAttributeValues"] === "object" &&
+    input["ExpressionAttributeValues"] !== null
+      ? (input["ExpressionAttributeValues"] as Record<string, AttributeValue>)
+      : {}
+  ) as Record<string, AttributeValue>;
+  const names = (
+    typeof input["ExpressionAttributeNames"] === "object" &&
+    input["ExpressionAttributeNames"] !== null
+      ? (input["ExpressionAttributeNames"] as Record<string, string>)
+      : {}
+  ) as Record<string, string>;
+  const ast = parseConditionExpression(expression, { names, values });
+  const item = current ?? {};
+  if (!evaluateCondition(ast, item)) {
+    throw awsError(
+      "ConditionalCheckFailedException",
+      "The conditional request failed",
+      400,
+    );
+  }
+};
+
 const parseSecondaryIndexes = (value: unknown): SecondaryIndex[] =>
   (Array.isArray(value) ? (value as Record<string, unknown>[]) : []).map(
     (entry) => ({
@@ -384,6 +415,7 @@ const PutItem: OperationHandler = (input, ctx) => {
   const item = asItem(input["Item"]);
   const key = keyOf(table, item);
   const previous = table.items[key];
+  ensureConditionPasses(input, previous);
   table.items[key] = item;
   ctx.store.set(name, table);
   return input["ReturnValues"] === "ALL_OLD" && previous !== undefined
@@ -404,6 +436,7 @@ const DeleteItem: OperationHandler = (input, ctx) => {
   const table = requireTable(ctx, name);
   const key = keyFromKeyInput(table, asItem(input["Key"]));
   const previous = table.items[key];
+  ensureConditionPasses(input, previous);
   if (previous !== undefined) {
     delete table.items[key];
     ctx.store.set(name, table);
@@ -509,7 +542,9 @@ const UpdateItem: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
   const key = keyFromKeyInput(table, asItem(input["Key"]));
-  const existing = table.items[key] ?? { ...asItem(input["Key"]) };
+  const previous = table.items[key];
+  ensureConditionPasses(input, previous);
+  const existing = previous ?? { ...asItem(input["Key"]) };
   const updated: Item = { ...existing };
   const expression = input["UpdateExpression"];
   if (typeof expression === "string" && expression !== "") {

@@ -452,9 +452,6 @@ const DeleteItem: OperationHandler = (input, ctx) => {
     : {};
 };
 
-const resolveName = (names: Record<string, string>, token: string): string =>
-  names[token] ?? token;
-
 const numberOf = (value: AttributeValue): number => {
   const inner = value["N"];
   return typeof inner === "string" ? Number(inner) : 0;
@@ -571,15 +568,8 @@ const matchesFilterExpression = (
   values: Record<string, AttributeValue>,
   names: Record<string, string>,
 ): boolean => {
-  const comparison = /^\s*(\S+)\s*(=|<>)\s*(\S+)\s*$/.exec(expression);
-  if (comparison === null) return true;
-  const attribute = resolveName(names, comparison[1]);
-  const operator = comparison[2];
-  const operand = values[comparison[3]];
-  if (operand === undefined) return true;
-  const actual = item[attribute];
-  const equal = actual !== undefined && scalarOf(actual) === scalarOf(operand);
-  return operator === "=" ? equal : !equal;
+  const ast = parseConditionExpression(expression, { names, values });
+  return evaluateCondition(ast, item);
 };
 
 const requireIndex = (table: StoredTable, indexName: string): void => {

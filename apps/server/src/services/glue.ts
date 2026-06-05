@@ -3288,6 +3288,241 @@ const DeleteUserDefinedFunction: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DeleteWorkflow: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["Name"] === "string" ? (input["Name"] as string) : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  if (ctx.store.get<StoredWorkflow>(`${workflowPrefix}${name}`) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Workflow ${name} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(`${workflowPrefix}${name}`);
+  return { Name: name };
+};
+
+const DescribeEntity: OperationHandler = (input, _ctx) => {
+  const connectionName =
+    typeof input["ConnectionName"] === "string" ? input["ConnectionName"] : "";
+  const entityName =
+    typeof input["EntityName"] === "string" ? input["EntityName"] : "";
+  if (connectionName === "" || entityName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "ConnectionName and EntityName are required.",
+      400,
+    );
+  }
+  return {
+    Fields: [],
+  };
+};
+
+const DescribeInboundIntegrations: OperationHandler = (input, ctx) => {
+  const targetArn =
+    typeof input["TargetArn"] === "string" ? input["TargetArn"] : "";
+  const integrations = ctx.store
+    .list<StoredIntegration>()
+    .filter((entry) => entry.key.startsWith(integrationPrefix))
+    .filter((entry) => targetArn === "" || entry.value.targetArn === targetArn)
+    .map((entry) => ({
+      IntegrationArn: entry.value.integrationArn,
+      SourceArn: entry.value.sourceArn,
+      TargetArn: entry.value.targetArn,
+      Status: "ACTIVE",
+      CreateTime: entry.value.createTime,
+    }));
+  return { Integrations: integrations };
+};
+
+const DescribeIntegrations: OperationHandler = (input, ctx) => {
+  const identifier =
+    typeof input["IntegrationIdentifier"] === "string"
+      ? input["IntegrationIdentifier"]
+      : "";
+  const integrations = ctx.store
+    .list<StoredIntegration>()
+    .filter((entry) => entry.key.startsWith(integrationPrefix))
+    .filter((entry) => {
+      if (identifier === "") return true;
+      const name = identifier.includes("/")
+        ? identifier.slice(identifier.lastIndexOf("/") + 1)
+        : identifier;
+      return (
+        entry.value.integrationName === name ||
+        entry.value.integrationArn === identifier
+      );
+    })
+    .map((entry) => ({
+      IntegrationArn: entry.value.integrationArn,
+      SourceArn: entry.value.sourceArn,
+      TargetArn: entry.value.targetArn,
+      IntegrationName: entry.value.integrationName,
+      Status: "ACTIVE",
+      CreateTime: entry.value.createTime,
+    }));
+  return { Integrations: integrations };
+};
+
+const GetBlueprint: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["Name"] === "string" ? (input["Name"] as string) : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  const stored = ctx.store.get<StoredBlueprint>(`${blueprintPrefix}${name}`);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Blueprint ${name} not found.`,
+      400,
+    );
+  }
+  return { Blueprint: blueprintView(stored) };
+};
+
+const GetBlueprintRun: OperationHandler = (input, _ctx) => {
+  const blueprintName =
+    typeof input["BlueprintName"] === "string" ? input["BlueprintName"] : "";
+  const runId =
+    typeof input["RunId"] === "string" ? input["RunId"] : "";
+  if (blueprintName === "" || runId === "") {
+    throw awsError(
+      "InvalidInputException",
+      "BlueprintName and RunId are required.",
+      400,
+    );
+  }
+  return {
+    BlueprintRun: {
+      BlueprintName: blueprintName,
+      RunId: runId,
+      State: "SUCCEEDED",
+      StartedOn: Math.floor(Date.now() / 1000) - 60,
+      CompletedOn: Math.floor(Date.now() / 1000),
+      WorkflowName: `${blueprintName}-workflow`,
+    },
+  };
+};
+
+const GetBlueprintRuns: OperationHandler = (input, _ctx) => {
+  const blueprintName =
+    typeof input["BlueprintName"] === "string" ? input["BlueprintName"] : "";
+  if (blueprintName === "") {
+    throw awsError("InvalidInputException", "BlueprintName is required.", 400);
+  }
+  return { Runs: [] };
+};
+
+const GetCatalogImportStatus: OperationHandler = (_input, _ctx) => {
+  return {
+    ImportStatus: {
+      ImportCompleted: true,
+      ImportTime: Math.floor(Date.now() / 1000) - 3600,
+      ImportedBy: "import-service",
+    },
+  };
+};
+
+const GetCatalogs: OperationHandler = (input, ctx) => {
+  const parentCatalogId =
+    typeof input["ParentCatalogId"] === "string"
+      ? input["ParentCatalogId"]
+      : "";
+  const list = ctx.store
+    .list<StoredCatalog>()
+    .filter((entry) => entry.key.startsWith(catalogPrefix))
+    .map((entry) => ({
+      Name: entry.value.name,
+      CatalogId: entry.value.name,
+      ...(typeof entry.value.input["Description"] === "string"
+        ? { Description: entry.value.input["Description"] }
+        : {}),
+      CreateTime: entry.value.createTime,
+      UpdateTime: entry.value.updateTime,
+      ...(parentCatalogId !== "" ? { ParentCatalogId: parentCatalogId } : {}),
+    }));
+  return { CatalogList: list };
+};
+
+const GetColumnStatisticsTaskRun: OperationHandler = (input, _ctx) => {
+  const columnStatisticsTaskRunId =
+    typeof input["ColumnStatisticsTaskRunId"] === "string"
+      ? input["ColumnStatisticsTaskRunId"]
+      : "";
+  if (columnStatisticsTaskRunId === "") {
+    throw awsError(
+      "InvalidInputException",
+      "ColumnStatisticsTaskRunId is required.",
+      400,
+    );
+  }
+  return {
+    ColumnStatisticsTaskRun: {
+      ColumnStatisticsTaskRunId: columnStatisticsTaskRunId,
+      Status: "SUCCEEDED",
+      StartTime: Math.floor(Date.now() / 1000) - 120,
+      EndTime: Math.floor(Date.now() / 1000),
+    },
+  };
+};
+
+const GetColumnStatisticsTaskRuns: OperationHandler = (input, _ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  if (databaseName === "" || tableName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName and TableName are required.",
+      400,
+    );
+  }
+  return { ColumnStatisticsTaskRuns: [] };
+};
+
+const GetColumnStatisticsTaskSettings: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  if (databaseName === "" || tableName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName and TableName are required.",
+      400,
+    );
+  }
+  const key = `${colStatsTaskSettingsPrefix}${databaseName}:${tableName}`;
+  const stored = ctx.store.get<StoredColStatsTaskSettings>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `ColumnStatisticsTaskSettings not found for ${databaseName}.${tableName}`,
+      400,
+    );
+  }
+  return {
+    ColumnStatisticsTaskSettings: {
+      DatabaseName: stored.databaseName,
+      TableName: stored.tableName,
+      Role: stored.role,
+      ...(typeof stored.input["Schedule"] === "string"
+        ? { Schedule: stored.input["Schedule"] }
+        : {}),
+      ...(typeof stored.input["SampleSize"] === "number"
+        ? { SampleSize: stored.input["SampleSize"] }
+        : {}),
+      CreatedOn: stored.createdOn,
+    },
+  };
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -3407,6 +3642,18 @@ const glue: ServiceDefinition = {
     DeleteTableOptimizer,
     DeleteUsageProfile,
     DeleteUserDefinedFunction,
+    DeleteWorkflow,
+    DescribeEntity,
+    DescribeInboundIntegrations,
+    DescribeIntegrations,
+    GetBlueprint,
+    GetBlueprintRun,
+    GetBlueprintRuns,
+    GetCatalogImportStatus,
+    GetCatalogs,
+    GetColumnStatisticsTaskRun,
+    GetColumnStatisticsTaskRuns,
+    GetColumnStatisticsTaskSettings,
   },
   model,
 } as const;

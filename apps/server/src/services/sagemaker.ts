@@ -3735,6 +3735,275 @@ const DescribeEdgeDeploymentPlan: OperationHandler = (input, ctx) => {
   };
 };
 
+const DescribeEdgePackagingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "EdgePackagingJobName");
+  const stored = ctx.store.get<StoredEdgePackagingJob>(edgePackagingJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `EdgePackagingJob ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    EdgePackagingJobArn: stored.EdgePackagingJobArn,
+    EdgePackagingJobName: stored.EdgePackagingJobName,
+    CompilationJobName: stored.CompilationJobName,
+    ModelName: stored.ModelName,
+    ModelVersion: stored.ModelVersion,
+    RoleArn: stored.RoleArn,
+    OutputConfig: stored.OutputConfig,
+    EdgePackagingJobStatus: "COMPLETED",
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+  };
+};
+
+const DescribeExperiment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ExperimentName");
+  const stored = ctx.store.get<StoredExperiment>(experimentKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Experiment ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    ExperimentName: stored.ExperimentName,
+    ExperimentArn: stored.ExperimentArn,
+    DisplayName: stored.DisplayName,
+    Description: stored.Description,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeFeatureGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "FeatureGroupName");
+  const stored = requireFeatureGroup(ctx, name);
+  return {
+    FeatureGroupArn: stored.FeatureGroupArn,
+    FeatureGroupName: stored.FeatureGroupName,
+    RecordIdentifierFeatureName: stored.RecordIdentifierFeatureName,
+    EventTimeFeatureName: stored.EventTimeFeatureName,
+    FeatureDefinitions: stored.FeatureDefinitions ?? [],
+    OnlineStoreConfig: stored.OnlineStoreConfig,
+    OfflineStoreConfig: stored.OfflineStoreConfig,
+    ThroughputConfig: stored.ThroughputConfig,
+    RoleArn: stored.RoleArn,
+    Description: stored.Description,
+    FeatureGroupStatus: "Created",
+    CreationTime: stored.CreationTime,
+    NextToken: "",
+  };
+};
+
+const DescribeFeatureMetadata: OperationHandler = (input, ctx) => {
+  const groupName = requireString(input, "FeatureGroupName");
+  const featureName = requireString(input, "FeatureName");
+  const stored = requireFeatureGroup(ctx, groupName);
+  const now = nowSeconds();
+  return {
+    FeatureGroupArn: stored.FeatureGroupArn,
+    FeatureGroupName: stored.FeatureGroupName,
+    FeatureName: featureName,
+    FeatureType: "String",
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: now,
+  };
+};
+
+const DescribeFlowDefinition: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "FlowDefinitionName");
+  const stored = ctx.store.get<StoredFlowDefinition>(flowDefinitionKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `FlowDefinition ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    FlowDefinitionArn: stored.FlowDefinitionArn,
+    FlowDefinitionName: stored.FlowDefinitionName,
+    FlowDefinitionStatus: "Active",
+    RoleArn: stored.RoleArn,
+    HumanLoopConfig: stored.HumanLoopConfig,
+    OutputConfig: stored.OutputConfig,
+    CreationTime: stored.CreationTime,
+  };
+};
+
+const DescribeHub: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "HubName");
+  const stored = requireHub(ctx, name);
+  return {
+    HubName: stored.HubName,
+    HubArn: stored.HubArn,
+    HubDescription: stored.HubDescription,
+    HubDisplayName: stored.HubDisplayName,
+    HubSearchKeywords: stored.HubSearchKeywords,
+    S3StorageConfig: stored.S3StorageConfig,
+    HubStatus: "InService",
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+  };
+};
+
+const DescribeHubContent: OperationHandler = (input, ctx) => {
+  const hubName = requireString(input, "HubName");
+  const contentType = requireString(input, "HubContentType");
+  const contentName = requireString(input, "HubContentName");
+  const contentVersion =
+    typeof input["HubContentVersion"] === "string"
+      ? (input["HubContentVersion"] as string)
+      : "1.0.0";
+  requireHub(ctx, hubName);
+  const contentArn = hubContentArnOf(
+    ctx.region,
+    ctx.account,
+    hubName,
+    contentType,
+    contentName,
+    contentVersion,
+  );
+  const now = nowSeconds();
+  return {
+    HubName: hubName,
+    HubArn: hubArnOf(ctx.region, ctx.account, hubName),
+    HubContentName: contentName,
+    HubContentArn: contentArn,
+    HubContentVersion: contentVersion,
+    HubContentType: contentType,
+    HubContentStatus: "Available",
+    CreationTime: now,
+  };
+};
+
+const DescribeHumanTaskUi: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "HumanTaskUiName");
+  const stored = ctx.store.get<StoredHumanTaskUi>(humanTaskUiKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `HumanTaskUi ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    HumanTaskUiArn: stored.HumanTaskUiArn,
+    HumanTaskUiName: stored.HumanTaskUiName,
+    HumanTaskUiStatus: "Active",
+    UiTemplate: stored.UiTemplate
+      ? { Url: `https://s3.amazonaws.com/bunsai-sagemaker/${name}/template` }
+      : { Url: `https://s3.amazonaws.com/bunsai-sagemaker/${name}/template` },
+    CreationTime: stored.CreationTime,
+  };
+};
+
+const DescribeHyperParameterTuningJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "HyperParameterTuningJobName");
+  const stored = ctx.store.get<StoredHyperParameterTuningJob>(
+    hyperParameterTuningJobKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `HyperParameterTuningJob ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    HyperParameterTuningJobName: stored.HyperParameterTuningJobName,
+    HyperParameterTuningJobArn: stored.HyperParameterTuningJobArn,
+    HyperParameterTuningJobStatus: stored.HyperParameterTuningJobStatus,
+    HyperParameterTuningJobConfig: stored.HyperParameterTuningJobConfig,
+    TrainingJobDefinition: stored.TrainingJobDefinition,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+    TrainingJobStatusCounters: {
+      Completed: 0,
+      InProgress: 0,
+      RetryableError: 0,
+      NonRetryableError: 0,
+      Stopped: 0,
+    },
+    ObjectiveStatusCounters: {
+      Succeeded: 0,
+      Pending: 0,
+      Failed: 0,
+    },
+  };
+};
+
+const DescribeImage: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ImageName");
+  const stored = requireImage(ctx, name);
+  return {
+    ImageName: stored.ImageName,
+    ImageArn: stored.ImageArn,
+    RoleArn: stored.RoleArn,
+    Description: stored.Description,
+    DisplayName: stored.DisplayName,
+    ImageStatus: "CREATED",
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+  };
+};
+
+const DescribeImageVersion: OperationHandler = (input, ctx) => {
+  const imageName = requireString(input, "ImageName");
+  const version =
+    typeof input["Version"] === "number" ? (input["Version"] as number) : 1;
+  const stored = ctx.store.get<StoredImageVersion>(
+    imageVersionKey(imageName, version),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `ImageVersion ${imageName}/${version} does not exist.`,
+      400,
+    );
+  }
+  return {
+    ImageArn: imageArnOf(ctx.region, ctx.account, imageName),
+    ImageVersionArn: stored.ImageVersionArn,
+    Version: stored.Version,
+    BaseImage: stored.BaseImage,
+    ContainerImage: stored.BaseImage,
+    ImageVersionStatus: "CREATED",
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+  };
+};
+
+const DescribeInferenceComponent: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InferenceComponentName");
+  const stored = ctx.store.get<StoredInferenceComponent>(
+    inferenceComponentKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `InferenceComponent ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    InferenceComponentName: stored.InferenceComponentName,
+    InferenceComponentArn: stored.InferenceComponentArn,
+    EndpointName: stored.EndpointName,
+    VariantName: stored.VariantName,
+    Specification: stored.Specification,
+    Specifications: stored.Specifications,
+    RuntimeConfig: stored.RuntimeConfig,
+    InferenceComponentStatus: "InService",
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+  };
+};
+
 const AddAssociation: OperationHandler = (input, ctx) => {
   const sourceArn = requireString(input, "SourceArn");
   const destinationArn = requireString(input, "DestinationArn");
@@ -5586,6 +5855,18 @@ const sagemaker = {
     DescribeDeviceFleet,
     DescribeDomain,
     DescribeEdgeDeploymentPlan,
+    DescribeEdgePackagingJob,
+    DescribeExperiment,
+    DescribeFeatureGroup,
+    DescribeFeatureMetadata,
+    DescribeFlowDefinition,
+    DescribeHub,
+    DescribeHubContent,
+    DescribeHumanTaskUi,
+    DescribeHyperParameterTuningJob,
+    DescribeImage,
+    DescribeImageVersion,
+    DescribeInferenceComponent,
     CreateSpace,
     CreateUserProfile,
     CreatePresignedDomainUrl,

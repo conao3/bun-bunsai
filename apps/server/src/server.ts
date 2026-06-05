@@ -73,9 +73,12 @@ export function createBunsaiApp() {
       requestBodyText: bodyTextForLog(bodyBytes),
       responseBodyText: bodyTextForLog(result.body),
     });
+    const responseHeaders = new Headers({ "content-type": result.contentType });
+    for (const [name, value] of Object.entries(result.headers ?? {}))
+      responseHeaders.set(name, value);
     return new Response(result.body, {
       status: result.statusCode,
-      headers: { "content-type": result.contentType, ...result.headers },
+      headers: responseHeaders,
     });
   };
 

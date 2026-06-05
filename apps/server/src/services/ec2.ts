@@ -209,9 +209,12 @@ type StoredVpnGateway = {
 
 type StoredVerifiedAccessInstance = {
   VerifiedAccessInstanceId: string;
+  Description: string;
   TrustProviderIds: string[];
   CreationTime: string;
   LastUpdatedTime: string;
+  Tags: Tag[];
+  FipsEnabled: boolean;
 };
 
 type StoredVerifiedAccessTrustProvider = {
@@ -895,6 +898,157 @@ type StoredTransitGatewayMeteringPolicy = {
   Tags: Tag[];
 };
 
+type StoredTransitGatewayMeteringPolicyEntry = {
+  TransitGatewayMeteringPolicyId: string;
+  PolicyRuleNumber: string;
+  MeteredAccount: string;
+  State: string;
+  UpdatedAt: string;
+  UpdateEffectiveAt: string;
+  MeteringPolicyRule: {
+    SourceTransitGatewayAttachmentId: string;
+    SourceTransitGatewayAttachmentType: string;
+    SourceCidrBlock: string;
+    SourcePortRange: string;
+    DestinationTransitGatewayAttachmentId: string;
+    DestinationTransitGatewayAttachmentType: string;
+    DestinationCidrBlock: string;
+    DestinationPortRange: string;
+    Protocol: string;
+  };
+};
+
+type StoredTransitGatewayMulticastDomain = {
+  TransitGatewayMulticastDomainId: string;
+  TransitGatewayId: string;
+  TransitGatewayMulticastDomainArn: string;
+  OwnerId: string;
+  Options: {
+    Igmpv2Support: string;
+    StaticSourcesSupport: string;
+    AutoAcceptSharedAssociations: string;
+  };
+  State: string;
+  CreationTime: string;
+  Tags: Tag[];
+};
+
+type StoredTransitGatewayPeeringAttachment = {
+  TransitGatewayAttachmentId: string;
+  AccepterTransitGatewayAttachmentId: string;
+  RequesterTgwInfo: {
+    TransitGatewayId: string;
+    OwnerId: string;
+    Region: string;
+  };
+  AccepterTgwInfo: {
+    TransitGatewayId: string;
+    OwnerId: string;
+    Region: string;
+  };
+  Options: { DynamicRouting: string };
+  Status: { Code: string; Message: string };
+  State: string;
+  CreationTime: string;
+  Tags: Tag[];
+};
+
+type StoredTransitGatewayPolicyTable = {
+  TransitGatewayPolicyTableId: string;
+  TransitGatewayId: string;
+  State: string;
+  CreationTime: string;
+  Tags: Tag[];
+};
+
+type StoredTransitGatewayPrefixListReference = {
+  TransitGatewayRouteTableId: string;
+  PrefixListId: string;
+  PrefixListOwnerId: string;
+  State: string;
+  Blackhole: boolean;
+  TransitGatewayAttachment: {
+    TransitGatewayAttachmentId: string;
+    ResourceType: string;
+    ResourceId: string;
+  };
+};
+
+type StoredTransitGatewayRoute = {
+  DestinationCidrBlock: string;
+  TransitGatewayRouteTableId: string;
+  TransitGatewayAttachmentId: string;
+  Blackhole: boolean;
+  Type: string;
+  State: string;
+};
+
+type StoredTransitGatewayRouteTable = {
+  TransitGatewayRouteTableId: string;
+  TransitGatewayId: string;
+  State: string;
+  DefaultAssociationRouteTable: boolean;
+  DefaultPropagationRouteTable: boolean;
+  CreationTime: string;
+  Tags: Tag[];
+};
+
+type StoredTransitGatewayRouteTableAnnouncement = {
+  TransitGatewayRouteTableAnnouncementId: string;
+  TransitGatewayId: string;
+  PeerTransitGatewayId: string;
+  PeeringAttachmentId: string;
+  AnnouncementDirection: string;
+  TransitGatewayRouteTableId: string;
+  State: string;
+  CreationTime: string;
+  Tags: Tag[];
+};
+
+type StoredTransitGatewayVpcAttachment = {
+  TransitGatewayAttachmentId: string;
+  TransitGatewayId: string;
+  VpcId: string;
+  VpcOwnerId: string;
+  State: string;
+  SubnetIds: string[];
+  CreationTime: string;
+  Options: {
+    DnsSupport: string;
+    SecurityGroupReferencingSupport: string;
+    Ipv6Support: string;
+    ApplianceModeSupport: string;
+  };
+  Tags: Tag[];
+};
+
+type StoredVerifiedAccessEndpoint = {
+  VerifiedAccessEndpointId: string;
+  VerifiedAccessInstanceId: string;
+  VerifiedAccessGroupId: string;
+  ApplicationDomain: string;
+  EndpointType: string;
+  AttachmentType: string;
+  DomainCertificateArn: string;
+  EndpointDomain: string;
+  SecurityGroupIds: string[];
+  Description: string;
+  CreationTime: string;
+  LastUpdatedTime: string;
+  Tags: Tag[];
+};
+
+type StoredVerifiedAccessGroup = {
+  VerifiedAccessGroupId: string;
+  VerifiedAccessInstanceId: string;
+  Description: string;
+  Owner: string;
+  VerifiedAccessGroupArn: string;
+  CreationTime: string;
+  LastUpdatedTime: string;
+  Tags: Tag[];
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -993,6 +1147,28 @@ const transitGatewayConnectPeerKey = (id: string): string =>
   `tgw-connect-peer/${id}`;
 const transitGatewayMeteringPolicyKey = (id: string): string =>
   `tgw-metering-policy/${id}`;
+const transitGatewayMeteringPolicyEntryKey = (
+  policyId: string,
+  ruleNumber: string,
+): string => `tgw-mpe/${policyId}/${ruleNumber}`;
+const transitGatewayMulticastDomainKey = (id: string): string =>
+  `tgw-mcast/${id}`;
+const transitGatewayPeeringAttachmentKey = (id: string): string =>
+  `tgw-peering/${id}`;
+const transitGatewayPolicyTableKey = (id: string): string => `tgw-pt/${id}`;
+const transitGatewayPrefixListReferenceKey = (
+  rtbId: string,
+  plId: string,
+): string => `tgw-plr/${rtbId}/${plId}`;
+const transitGatewayRouteKey = (rtbId: string, cidr: string): string =>
+  `tgw-route/${rtbId}/${cidr}`;
+const transitGatewayRouteTableKey = (id: string): string => `tgw-rtb/${id}`;
+const transitGatewayRouteTableAnnouncementKey = (id: string): string =>
+  `tgw-rtb-ann/${id}`;
+const transitGatewayVpcAttachmentKey = (id: string): string =>
+  `tgw-vpc-attach/${id}`;
+const verifiedAccessEndpointKey = (id: string): string => `vae/${id}`;
+const verifiedAccessGroupKey = (id: string): string => `vag/${id}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -2869,9 +3045,12 @@ const AttachVerifiedAccessTrustProvider: OperationHandler = (input, ctx) => {
   if (instance === undefined) {
     instance = {
       VerifiedAccessInstanceId: instanceId,
+      Description: "",
       TrustProviderIds: [],
       CreationTime: new Date().toISOString(),
       LastUpdatedTime: new Date().toISOString(),
+      Tags: [],
+      FipsEnabled: false,
     };
   }
   if (!instance.TrustProviderIds.includes(trustProviderId)) {
@@ -6091,6 +6270,582 @@ const CreateTransitGatewayMeteringPolicy: OperationHandler = (input, ctx) => {
   };
 };
 
+const CreateTransitGatewayMeteringPolicyEntry: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const policyId =
+    typeof input["TransitGatewayMeteringPolicyId"] === "string"
+      ? input["TransitGatewayMeteringPolicyId"]
+      : "";
+  const policy = ctx.store.get<StoredTransitGatewayMeteringPolicy>(
+    transitGatewayMeteringPolicyKey(policyId),
+  );
+  if (policy === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayMeteringPolicyID.NotFound",
+      `The transit gateway metering policy ID '${policyId}' does not exist`,
+      400,
+    );
+  }
+  const ruleNumber =
+    typeof input["PolicyRuleNumber"] === "number"
+      ? String(input["PolicyRuleNumber"])
+      : "1";
+  const meteredAccount =
+    typeof input["MeteredAccount"] === "string" ? input["MeteredAccount"] : "";
+  const srcAttachId =
+    typeof input["SourceTransitGatewayAttachmentId"] === "string"
+      ? input["SourceTransitGatewayAttachmentId"]
+      : "";
+  const srcAttachType =
+    typeof input["SourceTransitGatewayAttachmentType"] === "string"
+      ? input["SourceTransitGatewayAttachmentType"]
+      : "";
+  const srcCidr =
+    typeof input["SourceCidrBlock"] === "string"
+      ? input["SourceCidrBlock"]
+      : "";
+  const srcPort =
+    typeof input["SourcePortRange"] === "string"
+      ? input["SourcePortRange"]
+      : "";
+  const dstAttachId =
+    typeof input["DestinationTransitGatewayAttachmentId"] === "string"
+      ? input["DestinationTransitGatewayAttachmentId"]
+      : "";
+  const dstAttachType =
+    typeof input["DestinationTransitGatewayAttachmentType"] === "string"
+      ? input["DestinationTransitGatewayAttachmentType"]
+      : "";
+  const dstCidr =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "";
+  const dstPort =
+    typeof input["DestinationPortRange"] === "string"
+      ? input["DestinationPortRange"]
+      : "";
+  const protocol =
+    typeof input["Protocol"] === "string" ? input["Protocol"] : "";
+  const now = new Date().toISOString();
+  const entry: StoredTransitGatewayMeteringPolicyEntry = {
+    TransitGatewayMeteringPolicyId: policyId,
+    PolicyRuleNumber: ruleNumber,
+    MeteredAccount: meteredAccount,
+    State: "available",
+    UpdatedAt: now,
+    UpdateEffectiveAt: now,
+    MeteringPolicyRule: {
+      SourceTransitGatewayAttachmentId: srcAttachId,
+      SourceTransitGatewayAttachmentType: srcAttachType,
+      SourceCidrBlock: srcCidr,
+      SourcePortRange: srcPort,
+      DestinationTransitGatewayAttachmentId: dstAttachId,
+      DestinationTransitGatewayAttachmentType: dstAttachType,
+      DestinationCidrBlock: dstCidr,
+      DestinationPortRange: dstPort,
+      Protocol: protocol,
+    },
+  };
+  ctx.store.set(
+    transitGatewayMeteringPolicyEntryKey(policyId, ruleNumber),
+    entry,
+  );
+  return {
+    TransitGatewayMeteringPolicyEntry: {
+      PolicyRuleNumber: entry.PolicyRuleNumber,
+      MeteredAccount: entry.MeteredAccount,
+      State: entry.State,
+      UpdatedAt: entry.UpdatedAt,
+      UpdateEffectiveAt: entry.UpdateEffectiveAt,
+      MeteringPolicyRule: entry.MeteringPolicyRule,
+    },
+  };
+};
+
+const CreateTransitGatewayMulticastDomain: OperationHandler = (input, ctx) => {
+  const transitGatewayId =
+    typeof input["TransitGatewayId"] === "string"
+      ? input["TransitGatewayId"]
+      : "";
+  const opts =
+    typeof input["Options"] === "object" && input["Options"] !== null
+      ? (input["Options"] as Record<string, unknown>)
+      : {};
+  const id = hexId("tgw-mcast");
+  const domain: StoredTransitGatewayMulticastDomain = {
+    TransitGatewayMulticastDomainId: id,
+    TransitGatewayId: transitGatewayId,
+    TransitGatewayMulticastDomainArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:transit-gateway-multicast-domain/${id}`,
+    OwnerId: ctx.account,
+    Options: {
+      Igmpv2Support:
+        typeof opts["Igmpv2Support"] === "string"
+          ? opts["Igmpv2Support"]
+          : "disable",
+      StaticSourcesSupport:
+        typeof opts["StaticSourcesSupport"] === "string"
+          ? opts["StaticSourcesSupport"]
+          : "disable",
+      AutoAcceptSharedAssociations:
+        typeof opts["AutoAcceptSharedAssociations"] === "string"
+          ? opts["AutoAcceptSharedAssociations"]
+          : "disable",
+    },
+    State: "available",
+    CreationTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(transitGatewayMulticastDomainKey(id), domain);
+  return {
+    TransitGatewayMulticastDomain: {
+      TransitGatewayMulticastDomainId: domain.TransitGatewayMulticastDomainId,
+      TransitGatewayId: domain.TransitGatewayId,
+      TransitGatewayMulticastDomainArn: domain.TransitGatewayMulticastDomainArn,
+      OwnerId: domain.OwnerId,
+      Options: domain.Options,
+      State: domain.State,
+      CreationTime: domain.CreationTime,
+      Tags: domain.Tags,
+    },
+  };
+};
+
+const CreateTransitGatewayPeeringAttachment: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const transitGatewayId =
+    typeof input["TransitGatewayId"] === "string"
+      ? input["TransitGatewayId"]
+      : "";
+  const peerTransitGatewayId =
+    typeof input["PeerTransitGatewayId"] === "string"
+      ? input["PeerTransitGatewayId"]
+      : "";
+  const peerAccountId =
+    typeof input["PeerAccountId"] === "string" ? input["PeerAccountId"] : "";
+  const peerRegion =
+    typeof input["PeerRegion"] === "string" ? input["PeerRegion"] : "";
+  const opts =
+    typeof input["Options"] === "object" && input["Options"] !== null
+      ? (input["Options"] as Record<string, unknown>)
+      : {};
+  const id = hexId("tgw-attach");
+  const accepterId = hexId("tgw-attach");
+  const attachment: StoredTransitGatewayPeeringAttachment = {
+    TransitGatewayAttachmentId: id,
+    AccepterTransitGatewayAttachmentId: accepterId,
+    RequesterTgwInfo: {
+      TransitGatewayId: transitGatewayId,
+      OwnerId: ctx.account,
+      Region: ctx.region,
+    },
+    AccepterTgwInfo: {
+      TransitGatewayId: peerTransitGatewayId,
+      OwnerId: peerAccountId,
+      Region: peerRegion,
+    },
+    Options: {
+      DynamicRouting:
+        typeof opts["DynamicRouting"] === "string"
+          ? opts["DynamicRouting"]
+          : "disable",
+    },
+    Status: { Code: "initiating", Message: "" },
+    State: "initiating",
+    CreationTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(transitGatewayPeeringAttachmentKey(id), attachment);
+  return {
+    TransitGatewayPeeringAttachment: {
+      TransitGatewayAttachmentId: attachment.TransitGatewayAttachmentId,
+      AccepterTransitGatewayAttachmentId:
+        attachment.AccepterTransitGatewayAttachmentId,
+      RequesterTgwInfo: attachment.RequesterTgwInfo,
+      AccepterTgwInfo: attachment.AccepterTgwInfo,
+      Options: attachment.Options,
+      Status: attachment.Status,
+      State: attachment.State,
+      CreationTime: attachment.CreationTime,
+      Tags: attachment.Tags,
+    },
+  };
+};
+
+const CreateTransitGatewayPolicyTable: OperationHandler = (input, ctx) => {
+  const transitGatewayId =
+    typeof input["TransitGatewayId"] === "string"
+      ? input["TransitGatewayId"]
+      : "";
+  const id = hexId("tgw-pt");
+  const table: StoredTransitGatewayPolicyTable = {
+    TransitGatewayPolicyTableId: id,
+    TransitGatewayId: transitGatewayId,
+    State: "available",
+    CreationTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(transitGatewayPolicyTableKey(id), table);
+  return {
+    TransitGatewayPolicyTable: {
+      TransitGatewayPolicyTableId: table.TransitGatewayPolicyTableId,
+      TransitGatewayId: table.TransitGatewayId,
+      State: table.State,
+      CreationTime: table.CreationTime,
+      Tags: table.Tags,
+    },
+  };
+};
+
+const CreateTransitGatewayPrefixListReference: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const prefixListId =
+    typeof input["PrefixListId"] === "string" ? input["PrefixListId"] : "";
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const blackhole =
+    typeof input["Blackhole"] === "boolean" ? input["Blackhole"] : false;
+  const ref: StoredTransitGatewayPrefixListReference = {
+    TransitGatewayRouteTableId: routeTableId,
+    PrefixListId: prefixListId,
+    PrefixListOwnerId: ctx.account,
+    State: "available",
+    Blackhole: blackhole,
+    TransitGatewayAttachment: {
+      TransitGatewayAttachmentId: attachmentId,
+      ResourceType: "vpc",
+      ResourceId: "",
+    },
+  };
+  ctx.store.set(
+    transitGatewayPrefixListReferenceKey(routeTableId, prefixListId),
+    ref,
+  );
+  return {
+    TransitGatewayPrefixListReference: {
+      TransitGatewayRouteTableId: ref.TransitGatewayRouteTableId,
+      PrefixListId: ref.PrefixListId,
+      PrefixListOwnerId: ref.PrefixListOwnerId,
+      State: ref.State,
+      Blackhole: ref.Blackhole,
+      TransitGatewayAttachment: ref.TransitGatewayAttachment,
+    },
+  };
+};
+
+const CreateTransitGatewayRoute: OperationHandler = (input, ctx) => {
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "";
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const blackhole =
+    typeof input["Blackhole"] === "boolean" ? input["Blackhole"] : false;
+  const route: StoredTransitGatewayRoute = {
+    DestinationCidrBlock: destinationCidrBlock,
+    TransitGatewayRouteTableId: routeTableId,
+    TransitGatewayAttachmentId: attachmentId,
+    Blackhole: blackhole,
+    Type: blackhole ? "blackhole" : "static",
+    State: "active",
+  };
+  ctx.store.set(
+    transitGatewayRouteKey(routeTableId, destinationCidrBlock),
+    route,
+  );
+  return {
+    Route: {
+      DestinationCidrBlock: route.DestinationCidrBlock,
+      TransitGatewayAttachments: attachmentId
+        ? [{ TransitGatewayAttachmentId: attachmentId, ResourceType: "vpc" }]
+        : [],
+      Type: route.Type,
+      State: route.State,
+    },
+  };
+};
+
+const CreateTransitGatewayRouteTable: OperationHandler = (input, ctx) => {
+  const transitGatewayId =
+    typeof input["TransitGatewayId"] === "string"
+      ? input["TransitGatewayId"]
+      : "";
+  const id = hexId("tgw-rtb");
+  const rtb: StoredTransitGatewayRouteTable = {
+    TransitGatewayRouteTableId: id,
+    TransitGatewayId: transitGatewayId,
+    State: "available",
+    DefaultAssociationRouteTable: false,
+    DefaultPropagationRouteTable: false,
+    CreationTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(transitGatewayRouteTableKey(id), rtb);
+  return {
+    TransitGatewayRouteTable: {
+      TransitGatewayRouteTableId: rtb.TransitGatewayRouteTableId,
+      TransitGatewayId: rtb.TransitGatewayId,
+      State: rtb.State,
+      DefaultAssociationRouteTable: rtb.DefaultAssociationRouteTable,
+      DefaultPropagationRouteTable: rtb.DefaultPropagationRouteTable,
+      CreationTime: rtb.CreationTime,
+      Tags: rtb.Tags,
+    },
+  };
+};
+
+const CreateTransitGatewayRouteTableAnnouncement: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const peeringAttachmentId =
+    typeof input["PeeringAttachmentId"] === "string"
+      ? input["PeeringAttachmentId"]
+      : "";
+  const rtb = ctx.store.get<StoredTransitGatewayRouteTable>(
+    transitGatewayRouteTableKey(routeTableId),
+  );
+  const transitGatewayId = rtb?.TransitGatewayId ?? hexId("tgw");
+  const peeringAttachment =
+    ctx.store.get<StoredTransitGatewayPeeringAttachment>(
+      transitGatewayPeeringAttachmentKey(peeringAttachmentId),
+    );
+  const peerTransitGatewayId =
+    peeringAttachment?.AccepterTgwInfo.TransitGatewayId ?? hexId("tgw");
+  const id = hexId("tgw-rtb-ann");
+  const announcement: StoredTransitGatewayRouteTableAnnouncement = {
+    TransitGatewayRouteTableAnnouncementId: id,
+    TransitGatewayId: transitGatewayId,
+    PeerTransitGatewayId: peerTransitGatewayId,
+    PeeringAttachmentId: peeringAttachmentId,
+    AnnouncementDirection: "outgoing",
+    TransitGatewayRouteTableId: routeTableId,
+    State: "available",
+    CreationTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(transitGatewayRouteTableAnnouncementKey(id), announcement);
+  return {
+    TransitGatewayRouteTableAnnouncement: {
+      TransitGatewayRouteTableAnnouncementId:
+        announcement.TransitGatewayRouteTableAnnouncementId,
+      TransitGatewayId: announcement.TransitGatewayId,
+      PeerTransitGatewayId: announcement.PeerTransitGatewayId,
+      PeeringAttachmentId: announcement.PeeringAttachmentId,
+      AnnouncementDirection: announcement.AnnouncementDirection,
+      TransitGatewayRouteTableId: announcement.TransitGatewayRouteTableId,
+      State: announcement.State,
+      CreationTime: announcement.CreationTime,
+      Tags: announcement.Tags,
+    },
+  };
+};
+
+const CreateTransitGatewayVpcAttachment: OperationHandler = (input, ctx) => {
+  const transitGatewayId =
+    typeof input["TransitGatewayId"] === "string"
+      ? input["TransitGatewayId"]
+      : "";
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const subnetIds = stringList(input["SubnetIds"]);
+  const opts =
+    typeof input["Options"] === "object" && input["Options"] !== null
+      ? (input["Options"] as Record<string, unknown>)
+      : {};
+  const id = hexId("tgw-attach");
+  const attachment: StoredTransitGatewayVpcAttachment = {
+    TransitGatewayAttachmentId: id,
+    TransitGatewayId: transitGatewayId,
+    VpcId: vpcId,
+    VpcOwnerId: ctx.account,
+    State: "available",
+    SubnetIds: subnetIds,
+    CreationTime: new Date().toISOString(),
+    Options: {
+      DnsSupport:
+        typeof opts["DnsSupport"] === "string" ? opts["DnsSupport"] : "enable",
+      SecurityGroupReferencingSupport:
+        typeof opts["SecurityGroupReferencingSupport"] === "string"
+          ? opts["SecurityGroupReferencingSupport"]
+          : "disable",
+      Ipv6Support:
+        typeof opts["Ipv6Support"] === "string"
+          ? opts["Ipv6Support"]
+          : "disable",
+      ApplianceModeSupport:
+        typeof opts["ApplianceModeSupport"] === "string"
+          ? opts["ApplianceModeSupport"]
+          : "disable",
+    },
+    Tags: [],
+  };
+  ctx.store.set(transitGatewayVpcAttachmentKey(id), attachment);
+  return {
+    TransitGatewayVpcAttachment: {
+      TransitGatewayAttachmentId: attachment.TransitGatewayAttachmentId,
+      TransitGatewayId: attachment.TransitGatewayId,
+      VpcId: attachment.VpcId,
+      VpcOwnerId: attachment.VpcOwnerId,
+      State: attachment.State,
+      SubnetIds: attachment.SubnetIds,
+      CreationTime: attachment.CreationTime,
+      Options: attachment.Options,
+      Tags: attachment.Tags,
+    },
+  };
+};
+
+const CreateVerifiedAccessEndpoint: OperationHandler = (input, ctx) => {
+  const groupId =
+    typeof input["VerifiedAccessGroupId"] === "string"
+      ? input["VerifiedAccessGroupId"]
+      : "";
+  const group = ctx.store.get<StoredVerifiedAccessGroup>(
+    verifiedAccessGroupKey(groupId),
+  );
+  const instanceId = group?.VerifiedAccessInstanceId ?? hexId("vai");
+  const endpointType =
+    typeof input["EndpointType"] === "string" ? input["EndpointType"] : "";
+  const attachmentType =
+    typeof input["AttachmentType"] === "string"
+      ? input["AttachmentType"]
+      : "vpc";
+  const domainCertificateArn =
+    typeof input["DomainCertificateArn"] === "string"
+      ? input["DomainCertificateArn"]
+      : "";
+  const applicationDomain =
+    typeof input["ApplicationDomain"] === "string"
+      ? input["ApplicationDomain"]
+      : "";
+  const endpointDomainPrefix =
+    typeof input["EndpointDomainPrefix"] === "string"
+      ? input["EndpointDomainPrefix"]
+      : "";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const securityGroupIds = stringList(input["SecurityGroupIds"]);
+  const id = hexId("vae");
+  const endpoint: StoredVerifiedAccessEndpoint = {
+    VerifiedAccessEndpointId: id,
+    VerifiedAccessInstanceId: instanceId,
+    VerifiedAccessGroupId: groupId,
+    ApplicationDomain: applicationDomain,
+    EndpointType: endpointType,
+    AttachmentType: attachmentType,
+    DomainCertificateArn: domainCertificateArn,
+    EndpointDomain: `${endpointDomainPrefix}.${applicationDomain}`,
+    SecurityGroupIds: securityGroupIds,
+    Description: description,
+    CreationTime: new Date().toISOString(),
+    LastUpdatedTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(verifiedAccessEndpointKey(id), endpoint);
+  return {
+    VerifiedAccessEndpoint: {
+      VerifiedAccessInstanceId: endpoint.VerifiedAccessInstanceId,
+      VerifiedAccessGroupId: endpoint.VerifiedAccessGroupId,
+      VerifiedAccessEndpointId: endpoint.VerifiedAccessEndpointId,
+      ApplicationDomain: endpoint.ApplicationDomain,
+      EndpointType: endpoint.EndpointType,
+      AttachmentType: endpoint.AttachmentType,
+      DomainCertificateArn: endpoint.DomainCertificateArn,
+      EndpointDomain: endpoint.EndpointDomain,
+      SecurityGroupIds: endpoint.SecurityGroupIds,
+      Status: { Code: "active", Message: "" },
+      Description: endpoint.Description,
+      CreationTime: endpoint.CreationTime,
+      LastUpdatedTime: endpoint.LastUpdatedTime,
+      Tags: endpoint.Tags,
+    },
+  };
+};
+
+const CreateVerifiedAccessGroup: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["VerifiedAccessInstanceId"] === "string"
+      ? input["VerifiedAccessInstanceId"]
+      : "";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const id = hexId("vagr");
+  const group: StoredVerifiedAccessGroup = {
+    VerifiedAccessGroupId: id,
+    VerifiedAccessInstanceId: instanceId,
+    Description: description,
+    Owner: ctx.account,
+    VerifiedAccessGroupArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:verified-access-group/${id}`,
+    CreationTime: new Date().toISOString(),
+    LastUpdatedTime: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(verifiedAccessGroupKey(id), group);
+  return {
+    VerifiedAccessGroup: {
+      VerifiedAccessGroupId: group.VerifiedAccessGroupId,
+      VerifiedAccessInstanceId: group.VerifiedAccessInstanceId,
+      Description: group.Description,
+      Owner: group.Owner,
+      VerifiedAccessGroupArn: group.VerifiedAccessGroupArn,
+      CreationTime: group.CreationTime,
+      LastUpdatedTime: group.LastUpdatedTime,
+      Tags: group.Tags,
+    },
+  };
+};
+
+const CreateVerifiedAccessInstance: OperationHandler = (input, ctx) => {
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const fipsEnabled =
+    typeof input["FIPSEnabled"] === "boolean" ? input["FIPSEnabled"] : false;
+  const id = hexId("vai");
+  const instance: StoredVerifiedAccessInstance = {
+    VerifiedAccessInstanceId: id,
+    Description: description,
+    TrustProviderIds: [],
+    CreationTime: new Date().toISOString(),
+    LastUpdatedTime: new Date().toISOString(),
+    Tags: [],
+    FipsEnabled: fipsEnabled,
+  };
+  ctx.store.set(vaInstanceKey(id), instance);
+  return {
+    VerifiedAccessInstance: {
+      VerifiedAccessInstanceId: instance.VerifiedAccessInstanceId,
+      Description: instance.Description,
+      VerifiedAccessTrustProviders: [],
+      CreationTime: instance.CreationTime,
+      LastUpdatedTime: instance.LastUpdatedTime,
+      Tags: instance.Tags,
+      FipsEnabled: instance.FipsEnabled,
+    },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -6268,6 +7023,18 @@ const ec2: ServiceDefinition = {
     CreateTransitGatewayConnect,
     CreateTransitGatewayConnectPeer,
     CreateTransitGatewayMeteringPolicy,
+    CreateTransitGatewayMeteringPolicyEntry,
+    CreateTransitGatewayMulticastDomain,
+    CreateTransitGatewayPeeringAttachment,
+    CreateTransitGatewayPolicyTable,
+    CreateTransitGatewayPrefixListReference,
+    CreateTransitGatewayRoute,
+    CreateTransitGatewayRouteTable,
+    CreateTransitGatewayRouteTableAnnouncement,
+    CreateTransitGatewayVpcAttachment,
+    CreateVerifiedAccessEndpoint,
+    CreateVerifiedAccessGroup,
+    CreateVerifiedAccessInstance,
   },
   model,
 } as const;

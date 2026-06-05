@@ -1049,6 +1049,89 @@ type StoredVerifiedAccessGroup = {
   Tags: Tag[];
 };
 
+type StoredVpcEndpoint = {
+  VpcEndpointId: string;
+  VpcEndpointType: string;
+  VpcId: string;
+  ServiceName: string;
+  State: string;
+  RouteTableIds: string[];
+  SubnetIds: string[];
+  Groups: { GroupId: string; GroupName: string }[];
+  IpAddressType: string;
+  PrivateDnsEnabled: boolean;
+  OwnerId: string;
+  CreationTimestamp: string;
+  Tags: Tag[];
+};
+
+type StoredVpcEndpointConnectionNotification = {
+  ConnectionNotificationId: string;
+  ServiceId: string | undefined;
+  VpcEndpointId: string | undefined;
+  ConnectionNotificationType: string;
+  ConnectionNotificationArn: string;
+  ConnectionEvents: string[];
+  ConnectionNotificationState: string;
+};
+
+type StoredVpcEndpointServiceConfiguration = {
+  ServiceId: string;
+  ServiceName: string;
+  ServiceState: string;
+  AcceptanceRequired: boolean;
+  NetworkLoadBalancerArns: string[];
+  GatewayLoadBalancerArns: string[];
+  PrivateDnsName: string | undefined;
+  Tags: Tag[];
+};
+
+type StoredVpcBlockPublicAccessExclusion = {
+  ExclusionId: string;
+  InternetGatewayExclusionMode: string;
+  ResourceArn: string;
+  State: string;
+  CreationTimestamp: string;
+  LastUpdateTimestamp: string;
+  Tags: Tag[];
+};
+
+type StoredVpcEncryptionControl = {
+  VpcEncryptionControlId: string;
+  VpcId: string;
+  Mode: string;
+  State: string;
+  Tags: Tag[];
+};
+
+type StoredVpnConcentrator = {
+  VpnConcentratorId: string;
+  State: string;
+  TransitGatewayId: string | undefined;
+  Type: string;
+  Tags: Tag[];
+};
+
+type StoredVpnConnection = {
+  VpnConnectionId: string;
+  State: string;
+  CustomerGatewayId: string;
+  VpnGatewayId: string | undefined;
+  TransitGatewayId: string | undefined;
+  Type: string;
+  Tags: Tag[];
+};
+
+type StoredVpnConnectionRoute = {
+  VpnConnectionId: string;
+  DestinationCidrBlock: string;
+  State: string;
+};
+
+type StoredCapacityManagerDataExport = {
+  CapacityManagerDataExportId: string;
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -1169,6 +1252,18 @@ const transitGatewayVpcAttachmentKey = (id: string): string =>
   `tgw-vpc-attach/${id}`;
 const verifiedAccessEndpointKey = (id: string): string => `vae/${id}`;
 const verifiedAccessGroupKey = (id: string): string => `vag/${id}`;
+const vpcEndpointKey = (id: string): string => `vpce/${id}`;
+const vpcEndpointConnectionNotificationKey = (id: string): string =>
+  `vpce-cn/${id}`;
+const vpcEndpointServiceConfigKey = (id: string): string => `vpce-svc/${id}`;
+const vpcBlockPublicAccessExclusionKey = (id: string): string =>
+  `vpce-bpa/${id}`;
+const vpcEncryptionControlKey = (id: string): string => `vpce-enc/${id}`;
+const vpnConcentratorKey = (id: string): string => `vpn-conc/${id}`;
+const vpnConnectionKey = (id: string): string => `vpn-conn/${id}`;
+const vpnConnectionRouteKey = (connId: string, cidr: string): string =>
+  `vpn-route/${connId}/${cidr}`;
+const capacityManagerDataExportKey = (id: string): string => `cmde/${id}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -3307,8 +3402,13 @@ const CreateCapacityReservationFleet: OperationHandler = (input, ctx) => {
   };
 };
 
-const CreateCapacityManagerDataExport: OperationHandler = (_input, _ctx) => {
-  return { CapacityManagerDataExportId: hexId("cmde") };
+const CreateCapacityManagerDataExport: OperationHandler = (_input, ctx) => {
+  const id = hexId("cmde");
+  const stored: StoredCapacityManagerDataExport = {
+    CapacityManagerDataExportId: id,
+  };
+  ctx.store.set(capacityManagerDataExportKey(id), stored);
+  return { CapacityManagerDataExportId: id };
 };
 
 const CreateCarrierGateway: OperationHandler = (input, ctx) => {
@@ -6846,6 +6946,401 @@ const CreateVerifiedAccessInstance: OperationHandler = (input, ctx) => {
   };
 };
 
+const CreateVerifiedAccessTrustProvider: OperationHandler = (input, ctx) => {
+  const trustProviderType =
+    typeof input["TrustProviderType"] === "string"
+      ? input["TrustProviderType"]
+      : "";
+  const userTrustProviderType =
+    typeof input["UserTrustProviderType"] === "string"
+      ? input["UserTrustProviderType"]
+      : undefined;
+  const deviceTrustProviderType =
+    typeof input["DeviceTrustProviderType"] === "string"
+      ? input["DeviceTrustProviderType"]
+      : undefined;
+  const policyReferenceName =
+    typeof input["PolicyReferenceName"] === "string"
+      ? input["PolicyReferenceName"]
+      : "";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const id = hexId("vatp");
+  const stored: StoredVerifiedAccessTrustProvider = {
+    VerifiedAccessTrustProviderId: id,
+    TrustProviderType: trustProviderType,
+    PolicyReferenceName: policyReferenceName,
+    CreationTime: new Date().toISOString(),
+    LastUpdatedTime: new Date().toISOString(),
+  };
+  ctx.store.set(vaTrustProviderKey(id), stored);
+  return {
+    VerifiedAccessTrustProvider: {
+      VerifiedAccessTrustProviderId: stored.VerifiedAccessTrustProviderId,
+      Description: description,
+      TrustProviderType: stored.TrustProviderType,
+      UserTrustProviderType: userTrustProviderType,
+      DeviceTrustProviderType: deviceTrustProviderType,
+      PolicyReferenceName: stored.PolicyReferenceName,
+      CreationTime: stored.CreationTime,
+      LastUpdatedTime: stored.LastUpdatedTime,
+      Tags: [],
+    },
+  };
+};
+
+const CreateVpcBlockPublicAccessExclusion: OperationHandler = (input, ctx) => {
+  const subnetId =
+    typeof input["SubnetId"] === "string" ? input["SubnetId"] : undefined;
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : undefined;
+  const mode =
+    typeof input["InternetGatewayExclusionMode"] === "string"
+      ? input["InternetGatewayExclusionMode"]
+      : "";
+  const resourceId = subnetId ?? vpcId ?? hexId("subnet");
+  const resourceArn = subnetId
+    ? `arn:aws:ec2:${ctx.region}:${ctx.account}:subnet/${resourceId}`
+    : `arn:aws:ec2:${ctx.region}:${ctx.account}:vpc/${resourceId}`;
+  const id = hexId("bpa-excl");
+  const now = new Date().toISOString();
+  const stored: StoredVpcBlockPublicAccessExclusion = {
+    ExclusionId: id,
+    InternetGatewayExclusionMode: mode,
+    ResourceArn: resourceArn,
+    State: "create-complete",
+    CreationTimestamp: now,
+    LastUpdateTimestamp: now,
+    Tags: [],
+  };
+  ctx.store.set(vpcBlockPublicAccessExclusionKey(id), stored);
+  return {
+    VpcBlockPublicAccessExclusion: {
+      ExclusionId: stored.ExclusionId,
+      InternetGatewayExclusionMode: stored.InternetGatewayExclusionMode,
+      ResourceArn: stored.ResourceArn,
+      State: stored.State,
+      CreationTimestamp: stored.CreationTimestamp,
+      LastUpdateTimestamp: stored.LastUpdateTimestamp,
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const CreateVpcEncryptionControl: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const id = hexId("vpc-enc");
+  const stored: StoredVpcEncryptionControl = {
+    VpcEncryptionControlId: id,
+    VpcId: vpcId,
+    Mode: "enforce",
+    State: "enforce-in-progress",
+    Tags: [],
+  };
+  ctx.store.set(vpcEncryptionControlKey(id), stored);
+  return {
+    VpcEncryptionControl: {
+      VpcEncryptionControlId: stored.VpcEncryptionControlId,
+      VpcId: stored.VpcId,
+      Mode: stored.Mode,
+      State: stored.State,
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const CreateVpcEndpoint: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const serviceName =
+    typeof input["ServiceName"] === "string" ? input["ServiceName"] : "";
+  const endpointType =
+    typeof input["VpcEndpointType"] === "string"
+      ? input["VpcEndpointType"]
+      : "Interface";
+  const routeTableIds = stringList(input["RouteTableIds"]);
+  const subnetIds = stringList(input["SubnetIds"]);
+  const securityGroupIds = stringList(input["SecurityGroupIds"]);
+  const ipAddressType =
+    typeof input["IpAddressType"] === "string" ? input["IpAddressType"] : "";
+  const privateDnsEnabled =
+    typeof input["PrivateDnsEnabled"] === "boolean"
+      ? input["PrivateDnsEnabled"]
+      : false;
+  const id = hexId("vpce");
+  const stored: StoredVpcEndpoint = {
+    VpcEndpointId: id,
+    VpcEndpointType: endpointType,
+    VpcId: vpcId,
+    ServiceName: serviceName,
+    State: "available",
+    RouteTableIds: routeTableIds,
+    SubnetIds: subnetIds,
+    Groups: securityGroupIds.map((gid) => ({ GroupId: gid, GroupName: "" })),
+    IpAddressType: ipAddressType,
+    PrivateDnsEnabled: privateDnsEnabled,
+    OwnerId: ctx.account,
+    CreationTimestamp: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(vpcEndpointKey(id), stored);
+  return {
+    VpcEndpoint: {
+      VpcEndpointId: stored.VpcEndpointId,
+      VpcEndpointType: stored.VpcEndpointType,
+      VpcId: stored.VpcId,
+      ServiceName: stored.ServiceName,
+      State: stored.State,
+      RouteTableIds: stored.RouteTableIds,
+      SubnetIds: stored.SubnetIds,
+      Groups: stored.Groups,
+      IpAddressType: stored.IpAddressType,
+      PrivateDnsEnabled: stored.PrivateDnsEnabled,
+      OwnerId: stored.OwnerId,
+      CreationTimestamp: stored.CreationTimestamp,
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const CreateVpcEndpointConnectionNotification: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const serviceId =
+    typeof input["ServiceId"] === "string" ? input["ServiceId"] : undefined;
+  const vpcEndpointId =
+    typeof input["VpcEndpointId"] === "string"
+      ? input["VpcEndpointId"]
+      : undefined;
+  const connectionNotificationArn =
+    typeof input["ConnectionNotificationArn"] === "string"
+      ? input["ConnectionNotificationArn"]
+      : "";
+  const connectionEvents = stringList(input["ConnectionEvents"]);
+  const id = hexId("vpce-cn");
+  const stored: StoredVpcEndpointConnectionNotification = {
+    ConnectionNotificationId: id,
+    ServiceId: serviceId,
+    VpcEndpointId: vpcEndpointId,
+    ConnectionNotificationType: "Topic",
+    ConnectionNotificationArn: connectionNotificationArn,
+    ConnectionEvents: connectionEvents,
+    ConnectionNotificationState: "Enabled",
+  };
+  ctx.store.set(vpcEndpointConnectionNotificationKey(id), stored);
+  return {
+    ConnectionNotification: {
+      ConnectionNotificationId: stored.ConnectionNotificationId,
+      ServiceId: stored.ServiceId,
+      VpcEndpointId: stored.VpcEndpointId,
+      ConnectionNotificationType: stored.ConnectionNotificationType,
+      ConnectionNotificationArn: stored.ConnectionNotificationArn,
+      ConnectionEvents: stored.ConnectionEvents,
+      ConnectionNotificationState: stored.ConnectionNotificationState,
+    },
+    ClientToken:
+      typeof input["ClientToken"] === "string"
+        ? input["ClientToken"]
+        : undefined,
+  };
+};
+
+const CreateVpcEndpointServiceConfiguration: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const acceptanceRequired =
+    typeof input["AcceptanceRequired"] === "boolean"
+      ? input["AcceptanceRequired"]
+      : false;
+  const privateDnsName =
+    typeof input["PrivateDnsName"] === "string"
+      ? input["PrivateDnsName"]
+      : undefined;
+  const networkLoadBalancerArns = stringList(input["NetworkLoadBalancerArns"]);
+  const gatewayLoadBalancerArns = stringList(input["GatewayLoadBalancerArns"]);
+  const id = hexId("vpce-svc");
+  const serviceName = `com.amazonaws.vpce.${ctx.region}.${id}`;
+  const stored: StoredVpcEndpointServiceConfiguration = {
+    ServiceId: id,
+    ServiceName: serviceName,
+    ServiceState: "Available",
+    AcceptanceRequired: acceptanceRequired,
+    NetworkLoadBalancerArns: networkLoadBalancerArns,
+    GatewayLoadBalancerArns: gatewayLoadBalancerArns,
+    PrivateDnsName: privateDnsName,
+    Tags: [],
+  };
+  ctx.store.set(vpcEndpointServiceConfigKey(id), stored);
+  return {
+    ServiceConfiguration: {
+      ServiceId: stored.ServiceId,
+      ServiceName: stored.ServiceName,
+      ServiceState: stored.ServiceState,
+      AcceptanceRequired: stored.AcceptanceRequired,
+      NetworkLoadBalancerArns: stored.NetworkLoadBalancerArns,
+      GatewayLoadBalancerArns: stored.GatewayLoadBalancerArns,
+      PrivateDnsName: stored.PrivateDnsName,
+      Tags: stored.Tags,
+    },
+    ClientToken:
+      typeof input["ClientToken"] === "string"
+        ? input["ClientToken"]
+        : undefined,
+  };
+};
+
+const CreateVpcPeeringConnection: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const peerVpcId =
+    typeof input["PeerVpcId"] === "string" ? input["PeerVpcId"] : "";
+  const peerOwnerId =
+    typeof input["PeerOwnerId"] === "string"
+      ? input["PeerOwnerId"]
+      : ctx.account;
+  const id = hexId("pcx");
+  const stored: StoredVpcPeeringConnection = {
+    VpcPeeringConnectionId: id,
+    AccepterVpcId: peerVpcId,
+    RequesterVpcId: vpcId,
+    Status: { Code: "pending-acceptance", Message: "Pending Acceptance" },
+    Tags: [],
+  };
+  ctx.store.set(vpcPeeringKey(id), stored);
+  return {
+    VpcPeeringConnection: {
+      VpcPeeringConnectionId: stored.VpcPeeringConnectionId,
+      AccepterVpcInfo: { VpcId: stored.AccepterVpcId, OwnerId: peerOwnerId },
+      RequesterVpcInfo: { VpcId: stored.RequesterVpcId, OwnerId: ctx.account },
+      Status: stored.Status,
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const CreateVpnConcentrator: OperationHandler = (input, ctx) => {
+  const type = typeof input["Type"] === "string" ? input["Type"] : "ipsec.1";
+  const transitGatewayId =
+    typeof input["TransitGatewayId"] === "string"
+      ? input["TransitGatewayId"]
+      : undefined;
+  const id = hexId("vpn-conc");
+  const stored: StoredVpnConcentrator = {
+    VpnConcentratorId: id,
+    State: "available",
+    TransitGatewayId: transitGatewayId,
+    Type: type,
+    Tags: [],
+  };
+  ctx.store.set(vpnConcentratorKey(id), stored);
+  return {
+    VpnConcentrator: {
+      VpnConcentratorId: stored.VpnConcentratorId,
+      State: stored.State,
+      TransitGatewayId: stored.TransitGatewayId,
+      Type: stored.Type,
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const CreateVpnConnection: OperationHandler = (input, ctx) => {
+  const customerGatewayId =
+    typeof input["CustomerGatewayId"] === "string"
+      ? input["CustomerGatewayId"]
+      : "";
+  const type = typeof input["Type"] === "string" ? input["Type"] : "ipsec.1";
+  const vpnGatewayId =
+    typeof input["VpnGatewayId"] === "string"
+      ? input["VpnGatewayId"]
+      : undefined;
+  const transitGatewayId =
+    typeof input["TransitGatewayId"] === "string"
+      ? input["TransitGatewayId"]
+      : undefined;
+  const id = hexId("vpn");
+  const stored: StoredVpnConnection = {
+    VpnConnectionId: id,
+    State: "available",
+    CustomerGatewayId: customerGatewayId,
+    VpnGatewayId: vpnGatewayId,
+    TransitGatewayId: transitGatewayId,
+    Type: type,
+    Tags: [],
+  };
+  ctx.store.set(vpnConnectionKey(id), stored);
+  return {
+    VpnConnection: {
+      VpnConnectionId: stored.VpnConnectionId,
+      State: stored.State,
+      CustomerGatewayId: stored.CustomerGatewayId,
+      VpnGatewayId: stored.VpnGatewayId,
+      TransitGatewayId: stored.TransitGatewayId,
+      Type: stored.Type,
+      Tags: stored.Tags,
+      Routes: [],
+      VgwTelemetry: [],
+    },
+  };
+};
+
+const CreateVpnConnectionRoute: OperationHandler = (input, ctx) => {
+  const vpnConnectionId =
+    typeof input["VpnConnectionId"] === "string"
+      ? input["VpnConnectionId"]
+      : "";
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "";
+  const stored: StoredVpnConnectionRoute = {
+    VpnConnectionId: vpnConnectionId,
+    DestinationCidrBlock: destinationCidrBlock,
+    State: "available",
+  };
+  ctx.store.set(
+    vpnConnectionRouteKey(vpnConnectionId, destinationCidrBlock),
+    stored,
+  );
+  return {};
+};
+
+const CreateVpnGateway: OperationHandler = (input, ctx) => {
+  const type = typeof input["Type"] === "string" ? input["Type"] : "ipsec.1";
+  const availabilityZone =
+    typeof input["AvailabilityZone"] === "string"
+      ? input["AvailabilityZone"]
+      : undefined;
+  const amazonSideAsn =
+    typeof input["AmazonSideAsn"] === "number" ? input["AmazonSideAsn"] : 64512;
+  const id = hexId("vgw");
+  const stored: StoredVpnGateway = {
+    VpnGatewayId: id,
+    State: "available",
+    VpcAttachments: [],
+  };
+  ctx.store.set(vpnGwKey(id), stored);
+  return {
+    VpnGateway: {
+      VpnGatewayId: stored.VpnGatewayId,
+      State: stored.State,
+      Type: type,
+      AvailabilityZone: availabilityZone,
+      AmazonSideAsn: amazonSideAsn,
+      VpcAttachments: stored.VpcAttachments,
+      Tags: [],
+    },
+  };
+};
+
+const DeleteCapacityManagerDataExport: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["CapacityManagerDataExportId"] === "string"
+      ? input["CapacityManagerDataExportId"]
+      : "";
+  ctx.store.delete(capacityManagerDataExportKey(id));
+  return { CapacityManagerDataExportId: id };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -7035,6 +7530,18 @@ const ec2: ServiceDefinition = {
     CreateVerifiedAccessEndpoint,
     CreateVerifiedAccessGroup,
     CreateVerifiedAccessInstance,
+    CreateVerifiedAccessTrustProvider,
+    CreateVpcBlockPublicAccessExclusion,
+    CreateVpcEncryptionControl,
+    CreateVpcEndpoint,
+    CreateVpcEndpointConnectionNotification,
+    CreateVpcEndpointServiceConfiguration,
+    CreateVpcPeeringConnection,
+    CreateVpnConcentrator,
+    CreateVpnConnection,
+    CreateVpnConnectionRoute,
+    CreateVpnGateway,
+    DeleteCapacityManagerDataExport,
   },
   model,
 } as const;

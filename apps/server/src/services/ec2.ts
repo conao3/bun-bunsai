@@ -650,7 +650,12 @@ type StoredInstanceEventWindow = {
   InstanceEventWindowId: string;
   Name: string;
   CronExpression: string | undefined;
-  TimeRanges: { StartWeekDay: string; StartHour: number; EndWeekDay: string; EndHour: number }[];
+  TimeRanges: {
+    StartWeekDay: string;
+    StartHour: number;
+    EndWeekDay: string;
+    EndHour: number;
+  }[];
   State: string;
   Tags: Tag[];
 };
@@ -664,6 +669,97 @@ type StoredExportTask = {
   StatusMessage: string;
   S3Bucket: string;
   S3Key: string;
+  Tags: Tag[];
+};
+
+type StoredPlacementGroup = {
+  GroupId: string;
+  GroupName: string;
+  State: string;
+  Strategy: string;
+  PartitionCount: number | undefined;
+  SpreadLevel: string | undefined;
+  Tags: Tag[];
+};
+
+type StoredPublicIpv4Pool = {
+  PoolId: string;
+  NetworkBorderGroup: string | undefined;
+  Tags: Tag[];
+};
+
+type StoredReplaceRootVolumeTask = {
+  ReplaceRootVolumeTaskId: string;
+  InstanceId: string;
+  TaskState: string;
+  StartTime: string;
+  Tags: Tag[];
+  ImageId: string | undefined;
+  SnapshotId: string | undefined;
+  DeleteReplacedRootVolume: boolean;
+};
+
+type StoredReservedInstancesListing = {
+  ReservedInstancesListingId: string;
+  ReservedInstancesId: string;
+  ClientToken: string;
+  CreateDate: string;
+  UpdateDate: string;
+  Status: string;
+  StatusMessage: string;
+  Tags: Tag[];
+};
+
+type StoredRouteServer = {
+  RouteServerId: string;
+  AmazonSideAsn: number;
+  State: string;
+  PersistRoutesState: string;
+  PersistRoutesDuration: number | undefined;
+  SnsNotificationsEnabled: boolean;
+  Tags: Tag[];
+};
+
+type StoredRouteServerEndpoint = {
+  RouteServerEndpointId: string;
+  RouteServerId: string;
+  VpcId: string;
+  SubnetId: string;
+  EniId: string;
+  EniAddress: string;
+  State: string;
+  Tags: Tag[];
+};
+
+type StoredRouteServerPeer = {
+  RouteServerPeerId: string;
+  RouteServerEndpointId: string;
+  RouteServerId: string;
+  VpcId: string;
+  SubnetId: string;
+  PeerAddress: string;
+  PeerAsn: number;
+  PeerLivenessDetection: string;
+  State: string;
+  EndpointEniId: string;
+  EndpointEniAddress: string;
+  Tags: Tag[];
+};
+
+type StoredSecondaryNetwork = {
+  SecondaryNetworkId: string;
+  Ipv4CidrBlock: string;
+  NetworkType: string;
+  State: string;
+  Tags: Tag[];
+};
+
+type StoredSecondarySubnet = {
+  SecondarySubnetId: string;
+  SecondaryNetworkId: string;
+  Ipv4CidrBlock: string;
+  AvailabilityZone: string;
+  State: string;
   Tags: Tag[];
 };
 
@@ -743,6 +839,15 @@ const imageKey = (id: string): string => `ami/${id}`;
 const instanceConnectEndpointKey = (id: string): string => `ice/${id}`;
 const instanceEventWindowKey = (id: string): string => `iew/${id}`;
 const exportTaskKey = (id: string): string => `export/${id}`;
+const placementGroupKey = (id: string): string => `pg/${id}`;
+const publicIpv4PoolKey = (id: string): string => `ipv4-pool/${id}`;
+const replaceRootVolumeTaskKey = (id: string): string => `rrvt/${id}`;
+const reservedInstancesListingKey = (id: string): string => `ril/${id}`;
+const routeServerKey = (id: string): string => `rs/${id}`;
+const routeServerEndpointKey = (id: string): string => `rse/${id}`;
+const routeServerPeerKey = (id: string): string => `rsp/${id}`;
+const secondaryNetworkKey = (id: string): string => `snet/${id}`;
+const secondarySubnetKey = (id: string): string => `ssub/${id}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -4542,10 +4647,7 @@ const CopyVolumes: OperationHandler = (input, ctx) => {
   return { Volumes: [volumeView(volume)] };
 };
 
-const CreateDelegateMacVolumeOwnershipTask: OperationHandler = (
-  input,
-  ctx,
-) => {
+const CreateDelegateMacVolumeOwnershipTask: OperationHandler = (input, ctx) => {
   const instanceId =
     typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
   const id = hexId("mac-task");
@@ -4606,9 +4708,7 @@ const CreateEgressOnlyInternetGateway: OperationHandler = (input, ctx) => {
   const id = hexId("eigw");
   const gateway: StoredEgressOnlyInternetGateway = {
     EgressOnlyInternetGatewayId: id,
-    Attachments: vpcId
-      ? [{ State: "attached", VpcId: vpcId }]
-      : [],
+    Attachments: vpcId ? [{ State: "attached", VpcId: vpcId }] : [],
     Tags: [],
   };
   ctx.store.set(egressOnlyIgwKey(id), gateway);
@@ -4845,6 +4945,441 @@ const CreateInstanceExportTask: OperationHandler = (input, ctx) => {
   };
 };
 
+const CreateInterruptibleCapacityReservationAllocation: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const sourceId =
+    typeof input["CapacityReservationId"] === "string"
+      ? input["CapacityReservationId"]
+      : "";
+  const instanceCount =
+    typeof input["InstanceCount"] === "number" ? input["InstanceCount"] : 1;
+  const source = ctx.store.get<StoredCapacityReservation>(
+    capacityReservationKey(sourceId),
+  );
+  if (source === undefined) {
+    throw awsError(
+      "InvalidCapacityReservationId.NotFound",
+      `The capacity reservation ID '${sourceId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    SourceCapacityReservationId: sourceId,
+    TargetInstanceCount: instanceCount,
+    Status: "active",
+    InterruptionType: "none",
+  };
+};
+
+const CreatePlacementGroup: OperationHandler = (input, ctx) => {
+  const groupName =
+    typeof input["GroupName"] === "string" ? input["GroupName"] : "";
+  const strategy =
+    typeof input["Strategy"] === "string" ? input["Strategy"] : "cluster";
+  const partitionCount =
+    typeof input["PartitionCount"] === "number"
+      ? input["PartitionCount"]
+      : undefined;
+  const spreadLevel =
+    typeof input["SpreadLevel"] === "string" ? input["SpreadLevel"] : undefined;
+  const id = hexId("pg");
+  const group: StoredPlacementGroup = {
+    GroupId: id,
+    GroupName: groupName,
+    State: "available",
+    Strategy: strategy,
+    PartitionCount: partitionCount,
+    SpreadLevel: spreadLevel,
+    Tags: [],
+  };
+  ctx.store.set(placementGroupKey(id), group);
+  return {
+    PlacementGroup: {
+      GroupId: group.GroupId,
+      GroupName: group.GroupName,
+      State: group.State,
+      Strategy: group.Strategy,
+      PartitionCount: group.PartitionCount,
+      SpreadLevel: group.SpreadLevel,
+      GroupArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:placement-group/${group.GroupName}`,
+      Tags: group.Tags,
+    },
+  };
+};
+
+const CreatePublicIpv4Pool: OperationHandler = (input, ctx) => {
+  const networkBorderGroup =
+    typeof input["NetworkBorderGroup"] === "string"
+      ? input["NetworkBorderGroup"]
+      : undefined;
+  const id = hexId("ipv4pool-ec2");
+  const pool: StoredPublicIpv4Pool = {
+    PoolId: id,
+    NetworkBorderGroup: networkBorderGroup,
+    Tags: [],
+  };
+  ctx.store.set(publicIpv4PoolKey(id), pool);
+  return { PoolId: pool.PoolId };
+};
+
+const CreateReplaceRootVolumeTask: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const snapshotId =
+    typeof input["SnapshotId"] === "string" ? input["SnapshotId"] : undefined;
+  const imageId =
+    typeof input["ImageId"] === "string" ? input["ImageId"] : undefined;
+  const deleteReplacedRootVolume = input["DeleteReplacedRootVolume"] === true;
+  const id = hexId("replacevol");
+  const task: StoredReplaceRootVolumeTask = {
+    ReplaceRootVolumeTaskId: id,
+    InstanceId: instanceId,
+    TaskState: "pending",
+    StartTime: new Date().toISOString(),
+    Tags: [],
+    ImageId: imageId,
+    SnapshotId: snapshotId,
+    DeleteReplacedRootVolume: deleteReplacedRootVolume,
+  };
+  ctx.store.set(replaceRootVolumeTaskKey(id), task);
+  return {
+    ReplaceRootVolumeTask: {
+      ReplaceRootVolumeTaskId: task.ReplaceRootVolumeTaskId,
+      InstanceId: task.InstanceId,
+      TaskState: task.TaskState,
+      StartTime: task.StartTime,
+      Tags: task.Tags,
+      ImageId: task.ImageId,
+      SnapshotId: task.SnapshotId,
+      DeleteReplacedRootVolume: task.DeleteReplacedRootVolume,
+    },
+  };
+};
+
+const CreateReservedInstancesListing: OperationHandler = (input, ctx) => {
+  const reservedInstancesId =
+    typeof input["ReservedInstancesId"] === "string"
+      ? input["ReservedInstancesId"]
+      : "";
+  const clientToken =
+    typeof input["ClientToken"] === "string"
+      ? input["ClientToken"]
+      : hexId("ct");
+  const id = hexId("rsl");
+  const now = new Date().toISOString();
+  const listing: StoredReservedInstancesListing = {
+    ReservedInstancesListingId: id,
+    ReservedInstancesId: reservedInstancesId,
+    ClientToken: clientToken,
+    CreateDate: now,
+    UpdateDate: now,
+    Status: "active",
+    StatusMessage: "",
+    Tags: [],
+  };
+  ctx.store.set(reservedInstancesListingKey(id), listing);
+  return {
+    ReservedInstancesListings: [
+      {
+        ReservedInstancesListingId: listing.ReservedInstancesListingId,
+        ReservedInstancesId: listing.ReservedInstancesId,
+        ClientToken: listing.ClientToken,
+        CreateDate: listing.CreateDate,
+        UpdateDate: listing.UpdateDate,
+        Status: listing.Status,
+        StatusMessage: listing.StatusMessage,
+        InstanceCounts: [],
+        PriceSchedules: [],
+        Tags: listing.Tags,
+      },
+    ],
+  };
+};
+
+const CreateRestoreImageTask: OperationHandler = (input, _ctx) => {
+  const bucket = typeof input["Bucket"] === "string" ? input["Bucket"] : "";
+  const objectKey =
+    typeof input["ObjectKey"] === "string" ? input["ObjectKey"] : "";
+  void bucket;
+  void objectKey;
+  const id = hexId("ami");
+  return { ImageId: id };
+};
+
+const CreateRoute: OperationHandler = (input, ctx) => {
+  const routeTableId =
+    typeof input["RouteTableId"] === "string" ? input["RouteTableId"] : "";
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : undefined;
+  const destinationIpv6CidrBlock =
+    typeof input["DestinationIpv6CidrBlock"] === "string"
+      ? input["DestinationIpv6CidrBlock"]
+      : undefined;
+  const gatewayId =
+    typeof input["GatewayId"] === "string" ? input["GatewayId"] : "local";
+  const table = ctx.store.get<StoredRouteTable>(routeTableKey(routeTableId));
+  if (table === undefined) {
+    throw awsError(
+      "InvalidRouteTableID.NotFound",
+      `The route table ID '${routeTableId}' does not exist`,
+      400,
+    );
+  }
+  const dest = destinationCidrBlock ?? destinationIpv6CidrBlock ?? "";
+  table.Routes.push({
+    DestinationCidrBlock: dest,
+    GatewayId: gatewayId,
+    Origin: "CreateRoute",
+    State: "active",
+  });
+  ctx.store.set(routeTableKey(routeTableId), table);
+  return { Return: true };
+};
+
+const CreateRouteServer: OperationHandler = (input, ctx) => {
+  const amazonSideAsn =
+    typeof input["AmazonSideAsn"] === "number" ? input["AmazonSideAsn"] : 64512;
+  const persistRoutes =
+    typeof input["PersistRoutes"] === "string"
+      ? input["PersistRoutes"]
+      : "disable";
+  const persistRoutesDuration =
+    typeof input["PersistRoutesDuration"] === "number"
+      ? input["PersistRoutesDuration"]
+      : undefined;
+  const snsNotificationsEnabled = input["SnsNotificationsEnabled"] === true;
+  const id = hexId("rs");
+  const server: StoredRouteServer = {
+    RouteServerId: id,
+    AmazonSideAsn: amazonSideAsn,
+    State: "pending",
+    PersistRoutesState: persistRoutes === "enable" ? "enabled" : "disabled",
+    PersistRoutesDuration: persistRoutesDuration,
+    SnsNotificationsEnabled: snsNotificationsEnabled,
+    Tags: [],
+  };
+  ctx.store.set(routeServerKey(id), server);
+  return {
+    RouteServer: {
+      RouteServerId: server.RouteServerId,
+      AmazonSideAsn: server.AmazonSideAsn,
+      State: server.State,
+      PersistRoutesState: server.PersistRoutesState,
+      PersistRoutesDuration: server.PersistRoutesDuration,
+      SnsNotificationsEnabled: server.SnsNotificationsEnabled,
+      Tags: server.Tags,
+    },
+  };
+};
+
+const CreateRouteServerEndpoint: OperationHandler = (input, ctx) => {
+  const routeServerId =
+    typeof input["RouteServerId"] === "string" ? input["RouteServerId"] : "";
+  const subnetId =
+    typeof input["SubnetId"] === "string" ? input["SubnetId"] : "";
+  const server = ctx.store.get<StoredRouteServer>(
+    routeServerKey(routeServerId),
+  );
+  if (server === undefined) {
+    throw awsError(
+      "InvalidRouteServerId.NotFound",
+      `The route server ID '${routeServerId}' does not exist`,
+      400,
+    );
+  }
+  const subnet = ctx.store.get<StoredSubnet>(subnetKey(subnetId));
+  if (subnet === undefined) {
+    throw awsError(
+      "InvalidSubnetID.NotFound",
+      `The subnet ID '${subnetId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("rse");
+  const eniId = hexId("eni");
+  const endpoint: StoredRouteServerEndpoint = {
+    RouteServerEndpointId: id,
+    RouteServerId: routeServerId,
+    VpcId: subnet.VpcId,
+    SubnetId: subnetId,
+    EniId: eniId,
+    EniAddress: randomIpv4(),
+    State: "pending",
+    Tags: [],
+  };
+  ctx.store.set(routeServerEndpointKey(id), endpoint);
+  return {
+    RouteServerEndpoint: {
+      RouteServerEndpointId: endpoint.RouteServerEndpointId,
+      RouteServerId: endpoint.RouteServerId,
+      VpcId: endpoint.VpcId,
+      SubnetId: endpoint.SubnetId,
+      EniId: endpoint.EniId,
+      EniAddress: endpoint.EniAddress,
+      State: endpoint.State,
+      Tags: endpoint.Tags,
+    },
+  };
+};
+
+const CreateRouteServerPeer: OperationHandler = (input, ctx) => {
+  const routeServerEndpointId =
+    typeof input["RouteServerEndpointId"] === "string"
+      ? input["RouteServerEndpointId"]
+      : "";
+  const peerAddress =
+    typeof input["PeerAddress"] === "string" ? input["PeerAddress"] : "";
+  const bgpOptions =
+    typeof input["BgpOptions"] === "object" && input["BgpOptions"] !== null
+      ? (input["BgpOptions"] as Record<string, unknown>)
+      : {};
+  const peerAsn =
+    typeof bgpOptions["PeerAsn"] === "number" ? bgpOptions["PeerAsn"] : 65000;
+  const peerLivenessDetection =
+    typeof bgpOptions["PeerLivenessDetection"] === "string"
+      ? bgpOptions["PeerLivenessDetection"]
+      : "bgp-keepalive";
+  const endpoint = ctx.store.get<StoredRouteServerEndpoint>(
+    routeServerEndpointKey(routeServerEndpointId),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidRouteServerEndpointId.NotFound",
+      `The route server endpoint ID '${routeServerEndpointId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("rsp");
+  const peer: StoredRouteServerPeer = {
+    RouteServerPeerId: id,
+    RouteServerEndpointId: routeServerEndpointId,
+    RouteServerId: endpoint.RouteServerId,
+    VpcId: endpoint.VpcId,
+    SubnetId: endpoint.SubnetId,
+    PeerAddress: peerAddress,
+    PeerAsn: peerAsn,
+    PeerLivenessDetection: peerLivenessDetection,
+    State: "pending",
+    EndpointEniId: endpoint.EniId,
+    EndpointEniAddress: endpoint.EniAddress,
+    Tags: [],
+  };
+  ctx.store.set(routeServerPeerKey(id), peer);
+  return {
+    RouteServerPeer: {
+      RouteServerPeerId: peer.RouteServerPeerId,
+      RouteServerEndpointId: peer.RouteServerEndpointId,
+      RouteServerId: peer.RouteServerId,
+      VpcId: peer.VpcId,
+      SubnetId: peer.SubnetId,
+      State: peer.State,
+      PeerAddress: peer.PeerAddress,
+      EndpointEniId: peer.EndpointEniId,
+      EndpointEniAddress: peer.EndpointEniAddress,
+      BgpOptions: {
+        PeerAsn: peer.PeerAsn,
+        PeerLivenessDetection: peer.PeerLivenessDetection,
+      },
+      Tags: peer.Tags,
+    },
+  };
+};
+
+const CreateSecondaryNetwork: OperationHandler = (input, ctx) => {
+  const ipv4CidrBlock =
+    typeof input["Ipv4CidrBlock"] === "string" ? input["Ipv4CidrBlock"] : "";
+  const networkType =
+    typeof input["NetworkType"] === "string" ? input["NetworkType"] : "";
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  const id = hexId("snet");
+  const network: StoredSecondaryNetwork = {
+    SecondaryNetworkId: id,
+    Ipv4CidrBlock: ipv4CidrBlock,
+    NetworkType: networkType,
+    State: "available",
+    Tags: [],
+  };
+  ctx.store.set(secondaryNetworkKey(id), network);
+  return {
+    SecondaryNetwork: {
+      SecondaryNetworkId: network.SecondaryNetworkId,
+      SecondaryNetworkArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:secondary-network/${network.SecondaryNetworkId}`,
+      OwnerId: ctx.account,
+      Type: network.NetworkType,
+      State: network.State,
+      Ipv4CidrBlockAssociations: [
+        {
+          AssociationId: hexId("secondary-network-cidr-assoc"),
+          Ipv4CidrBlock: network.Ipv4CidrBlock,
+          Ipv4CidrBlockState: { State: "associated" },
+        },
+      ],
+      Tags: network.Tags,
+    },
+    ClientToken: clientToken,
+  };
+};
+
+const CreateSecondarySubnet: OperationHandler = (input, ctx) => {
+  const secondaryNetworkId =
+    typeof input["SecondaryNetworkId"] === "string"
+      ? input["SecondaryNetworkId"]
+      : "";
+  const ipv4CidrBlock =
+    typeof input["Ipv4CidrBlock"] === "string" ? input["Ipv4CidrBlock"] : "";
+  const availabilityZone =
+    typeof input["AvailabilityZone"] === "string"
+      ? input["AvailabilityZone"]
+      : `${ctx.region}a`;
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  const network = ctx.store.get<StoredSecondaryNetwork>(
+    secondaryNetworkKey(secondaryNetworkId),
+  );
+  if (network === undefined) {
+    throw awsError(
+      "InvalidSecondaryNetworkId.NotFound",
+      `The secondary network ID '${secondaryNetworkId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("ssub");
+  const subnet: StoredSecondarySubnet = {
+    SecondarySubnetId: id,
+    SecondaryNetworkId: secondaryNetworkId,
+    Ipv4CidrBlock: ipv4CidrBlock,
+    AvailabilityZone: availabilityZone,
+    State: "available",
+    Tags: [],
+  };
+  ctx.store.set(secondarySubnetKey(id), subnet);
+  return {
+    SecondarySubnet: {
+      SecondarySubnetId: subnet.SecondarySubnetId,
+      SecondarySubnetArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:secondary-subnet/${subnet.SecondarySubnetId}`,
+      SecondaryNetworkId: subnet.SecondaryNetworkId,
+      SecondaryNetworkType: network.NetworkType,
+      OwnerId: ctx.account,
+      AvailabilityZone: subnet.AvailabilityZone,
+      State: subnet.State,
+      Ipv4CidrBlockAssociations: [
+        {
+          AssociationId: hexId("secondary-subnet-cidr-assoc"),
+          Ipv4CidrBlock: subnet.Ipv4CidrBlock,
+          Ipv4CidrBlockState: { State: "associated" },
+        },
+      ],
+      Tags: subnet.Tags,
+    },
+    ClientToken: clientToken,
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -4998,6 +5533,18 @@ const ec2: ServiceDefinition = {
     CreateInstanceConnectEndpoint,
     CreateInstanceEventWindow,
     CreateInstanceExportTask,
+    CreateInterruptibleCapacityReservationAllocation,
+    CreatePlacementGroup,
+    CreatePublicIpv4Pool,
+    CreateReplaceRootVolumeTask,
+    CreateReservedInstancesListing,
+    CreateRestoreImageTask,
+    CreateRoute,
+    CreateRouteServer,
+    CreateRouteServerEndpoint,
+    CreateRouteServerPeer,
+    CreateSecondaryNetwork,
+    CreateSecondarySubnet,
   },
   model,
 } as const;

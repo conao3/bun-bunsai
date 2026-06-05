@@ -763,6 +763,138 @@ type StoredSecondarySubnet = {
   Tags: Tag[];
 };
 
+type StoredSpotDatafeedSubscription = {
+  OwnerId: string;
+  Bucket: string;
+  Prefix: string;
+  State: string;
+};
+
+type StoredStoreImageTask = {
+  ImageId: string;
+  ObjectKey: string;
+  Bucket: string;
+};
+
+type StoredSubnetCidrReservation = {
+  SubnetCidrReservationId: string;
+  SubnetId: string;
+  Cidr: string;
+  ReservationType: string;
+  OwnerId: string;
+  Description: string;
+  Tags: Tag[];
+};
+
+type StoredTrafficMirrorFilterRule = {
+  TrafficMirrorFilterRuleId: string;
+  TrafficMirrorFilterId: string;
+  TrafficDirection: string;
+  RuleNumber: number;
+  RuleAction: string;
+  Protocol: number | undefined;
+  DestinationPortRange: { FromPort: number; ToPort: number } | undefined;
+  SourcePortRange: { FromPort: number; ToPort: number } | undefined;
+  DestinationCidrBlock: string;
+  SourceCidrBlock: string;
+  Description: string;
+  Tags: Tag[];
+};
+
+type StoredTrafficMirrorFilter = {
+  TrafficMirrorFilterId: string;
+  IngressFilterRules: StoredTrafficMirrorFilterRule[];
+  EgressFilterRules: StoredTrafficMirrorFilterRule[];
+  NetworkServices: string[];
+  Description: string;
+  Tags: Tag[];
+};
+
+type StoredTrafficMirrorSession = {
+  TrafficMirrorSessionId: string;
+  TrafficMirrorTargetId: string;
+  TrafficMirrorFilterId: string;
+  NetworkInterfaceId: string;
+  OwnerId: string;
+  PacketLength: number | undefined;
+  SessionNumber: number;
+  VirtualNetworkId: number | undefined;
+  Description: string;
+  Tags: Tag[];
+};
+
+type StoredTrafficMirrorTarget = {
+  TrafficMirrorTargetId: string;
+  NetworkInterfaceId: string | undefined;
+  NetworkLoadBalancerArn: string | undefined;
+  Type: string;
+  Description: string;
+  OwnerId: string;
+  GatewayLoadBalancerEndpointId: string | undefined;
+  Tags: Tag[];
+};
+
+type StoredTransitGateway = {
+  TransitGatewayId: string;
+  TransitGatewayArn: string;
+  State: string;
+  OwnerId: string;
+  Description: string;
+  CreationTime: string;
+  Options: {
+    AmazonSideAsn: number;
+    AutoAcceptSharedAttachments: string;
+    DefaultRouteTableAssociation: string;
+    AssociationDefaultRouteTableId: string;
+    DefaultRouteTablePropagation: string;
+    PropagationDefaultRouteTableId: string;
+    VpnEcmpSupport: string;
+    DnsSupport: string;
+    MulticastSupport: string;
+  };
+  Tags: Tag[];
+};
+
+type StoredTransitGatewayConnect = {
+  TransitGatewayAttachmentId: string;
+  TransportTransitGatewayAttachmentId: string;
+  TransitGatewayId: string;
+  State: string;
+  CreationTime: string;
+  Options: { Protocol: string };
+  Tags: Tag[];
+};
+
+type StoredTransitGatewayConnectPeer = {
+  TransitGatewayAttachmentId: string;
+  TransitGatewayConnectPeerId: string;
+  State: string;
+  CreationTime: string;
+  ConnectPeerConfiguration: {
+    TransitGatewayAddress: string;
+    PeerAddress: string;
+    InsideCidrBlocks: string[];
+    Protocol: string;
+    BgpConfigurations: {
+      TransitGatewayAsn: number;
+      PeerAsn: number;
+      TransitGatewayAddress: string;
+      PeerAddress: string;
+      BgpStatus: string;
+    }[];
+  };
+  Tags: Tag[];
+};
+
+type StoredTransitGatewayMeteringPolicy = {
+  TransitGatewayMeteringPolicyId: string;
+  TransitGatewayId: string;
+  MiddleboxAttachmentIds: string[];
+  State: string;
+  UpdateEffectiveAt: string;
+  Tags: Tag[];
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -848,6 +980,19 @@ const routeServerEndpointKey = (id: string): string => `rse/${id}`;
 const routeServerPeerKey = (id: string): string => `rsp/${id}`;
 const secondaryNetworkKey = (id: string): string => `snet/${id}`;
 const secondarySubnetKey = (id: string): string => `ssub/${id}`;
+const spotDatafeedKey = (): string => `spot-datafeed/singleton`;
+const storeImageTaskKey = (id: string): string => `store-image-task/${id}`;
+const subnetCidrReservationKey = (id: string): string => `scr/${id}`;
+const trafficMirrorFilterKey = (id: string): string => `tmf/${id}`;
+const trafficMirrorFilterRuleKey = (id: string): string => `tmfr/${id}`;
+const trafficMirrorSessionKey = (id: string): string => `tms/${id}`;
+const trafficMirrorTargetKey = (id: string): string => `tmt/${id}`;
+const transitGatewayKey = (id: string): string => `tgw/${id}`;
+const transitGatewayConnectKey = (id: string): string => `tgw-connect/${id}`;
+const transitGatewayConnectPeerKey = (id: string): string =>
+  `tgw-connect-peer/${id}`;
+const transitGatewayMeteringPolicyKey = (id: string): string =>
+  `tgw-metering-policy/${id}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -5380,6 +5525,572 @@ const CreateSecondarySubnet: OperationHandler = (input, ctx) => {
   };
 };
 
+const CreateSnapshots: OperationHandler = (input, ctx) => {
+  const spec =
+    typeof input["InstanceSpecification"] === "object" &&
+    input["InstanceSpecification"] !== null
+      ? (input["InstanceSpecification"] as Record<string, unknown>)
+      : {};
+  const instanceId =
+    typeof spec["InstanceId"] === "string" ? spec["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(instanceId));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${instanceId}' does not exist.`,
+      400,
+    );
+  }
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const volumes = ctx.store
+    .list<StoredVolume>()
+    .filter((e) => e.key.startsWith("volume/"))
+    .map((e) => e.value);
+  const instanceVolumes = volumes.filter(
+    (v) =>
+      v.Attachments.length > 0 &&
+      v.Attachments.some((a) => a.InstanceId === instanceId),
+  );
+  const excludeBootVolume =
+    typeof spec["ExcludeBootVolume"] === "boolean"
+      ? spec["ExcludeBootVolume"]
+      : false;
+  const excludeDataVolumeIds = Array.isArray(spec["ExcludeDataVolumeIds"])
+    ? (spec["ExcludeDataVolumeIds"] as string[])
+    : [];
+  const snapshots = instanceVolumes
+    .filter((v) => {
+      if (excludeDataVolumeIds.includes(v.VolumeId)) return false;
+      if (
+        excludeBootVolume &&
+        v.Attachments.some(
+          (a) => a.Device === "/dev/xvda" || a.Device === "/dev/sda1",
+        )
+      )
+        return false;
+      return true;
+    })
+    .map((v) => {
+      const id = hexId("snap");
+      const snapshot: StoredSnapshot = {
+        SnapshotId: id,
+        VolumeId: v.VolumeId,
+        VolumeSize: v.Size,
+        State: "completed",
+        Progress: "100%",
+        StartTime: new Date().toISOString(),
+        Description: description,
+        Encrypted: v.Encrypted,
+        OwnerId: ctx.account,
+        Tags: [],
+      };
+      ctx.store.set(snapshotKey(id), snapshot);
+      return snapshotView(snapshot);
+    });
+  return { Snapshots: snapshots };
+};
+
+const CreateSpotDatafeedSubscription: OperationHandler = (input, ctx) => {
+  const bucket = typeof input["Bucket"] === "string" ? input["Bucket"] : "";
+  const prefix = typeof input["Prefix"] === "string" ? input["Prefix"] : "";
+  const subscription: StoredSpotDatafeedSubscription = {
+    OwnerId: ctx.account,
+    Bucket: bucket,
+    Prefix: prefix,
+    State: "Active",
+  };
+  ctx.store.set(spotDatafeedKey(), subscription);
+  return {
+    SpotDatafeedSubscription: {
+      Bucket: subscription.Bucket,
+      OwnerId: subscription.OwnerId,
+      Prefix: subscription.Prefix,
+      State: subscription.State,
+    },
+  };
+};
+
+const CreateStoreImageTask: OperationHandler = (input, ctx) => {
+  const imageId = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const bucket = typeof input["Bucket"] === "string" ? input["Bucket"] : "";
+  const objectKey = `${imageId}/image.bin`;
+  const task: StoredStoreImageTask = {
+    ImageId: imageId,
+    ObjectKey: objectKey,
+    Bucket: bucket,
+  };
+  ctx.store.set(storeImageTaskKey(imageId), task);
+  return { ObjectKey: objectKey };
+};
+
+const CreateSubnetCidrReservation: OperationHandler = (input, ctx) => {
+  const subnetId =
+    typeof input["SubnetId"] === "string" ? input["SubnetId"] : "";
+  const subnet = ctx.store.get<StoredSubnet>(subnetKey(subnetId));
+  if (subnet === undefined) {
+    throw awsError(
+      "InvalidSubnetID.NotFound",
+      `The subnet ID '${subnetId}' does not exist`,
+      400,
+    );
+  }
+  const cidr = typeof input["Cidr"] === "string" ? input["Cidr"] : "";
+  const reservationType =
+    typeof input["ReservationType"] === "string"
+      ? input["ReservationType"]
+      : "prefix";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const id = hexId("scr");
+  const reservation: StoredSubnetCidrReservation = {
+    SubnetCidrReservationId: id,
+    SubnetId: subnetId,
+    Cidr: cidr,
+    ReservationType: reservationType,
+    OwnerId: ctx.account,
+    Description: description,
+    Tags: [],
+  };
+  ctx.store.set(subnetCidrReservationKey(id), reservation);
+  return {
+    SubnetCidrReservation: {
+      SubnetCidrReservationId: reservation.SubnetCidrReservationId,
+      SubnetId: reservation.SubnetId,
+      Cidr: reservation.Cidr,
+      ReservationType: reservation.ReservationType,
+      OwnerId: reservation.OwnerId,
+      Description: reservation.Description,
+      Tags: reservation.Tags,
+    },
+  };
+};
+
+const CreateTrafficMirrorFilter: OperationHandler = (input, ctx) => {
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  const id = hexId("tmf");
+  const filter: StoredTrafficMirrorFilter = {
+    TrafficMirrorFilterId: id,
+    IngressFilterRules: [],
+    EgressFilterRules: [],
+    NetworkServices: [],
+    Description: description,
+    Tags: [],
+  };
+  ctx.store.set(trafficMirrorFilterKey(id), filter);
+  return {
+    TrafficMirrorFilter: {
+      TrafficMirrorFilterId: filter.TrafficMirrorFilterId,
+      IngressFilterRules: filter.IngressFilterRules,
+      EgressFilterRules: filter.EgressFilterRules,
+      NetworkServices: filter.NetworkServices,
+      Description: filter.Description,
+      Tags: filter.Tags,
+    },
+    ClientToken: clientToken,
+  };
+};
+
+const CreateTrafficMirrorFilterRule: OperationHandler = (input, ctx) => {
+  const filterId =
+    typeof input["TrafficMirrorFilterId"] === "string"
+      ? input["TrafficMirrorFilterId"]
+      : "";
+  const filter = ctx.store.get<StoredTrafficMirrorFilter>(
+    trafficMirrorFilterKey(filterId),
+  );
+  if (filter === undefined) {
+    throw awsError(
+      "InvalidTrafficMirrorFilterId.NotFound",
+      `The Traffic Mirror filter ID '${filterId}' does not exist`,
+      400,
+    );
+  }
+  const trafficDirection =
+    typeof input["TrafficDirection"] === "string"
+      ? input["TrafficDirection"]
+      : "ingress";
+  const ruleNumber = integerOf(input["RuleNumber"]) ?? 100;
+  const ruleAction =
+    typeof input["RuleAction"] === "string" ? input["RuleAction"] : "accept";
+  const protocol = integerOf(input["Protocol"]);
+  const destCidr =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "0.0.0.0/0";
+  const sourceCidr =
+    typeof input["SourceCidrBlock"] === "string"
+      ? input["SourceCidrBlock"]
+      : "0.0.0.0/0";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  const destPortRangeRaw =
+    typeof input["DestinationPortRange"] === "object" &&
+    input["DestinationPortRange"] !== null
+      ? (input["DestinationPortRange"] as Record<string, unknown>)
+      : null;
+  const srcPortRangeRaw =
+    typeof input["SourcePortRange"] === "object" &&
+    input["SourcePortRange"] !== null
+      ? (input["SourcePortRange"] as Record<string, unknown>)
+      : null;
+  const destPortRange = destPortRangeRaw
+    ? {
+        FromPort: integerOf(destPortRangeRaw["FromPort"]) ?? 0,
+        ToPort: integerOf(destPortRangeRaw["ToPort"]) ?? 65535,
+      }
+    : undefined;
+  const srcPortRange = srcPortRangeRaw
+    ? {
+        FromPort: integerOf(srcPortRangeRaw["FromPort"]) ?? 0,
+        ToPort: integerOf(srcPortRangeRaw["ToPort"]) ?? 65535,
+      }
+    : undefined;
+  const ruleId = hexId("tmfr");
+  const rule: StoredTrafficMirrorFilterRule = {
+    TrafficMirrorFilterRuleId: ruleId,
+    TrafficMirrorFilterId: filterId,
+    TrafficDirection: trafficDirection,
+    RuleNumber: ruleNumber,
+    RuleAction: ruleAction,
+    Protocol: protocol,
+    DestinationPortRange: destPortRange,
+    SourcePortRange: srcPortRange,
+    DestinationCidrBlock: destCidr,
+    SourceCidrBlock: sourceCidr,
+    Description: description,
+    Tags: [],
+  };
+  ctx.store.set(trafficMirrorFilterRuleKey(ruleId), rule);
+  if (trafficDirection === "egress") {
+    filter.EgressFilterRules.push(rule);
+  } else {
+    filter.IngressFilterRules.push(rule);
+  }
+  ctx.store.set(trafficMirrorFilterKey(filterId), filter);
+  return {
+    TrafficMirrorFilterRule: {
+      TrafficMirrorFilterRuleId: rule.TrafficMirrorFilterRuleId,
+      TrafficMirrorFilterId: rule.TrafficMirrorFilterId,
+      TrafficDirection: rule.TrafficDirection,
+      RuleNumber: rule.RuleNumber,
+      RuleAction: rule.RuleAction,
+      Protocol: rule.Protocol,
+      DestinationPortRange: rule.DestinationPortRange,
+      SourcePortRange: rule.SourcePortRange,
+      DestinationCidrBlock: rule.DestinationCidrBlock,
+      SourceCidrBlock: rule.SourceCidrBlock,
+      Description: rule.Description,
+      Tags: rule.Tags,
+    },
+    ClientToken: clientToken,
+  };
+};
+
+const CreateTrafficMirrorSession: OperationHandler = (input, ctx) => {
+  const networkInterfaceId =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const targetId =
+    typeof input["TrafficMirrorTargetId"] === "string"
+      ? input["TrafficMirrorTargetId"]
+      : "";
+  const filterId =
+    typeof input["TrafficMirrorFilterId"] === "string"
+      ? input["TrafficMirrorFilterId"]
+      : "";
+  const sessionNumber = integerOf(input["SessionNumber"]) ?? 1;
+  const packetLength = integerOf(input["PacketLength"]);
+  const virtualNetworkId = integerOf(input["VirtualNetworkId"]);
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  const id = hexId("tms");
+  const session: StoredTrafficMirrorSession = {
+    TrafficMirrorSessionId: id,
+    TrafficMirrorTargetId: targetId,
+    TrafficMirrorFilterId: filterId,
+    NetworkInterfaceId: networkInterfaceId,
+    OwnerId: ctx.account,
+    PacketLength: packetLength,
+    SessionNumber: sessionNumber,
+    VirtualNetworkId: virtualNetworkId,
+    Description: description,
+    Tags: [],
+  };
+  ctx.store.set(trafficMirrorSessionKey(id), session);
+  return {
+    TrafficMirrorSession: {
+      TrafficMirrorSessionId: session.TrafficMirrorSessionId,
+      TrafficMirrorTargetId: session.TrafficMirrorTargetId,
+      TrafficMirrorFilterId: session.TrafficMirrorFilterId,
+      NetworkInterfaceId: session.NetworkInterfaceId,
+      OwnerId: session.OwnerId,
+      PacketLength: session.PacketLength,
+      SessionNumber: session.SessionNumber,
+      VirtualNetworkId: session.VirtualNetworkId,
+      Description: session.Description,
+      Tags: session.Tags,
+    },
+    ClientToken: clientToken,
+  };
+};
+
+const CreateTrafficMirrorTarget: OperationHandler = (input, ctx) => {
+  const networkInterfaceId =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : undefined;
+  const networkLoadBalancerArn =
+    typeof input["NetworkLoadBalancerArn"] === "string"
+      ? input["NetworkLoadBalancerArn"]
+      : undefined;
+  const gatewayLoadBalancerEndpointId =
+    typeof input["GatewayLoadBalancerEndpointId"] === "string"
+      ? input["GatewayLoadBalancerEndpointId"]
+      : undefined;
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  const type = networkLoadBalancerArn
+    ? "network-load-balancer"
+    : gatewayLoadBalancerEndpointId
+      ? "gateway-load-balancer-endpoint"
+      : "network-interface";
+  const id = hexId("tmt");
+  const target: StoredTrafficMirrorTarget = {
+    TrafficMirrorTargetId: id,
+    NetworkInterfaceId: networkInterfaceId,
+    NetworkLoadBalancerArn: networkLoadBalancerArn,
+    Type: type,
+    Description: description,
+    OwnerId: ctx.account,
+    GatewayLoadBalancerEndpointId: gatewayLoadBalancerEndpointId,
+    Tags: [],
+  };
+  ctx.store.set(trafficMirrorTargetKey(id), target);
+  return {
+    TrafficMirrorTarget: {
+      TrafficMirrorTargetId: target.TrafficMirrorTargetId,
+      NetworkInterfaceId: target.NetworkInterfaceId,
+      NetworkLoadBalancerArn: target.NetworkLoadBalancerArn,
+      Type: target.Type,
+      Description: target.Description,
+      OwnerId: target.OwnerId,
+      GatewayLoadBalancerEndpointId: target.GatewayLoadBalancerEndpointId,
+      Tags: target.Tags,
+    },
+    ClientToken: clientToken,
+  };
+};
+
+const CreateTransitGateway: OperationHandler = (input, ctx) => {
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : "";
+  const options =
+    typeof input["Options"] === "object" && input["Options"] !== null
+      ? (input["Options"] as Record<string, unknown>)
+      : {};
+  const amazonSideAsn =
+    typeof options["AmazonSideAsn"] === "number"
+      ? options["AmazonSideAsn"]
+      : 64512;
+  const id = hexId("tgw");
+  const rtbId = hexId("tgw-rtb");
+  const gateway: StoredTransitGateway = {
+    TransitGatewayId: id,
+    TransitGatewayArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:transit-gateway/${id}`,
+    State: "available",
+    OwnerId: ctx.account,
+    Description: description,
+    CreationTime: new Date().toISOString(),
+    Options: {
+      AmazonSideAsn: amazonSideAsn,
+      AutoAcceptSharedAttachments:
+        typeof options["AutoAcceptSharedAttachments"] === "string"
+          ? options["AutoAcceptSharedAttachments"]
+          : "disable",
+      DefaultRouteTableAssociation:
+        typeof options["DefaultRouteTableAssociation"] === "string"
+          ? options["DefaultRouteTableAssociation"]
+          : "enable",
+      AssociationDefaultRouteTableId: rtbId,
+      DefaultRouteTablePropagation:
+        typeof options["DefaultRouteTablePropagation"] === "string"
+          ? options["DefaultRouteTablePropagation"]
+          : "enable",
+      PropagationDefaultRouteTableId: rtbId,
+      VpnEcmpSupport:
+        typeof options["VpnEcmpSupport"] === "string"
+          ? options["VpnEcmpSupport"]
+          : "enable",
+      DnsSupport:
+        typeof options["DnsSupport"] === "string"
+          ? options["DnsSupport"]
+          : "enable",
+      MulticastSupport:
+        typeof options["MulticastSupport"] === "string"
+          ? options["MulticastSupport"]
+          : "disable",
+    },
+    Tags: [],
+  };
+  ctx.store.set(transitGatewayKey(id), gateway);
+  return {
+    TransitGateway: {
+      TransitGatewayId: gateway.TransitGatewayId,
+      TransitGatewayArn: gateway.TransitGatewayArn,
+      State: gateway.State,
+      OwnerId: gateway.OwnerId,
+      Description: gateway.Description,
+      CreationTime: gateway.CreationTime,
+      Options: gateway.Options,
+      Tags: gateway.Tags,
+    },
+  };
+};
+
+const CreateTransitGatewayConnect: OperationHandler = (input, ctx) => {
+  const transportAttachmentId =
+    typeof input["TransportTransitGatewayAttachmentId"] === "string"
+      ? input["TransportTransitGatewayAttachmentId"]
+      : "";
+  const opts =
+    typeof input["Options"] === "object" && input["Options"] !== null
+      ? (input["Options"] as Record<string, unknown>)
+      : {};
+  const protocol =
+    typeof opts["Protocol"] === "string" ? opts["Protocol"] : "gre";
+  const transportAttachment = ctx.store.get<StoredTgwAttachment>(
+    tgwAttachmentKey(transportAttachmentId),
+  );
+  const transitGatewayId =
+    transportAttachment?.TransitGatewayId ?? hexId("tgw");
+  const id = hexId("tgw-attach");
+  const connect: StoredTransitGatewayConnect = {
+    TransitGatewayAttachmentId: id,
+    TransportTransitGatewayAttachmentId: transportAttachmentId,
+    TransitGatewayId: transitGatewayId,
+    State: "available",
+    CreationTime: new Date().toISOString(),
+    Options: { Protocol: protocol },
+    Tags: [],
+  };
+  ctx.store.set(transitGatewayConnectKey(id), connect);
+  return {
+    TransitGatewayConnect: {
+      TransitGatewayAttachmentId: connect.TransitGatewayAttachmentId,
+      TransportTransitGatewayAttachmentId:
+        connect.TransportTransitGatewayAttachmentId,
+      TransitGatewayId: connect.TransitGatewayId,
+      State: connect.State,
+      CreationTime: connect.CreationTime,
+      Options: connect.Options,
+      Tags: connect.Tags,
+    },
+  };
+};
+
+const CreateTransitGatewayConnectPeer: OperationHandler = (input, ctx) => {
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const transitGatewayAddress =
+    typeof input["TransitGatewayAddress"] === "string"
+      ? input["TransitGatewayAddress"]
+      : "169.254.6.1";
+  const peerAddress =
+    typeof input["PeerAddress"] === "string" ? input["PeerAddress"] : "";
+  const insideCidrBlocks = stringList(input["InsideCidrBlocks"]);
+  const bgpOpts =
+    typeof input["BgpOptions"] === "object" && input["BgpOptions"] !== null
+      ? (input["BgpOptions"] as Record<string, unknown>)
+      : {};
+  const peerAsn =
+    typeof bgpOpts["PeerAsn"] === "number" ? bgpOpts["PeerAsn"] : 65000;
+  const id = hexId("tgw-connect-peer");
+  const peer: StoredTransitGatewayConnectPeer = {
+    TransitGatewayAttachmentId: attachmentId,
+    TransitGatewayConnectPeerId: id,
+    State: "available",
+    CreationTime: new Date().toISOString(),
+    ConnectPeerConfiguration: {
+      TransitGatewayAddress: transitGatewayAddress,
+      PeerAddress: peerAddress,
+      InsideCidrBlocks: insideCidrBlocks,
+      Protocol: "gre",
+      BgpConfigurations: [
+        {
+          TransitGatewayAsn: 64512,
+          PeerAsn: peerAsn as number,
+          TransitGatewayAddress: transitGatewayAddress,
+          PeerAddress: peerAddress,
+          BgpStatus: "up",
+        },
+      ],
+    },
+    Tags: [],
+  };
+  ctx.store.set(transitGatewayConnectPeerKey(id), peer);
+  return {
+    TransitGatewayConnectPeer: {
+      TransitGatewayAttachmentId: peer.TransitGatewayAttachmentId,
+      TransitGatewayConnectPeerId: peer.TransitGatewayConnectPeerId,
+      State: peer.State,
+      CreationTime: peer.CreationTime,
+      ConnectPeerConfiguration: peer.ConnectPeerConfiguration,
+      Tags: peer.Tags,
+    },
+  };
+};
+
+const CreateTransitGatewayMeteringPolicy: OperationHandler = (input, ctx) => {
+  const transitGatewayId =
+    typeof input["TransitGatewayId"] === "string"
+      ? input["TransitGatewayId"]
+      : "";
+  const gateway = ctx.store.get<StoredTransitGateway>(
+    transitGatewayKey(transitGatewayId),
+  );
+  if (gateway === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayID.NotFound",
+      `The transit gateway ID '${transitGatewayId}' does not exist`,
+      400,
+    );
+  }
+  const middleboxAttachmentIds = stringList(input["MiddleboxAttachmentIds"]);
+  const id = hexId("tgw-metering-policy");
+  const policy: StoredTransitGatewayMeteringPolicy = {
+    TransitGatewayMeteringPolicyId: id,
+    TransitGatewayId: transitGatewayId,
+    MiddleboxAttachmentIds: middleboxAttachmentIds,
+    State: "available",
+    UpdateEffectiveAt: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(transitGatewayMeteringPolicyKey(id), policy);
+  return {
+    TransitGatewayMeteringPolicy: {
+      TransitGatewayMeteringPolicyId: policy.TransitGatewayMeteringPolicyId,
+      TransitGatewayId: policy.TransitGatewayId,
+      MiddleboxAttachmentIds: policy.MiddleboxAttachmentIds,
+      State: policy.State,
+      UpdateEffectiveAt: policy.UpdateEffectiveAt,
+      Tags: policy.Tags,
+    },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -5545,6 +6256,18 @@ const ec2: ServiceDefinition = {
     CreateRouteServerPeer,
     CreateSecondaryNetwork,
     CreateSecondarySubnet,
+    CreateSnapshots,
+    CreateSpotDatafeedSubscription,
+    CreateStoreImageTask,
+    CreateSubnetCidrReservation,
+    CreateTrafficMirrorFilter,
+    CreateTrafficMirrorFilterRule,
+    CreateTrafficMirrorSession,
+    CreateTrafficMirrorTarget,
+    CreateTransitGateway,
+    CreateTransitGatewayConnect,
+    CreateTransitGatewayConnectPeer,
+    CreateTransitGatewayMeteringPolicy,
   },
   model,
 } as const;

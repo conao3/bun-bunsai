@@ -5124,6 +5124,165 @@ const DeleteMlflowApp: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DeleteMlflowTrackingServer: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrackingServerName");
+  const stored = ctx.store.get<StoredMlflowTrackingServer>(
+    mlflowTrackingServerKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `MlflowTrackingServer ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(mlflowTrackingServerKey(name));
+  return { TrackingServerArn: stored.TrackingServerArn };
+};
+
+const DeleteOptimizationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "OptimizationJobName");
+  const stored = ctx.store.get<StoredOptimizationJob>(optimizationJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `OptimizationJob ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(optimizationJobKey(name));
+  return {};
+};
+
+const DeletePartnerApp: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "Arn");
+  const stored = requirePartnerApp(ctx, arn);
+  ctx.store.delete(partnerAppKey(stored.Name));
+  return { Arn: arn };
+};
+
+const DeleteProject: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ProjectName");
+  const stored = ctx.store.get<StoredProject>(projectKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Project ${name} does not exist.`, 400);
+  }
+  ctx.store.delete(projectKey(name));
+  return {};
+};
+
+const DeleteSpace: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  const spaceName = requireString(input, "SpaceName");
+  const stored = ctx.store.get<StoredSpace>(spaceKey(domainId, spaceName));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Space ${spaceName} in domain ${domainId} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(spaceKey(domainId, spaceName));
+  return {};
+};
+
+const DeleteStudioLifecycleConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "StudioLifecycleConfigName");
+  const stored = ctx.store.get<StoredStudioLifecycleConfig>(
+    studioLifecycleConfigKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `StudioLifecycleConfig ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(studioLifecycleConfigKey(name));
+  return {};
+};
+
+const DeleteTags: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "ResourceArn");
+  const tagKeys = Array.isArray(input["TagKeys"])
+    ? (input["TagKeys"] as string[])
+    : [];
+  const existing = ctx.store.get<StoredTags>(tagsKey(resourceArn));
+  if (existing !== undefined) {
+    const filtered = existing.Tags.filter((t) => !tagKeys.includes(t.Key));
+    ctx.store.set(tagsKey(resourceArn), {
+      ResourceArn: resourceArn,
+      Tags: filtered,
+    });
+  }
+  return {};
+};
+
+const DeleteTrial: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrialName");
+  const stored = ctx.store.get<StoredTrial>(trialKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Trial ${name} does not exist.`, 400);
+  }
+  ctx.store.delete(trialKey(name));
+  return { TrialArn: stored.TrialArn };
+};
+
+const DeleteTrialComponent: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrialComponentName");
+  const stored = ctx.store.get<StoredTrialComponent>(trialComponentKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `TrialComponent ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(trialComponentKey(name));
+  return { TrialComponentArn: stored.TrialComponentArn };
+};
+
+const DeleteUserProfile: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  const userProfileName = requireString(input, "UserProfileName");
+  const stored = ctx.store.get<StoredUserProfile>(
+    userProfileKey(domainId, userProfileName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `UserProfile ${userProfileName} in domain ${domainId} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(userProfileKey(domainId, userProfileName));
+  return {};
+};
+
+const DeleteWorkforce: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "WorkforceName");
+  const stored = ctx.store.get<StoredWorkforce>(workforceKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Workforce ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(workforceKey(name));
+  return {};
+};
+
+const DeleteWorkteam: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "WorkteamName");
+  const stored = ctx.store.get<StoredWorkteam>(workteamKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Workteam ${name} does not exist.`, 400);
+  }
+  ctx.store.delete(workteamKey(name));
+  return { Success: true };
+};
+
 const CreatePresignedMlflowTrackingServerUrl: OperationHandler = (
   input,
   ctx,
@@ -5316,6 +5475,18 @@ const sagemaker = {
     DeleteInferenceComponent,
     DeleteInferenceExperiment,
     DeleteMlflowApp,
+    DeleteMlflowTrackingServer,
+    DeleteOptimizationJob,
+    DeletePartnerApp,
+    DeleteProject,
+    DeleteSpace,
+    DeleteStudioLifecycleConfig,
+    DeleteTags,
+    DeleteTrial,
+    DeleteTrialComponent,
+    DeleteUserProfile,
+    DeleteWorkforce,
+    DeleteWorkteam,
   },
   model,
 } as const satisfies ServiceDefinition;

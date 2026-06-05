@@ -2185,6 +2185,97 @@ const DisassociateHoursOfOperations: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DisassociateInstanceStorageConfig: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const associationId = requireString(input, "AssociationId");
+  const key = instanceStorageConfigKey(instanceId, associationId);
+  if (ctx.store.get<StoredInstanceStorageConfig>(key) === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `InstanceStorageConfig ${associationId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const DisassociateLambdaFunction: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateLexBot: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociatePhoneNumberContactFlow: OperationHandler = (input, ctx) => {
+  const phoneNumberId = requireString(input, "PhoneNumberId");
+  const stored = ctx.store.get<StoredPhoneNumber>(
+    phoneNumberKey(phoneNumberId),
+  );
+  if (stored !== undefined) {
+    ctx.store.set(phoneNumberKey(phoneNumberId), {
+      ...stored,
+      ContactFlowId: undefined,
+    });
+  }
+  return {};
+};
+
+const DisassociateQueueEmailAddresses: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateQueueQuickConnects: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateRoutingProfileQueues: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateSecurityKey: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateSecurityProfiles: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateTrafficDistributionGroupUser: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return {};
+};
+
+const DisassociateUserProficiencies: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DisassociateWorkspace: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
 const DescribeInstanceAttribute: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
@@ -2718,6 +2809,9 @@ const connect = {
           if (req.method === "DELETE") {
             if (parts[2] === "approved-origin")
               return "DisassociateApprovedOrigin";
+            if (parts[2] === "lambda-function")
+              return "DisassociateLambdaFunction";
+            if (parts[2] === "lex-bot") return "DisassociateLexBot";
           }
           if (req.method === "POST") {
             if (parts[2] === "bot") return "DisassociateBot";
@@ -2734,6 +2828,10 @@ const connect = {
             return "DescribeInstanceAttribute";
           if (req.method === "GET" && parts[2] === "storage-config")
             return "DescribeInstanceStorageConfig";
+          if (req.method === "DELETE" && parts[2] === "storage-config")
+            return "DisassociateInstanceStorageConfig";
+          if (req.method === "DELETE" && parts[2] === "security-key")
+            return "DisassociateSecurityKey";
           if (
             req.method === "DELETE" &&
             parts[2] === "integration-associations"
@@ -2890,6 +2988,12 @@ const connect = {
           req.method === "PUT"
         )
           return "AssociatePhoneNumberContactFlow";
+        if (
+          parts.length === 3 &&
+          parts[2] === "contact-flow" &&
+          req.method === "DELETE"
+        )
+          return "DisassociatePhoneNumberContactFlow";
         return undefined;
 
       case "queues":
@@ -2901,6 +3005,10 @@ const connect = {
             return "AssociateQueueEmailAddresses";
           if (parts[3] === "associate-quick-connects")
             return "AssociateQueueQuickConnects";
+          if (parts[3] === "disassociate-email-addresses")
+            return "DisassociateQueueEmailAddresses";
+          if (parts[3] === "disassociate-quick-connects")
+            return "DisassociateQueueQuickConnects";
         }
         return undefined;
 
@@ -2917,6 +3025,12 @@ const connect = {
           req.method === "POST"
         )
           return "AssociateRoutingProfileQueues";
+        if (
+          parts.length === 4 &&
+          parts[3] === "disassociate-queues" &&
+          req.method === "POST"
+        )
+          return "DisassociateRoutingProfileQueues";
         return undefined;
 
       case "security-profiles":
@@ -2933,6 +3047,11 @@ const connect = {
           return "AssociateSecurityProfiles";
         return undefined;
 
+      case "disassociate-security-profiles":
+        if (parts.length === 2 && req.method === "POST")
+          return "DisassociateSecurityProfiles";
+        return undefined;
+
       case "traffic-distribution-group":
         if (parts.length === 1 && req.method === "PUT")
           return "CreateTrafficDistributionGroup";
@@ -2942,6 +3061,12 @@ const connect = {
           return "DeleteTrafficDistributionGroup";
         if (parts.length === 3 && parts[2] === "user" && req.method === "PUT")
           return "AssociateTrafficDistributionGroupUser";
+        if (
+          parts.length === 3 &&
+          parts[2] === "user" &&
+          req.method === "DELETE"
+        )
+          return "DisassociateTrafficDistributionGroupUser";
         return undefined;
 
       case "users":
@@ -2954,6 +3079,12 @@ const connect = {
           req.method === "POST"
         )
           return "AssociateUserProficiencies";
+        if (
+          parts.length === 4 &&
+          parts[3] === "disassociate-proficiencies" &&
+          req.method === "POST"
+        )
+          return "DisassociateUserProficiencies";
         return undefined;
 
       case "user-hierarchy-groups":
@@ -3234,6 +3365,12 @@ const connect = {
           req.method === "POST"
         )
           return "AssociateWorkspace";
+        if (
+          parts.length === 4 &&
+          parts[3] === "disassociate" &&
+          req.method === "POST"
+        )
+          return "DisassociateWorkspace";
         if (parts.length === 4 && parts[3] === "pages" && req.method === "PUT")
           return "CreateWorkspacePage";
         if (
@@ -3402,6 +3539,18 @@ const connect = {
     DisassociateEmailAddressAlias,
     DisassociateFlow,
     DisassociateHoursOfOperations,
+    DisassociateInstanceStorageConfig,
+    DisassociateLambdaFunction,
+    DisassociateLexBot,
+    DisassociatePhoneNumberContactFlow,
+    DisassociateQueueEmailAddresses,
+    DisassociateQueueQuickConnects,
+    DisassociateRoutingProfileQueues,
+    DisassociateSecurityKey,
+    DisassociateSecurityProfiles,
+    DisassociateTrafficDistributionGroupUser,
+    DisassociateUserProficiencies,
+    DisassociateWorkspace,
     UpdateAgentStatus,
     UpdateAttachedFilesConfiguration,
     UpdateAuthenticationProfile,

@@ -25,6 +25,7 @@ export type TestApp = {
     httpHandlerConfigs(): Record<string, never>;
   };
   uiFetch(path: string): Promise<Response>;
+  gwFetch(url: string, init?: RequestInit): Promise<Response>;
 };
 
 export function startApp(): TestApp {
@@ -44,10 +45,11 @@ export function startApp(): TestApp {
           }
         }
         const qs = search.size ? `?${search}` : "";
+        const headers = { ...request.headers, host: request.hostname };
         const res = await app.gatewayFetch(
           new Request(`${origin}${request.path}${qs}`, {
             method: request.method,
-            headers: request.headers,
+            headers,
             body: request.body,
           }),
         );
@@ -74,6 +76,9 @@ export function startApp(): TestApp {
       return Promise.resolve(
         app.managementFetch(new Request(`${origin}${path}`)),
       );
+    },
+    gwFetch(url, init) {
+      return app.gatewayFetch(new Request(url, init));
     },
   };
 }

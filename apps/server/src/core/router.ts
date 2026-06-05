@@ -8,6 +8,7 @@ export type RouteResult = {
   region: string;
   account: string;
   target: string | undefined;
+  presignedExpired: boolean;
 };
 
 const parseCredentialScope = (
@@ -19,6 +20,36 @@ const parseCredentialScope = (
   );
   if (match === null) return undefined;
   return { region: match[1], service: match[2] };
+};
+
+const parseQueryCredentialScope = (
+  url: URL,
+): { service: string; region: string } | undefined => {
+  const credential = url.searchParams.get("X-Amz-Credential");
+  if (credential === null) return undefined;
+  const match = credential.match(
+    /^[^/]+\/[^/]+\/([^/]+)\/([^/]+)\/aws4_request$/,
+  );
+  if (match === null) return undefined;
+  return { region: match[1], service: match[2] };
+};
+
+const presignedIsExpired = (url: URL): boolean => {
+  const date = url.searchParams.get("X-Amz-Date");
+  const expires = url.searchParams.get("X-Amz-Expires");
+  if (date === null || expires === null) return false;
+  const match = date.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  const seconds = Number(expires);
+  if (match === null || !Number.isFinite(seconds)) return false;
+  const signedAt = Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6]),
+  );
+  return Date.now() > signedAt + seconds * 1000;
 };
 
 const serviceFromTarget = (
@@ -43,7 +74,9 @@ const serviceFromHost = (host: string | null): string | undefined => {
 
 export const routeRequest = (req: Request, url: URL): RouteResult => {
   const headers = req.headers;
-  const credential = parseCredentialScope(headers.get("authorization"));
+  const credential =
+    parseCredentialScope(headers.get("authorization")) ??
+    parseQueryCredentialScope(url);
   const target = headers.get("x-amz-target") ?? undefined;
   const region = credential?.region ?? defaultRegion;
 
@@ -56,6 +89,8 @@ export const routeRequest = (req: Request, url: URL): RouteResult => {
     region,
     account: defaultAccount,
     target,
+    presignedExpired:
+      url.searchParams.has("X-Amz-Credential") && presignedIsExpired(url),
   };
 };
 

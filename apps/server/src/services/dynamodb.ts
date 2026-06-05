@@ -1,7 +1,11 @@
+import { compareAV, equalsAV } from "../core/expressions/attribute.ts";
 import { evaluateCondition } from "../core/expressions/evaluator-condition.ts";
+import { resolveKeyCondition } from "../core/expressions/evaluator-key-condition.ts";
 import { applyUpdate } from "../core/expressions/evaluator-update.ts";
 import { parseConditionExpression } from "../core/expressions/parser-condition.ts";
+import { parseKeyConditionExpression } from "../core/expressions/parser-key-condition.ts";
 import { parseUpdateExpression } from "../core/expressions/parser-update.ts";
+import type { KeyConditionResult } from "../core/expressions/types.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import dynamodbModel from "../../../../test/vendor/aws-models/dynamodb.json" with { type: "json" };
@@ -611,22 +615,193 @@ const filterByExpression = (
   );
 };
 
+const keySchemaShape = (
+  elements: KeySchemaElement[],
+): { hash: string; range?: string } => {
+  let hash = "";
+  let range: string | undefined;
+  for (const element of elements) {
+    if (element.KeyType === "HASH") hash = element.AttributeName;
+    else if (element.KeyType === "RANGE") range = element.AttributeName;
+  }
+  return range === undefined ? { hash } : { hash, range };
+};
+
+const indexKeySchema = (
+  table: StoredTable,
+  indexName: string | undefined,
+): { hash: string; range?: string } => {
+  if (indexName === undefined) return keySchemaShape(table.KeySchema);
+  const candidates = [
+    ...(table.globalSecondaryIndexes ?? []),
+    ...(table.localSecondaryIndexes ?? []),
+  ];
+  const index = candidates.find((entry) => entry.IndexName === indexName);
+  if (index === undefined) {
+    throw awsError(
+      "ValidationException",
+      `The table does not have the specified index: ${indexName}`,
+      400,
+    );
+  }
+  return keySchemaShape(index.KeySchema);
+};
+
+const matchesResolvedKeyCondition = (
+  item: Item,
+  cond: KeyConditionResult,
+): boolean => {
+  const hashVal = item[cond.hash.attribute];
+  if (hashVal === undefined) return false;
+  if (!equalsAV(hashVal, cond.hash.value)) return false;
+  if (cond.range === undefined) return true;
+  const rangeVal = item[cond.range.attribute];
+  if (rangeVal === undefined) return false;
+  if (cond.range.op === "BETWEEN") {
+    const lo = compareAV(rangeVal, cond.range.lo);
+    const hi = compareAV(rangeVal, cond.range.hi);
+    return lo !== undefined && hi !== undefined && lo >= 0 && hi <= 0;
+  }
+  if (cond.range.op === "begins_with") {
+    const value = rangeVal["S"];
+    const prefix = cond.range.prefix["S"];
+    if (typeof value !== "string" || typeof prefix !== "string") {
+      const valueBytes = rangeVal["B"];
+      const prefixBytes = cond.range.prefix["B"];
+      if (typeof valueBytes === "string" && typeof prefixBytes === "string") {
+        return valueBytes.startsWith(prefixBytes);
+      }
+      return false;
+    }
+    return value.startsWith(prefix);
+  }
+  const cmp = compareAV(rangeVal, cond.range.value);
+  if (cmp === undefined) return false;
+  switch (cond.range.op) {
+    case "=":
+      return cmp === 0;
+    case "<":
+      return cmp === -1;
+    case "<=":
+      return cmp !== 1;
+    case ">":
+      return cmp === 1;
+    case ">=":
+      return cmp !== -1;
+  }
+};
+
+const projectKey = (
+  item: Item,
+  schema: { hash: string; range?: string },
+  baseSchema: { hash: string; range?: string },
+): Item => {
+  const out: Item = {};
+  const include = (attr: string): void => {
+    const v = item[attr];
+    if (v !== undefined) out[attr] = v;
+  };
+  include(schema.hash);
+  if (schema.range !== undefined) include(schema.range);
+  include(baseSchema.hash);
+  if (baseSchema.range !== undefined) include(baseSchema.range);
+  return out;
+};
+
+const keysEqual = (
+  a: Item,
+  b: Item,
+  schema: { hash: string; range?: string },
+): boolean => {
+  const aHash = a[schema.hash];
+  const bHash = b[schema.hash];
+  if (aHash === undefined || bHash === undefined || !equalsAV(aHash, bHash)) {
+    return false;
+  }
+  if (schema.range === undefined) return true;
+  const aRange = a[schema.range];
+  const bRange = b[schema.range];
+  if (aRange === undefined || bRange === undefined) return false;
+  return equalsAV(aRange, bRange);
+};
+
 const Query: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
-  if (typeof input["IndexName"] === "string") {
-    requireIndex(table, input["IndexName"]);
+  const indexName =
+    typeof input["IndexName"] === "string" ? input["IndexName"] : undefined;
+  if (indexName !== undefined) requireIndex(table, indexName);
+  const schema = indexKeySchema(table, indexName);
+  const baseSchema = keySchemaShape(table.KeySchema);
+  const expression = input["KeyConditionExpression"];
+  let candidates = Object.values(table.items);
+  if (indexName !== undefined && schema.range !== undefined) {
+    candidates = candidates.filter(
+      (item) => item[schema.range as string] !== undefined,
+    );
   }
-  const conditions =
-    typeof input["KeyConditions"] === "object" &&
-    input["KeyConditions"] !== null
-      ? (input["KeyConditions"] as Record<string, Record<string, unknown>>)
-      : {};
-  const matched = Object.values(table.items).filter((item) =>
-    matchesKeyConditions(item, conditions),
-  );
-  const items = filterByExpression(matched, input);
-  return { Items: items, Count: items.length, ScannedCount: matched.length };
+  let matched: Item[];
+  if (typeof expression === "string" && expression !== "") {
+    const values = asRecord(input["ExpressionAttributeValues"]) as Record<
+      string,
+      AttributeValue
+    >;
+    const names = asRecord(input["ExpressionAttributeNames"]) as Record<
+      string,
+      string
+    >;
+    const ast = parseKeyConditionExpression(expression, { names, values });
+    const cond = resolveKeyCondition(ast, schema);
+    matched = candidates.filter((item) =>
+      matchesResolvedKeyCondition(item, cond),
+    );
+    if (schema.range !== undefined) {
+      const rangeAttr = schema.range;
+      matched.sort((a, b) => {
+        const cmp = compareAV(a[rangeAttr] ?? {}, b[rangeAttr] ?? {});
+        return cmp ?? 0;
+      });
+    }
+  } else {
+    const conditions =
+      typeof input["KeyConditions"] === "object" &&
+      input["KeyConditions"] !== null
+        ? (input["KeyConditions"] as Record<string, Record<string, unknown>>)
+        : {};
+    matched = candidates.filter((item) =>
+      matchesKeyConditions(item, conditions),
+    );
+  }
+  if (input["ScanIndexForward"] === false) {
+    matched.reverse();
+  }
+  let startIndex = 0;
+  const startKey = input["ExclusiveStartKey"];
+  if (typeof startKey === "object" && startKey !== null) {
+    const start = startKey as Item;
+    const found = matched.findIndex((item) => keysEqual(item, start, schema));
+    if (found >= 0) startIndex = found + 1;
+  }
+  const remainder = matched.slice(startIndex);
+  const rawLimit = input["Limit"];
+  const limit =
+    typeof rawLimit === "number" && rawLimit > 0
+      ? Math.min(rawLimit, remainder.length)
+      : remainder.length;
+  const window = remainder.slice(0, limit);
+  const filtered = filterByExpression(window, input);
+  const result: Record<string, unknown> = {
+    Items: filtered,
+    Count: filtered.length,
+    ScannedCount: window.length,
+  };
+  if (limit < remainder.length) {
+    const last = window[window.length - 1];
+    if (last !== undefined) {
+      result["LastEvaluatedKey"] = projectKey(last, schema, baseSchema);
+    }
+  }
+  return result;
 };
 
 const Scan: OperationHandler = (input, ctx) => {

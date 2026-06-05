@@ -4194,6 +4194,244 @@ const GetTags: OperationHandler = (input, _ctx) => {
   return { Tags: {} };
 };
 
+const GetUnfilteredPartitionMetadata: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  const values = requirePartitionValues(input);
+  const key = partitionStoreKey(databaseName, tableName, values);
+  const partition = ctx.store.get<StoredPartition>(key);
+  if (partition === undefined) {
+    throw awsError("EntityNotFoundException", `Partition not found.`, 400);
+  }
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : ctx.account;
+  return {
+    Partition: partitionView(partition, catalogId),
+    AuthorizedColumns: [],
+    IsRegisteredWithLakeFormation: false,
+  };
+};
+
+const GetUnfilteredPartitionsMetadata: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  requireTable(ctx, databaseName, tableName);
+  const prefix = `${partitionPrefix}${databaseName}:${tableName}:`;
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : ctx.account;
+  const list = ctx.store
+    .list<StoredPartition>()
+    .filter((entry) => entry.key.startsWith(prefix))
+    .map((entry) => ({
+      Partition: partitionView(entry.value, catalogId),
+      AuthorizedColumns: [],
+      IsRegisteredWithLakeFormation: false,
+    }));
+  return { UnfilteredPartitions: list };
+};
+
+const GetUnfilteredTableMetadata: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const name = requireName(input);
+  const table = requireTable(ctx, databaseName, name);
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : ctx.account;
+  return {
+    Table: tableView(name, table, catalogId),
+    AuthorizedColumns: [],
+    IsRegisteredWithLakeFormation: false,
+    IsMultiDialectView: false,
+    Permissions: [],
+  };
+};
+
+const GetUsageProfile: OperationHandler = (input, ctx) => {
+  const name = requireName(asRecord(input));
+  const key = `${usageProfilePrefix}${name}`;
+  const stored = ctx.store.get<StoredUsageProfile>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `UsageProfile ${name} not found.`,
+      400,
+    );
+  }
+  return {
+    Name: stored.name,
+    CreatedOn: stored.createdOn,
+    ...(typeof stored.input["Configuration"] === "object" &&
+    stored.input["Configuration"] !== null
+      ? { Configuration: stored.input["Configuration"] }
+      : {}),
+  };
+};
+
+const udfView = (
+  stored: StoredUDF,
+  catalogId: string,
+): Record<string, unknown> => ({
+  FunctionName: stored.input["FunctionName"],
+  DatabaseName: stored.databaseName,
+  ...(typeof stored.input["ClassName"] === "string"
+    ? { ClassName: stored.input["ClassName"] }
+    : {}),
+  ...(typeof stored.input["OwnerName"] === "string"
+    ? { OwnerName: stored.input["OwnerName"] }
+    : {}),
+  ...(typeof stored.input["OwnerType"] === "string"
+    ? { OwnerType: stored.input["OwnerType"] }
+    : {}),
+  ...(Array.isArray(stored.input["ResourceUris"])
+    ? { ResourceUris: stored.input["ResourceUris"] }
+    : {}),
+  CreateTime: stored.createTime,
+  CatalogId: catalogId,
+});
+
+const GetUserDefinedFunction: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const functionName =
+    typeof input["FunctionName"] === "string" ? input["FunctionName"] : "";
+  if (databaseName === "" || functionName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName and FunctionName are required.",
+      400,
+    );
+  }
+  const key = `${udfPrefix}${databaseName}:${functionName}`;
+  const stored = ctx.store.get<StoredUDF>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `UserDefinedFunction ${databaseName}.${functionName} not found.`,
+      400,
+    );
+  }
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : ctx.account;
+  return { UserDefinedFunction: udfView(stored, catalogId) };
+};
+
+const GetUserDefinedFunctions: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : ctx.account;
+  const list = ctx.store
+    .list<StoredUDF>()
+    .filter((entry) => entry.key.startsWith(udfPrefix))
+    .filter(
+      (entry) =>
+        databaseName === "" || entry.value.databaseName === databaseName,
+    )
+    .map((entry) => udfView(entry.value, catalogId));
+  return { UserDefinedFunctions: list };
+};
+
+const GetWorkflow: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["Name"] === "string" ? (input["Name"] as string) : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  const stored = ctx.store.get<StoredWorkflow>(`${workflowPrefix}${name}`);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Workflow ${name} not found.`,
+      400,
+    );
+  }
+  return { Workflow: workflowView(stored) };
+};
+
+const GetWorkflowRun: OperationHandler = (input, _ctx) => {
+  const name =
+    typeof input["Name"] === "string" ? (input["Name"] as string) : "";
+  const runId =
+    typeof input["RunId"] === "string" ? (input["RunId"] as string) : "";
+  if (name === "" || runId === "") {
+    throw awsError(
+      "InvalidInputException",
+      "Name and RunId are required.",
+      400,
+    );
+  }
+  return {
+    Run: {
+      Name: name,
+      WorkflowRunId: runId,
+      Status: "COMPLETED",
+      StartedOn: Math.floor(Date.now() / 1000) - 120,
+      CompletedOn: Math.floor(Date.now() / 1000),
+      Statistics: {
+        TotalActions: 0,
+        TimeoutActions: 0,
+        FailedActions: 0,
+        StoppedActions: 0,
+        SucceededActions: 0,
+        RunningActions: 0,
+      },
+    },
+  };
+};
+
+const GetWorkflowRunProperties: OperationHandler = (input, _ctx) => {
+  const name =
+    typeof input["Name"] === "string" ? (input["Name"] as string) : "";
+  const runId =
+    typeof input["RunId"] === "string" ? (input["RunId"] as string) : "";
+  if (name === "" || runId === "") {
+    throw awsError(
+      "InvalidInputException",
+      "Name and RunId are required.",
+      400,
+    );
+  }
+  return { RunProperties: {} };
+};
+
+const GetWorkflowRuns: OperationHandler = (input, _ctx) => {
+  const name =
+    typeof input["Name"] === "string" ? (input["Name"] as string) : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  return { Runs: [] };
+};
+
+const ImportCatalogToGlue: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
+const ListBlueprints: OperationHandler = (input, ctx) => {
+  const tags =
+    typeof input["Tags"] === "object" && input["Tags"] !== null
+      ? (input["Tags"] as Record<string, string>)
+      : null;
+  const list = ctx.store
+    .list<StoredBlueprint>()
+    .filter((entry) => entry.key.startsWith(blueprintPrefix))
+    .filter((entry) => {
+      if (tags === null) return true;
+      const storedTags =
+        typeof entry.value.input["Tags"] === "object" &&
+        entry.value.input["Tags"] !== null
+          ? (entry.value.input["Tags"] as Record<string, string>)
+          : {};
+      return Object.entries(tags).every(([k, v]) => storedTags[k] === v);
+    })
+    .map((entry) => entry.value.name);
+  return { Blueprints: list };
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -4361,6 +4599,18 @@ const glue: ServiceDefinition = {
     GetTableVersion,
     GetTableVersions,
     GetTags,
+    GetUnfilteredPartitionMetadata,
+    GetUnfilteredPartitionsMetadata,
+    GetUnfilteredTableMetadata,
+    GetUsageProfile,
+    GetUserDefinedFunction,
+    GetUserDefinedFunctions,
+    GetWorkflow,
+    GetWorkflowRun,
+    GetWorkflowRunProperties,
+    GetWorkflowRuns,
+    ImportCatalogToGlue,
+    ListBlueprints,
   },
   model,
 } as const;

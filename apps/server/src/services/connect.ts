@@ -550,7 +550,129 @@ const DeleteHoursOfOperation: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DeleteHoursOfOperationOverride: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hooId = requireString(input, "HoursOfOperationId");
+  const overrideId = requireString(input, "HoursOfOperationOverrideId");
+  const stored = ctx.store.get<StoredHoursOfOperationOverride>(
+    hoursOfOperationOverrideKey(instanceId, hooId, overrideId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `HoursOfOperationOverride ${overrideId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(hoursOfOperationOverrideKey(instanceId, hooId, overrideId));
+  return {};
+};
+
+const DeleteIntegrationAssociation: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeleteNotification: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeletePredefinedAttribute: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeletePrompt: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeletePushNotificationRegistration: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const DeleteQueue: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const queueId = requireString(input, "QueueId");
+  const stored = ctx.store.get<StoredQueue>(queueKey(instanceId, queueId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Queue ${queueId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(queueKey(instanceId, queueId));
+  return {};
+};
+
+const DeleteQuickConnect: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const quickConnectId = requireString(input, "QuickConnectId");
+  const stored = ctx.store.get<StoredQuickConnect>(
+    quickConnectKey(instanceId, quickConnectId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `QuickConnect ${quickConnectId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(quickConnectKey(instanceId, quickConnectId));
+  return {};
+};
+
+const DeleteRoutingProfile: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const routingProfileId = requireString(input, "RoutingProfileId");
+  const stored = ctx.store.get<StoredRoutingProfile>(
+    routingProfileKey(instanceId, routingProfileId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `RoutingProfile ${routingProfileId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(routingProfileKey(instanceId, routingProfileId));
+  return {};
+};
+
+const DeleteRule: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
 const ActivateEvaluationForm: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const formId = requireString(input, "EvaluationFormId");
+  const version =
+    typeof input["EvaluationFormVersion"] === "number"
+      ? input["EvaluationFormVersion"]
+      : 1;
+  return {
+    EvaluationFormId: formId,
+    EvaluationFormArn: `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/evaluation-form/${formId}`,
+    EvaluationFormVersion: version,
+  };
+};
+
+const DeactivateEvaluationForm: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
   const formId = requireString(input, "EvaluationFormId");
@@ -1338,6 +1460,12 @@ const CreateWorkspace: OperationHandler = (input, ctx) => {
   return { WorkspaceId: id, WorkspaceArn: arn };
 };
 
+const CreateWorkspacePage: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
 const DescribeAgentStatus: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
@@ -1962,6 +2090,11 @@ const connect = {
             return "DescribeInstanceAttribute";
           if (req.method === "GET" && parts[2] === "storage-config")
             return "DescribeInstanceStorageConfig";
+          if (
+            req.method === "DELETE" &&
+            parts[2] === "integration-associations"
+          )
+            return "DeleteIntegrationAssociation";
         }
         if (parts.length === 5) {
           if (
@@ -1986,6 +2119,12 @@ const connect = {
           req.method === "POST"
         )
           return "ActivateEvaluationForm";
+        if (
+          parts.length === 4 &&
+          parts[3] === "deactivate" &&
+          req.method === "POST"
+        )
+          return "DeactivateEvaluationForm";
         return undefined;
 
       case "analytics-data":
@@ -2058,6 +2197,12 @@ const connect = {
           req.method === "GET"
         )
           return "DescribeHoursOfOperationOverride";
+        if (
+          parts.length === 5 &&
+          parts[3] === "overrides" &&
+          req.method === "DELETE"
+        )
+          return "DeleteHoursOfOperationOverride";
         return undefined;
 
       case "phone-number":
@@ -2073,6 +2218,7 @@ const connect = {
 
       case "queues":
         if (parts.length === 2 && req.method === "PUT") return "CreateQueue";
+        if (parts.length === 3 && req.method === "DELETE") return "DeleteQueue";
         if (parts.length === 4 && req.method === "POST") {
           if (parts[3] === "associate-email-addresses")
             return "AssociateQueueEmailAddresses";
@@ -2084,6 +2230,8 @@ const connect = {
       case "routing-profiles":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateRoutingProfile";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteRoutingProfile";
         if (
           parts.length === 4 &&
           parts[3] === "associate-queues" &&
@@ -2257,15 +2405,21 @@ const connect = {
       case "notifications":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateNotification";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteNotification";
         return undefined;
 
       case "predefined-attributes":
         if (parts.length === 2 && req.method === "PUT")
           return "CreatePredefinedAttribute";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeletePredefinedAttribute";
         return undefined;
 
       case "prompts":
         if (parts.length === 2 && req.method === "PUT") return "CreatePrompt";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeletePrompt";
         return undefined;
 
       case "push-notification":
@@ -2275,15 +2429,24 @@ const connect = {
           req.method === "PUT"
         )
           return "CreatePushNotificationRegistration";
+        if (
+          parts.length === 4 &&
+          parts[2] === "registrations" &&
+          req.method === "DELETE"
+        )
+          return "DeletePushNotificationRegistration";
         return undefined;
 
       case "quick-connects":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateQuickConnect";
+        if (parts.length === 3 && req.method === "DELETE")
+          return "DeleteQuickConnect";
         return undefined;
 
       case "rules":
         if (parts.length === 2 && req.method === "POST") return "CreateRule";
+        if (parts.length === 3 && req.method === "DELETE") return "DeleteRule";
         return undefined;
 
       case "test-cases":
@@ -2342,6 +2505,8 @@ const connect = {
           req.method === "POST"
         )
           return "AssociateWorkspace";
+        if (parts.length === 4 && parts[3] === "pages" && req.method === "PUT")
+          return "CreateWorkspacePage";
         return undefined;
 
       default:
@@ -2365,7 +2530,18 @@ const connect = {
     DeleteEmailAddress,
     DeleteEvaluationForm,
     DeleteHoursOfOperation,
+    DeleteHoursOfOperationOverride,
+    DeleteIntegrationAssociation,
+    DeleteNotification,
+    DeletePredefinedAttribute,
+    DeletePrompt,
+    DeletePushNotificationRegistration,
+    DeleteQueue,
+    DeleteQuickConnect,
+    DeleteRoutingProfile,
+    DeleteRule,
     ActivateEvaluationForm,
+    DeactivateEvaluationForm,
     AssociateAnalyticsDataSet,
     AssociateApprovedOrigin,
     AssociateBot,
@@ -2432,6 +2608,7 @@ const connect = {
     CreateViewVersion,
     CreateVocabulary,
     CreateWorkspace,
+    CreateWorkspacePage,
     DescribeAgentStatus,
     DescribeAttachedFilesConfiguration,
     DescribeAuthenticationProfile,

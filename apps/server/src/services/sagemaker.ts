@@ -379,6 +379,62 @@ type StoredMonitoringSchedule = {
   CreationTime: number;
 };
 
+type StoredAssociation = {
+  SourceArn: string;
+  DestinationArn: string;
+  AssociationType?: string;
+};
+
+type StoredTags = {
+  ResourceArn: string;
+  Tags: Array<{ Key: string; Value: string }>;
+};
+
+type StoredTrialComponentAssociation = {
+  TrialComponentName: string;
+  TrialName: string;
+  TrialComponentArn: string;
+  TrialArn: string;
+};
+
+type StoredClusterNode = {
+  ClusterName: string;
+  NodeId: string;
+  InstanceGroupName: string;
+  Status: string;
+};
+
+type StoredAIBenchmarkJob = {
+  AIBenchmarkJobName: string;
+  AIBenchmarkJobArn: string;
+  AIBenchmarkJobStatus: string;
+  BenchmarkTarget?: unknown;
+  OutputConfig?: unknown;
+  AIWorkloadConfigIdentifier?: unknown;
+  RoleArn?: string;
+  CreationTime: number;
+};
+
+type StoredAIRecommendationJob = {
+  AIRecommendationJobName: string;
+  AIRecommendationJobArn: string;
+  AIRecommendationJobStatus: string;
+  ModelSource?: unknown;
+  OutputConfig?: unknown;
+  AIWorkloadConfigIdentifier?: unknown;
+  PerformanceTarget?: unknown;
+  RoleArn?: string;
+  CreationTime: number;
+};
+
+type StoredAIWorkloadConfig = {
+  AIWorkloadConfigName: string;
+  AIWorkloadConfigArn: string;
+  DatasetConfig?: unknown;
+  AIWorkloadConfigs?: unknown;
+  CreationTime: number;
+};
+
 const modelKey = (name: string): string => `model/${name}`;
 
 const configKey = (name: string): string => `endpoint-config/${name}`;
@@ -460,6 +516,27 @@ const inferenceRecommendationsJobKey = (name: string): string =>
 
 const monitoringScheduleKey = (name: string): string =>
   `monitoring-schedule/${name}`;
+
+const associationKey = (sourceArn: string, destinationArn: string): string =>
+  `association/${sourceArn}/${destinationArn}`;
+
+const tagsKey = (resourceArn: string): string => `tags/${resourceArn}`;
+
+const trialComponentAssociationKey = (
+  trialComponentName: string,
+  trialName: string,
+): string => `trial-component-association/${trialComponentName}/${trialName}`;
+
+const clusterNodeKey = (clusterName: string, nodeId: string): string =>
+  `cluster-node/${clusterName}/${nodeId}`;
+
+const aiBenchmarkJobKey = (name: string): string => `ai-benchmark-job/${name}`;
+
+const aiRecommendationJobKey = (name: string): string =>
+  `ai-recommendation-job/${name}`;
+
+const aiWorkloadConfigKey = (name: string): string =>
+  `ai-workload-config/${name}`;
 
 const trainingJobArnOf = (
   region: string,
@@ -670,6 +747,36 @@ const monitoringScheduleArnOf = (
   name: string,
 ): string =>
   `arn:aws:sagemaker:${region}:${account}:monitoring-schedule/${name}`;
+
+const aiBenchmarkJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:ai-benchmark-job/${name}`;
+
+const aiRecommendationJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:ai-recommendation-job/${name}`;
+
+const aiWorkloadConfigArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:ai-workload-config/${name}`;
+
+const trialComponentArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:experiment-trial-component/${name}`;
+
+const trialArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:sagemaker:${region}:${account}:experiment-trial/${name}`;
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
@@ -2900,6 +3007,279 @@ const DescribeAIWorkloadConfig: OperationHandler = (input, ctx) => {
   };
 };
 
+const AddAssociation: OperationHandler = (input, ctx) => {
+  const sourceArn = requireString(input, "SourceArn");
+  const destinationArn = requireString(input, "DestinationArn");
+  const stored: StoredAssociation = {
+    SourceArn: sourceArn,
+    DestinationArn: destinationArn,
+    AssociationType:
+      typeof input["AssociationType"] === "string"
+        ? (input["AssociationType"] as string)
+        : undefined,
+  };
+  ctx.store.set(associationKey(sourceArn, destinationArn), stored);
+  return { SourceArn: sourceArn, DestinationArn: destinationArn };
+};
+
+const AddTags: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "ResourceArn");
+  const newTags = Array.isArray(input["Tags"])
+    ? (input["Tags"] as Array<{ Key: string; Value: string }>)
+    : [];
+  const existing = ctx.store.get<StoredTags>(tagsKey(resourceArn));
+  const currentTags = existing?.Tags ?? [];
+  const merged = [...currentTags];
+  for (const tag of newTags) {
+    const idx = merged.findIndex((t) => t.Key === tag.Key);
+    if (idx >= 0) {
+      merged[idx] = tag;
+    } else {
+      merged.push(tag);
+    }
+  }
+  ctx.store.set(tagsKey(resourceArn), {
+    ResourceArn: resourceArn,
+    Tags: merged,
+  });
+  return { Tags: merged };
+};
+
+const AssociateTrialComponent: OperationHandler = (input, ctx) => {
+  const trialComponentName = requireString(input, "TrialComponentName");
+  const trialName = requireString(input, "TrialName");
+  const trialComponentArn = trialComponentArnOf(
+    ctx.region,
+    ctx.account,
+    trialComponentName,
+  );
+  const trialArn = trialArnOf(ctx.region, ctx.account, trialName);
+  const stored: StoredTrialComponentAssociation = {
+    TrialComponentName: trialComponentName,
+    TrialName: trialName,
+    TrialComponentArn: trialComponentArn,
+    TrialArn: trialArn,
+  };
+  ctx.store.set(
+    trialComponentAssociationKey(trialComponentName, trialName),
+    stored,
+  );
+  return { TrialComponentArn: trialComponentArn, TrialArn: trialArn };
+};
+
+const AttachClusterNodeVolume: OperationHandler = (input, ctx) => {
+  const clusterArn = requireString(input, "ClusterArn");
+  const nodeId = requireString(input, "NodeId");
+  const volumeId = requireString(input, "VolumeId");
+  void ctx;
+  return {
+    ClusterArn: clusterArn,
+    NodeId: nodeId,
+    VolumeId: volumeId,
+    AttachTime: nowSeconds(),
+    Status: "attached",
+    DeviceName: "/dev/xvdf",
+  };
+};
+
+const BatchAddClusterNodes: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "ClusterName");
+  const nodesToAdd = Array.isArray(input["NodesToAdd"])
+    ? (input["NodesToAdd"] as Array<Record<string, unknown>>)
+    : [];
+  const successful: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < nodesToAdd.length; i++) {
+    const node = nodesToAdd[i];
+    const instanceGroupName =
+      typeof node["InstanceGroupName"] === "string"
+        ? node["InstanceGroupName"]
+        : "default-group";
+    const nodeId = `i-${nowSeconds().toString(16)}${i.toString(16).padStart(4, "0")}`;
+    const nodeLogicalId =
+      typeof node["NodeLogicalId"] === "string"
+        ? node["NodeLogicalId"]
+        : nodeId;
+    const stored: StoredClusterNode = {
+      ClusterName: clusterName,
+      NodeId: nodeId,
+      InstanceGroupName: instanceGroupName,
+      Status: "Running",
+    };
+    ctx.store.set(clusterNodeKey(clusterName, nodeId), stored);
+    successful.push({
+      NodeLogicalId: nodeLogicalId,
+      InstanceGroupName: instanceGroupName,
+      Status: "Running",
+    });
+  }
+  return { Successful: successful, Failed: [] };
+};
+
+const BatchDeleteClusterNodes: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "ClusterName");
+  const nodeIds = Array.isArray(input["NodeIds"])
+    ? (input["NodeIds"] as string[])
+    : [];
+  const nodeLogicalIds = Array.isArray(input["NodeLogicalIds"])
+    ? (input["NodeLogicalIds"] as string[])
+    : [];
+  for (const nodeId of nodeIds) {
+    ctx.store.delete(clusterNodeKey(clusterName, nodeId));
+  }
+  return {
+    Failed: [],
+    Successful: nodeIds,
+    FailedNodeLogicalIds: [],
+    SuccessfulNodeLogicalIds: nodeLogicalIds,
+  };
+};
+
+const BatchDescribeModelPackage: OperationHandler = (input, ctx) => {
+  const arns = Array.isArray(input["ModelPackageArnList"])
+    ? (input["ModelPackageArnList"] as string[])
+    : [];
+  const allPackages = ctx.store
+    .list<StoredModelPackage>()
+    .filter((entry) => entry.key.startsWith("model-package/"))
+    .map((entry) => entry.value);
+  const summaries: Record<string, unknown> = {};
+  for (const arn of arns) {
+    const pkg = allPackages.find((p) => p.ModelPackageArn === arn);
+    if (pkg !== undefined) {
+      summaries[arn] = {
+        ModelPackageGroupName: pkg.ModelPackageGroupName,
+        ModelPackageVersion: 1,
+        ModelPackageArn: pkg.ModelPackageArn,
+        ModelPackageDescription: pkg.ModelPackageDescription,
+        CreationTime: pkg.CreationTime,
+        InferenceSpecification: undefined,
+        ModelPackageStatus: pkg.ModelPackageStatus,
+        ModelApprovalStatus: pkg.ModelApprovalStatus,
+        ModelPackageRegistrationType: pkg.ModelPackageGroupName
+          ? "MultipleApprovalRequired"
+          : "SingleModel",
+      };
+    }
+  }
+  return {
+    ModelPackageSummaries: summaries,
+    BatchDescribeModelPackageErrorMap: {},
+  };
+};
+
+const BatchRebootClusterNodes: OperationHandler = (input, _ctx) => {
+  const nodeIds = Array.isArray(input["NodeIds"])
+    ? (input["NodeIds"] as string[])
+    : [];
+  const nodeLogicalIds = Array.isArray(input["NodeLogicalIds"])
+    ? (input["NodeLogicalIds"] as string[])
+    : [];
+  return {
+    Successful: nodeIds,
+    Failed: [],
+    FailedNodeLogicalIds: [],
+    SuccessfulNodeLogicalIds: nodeLogicalIds,
+  };
+};
+
+const BatchReplaceClusterNodes: OperationHandler = (input, _ctx) => {
+  const nodeIds = Array.isArray(input["NodeIds"])
+    ? (input["NodeIds"] as string[])
+    : [];
+  const nodeLogicalIds = Array.isArray(input["NodeLogicalIds"])
+    ? (input["NodeLogicalIds"] as string[])
+    : [];
+  return {
+    Successful: nodeIds,
+    Failed: [],
+    FailedNodeLogicalIds: [],
+    SuccessfulNodeLogicalIds: nodeLogicalIds,
+  };
+};
+
+const CreateAIBenchmarkJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AIBenchmarkJobName");
+  const existing = ctx.store.get<StoredAIBenchmarkJob>(aiBenchmarkJobKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `AI benchmark job ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = aiBenchmarkJobArnOf(ctx.region, ctx.account, name);
+  const stored: StoredAIBenchmarkJob = {
+    AIBenchmarkJobName: name,
+    AIBenchmarkJobArn: arn,
+    AIBenchmarkJobStatus: "InProgress",
+    BenchmarkTarget: input["BenchmarkTarget"],
+    OutputConfig: input["OutputConfig"],
+    AIWorkloadConfigIdentifier: input["AIWorkloadConfigIdentifier"],
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(aiBenchmarkJobKey(name), stored);
+  return { AIBenchmarkJobArn: arn };
+};
+
+const CreateAIRecommendationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AIRecommendationJobName");
+  const existing = ctx.store.get<StoredAIRecommendationJob>(
+    aiRecommendationJobKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `AI recommendation job ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = aiRecommendationJobArnOf(ctx.region, ctx.account, name);
+  const stored: StoredAIRecommendationJob = {
+    AIRecommendationJobName: name,
+    AIRecommendationJobArn: arn,
+    AIRecommendationJobStatus: "InProgress",
+    ModelSource: input["ModelSource"],
+    OutputConfig: input["OutputConfig"],
+    AIWorkloadConfigIdentifier: input["AIWorkloadConfigIdentifier"],
+    PerformanceTarget: input["PerformanceTarget"],
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(aiRecommendationJobKey(name), stored);
+  return { AIRecommendationJobArn: arn };
+};
+
+const CreateAIWorkloadConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AIWorkloadConfigName");
+  const existing = ctx.store.get<StoredAIWorkloadConfig>(
+    aiWorkloadConfigKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `AI workload config ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = aiWorkloadConfigArnOf(ctx.region, ctx.account, name);
+  const stored: StoredAIWorkloadConfig = {
+    AIWorkloadConfigName: name,
+    AIWorkloadConfigArn: arn,
+    DatasetConfig: input["DatasetConfig"],
+    AIWorkloadConfigs: input["AIWorkloadConfigs"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(aiWorkloadConfigKey(name), stored);
+  return { AIWorkloadConfigArn: arn };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -3001,6 +3381,18 @@ const sagemaker = {
     CreateInferenceRecommendationsJob,
     CreateMonitoringSchedule,
     DeleteMonitoringSchedule,
+    AddAssociation,
+    AddTags,
+    AssociateTrialComponent,
+    AttachClusterNodeVolume,
+    BatchAddClusterNodes,
+    BatchDeleteClusterNodes,
+    BatchDescribeModelPackage,
+    BatchRebootClusterNodes,
+    BatchReplaceClusterNodes,
+    CreateAIBenchmarkJob,
+    CreateAIRecommendationJob,
+    CreateAIWorkloadConfig,
   },
   model,
 } as const satisfies ServiceDefinition;

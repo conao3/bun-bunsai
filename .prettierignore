@@ -1,0 +1,5 @@
+test/vendor/
+dist/
+.claude-dev/
+.direnv/
+log/

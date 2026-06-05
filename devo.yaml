@@ -1,0 +1,8 @@
+session: bun-bunsai${SLUG:+-$SLUG}
+
+inherit_env:
+  - SLUG
+
+tasks:
+  - id: server
+    cmd: bun install && bun run dev

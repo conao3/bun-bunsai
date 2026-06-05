@@ -3065,6 +3065,229 @@ const CreateUserDefinedFunction: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DeleteColumnStatisticsTaskSettings: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  if (databaseName === "" || tableName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName and TableName are required.",
+      400,
+    );
+  }
+  const key = `${colStatsTaskSettingsPrefix}${databaseName}:${tableName}`;
+  if (ctx.store.get<StoredColStatsTaskSettings>(key) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `ColumnStatisticsTaskSettings not found for ${databaseName}.${tableName}`,
+      400,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const DeleteCustomEntityType: OperationHandler = (input, ctx) => {
+  const name = requireName(asRecord(input));
+  const key = `${customEntityTypePrefix}${name}`;
+  if (ctx.store.get<StoredCustomEntityType>(key) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `CustomEntityType ${name} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(key);
+  return { Name: name };
+};
+
+const DeleteDataQualityRuleset: OperationHandler = (input, ctx) => {
+  const name = requireName(asRecord(input));
+  const key = `${dqRulesetPrefix}${name}`;
+  if (ctx.store.get<StoredDataQualityRuleset>(key) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `DataQualityRuleset ${name} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const DeleteGlueIdentityCenterConfiguration: OperationHandler = (
+  _input,
+  ctx,
+) => {
+  if (ctx.store.get<StoredGlueIdc>(glueIdcPrefix) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      "GlueIdentityCenterConfiguration not found.",
+      400,
+    );
+  }
+  ctx.store.delete(glueIdcPrefix);
+  return {};
+};
+
+const DeleteIntegration: OperationHandler = (input, ctx) => {
+  const identifier =
+    typeof input["IntegrationIdentifier"] === "string"
+      ? input["IntegrationIdentifier"]
+      : "";
+  if (identifier === "") {
+    throw awsError(
+      "InvalidInputException",
+      "IntegrationIdentifier is required.",
+      400,
+    );
+  }
+  const name = identifier.includes("/")
+    ? identifier.slice(identifier.lastIndexOf("/") + 1)
+    : identifier;
+  const key = `${integrationPrefix}${name}`;
+  const stored = ctx.store.get<StoredIntegration>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Integration ${name} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(key);
+  return {
+    SourceArn: stored.sourceArn,
+    TargetArn: stored.targetArn,
+    IntegrationName: stored.integrationName,
+    IntegrationArn: stored.integrationArn,
+    Status: "DELETING",
+    CreateTime: stored.createTime,
+    Tags: [],
+    Errors: [],
+  };
+};
+
+const DeleteIntegrationResourceProperty: OperationHandler = (input, ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string" ? input["ResourceArn"] : "";
+  if (resourceArn === "") {
+    throw awsError("InvalidInputException", "ResourceArn is required.", 400);
+  }
+  const key = `${integrationResourcePropertyPrefix}${resourceArn}`;
+  if (ctx.store.get<StoredIntegrationResourceProperty>(key) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `IntegrationResourceProperty for ${resourceArn} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const DeleteResourcePolicy: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
+const DeleteSecurityConfiguration: OperationHandler = (input, ctx) => {
+  const name = requireName(asRecord(input));
+  const key = `${securityConfigPrefix}${name}`;
+  if (ctx.store.get<StoredSecurityConfig>(key) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `SecurityConfiguration ${name} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const DeleteSession: OperationHandler = (input, ctx) => {
+  const id = typeof input["Id"] === "string" ? input["Id"] : "";
+  if (id === "") {
+    throw awsError("InvalidInputException", "Id is required.", 400);
+  }
+  const key = `${sessionPrefix}${id}`;
+  if (ctx.store.get<StoredSession>(key) === undefined) {
+    throw awsError("EntityNotFoundException", `Session ${id} not found.`, 400);
+  }
+  ctx.store.delete(key);
+  return { Id: id };
+};
+
+const DeleteTableOptimizer: OperationHandler = (input, ctx) => {
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : "";
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  const type = typeof input["Type"] === "string" ? input["Type"] : "";
+  if (
+    catalogId === "" ||
+    databaseName === "" ||
+    tableName === "" ||
+    type === ""
+  ) {
+    throw awsError(
+      "InvalidInputException",
+      "CatalogId, DatabaseName, TableName, and Type are required.",
+      400,
+    );
+  }
+  const key = `${tableOptimizerPrefix}${catalogId}:${databaseName}:${tableName}:${type}`;
+  if (ctx.store.get<StoredTableOptimizer>(key) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `TableOptimizer not found for ${databaseName}.${tableName} type ${type}`,
+      400,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const DeleteUsageProfile: OperationHandler = (input, ctx) => {
+  const name = requireName(asRecord(input));
+  const key = `${usageProfilePrefix}${name}`;
+  if (ctx.store.get<StoredUsageProfile>(key) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `UsageProfile ${name} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const DeleteUserDefinedFunction: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const functionName =
+    typeof input["FunctionName"] === "string" ? input["FunctionName"] : "";
+  if (databaseName === "" || functionName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName and FunctionName are required.",
+      400,
+    );
+  }
+  const key = `${udfPrefix}${databaseName}:${functionName}`;
+  if (ctx.store.get<StoredUDF>(key) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `UserDefinedFunction ${databaseName}.${functionName} not found.`,
+      400,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -3172,6 +3395,18 @@ const glue: ServiceDefinition = {
     CreateSecurityConfiguration,
     CreateUsageProfile,
     CreateUserDefinedFunction,
+    DeleteColumnStatisticsTaskSettings,
+    DeleteCustomEntityType,
+    DeleteDataQualityRuleset,
+    DeleteGlueIdentityCenterConfiguration,
+    DeleteIntegration,
+    DeleteIntegrationResourceProperty,
+    DeleteResourcePolicy,
+    DeleteSecurityConfiguration,
+    DeleteSession,
+    DeleteTableOptimizer,
+    DeleteUsageProfile,
+    DeleteUserDefinedFunction,
   },
   model,
 } as const;

@@ -1,5 +1,7 @@
 import { evaluateCondition } from "../core/expressions/evaluator-condition.ts";
+import { applyUpdate } from "../core/expressions/evaluator-update.ts";
 import { parseConditionExpression } from "../core/expressions/parser-condition.ts";
+import { parseUpdateExpression } from "../core/expressions/parser-update.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import dynamodbModel from "../../../../test/vendor/aws-models/dynamodb.json" with { type: "json" };
@@ -480,64 +482,6 @@ const applyAddValue = (
   return operand;
 };
 
-const applyUpdateExpression = (
-  item: Item,
-  expression: string,
-  values: Record<string, AttributeValue>,
-  names: Record<string, string>,
-): void => {
-  const clauses = expression
-    .split(/\s+(?=SET|ADD|REMOVE|DELETE)\b/i)
-    .map((clause) => clause.trim())
-    .filter((clause) => clause !== "");
-  for (const clause of clauses) {
-    const match = /^(SET|ADD|REMOVE|DELETE)\s*(.*)$/is.exec(clause);
-    if (match === null) continue;
-    const verb = match[1].toUpperCase();
-    const body = match[2];
-    const parts = body
-      .split(",")
-      .map((part) => part.trim())
-      .filter((part) => part !== "");
-    for (const part of parts) {
-      if (verb === "SET") {
-        const assign = /^(\S+)\s*=\s*(\S+)$/.exec(part);
-        if (assign === null) continue;
-        const attribute = resolveName(names, assign[1]);
-        const operand = values[assign[2]];
-        if (operand !== undefined) item[attribute] = operand;
-      } else if (verb === "REMOVE") {
-        delete item[resolveName(names, part)];
-      } else if (verb === "ADD") {
-        const tokens = part.split(/\s+/);
-        const attribute = resolveName(names, tokens[0]);
-        const operand = values[tokens[1]];
-        if (operand !== undefined) {
-          item[attribute] = applyAddValue(item[attribute], operand);
-        }
-      } else if (verb === "DELETE") {
-        const tokens = part.split(/\s+/);
-        const attribute = resolveName(names, tokens[0]);
-        const operand = values[tokens[1]];
-        const current = item[attribute];
-        if (
-          operand !== undefined &&
-          current !== undefined &&
-          Array.isArray(operand["SS"]) &&
-          Array.isArray(current["SS"])
-        ) {
-          const remove = new Set(operand["SS"] as string[]);
-          item[attribute] = {
-            SS: (current["SS"] as string[]).filter(
-              (value) => !remove.has(value),
-            ),
-          };
-        }
-      }
-    }
-  }
-};
-
 const UpdateItem: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
@@ -545,7 +489,7 @@ const UpdateItem: OperationHandler = (input, ctx) => {
   const previous = table.items[key];
   ensureConditionPasses(input, previous);
   const existing = previous ?? { ...asItem(input["Key"]) };
-  const updated: Item = { ...existing };
+  let updated: Item;
   const expression = input["UpdateExpression"];
   if (typeof expression === "string" && expression !== "") {
     const values = asRecord(input["ExpressionAttributeValues"]) as Record<
@@ -556,8 +500,13 @@ const UpdateItem: OperationHandler = (input, ctx) => {
       string,
       string
     >;
-    applyUpdateExpression(updated, expression, values, exprNames);
+    const ast = parseUpdateExpression(expression, {
+      names: exprNames,
+      values,
+    });
+    updated = applyUpdate(ast, existing);
   } else {
+    updated = { ...existing };
     const updates = input["AttributeUpdates"];
     if (typeof updates === "object" && updates !== null) {
       for (const [attribute, action] of Object.entries(

@@ -670,6 +670,68 @@ type StoredOptimizationJob = {
   LastModifiedTime: number;
 };
 
+type StoredProject = {
+  ProjectName: string;
+  ProjectArn: string;
+  ProjectId: string;
+  ProjectDescription?: string;
+  ServiceCatalogProvisioningDetails?: unknown;
+  ProjectStatus: string;
+  CreationTime: number;
+};
+
+type StoredStudioLifecycleConfig = {
+  StudioLifecycleConfigName: string;
+  StudioLifecycleConfigArn: string;
+  StudioLifecycleConfigAppType: string;
+  StudioLifecycleConfigContent?: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredTrial = {
+  TrialName: string;
+  TrialArn: string;
+  ExperimentName: string;
+  DisplayName?: string;
+  MetadataProperties?: unknown;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredTrialComponent = {
+  TrialComponentName: string;
+  TrialComponentArn: string;
+  DisplayName?: string;
+  Status?: unknown;
+  StartTime?: number;
+  EndTime?: number;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredWorkforce = {
+  WorkforceName: string;
+  WorkforceArn: string;
+  CognitoConfig?: unknown;
+  OidcConfig?: unknown;
+  SourceIpConfig?: unknown;
+  WorkforceVpcConfig?: unknown;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredWorkteam = {
+  WorkteamName: string;
+  WorkteamArn: string;
+  Description: string;
+  MemberDefinitions?: unknown;
+  NotificationConfiguration?: unknown;
+  WorkerAccessConfiguration?: unknown;
+  CreateDate: number;
+  LastUpdatedDate: number;
+};
+
 const modelKey = (name: string): string => `model/${name}`;
 
 const configKey = (name: string): string => `endpoint-config/${name}`;
@@ -822,6 +884,19 @@ const mlflowTrackingServerKey = (name: string): string =>
   `mlflow-tracking-server/${name}`;
 
 const optimizationJobKey = (name: string): string => `optimization-job/${name}`;
+
+const projectKey = (name: string): string => `project/${name}`;
+
+const studioLifecycleConfigKey = (name: string): string =>
+  `studio-lifecycle-config/${name}`;
+
+const trialKey = (name: string): string => `trial/${name}`;
+
+const trialComponentKey = (name: string): string => `trial-component/${name}`;
+
+const workforceKey = (name: string): string => `workforce/${name}`;
+
+const workteamKey = (name: string): string => `workteam/${name}`;
 
 const trainingJobArnOf = (
   region: string,
@@ -1182,6 +1257,25 @@ const trialComponentArnOf = (
 
 const trialArnOf = (region: string, account: string, name: string): string =>
   `arn:aws:sagemaker:${region}:${account}:experiment-trial/${name}`;
+
+const projectArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:sagemaker:${region}:${account}:project/${name}`;
+
+const studioLifecycleConfigArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:studio-lifecycle-config/${name}`;
+
+const workforceArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:workforce/${name}`;
+
+const workteamArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:sagemaker:${region}:${account}:workteam/${name}`;
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
@@ -4370,6 +4464,287 @@ const CreateOptimizationJob: OperationHandler = (input, ctx) => {
   return { OptimizationJobArn: arn };
 };
 
+const CreateProject: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ProjectName");
+  const existing = ctx.store.get<StoredProject>(projectKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `Project ${name} already exists.`, 400);
+  }
+  const arn = projectArnOf(ctx.region, ctx.account, name);
+  const stored: StoredProject = {
+    ProjectName: name,
+    ProjectArn: arn,
+    ProjectId: name,
+    ProjectDescription:
+      typeof input["ProjectDescription"] === "string"
+        ? (input["ProjectDescription"] as string)
+        : undefined,
+    ServiceCatalogProvisioningDetails:
+      input["ServiceCatalogProvisioningDetails"],
+    ProjectStatus: "Pending",
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(projectKey(name), stored);
+  return { ProjectArn: arn, ProjectId: name };
+};
+
+const CreateStudioLifecycleConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "StudioLifecycleConfigName");
+  const existing = ctx.store.get<StoredStudioLifecycleConfig>(
+    studioLifecycleConfigKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Studio lifecycle config ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = studioLifecycleConfigArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredStudioLifecycleConfig = {
+    StudioLifecycleConfigName: name,
+    StudioLifecycleConfigArn: arn,
+    StudioLifecycleConfigAppType:
+      typeof input["StudioLifecycleConfigAppType"] === "string"
+        ? (input["StudioLifecycleConfigAppType"] as string)
+        : "JupyterServer",
+    StudioLifecycleConfigContent:
+      typeof input["StudioLifecycleConfigContent"] === "string"
+        ? (input["StudioLifecycleConfigContent"] as string)
+        : undefined,
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(studioLifecycleConfigKey(name), stored);
+  return { StudioLifecycleConfigArn: arn };
+};
+
+const CreateTrial: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrialName");
+  const existing = ctx.store.get<StoredTrial>(trialKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `Trial ${name} already exists.`, 400);
+  }
+  const arn = trialArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredTrial = {
+    TrialName: name,
+    TrialArn: arn,
+    ExperimentName: requireString(input, "ExperimentName"),
+    DisplayName:
+      typeof input["DisplayName"] === "string"
+        ? (input["DisplayName"] as string)
+        : undefined,
+    MetadataProperties: input["MetadataProperties"],
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(trialKey(name), stored);
+  return { TrialArn: arn };
+};
+
+const CreateTrialComponent: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrialComponentName");
+  const existing = ctx.store.get<StoredTrialComponent>(trialComponentKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `Trial component ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = trialComponentArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredTrialComponent = {
+    TrialComponentName: name,
+    TrialComponentArn: arn,
+    DisplayName:
+      typeof input["DisplayName"] === "string"
+        ? (input["DisplayName"] as string)
+        : undefined,
+    Status: input["Status"],
+    StartTime:
+      typeof input["StartTime"] === "number"
+        ? (input["StartTime"] as number)
+        : undefined,
+    EndTime:
+      typeof input["EndTime"] === "number"
+        ? (input["EndTime"] as number)
+        : undefined,
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(trialComponentKey(name), stored);
+  return { TrialComponentArn: arn };
+};
+
+const CreateWorkforce: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "WorkforceName");
+  const existing = ctx.store.get<StoredWorkforce>(workforceKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `Workforce ${name} already exists.`, 400);
+  }
+  const arn = workforceArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredWorkforce = {
+    WorkforceName: name,
+    WorkforceArn: arn,
+    CognitoConfig: input["CognitoConfig"],
+    OidcConfig: input["OidcConfig"],
+    SourceIpConfig: input["SourceIpConfig"],
+    WorkforceVpcConfig: input["WorkforceVpcConfig"],
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(workforceKey(name), stored);
+  return { WorkforceArn: arn };
+};
+
+const CreateWorkteam: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "WorkteamName");
+  const existing = ctx.store.get<StoredWorkteam>(workteamKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `Workteam ${name} already exists.`, 400);
+  }
+  const arn = workteamArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredWorkteam = {
+    WorkteamName: name,
+    WorkteamArn: arn,
+    Description: requireString(input, "Description"),
+    MemberDefinitions: input["MemberDefinitions"],
+    NotificationConfiguration: input["NotificationConfiguration"],
+    WorkerAccessConfiguration: input["WorkerAccessConfiguration"],
+    CreateDate: now,
+    LastUpdatedDate: now,
+  };
+  ctx.store.set(workteamKey(name), stored);
+  return { WorkteamArn: arn };
+};
+
+const requireAIBenchmarkJob = (
+  ctx: ServiceContext,
+  name: string,
+): StoredAIBenchmarkJob => {
+  const stored = ctx.store.get<StoredAIBenchmarkJob>(aiBenchmarkJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `AI benchmark job ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteAIBenchmarkJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AIBenchmarkJobName");
+  requireAIBenchmarkJob(ctx, name);
+  ctx.store.delete(aiBenchmarkJobKey(name));
+  return {};
+};
+
+const requireAIRecommendationJob = (
+  ctx: ServiceContext,
+  name: string,
+): StoredAIRecommendationJob => {
+  const stored = ctx.store.get<StoredAIRecommendationJob>(
+    aiRecommendationJobKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `AI recommendation job ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteAIRecommendationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AIRecommendationJobName");
+  requireAIRecommendationJob(ctx, name);
+  ctx.store.delete(aiRecommendationJobKey(name));
+  return {};
+};
+
+const requireAIWorkloadConfig = (
+  ctx: ServiceContext,
+  name: string,
+): StoredAIWorkloadConfig => {
+  const stored = ctx.store.get<StoredAIWorkloadConfig>(
+    aiWorkloadConfigKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `AI workload config ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteAIWorkloadConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AIWorkloadConfigName");
+  requireAIWorkloadConfig(ctx, name);
+  ctx.store.delete(aiWorkloadConfigKey(name));
+  return {};
+};
+
+const requireAction = (ctx: ServiceContext, name: string): StoredAction => {
+  const stored = ctx.store.get<StoredAction>(actionKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Action ${name} does not exist.`, 400);
+  }
+  return stored;
+};
+
+const DeleteAction: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ActionName");
+  requireAction(ctx, name);
+  ctx.store.delete(actionKey(name));
+  return { ActionArn: actionArnOf(ctx.region, ctx.account, name) };
+};
+
+const requireAlgorithm = (
+  ctx: ServiceContext,
+  name: string,
+): StoredAlgorithm => {
+  const stored = ctx.store.get<StoredAlgorithm>(algorithmKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Algorithm ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteAlgorithm: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AlgorithmName");
+  requireAlgorithm(ctx, name);
+  ctx.store.delete(algorithmKey(name));
+  return {};
+};
+
+const requireArtifact = (ctx: ServiceContext, arn: string): StoredArtifact => {
+  const stored = ctx.store.get<StoredArtifact>(artifactKey(arn));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Artifact ${arn} does not exist.`, 400);
+  }
+  return stored;
+};
+
+const DeleteArtifact: OperationHandler = (input, ctx) => {
+  const artifactArn = requireString(input, "ArtifactArn");
+  requireArtifact(ctx, artifactArn);
+  ctx.store.delete(artifactKey(artifactArn));
+  return { ArtifactArn: artifactArn };
+};
+
 const CreatePresignedMlflowTrackingServerUrl: OperationHandler = (
   input,
   ctx,
@@ -4526,6 +4901,18 @@ const sagemaker = {
     CreateMlflowTrackingServer,
     CreateOptimizationJob,
     CreatePresignedMlflowTrackingServerUrl,
+    CreateProject,
+    CreateStudioLifecycleConfig,
+    CreateTrial,
+    CreateTrialComponent,
+    CreateWorkforce,
+    CreateWorkteam,
+    DeleteAIBenchmarkJob,
+    DeleteAIRecommendationJob,
+    DeleteAIWorkloadConfig,
+    DeleteAction,
+    DeleteAlgorithm,
+    DeleteArtifact,
   },
   model,
 } as const satisfies ServiceDefinition;

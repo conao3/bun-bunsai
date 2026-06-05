@@ -4745,6 +4745,237 @@ const DeleteArtifact: OperationHandler = (input, ctx) => {
   return { ArtifactArn: artifactArn };
 };
 
+const DeleteAssociation: OperationHandler = (input, ctx) => {
+  const sourceArn = requireString(input, "SourceArn");
+  const destinationArn = requireString(input, "DestinationArn");
+  const key = associationKey(sourceArn, destinationArn);
+  const stored = ctx.store.get<StoredAssociation>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Association from ${sourceArn} to ${destinationArn} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(key);
+  return { SourceArn: sourceArn, DestinationArn: destinationArn };
+};
+
+const requireCluster = (ctx: ServiceContext, name: string): StoredCluster => {
+  const stored = ctx.store.get<StoredCluster>(clusterKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Cluster ${name} does not exist.`, 400);
+  }
+  return stored;
+};
+
+const DeleteCluster: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ClusterName");
+  const stored = requireCluster(ctx, name);
+  ctx.store.delete(clusterKey(name));
+  return { ClusterArn: stored.ClusterArn };
+};
+
+const requireClusterSchedulerConfig = (
+  ctx: ServiceContext,
+  name: string,
+): StoredClusterSchedulerConfig => {
+  const stored = ctx.store.get<StoredClusterSchedulerConfig>(
+    clusterSchedulerConfigKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `ClusterSchedulerConfig ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteClusterSchedulerConfig: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ClusterSchedulerConfigId");
+  requireClusterSchedulerConfig(ctx, id);
+  ctx.store.delete(clusterSchedulerConfigKey(id));
+  return {};
+};
+
+const requireCodeRepository = (
+  ctx: ServiceContext,
+  name: string,
+): StoredCodeRepository => {
+  const stored = ctx.store.get<StoredCodeRepository>(codeRepositoryKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `CodeRepository ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteCodeRepository: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CodeRepositoryName");
+  requireCodeRepository(ctx, name);
+  ctx.store.delete(codeRepositoryKey(name));
+  return {};
+};
+
+const requireCompilationJob = (
+  ctx: ServiceContext,
+  name: string,
+): StoredCompilationJob => {
+  const stored = ctx.store.get<StoredCompilationJob>(compilationJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `CompilationJob ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteCompilationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CompilationJobName");
+  requireCompilationJob(ctx, name);
+  ctx.store.delete(compilationJobKey(name));
+  return {};
+};
+
+const requireComputeQuota = (
+  ctx: ServiceContext,
+  name: string,
+): StoredComputeQuota => {
+  const stored = ctx.store.get<StoredComputeQuota>(computeQuotaKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `ComputeQuota ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteComputeQuota: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ComputeQuotaId");
+  requireComputeQuota(ctx, name);
+  ctx.store.delete(computeQuotaKey(name));
+  return {};
+};
+
+const requireContext = (ctx: ServiceContext, name: string): StoredContext => {
+  const stored = ctx.store.get<StoredContext>(contextKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Context ${name} does not exist.`, 400);
+  }
+  return stored;
+};
+
+const DeleteContext: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ContextName");
+  const stored = requireContext(ctx, name);
+  ctx.store.delete(contextKey(name));
+  return { ContextArn: stored.ContextArn };
+};
+
+const requireDataQualityJobDefinition = (
+  ctx: ServiceContext,
+  name: string,
+): StoredDataQualityJobDefinition => {
+  const stored = ctx.store.get<StoredDataQualityJobDefinition>(
+    dataQualityJobDefinitionKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `DataQualityJobDefinition ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteDataQualityJobDefinition: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "JobDefinitionName");
+  requireDataQualityJobDefinition(ctx, name);
+  ctx.store.delete(dataQualityJobDefinitionKey(name));
+  return {};
+};
+
+const requireDeviceFleet = (
+  ctx: ServiceContext,
+  name: string,
+): StoredDeviceFleet => {
+  const stored = ctx.store.get<StoredDeviceFleet>(deviceFleetKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `DeviceFleet ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteDeviceFleet: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "DeviceFleetName");
+  requireDeviceFleet(ctx, name);
+  ctx.store.delete(deviceFleetKey(name));
+  return {};
+};
+
+const DeleteDomain: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DomainId");
+  requireDomain(ctx, id);
+  ctx.store.delete(domainKey(id));
+  return {};
+};
+
+const requireEdgeDeploymentPlan = (
+  ctx: ServiceContext,
+  name: string,
+): StoredEdgeDeploymentPlan => {
+  const stored = ctx.store.get<StoredEdgeDeploymentPlan>(
+    edgeDeploymentPlanKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `EdgeDeploymentPlan ${name} does not exist.`,
+      400,
+    );
+  }
+  return stored;
+};
+
+const DeleteEdgeDeploymentPlan: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "EdgeDeploymentPlanName");
+  requireEdgeDeploymentPlan(ctx, name);
+  ctx.store.delete(edgeDeploymentPlanKey(name));
+  return {};
+};
+
+const DeleteEdgeDeploymentStage: OperationHandler = (input, ctx) => {
+  const planName = requireString(input, "EdgeDeploymentPlanName");
+  const stageName = requireString(input, "StageName");
+  const stored = requireEdgeDeploymentPlan(ctx, planName);
+  const stages = Array.isArray(stored.Stages) ? stored.Stages : [];
+  const filtered = stages.filter(
+    (s) =>
+      typeof s === "object" &&
+      s !== null &&
+      (s as Record<string, unknown>)["StageName"] !== stageName,
+  );
+  ctx.store.set(edgeDeploymentPlanKey(planName), {
+    ...stored,
+    Stages: filtered,
+  });
+  return {};
+};
+
 const CreatePresignedMlflowTrackingServerUrl: OperationHandler = (
   input,
   ctx,
@@ -4913,6 +5144,18 @@ const sagemaker = {
     DeleteAction,
     DeleteAlgorithm,
     DeleteArtifact,
+    DeleteAssociation,
+    DeleteCluster,
+    DeleteClusterSchedulerConfig,
+    DeleteCodeRepository,
+    DeleteCompilationJob,
+    DeleteComputeQuota,
+    DeleteContext,
+    DeleteDataQualityJobDefinition,
+    DeleteDeviceFleet,
+    DeleteDomain,
+    DeleteEdgeDeploymentPlan,
+    DeleteEdgeDeploymentStage,
   },
   model,
 } as const satisfies ServiceDefinition;

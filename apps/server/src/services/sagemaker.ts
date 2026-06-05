@@ -435,6 +435,142 @@ type StoredAIWorkloadConfig = {
   CreationTime: number;
 };
 
+type StoredAction = {
+  ActionName: string;
+  ActionArn: string;
+  ActionType: string;
+  Status: string;
+  Source?: unknown;
+  Properties?: unknown;
+  Description?: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredAlgorithm = {
+  AlgorithmName: string;
+  AlgorithmArn: string;
+  AlgorithmStatus: string;
+  AlgorithmDescription?: string;
+  TrainingSpecification?: unknown;
+  InferenceSpecification?: unknown;
+  ValidationSpecification?: unknown;
+  CreationTime: number;
+};
+
+type StoredArtifact = {
+  ArtifactName?: string;
+  ArtifactArn: string;
+  ArtifactType: string;
+  Source?: unknown;
+  Properties?: unknown;
+  Description?: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredAutoMLJob = {
+  AutoMLJobName: string;
+  AutoMLJobArn: string;
+  AutoMLJobStatus: string;
+  AutoMLJobSecondaryStatus: string;
+  InputDataConfig?: unknown;
+  OutputDataConfig?: unknown;
+  RoleArn?: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredAutoMLJobV2 = {
+  AutoMLJobName: string;
+  AutoMLJobArn: string;
+  AutoMLJobStatus: string;
+  AutoMLJobSecondaryStatus: string;
+  AutoMLJobInputDataConfig?: unknown;
+  OutputDataConfig?: unknown;
+  RoleArn?: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredCluster = {
+  ClusterName: string;
+  ClusterArn: string;
+  ClusterStatus: string;
+  InstanceGroups?: unknown;
+  VpcConfig?: unknown;
+  CreationTime: number;
+};
+
+type StoredClusterSchedulerConfig = {
+  ClusterSchedulerConfigName: string;
+  ClusterSchedulerConfigArn: string;
+  ClusterSchedulerConfigId: string;
+  ClusterArn?: string;
+  SchedulerConfig?: unknown;
+  Description?: string;
+  Status: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredCodeRepository = {
+  CodeRepositoryName: string;
+  CodeRepositoryArn: string;
+  GitConfig?: unknown;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredCompilationJob = {
+  CompilationJobName: string;
+  CompilationJobArn: string;
+  CompilationJobStatus: string;
+  RoleArn: string;
+  InputConfig?: unknown;
+  OutputConfig?: unknown;
+  StoppingCondition?: unknown;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredComputeQuota = {
+  ComputeQuotaName: string;
+  ComputeQuotaArn: string;
+  ComputeQuotaId: string;
+  ClusterArn?: string;
+  ComputeQuotaConfig?: unknown;
+  Description?: string;
+  Status: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredContext = {
+  ContextName: string;
+  ContextArn: string;
+  ContextType: string;
+  Source?: unknown;
+  Properties?: unknown;
+  Description?: string;
+  CreationTime: number;
+  LastModifiedTime: number;
+};
+
+type StoredDataQualityJobDefinition = {
+  JobDefinitionName: string;
+  JobDefinitionArn: string;
+  DataQualityBaselineConfig?: unknown;
+  DataQualityAppSpecification?: unknown;
+  DataQualityJobInput?: unknown;
+  DataQualityJobOutputConfig?: unknown;
+  JobResources?: unknown;
+  NetworkConfig?: unknown;
+  RoleArn?: string;
+  StoppingCondition?: unknown;
+  CreationTime: number;
+};
+
 const modelKey = (name: string): string => `model/${name}`;
 
 const configKey = (name: string): string => `endpoint-config/${name}`;
@@ -537,6 +673,32 @@ const aiRecommendationJobKey = (name: string): string =>
 
 const aiWorkloadConfigKey = (name: string): string =>
   `ai-workload-config/${name}`;
+
+const actionKey = (name: string): string => `action/${name}`;
+
+const algorithmKey = (name: string): string => `algorithm/${name}`;
+
+const artifactKey = (arn: string): string => `artifact/${arn}`;
+
+const autoMLJobKey = (name: string): string => `automl-job/${name}`;
+
+const autoMLJobV2Key = (name: string): string => `automl-job-v2/${name}`;
+
+const clusterKey = (name: string): string => `cluster/${name}`;
+
+const clusterSchedulerConfigKey = (name: string): string =>
+  `cluster-scheduler-config/${name}`;
+
+const codeRepositoryKey = (name: string): string => `code-repository/${name}`;
+
+const compilationJobKey = (name: string): string => `compilation-job/${name}`;
+
+const computeQuotaKey = (name: string): string => `compute-quota/${name}`;
+
+const contextKey = (name: string): string => `context/${name}`;
+
+const dataQualityJobDefinitionKey = (name: string): string =>
+  `data-quality-job-definition/${name}`;
 
 const trainingJobArnOf = (
   region: string,
@@ -767,6 +929,62 @@ const aiWorkloadConfigArnOf = (
   name: string,
 ): string =>
   `arn:aws:sagemaker:${region}:${account}:ai-workload-config/${name}`;
+
+const actionArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:sagemaker:${region}:${account}:action/${name}`;
+
+const algorithmArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:algorithm/${name}`;
+
+const artifactArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:sagemaker:${region}:${account}:artifact/${name}`;
+
+const autoMLJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:automl-job/${name}`;
+
+const clusterArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:sagemaker:${region}:${account}:cluster/${name}`;
+
+const clusterSchedulerConfigArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:cluster-scheduler-config/${name}`;
+
+const codeRepositoryArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:code-repository/${name}`;
+
+const compilationJobArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:compilation-job/${name}`;
+
+const computeQuotaArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string => `arn:aws:sagemaker:${region}:${account}:compute-quota/${name}`;
+
+const contextArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:sagemaker:${region}:${account}:context/${name}`;
+
+const dataQualityJobDefinitionArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:sagemaker:${region}:${account}:data-quality-job-definition/${name}`;
 
 const trialComponentArnOf = (
   region: string,
@@ -2860,27 +3078,37 @@ const DescribeAppImageConfig: OperationHandler = (input, ctx) => {
 
 const DescribeAction: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ActionName");
-  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:action/${name}`;
+  const stored = ctx.store.get<StoredAction>(actionKey(name));
+  const arn =
+    stored?.ActionArn ??
+    `arn:aws:sagemaker:${ctx.region}:${ctx.account}:action/${name}`;
   const now = nowSeconds();
   return {
     ActionName: name,
     ActionArn: arn,
-    ActionType: "ModelDeployment",
-    Status: "Completed",
-    CreationTime: now,
-    LastModifiedTime: now,
+    ActionType: stored?.ActionType ?? "ModelDeployment",
+    Status: stored?.Status ?? "Completed",
+    Source: stored?.Source,
+    Properties: stored?.Properties,
+    Description: stored?.Description,
+    CreationTime: stored?.CreationTime ?? now,
+    LastModifiedTime: stored?.LastModifiedTime ?? now,
   };
 };
 
 const DescribeAlgorithm: OperationHandler = (input, ctx) => {
   const name = requireString(input, "AlgorithmName");
-  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:algorithm/${name}`;
+  const stored = ctx.store.get<StoredAlgorithm>(algorithmKey(name));
+  const arn =
+    stored?.AlgorithmArn ??
+    `arn:aws:sagemaker:${ctx.region}:${ctx.account}:algorithm/${name}`;
   return {
     AlgorithmName: name,
     AlgorithmArn: arn,
-    AlgorithmStatus: "Completed",
-    CreationTime: nowSeconds(),
-    TrainingSpecification: {
+    AlgorithmStatus: stored?.AlgorithmStatus ?? "Completed",
+    AlgorithmDescription: stored?.AlgorithmDescription,
+    CreationTime: stored?.CreationTime ?? nowSeconds(),
+    TrainingSpecification: stored?.TrainingSpecification ?? {
       TrainingImage: `${ctx.account}.dkr.ecr.${ctx.region}.amazonaws.com/bunsai:latest`,
       SupportedTrainingInstanceTypes: ["ml.m5.xlarge"],
     },
@@ -2890,6 +3118,19 @@ const DescribeAlgorithm: OperationHandler = (input, ctx) => {
 
 const DescribeArtifact: OperationHandler = (input, ctx) => {
   const artifactArn = requireString(input, "ArtifactArn");
+  const stored = ctx.store.get<StoredArtifact>(artifactKey(artifactArn));
+  if (stored !== undefined) {
+    return {
+      ArtifactName: stored.ArtifactName,
+      ArtifactArn: stored.ArtifactArn,
+      ArtifactType: stored.ArtifactType,
+      Source: stored.Source,
+      Properties: stored.Properties,
+      Description: stored.Description,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    };
+  }
   const now = nowSeconds();
   return {
     ArtifactName: "bunsai-artifact",
@@ -2905,47 +3146,63 @@ const DescribeArtifact: OperationHandler = (input, ctx) => {
 
 const DescribeAutoMLJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "AutoMLJobName");
-  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:automl-job/${name}`;
+  const stored = ctx.store.get<StoredAutoMLJob>(autoMLJobKey(name));
+  const arn =
+    stored?.AutoMLJobArn ??
+    `arn:aws:sagemaker:${ctx.region}:${ctx.account}:automl-job/${name}`;
   const now = nowSeconds();
   return {
     AutoMLJobName: name,
     AutoMLJobArn: arn,
-    AutoMLJobStatus: "Completed",
-    AutoMLJobSecondaryStatus: "Completed",
-    CreationTime: now,
-    LastModifiedTime: now,
-    InputDataConfig: [],
-    OutputDataConfig: { S3OutputPath: `s3://bunsai-sagemaker/${name}/output` },
-    RoleArn: `arn:aws:iam::${ctx.account}:role/SageMakerRole`,
+    AutoMLJobStatus: stored?.AutoMLJobStatus ?? "Completed",
+    AutoMLJobSecondaryStatus: stored?.AutoMLJobSecondaryStatus ?? "Completed",
+    CreationTime: stored?.CreationTime ?? now,
+    LastModifiedTime: stored?.LastModifiedTime ?? now,
+    InputDataConfig: stored?.InputDataConfig ?? [],
+    OutputDataConfig: stored?.OutputDataConfig ?? {
+      S3OutputPath: `s3://bunsai-sagemaker/${name}/output`,
+    },
+    RoleArn:
+      stored?.RoleArn ?? `arn:aws:iam::${ctx.account}:role/SageMakerRole`,
   };
 };
 
 const DescribeAutoMLJobV2: OperationHandler = (input, ctx) => {
   const name = requireString(input, "AutoMLJobName");
-  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:automl-job/${name}`;
+  const stored = ctx.store.get<StoredAutoMLJobV2>(autoMLJobV2Key(name));
+  const arn =
+    stored?.AutoMLJobArn ??
+    `arn:aws:sagemaker:${ctx.region}:${ctx.account}:automl-job/${name}`;
   const now = nowSeconds();
   return {
     AutoMLJobName: name,
     AutoMLJobArn: arn,
-    AutoMLJobStatus: "Completed",
-    AutoMLJobSecondaryStatus: "Completed",
-    CreationTime: now,
-    LastModifiedTime: now,
-    AutoMLJobInputDataConfig: [],
-    OutputDataConfig: { S3OutputPath: `s3://bunsai-sagemaker/${name}/output` },
-    RoleArn: `arn:aws:iam::${ctx.account}:role/SageMakerRole`,
+    AutoMLJobStatus: stored?.AutoMLJobStatus ?? "Completed",
+    AutoMLJobSecondaryStatus: stored?.AutoMLJobSecondaryStatus ?? "Completed",
+    CreationTime: stored?.CreationTime ?? now,
+    LastModifiedTime: stored?.LastModifiedTime ?? now,
+    AutoMLJobInputDataConfig: stored?.AutoMLJobInputDataConfig ?? [],
+    OutputDataConfig: stored?.OutputDataConfig ?? {
+      S3OutputPath: `s3://bunsai-sagemaker/${name}/output`,
+    },
+    RoleArn:
+      stored?.RoleArn ?? `arn:aws:iam::${ctx.account}:role/SageMakerRole`,
   };
 };
 
 const DescribeCluster: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ClusterName");
-  const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:cluster/${name}`;
+  const stored = ctx.store.get<StoredCluster>(clusterKey(name));
+  const arn =
+    stored?.ClusterArn ??
+    `arn:aws:sagemaker:${ctx.region}:${ctx.account}:cluster/${name}`;
   return {
     ClusterArn: arn,
     ClusterName: name,
-    ClusterStatus: "InService",
-    CreationTime: nowSeconds(),
-    InstanceGroups: [],
+    ClusterStatus: stored?.ClusterStatus ?? "InService",
+    CreationTime: stored?.CreationTime ?? nowSeconds(),
+    InstanceGroups: stored?.InstanceGroups ?? [],
+    VpcConfig: stored?.VpcConfig,
   };
 };
 
@@ -3280,6 +3537,337 @@ const CreateAIWorkloadConfig: OperationHandler = (input, ctx) => {
   return { AIWorkloadConfigArn: arn };
 };
 
+const CreateAction: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ActionName");
+  const existing = ctx.store.get<StoredAction>(actionKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `Action ${name} already exists.`, 400);
+  }
+  const arn = actionArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredAction = {
+    ActionName: name,
+    ActionArn: arn,
+    ActionType:
+      typeof input["ActionType"] === "string"
+        ? (input["ActionType"] as string)
+        : "ModelDeployment",
+    Status: "Completed",
+    Source: input["Source"],
+    Properties: input["Properties"],
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : undefined,
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(actionKey(name), stored);
+  return { ActionArn: arn };
+};
+
+const CreateAlgorithm: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AlgorithmName");
+  const existing = ctx.store.get<StoredAlgorithm>(algorithmKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `Algorithm ${name} already exists.`, 400);
+  }
+  const arn = algorithmArnOf(ctx.region, ctx.account, name);
+  const stored: StoredAlgorithm = {
+    AlgorithmName: name,
+    AlgorithmArn: arn,
+    AlgorithmStatus: "Pending",
+    AlgorithmDescription:
+      typeof input["AlgorithmDescription"] === "string"
+        ? (input["AlgorithmDescription"] as string)
+        : undefined,
+    TrainingSpecification: input["TrainingSpecification"],
+    InferenceSpecification: input["InferenceSpecification"],
+    ValidationSpecification: input["ValidationSpecification"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(algorithmKey(name), stored);
+  return { AlgorithmArn: arn };
+};
+
+const CreateArtifact: OperationHandler = (input, ctx) => {
+  const artifactType = requireString(input, "ArtifactType");
+  const name =
+    typeof input["ArtifactName"] === "string"
+      ? (input["ArtifactName"] as string)
+      : artifactType;
+  const arn = artifactArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredArtifact = {
+    ArtifactName:
+      typeof input["ArtifactName"] === "string"
+        ? (input["ArtifactName"] as string)
+        : undefined,
+    ArtifactArn: arn,
+    ArtifactType: artifactType,
+    Source: input["Source"],
+    Properties: input["Properties"],
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : undefined,
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(artifactKey(arn), stored);
+  return { ArtifactArn: arn };
+};
+
+const CreateAutoMLJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AutoMLJobName");
+  const existing = ctx.store.get<StoredAutoMLJob>(autoMLJobKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `AutoML job ${name} already exists.`, 400);
+  }
+  const arn = autoMLJobArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredAutoMLJob = {
+    AutoMLJobName: name,
+    AutoMLJobArn: arn,
+    AutoMLJobStatus: "InProgress",
+    AutoMLJobSecondaryStatus: "AnalyzingData",
+    InputDataConfig: input["InputDataConfig"],
+    OutputDataConfig: input["OutputDataConfig"],
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(autoMLJobKey(name), stored);
+  return { AutoMLJobArn: arn };
+};
+
+const CreateAutoMLJobV2: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AutoMLJobName");
+  const existing = ctx.store.get<StoredAutoMLJobV2>(autoMLJobV2Key(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `AutoML job ${name} already exists.`, 400);
+  }
+  const arn = autoMLJobArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredAutoMLJobV2 = {
+    AutoMLJobName: name,
+    AutoMLJobArn: arn,
+    AutoMLJobStatus: "InProgress",
+    AutoMLJobSecondaryStatus: "AnalyzingData",
+    AutoMLJobInputDataConfig: input["AutoMLJobInputDataConfig"],
+    OutputDataConfig: input["OutputDataConfig"],
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(autoMLJobV2Key(name), stored);
+  return { AutoMLJobArn: arn };
+};
+
+const CreateCluster: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ClusterName");
+  const existing = ctx.store.get<StoredCluster>(clusterKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `Cluster ${name} already exists.`, 400);
+  }
+  const arn = clusterArnOf(ctx.region, ctx.account, name);
+  const stored: StoredCluster = {
+    ClusterName: name,
+    ClusterArn: arn,
+    ClusterStatus: "Creating",
+    InstanceGroups: input["InstanceGroups"],
+    VpcConfig: input["VpcConfig"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(clusterKey(name), stored);
+  return { ClusterArn: arn };
+};
+
+const CreateClusterSchedulerConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const existing = ctx.store.get<StoredClusterSchedulerConfig>(
+    clusterSchedulerConfigKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `ClusterSchedulerConfig ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = clusterSchedulerConfigArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredClusterSchedulerConfig = {
+    ClusterSchedulerConfigName: name,
+    ClusterSchedulerConfigArn: arn,
+    ClusterSchedulerConfigId: name,
+    ClusterArn:
+      typeof input["ClusterArn"] === "string"
+        ? (input["ClusterArn"] as string)
+        : undefined,
+    SchedulerConfig: input["SchedulerConfig"],
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : undefined,
+    Status: "Creating",
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(clusterSchedulerConfigKey(name), stored);
+  return {
+    ClusterSchedulerConfigArn: arn,
+    ClusterSchedulerConfigId: name,
+  };
+};
+
+const CreateCodeRepository: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CodeRepositoryName");
+  const existing = ctx.store.get<StoredCodeRepository>(codeRepositoryKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `CodeRepository ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = codeRepositoryArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredCodeRepository = {
+    CodeRepositoryName: name,
+    CodeRepositoryArn: arn,
+    GitConfig: input["GitConfig"],
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(codeRepositoryKey(name), stored);
+  return { CodeRepositoryArn: arn };
+};
+
+const CreateCompilationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CompilationJobName");
+  const existing = ctx.store.get<StoredCompilationJob>(compilationJobKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `CompilationJob ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = compilationJobArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredCompilationJob = {
+    CompilationJobName: name,
+    CompilationJobArn: arn,
+    CompilationJobStatus: "INPROGRESS",
+    RoleArn: requireString(input, "RoleArn"),
+    InputConfig: input["InputConfig"],
+    OutputConfig: input["OutputConfig"],
+    StoppingCondition: input["StoppingCondition"],
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(compilationJobKey(name), stored);
+  return { CompilationJobArn: arn };
+};
+
+const CreateComputeQuota: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ComputeQuotaName");
+  const existing = ctx.store.get<StoredComputeQuota>(computeQuotaKey(name));
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `ComputeQuota ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = computeQuotaArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredComputeQuota = {
+    ComputeQuotaName: name,
+    ComputeQuotaArn: arn,
+    ComputeQuotaId: name,
+    ClusterArn:
+      typeof input["ClusterArn"] === "string"
+        ? (input["ClusterArn"] as string)
+        : undefined,
+    ComputeQuotaConfig: input["ComputeQuotaConfig"],
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : undefined,
+    Status: "Creating",
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(computeQuotaKey(name), stored);
+  return { ComputeQuotaArn: arn, ComputeQuotaId: name };
+};
+
+const CreateContext: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ContextName");
+  const existing = ctx.store.get<StoredContext>(contextKey(name));
+  if (existing !== undefined) {
+    throw awsError("ResourceInUse", `Context ${name} already exists.`, 400);
+  }
+  const arn = contextArnOf(ctx.region, ctx.account, name);
+  const now = nowSeconds();
+  const stored: StoredContext = {
+    ContextName: name,
+    ContextArn: arn,
+    ContextType: requireString(input, "ContextType"),
+    Source: input["Source"],
+    Properties: input["Properties"],
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : undefined,
+    CreationTime: now,
+    LastModifiedTime: now,
+  };
+  ctx.store.set(contextKey(name), stored);
+  return { ContextArn: arn };
+};
+
+const CreateDataQualityJobDefinition: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "JobDefinitionName");
+  const existing = ctx.store.get<StoredDataQualityJobDefinition>(
+    dataQualityJobDefinitionKey(name),
+  );
+  if (existing !== undefined) {
+    throw awsError(
+      "ResourceInUse",
+      `DataQualityJobDefinition ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = dataQualityJobDefinitionArnOf(ctx.region, ctx.account, name);
+  const stored: StoredDataQualityJobDefinition = {
+    JobDefinitionName: name,
+    JobDefinitionArn: arn,
+    DataQualityBaselineConfig: input["DataQualityBaselineConfig"],
+    DataQualityAppSpecification: input["DataQualityAppSpecification"],
+    DataQualityJobInput: input["DataQualityJobInput"],
+    DataQualityJobOutputConfig: input["DataQualityJobOutputConfig"],
+    JobResources: input["JobResources"],
+    NetworkConfig: input["NetworkConfig"],
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : undefined,
+    StoppingCondition: input["StoppingCondition"],
+    CreationTime: nowSeconds(),
+  };
+  ctx.store.set(dataQualityJobDefinitionKey(name), stored);
+  return { JobDefinitionArn: arn };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -3393,6 +3981,18 @@ const sagemaker = {
     CreateAIBenchmarkJob,
     CreateAIRecommendationJob,
     CreateAIWorkloadConfig,
+    CreateAction,
+    CreateAlgorithm,
+    CreateArtifact,
+    CreateAutoMLJob,
+    CreateAutoMLJobV2,
+    CreateCluster,
+    CreateClusterSchedulerConfig,
+    CreateCodeRepository,
+    CreateCompilationJob,
+    CreateComputeQuota,
+    CreateContext,
+    CreateDataQualityJobDefinition,
   },
   model,
 } as const satisfies ServiceDefinition;

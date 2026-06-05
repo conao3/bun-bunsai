@@ -4411,6 +4411,91 @@ const ImportCatalogToGlue: OperationHandler = (_input, _ctx) => {
   return {};
 };
 
+const ListColumnStatisticsTaskRuns: OperationHandler = (_input, _ctx) => {
+  return { ColumnStatisticsTaskRunIds: [] };
+};
+
+const ListConnectionTypes: OperationHandler = (_input, _ctx) => {
+  return { ConnectionTypes: [] };
+};
+
+const ListCrawls: OperationHandler = (_input, _ctx) => {
+  return { Crawls: [] };
+};
+
+const ListCustomEntityTypes: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredCustomEntityType>()
+    .filter((entry) => entry.key.startsWith(customEntityTypePrefix))
+    .map((entry) => ({
+      Name: entry.value.name,
+      RegexString: entry.value.regexString,
+      ...(entry.value.contextWords.length > 0
+        ? { ContextWords: entry.value.contextWords }
+        : {}),
+    }));
+  return { CustomEntityTypes: list };
+};
+
+const ListDataQualityResults: OperationHandler = (_input, _ctx) => {
+  return { Results: [] };
+};
+
+const ListDataQualityRuleRecommendationRuns: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Runs: [] };
+};
+
+const ListDataQualityRulesetEvaluationRuns: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Runs: [] };
+};
+
+const ListDataQualityRulesets: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredDataQualityRuleset>()
+    .filter((entry) => entry.key.startsWith(dqRulesetPrefix))
+    .map((entry) => ({
+      Name: entry.value.name,
+      CreatedOn: entry.value.createdOn,
+      ...(typeof entry.value.input["Description"] === "string"
+        ? { Description: entry.value.input["Description"] }
+        : {}),
+      ...(typeof entry.value.input["TargetTable"] === "object" &&
+      entry.value.input["TargetTable"] !== null
+        ? { TargetTable: entry.value.input["TargetTable"] }
+        : {}),
+    }));
+  return { Rulesets: list };
+};
+
+const ListDataQualityStatisticAnnotations: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Annotations: [] };
+};
+
+const ListDataQualityStatistics: OperationHandler = (_input, _ctx) => {
+  return { Statistics: [] };
+};
+
+const ListDevEndpoints: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredDevEndpoint>()
+    .filter((entry) => entry.key.startsWith(devEndpointPrefix))
+    .map((entry) => entry.key.slice(devEndpointPrefix.length));
+  return { DevEndpointNames: list };
+};
+
+const ListEntities: OperationHandler = (_input, _ctx) => {
+  return { Entities: [] };
+};
+
 const ListBlueprints: OperationHandler = (input, ctx) => {
   const tags =
     typeof input["Tags"] === "object" && input["Tags"] !== null
@@ -4611,6 +4696,18 @@ const glue: ServiceDefinition = {
     GetWorkflowRuns,
     ImportCatalogToGlue,
     ListBlueprints,
+    ListColumnStatisticsTaskRuns,
+    ListConnectionTypes,
+    ListCrawls,
+    ListCustomEntityTypes,
+    ListDataQualityResults,
+    ListDataQualityRuleRecommendationRuns,
+    ListDataQualityRulesetEvaluationRuns,
+    ListDataQualityRulesets,
+    ListDataQualityStatisticAnnotations,
+    ListDataQualityStatistics,
+    ListDevEndpoints,
+    ListEntities,
   },
   model,
 } as const;

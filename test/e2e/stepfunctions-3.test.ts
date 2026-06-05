@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateActivityCommand,
   CreateStateMachineAliasCommand,
@@ -29,14 +29,21 @@ import {
   ValidateStateMachineDefinitionCommand,
 } from "@aws-sdk/client-sfn";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const sfn = () => new SFNClient({ endpoint, region, credentials });
+const sfn = () =>
+  new SFNClient({ endpoint, region, credentials, requestHandler });
 
 const sfnSync = () =>
-  new SFNClient({ endpoint, region, credentials, disableHostPrefix: true });
+  new SFNClient({
+    endpoint,
+    region,
+    credentials,
+    requestHandler,
+    disableHostPrefix: true,
+  });
 
 const definition = JSON.stringify({
   StartAt: "Pass",

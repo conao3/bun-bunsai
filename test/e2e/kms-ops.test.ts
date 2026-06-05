@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CancelKeyDeletionCommand,
   ConnectCustomKeyStoreCommand,
@@ -54,14 +54,15 @@ import {
   VerifyMacCommand,
 } from "@aws-sdk/client-kms";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const textEncoder = new TextEncoder();
 
 describe("kms ops e2e", () => {
-  const kms = () => new KMSClient({ endpoint, region, credentials });
+  const kms = () =>
+    new KMSClient({ endpoint, region, credentials, requestHandler });
 
   test("alias lifecycle and encryption through alias", async () => {
     const client = kms();

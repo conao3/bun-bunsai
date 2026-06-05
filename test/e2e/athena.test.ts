@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AthenaClient,
   CreateWorkGroupCommand,
@@ -11,12 +11,13 @@ import {
   StopQueryExecutionCommand,
 } from "@aws-sdk/client-athena";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("athena e2e", () => {
-  const athena = () => new AthenaClient({ endpoint, region, credentials });
+  const athena = () =>
+    new AthenaClient({ endpoint, region, credentials, requestHandler });
 
   test("start, get, list and stop a query execution", async () => {
     const client = athena();

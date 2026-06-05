@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreatePlacementGroupCommand,
   CreatePublicIpv4PoolCommand,
@@ -7,13 +7,13 @@ import {
 import type { EC2Client as EC2ClientType } from "@aws-sdk/client-ec2";
 import { EC2Client } from "@aws-sdk/client-ec2";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("ec2 chunk10 create-placement-group and create-public-ipv4-pool e2e", () => {
   const ec2 = (): EC2ClientType =>
-    new EC2Client({ endpoint, region, credentials });
+    new EC2Client({ endpoint, region, credentials, requestHandler });
 
   test("create-placement-group: cluster strategy returns valid group", async () => {
     const client = ec2();

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   BatchClient,
   CancelJobCommand,
@@ -47,9 +47,8 @@ import {
   UpdateServiceEnvironmentCommand,
   UpdateServiceJobCommand,
 } from "@aws-sdk/client-batch";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -58,7 +57,7 @@ const batch = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("Batch job listing, cancel and terminate", async () => {

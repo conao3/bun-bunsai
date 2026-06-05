@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CancelTagSyncTaskCommand,
   CreateGroupCommand,
@@ -27,12 +27,12 @@ import {
   UpdateGroupQueryCommand,
 } from "@aws-sdk/client-resource-groups";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const resourcegroups = () =>
-  new ResourceGroupsClient({ endpoint, region, credentials });
+  new ResourceGroupsClient({ endpoint, region, credentials, requestHandler });
 
 test("ResourceGroups group roundtrip", async () => {
   const client = resourcegroups();

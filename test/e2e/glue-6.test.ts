@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   BatchGetBlueprintsCommand,
   BatchGetDataQualityResultCommand,
@@ -16,12 +16,13 @@ import {
   GlueClient,
 } from "@aws-sdk/client-glue";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("glue blueprint, workflow, session, data-quality e2e", () => {
-  const glue = () => new GlueClient({ endpoint, region, credentials });
+  const glue = () =>
+    new GlueClient({ endpoint, region, credentials, requestHandler });
 
   test("blueprint create -> batch get -> delete lifecycle", async () => {
     const client = glue();

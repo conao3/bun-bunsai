@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateBrokerCommand,
   CreateConfigurationCommand,
@@ -28,11 +28,12 @@ import {
   UpdateUserCommand,
 } from "@aws-sdk/client-mq";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const mq = () => new MqClient({ endpoint, region, credentials });
+const mq = () =>
+  new MqClient({ endpoint, region, credentials, requestHandler });
 
 test("MQ broker and configuration roundtrip", async () => {
   const client = mq();

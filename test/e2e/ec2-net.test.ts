@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AllocateAddressCommand,
   AttachInternetGatewayCommand,
@@ -22,9 +22,8 @@ import {
   ReleaseAddressCommand,
   RevokeSecurityGroupIngressCommand,
 } from "@aws-sdk/client-ec2";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -34,7 +33,7 @@ describe("ec2 net e2e", () => {
       endpoint,
       region,
       credentials,
-      requestHandler: new NodeHttpHandler(),
+      requestHandler,
     });
 
   test("create, describe and delete subnet", async () => {

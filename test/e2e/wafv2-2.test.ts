@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AssociateWebACLCommand,
   CheckCapacityCommand,
@@ -55,9 +55,8 @@ import {
   UpdateRuleGroupCommand,
   WAFV2Client,
 } from "@aws-sdk/client-wafv2";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -66,7 +65,7 @@ const wafv2 = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 const visibilityConfig = {

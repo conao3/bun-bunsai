@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateCacheParameterGroupCommand,
   CreateCacheSubnetGroupCommand,
@@ -10,12 +10,12 @@ import {
   ElastiCacheClient,
 } from "@aws-sdk/client-elasticache";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const elasticache = () =>
-  new ElastiCacheClient({ endpoint, region, credentials });
+  new ElastiCacheClient({ endpoint, region, credentials, requestHandler });
 
 test("ElastiCache cache parameter group round-trip", async () => {
   const client = elasticache();

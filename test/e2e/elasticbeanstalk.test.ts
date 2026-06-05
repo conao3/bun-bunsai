@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AbortEnvironmentUpdateCommand,
   ApplyEnvironmentManagedActionCommand,
@@ -51,11 +51,12 @@ import {
   ValidateConfigurationSettingsCommand,
 } from "@aws-sdk/client-elastic-beanstalk";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const eb = () => new ElasticBeanstalkClient({ endpoint, region, credentials });
+const eb = () =>
+  new ElasticBeanstalkClient({ endpoint, region, credentials, requestHandler });
 
 test("Elastic Beanstalk application and environment lifecycle round-trip", async () => {
   const client = eb();

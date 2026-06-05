@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AddClientIDToOpenIDConnectProviderCommand,
   AddRoleToInstanceProfileCommand,
@@ -28,11 +28,12 @@ import {
   UntagPolicyCommand,
 } from "@aws-sdk/client-iam";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const iam = () => new IAMClient({ endpoint, region, credentials });
+const iam = () =>
+  new IAMClient({ endpoint, region, credentials, requestHandler });
 
 const policyDocument = JSON.stringify({
   Version: "2012-10-17",

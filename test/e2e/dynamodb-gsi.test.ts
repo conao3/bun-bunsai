@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
+import { startApp } from "./harness.ts";
 import {
   CreateTableCommand,
   DeleteTableCommand,
@@ -12,7 +11,7 @@ import {
   ScanCommand,
 } from "@aws-sdk/client-dynamodb";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -22,7 +21,7 @@ describe("DynamoDB GSI/filter/paging e2e", () => {
       endpoint,
       region,
       credentials,
-      requestHandler: new NodeHttpHandler(),
+      requestHandler,
     });
 
   test("secondary indexes are stored and described", async () => {

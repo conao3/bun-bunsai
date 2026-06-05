@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateDeliveryStreamCommand,
   DeleteDeliveryStreamCommand,
@@ -10,12 +10,13 @@ import {
   PutRecordCommand,
 } from "@aws-sdk/client-firehose";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("firehose e2e", () => {
-  const firehose = () => new FirehoseClient({ endpoint, region, credentials });
+  const firehose = () =>
+    new FirehoseClient({ endpoint, region, credentials, requestHandler });
 
   test("create, describe, list, put and delete a delivery stream", async () => {
     const client = firehose();

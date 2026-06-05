@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
+import { startApp } from "./harness.ts";
 import {
   ConnectClient,
   CreateInstanceCommand,
@@ -11,7 +10,7 @@ import {
   DisassociateRoutingProfileQueuesCommand,
 } from "@aws-sdk/client-connect";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -20,7 +19,7 @@ const connect = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("AssociateRoutingProfileQueues then DisassociateRoutingProfileQueues", async () => {

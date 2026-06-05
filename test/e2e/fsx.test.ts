@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AssociateFileSystemAliasesCommand,
   CancelDataRepositoryTaskCommand,
@@ -52,11 +52,12 @@ import {
   UpdateVolumeCommand,
 } from "@aws-sdk/client-fsx";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const client = () => new FSxClient({ endpoint, region, credentials });
+const client = () =>
+  new FSxClient({ endpoint, region, credentials, requestHandler });
 
 test("fsx file system and backup round-trip", async () => {
   const fsx = client();

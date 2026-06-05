@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AddLFTagsToResourceCommand,
   AssumeDecoratedRoleWithSAMLCommand,
@@ -65,18 +65,19 @@ import {
   UpdateTableStorageOptimizerCommand,
 } from "@aws-sdk/client-lakeformation";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const lakeformation = () =>
-  new LakeFormationClient({ endpoint, region, credentials });
+  new LakeFormationClient({ endpoint, region, credentials, requestHandler });
 
 const lakeformationNoHostPrefix = () =>
   new LakeFormationClient({
     endpoint,
     region,
     credentials,
+    requestHandler,
     disableHostPrefix: true,
   });
 

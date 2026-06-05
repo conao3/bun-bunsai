@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AcceptGrantCommand,
   CheckInLicenseCommand,
@@ -65,9 +65,8 @@ import {
   UpdateLicenseSpecificationsForResourceCommand,
   UpdateServiceSettingsCommand,
 } from "@aws-sdk/client-license-manager";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -76,7 +75,7 @@ const licensemanager = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("LicenseManager license configuration lifecycle", async () => {

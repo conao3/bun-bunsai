@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateAccessPointCommand,
   CreateFileSystemCommand,
@@ -35,11 +35,12 @@ import {
   UpdateFileSystemProtectionCommand,
 } from "@aws-sdk/client-efs";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const efs = () => new EFSClient({ endpoint, region, credentials });
+const efs = () =>
+  new EFSClient({ endpoint, region, credentials, requestHandler });
 
 test("EFS file system, mount target and lifecycle roundtrip", async () => {
   const client = efs();

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateDiscovererCommand,
   CreateRegistryCommand,
@@ -35,11 +35,12 @@ import {
   UpdateSchemaCommand,
 } from "@aws-sdk/client-schemas";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const schemas = () => new SchemasClient({ endpoint, region, credentials });
+const schemas = () =>
+  new SchemasClient({ endpoint, region, credentials, requestHandler });
 
 test("schemas registry round trip", async () => {
   const client = schemas();

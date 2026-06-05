@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   APIGatewayClient,
   CreateApiKeyCommand,
@@ -17,12 +17,12 @@ import {
   DeleteVpcLinkCommand,
 } from "@aws-sdk/client-api-gateway";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const apigateway = () =>
-  new APIGatewayClient({ endpoint, region, credentials });
+  new APIGatewayClient({ endpoint, region, credentials, requestHandler });
 
 test("API Gateway usage-plan + key lifecycle", async () => {
   const client = apigateway();

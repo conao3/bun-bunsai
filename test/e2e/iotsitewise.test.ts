@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
+import { startApp } from "./harness.ts";
 import {
   AssociateAssetsCommand,
   BatchAssociateProjectAssetsCommand,
@@ -38,7 +37,7 @@ import {
   TagResourceCommand,
 } from "@aws-sdk/client-iotsitewise";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -47,7 +46,7 @@ const iotsitewise = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("IoTSiteWise asset model roundtrip", async () => {

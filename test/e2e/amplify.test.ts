@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AmplifyClient,
   CreateAppCommand,
@@ -40,9 +40,8 @@ import {
   UpdateDomainAssociationCommand,
   UpdateWebhookCommand,
 } from "@aws-sdk/client-amplify";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -51,7 +50,7 @@ const amplify = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("Amplify app and branch roundtrip", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateDhcpOptionsCommand,
   CreateEgressOnlyInternetGatewayCommand,
@@ -7,12 +7,13 @@ import {
   EC2Client,
 } from "@aws-sdk/client-ec2";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("ec2 chunk9 create-dhcp-options and create-egress-only-internet-gateway e2e", () => {
-  const ec2 = () => new EC2Client({ endpoint, region, credentials });
+  const ec2 = () =>
+    new EC2Client({ endpoint, region, credentials, requestHandler });
 
   test("create-dhcp-options: creates a DHCP options set and returns an ID", async () => {
     const client = ec2();

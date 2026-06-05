@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CloudFrontClient,
   CreateCachePolicyCommand,
@@ -11,9 +11,8 @@ import {
   ListCachePoliciesCommand,
   ListPublicKeysCommand,
 } from "@aws-sdk/client-cloudfront";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -22,7 +21,7 @@ const cloudfront = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("CloudFront cache policy lifecycle", async () => {

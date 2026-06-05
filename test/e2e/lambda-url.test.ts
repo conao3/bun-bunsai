@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateFunctionCommand,
   CreateFunctionUrlConfigCommand,
@@ -14,11 +14,12 @@ import {
   PutFunctionConcurrencyCommand,
 } from "@aws-sdk/client-lambda";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const lambda = () => new LambdaClient({ endpoint, region, credentials });
+const lambda = () =>
+  new LambdaClient({ endpoint, region, credentials, requestHandler });
 
 const createFn = async (
   client: LambdaClient,

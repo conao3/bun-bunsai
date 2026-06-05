@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AcceptResourceShareInvitationCommand,
   AssociateResourceShareCommand,
@@ -38,11 +38,12 @@ import {
   UpdateResourceShareCommand,
 } from "@aws-sdk/client-ram";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const ram = () => new RAMClient({ endpoint, region, credentials });
+const ram = () =>
+  new RAMClient({ endpoint, region, credentials, requestHandler });
 
 test("RAM resource share roundtrip", async () => {
   const client = ram();

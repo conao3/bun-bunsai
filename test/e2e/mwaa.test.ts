@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateCliTokenCommand,
   CreateEnvironmentCommand,
@@ -15,9 +15,8 @@ import {
   UpdateEnvironmentCommand,
   MWAAClient,
 } from "@aws-sdk/client-mwaa";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -26,7 +25,7 @@ const mwaa = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("MWAA environment roundtrip", async () => {

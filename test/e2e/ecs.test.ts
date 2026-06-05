@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateClusterCommand,
   DeleteClusterCommand,
@@ -13,12 +13,13 @@ import {
   StopTaskCommand,
 } from "@aws-sdk/client-ecs";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("ecs e2e", () => {
-  const ecs = () => new ECSClient({ endpoint, region, credentials });
+  const ecs = () =>
+    new ECSClient({ endpoint, region, credentials, requestHandler });
 
   test("create, describe, list and delete cluster", async () => {
     const client = ecs();

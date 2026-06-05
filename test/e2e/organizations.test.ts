@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AcceptHandshakeCommand,
   AttachPolicyCommand,
@@ -53,11 +53,12 @@ import {
   UpdatePolicyCommand,
 } from "@aws-sdk/client-organizations";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const org = () => new OrganizationsClient({ endpoint, region, credentials });
+const org = () =>
+  new OrganizationsClient({ endpoint, region, credentials, requestHandler });
 
 test("Organizations org / account / ou lifecycle", async () => {
   const client = org();

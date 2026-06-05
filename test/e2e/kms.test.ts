@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateKeyCommand,
   DecryptCommand,
@@ -10,7 +10,7 @@ import {
   ListKeysCommand,
 } from "@aws-sdk/client-kms";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -18,7 +18,8 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 describe("kms e2e", () => {
-  const kms = () => new KMSClient({ endpoint, region, credentials });
+  const kms = () =>
+    new KMSClient({ endpoint, region, credentials, requestHandler });
 
   test("create, describe and list keys", async () => {
     const client = kms();

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CodePipelineClient,
   CreateCustomActionTypeCommand,
@@ -38,12 +38,12 @@ import {
   UpdatePipelineCommand,
 } from "@aws-sdk/client-codepipeline";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const codepipeline = () =>
-  new CodePipelineClient({ endpoint, region, credentials });
+  new CodePipelineClient({ endpoint, region, credentials, requestHandler });
 
 const makePipeline = (name: string) => ({
   name,

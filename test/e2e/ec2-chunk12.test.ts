@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { spawn } from "bun";
+import { describe, expect, test } from "bun:test";
+import { startApp } from "./harness.ts";
 import {
   CreateTransitGatewayCommand,
   CreateTransitGatewayRouteTableCommand,
@@ -15,55 +15,13 @@ import {
 import type { EC2Client as EC2ClientType } from "@aws-sdk/client-ec2";
 import { EC2Client } from "@aws-sdk/client-ec2";
 
-const awsPort = 4590;
-const uiPort = 5690;
-const endpoint = `http://localhost:${awsPort}`;
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const serverEntry = new URL("../../apps/server/src/index.ts", import.meta.url)
-  .pathname;
-
-const waitForServer = async (): Promise<void> => {
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      const res = await fetch(`http://localhost:${uiPort}/__bunsai/logs`);
-      if (res.ok) {
-        await res.body?.cancel();
-        return;
-      }
-    } catch {
-      void 0;
-    }
-    await Bun.sleep(100);
-  }
-  throw new Error("server did not become ready");
-};
-
 describe("ec2 chunk12 create-transit-gateway-route-table and create-verified-access-instance e2e", () => {
-  let proc: ReturnType<typeof spawn> | undefined;
-
-  beforeAll(async () => {
-    proc = spawn({
-      cmd: ["bun", serverEntry],
-      env: {
-        ...process.env,
-        BUNSAI_PORT: String(awsPort),
-        BUNSAI_UI_PORT: String(uiPort),
-        NODE_ENV: "production",
-      },
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    await waitForServer();
-  });
-
-  afterAll(() => {
-    proc?.kill();
-  });
-
   const ec2 = (): EC2ClientType =>
-    new EC2Client({ endpoint, region, credentials });
+    new EC2Client({ endpoint, region, credentials, requestHandler });
 
   test("create-transit-gateway-route-table: returns a valid route table", async () => {
     const client = ec2();

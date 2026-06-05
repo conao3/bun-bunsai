@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AssociateFirewallPolicyCommand,
   CreateFirewallCommand,
@@ -33,13 +33,18 @@ import {
   UpdateTLSInspectionConfigurationCommand,
 } from "@aws-sdk/client-network-firewall";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("network-firewall e2e", () => {
   const firewall = () =>
-    new NetworkFirewallClient({ endpoint, region, credentials });
+    new NetworkFirewallClient({
+      endpoint,
+      region,
+      credentials,
+      requestHandler,
+    });
 
   test("create, describe, list and delete a firewall", async () => {
     const client = firewall();

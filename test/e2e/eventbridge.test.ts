@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   DeleteRuleCommand,
   DescribeRuleCommand,
@@ -12,11 +12,12 @@ import {
   RemoveTargetsCommand,
 } from "@aws-sdk/client-eventbridge";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const eb = () => new EventBridgeClient({ endpoint, region, credentials });
+const eb = () =>
+  new EventBridgeClient({ endpoint, region, credentials, requestHandler });
 
 test("EventBridge rule and target lifecycle", async () => {
   const client = eb();

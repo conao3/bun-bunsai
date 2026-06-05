@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateDBInstanceCommand,
   CreateDBSnapshotCommand,
@@ -11,11 +11,12 @@ import {
   StopDBInstanceCommand,
 } from "@aws-sdk/client-rds";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const rds = () => new RDSClient({ endpoint, region, credentials });
+const rds = () =>
+  new RDSClient({ endpoint, region, credentials, requestHandler });
 
 test("RDS DB instance lifecycle round-trip", async () => {
   const client = rds();

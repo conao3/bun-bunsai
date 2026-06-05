@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CloudWatchClient,
   DeleteDashboardsCommand,
@@ -13,11 +13,12 @@ import {
   SetAlarmStateCommand,
 } from "@aws-sdk/client-cloudwatch";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const cw = () => new CloudWatchClient({ endpoint, region, credentials });
+const cw = () =>
+  new CloudWatchClient({ endpoint, region, credentials, requestHandler });
 
 test("CloudWatch dashboard lifecycle round-trip", async () => {
   const client = cw();

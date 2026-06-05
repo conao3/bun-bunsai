@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateSAMLProviderCommand,
   DeleteSAMLProviderCommand,
@@ -12,11 +12,12 @@ import {
   UpdateSAMLProviderCommand,
 } from "@aws-sdk/client-iam";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const iam = () => new IAMClient({ endpoint, region, credentials });
+const iam = () =>
+  new IAMClient({ endpoint, region, credentials, requestHandler });
 
 const samlMetadata = `<?xml version="1.0" encoding="UTF-8"?><EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://example.com/saml"></EntityDescriptor>`;
 const samlMetadataV2 = `<?xml version="1.0" encoding="UTF-8"?><EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://example.com/saml/v2"></EntityDescriptor>`;

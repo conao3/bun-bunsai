@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   ConfirmSubscriptionCommand,
   CreatePlatformApplicationCommand,
@@ -14,11 +14,12 @@ import {
   SubscribeCommand,
 } from "@aws-sdk/client-sns";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const sns = () => new SNSClient({ endpoint, region, credentials });
+const sns = () =>
+  new SNSClient({ endpoint, region, credentials, requestHandler });
 
 test("SNS subscription attributes get/set lifecycle", async () => {
   const client = sns();

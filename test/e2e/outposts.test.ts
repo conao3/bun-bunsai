@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CancelCapacityTaskCommand,
   CancelOrderCommand,
@@ -41,11 +41,12 @@ import {
   UpdateSiteRackPhysicalPropertiesCommand,
 } from "@aws-sdk/client-outposts";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const outposts = () => new OutpostsClient({ endpoint, region, credentials });
+const outposts = () =>
+  new OutpostsClient({ endpoint, region, credentials, requestHandler });
 
 test("Outposts outpost roundtrip", async () => {
   const client = outposts();

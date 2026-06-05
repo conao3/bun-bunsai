@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -21,7 +21,7 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -36,7 +36,13 @@ const readBody = async (body: GetObjectCommandOutputBody): Promise<string> => {
 
 describe("S3 extra ops e2e", () => {
   const s3 = () =>
-    new S3Client({ endpoint, region, credentials, forcePathStyle: true });
+    new S3Client({
+      endpoint,
+      region,
+      credentials,
+      requestHandler,
+      forcePathStyle: true,
+    });
   const bucket = "bunsai-e2e-s3-extra";
 
   test("copy, tagging, location, and list-v1 lifecycle", async () => {

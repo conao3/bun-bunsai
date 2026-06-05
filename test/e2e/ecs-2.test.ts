@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   ContinueServiceDeploymentCommand,
   CreateCapacityProviderCommand,
@@ -68,12 +68,13 @@ import {
   UpdateTaskSetCommand,
 } from "@aws-sdk/client-ecs";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("ecs service and task definition e2e", () => {
-  const ecs = () => new ECSClient({ endpoint, region, credentials });
+  const ecs = () =>
+    new ECSClient({ endpoint, region, credentials, requestHandler });
 
   test("register, list and deregister task definitions", async () => {
     const client = ecs();

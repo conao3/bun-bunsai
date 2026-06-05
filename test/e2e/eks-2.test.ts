@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateAddonCommand,
   CreateClusterCommand,
@@ -13,11 +13,12 @@ import {
   ListFargateProfilesCommand,
 } from "@aws-sdk/client-eks";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const eks = () => new EKSClient({ endpoint, region, credentials });
+const eks = () =>
+  new EKSClient({ endpoint, region, credentials, requestHandler });
 
 test("EKS fargate profile roundtrip", async () => {
   const client = eks();

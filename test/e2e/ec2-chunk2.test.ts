@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AttachVolumeCommand,
   CreateVolumeCommand,
@@ -9,12 +9,13 @@ import {
   RunInstancesCommand,
 } from "@aws-sdk/client-ec2";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("ec2 chunk2 attach/detach e2e", () => {
-  const ec2 = () => new EC2Client({ endpoint, region, credentials });
+  const ec2 = () =>
+    new EC2Client({ endpoint, region, credentials, requestHandler });
 
   test("attach and detach volume lifecycle", async () => {
     const client = ec2();

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateTableCommand,
   DeleteItemCommand,
@@ -14,12 +14,13 @@ import {
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("DynamoDB e2e", () => {
-  const ddb = () => new DynamoDBClient({ endpoint, region, credentials });
+  const ddb = () =>
+    new DynamoDBClient({ endpoint, region, credentials, requestHandler });
   const table = "bunsai-e2e-ddb";
 
   test("table and item lifecycle", async () => {

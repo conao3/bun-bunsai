@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateTrafficMirrorFilterCommand,
   CreateTrafficMirrorFilterRuleCommand,
@@ -16,13 +16,13 @@ import {
 import type { EC2Client as EC2ClientType } from "@aws-sdk/client-ec2";
 import { EC2Client } from "@aws-sdk/client-ec2";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("ec2 chunk11 create-transit-gateway and create-traffic-mirror-filter e2e", () => {
   const ec2 = (): EC2ClientType =>
-    new EC2Client({ endpoint, region, credentials });
+    new EC2Client({ endpoint, region, credentials, requestHandler });
 
   test("create-transit-gateway: returns a valid transit gateway", async () => {
     const client = ec2();

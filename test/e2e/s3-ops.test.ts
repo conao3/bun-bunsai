@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateBucketCommand,
   DeleteBucketCommand,
@@ -19,13 +19,19 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("S3 ops e2e", () => {
   const s3 = () =>
-    new S3Client({ endpoint, region, credentials, forcePathStyle: true });
+    new S3Client({
+      endpoint,
+      region,
+      credentials,
+      requestHandler,
+      forcePathStyle: true,
+    });
   const bucket = "bunsai-e2e-s3-ops";
 
   test("bucket versioning put and get", async () => {

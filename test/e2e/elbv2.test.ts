@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AddListenerCertificatesCommand,
   AddTagsCommand,
@@ -43,12 +43,17 @@ import {
   SetSubnetsCommand,
 } from "@aws-sdk/client-elastic-load-balancing-v2";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const elbv2 = () =>
-  new ElasticLoadBalancingV2Client({ endpoint, region, credentials });
+  new ElasticLoadBalancingV2Client({
+    endpoint,
+    region,
+    credentials,
+    requestHandler,
+  });
 
 test("ELBv2 load balancer / target group / listener round-trip", async () => {
   const client = elbv2();

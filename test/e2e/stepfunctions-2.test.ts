@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateActivityCommand,
   DeleteActivityCommand,
@@ -11,11 +11,12 @@ import {
   UntagResourceCommand,
 } from "@aws-sdk/client-sfn";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const sfn = () => new SFNClient({ endpoint, region, credentials });
+const sfn = () =>
+  new SFNClient({ endpoint, region, credentials, requestHandler });
 
 test("Step Functions activity lifecycle", async () => {
   const client = sfn();

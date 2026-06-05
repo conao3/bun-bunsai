@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AccessAnalyzerClient,
   ApplyArchiveRuleCommand,
@@ -39,12 +39,12 @@ import {
   ValidatePolicyCommand,
 } from "@aws-sdk/client-accessanalyzer";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const accessanalyzer = () =>
-  new AccessAnalyzerClient({ endpoint, region, credentials });
+  new AccessAnalyzerClient({ endpoint, region, credentials, requestHandler });
 
 test("AccessAnalyzer analyzer roundtrip", async () => {
   const client = accessanalyzer();

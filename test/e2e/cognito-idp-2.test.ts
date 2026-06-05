@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AdminAddUserToGroupCommand,
   AdminCreateUserCommand,
@@ -12,13 +12,18 @@ import {
   ListGroupsCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("cognito-idp groups e2e", () => {
   const cognito = () =>
-    new CognitoIdentityProviderClient({ endpoint, region, credentials });
+    new CognitoIdentityProviderClient({
+      endpoint,
+      region,
+      credentials,
+      requestHandler,
+    });
 
   test("group lifecycle: create, get, list, delete", async () => {
     const client = cognito();

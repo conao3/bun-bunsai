@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AthenaClient,
   CancelCapacityReservationCommand,
@@ -36,12 +36,13 @@ import {
   UpdateWorkGroupCommand,
 } from "@aws-sdk/client-athena";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("athena data catalogs and named queries e2e", () => {
-  const athena = () => new AthenaClient({ endpoint, region, credentials });
+  const athena = () =>
+    new AthenaClient({ endpoint, region, credentials, requestHandler });
 
   test("create, get, list and delete a data catalog", async () => {
     const client = athena();

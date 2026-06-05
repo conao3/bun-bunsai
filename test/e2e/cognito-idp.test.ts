@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AdminAddUserToGroupCommand,
   AdminConfirmSignUpCommand,
@@ -34,13 +34,18 @@ import {
   UpdateUserPoolClientCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("cognito-idp e2e", () => {
   const cognito = () =>
-    new CognitoIdentityProviderClient({ endpoint, region, credentials });
+    new CognitoIdentityProviderClient({
+      endpoint,
+      region,
+      credentials,
+      requestHandler,
+    });
 
   test("user pool lifecycle: create, describe, list, delete", async () => {
     const client = cognito();

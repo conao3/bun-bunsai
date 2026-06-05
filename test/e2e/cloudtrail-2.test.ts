@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AddTagsCommand,
   CancelQueryCommand,
@@ -56,9 +56,8 @@ import {
   UpdateEventDataStoreCommand,
   UpdateTrailCommand,
 } from "@aws-sdk/client-cloudtrail";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -67,7 +66,7 @@ const cloudtrail = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("CloudTrail update, event selectors and tags", async () => {

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CancelTaskExecutionCommand,
   CreateAgentCommand,
@@ -48,11 +48,12 @@ import {
   UpdateTaskExecutionCommand,
 } from "@aws-sdk/client-datasync";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const client = () => new DataSyncClient({ endpoint, region, credentials });
+const client = () =>
+  new DataSyncClient({ endpoint, region, credentials, requestHandler });
 
 test("datasync location and task round-trip", async () => {
   const datasync = client();

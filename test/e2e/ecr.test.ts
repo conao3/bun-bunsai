@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   BatchCheckLayerAvailabilityCommand,
   BatchDeleteImageCommand,
@@ -62,12 +62,13 @@ import {
   ValidatePullThroughCacheRuleCommand,
 } from "@aws-sdk/client-ecr";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("ecr e2e", () => {
-  const ecr = () => new ECRClient({ endpoint, region, credentials });
+  const ecr = () =>
+    new ECRClient({ endpoint, region, credentials, requestHandler });
 
   test("create, describe, list and delete repository", async () => {
     const client = ecr();

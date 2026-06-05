@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateSecurityGroupCommand,
   CreateTagsCommand,
@@ -16,12 +16,13 @@ import {
   TerminateInstancesCommand,
 } from "@aws-sdk/client-ec2";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("ec2 e2e", () => {
-  const ec2 = () => new EC2Client({ endpoint, region, credentials });
+  const ec2 = () =>
+    new EC2Client({ endpoint, region, credentials, requestHandler });
 
   test("run, describe, stop, start and terminate instances", async () => {
     const client = ec2();

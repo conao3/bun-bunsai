@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AcceptInboundConnectionCommand,
   AddDataSourceCommand,
@@ -36,12 +36,12 @@ import {
   UpdateDomainConfigCommand,
 } from "@aws-sdk/client-opensearch";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const opensearch = () =>
-  new OpenSearchClient({ endpoint, region, credentials });
+  new OpenSearchClient({ endpoint, region, credentials, requestHandler });
 
 test("OpenSearch domain roundtrip", async () => {
   const client = opensearch();

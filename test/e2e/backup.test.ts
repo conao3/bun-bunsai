@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   BackupClient,
   CancelLegalHoldCommand,
@@ -54,11 +54,12 @@ import {
   UpdateRegionSettingsCommand,
 } from "@aws-sdk/client-backup";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const backup = () => new BackupClient({ endpoint, region, credentials });
+const backup = () =>
+  new BackupClient({ endpoint, region, credentials, requestHandler });
 
 test("Backup vault roundtrip", async () => {
   const client = backup();

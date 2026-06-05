@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./e2e/harness.ts";
+import { startApp } from "./e2e/harness.ts";
 import {
   CreateBucketCommand,
   DeleteBucketCommand,
@@ -19,14 +19,22 @@ import {
 } from "@aws-sdk/client-sqs";
 import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 
-const { endpoint, uiEndpoint } = startServer();
+const { endpoint, requestHandler, uiFetch } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const sts = () => new STSClient({ endpoint, region, credentials });
+const sts = () =>
+  new STSClient({ endpoint, region, credentials, requestHandler });
 const s3 = () =>
-  new S3Client({ endpoint, region, credentials, forcePathStyle: true });
-const sqs = () => new SQSClient({ endpoint, region, credentials });
+  new S3Client({
+    endpoint,
+    region,
+    credentials,
+    requestHandler,
+    forcePathStyle: true,
+  });
+const sqs = () =>
+  new SQSClient({ endpoint, region, credentials, requestHandler });
 
 test("STS GetCallerIdentity returns an Account", async () => {
   const client = sts();
@@ -98,7 +106,7 @@ test("SQS queue and message lifecycle", async () => {
 });
 
 test("management logs recorded the SDK calls", async () => {
-  const res = await fetch(`${uiEndpoint}/__bunsai/logs`);
+  const res = await uiFetch("/__bunsai/logs");
   expect(res.ok).toBe(true);
   const logs = (await res.json()) as { service: string; operation: string }[];
   const seen = new Set(logs.map((l) => `${l.service}:${l.operation}`));

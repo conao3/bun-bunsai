@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
+import { startApp } from "./harness.ts";
 import {
   BatchDetectSentimentCommand,
   ClassifyDocumentCommand,
@@ -38,7 +37,7 @@ import {
   UntagResourceCommand,
 } from "@aws-sdk/client-comprehend";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const account = "000000000000";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
@@ -48,7 +47,7 @@ const comprehend = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("Comprehend endpoint roundtrip", async () => {

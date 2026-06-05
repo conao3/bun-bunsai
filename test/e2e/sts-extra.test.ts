@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AssumeRoleCommand,
   GetFederationTokenCommand,
@@ -7,11 +7,12 @@ import {
   STSClient,
 } from "@aws-sdk/client-sts";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const sts = () => new STSClient({ endpoint, region, credentials });
+const sts = () =>
+  new STSClient({ endpoint, region, credentials, requestHandler });
 
 test("STS AssumeRole returns Credentials and AssumedRoleUser", async () => {
   const client = sts();

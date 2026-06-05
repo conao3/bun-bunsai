@@ -105,7 +105,7 @@ Bun workspaces monorepo:
 
 Two test layers (see [`STATUS.md`](./STATUS.md)):
 
-- **L0 / e2e** — real `@aws-sdk/v3` clients hit an in-process `bunsai` server on an ephemeral port and assert full round-trips (`test/e2e/`).
+- **L0 / e2e** — real `@aws-sdk/v3` clients drive the `bunsai` gateway handler in-process (no HTTP, via a custom `requestHandler`) and assert full round-trips (`test/e2e/`).
 - **L1 / conformance** — botocore protocol test suite (`test/conformance/`) drives the codec in-process.
 
 ```sh

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateQueueCommand,
   DeleteQueueCommand,
@@ -14,12 +14,13 @@ import {
   UntagQueueCommand,
 } from "@aws-sdk/client-sqs";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("SQS extra ops e2e", () => {
-  const sqs = () => new SQSClient({ endpoint, region, credentials });
+  const sqs = () =>
+    new SQSClient({ endpoint, region, credentials, requestHandler });
   const queueName = "bunsai-e2e-sqs-extra";
 
   test("tags, attributes, and purge", async () => {

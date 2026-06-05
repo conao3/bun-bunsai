@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CancelCommandCommand,
   CreateActivationCommand,
@@ -42,12 +42,13 @@ import {
   UpdateOpsItemCommand,
 } from "@aws-sdk/client-ssm";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("ssm e2e", () => {
-  const ssm = () => new SSMClient({ endpoint, region, credentials });
+  const ssm = () =>
+    new SSMClient({ endpoint, region, credentials, requestHandler });
 
   test("Parameter lifecycle round-trips through the real SDK", async () => {
     const client = ssm();

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AcceptAddressTransferCommand,
   AcceptCapacityReservationBillingOwnershipCommand,
@@ -14,9 +14,8 @@ import {
   EC2Client,
   RunInstancesCommand,
 } from "@aws-sdk/client-ec2";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -26,7 +25,7 @@ describe("ec2 chunk1 e2e", () => {
       endpoint,
       region,
       credentials,
-      requestHandler: new NodeHttpHandler(),
+      requestHandler,
     });
 
   test("associate-address: allocate EIP, run instance, associate", async () => {

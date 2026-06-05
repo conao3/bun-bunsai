@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AssociateOriginationIdentityCommand,
   CarrierLookupCommand,
@@ -37,12 +37,17 @@ import {
   UntagResourceCommand,
 } from "@aws-sdk/client-pinpoint-sms-voice-v2";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const smsVoice = () =>
-  new PinpointSMSVoiceV2Client({ endpoint, region, credentials });
+  new PinpointSMSVoiceV2Client({
+    endpoint,
+    region,
+    credentials,
+    requestHandler,
+  });
 
 test("PinpointSMSVoiceV2 configuration set roundtrip", async () => {
   const client = smsVoice();

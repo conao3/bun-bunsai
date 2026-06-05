@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
+import { startApp } from "./harness.ts";
 import {
   CreateLifecyclePolicyCommand,
   DeleteLifecyclePolicyCommand,
@@ -13,7 +12,7 @@ import {
   UpdateLifecyclePolicyCommand,
 } from "@aws-sdk/client-dlm";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -22,7 +21,7 @@ const dlm = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("DLM lifecycle policy roundtrip", async () => {

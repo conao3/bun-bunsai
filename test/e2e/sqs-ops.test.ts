@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AddPermissionCommand,
   CancelMessageMoveTaskCommand,
@@ -19,12 +19,13 @@ import {
   StartMessageMoveTaskCommand,
 } from "@aws-sdk/client-sqs";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("SQS batch ops e2e", () => {
-  const sqs = () => new SQSClient({ endpoint, region, credentials });
+  const sqs = () =>
+    new SQSClient({ endpoint, region, credentials, requestHandler });
 
   test("send/delete/visibility batch round trip", async () => {
     const client = sqs();

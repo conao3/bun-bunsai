@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CloudWatchLogsClient,
   CreateLogGroupCommand,
@@ -15,13 +15,13 @@ import {
   UntagLogGroupCommand,
 } from "@aws-sdk/client-cloudwatch-logs";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("logs e2e (retention, metric filters, tags)", () => {
   const logs = () =>
-    new CloudWatchLogsClient({ endpoint, region, credentials });
+    new CloudWatchLogsClient({ endpoint, region, credentials, requestHandler });
 
   test("put and delete retention policy", async () => {
     const client = logs();

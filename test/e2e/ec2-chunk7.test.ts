@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AssociateVpcCidrBlockCommand,
   AuthorizeSecurityGroupEgressCommand,
@@ -9,12 +9,13 @@ import {
   EC2Client,
 } from "@aws-sdk/client-ec2";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("ec2 chunk7 associate-vpc-cidr-block and authorize-security-group-egress e2e", () => {
-  const ec2 = () => new EC2Client({ endpoint, region, credentials });
+  const ec2 = () =>
+    new EC2Client({ endpoint, region, credentials, requestHandler });
 
   test("associate-vpc-cidr-block: associates IPv4 CIDR block with VPC", async () => {
     const client = ec2();

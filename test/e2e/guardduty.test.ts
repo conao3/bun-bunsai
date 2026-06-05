@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   ArchiveFindingsCommand,
   CreateDetectorCommand,
@@ -41,9 +41,8 @@ import {
   UpdateIPSetCommand,
   UpdateThreatIntelSetCommand,
 } from "@aws-sdk/client-guardduty";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -52,7 +51,7 @@ const guardduty = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("GuardDuty detector lifecycle", async () => {

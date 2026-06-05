@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CountClosedWorkflowExecutionsCommand,
   CountOpenWorkflowExecutionsCommand,
@@ -42,9 +42,8 @@ import {
   UndeprecateWorkflowTypeCommand,
   UntagResourceCommand,
 } from "@aws-sdk/client-swf";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -53,7 +52,7 @@ const swf = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("SWF domain lifecycle", async () => {

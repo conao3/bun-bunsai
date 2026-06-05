@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateCustomEntityTypeCommand,
   CreateDataQualityRulesetCommand,
@@ -14,12 +14,13 @@ import {
   GlueClient,
 } from "@aws-sdk/client-glue";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 describe("glue chunk-9 ops e2e", () => {
-  const glue = () => new GlueClient({ endpoint, region, credentials });
+  const glue = () =>
+    new GlueClient({ endpoint, region, credentials, requestHandler });
 
   test("data quality ruleset create -> get lifecycle", async () => {
     const client = glue();

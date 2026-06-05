@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   ACMClient,
   DeleteCertificateCommand,
@@ -8,9 +8,8 @@ import {
   ListCertificatesCommand,
   RequestCertificateCommand,
 } from "@aws-sdk/client-acm";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -19,7 +18,7 @@ const acm = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("ACM certificate request, describe and delete lifecycle", async () => {

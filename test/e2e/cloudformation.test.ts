@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CloudFormationClient,
   CreateStackCommand,
@@ -10,11 +10,12 @@ import {
   UpdateStackCommand,
 } from "@aws-sdk/client-cloudformation";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const cfn = () => new CloudFormationClient({ endpoint, region, credentials });
+const cfn = () =>
+  new CloudFormationClient({ endpoint, region, credentials, requestHandler });
 
 const template = JSON.stringify({
   AWSTemplateFormatVersion: "2010-09-09",

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   ChangeResourceRecordSetsCommand,
   CreateHostedZoneCommand,
@@ -10,11 +10,12 @@ import {
   Route53Client,
 } from "@aws-sdk/client-route-53";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const route53 = () => new Route53Client({ endpoint, region, credentials });
+const route53 = () =>
+  new Route53Client({ endpoint, region, credentials, requestHandler });
 
 test("Route53 hosted zone and record set lifecycle", async () => {
   const client = route53();

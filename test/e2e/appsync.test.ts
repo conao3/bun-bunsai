@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AppSyncClient,
   AssociateApiCommand,
@@ -63,11 +63,12 @@ import {
   UpdateTypeCommand,
 } from "@aws-sdk/client-appsync";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const appsync = () => new AppSyncClient({ endpoint, region, credentials });
+const appsync = () =>
+  new AppSyncClient({ endpoint, region, credentials, requestHandler });
 
 test("AppSync graphql api and api key roundtrip", async () => {
   const client = appsync();

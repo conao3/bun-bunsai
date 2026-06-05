@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   AddProfilePermissionCommand,
   CancelSigningProfileCommand,
@@ -23,12 +23,18 @@ import {
   UntagResourceCommand,
 } from "@aws-sdk/client-signer";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const signer = () =>
-  new SignerClient({ endpoint, region, credentials, disableHostPrefix: true });
+  new SignerClient({
+    endpoint,
+    region,
+    credentials,
+    requestHandler,
+    disableHostPrefix: true,
+  });
 
 test("Signer signing profile roundtrip", async () => {
   const client = signer();

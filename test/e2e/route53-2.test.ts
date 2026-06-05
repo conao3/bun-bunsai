@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateHealthCheckCommand,
   DeleteHealthCheckCommand,
@@ -9,11 +9,12 @@ import {
   Route53Client,
 } from "@aws-sdk/client-route-53";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const route53 = () => new Route53Client({ endpoint, region, credentials });
+const route53 = () =>
+  new Route53Client({ endpoint, region, credentials, requestHandler });
 
 test("Route53 health check lifecycle and hosted zone count", async () => {
   const client = route53();

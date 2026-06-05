@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
+import { startApp } from "./harness.ts";
 import {
   CreateScheduleCommand,
   CreateScheduleGroupCommand,
@@ -16,11 +16,12 @@ import {
   UpdateScheduleCommand,
 } from "@aws-sdk/client-scheduler";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
-const scheduler = () => new SchedulerClient({ endpoint, region, credentials });
+const scheduler = () =>
+  new SchedulerClient({ endpoint, region, credentials, requestHandler });
 
 test("Scheduler schedule and schedule group roundtrip", async () => {
   const client = scheduler();

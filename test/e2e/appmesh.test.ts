@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { startServer } from "./harness.ts";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
+import { startApp } from "./harness.ts";
 import {
   AppMeshClient,
   CreateGatewayRouteCommand,
@@ -43,7 +42,7 @@ import {
   UpdateVirtualServiceCommand,
 } from "@aws-sdk/client-app-mesh";
 
-const { endpoint } = startServer();
+const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -52,7 +51,7 @@ const appmesh = () =>
     endpoint,
     region,
     credentials,
-    requestHandler: new NodeHttpHandler(),
+    requestHandler,
   });
 
 test("AppMesh mesh roundtrip", async () => {

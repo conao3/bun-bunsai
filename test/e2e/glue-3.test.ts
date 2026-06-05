@@ -117,7 +117,9 @@ describe("glue partition, connection, classifier e2e", () => {
         TableName: tableName,
         Entries: [
           {
-            PartitionValueList: { Values: ["2024-01-03"] },
+            PartitionValueList: {
+              Values: ["2024-01-03"],
+            } as unknown as string[],
             PartitionInput: {
               Values: ["2024-01-03"],
               StorageDescriptor: { Location: "s3://bucket/updated" },

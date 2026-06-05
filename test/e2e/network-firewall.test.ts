@@ -104,7 +104,10 @@ describe("network-firewall e2e", () => {
     const created = await client.send(
       new CreateFirewallPolicyCommand({
         FirewallPolicyName: name,
-        FirewallPolicy: { StatelessDefaultActions: ["aws:drop"] },
+        FirewallPolicy: {
+          StatelessDefaultActions: ["aws:drop"],
+          StatelessFragmentDefaultActions: ["aws:drop"],
+        },
         Description: "initial",
       }),
     );
@@ -129,7 +132,10 @@ describe("network-firewall e2e", () => {
     const updated = await client.send(
       new UpdateFirewallPolicyCommand({
         FirewallPolicyName: name,
-        FirewallPolicy: { StatelessDefaultActions: ["aws:pass"] },
+        FirewallPolicy: {
+          StatelessDefaultActions: ["aws:pass"],
+          StatelessFragmentDefaultActions: ["aws:pass"],
+        },
         UpdateToken: created.UpdateToken,
       }),
     );

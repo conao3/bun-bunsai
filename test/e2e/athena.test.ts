@@ -40,7 +40,7 @@ describe("athena e2e", () => {
     const listed = await client.send(
       new ListQueryExecutionsCommand({ WorkGroup: "primary" }),
     );
-    expect(listed.QueryExecutionIds ?? []).toContain(id);
+    expect(listed.QueryExecutionIds ?? []).toContain(id ?? "");
 
     const results = await client.send(
       new GetQueryResultsCommand({ QueryExecutionId: id }),

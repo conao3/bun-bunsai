@@ -337,7 +337,7 @@ test("GuardDuty publishing destination lifecycle", async () => {
     }),
   );
   expect(described.DestinationType).toBe("S3");
-  expect(described.Status).toBe("ACTIVE");
+  expect(String(described.Status)).toBe("ACTIVE");
 
   const listed = await client.send(
     new ListPublishingDestinationsCommand({ DetectorId: detectorId }),

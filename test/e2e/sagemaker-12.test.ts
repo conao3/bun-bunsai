@@ -43,6 +43,7 @@ test("Cluster create and delete lifecycle", async () => {
           InstanceGroupName: "group1",
           InstanceType: "ml.t3.medium",
           InstanceCount: 1,
+          ExecutionRole: "arn:aws:iam::123456789012:role/bunsai-e2e",
           LifeCycleConfig: {
             SourceS3Uri: "s3://bucket/lcc",
             OnCreate: "on_create.sh",
@@ -267,6 +268,7 @@ test("ClusterSchedulerConfig create and delete lifecycle", async () => {
           InstanceGroupName: "group1",
           InstanceType: "ml.t3.medium",
           InstanceCount: 1,
+          ExecutionRole: "arn:aws:iam::123456789012:role/bunsai-e2e",
           LifeCycleConfig: {
             SourceS3Uri: "s3://bucket/lcc",
             OnCreate: "on_create.sh",

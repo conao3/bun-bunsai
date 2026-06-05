@@ -35,6 +35,7 @@ import {
   TagResourceCommand,
   UntagResourceCommand,
 } from "@aws-sdk/client-personalize";
+import type { TagResourceCommandInput } from "@aws-sdk/client-personalize";
 
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
@@ -400,20 +401,26 @@ test("Personalize tags lifecycle", async () => {
   const listed = await client.send(
     new ListTagsForResourceCommand({ resourceArn: dsgArn }),
   );
-  expect(listed.tags?.["env"]).toBe("test");
+  expect((listed.tags as Record<string, string> | undefined)?.["env"]).toBe(
+    "test",
+  );
 
   await client.send(
     new TagResourceCommand({
       resourceArn: dsgArn,
-      tags: { project: "bunsai" },
+      tags: { project: "bunsai" } as unknown as TagResourceCommandInput["tags"],
     }),
   );
 
   const afterTag = await client.send(
     new ListTagsForResourceCommand({ resourceArn: dsgArn }),
   );
-  expect(afterTag.tags?.["env"]).toBe("test");
-  expect(afterTag.tags?.["project"]).toBe("bunsai");
+  expect((afterTag.tags as Record<string, string> | undefined)?.["env"]).toBe(
+    "test",
+  );
+  expect(
+    (afterTag.tags as Record<string, string> | undefined)?.["project"],
+  ).toBe("bunsai");
 
   await client.send(
     new UntagResourceCommand({ resourceArn: dsgArn, tagKeys: ["env"] }),
@@ -422,6 +429,10 @@ test("Personalize tags lifecycle", async () => {
   const afterUntag = await client.send(
     new ListTagsForResourceCommand({ resourceArn: dsgArn }),
   );
-  expect(afterUntag.tags?.["env"]).toBeUndefined();
-  expect(afterUntag.tags?.["project"]).toBe("bunsai");
+  expect(
+    (afterUntag.tags as Record<string, string> | undefined)?.["env"],
+  ).toBeUndefined();
+  expect(
+    (afterUntag.tags as Record<string, string> | undefined)?.["project"],
+  ).toBe("bunsai");
 });

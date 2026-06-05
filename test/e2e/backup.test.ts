@@ -241,7 +241,7 @@ test("Legal hold create/get/cancel", async () => {
   const afterCancel = await client.send(
     new GetLegalHoldCommand({ LegalHoldId: holdId }),
   );
-  expect(afterCancel.Status).toBe("CANCELLED");
+  expect(String(afterCancel.Status)).toBe("CANCELLED");
 });
 
 test("Report plan lifecycle", async () => {

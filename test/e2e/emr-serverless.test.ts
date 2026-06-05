@@ -25,6 +25,7 @@ import {
   UntagResourceCommand,
   UpdateApplicationCommand,
 } from "@aws-sdk/client-emr-serverless";
+import type { SessionState } from "@aws-sdk/client-emr-serverless";
 
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
@@ -208,7 +209,7 @@ test("EMR Serverless GetResourceDashboard", async () => {
     new GetResourceDashboardCommand({
       applicationId,
       resourceId: sessionId,
-      resourceType: "Session",
+      resourceType: "SESSION",
     }),
   );
   expect(dashboard.url).toBeDefined();
@@ -246,7 +247,7 @@ test("EMR Serverless session lifecycle", async () => {
   );
   expect(got.session?.applicationId).toBe(applicationId);
   expect(got.session?.sessionId).toBe(sessionId);
-  expect(got.session?.state).toBe("CREATING");
+  expect(got.session?.state).toBe("CREATING" as SessionState);
 
   const listed = await client.send(new ListSessionsCommand({ applicationId }));
   expect((listed.sessions ?? []).map((s) => s.sessionId)).toContain(sessionId);

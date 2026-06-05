@@ -238,7 +238,7 @@ const presentConfigurationTemplate = (
   template: StoredConfigurationTemplate,
 ) => ({
   ApplicationName: template.ApplicationName,
-  TemplateName: template.TemplateName,
+  TemplateName: template.TemplateName as string | undefined,
   SolutionStackName: template.SolutionStackName,
   PlatformArn: template.PlatformArn,
   Description: template.Description,

@@ -116,7 +116,7 @@ describe("ec2 net e2e", () => {
       (item) => item.InternetGatewayId === igwId,
     );
     expect(gateway?.Attachments?.[0]?.VpcId).toBe(vpcId);
-    expect(gateway?.Attachments?.[0]?.State).toBe("available");
+    expect(gateway?.Attachments?.[0]?.State as string).toBe("available");
   });
 
   test("allocate, describe and release elastic ip", async () => {

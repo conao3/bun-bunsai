@@ -120,7 +120,7 @@ test("CreateArtifact → DeleteArtifact lifecycle", async () => {
       ArtifactType: "DataSet",
       Source: {
         SourceUri: "s3://bunsai/artifact-source",
-        SourceTypes: [{ SourceIdType: "S3ETag", SourceId: "abc123" }],
+        SourceTypes: [{ SourceIdType: "S3ETag", Value: "abc123" }],
       },
     }),
   );

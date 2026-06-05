@@ -685,7 +685,7 @@ describe("ecs service and task definition e2e", () => {
     const deletedDaemon = await client.send(
       new DeleteDaemonCommand({ daemonArn: dArn! }),
     );
-    expect(deletedDaemon.status).toBe("INACTIVE");
+    expect(deletedDaemon.status as string).toBe("INACTIVE");
 
     await client.send(
       new DeleteDaemonTaskDefinitionCommand({ daemonTaskDefinition: dtdArn! }),
@@ -702,7 +702,7 @@ describe("ecs service and task definition e2e", () => {
       new CreateExpressGatewayServiceCommand({
         executionRoleArn,
         infrastructureRoleArn,
-        primaryContainer: { name: "proxy" },
+        primaryContainer: { image: "proxy" },
       }),
     );
     const sArn = created.service?.serviceArn;

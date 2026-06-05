@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
   AddTagsToResourceCommand,
-  AuthorizeCacheSecurityGroupIngress,
   AuthorizeCacheSecurityGroupIngressCommand,
   BatchApplyUpdateActionCommand,
   BatchStopUpdateActionCommand,

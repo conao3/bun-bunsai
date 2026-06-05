@@ -3737,7 +3737,9 @@ const DescribeEdgeDeploymentPlan: OperationHandler = (input, ctx) => {
 
 const DescribeEdgePackagingJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "EdgePackagingJobName");
-  const stored = ctx.store.get<StoredEdgePackagingJob>(edgePackagingJobKey(name));
+  const stored = ctx.store.get<StoredEdgePackagingJob>(
+    edgePackagingJobKey(name),
+  );
   if (stored === undefined) {
     throw awsError(
       "ResourceNotFound",

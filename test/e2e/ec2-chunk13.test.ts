@@ -40,7 +40,7 @@ describe("ec2 chunk13 create-vpc-endpoint and create-vpc-peering-connection e2e"
     expect(ep?.VpcEndpointId?.startsWith("vpce-")).toBe(true);
     expect(ep?.VpcId).toBe(vpcId);
     expect(ep?.ServiceName).toBe("com.amazonaws.us-east-1.s3");
-    expect(ep?.State).toBe("available");
+    expect(String(ep?.State)).toBe("available");
     expect(ep?.VpcEndpointType).toBe("Gateway");
     expect(ep?.OwnerId).toBeDefined();
     expect(ep?.CreationTimestamp).toBeDefined();

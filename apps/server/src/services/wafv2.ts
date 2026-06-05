@@ -763,7 +763,7 @@ const ListAPIKeys: OperationHandler = (input, ctx) => {
     .list<StoredAPIKey>()
     .filter((entry) => entry.key.startsWith(`apikey/${scope}/`))
     .map((entry) => entry.value)
-    .sort((a, b) => a.CreationTimestamp.localeCompare(b.CreationTimestamp));
+    .sort((a, b) => a.CreationTimestamp - b.CreationTimestamp);
   return {
     APIKeySummaries: keys.map((k) => ({
       TokenDomains: k.TokenDomains,

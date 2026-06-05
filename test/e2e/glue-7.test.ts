@@ -77,7 +77,7 @@ describe("glue custom-entity, table-optimizer, integration, udf e2e", () => {
             catalogId: "123456789012",
             databaseName: "e2e_db",
             tableName: "e2e_table",
-            type: "nonexistent",
+            type: "retention",
           },
         ],
       }),

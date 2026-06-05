@@ -1044,7 +1044,7 @@ const ListProvisioningArtifactsForServiceAction: OperationHandler = (
         ProductViewSummary: productSummary(product),
       };
     })
-    .filter((r): r is Record<string, unknown> => r !== null);
+    .filter((r): r is NonNullable<typeof r> => r !== null);
   return { ProvisioningArtifactViews: results };
 };
 

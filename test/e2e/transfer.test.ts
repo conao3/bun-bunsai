@@ -184,7 +184,7 @@ test("connector and test-connection lifecycle", async () => {
     new DescribeConnectorCommand({ ConnectorId: ConnectorId! }),
   );
   expect(described.Connector?.ConnectorId).toBe(ConnectorId);
-  expect(described.Connector?.Status).toBe("ONLINE");
+  expect(String(described.Connector?.Status)).toBe("ONLINE");
 
   const listed = await transfer.send(new ListConnectorsCommand({}));
   expect(
@@ -280,7 +280,12 @@ test("web-app and customization lifecycle", async () => {
 
   const { WebAppId } = await transfer.send(
     new CreateWebAppCommand({
-      IdentityProviderDetails: { IdentityProviderType: "AWS_IAM_IDP" },
+      IdentityProviderDetails: {
+        IdentityCenterConfig: {
+          InstanceArn: "arn:aws:sso:::instance/ssoins-0123456789abcdef",
+          Role: "arn:aws:iam::000000000000:role/webapp-role",
+        },
+      },
     }),
   );
   expect(WebAppId).toBeDefined();

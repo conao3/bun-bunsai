@@ -192,7 +192,7 @@ export const Ico = {
   ),
 } as const;
 
-export const serviceMeta: Record<
+const serviceMeta: Record<
   string,
   {
     name: string;

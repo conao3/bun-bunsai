@@ -389,7 +389,7 @@ test("DataExchange data grant roundtrip", async () => {
   const accepted = await client.send(
     new AcceptDataGrantCommand({ DataGrantArn: grantArn }),
   );
-  expect(accepted.AcceptanceState).toBe("GRANTED");
+  expect(accepted.AcceptanceState as string).toBe("GRANTED");
   expect(accepted.AcceptedAt).toBeDefined();
 
   await client.send(new DeleteDataGrantCommand({ DataGrantId: grantId }));

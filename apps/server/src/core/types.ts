@@ -1,10 +1,4 @@
-export const protocols = [
-  "query",
-  "ec2",
-  "json",
-  "rest-json",
-  "rest-xml",
-] as const;
+const protocols = ["query", "ec2", "json", "rest-json", "rest-xml"] as const;
 
 export type Protocol = (typeof protocols)[number];
 
@@ -55,30 +49,9 @@ export type OperationHandler = (
   req: ParsedRequest,
 ) => unknown | Promise<unknown>;
 
-export const shapeTypes = [
-  "structure",
-  "list",
-  "map",
-  "string",
-  "integer",
-  "long",
-  "double",
-  "float",
-  "boolean",
-  "blob",
-  "timestamp",
-] as const;
-
-export type ShapeType = (typeof shapeTypes)[number];
-
 export type TimestampFormat = "unixTimestamp" | "iso8601" | "rfc822";
 
-export type Location =
-  | "querystring"
-  | "header"
-  | "headers"
-  | "uri"
-  | "statusCode";
+type Location = "querystring" | "header" | "headers" | "uri" | "statusCode";
 
 export type XmlNamespace = {
   uri: string;

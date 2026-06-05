@@ -321,6 +321,7 @@ const headerString = (
     );
   if (shape !== undefined && shape.type === "structure") return String(value);
   if (shape !== undefined && shape.type === "map") return String(value);
+  if (shape !== undefined && shape.type === "list") return String(value);
   if (shape !== undefined)
     return scalarToWireString(shape, value, member.timestampFormat);
   return String(value);

@@ -11,7 +11,7 @@ import { serializeShapeOutput } from "./codec/serialize.ts";
 import { serializeShapeError } from "./codec/error.ts";
 import type { CodecResult } from "./codec/common.ts";
 
-export const contentTypes = {
+const contentTypes = {
   query: "text/xml",
   ec2: "text/xml;charset=UTF-8",
   json: "application/x-amz-json-1.1",
@@ -59,7 +59,7 @@ const toXmlInline = (value: unknown, indent: string): string => {
   return escapeXml(String(value));
 };
 
-export const buildXml = (
+const buildXml = (
   rootName: string,
   body: Record<string, unknown>,
   attributes: Record<string, string> = {},
@@ -71,7 +71,7 @@ export const buildXml = (
   return `<?xml version="1.0" encoding="UTF-8"?>\n<${rootName}${attrs}>\n${inner}\n</${rootName}>`;
 };
 
-export const parseXml = (xml: string): Record<string, unknown> => {
+const parseXml = (xml: string): Record<string, unknown> => {
   const stripped = xml.replace(/<\?xml[^?]*\?>/, "").trim();
   const rootMatch = stripped.match(/^<([\w:.-]+)[^>]*>([\s\S]*)<\/\1>\s*$/);
   if (!rootMatch) return {};

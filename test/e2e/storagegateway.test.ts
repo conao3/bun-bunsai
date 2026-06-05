@@ -388,7 +388,6 @@ test("storagegateway snapshot schedule lifecycle", async () => {
       StartAt: 0,
       RecurrenceInHours: 24,
       Description: "daily snapshot",
-      Timezone: "GMT",
     }),
   );
 

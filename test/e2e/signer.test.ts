@@ -22,6 +22,7 @@ import {
   TagResourceCommand,
   UntagResourceCommand,
 } from "@aws-sdk/client-signer";
+import type { SigningStatus } from "@aws-sdk/client-signer";
 
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
@@ -178,7 +179,7 @@ test("RevokeSignature", async () => {
   const desc = await client.send(
     new DescribeSigningJobCommand({ jobId: start.jobId! }),
   );
-  expect(desc.status).toBe("Revoked");
+  expect(desc.status).toBe("Revoked" as SigningStatus);
   expect(desc.revocationRecord).toBeDefined();
 });
 

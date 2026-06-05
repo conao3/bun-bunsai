@@ -457,7 +457,7 @@ test("CloudWatch alarm mute rule lifecycle", async () => {
   await client.send(
     new PutAlarmMuteRuleCommand({
       Name: ruleName,
-      Rule: { Schedule: "cron(0 0 * * ? *)" },
+      Rule: { Schedule: { Expression: "cron(0 0 * * ? *)", Duration: "PT1H" } },
       Description: "e2e mute rule",
     }),
   );

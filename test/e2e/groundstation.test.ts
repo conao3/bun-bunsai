@@ -344,10 +344,14 @@ test("GroundStation contact roundtrip", async () => {
     new ListContactVersionsCommand({ contactId }),
   );
   expect(versions.contactVersionsList?.length).toBeGreaterThan(0);
-  const versionId = versions.contactVersionsList?.[0]?.versionId ?? "";
+  const versionId = versions.contactVersionsList?.[0]?.versionId;
+  expect(versionId).toBeDefined();
 
   const describedVersion = await client.send(
-    new DescribeContactVersionCommand({ contactId, versionId }),
+    new DescribeContactVersionCommand({
+      contactId,
+      versionId: versionId as unknown as number,
+    }),
   );
   expect(describedVersion.contactId).toBe(contactId);
 
@@ -454,12 +458,13 @@ test("GroundStation agent operations", async () => {
   const registered = await client.send(
     new RegisterAgentCommand({
       discoveryData: {
-        groundStations: ["gs-bunsai-0001"],
-        mountPoints: [],
+        publicIpAddresses: ["203.0.113.1"],
+        privateIpAddresses: ["10.0.0.1"],
         capabilityArns: [],
       },
       agentDetails: {
         agentVersion: "1.0.0",
+        instanceId: "i-0bunsaie2e000001",
         instanceType: "t3.medium",
         componentVersions: [],
         agentCpuCores: [],

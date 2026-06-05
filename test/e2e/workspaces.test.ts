@@ -431,7 +431,7 @@ test("WorkSpaces pool create/start/stop/terminate", async () => {
   );
   expect(created.WorkspacesPool?.PoolId).toBeDefined();
   const poolId = created.WorkspacesPool?.PoolId as string;
-  expect(created.WorkspacesPool?.State).toBe("AVAILABLE");
+  expect(created.WorkspacesPool?.State as string).toBe("AVAILABLE");
 
   const described = await client.send(
     new DescribeWorkspacesPoolsCommand({ PoolIds: [poolId] }),
@@ -451,7 +451,7 @@ test("WorkSpaces pool create/start/stop/terminate", async () => {
   const afterStart = await client.send(
     new DescribeWorkspacesPoolsCommand({ PoolIds: [poolId] }),
   );
-  expect(afterStart.WorkspacesPools?.[0]?.State).toBe("AVAILABLE");
+  expect(afterStart.WorkspacesPools?.[0]?.State as string).toBe("AVAILABLE");
 
   await client.send(new TerminateWorkspacesPoolCommand({ PoolId: poolId }));
 
@@ -469,7 +469,9 @@ test("WorkSpaces account-link invite/accept/list", async () => {
   );
   expect(created.AccountLink?.AccountLinkId).toBeDefined();
   const linkId = created.AccountLink?.AccountLinkId as string;
-  expect(created.AccountLink?.AccountLinkStatus).toBe("PENDING_ACCEPTANCE");
+  expect(created.AccountLink?.AccountLinkStatus as string).toBe(
+    "PENDING_ACCEPTANCE",
+  );
 
   const listed = await client.send(new ListAccountLinksCommand({}));
   expect(listed.AccountLinks?.some((l) => l.AccountLinkId === linkId)).toBe(

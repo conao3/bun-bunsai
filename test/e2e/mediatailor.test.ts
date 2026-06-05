@@ -454,8 +454,7 @@ test("MediaTailor program roundtrip", async () => {
       ProgramName: programName,
       ScheduleConfiguration: {
         Transition: {
-          RelativePosition: "BEFORE_PROGRAM",
-          Type: "RELATIVE",
+          DurationMillis: 60000,
         },
       },
     }),

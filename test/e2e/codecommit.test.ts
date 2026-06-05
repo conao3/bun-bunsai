@@ -137,7 +137,7 @@ test("CodeCommit lifecycle: branches, files, merges, triggers, tags", async () =
       repositoryName: repoName,
       branchName: "main",
       filePath: "README.md",
-      fileContent: Buffer.from("# Hello").toString("base64"),
+      fileContent: Buffer.from("# Hello"),
       commitMessage: "initial commit",
     }),
   );
@@ -177,7 +177,7 @@ test("CodeCommit lifecycle: branches, files, merges, triggers, tags", async () =
       repositoryName: repoName,
       branchName: "feature",
       filePath: "feature.txt",
-      fileContent: Buffer.from("feature content").toString("base64"),
+      fileContent: Buffer.from("feature content"),
     }),
   );
   expect(put2.commitId).toBeTruthy();
@@ -249,7 +249,7 @@ test("CodeCommit lifecycle: branches, files, merges, triggers, tags", async () =
       repositoryName: repoName,
       branchName: "main",
       filePath: "src/app.ts",
-      fileContent: Buffer.from("export {}").toString("base64"),
+      fileContent: Buffer.from("export {}"),
       parentCommitId: merged.commitId,
     }),
   );
@@ -434,7 +434,7 @@ test("CodeCommit pull-request lifecycle", async () => {
       repositoryName: repoName,
       branchName: "main",
       filePath: "README.md",
-      fileContent: Buffer.from("hello").toString("base64"),
+      fileContent: Buffer.from("hello"),
       commitMessage: "init",
     }),
   );
@@ -450,7 +450,7 @@ test("CodeCommit pull-request lifecycle", async () => {
       repositoryName: repoName,
       branchName: "feature",
       filePath: "feat.md",
-      fileContent: Buffer.from("feature").toString("base64"),
+      fileContent: Buffer.from("feature"),
       commitMessage: "feat",
     }),
   );
@@ -527,7 +527,7 @@ test("CodeCommit comment lifecycle", async () => {
       repositoryName: repoName,
       branchName: "main",
       filePath: "README.md",
-      fileContent: Buffer.from("hello").toString("base64"),
+      fileContent: Buffer.from("hello"),
       commitMessage: "init",
     }),
   );
@@ -543,7 +543,7 @@ test("CodeCommit comment lifecycle", async () => {
       repositoryName: repoName,
       branchName: "feature",
       filePath: "feat.md",
-      fileContent: Buffer.from("feature").toString("base64"),
+      fileContent: Buffer.from("feature"),
       commitMessage: "feat",
     }),
   );

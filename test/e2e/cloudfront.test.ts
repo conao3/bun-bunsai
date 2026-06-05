@@ -53,17 +53,17 @@ const distributionConfig = (callerReference: string, comment: string) => ({
         CustomOriginConfig: {
           HTTPPort: 80,
           HTTPSPort: 443,
-          OriginProtocolPolicy: "https-only",
+          OriginProtocolPolicy: "https-only" as const,
         },
       },
     ],
   },
   DefaultCacheBehavior: {
     TargetOriginId: "origin-1",
-    ViewerProtocolPolicy: "allow-all",
+    ViewerProtocolPolicy: "allow-all" as const,
     ForwardedValues: {
       QueryString: false,
-      Cookies: { Forward: "none" },
+      Cookies: { Forward: "none" as const },
     },
     MinTTL: 0,
   },

@@ -182,7 +182,7 @@ test("IoT Events alarm model roundtrip", async () => {
       comparisonOperator: "GREATER",
       threshold: "30",
     },
-  };
+  } as const;
 
   const created = await client.send(
     new CreateAlarmModelCommand({

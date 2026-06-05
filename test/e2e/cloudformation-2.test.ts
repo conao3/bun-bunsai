@@ -433,7 +433,7 @@ test("CloudFormation execute change set + stack policy + termination protection"
     }),
   );
   expect(hooks.ChangeSetName).toBe(changeSetName);
-  expect(hooks.Status).toBe("PLANNING_COMPLETE");
+  expect(String(hooks.Status)).toBe("PLANNING_COMPLETE");
 
   await client.send(
     new ExecuteChangeSetCommand({
@@ -632,7 +632,7 @@ test("CloudFormation stack refactor lifecycle", async () => {
       StackRefactorId: created.StackRefactorId!,
     }),
   );
-  expect(afterExecute.Status).toBe("EXECUTE_COMPLETE");
+  expect(String(afterExecute.Status)).toBe("EXECUTE_COMPLETE");
 });
 
 test("CloudFormation publisher + organizations access", async () => {

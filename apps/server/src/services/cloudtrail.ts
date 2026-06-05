@@ -559,7 +559,7 @@ const normalizeTags = (value: unknown): StoredTag[] => {
     return [];
   }
   return value
-    .map((entry) => {
+    .map((entry): StoredTag | undefined => {
       const tag = entry as Record<string, unknown>;
       const key = tag["Key"];
       if (typeof key !== "string") {

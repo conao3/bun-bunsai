@@ -860,7 +860,7 @@ test("EMR persistent app UI lifecycle", async () => {
   const onCluster = await client.send(
     new GetOnClusterAppUIPresignedURLCommand({
       ClusterId: clusterId,
-      OnClusterAppUIType: "SPARK_HISTORY_SERVER",
+      OnClusterAppUIType: "SparkHistoryServer",
     }),
   );
   expect(onCluster.PresignedURLReady).toBe(true);

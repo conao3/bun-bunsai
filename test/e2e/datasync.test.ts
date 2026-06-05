@@ -378,7 +378,9 @@ test("datasync FSx ONTAP location round-trip", async () => {
       SecurityGroupArns: [
         "arn:aws:ec2:us-east-1:000000000000:security-group/sg-12345678",
       ],
-      Protocol: { SMB: { MountOptions: { Version: "AUTOMATIC" } } },
+      Protocol: {
+        SMB: { MountOptions: { Version: "AUTOMATIC" }, User: "bunsai" },
+      },
     }),
   );
   const locArn = created.LocationArn!;

@@ -47,6 +47,7 @@ import {
   UpdateServiceEnvironmentCommand,
   UpdateServiceJobCommand,
 } from "@aws-sdk/client-batch";
+import type { JobStatus } from "@aws-sdk/client-batch";
 
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
@@ -117,7 +118,10 @@ test("Batch job listing, cancel and terminate", async () => {
   expect(cancelled.$metadata.httpStatusCode).toBe(200);
 
   const afterCancel = await client.send(
-    new ListJobsCommand({ jobQueue: jobQueueName, jobStatus: "CANCELLED" }),
+    new ListJobsCommand({
+      jobQueue: jobQueueName,
+      jobStatus: "CANCELLED" as JobStatus,
+    }),
   );
   const cancelledIds = (afterCancel.jobSummaryList ?? []).map(
     (entry) => entry.jobId,
@@ -378,8 +382,8 @@ test("Quota share CRUD", async () => {
       quotaShareName,
       jobQueue: jobQueueName,
       capacityLimits: [],
-      resourceSharingConfiguration: {},
-      preemptionConfiguration: {},
+      resourceSharingConfiguration: { strategy: "RESERVE" },
+      preemptionConfiguration: { inSharePreemption: "DISABLED" },
     }),
   );
   expect(created.quotaShareName).toBe(quotaShareName);
@@ -427,7 +431,7 @@ test("Service job lifecycle", async () => {
       jobName: "bunsai-e2e2-sj-1",
       jobQueue: jobQueueName,
       serviceJobType: "SAGEMAKER_TRAINING",
-      serviceRequestPayload: {},
+      serviceRequestPayload: JSON.stringify({}),
     }),
   );
   expect(submitted.jobName).toBe("bunsai-e2e2-sj-1");

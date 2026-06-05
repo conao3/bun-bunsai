@@ -624,7 +624,7 @@ test("LicenseManager asset ruleset lifecycle", async () => {
   const created = await client.send(
     new CreateLicenseAssetRulesetCommand({
       Name: "bunsai-e2e-ruleset",
-      Rules: [{ Name: "rule1", Value: "value1", Unit: "None" }],
+      Rules: [{ RuleStatement: {} }],
       ClientToken: `tok-${crypto.randomUUID()}`,
     }),
   );
@@ -641,7 +641,7 @@ test("LicenseManager asset ruleset lifecycle", async () => {
   await client.send(
     new UpdateLicenseAssetRulesetCommand({
       LicenseAssetRulesetArn: rulesetArn,
-      Rules: [{ Name: "rule1", Value: "updated", Unit: "None" }],
+      Rules: [{ RuleStatement: {} }],
       ClientToken: `tok-${crypto.randomUUID()}`,
     }),
   );
@@ -675,7 +675,7 @@ test("LicenseManager asset group lifecycle", async () => {
   const rulesetCreated = await client.send(
     new CreateLicenseAssetRulesetCommand({
       Name: "bunsai-e2e-group-ruleset",
-      Rules: [{ Name: "rule1", Value: "value1", Unit: "None" }],
+      Rules: [{ RuleStatement: {} }],
       ClientToken: `tok-${crypto.randomUUID()}`,
     }),
   );
@@ -743,8 +743,8 @@ test("LicenseManager license conversion task", async () => {
   const created = await client.send(
     new CreateLicenseConversionTaskForResourceCommand({
       ResourceArn: "arn:aws:ec2:us-east-1:123456789012:instance/i-12345abc",
-      SourceLicenseContext: { usageOperation: "RunInstances:0010" },
-      DestinationLicenseContext: { usageOperation: "RunInstances:0014" },
+      SourceLicenseContext: { UsageOperation: "RunInstances:0010" },
+      DestinationLicenseContext: { UsageOperation: "RunInstances:0014" },
     }),
   );
   const taskId = created.LicenseConversionTaskId!;

@@ -1,7 +1,7 @@
 import type { ParsedRequest, Protocol } from "./types.ts";
 
-export const defaultAccount = "000000000000" as const;
-export const defaultRegion = "us-east-1" as const;
+const defaultAccount = "000000000000" as const;
+const defaultRegion = "us-east-1" as const;
 
 export type RouteResult = {
   service: string | undefined;

@@ -14,13 +14,13 @@ import type {
 } from "../../apps/server/src/core/types.ts";
 import { knownGaps } from "./known-gaps.ts";
 
-export type VendorHttp = {
+type VendorHttp = {
   method: string;
   requestUri: string;
   responseCode?: number;
 };
 
-export type VendorGiven = {
+type VendorGiven = {
   name: string;
   http: VendorHttp;
   input?: { shape: string };
@@ -30,20 +30,20 @@ export type VendorGiven = {
   idempotent?: boolean;
 };
 
-export type VendorSerialized = {
+type VendorSerialized = {
   method?: string;
   uri?: string;
   body?: string;
   headers?: Record<string, string>;
 };
 
-export type VendorResponse = {
+type VendorResponse = {
   status_code?: number;
   headers?: Record<string, string>;
   body?: string;
 };
 
-export type VendorCase = {
+type VendorCase = {
   id: string;
   given: VendorGiven;
   description?: string;
@@ -56,7 +56,7 @@ export type VendorCase = {
   response?: VendorResponse;
 };
 
-export type VendorMetadata = {
+type VendorMetadata = {
   protocol: string;
   protocols?: string[];
   apiVersion?: string;

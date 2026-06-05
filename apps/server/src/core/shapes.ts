@@ -71,10 +71,6 @@ export type ServiceModelJson = {
   shapes?: Record<string, RawShape>;
 };
 
-export type SuiteShapes = {
-  shapes?: Record<string, RawShape>;
-};
-
 const normalizeXmlNamespace = (
   raw: RawXmlNamespace | undefined,
 ): XmlNamespace | undefined => {
@@ -259,18 +255,6 @@ export const resolveOutputShape = (
   const op = model.operations[name];
   if (op?.output === undefined) return undefined;
   return model.registry.shapes[op.output.shape];
-};
-
-export const resolveErrorShape = (
-  model: ServiceModel,
-  operationName: string,
-  errorShapeName: string,
-): Shape | undefined => {
-  const op = model.operations[operationName];
-  if (op?.errors === undefined) return undefined;
-  const found = op.errors.find((e) => e.shape === errorShapeName);
-  if (found === undefined) return undefined;
-  return model.registry.shapes[found.shape];
 };
 
 export const errorTraitCode = (

@@ -142,13 +142,3 @@ export const scalarToWireString = (
   if (shape.type === "boolean") return value === true ? "true" : "false";
   return String(value);
 };
-
-export const wireName = (
-  fallback: string,
-  member: Member,
-  preferQueryName: boolean,
-): string => {
-  if (preferQueryName && member.queryName !== undefined)
-    return member.queryName;
-  return member.locationName ?? fallback;
-};

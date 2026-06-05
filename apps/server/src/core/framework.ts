@@ -28,7 +28,7 @@ const isAwsError = (value: unknown): value is AwsError =>
   value !== null &&
   (value as { __awsError?: unknown }).__awsError === true;
 
-export const resolveOperationName = (
+const resolveOperationName = (
   service: ServiceDefinition,
   req: ParsedRequest,
 ): string | undefined => {

@@ -1,4 +1,4 @@
-export const protocols = [
+const protocols = [
   "query",
   "json",
   "rest-json",

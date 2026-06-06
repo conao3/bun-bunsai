@@ -770,21 +770,28 @@ const filterByExpression = (
 
 const keySchemaShape = (
   elements: KeySchemaElement[],
-): { hash: string; range?: string } => {
+  definitions: AttributeDefinition[] = [],
+): { hash: string; range?: string; rangeType?: string } => {
   let hash = "";
   let range: string | undefined;
   for (const element of elements) {
     if (element.KeyType === "HASH") hash = element.AttributeName;
     else if (element.KeyType === "RANGE") range = element.AttributeName;
   }
-  return range === undefined ? { hash } : { hash, range };
+  if (range === undefined) return { hash };
+  const rangeType = definitions.find(
+    (def) => def.AttributeName === range,
+  )?.AttributeType;
+  return { hash, range, rangeType };
 };
 
 const indexKeySchema = (
   table: StoredTable,
   indexName: string | undefined,
-): { hash: string; range?: string } => {
-  if (indexName === undefined) return keySchemaShape(table.KeySchema);
+): { hash: string; range?: string; rangeType?: string } => {
+  if (indexName === undefined) {
+    return keySchemaShape(table.KeySchema, table.AttributeDefinitions);
+  }
   const candidates = [
     ...(table.globalSecondaryIndexes ?? []),
     ...(table.localSecondaryIndexes ?? []),
@@ -797,7 +804,7 @@ const indexKeySchema = (
       400,
     );
   }
-  return keySchemaShape(index.KeySchema);
+  return keySchemaShape(index.KeySchema, table.AttributeDefinitions);
 };
 
 const matchesResolvedKeyCondition = (
@@ -912,7 +919,16 @@ const Query: OperationHandler = (input, ctx) => {
       const rangeAttr = schema.range;
       matched.sort((a, b) => {
         const cmp = compareAV(a[rangeAttr] ?? {}, b[rangeAttr] ?? {});
-        return cmp ?? 0;
+        if (cmp !== undefined && cmp !== 0) return cmp;
+        const hashCmp = compareAV(
+          a[baseSchema.hash] ?? {},
+          b[baseSchema.hash] ?? {},
+        );
+        if (hashCmp !== undefined && hashCmp !== 0) return hashCmp;
+        if (baseSchema.range === undefined) return 0;
+        return (
+          compareAV(a[baseSchema.range] ?? {}, b[baseSchema.range] ?? {}) ?? 0
+        );
       });
     }
   } else {
@@ -932,8 +948,25 @@ const Query: OperationHandler = (input, ctx) => {
   const startKey = input["ExclusiveStartKey"];
   if (typeof startKey === "object" && startKey !== null) {
     const start = startKey as Item;
-    const found = matched.findIndex((item) => keysEqual(item, start, schema));
-    if (found >= 0) startIndex = found + 1;
+    const found = matched.findIndex(
+      (item) =>
+        keysEqual(item, start, schema) && keysEqual(item, start, baseSchema),
+    );
+    if (found >= 0) {
+      startIndex = found + 1;
+    } else if (
+      schema.range !== undefined &&
+      start[schema.range] !== undefined
+    ) {
+      const forward = input["ScanIndexForward"] !== false;
+      const startRange = start[schema.range] as AttributeValue;
+      const pos = matched.findIndex((item) => {
+        const cmp = compareAV(item[schema.range as string] ?? {}, startRange);
+        if (cmp === undefined) return false;
+        return forward ? cmp > 0 : cmp < 0;
+      });
+      startIndex = pos >= 0 ? pos : matched.length;
+    }
   }
   const remainder = matched.slice(startIndex);
   const rawLimit = input["Limit"];

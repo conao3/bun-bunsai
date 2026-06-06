@@ -16,7 +16,7 @@ const valueOf = (operand: Operand): Record<string, unknown> => {
 
 export const resolveKeyCondition = (
   ast: KeyConditionAST,
-  schema: { hash: string; range?: string },
+  schema: { hash: string; range?: string; rangeType?: string },
 ): KeyConditionResult => {
   if (ast.hash.path.root !== schema.hash) {
     failValidation(`Query condition missed key schema element: ${schema.hash}`);
@@ -51,10 +51,26 @@ export const resolveKeyCondition = (
       hi: valueOf(pred.high),
     };
   } else {
+    if (
+      schema.rangeType !== undefined &&
+      schema.rangeType !== "S" &&
+      schema.rangeType !== "B"
+    ) {
+      failValidation(
+        "Invalid KeyConditionExpression: Incorrect operand type for operator or function; operator or function: begins_with",
+      );
+    }
+    const prefix = valueOf(pred.prefix);
+    const operandType = Object.keys(prefix)[0];
+    if (operandType !== "S" && operandType !== "B") {
+      failValidation(
+        `Invalid KeyConditionExpression: Incorrect operand type for operator or function; operator or function: begins_with, operand type: ${operandType}`,
+      );
+    }
     result.range = {
       attribute: rangeAttr,
       op: "begins_with",
-      prefix: valueOf(pred.prefix),
+      prefix,
     };
   }
   return result;

@@ -15,8 +15,12 @@ type StoredMessage = {
   Body: string;
   MD5OfBody: string;
   MessageAttributes: Record<string, unknown> | undefined;
+  MD5OfMessageAttributes: string | undefined;
   invisibleUntil: number;
   receiveCount: number;
+  SentTimestamp: number;
+  firstReceivedAt: number | undefined;
+  SenderId: string;
 };
 
 type StoredQueue = {
@@ -25,12 +29,153 @@ type StoredQueue = {
   Attributes: Record<string, string>;
   Tags: Record<string, string>;
   messages: StoredMessage[];
+  createdAt: number;
+  modifiedAt: number;
 };
 
 const md5Hex = (value: string): string => {
   const hasher = new Bun.CryptoHasher("md5");
   hasher.update(value);
   return hasher.digest("hex");
+};
+
+const encodeLengthPrefixed = (parts: Uint8Array[], bytes: Uint8Array): void => {
+  const length = new Uint8Array(4);
+  new DataView(length.buffer).setUint32(0, bytes.length, false);
+  parts.push(length, bytes);
+};
+
+const md5OfMessageAttributes = (
+  attributes: Record<string, unknown> | undefined,
+): string | undefined => {
+  if (attributes === undefined) return undefined;
+  const names = Object.keys(attributes).sort();
+  if (names.length === 0) return undefined;
+  const encoder = new TextEncoder();
+  const parts: Uint8Array[] = [];
+  for (const name of names) {
+    const attribute = attributes[name] as Record<string, unknown>;
+    const dataType =
+      typeof attribute["DataType"] === "string"
+        ? (attribute["DataType"] as string)
+        : "String";
+    encodeLengthPrefixed(parts, encoder.encode(name));
+    encodeLengthPrefixed(parts, encoder.encode(dataType));
+    const stringValue = attribute["StringValue"];
+    const binaryValue = attribute["BinaryValue"];
+    if (typeof stringValue === "string") {
+      parts.push(new Uint8Array([1]));
+      encodeLengthPrefixed(parts, encoder.encode(stringValue));
+    } else if (binaryValue !== undefined) {
+      parts.push(new Uint8Array([2]));
+      const bytes =
+        binaryValue instanceof Uint8Array
+          ? binaryValue
+          : typeof binaryValue === "string"
+            ? Uint8Array.from(atob(binaryValue), (c) => c.charCodeAt(0))
+            : new Uint8Array();
+      encodeLengthPrefixed(parts, bytes);
+    }
+  }
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const buffer = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    buffer.set(part, offset);
+    offset += part.length;
+  }
+  const hasher = new Bun.CryptoHasher("md5");
+  hasher.update(buffer);
+  return hasher.digest("hex");
+};
+
+const toIntOr = (raw: unknown, fallback: number): number => {
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number.parseInt(raw, 10)
+        : fallback;
+  return Number.isFinite(value) ? value : fallback;
+};
+
+const queueVisibilityDefault = (queue: StoredQueue): number =>
+  toIntOr(queue.Attributes["VisibilityTimeout"], 30);
+
+const queueDelayDefault = (queue: StoredQueue): number =>
+  toIntOr(queue.Attributes["DelaySeconds"], 0);
+
+const messageAttributesOf = (
+  source: Record<string, unknown>,
+): Record<string, unknown> | undefined =>
+  typeof source["MessageAttributes"] === "object" &&
+  source["MessageAttributes"] !== null
+    ? (source["MessageAttributes"] as Record<string, unknown>)
+    : undefined;
+
+type EnqueueOptions = {
+  body: string;
+  messageAttributes: Record<string, unknown> | undefined;
+  delaySeconds: number;
+  senderId: string;
+};
+
+const enqueueMessage = (
+  queue: StoredQueue,
+  options: EnqueueOptions,
+): StoredMessage => {
+  const now = Date.now();
+  const message: StoredMessage = {
+    MessageId: crypto.randomUUID(),
+    ReceiptHandle: crypto.randomUUID(),
+    Body: options.body,
+    MD5OfBody: md5Hex(options.body),
+    MessageAttributes: options.messageAttributes,
+    MD5OfMessageAttributes: md5OfMessageAttributes(options.messageAttributes),
+    invisibleUntil: options.delaySeconds > 0 ? now + options.delaySeconds * 1000 : 0,
+    receiveCount: 0,
+    SentTimestamp: now,
+    firstReceivedAt: undefined,
+    SenderId: options.senderId,
+  };
+  queue.messages.push(message);
+  return message;
+};
+
+const systemAttributesRequest = (input: Record<string, unknown>): Set<string> => {
+  const names = new Set<string>();
+  for (const key of ["AttributeNames", "MessageSystemAttributeNames"]) {
+    const raw = input[key];
+    if (Array.isArray(raw)) {
+      for (const value of raw as unknown[]) names.add(String(value));
+    } else if (typeof raw === "string" && raw !== "") {
+      names.add(raw);
+    }
+  }
+  return names;
+};
+
+const buildSystemAttributes = (
+  message: StoredMessage,
+  requested: Set<string>,
+): Record<string, string> | undefined => {
+  if (requested.size === 0) return undefined;
+  const all = requested.has("All");
+  const available: Record<string, string> = {
+    ApproximateReceiveCount: String(message.receiveCount),
+    SentTimestamp: String(message.SentTimestamp),
+    SenderId: message.SenderId,
+  };
+  if (message.firstReceivedAt !== undefined) {
+    available["ApproximateFirstReceiveTimestamp"] = String(
+      message.firstReceivedAt,
+    );
+  }
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(available)) {
+    if (all || requested.has(key)) result[key] = value;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 };
 
 const queueUrlOf = (account: string, name: string): string =>
@@ -80,12 +225,15 @@ const CreateQueue: OperationHandler = (input, ctx) => {
     typeof input["tags"] === "object" && input["tags"] !== null
       ? (input["tags"] as Record<string, string>)
       : {};
+  const now = Date.now();
   const queue: StoredQueue = {
     QueueName: name,
     QueueUrl: url,
     Attributes: { ...attributes },
     Tags: { ...tags },
     messages: [],
+    createdAt: now,
+    modifiedAt: now,
   };
   ctx.store.set(name, queue);
   return { QueueUrl: url };
@@ -127,27 +275,23 @@ const SendMessage: OperationHandler = (input, ctx) => {
     typeof input["MessageBody"] === "string"
       ? (input["MessageBody"] as string)
       : "";
-  const messageAttributes =
-    typeof input["MessageAttributes"] === "object" &&
-    input["MessageAttributes"] !== null
-      ? (input["MessageAttributes"] as Record<string, unknown>)
-      : undefined;
-  const messageId = crypto.randomUUID();
-  const receiptHandle = crypto.randomUUID();
-  const message: StoredMessage = {
-    MessageId: messageId,
-    ReceiptHandle: receiptHandle,
-    Body: body,
-    MD5OfBody: md5Hex(body),
-    MessageAttributes: messageAttributes,
-    invisibleUntil: 0,
-    receiveCount: 0,
-  };
-  queue.messages.push(message);
+  const delaySeconds = toIntOr(
+    input["DelaySeconds"],
+    queueDelayDefault(queue),
+  );
+  const message = enqueueMessage(queue, {
+    body,
+    messageAttributes: messageAttributesOf(input),
+    delaySeconds,
+    senderId: ctx.account,
+  });
   ctx.store.set(name, queue);
   return {
-    MessageId: messageId,
+    MessageId: message.MessageId,
     MD5OfMessageBody: message.MD5OfBody,
+    ...(message.MD5OfMessageAttributes !== undefined
+      ? { MD5OfMessageAttributes: message.MD5OfMessageAttributes }
+      : {}),
   };
 };
 
@@ -162,14 +306,11 @@ const ReceiveMessage: OperationHandler = (input, ctx) => {
         ? Number.parseInt(rawMax, 10)
         : 1;
   const limit = Number.isFinite(max) && max > 0 ? Math.min(max, 10) : 1;
-  const rawVisibility = input["VisibilityTimeout"];
-  const visibility =
-    typeof rawVisibility === "number"
-      ? rawVisibility
-      : typeof rawVisibility === "string"
-        ? Number.parseInt(rawVisibility, 10)
-        : 30;
-  const visibilitySeconds = Number.isFinite(visibility) ? visibility : 30;
+  const visibilitySeconds =
+    input["VisibilityTimeout"] === undefined
+      ? queueVisibilityDefault(queue)
+      : toIntOr(input["VisibilityTimeout"], queueVisibilityDefault(queue));
+  const systemRequest = systemAttributesRequest(input);
   const now = Date.now();
   const selected: StoredMessage[] = [];
   for (const message of queue.messages) {
@@ -177,18 +318,26 @@ const ReceiveMessage: OperationHandler = (input, ctx) => {
     if (message.invisibleUntil > now) continue;
     message.invisibleUntil = now + visibilitySeconds * 1000;
     message.receiveCount += 1;
+    if (message.firstReceivedAt === undefined) message.firstReceivedAt = now;
     message.ReceiptHandle = crypto.randomUUID();
     selected.push(message);
   }
   ctx.store.set(name, queue);
   return {
-    Messages: selected.map((message) => ({
-      MessageId: message.MessageId,
-      ReceiptHandle: message.ReceiptHandle,
-      MD5OfBody: message.MD5OfBody,
-      Body: message.Body,
-      MessageAttributes: message.MessageAttributes,
-    })),
+    Messages: selected.map((message) => {
+      const attributes = buildSystemAttributes(message, systemRequest);
+      return {
+        MessageId: message.MessageId,
+        ReceiptHandle: message.ReceiptHandle,
+        MD5OfBody: message.MD5OfBody,
+        Body: message.Body,
+        MessageAttributes: message.MessageAttributes,
+        ...(message.MD5OfMessageAttributes !== undefined
+          ? { MD5OfMessageAttributes: message.MD5OfMessageAttributes }
+          : {}),
+        ...(attributes !== undefined ? { Attributes: attributes } : {}),
+      };
+    }),
   };
 };
 
@@ -216,13 +365,18 @@ const GetQueueAttributes: OperationHandler = (input, ctx) => {
   const visible = queue.messages.filter(
     (message) => message.invisibleUntil <= now,
   ).length;
-  const notVisible = queue.messages.length - visible;
+  const delayed = queue.messages.filter(
+    (message) => message.invisibleUntil > now && message.receiveCount === 0,
+  ).length;
+  const notVisible = queue.messages.length - visible - delayed;
   const computed: Record<string, string> = {
     ...queue.Attributes,
     QueueArn: `arn:aws:sqs:${ctx.region}:${ctx.account}:${name}`,
     ApproximateNumberOfMessages: String(visible),
     ApproximateNumberOfMessagesNotVisible: String(notVisible),
-    ApproximateNumberOfMessagesDelayed: "0",
+    ApproximateNumberOfMessagesDelayed: String(delayed),
+    CreatedTimestamp: String(Math.floor(queue.createdAt / 1000)),
+    LastModifiedTimestamp: String(Math.floor(queue.modifiedAt / 1000)),
   };
   const requested = input["AttributeNames"];
   const names = Array.isArray(requested)
@@ -287,6 +441,7 @@ const SetQueueAttributes: OperationHandler = (input, ctx) => {
   for (const [key, value] of Object.entries(attributes)) {
     queue.Attributes[key] = String(value);
   }
+  queue.modifiedAt = Date.now();
   ctx.store.set(name, queue);
   return {};
 };
@@ -371,26 +526,20 @@ const SendMessageBatch: OperationHandler = (input, ctx) => {
       });
       continue;
     }
-    const messageAttributes =
-      typeof entry["MessageAttributes"] === "object" &&
-      entry["MessageAttributes"] !== null
-        ? (entry["MessageAttributes"] as Record<string, unknown>)
-        : undefined;
-    const messageId = crypto.randomUUID();
-    const message: StoredMessage = {
-      MessageId: messageId,
-      ReceiptHandle: crypto.randomUUID(),
-      Body: body,
-      MD5OfBody: md5Hex(body),
-      MessageAttributes: messageAttributes,
-      invisibleUntil: 0,
-      receiveCount: 0,
-    };
-    queue.messages.push(message);
+    const delaySeconds = toIntOr(entry["DelaySeconds"], queueDelayDefault(queue));
+    const message = enqueueMessage(queue, {
+      body,
+      messageAttributes: messageAttributesOf(entry),
+      delaySeconds,
+      senderId: ctx.account,
+    });
     successful.push({
       Id: id,
-      MessageId: messageId,
+      MessageId: message.MessageId,
       MD5OfMessageBody: message.MD5OfBody,
+      ...(message.MD5OfMessageAttributes !== undefined
+        ? { MD5OfMessageAttributes: message.MD5OfMessageAttributes }
+        : {}),
     });
   }
   ctx.store.set(name, queue);

@@ -81,10 +81,16 @@ describe("SQS extra ops e2e", () => {
     const beforePurge = await client.send(
       new GetQueueAttributesCommand({
         QueueUrl: queueUrl,
-        AttributeNames: ["ApproximateNumberOfMessages"],
+        AttributeNames: [
+          "ApproximateNumberOfMessages",
+          "ApproximateNumberOfMessagesDelayed",
+        ],
       }),
     );
-    expect(beforePurge.Attributes?.ApproximateNumberOfMessages).toBe("2");
+    expect(beforePurge.Attributes?.ApproximateNumberOfMessages).toBe("0");
+    expect(beforePurge.Attributes?.ApproximateNumberOfMessagesDelayed).toBe(
+      "2",
+    );
 
     await client.send(new PurgeQueueCommand({ QueueUrl: queueUrl }));
 

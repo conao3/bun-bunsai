@@ -8,6 +8,7 @@ import {
   PutItemCommand,
   TransactWriteItemsCommand,
 } from "@aws-sdk/client-dynamodb";
+import type { TransactWriteItemsCommandInput } from "@aws-sdk/client-dynamodb";
 
 const { endpoint, requestHandler } = startApp();
 const client = () =>
@@ -18,10 +19,7 @@ const client = () =>
     requestHandler,
   });
 
-const createTable = async (
-  c: DynamoDBClient,
-  table: string,
-): Promise<void> => {
+const createTable = async (c: DynamoDBClient, table: string): Promise<void> => {
   await c.send(
     new CreateTableCommand({
       TableName: table,
@@ -43,8 +41,18 @@ describe("DynamoDB TransactWriteItems validation (c6)", () => {
       await c.send(
         new TransactWriteItemsCommand({
           TransactItems: [
-            { Put: { TableName: table, Item: { pk: { S: "dup" }, a: { N: "1" } } } },
-            { Put: { TableName: table, Item: { pk: { S: "dup" }, a: { N: "2" } } } },
+            {
+              Put: {
+                TableName: table,
+                Item: { pk: { S: "dup" }, a: { N: "1" } },
+              },
+            },
+            {
+              Put: {
+                TableName: table,
+                Item: { pk: { S: "dup" }, a: { N: "2" } },
+              },
+            },
           ],
         }),
       );
@@ -98,7 +106,7 @@ describe("DynamoDB TransactWriteItems validation (c6)", () => {
                 Key: { pk: { S: "k1" } },
               },
             },
-          ],
+          ] as unknown as TransactWriteItemsCommandInput["TransactItems"],
         }),
       );
     } catch (error) {

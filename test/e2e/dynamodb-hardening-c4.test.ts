@@ -36,7 +36,9 @@ describe("C4 Scan Segment / TotalSegments validation", () => {
     const t = uniqueName("c4seg");
     await makeTable(c, t);
     for (let n = 1; n <= 3; n++) {
-      await c.send(new PutItemCommand({ TableName: t, Item: { pk: { S: String(n) } } }));
+      await c.send(
+        new PutItemCommand({ TableName: t, Item: { pk: { S: String(n) } } }),
+      );
     }
     const r = await c.send(
       new ScanCommand({ TableName: t, Segment: 0, TotalSegments: 1 }),
@@ -48,7 +50,9 @@ describe("C4 Scan Segment / TotalSegments validation", () => {
     const c = client();
     const t = uniqueName("c4seg");
     await makeTable(c, t);
-    await c.send(new PutItemCommand({ TableName: t, Item: { pk: { S: "1" } } }));
+    await c.send(
+      new PutItemCommand({ TableName: t, Item: { pk: { S: "1" } } }),
+    );
     await expect(
       c.send(new ScanCommand({ TableName: t, Segment: 0 })),
     ).rejects.toMatchObject({ name: "ValidationException" });
@@ -58,7 +62,9 @@ describe("C4 Scan Segment / TotalSegments validation", () => {
     const c = client();
     const t = uniqueName("c4seg");
     await makeTable(c, t);
-    await c.send(new PutItemCommand({ TableName: t, Item: { pk: { S: "1" } } }));
+    await c.send(
+      new PutItemCommand({ TableName: t, Item: { pk: { S: "1" } } }),
+    );
     await expect(
       c.send(new ScanCommand({ TableName: t, Segment: 2, TotalSegments: 2 })),
     ).rejects.toMatchObject({ name: "ValidationException" });

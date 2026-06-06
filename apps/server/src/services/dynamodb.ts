@@ -369,9 +369,7 @@ const updateReturnAttributes = (
   return {};
 };
 
-const ensurePutDeleteReturnValues = (
-  input: Record<string, unknown>,
-): void => {
+const ensurePutDeleteReturnValues = (input: Record<string, unknown>): void => {
   const returnValues = input["ReturnValues"];
   if (
     returnValues !== undefined &&
@@ -409,7 +407,8 @@ const compareExpected = (
   list: AttributeValue[],
 ): boolean => {
   const target = list[0];
-  if (operator === "EQ") return target !== undefined && equalsAV(actual, target);
+  if (operator === "EQ")
+    return target !== undefined && equalsAV(actual, target);
   if (operator === "NE")
     return target !== undefined && !equalsAV(actual, target);
   if (operator === "BETWEEN") {

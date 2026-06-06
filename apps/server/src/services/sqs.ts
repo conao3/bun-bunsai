@@ -21,6 +21,17 @@ type StoredMessage = {
   SentTimestamp: number;
   firstReceivedAt: number | undefined;
   SenderId: string;
+  MessageGroupId: string | undefined;
+  MessageDeduplicationId: string | undefined;
+  SequenceNumber: string | undefined;
+};
+
+type DedupEntry = {
+  time: number;
+  messageId: string;
+  sequenceNumber: string;
+  md5OfBody: string;
+  md5OfMessageAttributes: string | undefined;
 };
 
 type StoredQueue = {
@@ -31,6 +42,8 @@ type StoredQueue = {
   messages: StoredMessage[];
   createdAt: number;
   modifiedAt: number;
+  sequence: number;
+  dedup: Record<string, DedupEntry>;
 };
 
 const md5Hex = (value: string): string => {
@@ -121,6 +134,9 @@ type EnqueueOptions = {
   messageAttributes: Record<string, unknown> | undefined;
   delaySeconds: number;
   senderId: string;
+  groupId: string | undefined;
+  deduplicationId: string | undefined;
+  sequenceNumber: string | undefined;
 };
 
 const enqueueMessage = (
@@ -135,17 +151,142 @@ const enqueueMessage = (
     MD5OfBody: md5Hex(options.body),
     MessageAttributes: options.messageAttributes,
     MD5OfMessageAttributes: md5OfMessageAttributes(options.messageAttributes),
-    invisibleUntil: options.delaySeconds > 0 ? now + options.delaySeconds * 1000 : 0,
+    invisibleUntil:
+      options.delaySeconds > 0 ? now + options.delaySeconds * 1000 : 0,
     receiveCount: 0,
     SentTimestamp: now,
     firstReceivedAt: undefined,
     SenderId: options.senderId,
+    MessageGroupId: options.groupId,
+    MessageDeduplicationId: options.deduplicationId,
+    SequenceNumber: options.sequenceNumber,
   };
   queue.messages.push(message);
   return message;
 };
 
-const systemAttributesRequest = (input: Record<string, unknown>): Set<string> => {
+const DEDUP_WINDOW_MS = 5 * 60 * 1000;
+
+const isFifoQueue = (queue: StoredQueue): boolean =>
+  queue.Attributes["FifoQueue"] === "true" || queue.QueueName.endsWith(".fifo");
+
+const sha256Hex = (value: string): string => {
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(value);
+  return hasher.digest("hex");
+};
+
+const pruneDedup = (queue: StoredQueue, now: number): void => {
+  for (const [id, entry] of Object.entries(queue.dedup)) {
+    if (now - entry.time > DEDUP_WINDOW_MS) delete queue.dedup[id];
+  }
+};
+
+type SendOutcome =
+  | {
+      ok: true;
+      result: {
+        MessageId: string;
+        MD5OfMessageBody: string;
+        MD5OfMessageAttributes?: string;
+        SequenceNumber?: string;
+      };
+    }
+  | { ok: false; code: string; message: string };
+
+const sendOne = (
+  queue: StoredQueue,
+  source: Record<string, unknown>,
+  senderId: string,
+): SendOutcome => {
+  const body =
+    typeof source["MessageBody"] === "string"
+      ? (source["MessageBody"] as string)
+      : "";
+  const messageAttributes = messageAttributesOf(source);
+  const fifo = isFifoQueue(queue);
+  let groupId: string | undefined;
+  let deduplicationId: string | undefined;
+  if (fifo) {
+    const rawGroup = source["MessageGroupId"];
+    if (typeof rawGroup !== "string" || rawGroup === "") {
+      return {
+        ok: false,
+        code: "MissingParameter",
+        message: "The request must contain the parameter MessageGroupId.",
+      };
+    }
+    groupId = rawGroup;
+    const explicitDedup = source["MessageDeduplicationId"];
+    if (typeof explicitDedup === "string" && explicitDedup !== "") {
+      deduplicationId = explicitDedup;
+    } else if (queue.Attributes["ContentBasedDeduplication"] === "true") {
+      deduplicationId = sha256Hex(body);
+    } else {
+      return {
+        ok: false,
+        code: "InvalidParameterValue",
+        message:
+          "The queue should either have ContentBasedDeduplication enabled or MessageDeduplicationId provided explicitly.",
+      };
+    }
+    const now = Date.now();
+    pruneDedup(queue, now);
+    const existing = queue.dedup[deduplicationId];
+    if (existing !== undefined) {
+      return {
+        ok: true,
+        result: {
+          MessageId: existing.messageId,
+          MD5OfMessageBody: existing.md5OfBody,
+          ...(existing.md5OfMessageAttributes !== undefined
+            ? { MD5OfMessageAttributes: existing.md5OfMessageAttributes }
+            : {}),
+          SequenceNumber: existing.sequenceNumber,
+        },
+      };
+    }
+  }
+  const delaySeconds = fifo
+    ? 0
+    : toIntOr(source["DelaySeconds"], queueDelayDefault(queue));
+  const sequenceNumber = fifo ? String(queue.sequence++) : undefined;
+  const message = enqueueMessage(queue, {
+    body,
+    messageAttributes,
+    delaySeconds,
+    senderId,
+    groupId,
+    deduplicationId,
+    sequenceNumber,
+  });
+  if (fifo && deduplicationId !== undefined) {
+    queue.dedup[deduplicationId] = {
+      time: Date.now(),
+      messageId: message.MessageId,
+      sequenceNumber: sequenceNumber ?? "",
+      md5OfBody: message.MD5OfBody,
+      md5OfMessageAttributes: message.MD5OfMessageAttributes,
+    };
+  }
+  return {
+    ok: true,
+    result: {
+      MessageId: message.MessageId,
+      MD5OfMessageBody: message.MD5OfBody,
+      ...(message.MD5OfMessageAttributes !== undefined
+        ? { MD5OfMessageAttributes: message.MD5OfMessageAttributes }
+        : {}),
+      ...(sequenceNumber !== undefined
+        ? { SequenceNumber: sequenceNumber }
+        : {}),
+    },
+  };
+};
+
+const systemAttributesRequest = (
+  input: Record<string, unknown>,
+): Set<string> => {
   const names = new Set<string>();
   for (const key of ["AttributeNames", "MessageSystemAttributeNames"]) {
     const raw = input[key];
@@ -173,6 +314,15 @@ const buildSystemAttributes = (
     available["ApproximateFirstReceiveTimestamp"] = String(
       message.firstReceivedAt,
     );
+  }
+  if (message.MessageGroupId !== undefined) {
+    available["MessageGroupId"] = message.MessageGroupId;
+  }
+  if (message.SequenceNumber !== undefined) {
+    available["SequenceNumber"] = message.SequenceNumber;
+  }
+  if (message.MessageDeduplicationId !== undefined) {
+    available["MessageDeduplicationId"] = message.MessageDeduplicationId;
   }
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(available)) {
@@ -220,6 +370,15 @@ const CreateQueue: OperationHandler = (input, ctx) => {
     typeof input["Attributes"] === "object" && input["Attributes"] !== null
       ? (input["Attributes"] as Record<string, string>)
       : {};
+  const nameIsFifo = name.endsWith(".fifo");
+  const attrIsFifo = attributes["FifoQueue"] === "true";
+  if (nameIsFifo !== attrIsFifo) {
+    throw awsError(
+      "InvalidParameterValue",
+      "The name of a FIFO queue can only include alphanumeric characters, hyphens, or underscores, must end with the .fifo suffix, and must be used together with the FifoQueue attribute set to true.",
+      400,
+    );
+  }
   const existing = ctx.store.get<StoredQueue>(name);
   if (existing !== undefined) {
     return { QueueUrl: existing.QueueUrl };
@@ -237,6 +396,8 @@ const CreateQueue: OperationHandler = (input, ctx) => {
     messages: [],
     createdAt: now,
     modifiedAt: now,
+    sequence: 1,
+    dedup: {},
   };
   ctx.store.set(name, queue);
   return { QueueUrl: url };
@@ -274,28 +435,12 @@ const DeleteQueue: OperationHandler = (input, ctx) => {
 const SendMessage: OperationHandler = (input, ctx) => {
   const name = queueNameFromInput(input);
   const queue = requireQueue(ctx, name);
-  const body =
-    typeof input["MessageBody"] === "string"
-      ? (input["MessageBody"] as string)
-      : "";
-  const delaySeconds = toIntOr(
-    input["DelaySeconds"],
-    queueDelayDefault(queue),
-  );
-  const message = enqueueMessage(queue, {
-    body,
-    messageAttributes: messageAttributesOf(input),
-    delaySeconds,
-    senderId: ctx.account,
-  });
+  const outcome = sendOne(queue, input, ctx.account);
+  if (!outcome.ok) {
+    throw awsError(outcome.code, outcome.message, 400);
+  }
   ctx.store.set(name, queue);
-  return {
-    MessageId: message.MessageId,
-    MD5OfMessageBody: message.MD5OfBody,
-    ...(message.MD5OfMessageAttributes !== undefined
-      ? { MD5OfMessageAttributes: message.MD5OfMessageAttributes }
-      : {}),
-  };
+  return outcome.result;
 };
 
 type RedriveConfig = {
@@ -344,6 +489,18 @@ const selectVisibleMessages = (
   now: number,
 ): StoredMessage[] => {
   const redrive = redriveConfigOf(queue);
+  const fifo = isFifoQueue(queue);
+  const lockedGroups = new Set<string>();
+  if (fifo) {
+    for (const message of queue.messages) {
+      if (
+        message.invisibleUntil > now &&
+        message.MessageGroupId !== undefined
+      ) {
+        lockedGroups.add(message.MessageGroupId);
+      }
+    }
+  }
   const selected: StoredMessage[] = [];
   const remaining: StoredMessage[] = [];
   for (const message of queue.messages) {
@@ -358,7 +515,11 @@ const selectVisibleMessages = (
     ) {
       continue;
     }
-    if (selected.length >= limit) {
+    const group = message.MessageGroupId;
+    if (
+      selected.length >= limit ||
+      (fifo && group !== undefined && lockedGroups.has(group))
+    ) {
       remaining.push(message);
       continue;
     }
@@ -366,6 +527,7 @@ const selectVisibleMessages = (
     message.receiveCount += 1;
     if (message.firstReceivedAt === undefined) message.firstReceivedAt = now;
     message.ReceiptHandle = crypto.randomUUID();
+    if (fifo && group !== undefined) lockedGroups.add(group);
     selected.push(message);
     remaining.push(message);
   }
@@ -619,21 +781,17 @@ const SendMessageBatch: OperationHandler = (input, ctx) => {
       });
       continue;
     }
-    const delaySeconds = toIntOr(entry["DelaySeconds"], queueDelayDefault(queue));
-    const message = enqueueMessage(queue, {
-      body,
-      messageAttributes: messageAttributesOf(entry),
-      delaySeconds,
-      senderId: ctx.account,
-    });
-    successful.push({
-      Id: id,
-      MessageId: message.MessageId,
-      MD5OfMessageBody: message.MD5OfBody,
-      ...(message.MD5OfMessageAttributes !== undefined
-        ? { MD5OfMessageAttributes: message.MD5OfMessageAttributes }
-        : {}),
-    });
+    const outcome = sendOne(queue, entry, ctx.account);
+    if (!outcome.ok) {
+      failed.push({
+        Id: id,
+        SenderFault: true,
+        Code: outcome.code,
+        Message: outcome.message,
+      });
+      continue;
+    }
+    successful.push({ Id: id, ...outcome.result });
   }
   ctx.store.set(name, queue);
   return { Successful: successful, Failed: failed };

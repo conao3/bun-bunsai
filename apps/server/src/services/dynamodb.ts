@@ -1170,6 +1170,32 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
   const transactItems = Array.isArray(input["TransactItems"])
     ? (input["TransactItems"] as Record<string, unknown>[])
     : [];
+  if (transactItems.length < 1) {
+    throw awsError(
+      "ValidationException",
+      "1 validation error detected: Value '[]' at 'transactItems' failed to satisfy constraint: Member must have length greater than or equal to 1",
+      400,
+    );
+  }
+  if (transactItems.length > 100) {
+    throw awsError(
+      "ValidationException",
+      "1 validation error detected: Value at 'transactItems' failed to satisfy constraint: Member must have length less than or equal to 100",
+      400,
+    );
+  }
+  const targets = new Set<string>();
+  const ensureUniqueTarget = (name: string, key: string): void => {
+    const identifier = `${name} ${key}`;
+    if (targets.has(identifier)) {
+      throw awsError(
+        "ValidationException",
+        "Transaction request cannot include multiple operations on one item",
+        400,
+      );
+    }
+    targets.add(identifier);
+  };
   const snapshots = new Map<string, StoredTable>();
   const tableFor = (name: string): StoredTable => {
     const existing = snapshots.get(name);
@@ -1193,8 +1219,18 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
     const update = entry["Update"];
     if (conditionCheck !== undefined) {
       const spec = asRecord(conditionCheck);
-      const table = tableFor(requireString(spec, "TableName"));
+      const expression = spec["ConditionExpression"];
+      if (typeof expression !== "string" || expression === "") {
+        throw awsError(
+          "ValidationException",
+          "ConditionExpression is required for ConditionCheck",
+          400,
+        );
+      }
+      const name = requireString(spec, "TableName");
+      const table = tableFor(name);
       const key = keyFromKeyInput(table, asItem(spec["Key"]));
+      ensureUniqueTarget(name, key);
       const current = table.items[key];
       const verdict = evaluateOptionalCondition(spec, current);
       if (!verdict.ok) {
@@ -1205,9 +1241,11 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
     }
     if (put !== undefined) {
       const spec = asRecord(put);
-      const table = tableFor(requireString(spec, "TableName"));
+      const name = requireString(spec, "TableName");
+      const table = tableFor(name);
       const value = asItem(spec["Item"]);
       const key = keyOf(table, value);
+      ensureUniqueTarget(name, key);
       const current = table.items[key];
       const verdict = evaluateOptionalCondition(spec, current);
       if (!verdict.ok) {
@@ -1219,8 +1257,10 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
     }
     if (del !== undefined) {
       const spec = asRecord(del);
-      const table = tableFor(requireString(spec, "TableName"));
+      const name = requireString(spec, "TableName");
+      const table = tableFor(name);
       const key = keyFromKeyInput(table, asItem(spec["Key"]));
+      ensureUniqueTarget(name, key);
       const current = table.items[key];
       const verdict = evaluateOptionalCondition(spec, current);
       if (!verdict.ok) {
@@ -1232,8 +1272,10 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
     }
     if (update !== undefined) {
       const spec = asRecord(update);
-      const table = tableFor(requireString(spec, "TableName"));
+      const name = requireString(spec, "TableName");
+      const table = tableFor(name);
       const key = keyFromKeyInput(table, asItem(spec["Key"]));
+      ensureUniqueTarget(name, key);
       const current = table.items[key];
       const verdict = evaluateOptionalCondition(spec, current);
       if (!verdict.ok) {

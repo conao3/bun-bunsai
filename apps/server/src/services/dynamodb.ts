@@ -997,6 +997,37 @@ const Scan: OperationHandler = (input, ctx) => {
   if (typeof input["IndexName"] === "string") {
     requireIndex(table, input["IndexName"]);
   }
+  const segment = input["Segment"];
+  const totalSegments = input["TotalSegments"];
+  if ((segment === undefined) !== (totalSegments === undefined)) {
+    throw awsError(
+      "ValidationException",
+      segment === undefined
+        ? "The Segment parameter is required but was not present in the request when TotalSegments parameter is present"
+        : "The TotalSegments parameter is required but was not present in the request when Segment parameter is present",
+      400,
+    );
+  }
+  if (typeof segment === "number" && typeof totalSegments === "number") {
+    if (
+      !Number.isInteger(totalSegments) ||
+      totalSegments < 1 ||
+      totalSegments > 1000000
+    ) {
+      throw awsError(
+        "ValidationException",
+        "TotalSegments must be a value between 1 and 1000000.",
+        400,
+      );
+    }
+    if (!Number.isInteger(segment) || segment < 0 || segment >= totalSegments) {
+      throw awsError(
+        "ValidationException",
+        `The Segment parameter is zero-based and must be less than parameter TotalSegments: Segment: ${segment} is not less than TotalSegments: ${totalSegments}`,
+        400,
+      );
+    }
+  }
   const filter =
     typeof input["ScanFilter"] === "object" && input["ScanFilter"] !== null
       ? (input["ScanFilter"] as Record<string, Record<string, unknown>>)

@@ -7,6 +7,8 @@ import type {
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
+import { unzip } from "./lambda/zip.ts";
+import { executeNodeHandler } from "./lambda/runtime.ts";
 
 const model = loadServiceModel(lambdaModel);
 
@@ -26,6 +28,8 @@ type StoredFunction = {
   RevisionId: string;
   LastModified: string;
   State: string;
+  CodeZipFile?: Uint8Array;
+  Environment?: Record<string, string>;
 };
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -36,20 +40,39 @@ const arnOf = (ctx: ServiceContext, name: string): string =>
 
 const nowIso = (): string => new Date().toISOString();
 
-const sha256Of = (input: string): string => {
+const sha256Of = (input: string | Uint8Array): string => {
   const hasher = new Bun.CryptoHasher("sha256");
   hasher.update(input);
   return hasher.digest("base64");
 };
 
-const codeSizeOf = (input: Record<string, unknown>): number => {
+const zipBytesOf = (value: unknown): Uint8Array | undefined => {
+  if (value instanceof Uint8Array) return value;
+  if (typeof value === "string")
+    return Uint8Array.from(value, (ch) => ch.charCodeAt(0) & 0xff);
+  return undefined;
+};
+
+const codeZipOf = (input: Record<string, unknown>): Uint8Array | undefined => {
   const code = input["Code"];
   if (typeof code === "object" && code !== null) {
-    const zip = (code as Record<string, unknown>)["ZipFile"];
-    if (typeof zip === "string") return zip.length;
-    if (zip instanceof Uint8Array) return zip.byteLength;
+    return zipBytesOf((code as Record<string, unknown>)["ZipFile"]);
   }
-  return 0;
+  return undefined;
+};
+
+const environmentOf = (
+  input: Record<string, unknown>,
+): Record<string, string> | undefined => {
+  const env = input["Environment"];
+  if (typeof env !== "object" || env === null) return undefined;
+  const variables = (env as Record<string, unknown>)["Variables"];
+  if (typeof variables !== "object" || variables === null) return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(variables)) {
+    if (typeof value === "string") out[key] = value;
+  }
+  return out;
 };
 
 const functionNameFromInput = (input: Record<string, unknown>): string => {
@@ -93,6 +116,9 @@ const configurationOf = (fn: StoredFunction): Record<string, unknown> => ({
   RevisionId: fn.RevisionId,
   PackageType: fn.PackageType,
   State: fn.State,
+  ...(fn.Environment !== undefined
+    ? { Environment: { Variables: fn.Environment } }
+    : {}),
 });
 
 const CreateFunction: OperationHandler = (input, ctx) => {
@@ -105,6 +131,7 @@ const CreateFunction: OperationHandler = (input, ctx) => {
       409,
     );
   }
+  const zip = codeZipOf(input);
   const fn: StoredFunction = {
     FunctionName: name,
     FunctionArn: arnOf(ctx, name),
@@ -119,12 +146,14 @@ const CreateFunction: OperationHandler = (input, ctx) => {
         ? (input["MemorySize"] as number)
         : 128,
     PackageType: stringOrUndefined(input["PackageType"]) ?? "Zip",
-    CodeSize: codeSizeOf(input),
-    CodeSha256: sha256Of(`${name}:${nowIso()}`),
+    CodeSize: zip?.byteLength ?? 0,
+    CodeSha256: zip !== undefined ? sha256Of(zip) : sha256Of(`${name}:empty`),
     Version: "$LATEST",
     RevisionId: crypto.randomUUID(),
     LastModified: nowIso(),
     State: "Active",
+    CodeZipFile: zip,
+    Environment: environmentOf(input),
   };
   ctx.store.set(name, fn);
   return configurationOf(fn);
@@ -157,26 +186,119 @@ const DeleteFunction: OperationHandler = (input, ctx) => {
 
 const UpdateFunctionCode: OperationHandler = (input, ctx) => {
   const fn = requireFunction(ctx, functionNameFromInput(input));
-  const zip = input["ZipFile"];
-  if (typeof zip === "string") fn.CodeSize = zip.length;
-  else if (zip instanceof Uint8Array) fn.CodeSize = zip.byteLength;
-  fn.CodeSha256 = sha256Of(`${fn.FunctionName}:${nowIso()}`);
+  const zip = zipBytesOf(input["ZipFile"]);
+  if (zip !== undefined) {
+    fn.CodeSize = zip.byteLength;
+    fn.CodeSha256 = sha256Of(zip);
+    fn.CodeZipFile = zip;
+  }
   fn.RevisionId = crypto.randomUUID();
   fn.LastModified = nowIso();
   ctx.store.set(fn.FunctionName, fn);
   return configurationOf(fn);
 };
 
-const Invoke: OperationHandler = (input, ctx) => {
-  const fn = requireFunction(ctx, functionNameFromInput(input));
-  const payload = input["Payload"];
-  return {
-    StatusCode: 200,
-    Payload:
-      typeof payload === "string" || payload instanceof Uint8Array
+const decodePayload = (payload: unknown): unknown => {
+  const bytes =
+    payload instanceof Uint8Array
+      ? new TextDecoder().decode(payload)
+      : typeof payload === "string"
         ? payload
-        : "",
+        : "";
+  if (bytes.trim() === "") return {};
+  try {
+    return JSON.parse(bytes);
+  } catch {
+    return bytes;
+  }
+};
+
+const echoPayload = (payload: unknown): string | Uint8Array =>
+  typeof payload === "string" || payload instanceof Uint8Array ? payload : "";
+
+const jsonPayload = (value: unknown): Uint8Array =>
+  new TextEncoder().encode(JSON.stringify(value));
+
+const reservedEnv = (
+  ctx: ServiceContext,
+  fn: StoredFunction,
+): Record<string, string> => ({
+  AWS_LAMBDA_FUNCTION_NAME: fn.FunctionName,
+  AWS_LAMBDA_FUNCTION_VERSION: fn.Version,
+  AWS_LAMBDA_FUNCTION_MEMORY_SIZE: String(fn.MemorySize),
+  AWS_REGION: ctx.region,
+  AWS_DEFAULT_REGION: ctx.region,
+  _HANDLER: fn.Handler ?? "",
+});
+
+const Invoke: OperationHandler = async (input, ctx) => {
+  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const invocationType =
+    stringOrUndefined(input["InvocationType"]) ?? "RequestResponse";
+  if (invocationType === "DryRun") {
+    return { StatusCode: 204, ExecutedVersion: fn.Version };
+  }
+  const files =
+    fn.CodeZipFile !== undefined ? unzip(fn.CodeZipFile) : undefined;
+  const execution =
+    files !== undefined && fn.Handler !== undefined
+      ? await executeNodeHandler({
+          files,
+          handler: fn.Handler,
+          runtime: fn.Runtime,
+          event: decodePayload(input["Payload"]),
+          env: { ...reservedEnv(ctx, fn), ...(fn.Environment ?? {}) },
+          timeoutMs: fn.Timeout * 1000,
+          context: {
+            functionName: fn.FunctionName,
+            functionVersion: fn.Version,
+            invokedFunctionArn: fn.FunctionArn,
+            memoryLimitInMB: String(fn.MemorySize),
+            awsRequestId: crypto.randomUUID(),
+            logGroupName: `/aws/lambda/${fn.FunctionName}`,
+            logStreamName: nowIso(),
+            callbackWaitsForEmptyEventLoop: true,
+          },
+        })
+      : { kind: "unsupported" as const };
+  const statusCode = invocationType === "Event" ? 202 : 200;
+  if (execution.kind === "unsupported") {
+    return {
+      StatusCode: statusCode,
+      Payload: echoPayload(input["Payload"]),
+      ExecutedVersion: fn.Version,
+    };
+  }
+  const logResult =
+    stringOrUndefined(input["LogType"]) === "Tail"
+      ? Buffer.from(execution.logs.slice(-4096)).toString("base64")
+      : undefined;
+  if (execution.kind === "result") {
+    return {
+      StatusCode: statusCode,
+      Payload: jsonPayload(execution.payload),
+      ExecutedVersion: fn.Version,
+      ...(logResult !== undefined ? { LogResult: logResult } : {}),
+    };
+  }
+  const errorBody =
+    execution.kind === "timeout"
+      ? {
+          errorType: "Sandbox.Timedout",
+          errorMessage: `${fn.FunctionName} timed out after ${fn.Timeout}.00 seconds`,
+          trace: [],
+        }
+      : {
+          errorType: execution.errorType,
+          errorMessage: execution.errorMessage,
+          trace: execution.trace,
+        };
+  return {
+    StatusCode: statusCode,
+    FunctionError: "Unhandled",
+    Payload: jsonPayload(errorBody),
     ExecutedVersion: fn.Version,
+    ...(logResult !== undefined ? { LogResult: logResult } : {}),
   };
 };
 
@@ -198,6 +320,8 @@ const UpdateFunctionConfiguration: OperationHandler = (input, ctx) => {
   if (typeof input["Timeout"] === "number") fn.Timeout = input["Timeout"];
   if (typeof input["MemorySize"] === "number")
     fn.MemorySize = input["MemorySize"];
+  const environment = environmentOf(input);
+  if (environment !== undefined) fn.Environment = environment;
   fn.RevisionId = crypto.randomUUID();
   fn.LastModified = nowIso();
   ctx.store.set(fn.FunctionName, fn);

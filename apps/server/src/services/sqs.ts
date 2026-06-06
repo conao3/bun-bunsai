@@ -967,6 +967,18 @@ const requireSourceQueue = (
   return queue;
 };
 
+const findRedriveDestination = (
+  ctx: ServiceContext,
+  deadLetterArn: string,
+): string | undefined => {
+  for (const entry of ctx.store.list<StoredQueue>()) {
+    if (redriveTargetArn(entry.value) === deadLetterArn) {
+      return entry.value.QueueName;
+    }
+  }
+  return undefined;
+};
+
 const StartMessageMoveTask: OperationHandler = (input, ctx) => {
   const sourceArn = input["SourceArn"];
   if (typeof sourceArn !== "string" || sourceArn === "") {
@@ -989,15 +1001,39 @@ const StartMessageMoveTask: OperationHandler = (input, ctx) => {
     parsedMax !== undefined && Number.isFinite(parsedMax)
       ? parsedMax
       : undefined;
+  const toMove = queue.messages.length;
+  const destinationName =
+    destinationArn !== undefined
+      ? nameFromArn(destinationArn)
+      : findRedriveDestination(ctx, sourceArn);
+  let moved = 0;
+  if (destinationName !== undefined && toMove > 0) {
+    const destination = ctx.store.get<StoredQueue>(destinationName);
+    if (destination !== undefined) {
+      for (const message of queue.messages) {
+        destination.messages.push({
+          ...message,
+          ReceiptHandle: crypto.randomUUID(),
+          invisibleUntil: 0,
+          receiveCount: 0,
+          firstReceivedAt: undefined,
+        });
+        moved += 1;
+      }
+      queue.messages = [];
+      ctx.store.set(destination.QueueName, destination);
+      ctx.store.set(queue.QueueName, queue);
+    }
+  }
   const taskHandle = crypto.randomUUID();
   const task: StoredMoveTask = {
     TaskHandle: taskHandle,
-    Status: "RUNNING",
+    Status: moved > 0 ? "COMPLETED" : "RUNNING",
     SourceArn: sourceArn,
     DestinationArn: destinationArn,
     MaxNumberOfMessagesPerSecond: maxPerSecond,
-    ApproximateNumberOfMessagesMoved: 0,
-    ApproximateNumberOfMessagesToMove: queue.messages.length,
+    ApproximateNumberOfMessagesMoved: moved,
+    ApproximateNumberOfMessagesToMove: toMove,
     StartedTimestamp: Date.now(),
   };
   const tasks = ctx.store.get<StoredMoveTask[]>(MOVE_TASKS_KEY) ?? [];

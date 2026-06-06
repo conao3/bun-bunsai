@@ -298,22 +298,78 @@ const SendMessage: OperationHandler = (input, ctx) => {
   };
 };
 
+type RedriveConfig = {
+  targetName: string;
+  maxReceiveCount: number;
+};
+
+const redriveConfigOf = (queue: StoredQueue): RedriveConfig | undefined => {
+  const raw = queue.Attributes["RedrivePolicy"];
+  if (typeof raw !== "string" || raw === "") return undefined;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const target = parsed["deadLetterTargetArn"];
+    if (typeof target !== "string" || target === "") return undefined;
+    const maxReceiveCount = toIntOr(parsed["maxReceiveCount"], 0);
+    if (maxReceiveCount <= 0) return undefined;
+    return { targetName: nameFromArn(target), maxReceiveCount };
+  } catch {
+    return undefined;
+  }
+};
+
+const moveToDeadLetter = (
+  ctx: ServiceContext,
+  targetName: string,
+  message: StoredMessage,
+): boolean => {
+  const dlq = ctx.store.get<StoredQueue>(targetName);
+  if (dlq === undefined) return false;
+  dlq.messages.push({
+    ...message,
+    ReceiptHandle: crypto.randomUUID(),
+    invisibleUntil: 0,
+    receiveCount: 0,
+    firstReceivedAt: undefined,
+  });
+  ctx.store.set(targetName, dlq);
+  return true;
+};
+
 const selectVisibleMessages = (
+  ctx: ServiceContext,
   queue: StoredQueue,
   limit: number,
   visibilitySeconds: number,
   now: number,
 ): StoredMessage[] => {
+  const redrive = redriveConfigOf(queue);
   const selected: StoredMessage[] = [];
+  const remaining: StoredMessage[] = [];
   for (const message of queue.messages) {
-    if (selected.length >= limit) break;
-    if (message.invisibleUntil > now) continue;
+    if (message.invisibleUntil > now) {
+      remaining.push(message);
+      continue;
+    }
+    if (
+      redrive !== undefined &&
+      message.receiveCount >= redrive.maxReceiveCount &&
+      moveToDeadLetter(ctx, redrive.targetName, message)
+    ) {
+      continue;
+    }
+    if (selected.length >= limit) {
+      remaining.push(message);
+      continue;
+    }
     message.invisibleUntil = now + visibilitySeconds * 1000;
     message.receiveCount += 1;
     if (message.firstReceivedAt === undefined) message.firstReceivedAt = now;
     message.ReceiptHandle = crypto.randomUUID();
     selected.push(message);
+    remaining.push(message);
   }
+  queue.messages = remaining;
   return selected;
 };
 
@@ -340,6 +396,7 @@ const ReceiveMessage: OperationHandler = async (input, ctx) => {
   const waitSeconds = Math.max(0, Math.min(waitRaw, 20));
   const deadline = Date.now() + waitSeconds * 1000;
   let selected = selectVisibleMessages(
+    ctx,
     queue,
     limit,
     visibilitySeconds,
@@ -350,7 +407,13 @@ const ReceiveMessage: OperationHandler = async (input, ctx) => {
     const refreshed = ctx.store.get<StoredQueue>(name);
     if (refreshed === undefined) break;
     queue = refreshed;
-    selected = selectVisibleMessages(queue, limit, visibilitySeconds, Date.now());
+    selected = selectVisibleMessages(
+      ctx,
+      queue,
+      limit,
+      visibilitySeconds,
+      Date.now(),
+    );
   }
   ctx.store.set(name, queue);
   return {

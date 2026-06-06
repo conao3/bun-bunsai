@@ -207,14 +207,8 @@ const setStep = (
     return { ...parent, M: m };
   }
   const arr = [...(parent["L"] as AttributeValue[])];
-  if (step.index > arr.length) {
-    throw awsError(
-      "ValidationException",
-      `The document path provided in the update expression is invalid for update: ${pathStr}`,
-      400,
-    );
-  }
-  arr[step.index] = next;
+  const writeIndex = step.index > arr.length ? arr.length : step.index;
+  arr[writeIndex] = next;
   return { ...parent, L: arr };
 };
 

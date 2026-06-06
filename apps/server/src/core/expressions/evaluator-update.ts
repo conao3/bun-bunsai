@@ -91,9 +91,15 @@ const evaluateSetValue = (
   }
   const left = evaluateSetValue(value.left, snapshot, targetPath);
   const right = evaluateSetValue(value.right, snapshot, targetPath);
-  if (typeOfAV(left) !== "L" || typeOfAV(right) !== "L") {
+  const badType =
+    typeOfAV(left) !== "L"
+      ? typeOfAV(left)
+      : typeOfAV(right) !== "L"
+        ? typeOfAV(right)
+        : undefined;
+  if (badType !== undefined) {
     failValidation(
-      `Invalid UpdateExpression: An operand in the update expression has an incorrect data type for list_append`,
+      `Invalid UpdateExpression: Incorrect operand type for operator or function; operator or function: list_append, operand type: ${badType}`,
     );
   }
   return {

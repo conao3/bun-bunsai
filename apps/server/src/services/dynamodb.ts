@@ -369,32 +369,122 @@ const updateReturnAttributes = (
   return {};
 };
 
+const conditionFailure = (
+  input: Record<string, unknown>,
+  current: Item | undefined,
+): never => {
+  const data =
+    input["ReturnValuesOnConditionCheckFailure"] === "ALL_OLD" &&
+    current !== undefined
+      ? { Item: current }
+      : undefined;
+  throw awsError(
+    "ConditionalCheckFailedException",
+    "The conditional request failed",
+    400,
+    data,
+  );
+};
+
+const compareExpected = (
+  actual: AttributeValue,
+  operator: string,
+  list: AttributeValue[],
+): boolean => {
+  const target = list[0];
+  if (operator === "EQ") return target !== undefined && equalsAV(actual, target);
+  if (operator === "NE")
+    return target !== undefined && !equalsAV(actual, target);
+  if (operator === "BETWEEN") {
+    const lo = list[0];
+    const hi = list[1];
+    if (lo === undefined || hi === undefined) return false;
+    const cmpLo = compareAV(actual, lo);
+    const cmpHi = compareAV(actual, hi);
+    return (
+      cmpLo !== undefined && cmpHi !== undefined && cmpLo >= 0 && cmpHi <= 0
+    );
+  }
+  if (target === undefined) return false;
+  const cmp = compareAV(actual, target);
+  if (cmp === undefined) return false;
+  if (operator === "LE") return cmp <= 0;
+  if (operator === "LT") return cmp < 0;
+  if (operator === "GE") return cmp >= 0;
+  if (operator === "GT") return cmp > 0;
+  return false;
+};
+
+const evaluateExpectedEntry = (
+  entry: Record<string, unknown>,
+  actual: AttributeValue | undefined,
+): boolean => {
+  const exists = entry["Exists"];
+  if (exists === false) return actual === undefined;
+  const value = entry["Value"];
+  const list = Array.isArray(entry["AttributeValueList"])
+    ? (entry["AttributeValueList"] as AttributeValue[])
+    : value !== undefined
+      ? [value as AttributeValue]
+      : [];
+  if (list.length === 0) return actual !== undefined;
+  if (actual === undefined) return false;
+  const operator =
+    typeof entry["ComparisonOperator"] === "string"
+      ? entry["ComparisonOperator"]
+      : "EQ";
+  return compareExpected(actual, operator, list);
+};
+
+const evaluateExpected = (
+  expected: Record<string, Record<string, unknown>>,
+  current: Item | undefined,
+  conditionalOperator: unknown,
+): boolean => {
+  const item = current ?? {};
+  const orMode = conditionalOperator === "OR";
+  let result = !orMode;
+  for (const [attribute, entry] of Object.entries(expected)) {
+    const passed = evaluateExpectedEntry(entry, item[attribute]);
+    result = orMode ? result || passed : result && passed;
+  }
+  return result;
+};
+
 const ensureConditionPasses = (
   input: Record<string, unknown>,
   current: Item | undefined,
 ): void => {
   const expression = input["ConditionExpression"];
-  if (typeof expression !== "string" || expression === "") return;
-  const values = (
-    typeof input["ExpressionAttributeValues"] === "object" &&
-    input["ExpressionAttributeValues"] !== null
-      ? (input["ExpressionAttributeValues"] as Record<string, AttributeValue>)
-      : {}
-  ) as Record<string, AttributeValue>;
-  const names = (
-    typeof input["ExpressionAttributeNames"] === "object" &&
-    input["ExpressionAttributeNames"] !== null
-      ? (input["ExpressionAttributeNames"] as Record<string, string>)
-      : {}
-  ) as Record<string, string>;
-  const ast = parseConditionExpression(expression, { names, values });
-  const item = current ?? {};
-  if (!evaluateCondition(ast, item)) {
-    throw awsError(
-      "ConditionalCheckFailedException",
-      "The conditional request failed",
-      400,
+  if (typeof expression === "string" && expression !== "") {
+    const values = (
+      typeof input["ExpressionAttributeValues"] === "object" &&
+      input["ExpressionAttributeValues"] !== null
+        ? (input["ExpressionAttributeValues"] as Record<string, AttributeValue>)
+        : {}
+    ) as Record<string, AttributeValue>;
+    const names = (
+      typeof input["ExpressionAttributeNames"] === "object" &&
+      input["ExpressionAttributeNames"] !== null
+        ? (input["ExpressionAttributeNames"] as Record<string, string>)
+        : {}
+    ) as Record<string, string>;
+    const ast = parseConditionExpression(expression, { names, values });
+    if (!evaluateCondition(ast, current ?? {})) {
+      conditionFailure(input, current);
+    }
+    return;
+  }
+  const expected = input["Expected"];
+  if (typeof expected === "object" && expected !== null) {
+    const passed = evaluateExpected(
+      expected as Record<string, Record<string, unknown>>,
+      current,
+      input["ConditionalOperator"],
     );
+    if (!passed) {
+      conditionFailure(input, current);
+    }
   }
 };
 

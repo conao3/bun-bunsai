@@ -1698,6 +1698,7 @@ const partiQLWhereMatch = (
   if (trimmed === "") return true;
   const values: Record<string, AttributeValue> = {};
   let counter = 0;
+  let litCounter = 0;
   const replaced = trimmed
     .replace(/"([A-Za-z_][A-Za-z0-9_]*)"/g, "$1")
     .replace(/\?/g, () => {
@@ -1705,46 +1706,152 @@ const partiQLWhereMatch = (
       const v = params[counter++];
       if (v !== undefined) values[name] = v;
       return name;
+    })
+    .replace(/'((?:[^']|'')*)'/g, (_full, contents: string) => {
+      const name = `:_lit_${litCounter++}`;
+      values[name] = { S: contents.replace(/''/g, "'") };
+      return name;
+    })
+    .replace(/(?<![:\w.])-?\d+(?:\.\d+)?/g, (literal) => {
+      const name = `:_lit_${litCounter++}`;
+      values[name] = { N: literal };
+      return name;
     });
   const ast = parseConditionExpression(replaced, { names: {}, values });
   return evaluateCondition(ast, item);
 };
 
 const parsePartiQLValue = (expr: string, params: AttributeValue[]): Item => {
-  const item: Item = {};
+  let pos = 0;
   let paramIdx = 0;
-  const inner = expr.slice(1, -1);
-  const pattern = /'([^']+)'\s*:\s*(\?|'[^']*'|-?\d+(?:\.\d+)?)/g;
-  let m: RegExpExecArray | null;
-  while ((m = pattern.exec(inner)) !== null) {
-    const fieldName = m[1];
-    const valueToken = m[2];
-    if (valueToken === "?") {
-      const param = params[paramIdx++];
-      if (param !== undefined) item[fieldName] = param;
-    } else if (valueToken.startsWith("'")) {
-      item[fieldName] = { S: valueToken.slice(1, -1) };
-    } else {
-      item[fieldName] = { N: valueToken };
+  const fail = (): never => {
+    throw awsError(
+      "ValidationException",
+      "Unable to parse PartiQL statement value",
+      400,
+    );
+  };
+  const skipSpace = (): void => {
+    while (pos < expr.length && /\s/.test(expr[pos])) pos++;
+  };
+  const readString = (): string => {
+    pos++;
+    let out = "";
+    while (pos < expr.length) {
+      const ch = expr[pos];
+      if (ch === "'") {
+        if (expr[pos + 1] === "'") {
+          out += "'";
+          pos += 2;
+          continue;
+        }
+        pos++;
+        return out;
+      }
+      out += ch;
+      pos++;
     }
-  }
-  return item;
+    return fail();
+  };
+  const parseValue = (): AttributeValue => {
+    skipSpace();
+    const ch = expr[pos];
+    if (ch === "?") {
+      pos++;
+      const param = params[paramIdx++];
+      return param ?? fail();
+    }
+    if (ch === "'") return { S: readString() };
+    if (ch === "{") return { M: parseMap() };
+    if (ch === "[") return { L: parseList() };
+    if (expr.startsWith("true", pos)) {
+      pos += 4;
+      return { BOOL: true };
+    }
+    if (expr.startsWith("false", pos)) {
+      pos += 5;
+      return { BOOL: false };
+    }
+    if (expr.startsWith("null", pos)) {
+      pos += 4;
+      return { NULL: true };
+    }
+    const numMatch = /^-?\d+(?:\.\d+)?/.exec(expr.slice(pos));
+    if (numMatch !== null) {
+      pos += numMatch[0].length;
+      return { N: numMatch[0] };
+    }
+    return fail();
+  };
+  const parseMap = (): Item => {
+    const map: Item = {};
+    pos++;
+    skipSpace();
+    if (expr[pos] === "}") {
+      pos++;
+      return map;
+    }
+    for (;;) {
+      skipSpace();
+      if (expr[pos] !== "'") return fail();
+      const key = readString();
+      skipSpace();
+      if (expr[pos] !== ":") return fail();
+      pos++;
+      map[key] = parseValue();
+      skipSpace();
+      if (expr[pos] === ",") {
+        pos++;
+        continue;
+      }
+      if (expr[pos] === "}") {
+        pos++;
+        return map;
+      }
+      return fail();
+    }
+  };
+  const parseList = (): AttributeValue[] => {
+    const list: AttributeValue[] = [];
+    pos++;
+    skipSpace();
+    if (expr[pos] === "]") {
+      pos++;
+      return list;
+    }
+    for (;;) {
+      list.push(parseValue());
+      skipSpace();
+      if (expr[pos] === ",") {
+        pos++;
+        continue;
+      }
+      if (expr[pos] === "]") {
+        pos++;
+        return list;
+      }
+      return fail();
+    }
+  };
+  skipSpace();
+  return parseMap();
 };
 
-const parsePartiQLSets = (
+const parsePartiQLUpdate = (
   setClause: string,
   params: AttributeValue[],
-): Item => {
-  const result: Item = {};
-  let paramIdx = 0;
-  for (const assignment of setClause.split(",").map((s) => s.trim())) {
-    const m = /^"?(\w+)"?\s*=\s*\?/.exec(assignment);
-    if (m !== null) {
-      const param = params[paramIdx++];
-      if (param !== undefined) result[m[1]] = param;
-    }
-  }
-  return result;
+): { expression: string; values: Record<string, AttributeValue> } => {
+  const values: Record<string, AttributeValue> = {};
+  let counter = 0;
+  const expression = `SET ${setClause
+    .replace(/"([A-Za-z_][A-Za-z0-9_]*)"/g, "$1")
+    .replace(/\?/g, () => {
+      const name = `:_s_${counter}`;
+      const v = params[counter++];
+      if (v !== undefined) values[name] = v;
+      return name;
+    })}`;
+  return { expression, values };
 };
 
 const countParams = (s: string): number => (s.match(/\?/g) ?? []).length;
@@ -1777,7 +1884,15 @@ const executePartiQL = (
     const table = requireTable(ctx, tableName);
     const item = parsePartiQLValue(valueExpr, parameters);
     if (Object.keys(item).length > 0) {
-      table.items[keyOf(table, item)] = item;
+      const key = keyOf(table, item);
+      if (table.items[key] !== undefined) {
+        throw awsError(
+          "DuplicateItemException",
+          "Duplicate primary key exists in table",
+          400,
+        );
+      }
+      table.items[key] = item;
       ctx.store.set(tableName, table);
     }
     return [];
@@ -1791,7 +1906,11 @@ const executePartiQL = (
     const whereClause = updateMatch[3];
     const table = requireTable(ctx, tableName);
     const setParamCount = countParams(setClause);
-    const setValues = parsePartiQLSets(setClause, parameters);
+    const { expression, values } = parsePartiQLUpdate(
+      setClause,
+      parameters.slice(0, setParamCount),
+    );
+    const ast = parseUpdateExpression(expression, { names: {}, values });
     const whereParams = parameters.slice(setParamCount);
     const allItems = Object.values(table.items);
     const matched =
@@ -1800,12 +1919,14 @@ const executePartiQL = (
             partiQLWhereMatch(item, whereClause, whereParams),
           )
         : allItems;
-    for (const item of matched) {
+    const updated = matched.map((item) => {
       const key = keyFromKeyInput(table, item);
-      table.items[key] = { ...item, ...setValues };
-    }
+      const next = applyUpdate(ast, item);
+      table.items[key] = next;
+      return next;
+    });
     if (matched.length > 0) ctx.store.set(tableName, table);
-    return matched.map((item) => ({ ...item, ...setValues }));
+    return updated;
   }
 
   const deleteMatch =
@@ -2374,15 +2495,35 @@ const ExecuteTransaction: OperationHandler = (input, ctx) => {
   const transactStatements = Array.isArray(input["TransactStatements"])
     ? (input["TransactStatements"] as Record<string, unknown>[])
     : [];
+  const snapshots = ctx.store
+    .list<StoredTable>()
+    .filter(
+      (entry) =>
+        entry.value !== null &&
+        typeof entry.value === "object" &&
+        typeof entry.value.items === "object" &&
+        entry.value.items !== null,
+    )
+    .map((entry) => ({
+      key: entry.key,
+      value: { ...entry.value, items: { ...entry.value.items } },
+    }));
   const responses: Record<string, unknown>[] = [];
-  for (const stmt of transactStatements) {
-    const statement =
-      typeof stmt["Statement"] === "string" ? stmt["Statement"] : "";
-    const parameters = Array.isArray(stmt["Parameters"])
-      ? (stmt["Parameters"] as AttributeValue[])
-      : [];
-    const items = executePartiQL(statement, parameters, ctx);
-    responses.push(items[0] !== undefined ? { Item: items[0] } : {});
+  try {
+    for (const stmt of transactStatements) {
+      const statement =
+        typeof stmt["Statement"] === "string" ? stmt["Statement"] : "";
+      const parameters = Array.isArray(stmt["Parameters"])
+        ? (stmt["Parameters"] as AttributeValue[])
+        : [];
+      const items = executePartiQL(statement, parameters, ctx);
+      responses.push(items[0] !== undefined ? { Item: items[0] } : {});
+    }
+  } catch (err) {
+    for (const snapshot of snapshots) {
+      ctx.store.set(snapshot.key, snapshot.value);
+    }
+    throw err;
   }
   return { Responses: responses };
 };

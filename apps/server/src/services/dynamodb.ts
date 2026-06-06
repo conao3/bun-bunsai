@@ -358,15 +358,32 @@ const updateReturnAttributes = (
     return previous === undefined ? {} : { Attributes: previous };
   }
   if (returnValues === "UPDATED_NEW") {
-    return { Attributes: projectItem({ paths: updatedPaths }, updated) };
+    const projected = projectItem({ paths: updatedPaths }, updated);
+    return Object.keys(projected).length === 0 ? {} : { Attributes: projected };
   }
   if (returnValues === "UPDATED_OLD") {
     if (previous === undefined) return {};
-    return {
-      Attributes: projectItem({ paths: updatedPaths }, previous),
-    };
+    const projected = projectItem({ paths: updatedPaths }, previous);
+    return Object.keys(projected).length === 0 ? {} : { Attributes: projected };
   }
   return {};
+};
+
+const ensurePutDeleteReturnValues = (
+  input: Record<string, unknown>,
+): void => {
+  const returnValues = input["ReturnValues"];
+  if (
+    returnValues !== undefined &&
+    returnValues !== "NONE" &&
+    returnValues !== "ALL_OLD"
+  ) {
+    throw awsError(
+      "ValidationException",
+      "ReturnValues can only be ALL_OLD or NONE",
+      400,
+    );
+  }
 };
 
 const conditionFailure = (
@@ -571,6 +588,7 @@ const DescribeTable: OperationHandler = (input, ctx) => {
 const PutItem: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
+  ensurePutDeleteReturnValues(input);
   const item = asItem(input["Item"]);
   const key = keyOf(table, item);
   const previous = table.items[key];
@@ -595,6 +613,7 @@ const GetItem: OperationHandler = (input, ctx) => {
 const DeleteItem: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
+  ensurePutDeleteReturnValues(input);
   const key = keyFromKeyInput(table, asItem(input["Key"]));
   const previous = table.items[key];
   ensureConditionPasses(input, previous);

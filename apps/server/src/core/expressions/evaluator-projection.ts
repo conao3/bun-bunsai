@@ -21,14 +21,8 @@ const insertPath = (
     return { M: { ...m, [step.name]: next } };
   }
   const arr = (parent["L"] ?? []) as AttributeValue[];
-  const child = arr[step.index] ?? {};
-  const next = insertPath(child, steps, idx + 1, value);
-  const nextArr = [...arr];
-  while (nextArr.length <= step.index) {
-    nextArr.push({});
-  }
-  nextArr[step.index] = next;
-  return { L: nextArr };
+  const next = insertPath({}, steps, idx + 1, value);
+  return { L: [...arr, next] };
 };
 
 const insertProjectedPath = (

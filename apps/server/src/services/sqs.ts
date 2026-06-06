@@ -39,6 +39,9 @@ const md5Hex = (value: string): string => {
   return hasher.digest("hex");
 };
 
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 const encodeLengthPrefixed = (parts: Uint8Array[], bytes: Uint8Array): void => {
   const length = new Uint8Array(4);
   new DataView(length.buffer).setUint32(0, bytes.length, false);
@@ -295,9 +298,28 @@ const SendMessage: OperationHandler = (input, ctx) => {
   };
 };
 
-const ReceiveMessage: OperationHandler = (input, ctx) => {
+const selectVisibleMessages = (
+  queue: StoredQueue,
+  limit: number,
+  visibilitySeconds: number,
+  now: number,
+): StoredMessage[] => {
+  const selected: StoredMessage[] = [];
+  for (const message of queue.messages) {
+    if (selected.length >= limit) break;
+    if (message.invisibleUntil > now) continue;
+    message.invisibleUntil = now + visibilitySeconds * 1000;
+    message.receiveCount += 1;
+    if (message.firstReceivedAt === undefined) message.firstReceivedAt = now;
+    message.ReceiptHandle = crypto.randomUUID();
+    selected.push(message);
+  }
+  return selected;
+};
+
+const ReceiveMessage: OperationHandler = async (input, ctx) => {
   const name = queueNameFromInput(input);
-  const queue = requireQueue(ctx, name);
+  let queue = requireQueue(ctx, name);
   const rawMax = input["MaxNumberOfMessages"];
   const max =
     typeof rawMax === "number"
@@ -311,16 +333,24 @@ const ReceiveMessage: OperationHandler = (input, ctx) => {
       ? queueVisibilityDefault(queue)
       : toIntOr(input["VisibilityTimeout"], queueVisibilityDefault(queue));
   const systemRequest = systemAttributesRequest(input);
-  const now = Date.now();
-  const selected: StoredMessage[] = [];
-  for (const message of queue.messages) {
-    if (selected.length >= limit) break;
-    if (message.invisibleUntil > now) continue;
-    message.invisibleUntil = now + visibilitySeconds * 1000;
-    message.receiveCount += 1;
-    if (message.firstReceivedAt === undefined) message.firstReceivedAt = now;
-    message.ReceiptHandle = crypto.randomUUID();
-    selected.push(message);
+  const waitRaw =
+    input["WaitTimeSeconds"] === undefined
+      ? toIntOr(queue.Attributes["ReceiveMessageWaitTimeSeconds"], 0)
+      : toIntOr(input["WaitTimeSeconds"], 0);
+  const waitSeconds = Math.max(0, Math.min(waitRaw, 20));
+  const deadline = Date.now() + waitSeconds * 1000;
+  let selected = selectVisibleMessages(
+    queue,
+    limit,
+    visibilitySeconds,
+    Date.now(),
+  );
+  while (selected.length === 0 && Date.now() < deadline) {
+    await sleep(Math.min(100, Math.max(1, deadline - Date.now())));
+    const refreshed = ctx.store.get<StoredQueue>(name);
+    if (refreshed === undefined) break;
+    queue = refreshed;
+    selected = selectVisibleMessages(queue, limit, visibilitySeconds, Date.now());
   }
   ctx.store.set(name, queue);
   return {

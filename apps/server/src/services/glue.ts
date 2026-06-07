@@ -4517,6 +4517,223 @@ const ListBlueprints: OperationHandler = (input, ctx) => {
   return { Blueprints: list };
 };
 
+const ListIntegrationResourceProperties: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredIntegrationResourceProperty>()
+    .filter((entry) => entry.key.startsWith(integrationResourcePropertyPrefix))
+    .map((entry) => ({
+      ResourceArn: entry.value.resourceArn,
+      ResourcePropertyArn: entry.value.resourcePropertyArn,
+      ...(entry.value.sourceProcessingProperties !== undefined
+        ? { SourceProcessingProperties: entry.value.sourceProcessingProperties }
+        : {}),
+      ...(entry.value.targetProcessingProperties !== undefined
+        ? { TargetProcessingProperties: entry.value.targetProcessingProperties }
+        : {}),
+    }));
+  return { IntegrationResourcePropertyList: list };
+};
+
+const ListMLTransforms: OperationHandler = (_input, ctx) => {
+  const transformIds = ctx.store
+    .list<StoredMLTransform>()
+    .filter((entry) => entry.key.startsWith(mlTransformPrefix))
+    .map((entry) => entry.value.transformId);
+  return { TransformIds: transformIds };
+};
+
+const ListMaterializedViewRefreshTaskRuns: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { TaskRunIds: [] };
+};
+
+const ListRegistries: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredRegistry>()
+    .filter((entry) => entry.key.startsWith(registryPrefix))
+    .map((entry) => ({
+      RegistryName: entry.value.registryName,
+      RegistryArn: entry.value.registryArn,
+      Description: entry.value.description,
+      Status: "AVAILABLE",
+      CreatedTime: String(Math.floor(Date.now() / 1000)),
+      UpdatedTime: String(Math.floor(Date.now() / 1000)),
+    }));
+  return { Registries: list };
+};
+
+const ListSchemaVersions: OperationHandler = (input, ctx) => {
+  const schemaId = asRecord(input["SchemaId"] ?? {});
+  const key = resolveSchemaKey(schemaId);
+  const stored = ctx.store.get<StoredSchema>(key);
+  if (stored === undefined) {
+    throw awsError("EntityNotFoundException", `Schema not found.`, 400);
+  }
+  const versions = Array.from(
+    { length: stored.latestSchemaVersion },
+    (_, i) => ({
+      SchemaArn: stored.schemaArn,
+      SchemaVersionId:
+        i === 0 ? stored.firstSchemaVersionId : crypto.randomUUID(),
+      VersionNumber: i + 1,
+      Status: "AVAILABLE",
+      CreatedTime: String(Math.floor(Date.now() / 1000)),
+    }),
+  );
+  return { Schemas: versions };
+};
+
+const ListSchemas: OperationHandler = (input, ctx) => {
+  const registryId =
+    typeof input["RegistryId"] === "object" && input["RegistryId"] !== null
+      ? asRecord(input["RegistryId"])
+      : null;
+  const list = ctx.store
+    .list<StoredSchema>()
+    .filter((entry) => entry.key.startsWith(schemaPrefix))
+    .filter((entry) => {
+      if (registryId === null) return true;
+      const name =
+        typeof registryId["RegistryName"] === "string"
+          ? registryId["RegistryName"]
+          : "";
+      return entry.value.registryName === name;
+    })
+    .map((entry) => ({
+      RegistryName: entry.value.registryName,
+      RegistryArn: entry.value.registryArn,
+      SchemaName: entry.value.schemaName,
+      SchemaArn: entry.value.schemaArn,
+      SchemaStatus: "AVAILABLE",
+      Description: entry.value.description,
+      CreatedTime: String(Math.floor(Date.now() / 1000)),
+      UpdatedTime: String(Math.floor(Date.now() / 1000)),
+    }));
+  return { Schemas: list };
+};
+
+const ListSessions: OperationHandler = (_input, ctx) => {
+  const sessions = ctx.store
+    .list<StoredSession>()
+    .filter((entry) => entry.key.startsWith(sessionPrefix))
+    .map((entry) => sessionView(entry.value));
+  const ids = sessions.map((s) => (typeof s["Id"] === "string" ? s["Id"] : ""));
+  return { Sessions: sessions, Ids: ids };
+};
+
+const ListStatements: OperationHandler = (input, ctx) => {
+  const sessionId =
+    typeof input["SessionId"] === "string"
+      ? (input["SessionId"] as string)
+      : "";
+  if (sessionId === "") {
+    throw awsError("InvalidInputException", "SessionId is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredSession>(`${sessionPrefix}${sessionId}`) === undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Session ${sessionId} not found.`,
+      400,
+    );
+  }
+  return { Statements: [] };
+};
+
+const ListTableOptimizerRuns: OperationHandler = (input, ctx) => {
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : ctx.account;
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  const type = typeof input["Type"] === "string" ? input["Type"] : "";
+  if (databaseName === "" || tableName === "" || type === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName, TableName, and Type are required.",
+      400,
+    );
+  }
+  const key = `${tableOptimizerPrefix}${catalogId}:${databaseName}:${tableName}:${type}`;
+  if (ctx.store.get<StoredTableOptimizer>(key) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `TableOptimizer not found for ${databaseName}.${tableName} type ${type}`,
+      400,
+    );
+  }
+  return { TableOptimizerRuns: [] };
+};
+
+const ListUsageProfiles: OperationHandler = (_input, ctx) => {
+  const list = ctx.store
+    .list<StoredUsageProfile>()
+    .filter((entry) => entry.key.startsWith(usageProfilePrefix))
+    .map((entry) => ({
+      Name: entry.value.name,
+      CreatedOn: entry.value.createdOn,
+    }));
+  return { Profiles: list };
+};
+
+const ListWorkflows: OperationHandler = (_input, ctx) => {
+  const names = ctx.store
+    .list<StoredWorkflow>()
+    .filter((entry) => entry.key.startsWith(workflowPrefix))
+    .map((entry) => entry.value.name);
+  return { Workflows: names };
+};
+
+const ModifyIntegration: OperationHandler = (input, ctx) => {
+  const integrationIdentifier =
+    typeof input["IntegrationIdentifier"] === "string"
+      ? (input["IntegrationIdentifier"] as string)
+      : "";
+  if (integrationIdentifier === "") {
+    throw awsError(
+      "InvalidInputException",
+      "IntegrationIdentifier is required.",
+      400,
+    );
+  }
+  const key = `${integrationPrefix}${integrationIdentifier}`;
+  const stored = ctx.store.get<StoredIntegration>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Integration ${integrationIdentifier} not found.`,
+      400,
+    );
+  }
+  const description =
+    typeof input["Description"] === "string"
+      ? (input["Description"] as string)
+      : typeof stored.input["Description"] === "string"
+        ? stored.input["Description"]
+        : undefined;
+  const updated: StoredIntegration = {
+    ...stored,
+    input: {
+      ...stored.input,
+      ...(description !== undefined ? { Description: description } : {}),
+    },
+  };
+  ctx.store.set(key, updated);
+  return {
+    SourceArn: updated.sourceArn,
+    TargetArn: updated.targetArn,
+    IntegrationName: updated.integrationName,
+    IntegrationArn: updated.integrationArn,
+    Status: "ACTIVE",
+    CreateTime: updated.createTime,
+    ...(description !== undefined ? { Description: description } : {}),
+  };
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -4708,6 +4925,18 @@ const glue: ServiceDefinition = {
     ListDataQualityStatistics,
     ListDevEndpoints,
     ListEntities,
+    ListIntegrationResourceProperties,
+    ListMLTransforms,
+    ListMaterializedViewRefreshTaskRuns,
+    ListRegistries,
+    ListSchemaVersions,
+    ListSchemas,
+    ListSessions,
+    ListStatements,
+    ListTableOptimizerRuns,
+    ListUsageProfiles,
+    ListWorkflows,
+    ModifyIntegration,
   },
   model,
 } as const;

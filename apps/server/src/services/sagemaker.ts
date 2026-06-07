@@ -7430,6 +7430,298 @@ const ListInferenceExperiments: OperationHandler = (input, ctx) => {
   };
 };
 
+const ListInferenceRecommendationsJobSteps: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Steps: [] };
+};
+
+const ListInferenceRecommendationsJobs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let jobs = ctx.store
+    .list<StoredInferenceRecommendationsJob>()
+    .filter((entry) => entry.key.startsWith("inference-recommendations-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    jobs = jobs.filter((j) => j.JobName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    jobs = jobs.slice(0, maxResults);
+  }
+  return {
+    InferenceRecommendationsJobs: jobs.map((stored) => ({
+      JobName: stored.JobName,
+      JobDescription: stored.JobDescription ?? "",
+      JobType: stored.JobType,
+      JobArn: stored.JobArn,
+      Status: "COMPLETED",
+      CreationTime: stored.CreationTime,
+      RoleArn: stored.RoleArn,
+      LastModifiedTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListLabelingJobs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let jobs = ctx.store
+    .list<StoredLabelingJob>()
+    .filter((entry) => entry.key.startsWith("labeling-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    jobs = jobs.filter((j) => j.LabelingJobName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    jobs = jobs.slice(0, maxResults);
+  }
+  return {
+    LabelingJobSummaryList: jobs.map((stored) => ({
+      LabelingJobName: stored.LabelingJobName,
+      LabelingJobArn: stored.LabelingJobArn,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+      LabelingJobStatus: stored.LabelingJobStatus,
+      LabelCounters: {},
+      WorkteamArn: "",
+    })),
+  };
+};
+
+const ListLabelingJobsForWorkteam: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let jobs = ctx.store
+    .list<StoredLabelingJob>()
+    .filter((entry) => entry.key.startsWith("labeling-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    jobs = jobs.slice(0, maxResults);
+  }
+  return {
+    LabelingJobSummaryList: jobs.map((stored) => ({
+      LabelingJobName: stored.LabelingJobName,
+      JobReferenceCode: stored.LabelingJobArn,
+      WorkRequesterAccountId: ctx.account,
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListLineageGroups: OperationHandler = (_input, _ctx) => {
+  return { LineageGroupSummaries: [] };
+};
+
+const ListMlflowApps: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let apps = ctx.store
+    .list<StoredMlflowApp>()
+    .filter((entry) => entry.key.startsWith("mlflow-app/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    apps = apps.slice(0, maxResults);
+  }
+  return {
+    Summaries: apps.map((stored) => ({
+      Arn: stored.Arn,
+      Name: stored.Name,
+      Status: "InService",
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListMlflowTrackingServers: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let servers = ctx.store
+    .list<StoredMlflowTrackingServer>()
+    .filter((entry) => entry.key.startsWith("mlflow-tracking-server/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    servers = servers.slice(0, maxResults);
+  }
+  return {
+    TrackingServerSummaries: servers.map((stored) => ({
+      TrackingServerArn: stored.TrackingServerArn,
+      TrackingServerName: stored.TrackingServerName,
+      CreationTime: stored.CreationTime,
+      TrackingServerStatus: "Created",
+      MlflowVersion: stored.MlflowVersion,
+    })),
+  };
+};
+
+const ListModelBiasJobDefinitions: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let defs = ctx.store
+    .list<StoredModelBiasJobDefinition>()
+    .filter((entry) => entry.key.startsWith("model-bias-job-definition/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    defs = defs.filter((d) => d.JobDefinitionName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    defs = defs.slice(0, maxResults);
+  }
+  return {
+    JobDefinitionSummaries: defs.map((stored) => ({
+      MonitoringJobDefinitionName: stored.JobDefinitionName,
+      MonitoringJobDefinitionArn: stored.JobDefinitionArn,
+      CreationTime: stored.CreationTime,
+      EndpointName: "",
+    })),
+  };
+};
+
+const ListModelCardExportJobs: OperationHandler = (input, ctx) => {
+  const modelCardName = requireString(input, "ModelCardName");
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let jobs = ctx.store
+    .list<StoredModelCardExportJob>()
+    .filter((entry) => entry.key.startsWith("model-card-export-job/"))
+    .map((entry) => entry.value)
+    .filter((j) => j.ModelCardName === modelCardName)
+    .sort((a, b) => b.CreatedAt - a.CreatedAt);
+  if (maxResults !== undefined) {
+    jobs = jobs.slice(0, maxResults);
+  }
+  return {
+    ModelCardExportJobSummaries: jobs.map((stored) => ({
+      ModelCardExportJobName: stored.ModelCardExportJobName,
+      ModelCardExportJobArn: stored.ModelCardExportJobArn,
+      Status: stored.Status,
+      ModelCardName: stored.ModelCardName,
+      ModelCardVersion: stored.ModelCardVersion,
+      CreatedAt: stored.CreatedAt,
+      LastModifiedAt: stored.LastModifiedAt,
+    })),
+  };
+};
+
+const ListModelCardVersions: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ModelCardName");
+  const stored = ctx.store.get<StoredModelCard>(modelCardKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Model card ${name} not found.`, 404);
+  }
+  return {
+    ModelCardVersionSummaryList: [
+      {
+        ModelCardName: stored.ModelCardName,
+        ModelCardArn: stored.ModelCardArn,
+        ModelCardStatus: stored.ModelCardStatus,
+        ModelCardVersion: stored.ModelCardVersion,
+        CreationTime: stored.CreationTime,
+        LastModifiedTime: stored.LastModifiedTime,
+      },
+    ],
+  };
+};
+
+const ListModelCards: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let cards = ctx.store
+    .list<StoredModelCard>()
+    .filter((entry) => entry.key.startsWith("model-card/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    cards = cards.filter((c) => c.ModelCardName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    cards = cards.slice(0, maxResults);
+  }
+  return {
+    ModelCardSummaries: cards.map((stored) => ({
+      ModelCardName: stored.ModelCardName,
+      ModelCardArn: stored.ModelCardArn,
+      ModelCardStatus: stored.ModelCardStatus,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListModelExplainabilityJobDefinitions: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let defs = ctx.store
+    .list<StoredModelExplainabilityJobDefinition>()
+    .filter((entry) =>
+      entry.key.startsWith("model-explainability-job-definition/"),
+    )
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    defs = defs.filter((d) => d.JobDefinitionName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    defs = defs.slice(0, maxResults);
+  }
+  return {
+    JobDefinitionSummaries: defs.map((stored) => ({
+      MonitoringJobDefinitionName: stored.JobDefinitionName,
+      MonitoringJobDefinitionArn: stored.JobDefinitionArn,
+      CreationTime: stored.CreationTime,
+      EndpointName: "",
+    })),
+  };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -7711,6 +8003,18 @@ const sagemaker = {
     ListImages,
     ListInferenceComponents,
     ListInferenceExperiments,
+    ListInferenceRecommendationsJobSteps,
+    ListInferenceRecommendationsJobs,
+    ListLabelingJobs,
+    ListLabelingJobsForWorkteam,
+    ListLineageGroups,
+    ListMlflowApps,
+    ListMlflowTrackingServers,
+    ListModelBiasJobDefinitions,
+    ListModelCardExportJobs,
+    ListModelCardVersions,
+    ListModelCards,
+    ListModelExplainabilityJobDefinitions,
   },
   model,
 } as const satisfies ServiceDefinition;

@@ -63,6 +63,152 @@ const requireRule = (
   return rule;
 };
 
+const scheduleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+const parseRateMs = (expr: string): number | undefined => {
+  const m = /^rate\((\d+)\s+(minute|minutes|hour|hours|day|days)\)$/.exec(expr);
+  if (m === null) return undefined;
+  const n = parseInt(m[1], 10);
+  const unit = m[2] as string;
+  if (unit.startsWith("minute")) return n * 60_000;
+  if (unit.startsWith("hour")) return n * 3_600_000;
+  if (unit.startsWith("day")) return n * 86_400_000;
+  return undefined;
+};
+
+const cronFieldMatches = (field: string, value: number): boolean => {
+  if (field === "*" || field === "?") return true;
+  if (field.includes(","))
+    return field.split(",").some((f) => cronFieldMatches(f.trim(), value));
+  if (field.includes("/")) {
+    const slash = field.indexOf("/");
+    const startStr = field.slice(0, slash);
+    const stepStr = field.slice(slash + 1);
+    const start = startStr === "*" ? 0 : parseInt(startStr, 10);
+    const step = parseInt(stepStr, 10);
+    return (
+      !isNaN(start) &&
+      !isNaN(step) &&
+      value >= start &&
+      (value - start) % step === 0
+    );
+  }
+  if (field.includes("-")) {
+    const dash = field.indexOf("-");
+    const start = parseInt(field.slice(0, dash), 10);
+    const end = parseInt(field.slice(dash + 1), 10);
+    return !isNaN(start) && !isNaN(end) && value >= start && value <= end;
+  }
+  const n = parseInt(field, 10);
+  return !isNaN(n) && value === n;
+};
+
+const parseCronNextMs = (expr: string): number | undefined => {
+  const inner = /^cron\((.+)\)$/.exec(expr);
+  if (inner === null) return undefined;
+  const parts = inner[1].trim().split(/\s+/);
+  if (parts.length !== 6) return undefined;
+  const [minF, hourF, domF, monF, dowF, yearF] = parts as [
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  const now = Date.now();
+  const next = new Date(now);
+  next.setUTCSeconds(0, 0);
+  next.setUTCMinutes(next.getUTCMinutes() + 1);
+  const limit = now + 366 * 24 * 3_600_000;
+  while (next.getTime() < limit) {
+    if (
+      cronFieldMatches(minF, next.getUTCMinutes()) &&
+      cronFieldMatches(hourF, next.getUTCHours()) &&
+      (domF === "?" || cronFieldMatches(domF, next.getUTCDate())) &&
+      cronFieldMatches(monF, next.getUTCMonth() + 1) &&
+      (dowF === "?" || cronFieldMatches(dowF, next.getUTCDay())) &&
+      cronFieldMatches(yearF, next.getUTCFullYear())
+    ) {
+      return next.getTime() - now;
+    }
+    next.setUTCMinutes(next.getUTCMinutes() + 1);
+  }
+  return undefined;
+};
+
+const cancelScheduleTimer = (key: string): void => {
+  const t = scheduleTimers.get(key);
+  if (t !== undefined) {
+    clearTimeout(t);
+    scheduleTimers.delete(key);
+  }
+};
+
+const fireScheduledRule = async (
+  key: string,
+  expr: string,
+  ctx: ServiceContext,
+): Promise<void> => {
+  const rule = ctx.store.get<StoredRule>(key);
+  if (rule === undefined || rule.State !== "ENABLED") {
+    scheduleTimers.delete(key);
+    return;
+  }
+  const event = {
+    version: "0",
+    id: crypto.randomUUID(),
+    "detail-type": "Scheduled Event",
+    source: "aws.events",
+    account: ctx.account,
+    time: new Date().toISOString(),
+    region: ctx.region,
+    resources: [rule.Arn],
+    detail: {},
+  };
+  for (const target of Object.values(rule.targets)) {
+    const arn = target["Arn"];
+    if (typeof arn === "string") {
+      const body = applyTargetTransform(event, target);
+      if (body !== undefined) {
+        await deliverToArn(ctx, arn, { body, event });
+      }
+    }
+  }
+  const nextMs = expr.startsWith("rate(")
+    ? parseRateMs(expr)
+    : parseCronNextMs(expr);
+  if (nextMs !== undefined) {
+    scheduleTimers.set(
+      key,
+      setTimeout(() => {
+        void fireScheduledRule(key, expr, ctx);
+      }, nextMs),
+    );
+  } else {
+    scheduleTimers.delete(key);
+  }
+};
+
+const startScheduleTimer = (
+  key: string,
+  expr: string,
+  ctx: ServiceContext,
+): void => {
+  cancelScheduleTimer(key);
+  const isRate = expr.startsWith("rate(");
+  const isCron = expr.startsWith("cron(");
+  if (!isRate && !isCron) return;
+  const firstDelayMs = isRate ? 0 : parseCronNextMs(expr);
+  if (firstDelayMs === undefined) return;
+  scheduleTimers.set(
+    key,
+    setTimeout(() => {
+      void fireScheduledRule(key, expr, ctx);
+    }, firstDelayMs),
+  );
+};
+
 const PutRule: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   const busName = busNameOf(input);
@@ -82,12 +228,17 @@ const PutRule: OperationHandler = (input, ctx) => {
     targets: existing?.targets ?? {},
   };
   ctx.store.set(key, rule);
+  cancelScheduleTimer(key);
+  if (rule.State === "ENABLED" && rule.ScheduleExpression !== undefined) {
+    startScheduleTimer(key, rule.ScheduleExpression, ctx);
+  }
   return { RuleArn: arn };
 };
 
 const DeleteRule: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   const busName = busNameOf(input);
+  cancelScheduleTimer(ruleKey(busName, name));
   ctx.store.delete(ruleKey(busName, name));
   return {};
 };
@@ -639,7 +790,11 @@ const EnableRule: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   const busName = busNameOf(input);
   const rule = requireRule(ctx, busName, name);
-  ctx.store.set(ruleKey(busName, name), { ...rule, State: "ENABLED" });
+  const key = ruleKey(busName, name);
+  ctx.store.set(key, { ...rule, State: "ENABLED" });
+  if (rule.ScheduleExpression !== undefined) {
+    startScheduleTimer(key, rule.ScheduleExpression, ctx);
+  }
   return {};
 };
 
@@ -647,7 +802,9 @@ const DisableRule: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   const busName = busNameOf(input);
   const rule = requireRule(ctx, busName, name);
-  ctx.store.set(ruleKey(busName, name), { ...rule, State: "DISABLED" });
+  const key = ruleKey(busName, name);
+  ctx.store.set(key, { ...rule, State: "DISABLED" });
+  cancelScheduleTimer(key);
   return {};
 };
 

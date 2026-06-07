@@ -3120,6 +3120,144 @@ const ListDataTablePrimaryValues: OperationHandler = (input, ctx) => {
   };
 };
 
+const ListDataTableValues: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const tableId = requireString(input, "DataTableId");
+  const values = ctx.store
+    .list<StoredDataTableValue>()
+    .filter((entry) => entry.key.startsWith(dataTableValuePrefix))
+    .map((entry) => entry.value)
+    .filter((v) => v.InstanceId === instanceId && v.DataTableId === tableId);
+  return { Values: values.map((v) => ({ Key: v.Key })) };
+};
+
+const ListDataTables: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const tables = ctx.store
+    .list<StoredDataTable>()
+    .filter((entry) => entry.key.startsWith(dataTablePrefix))
+    .map((entry) => entry.value)
+    .filter((t) => t.InstanceId === instanceId);
+  return {
+    DataTableSummaryList: tables.map((t) => ({ Id: t.Id, Arn: t.Arn })),
+  };
+};
+
+const ListDefaultVocabularies: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { DefaultVocabularyList: [] };
+};
+
+const ListEntitySecurityProfiles: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { SecurityProfiles: [] };
+};
+
+const ListEvaluationFormVersions: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { EvaluationFormVersionSummaryList: [] };
+};
+
+const ListEvaluationForms: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const forms = ctx.store
+    .list<StoredEvaluationForm>()
+    .filter((entry) => entry.key.startsWith(evaluationFormPrefix))
+    .map((entry) => entry.value)
+    .filter((f) => f.InstanceId === instanceId);
+  return {
+    EvaluationFormSummaryList: forms.map((f) => ({
+      EvaluationFormId: f.EvaluationFormId,
+      EvaluationFormArn: f.EvaluationFormArn,
+    })),
+  };
+};
+
+const ListFlowAssociations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { FlowAssociationSummaryList: [] };
+};
+
+const ListHoursOfOperationOverrides: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hooId = requireString(input, "HoursOfOperationId");
+  const overrides = ctx.store
+    .list<StoredHoursOfOperationOverride>()
+    .filter((entry) => entry.key.startsWith(hoursOfOperationOverridePrefix))
+    .map((entry) => entry.value)
+    .filter(
+      (o) => o.InstanceId === instanceId && o.HoursOfOperationId === hooId,
+    );
+  return {
+    HoursOfOperationOverrideList: overrides.map((o) => ({
+      HoursOfOperationOverrideId: o.HoursOfOperationOverrideId,
+      HoursOfOperationId: o.HoursOfOperationId,
+    })),
+  };
+};
+
+const ListHoursOfOperations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hours = ctx.store
+    .list<StoredHoursOfOperation>()
+    .filter((entry) => entry.key.startsWith(hoursOfOperationPrefix))
+    .map((entry) => entry.value)
+    .filter((h) => h.InstanceId === instanceId);
+  return {
+    HoursOfOperationSummaryList: hours.map((h) => ({
+      Id: h.HoursOfOperationId,
+      Arn: h.HoursOfOperationArn,
+      Name: h.Name,
+    })),
+  };
+};
+
+const ListInstanceAttributes: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { Attributes: [] };
+};
+
+const ListInstanceStorageConfigs: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const resourceType =
+    typeof input["ResourceType"] === "string"
+      ? input["ResourceType"]
+      : undefined;
+  const configs = ctx.store
+    .list<StoredInstanceStorageConfig>()
+    .filter((entry) => entry.key.startsWith(instanceStorageConfigPrefix))
+    .map((entry) => entry.value)
+    .filter(
+      (c) =>
+        c.InstanceId === instanceId &&
+        (resourceType === undefined || c.ResourceType === resourceType),
+    );
+  return {
+    StorageConfigs: configs.map((c) => ({
+      AssociationId: c.AssociationId,
+      StorageType: "S3",
+      ResourceType: c.ResourceType,
+    })),
+  };
+};
+
+const ListIntegrationAssociations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { IntegrationAssociationSummaryList: [] };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -3167,6 +3305,11 @@ const connect = {
           if (req.method === "GET") {
             if (parts[2] === "approved-origins") return "ListApprovedOrigins";
             if (parts[2] === "bots") return "ListBots";
+            if (parts[2] === "attributes") return "ListInstanceAttributes";
+            if (parts[2] === "storage-configs")
+              return "ListInstanceStorageConfigs";
+            if (parts[2] === "integration-associations")
+              return "ListIntegrationAssociations";
           }
         }
         if (parts.length === 4) {
@@ -3223,10 +3366,18 @@ const connect = {
       case "evaluation-forms":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateEvaluationForm";
+        if (parts.length === 2 && req.method === "GET")
+          return "ListEvaluationForms";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeEvaluationForm";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteEvaluationForm";
+        if (
+          parts.length === 4 &&
+          parts[3] === "versions" &&
+          req.method === "GET"
+        )
+          return "ListEvaluationFormVersions";
         if (
           parts.length === 4 &&
           parts[3] === "activate" &&
@@ -3323,6 +3474,12 @@ const connect = {
           req.method === "POST"
         )
           return "DisassociateHoursOfOperations";
+        if (
+          parts.length === 4 &&
+          parts[3] === "overrides" &&
+          req.method === "GET"
+        )
+          return "ListHoursOfOperationOverrides";
         if (
           parts.length === 4 &&
           parts[3] === "overrides" &&
@@ -3612,6 +3769,7 @@ const connect = {
       case "data-tables":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateDataTable";
+        if (parts.length === 2 && req.method === "GET") return "ListDataTables";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeDataTable";
         if (parts.length === 3 && req.method === "DELETE")
@@ -3651,6 +3809,7 @@ const connect = {
           if (parts[4] === "update") return "BatchUpdateDataTableValue";
           if (parts[4] === "evaluate") return "EvaluateDataTableValues";
           if (parts[4] === "list-primary") return "ListDataTablePrimaryValues";
+          if (parts[4] === "list") return "ListDataTableValues";
         }
         return undefined;
 
@@ -3882,6 +4041,26 @@ const connect = {
           return "GetTrafficDistribution";
         return undefined;
 
+      case "default-vocabulary-summary":
+        if (parts.length === 2 && req.method === "POST")
+          return "ListDefaultVocabularies";
+        return undefined;
+
+      case "entity-security-profiles-summary":
+        if (parts.length === 2 && req.method === "POST")
+          return "ListEntitySecurityProfiles";
+        return undefined;
+
+      case "flow-associations-summary":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListFlowAssociations";
+        return undefined;
+
+      case "hours-of-operations-summary":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListHoursOfOperations";
+        return undefined;
+
       default:
         return undefined;
     }
@@ -4033,6 +4212,18 @@ const connect = {
     ListContactReferences,
     ListDataTableAttributes,
     ListDataTablePrimaryValues,
+    ListDataTableValues,
+    ListDataTables,
+    ListDefaultVocabularies,
+    ListEntitySecurityProfiles,
+    ListEvaluationFormVersions,
+    ListEvaluationForms,
+    ListFlowAssociations,
+    ListHoursOfOperationOverrides,
+    ListHoursOfOperations,
+    ListInstanceAttributes,
+    ListInstanceStorageConfigs,
+    ListIntegrationAssociations,
     DescribeAuthenticationProfile,
     DescribeContact,
     DescribeContactEvaluation,

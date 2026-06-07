@@ -1277,6 +1277,22 @@ const vpnConnectionKey = (id: string): string => `vpn-conn/${id}`;
 const vpnConnectionRouteKey = (connId: string, cidr: string): string =>
   `vpn-route/${connId}/${cidr}`;
 const capacityManagerDataExportKey = (id: string): string => `cmde/${id}`;
+const byoipCidrKey = (cidr: string): string => `byoip-cidr/${cidr}`;
+const ipamPoolCidrKey = (poolId: string, cidr: string): string =>
+  `ipam-pool-cidr/${poolId}/${cidr}`;
+const publicIpv4PoolCidrKey = (poolId: string, cidr: string): string =>
+  `ipv4-pool-cidr/${poolId}/${cidr}`;
+const instanceEventNotificationKey = (): string => `ien/singleton`;
+const tgwMcastMemberKey = (
+  domainId: string,
+  groupIp: string,
+  niId: string,
+): string => `tgw-mcast-member/${domainId}/${groupIp}/${niId}`;
+const tgwMcastSourceKey = (
+  domainId: string,
+  groupIp: string,
+  niId: string,
+): string => `tgw-mcast-source/${domainId}/${groupIp}/${niId}`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -9567,6 +9583,256 @@ const DeleteVpnConcentrator: OperationHandler = (input, ctx) => {
   return { Return: true };
 };
 
+const DeleteVpnConnection: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpnConnectionId"] === "string"
+      ? input["VpnConnectionId"]
+      : "";
+  const stored = ctx.store.get<StoredVpnConnection>(vpnConnectionKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpnConnectionID.NotFound",
+      `The vpn connection ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(vpnConnectionKey(id));
+  return {};
+};
+
+const DeleteVpnConnectionRoute: OperationHandler = (input, ctx) => {
+  const vpnConnectionId =
+    typeof input["VpnConnectionId"] === "string"
+      ? input["VpnConnectionId"]
+      : "";
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "";
+  const conn = ctx.store.get<StoredVpnConnection>(
+    vpnConnectionKey(vpnConnectionId),
+  );
+  if (conn === undefined) {
+    throw awsError(
+      "InvalidVpnConnectionID.NotFound",
+      `The vpn connection ID '${vpnConnectionId}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(
+    vpnConnectionRouteKey(vpnConnectionId, destinationCidrBlock),
+  );
+  return {};
+};
+
+const DeleteVpnGateway: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpnGatewayId"] === "string" ? input["VpnGatewayId"] : "";
+  const stored = ctx.store.get<StoredVpnGateway>(vpnGwKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpnGatewayID.NotFound",
+      `The virtual private gateway ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(vpnGwKey(id));
+  return {};
+};
+
+const DeprovisionByoipCidr: OperationHandler = (input, ctx) => {
+  const cidr = typeof input["Cidr"] === "string" ? input["Cidr"] : "";
+  ctx.store.delete(byoipCidrKey(cidr));
+  return {
+    ByoipCidr: {
+      Cidr: cidr,
+      State: "deprovisioned",
+      StatusMessage: "Deprovisioned",
+      AsnAssociations: [],
+    },
+  };
+};
+
+const DeprovisionIpamByoasn: OperationHandler = (input, ctx) => {
+  const ipamId = typeof input["IpamId"] === "string" ? input["IpamId"] : "";
+  const asn = typeof input["Asn"] === "string" ? input["Asn"] : "";
+  const stored = ctx.store.get<StoredIpamByoasnAssociation>(
+    ipamByoasnKey(ipamId, asn),
+  );
+  ctx.store.delete(ipamByoasnKey(ipamId, asn));
+  return {
+    Byoasn: {
+      Asn: stored?.Asn ?? asn,
+      IpamId: stored?.IpamId ?? ipamId,
+      IpamArn:
+        stored?.IpamArn ??
+        `arn:aws:ec2:${ctx.region}:${ctx.account}:ipam/${ipamId}`,
+      StatusMessage: "BYOASN deprovisioned",
+      State: "deprovision-complete",
+    },
+  };
+};
+
+const DeprovisionIpamPoolCidr: OperationHandler = (input, ctx) => {
+  const poolId =
+    typeof input["IpamPoolId"] === "string" ? input["IpamPoolId"] : "";
+  const cidr = typeof input["Cidr"] === "string" ? input["Cidr"] : "";
+  ctx.store.delete(ipamPoolCidrKey(poolId, cidr));
+  return {
+    IpamPoolCidr: {
+      Cidr: cidr,
+      State: "deprovisioned",
+    },
+  };
+};
+
+const DeprovisionPublicIpv4PoolCidr: OperationHandler = (input, ctx) => {
+  const poolId = typeof input["PoolId"] === "string" ? input["PoolId"] : "";
+  const cidr = typeof input["Cidr"] === "string" ? input["Cidr"] : "";
+  ctx.store.delete(publicIpv4PoolCidrKey(poolId, cidr));
+  return {
+    PoolId: poolId,
+    DeprovisionedAddresses: [],
+  };
+};
+
+const DeregisterImage: OperationHandler = (input, ctx) => {
+  const id = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(id));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(imageKey(id));
+  return { Return: true, DeleteSnapshotResults: [] };
+};
+
+const DeregisterInstanceEventNotificationAttributes: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const attr =
+    typeof input["InstanceTagAttribute"] === "object" &&
+    input["InstanceTagAttribute"] !== null
+      ? (input["InstanceTagAttribute"] as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+  const includeAll = attr["IncludeAllTagsOfInstance"] === true;
+  const keysToRemove = Array.isArray(attr["InstanceTagKeys"])
+    ? (attr["InstanceTagKeys"] as string[])
+    : [];
+  type StoredIen = {
+    InstanceTagKeys: string[];
+    IncludeAllTagsOfInstance: boolean;
+  };
+  const existing = ctx.store.get<StoredIen>(instanceEventNotificationKey()) ?? {
+    InstanceTagKeys: [],
+    IncludeAllTagsOfInstance: false,
+  };
+  const remaining = includeAll
+    ? []
+    : existing.InstanceTagKeys.filter((k) => !keysToRemove.includes(k));
+  ctx.store.set(instanceEventNotificationKey(), {
+    InstanceTagKeys: remaining,
+    IncludeAllTagsOfInstance: false,
+  });
+  return {
+    InstanceTagAttribute: {
+      InstanceTagKeys: remaining,
+      IncludeAllTagsOfInstance: false,
+    },
+  };
+};
+
+const DeregisterTransitGatewayMulticastGroupMembers: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const domainId =
+    typeof input["TransitGatewayMulticastDomainId"] === "string"
+      ? input["TransitGatewayMulticastDomainId"]
+      : "";
+  const groupIp =
+    typeof input["GroupIpAddress"] === "string" ? input["GroupIpAddress"] : "";
+  const niIds = Array.isArray(input["NetworkInterfaceIds"])
+    ? (input["NetworkInterfaceIds"] as string[])
+    : [];
+  for (const niId of niIds) {
+    ctx.store.delete(tgwMcastMemberKey(domainId, groupIp, niId));
+  }
+  return {
+    DeregisteredMulticastGroupMembers: {
+      TransitGatewayMulticastDomainId: domainId,
+      DeregisteredNetworkInterfaceIds: niIds,
+      GroupIpAddress: groupIp,
+    },
+  };
+};
+
+const DeregisterTransitGatewayMulticastGroupSources: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const domainId =
+    typeof input["TransitGatewayMulticastDomainId"] === "string"
+      ? input["TransitGatewayMulticastDomainId"]
+      : "";
+  const groupIp =
+    typeof input["GroupIpAddress"] === "string" ? input["GroupIpAddress"] : "";
+  const niIds = Array.isArray(input["NetworkInterfaceIds"])
+    ? (input["NetworkInterfaceIds"] as string[])
+    : [];
+  for (const niId of niIds) {
+    ctx.store.delete(tgwMcastSourceKey(domainId, groupIp, niId));
+  }
+  return {
+    DeregisteredMulticastGroupSources: {
+      TransitGatewayMulticastDomainId: domainId,
+      DeregisteredNetworkInterfaceIds: niIds,
+      GroupIpAddress: groupIp,
+    },
+  };
+};
+
+const DescribeAccountAttributes: OperationHandler = (input, _ctx) => {
+  const requestedNames = Array.isArray(input["AttributeNames"])
+    ? (input["AttributeNames"] as string[])
+    : [];
+  const allAttributes = [
+    {
+      AttributeName: "supported-platforms",
+      AttributeValues: [{ AttributeValue: "VPC" }],
+    },
+    {
+      AttributeName: "default-vpc",
+      AttributeValues: [{ AttributeValue: "vpc-00000000" }],
+    },
+    {
+      AttributeName: "max-instances",
+      AttributeValues: [{ AttributeValue: "20" }],
+    },
+    {
+      AttributeName: "vpc-max-security-groups-per-interface",
+      AttributeValues: [{ AttributeValue: "5" }],
+    },
+    {
+      AttributeName: "max-elastic-ips",
+      AttributeValues: [{ AttributeValue: "5" }],
+    },
+    {
+      AttributeName: "vpc-max-elastic-ips",
+      AttributeValues: [{ AttributeValue: "5" }],
+    },
+  ] as const;
+  const filtered =
+    requestedNames.length === 0
+      ? allAttributes
+      : allAttributes.filter((a) => requestedNames.includes(a.AttributeName));
+  return { AccountAttributes: filtered };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -9852,6 +10118,18 @@ const ec2: ServiceDefinition = {
     DeleteVpcEndpoints,
     DeleteVpcPeeringConnection,
     DeleteVpnConcentrator,
+    DeleteVpnConnection,
+    DeleteVpnConnectionRoute,
+    DeleteVpnGateway,
+    DeprovisionByoipCidr,
+    DeprovisionIpamByoasn,
+    DeprovisionIpamPoolCidr,
+    DeprovisionPublicIpv4PoolCidr,
+    DeregisterImage,
+    DeregisterInstanceEventNotificationAttributes,
+    DeregisterTransitGatewayMulticastGroupMembers,
+    DeregisterTransitGatewayMulticastGroupSources,
+    DescribeAccountAttributes,
   },
   model,
 } as const;

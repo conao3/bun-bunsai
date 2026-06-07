@@ -1,3 +1,4 @@
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import { publicJwks, signJwt } from "../core/jwt.ts";
@@ -210,6 +211,78 @@ type StoredMfaConfig = {
   WebAuthnConfiguration?: Record<string, unknown>;
   MfaConfiguration: string;
 };
+
+const SRP_N_HEX =
+  "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1" +
+  "29024E088A67CC74020BBEA63B139B22514A08798E3404DD" +
+  "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245" +
+  "E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED" +
+  "EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D" +
+  "C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F" +
+  "83655D23DCA3AD961C62F356208552BB9ED529077096966D" +
+  "670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B" +
+  "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9" +
+  "DE2BCBF6955817183995497CEA956AE515D2261898FA0510" +
+  "15728E5A8AAAC42DAD33170D04507A33A85521ABDF1CBA64" +
+  "ECFB850458DBEF0A8AEA71575D060C7DB3970F85A6E1E4C7" +
+  "ABF5AE8CDB0933D71E8C94E04A25619DCEE3D2261AD2EE6B" +
+  "F12FFA06D98A0864D87602733EC86A64521F2B18177B200C" +
+  "BBE117577A615D6C770988C0BAD946E208E24FA074E5AB31" +
+  "43DB5BFCE0FD108E4B82D120A93AD2CAFFFFFFFFFFFFFFFF";
+
+const SRP_N = BigInt(`0x${SRP_N_HEX}`);
+const SRP_g = 2n;
+
+const srpPadHex = (n: bigint): string => {
+  let hex = n.toString(16);
+  if (hex.length % 2 !== 0) hex = `0${hex}`;
+  if (/^[89a-f]/i.test(hex)) hex = `00${hex}`;
+  return hex;
+};
+
+const srpDigest = (hexStr: string): bigint =>
+  BigInt(
+    `0x${createHash("sha256").update(Buffer.from(hexStr, "hex")).digest("hex")}`,
+  );
+
+const SRP_k = srpDigest(srpPadHex(SRP_N) + "02");
+
+const modPow = (base: bigint, exp: bigint, mod: bigint): bigint => {
+  let result = 1n;
+  let b = ((base % mod) + mod) % mod;
+  let e = exp;
+  while (e > 0n) {
+    if (e & 1n) result = (result * b) % mod;
+    e >>= 1n;
+    b = (b * b) % mod;
+  }
+  return result;
+};
+
+const srpHkdf = (S: bigint, u: bigint): Buffer => {
+  const ikm = Buffer.from(srpPadHex(S), "hex");
+  const salt = Buffer.from(srpPadHex(u), "hex");
+  const prk = createHmac("sha256", salt).update(ikm).digest();
+  const info = Buffer.concat([
+    Buffer.from("Caldera Derived Key", "utf8"),
+    Buffer.from([0x01]),
+  ]);
+  return createHmac("sha256", prk).update(info).digest().subarray(0, 16);
+};
+
+type SrpSession = {
+  poolId: string;
+  clientId: string;
+  username: string;
+  b: string;
+  v: string;
+  srpA: string;
+  salt: string;
+  secretBlock: string;
+};
+
+const srpSessionKey = (poolId: string, username: string): string =>
+  `srp#${poolId}#${username}`;
 
 const poolArn = (region: string, account: string, poolId: string): string =>
   `arn:aws:cognito-idp:${region}:${account}:userpool/${poolId}`;
@@ -2106,11 +2179,61 @@ const InitiateAuth: OperationHandler = async (input, ctx) => {
       }),
     };
   }
+  if (authFlow === "USER_SRP_AUTH") {
+    const username = authParams["USERNAME"] ?? "";
+    const srpA = authParams["SRP_A"] ?? "";
+    const user = pool.users[username];
+    if (user === undefined) {
+      throw awsError("UserNotFoundException", `User does not exist.`, 400);
+    }
+    if (!user.Enabled) {
+      throw awsError("NotAuthorizedException", `User is disabled.`, 400);
+    }
+    const password = user.Password ?? "";
+    const poolName = pool.Id.split("_")[1] ?? pool.Id;
+    const saltRaw = randomBytes(16);
+    const saltBigInt = BigInt(`0x${saltRaw.toString("hex")}`);
+    const saltHex = srpPadHex(saltBigInt);
+    const innerHash = createHash("sha256")
+      .update(`${poolName}${username}:${password}`, "utf8")
+      .digest("hex");
+    const x = srpDigest(saltHex + innerHash);
+    const v = modPow(SRP_g, x, SRP_N);
+    const b = BigInt(`0x${randomBytes(32).toString("hex")}`);
+    const B = (((SRP_k * v) % SRP_N) + modPow(SRP_g, b, SRP_N)) % SRP_N;
+    const secretBlockBytes = randomBytes(128);
+    const secretBlock = secretBlockBytes.toString("base64");
+    const session: SrpSession = {
+      poolId: pool.Id,
+      clientId,
+      username,
+      b: b.toString(16),
+      v: v.toString(16),
+      srpA,
+      salt: saltHex,
+      secretBlock,
+    };
+    ctx.store.set(srpSessionKey(pool.Id, username), session);
+    return {
+      ChallengeName: "PASSWORD_VERIFIER",
+      ChallengeParameters: {
+        SRP_B: srpPadHex(B),
+        SALT: saltHex,
+        SECRET_BLOCK: secretBlock,
+        USER_ID_FOR_SRP: username,
+        USERNAME: username,
+      },
+    };
+  }
   return { ChallengeName: "PASSWORD_VERIFIER", ChallengeParameters: {} };
 };
 
 const RespondToAuthChallenge: OperationHandler = async (input, ctx) => {
   const clientId = requireString(input, "ClientId");
+  const challengeName =
+    typeof input["ChallengeName"] === "string"
+      ? (input["ChallengeName"] as string)
+      : "";
   const challengeResponses =
     typeof input["ChallengeResponses"] === "object" &&
     input["ChallengeResponses"] !== null
@@ -2129,6 +2252,57 @@ const RespondToAuthChallenge: OperationHandler = async (input, ctx) => {
     ) {
       pool = entry.value;
       break;
+    }
+  }
+  if (pool !== undefined && challengeName === "PASSWORD_VERIFIER") {
+    const session = ctx.store.get<SrpSession>(srpSessionKey(pool.Id, username));
+    if (session !== undefined) {
+      const signature = challengeResponses["PASSWORD_CLAIM_SIGNATURE"] ?? "";
+      const secretBlock =
+        challengeResponses["PASSWORD_CLAIM_SECRET_BLOCK"] ?? "";
+      const timestamp = challengeResponses["TIMESTAMP"] ?? "";
+      ctx.store.delete(srpSessionKey(pool.Id, username));
+      if (secretBlock !== session.secretBlock) {
+        throw awsError(
+          "NotAuthorizedException",
+          "Incorrect username or password.",
+          400,
+        );
+      }
+      const A = BigInt(`0x${session.srpA}`);
+      const v = BigInt(`0x${session.v}`);
+      const b = BigInt(`0x${session.b}`);
+      const B = (((SRP_k * v) % SRP_N) + modPow(SRP_g, b, SRP_N)) % SRP_N;
+      const u = srpDigest(srpPadHex(A) + srpPadHex(B));
+      const S = modPow(
+        (((A * modPow(v, u, SRP_N)) % SRP_N) + SRP_N) % SRP_N,
+        b,
+        SRP_N,
+      );
+      const K = srpHkdf(S, u);
+      const secretBlockBytes = Buffer.from(secretBlock, "base64");
+      const poolName = pool.Id.split("_")[1] ?? pool.Id;
+      const expectedSig = createHmac("sha256", K)
+        .update(poolName, "utf8")
+        .update(username, "utf8")
+        .update(secretBlockBytes)
+        .update(timestamp, "utf8")
+        .digest("base64");
+      if (signature !== expectedSig) {
+        throw awsError(
+          "NotAuthorizedException",
+          "Incorrect username or password.",
+          400,
+        );
+      }
+      return {
+        AuthenticationResult: await issueTokens({
+          poolId: pool.Id,
+          username,
+          clientId,
+          user: pool.users[username],
+        }),
+      };
     }
   }
   return {

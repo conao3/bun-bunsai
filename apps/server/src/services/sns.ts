@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import { deliverToQueue } from "./sqs.ts";
 import snsModel from "../../../../test/vendor/aws-models/sns.json" with { type: "json" };
 import type {
   OperationHandler,
@@ -112,8 +111,6 @@ const requireTopic = (ctx: ServiceContext, arn: string): StoredTopic => {
   }
   return topic;
 };
-
-const arnResourceName = (arn: string): string => arn.split(":").pop() ?? "";
 
 const jsonDefaultMessage = (message: string): string => {
   try {
@@ -285,7 +282,6 @@ const fanout = async (
   matchTopic: (topicArn: string) => boolean,
   delivery: DeliveryMessage,
 ): Promise<void> => {
-  const sqsStore = ctx.storeFor("sqs");
   for (const entry of snsStore.list<StoredSubscription>()) {
     if (!entry.key.startsWith("subscription/")) continue;
     const subscription = entry.value;
@@ -295,30 +291,20 @@ const fanout = async (
         subscriptionAttributesKey(subscription.SubscriptionArn),
       )?.Attributes ?? {};
     if (!matchesFilterPolicy(attributes["FilterPolicy"], delivery)) continue;
-    if (subscription.Protocol === "sqs") {
-      const queueName = arnResourceName(subscription.Endpoint);
-      if (attributes["RawMessageDelivery"] === "true") {
-        deliverToQueue(sqsStore, queueName, {
-          body: delivery.message,
-          messageAttributes: delivery.messageAttributes,
-          senderId: ctx.account,
-        });
-      } else {
-        deliverToQueue(sqsStore, queueName, {
-          body: buildEnvelope(subscription.TopicArn, delivery),
-          senderId: ctx.account,
-        });
-      }
-    } else if (subscription.Protocol === "lambda") {
-      await deliverToArn(ctx, subscription.Endpoint, {
-        body: delivery.message,
-        event: snsLambdaEvent(
-          subscription.TopicArn,
-          subscription.SubscriptionArn,
-          delivery,
-        ),
-      });
-    }
+    const raw = attributes["RawMessageDelivery"] === "true";
+    const isSqs = subscription.Protocol === "sqs";
+    await deliverToArn(ctx, subscription.Endpoint, {
+      body:
+        isSqs && !raw
+          ? buildEnvelope(subscription.TopicArn, delivery)
+          : delivery.message,
+      event: snsLambdaEvent(
+        subscription.TopicArn,
+        subscription.SubscriptionArn,
+        delivery,
+      ),
+      messageAttributes: raw ? delivery.messageAttributes : undefined,
+    });
   }
 };
 

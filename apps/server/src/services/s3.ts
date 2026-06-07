@@ -23,6 +23,11 @@ type S3Object = {
   versionId?: string;
   isDeleteMarker?: boolean;
   acl?: string;
+  contentDisposition?: string;
+  cacheControl?: string;
+  contentEncoding?: string;
+  contentLanguage?: string;
+  expires?: number;
 };
 
 type S3Tag = {
@@ -46,6 +51,11 @@ type S3Upload = {
   parts: Record<string, S3Part>;
   userMetadata: Record<string, string>;
   storageClass: string;
+  contentDisposition?: string;
+  cacheControl?: string;
+  contentEncoding?: string;
+  contentLanguage?: string;
+  expires?: number;
 };
 
 type S3Bucket = {
@@ -535,6 +545,24 @@ const s3: ServiceDefinition = {
       const storageClass = input["StorageClass"];
       const versionId = versioned ? generateVersionId() : undefined;
       const acl = typeof input["ACL"] === "string" ? input["ACL"] : undefined;
+      const contentDisposition =
+        typeof input["ContentDisposition"] === "string"
+          ? input["ContentDisposition"]
+          : undefined;
+      const cacheControl =
+        typeof input["CacheControl"] === "string"
+          ? input["CacheControl"]
+          : undefined;
+      const contentEncoding =
+        typeof input["ContentEncoding"] === "string"
+          ? input["ContentEncoding"]
+          : undefined;
+      const contentLanguage =
+        typeof input["ContentLanguage"] === "string"
+          ? input["ContentLanguage"]
+          : undefined;
+      const expires =
+        typeof input["Expires"] === "number" ? input["Expires"] : undefined;
       const object: S3Object = {
         key,
         body,
@@ -552,6 +580,11 @@ const s3: ServiceDefinition = {
           typeof storageClass === "string" ? storageClass : "STANDARD",
         versionId,
         acl,
+        contentDisposition,
+        cacheControl,
+        contentEncoding,
+        contentLanguage,
+        expires,
       };
       const existing = target.objects[key] ?? [];
       const versions = versioned ? [object, ...existing] : [object];
@@ -615,6 +648,19 @@ const s3: ServiceDefinition = {
         ...(object.versionId !== undefined
           ? { VersionId: object.versionId }
           : {}),
+        ...(object.contentDisposition !== undefined
+          ? { ContentDisposition: object.contentDisposition }
+          : {}),
+        ...(object.cacheControl !== undefined
+          ? { CacheControl: object.cacheControl }
+          : {}),
+        ...(object.contentEncoding !== undefined
+          ? { ContentEncoding: object.contentEncoding }
+          : {}),
+        ...(object.contentLanguage !== undefined
+          ? { ContentLanguage: object.contentLanguage }
+          : {}),
+        ...(object.expires !== undefined ? { Expires: object.expires } : {}),
       };
       const rangeHeader = req.headers.get("range");
       const match =
@@ -689,6 +735,19 @@ const s3: ServiceDefinition = {
         ...(object.versionId !== undefined
           ? { VersionId: object.versionId }
           : {}),
+        ...(object.contentDisposition !== undefined
+          ? { ContentDisposition: object.contentDisposition }
+          : {}),
+        ...(object.cacheControl !== undefined
+          ? { CacheControl: object.cacheControl }
+          : {}),
+        ...(object.contentEncoding !== undefined
+          ? { ContentEncoding: object.contentEncoding }
+          : {}),
+        ...(object.contentLanguage !== undefined
+          ? { ContentLanguage: object.contentLanguage }
+          : {}),
+        ...(object.expires !== undefined ? { Expires: object.expires } : {}),
       };
     },
     ListObjectsV2: (input, ctx, req) => {
@@ -1023,6 +1082,11 @@ const s3: ServiceDefinition = {
         userMetadata: source.userMetadata,
         storageClass: source.storageClass,
         versionId,
+        contentDisposition: source.contentDisposition,
+        cacheControl: source.cacheControl,
+        contentEncoding: source.contentEncoding,
+        contentLanguage: source.contentLanguage,
+        expires: source.expires,
       };
       const existing = target.objects[key] ?? [];
       const versions = versioned ? [object, ...existing] : [object];
@@ -1103,6 +1167,24 @@ const s3: ServiceDefinition = {
             : {},
         storageClass:
           typeof storageClass === "string" ? storageClass : "STANDARD",
+        contentDisposition:
+          typeof input["ContentDisposition"] === "string"
+            ? input["ContentDisposition"]
+            : undefined,
+        cacheControl:
+          typeof input["CacheControl"] === "string"
+            ? input["CacheControl"]
+            : undefined,
+        contentEncoding:
+          typeof input["ContentEncoding"] === "string"
+            ? input["ContentEncoding"]
+            : undefined,
+        contentLanguage:
+          typeof input["ContentLanguage"] === "string"
+            ? input["ContentLanguage"]
+            : undefined,
+        expires:
+          typeof input["Expires"] === "number" ? input["Expires"] : undefined,
       };
       ctx.store.set<S3Bucket>(bucket, {
         ...target,
@@ -1290,6 +1372,11 @@ const s3: ServiceDefinition = {
         userMetadata: upload.userMetadata,
         storageClass: upload.storageClass,
         versionId,
+        contentDisposition: upload.contentDisposition,
+        cacheControl: upload.cacheControl,
+        contentEncoding: upload.contentEncoding,
+        contentLanguage: upload.contentLanguage,
+        expires: upload.expires,
       };
       const existingVersions = target.objects[key] ?? [];
       const versions = versioned ? [object, ...existingVersions] : [object];

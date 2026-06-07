@@ -10003,6 +10003,151 @@ const DescribeAccountAttributes: OperationHandler = (input, _ctx) => {
   return { AccountAttributes: filtered };
 };
 
+const DescribeCapacityReservationBillingRequests: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { CapacityReservationBillingRequests: [] };
+};
+
+const DescribeCapacityReservationFleets: OperationHandler = (_input, _ctx) => {
+  return { CapacityReservationFleets: [] };
+};
+
+const DescribeCapacityReservationTopology: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["CapacityReservationIds"]);
+  const reservations = allCapacityReservations(ctx).filter(
+    (r) => ids.length === 0 || ids.includes(r.CapacityReservationId),
+  );
+  return {
+    CapacityReservations: reservations.map((r) => ({
+      CapacityReservationId: r.CapacityReservationId,
+      State: r.State,
+      InstanceType: r.InstanceType,
+      GroupName: "",
+      NetworkNodes: [],
+    })),
+  };
+};
+
+const DescribeCapacityReservations: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["CapacityReservationIds"]);
+  const reservations = allCapacityReservations(ctx).filter(
+    (r) => ids.length === 0 || ids.includes(r.CapacityReservationId),
+  );
+  return {
+    CapacityReservations: reservations.map((r) => ({
+      CapacityReservationId: r.CapacityReservationId,
+      OwnerId: ctx.account,
+      CapacityReservationArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:capacity-reservation/${r.CapacityReservationId}`,
+      InstanceType: r.InstanceType,
+      InstancePlatform: r.InstancePlatform,
+      AvailabilityZone: r.AvailabilityZone,
+      Tenancy: r.Tenancy,
+      TotalInstanceCount: r.TotalInstanceCount,
+      AvailableInstanceCount: r.AvailableInstanceCount,
+      EbsOptimized: r.EbsOptimized,
+      EphemeralStorage: r.EphemeralStorage,
+      State: r.State,
+      EndDateType: r.EndDateType,
+      InstanceMatchCriteria: r.InstanceMatchCriteria,
+      CreateDate: r.CreateDate,
+      Tags: r.Tags,
+    })),
+  };
+};
+
+const DescribeCarrierGateways: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["CarrierGatewayIds"]);
+  const gateways = allCarrierGateways(ctx).filter(
+    (g) => ids.length === 0 || ids.includes(g.CarrierGatewayId),
+  );
+  return {
+    CarrierGateways: gateways.map((g) => ({
+      CarrierGatewayId: g.CarrierGatewayId,
+      VpcId: g.VpcId,
+      State: g.State,
+      OwnerId: g.OwnerId,
+      Tags: g.Tags,
+    })),
+  };
+};
+
+const DescribeClassicLinkInstances: OperationHandler = (_input, _ctx) => {
+  return { Instances: [] };
+};
+
+const DescribeClientVpnAuthorizationRules: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { AuthorizationRules: [] };
+};
+
+const DescribeClientVpnConnections: OperationHandler = (_input, _ctx) => {
+  return { Connections: [] };
+};
+
+const DescribeClientVpnEndpoints: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["ClientVpnEndpointIds"]);
+  const endpoints = ctx.store
+    .list<StoredClientVpnEndpoint>()
+    .filter((entry) => entry.key.startsWith("cvpn/"))
+    .map((entry) => entry.value)
+    .filter((e) => ids.length === 0 || ids.includes(e.ClientVpnEndpointId));
+  return {
+    ClientVpnEndpoints: endpoints.map((e) => ({
+      ClientVpnEndpointId: e.ClientVpnEndpointId,
+      ServerCertificateArn: e.ServerCertificateArn,
+      DnsName: e.DnsName,
+      Status: { Code: e.State, Message: "" },
+      Tags: e.Tags,
+    })),
+  };
+};
+
+const DescribeClientVpnRoutes: OperationHandler = (input, ctx) => {
+  const endpointId =
+    typeof input["ClientVpnEndpointId"] === "string"
+      ? input["ClientVpnEndpointId"]
+      : "";
+  const routes = ctx.store
+    .list<StoredClientVpnRoute>()
+    .filter((entry) => entry.key.startsWith(`cvpn-route/${endpointId}/`))
+    .map((entry) => entry.value);
+  return {
+    Routes: routes.map((r) => ({
+      ClientVpnEndpointId: r.ClientVpnEndpointId,
+      DestinationCidr: r.DestinationCidrBlock,
+      TargetSubnet: r.TargetSubnet,
+      Type: "add-route",
+      Origin: "add-route",
+      Status: { Code: r.Status, Message: "" },
+      Description: r.Description,
+    })),
+  };
+};
+
+const DescribeClientVpnTargetNetworks: OperationHandler = (_input, _ctx) => {
+  return { ClientVpnTargetNetworks: [] };
+};
+
+const DescribeCoipPools: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["PoolIds"]);
+  const pools = allCoipPools(ctx).filter(
+    (p) => ids.length === 0 || ids.includes(p.PoolId),
+  );
+  return {
+    CoipPools: pools.map((p) => ({
+      PoolId: p.PoolId,
+      PoolCidrs: p.PoolCidrs,
+      LocalGatewayRouteTableId: p.LocalGatewayRouteTableId,
+      Tags: p.Tags,
+      PoolArn: p.PoolArn,
+    })),
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -10312,6 +10457,18 @@ const ec2: ServiceDefinition = {
     DescribeCapacityBlocks,
     DescribeCapacityManagerDataExports,
     DescribeAccountAttributes,
+    DescribeCapacityReservationBillingRequests,
+    DescribeCapacityReservationFleets,
+    DescribeCapacityReservationTopology,
+    DescribeCapacityReservations,
+    DescribeCarrierGateways,
+    DescribeClassicLinkInstances,
+    DescribeClientVpnAuthorizationRules,
+    DescribeClientVpnConnections,
+    DescribeClientVpnEndpoints,
+    DescribeClientVpnRoutes,
+    DescribeClientVpnTargetNetworks,
+    DescribeCoipPools,
   },
   model,
 } as const;

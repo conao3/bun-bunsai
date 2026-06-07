@@ -1,3 +1,4 @@
+import nodeCrypto from "node:crypto";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import kmsModel from "../../../../test/vendor/aws-models/kms.json" with { type: "json" };
@@ -73,9 +74,14 @@ type StoredRotation = {
   KeyMaterialId: string;
 };
 
+type StoredCryptoKey =
+  | { type: "asymmetric"; privateKeyPem: string; publicKeyPem: string }
+  | { type: "hmac"; keyHex: string };
+
 const aliasStorePrefix = "alias:" as const;
 const grantStorePrefix = "grant:" as const;
 const cksStorePrefix = "cks:" as const;
+const cryptoKeyStorePrefix = "cryptokey:" as const;
 const defaultPolicy =
   '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"*"},"Action":"kms:*","Resource":"*"}]}' as const;
 
@@ -97,7 +103,8 @@ const listStoredKeys = (
       (entry) =>
         !entry.key.startsWith(aliasStorePrefix) &&
         !entry.key.startsWith(grantStorePrefix) &&
-        !entry.key.startsWith(cksStorePrefix),
+        !entry.key.startsWith(cksStorePrefix) &&
+        !entry.key.startsWith(cryptoKeyStorePrefix),
     );
 
 const listStoredAliases = (
@@ -179,6 +186,98 @@ const syntheticBytes = (n: number): string => {
   let s = "";
   for (const b of bytes) s += String.fromCharCode(b);
   return s;
+};
+
+const latin1ToBytes = (s: string): Uint8Array =>
+  Uint8Array.from(s, (c) => c.charCodeAt(0) & 0xff);
+
+const bytesToLatin1 = (buf: Uint8Array): string => {
+  let s = "";
+  for (const b of buf) s += String.fromCharCode(b);
+  return s;
+};
+
+const keySpecToCurve = (keySpec: string): string => {
+  const map = {
+    ECC_NIST_P256: "prime256v1",
+    ECC_NIST_P384: "secp384r1",
+    ECC_NIST_P521: "secp521r1",
+    ECC_SECG_P256K1: "secp256k1",
+  } as const;
+  return (map as Record<string, string>)[keySpec] ?? "prime256v1";
+};
+
+const generateCryptoKey = (keySpec: string): StoredCryptoKey => {
+  if (keySpec.startsWith("HMAC_")) {
+    const bits = parseInt(keySpec.slice(5), 10);
+    const key = new Uint8Array(bits / 8);
+    crypto.getRandomValues(key);
+    return { type: "hmac", keyHex: Buffer.from(key).toString("hex") };
+  }
+  if (keySpec.startsWith("RSA_")) {
+    const modulusLength = parseInt(keySpec.slice(4), 10);
+    const { privateKey, publicKey } = nodeCrypto.generateKeyPairSync("rsa", {
+      modulusLength,
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+    return {
+      type: "asymmetric",
+      privateKeyPem: privateKey as string,
+      publicKeyPem: publicKey as string,
+    };
+  }
+  if (keySpec.startsWith("ECC_")) {
+    const namedCurve = keySpecToCurve(keySpec);
+    const { privateKey, publicKey } = nodeCrypto.generateKeyPairSync("ec", {
+      namedCurve,
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+    return {
+      type: "asymmetric",
+      privateKeyPem: privateKey as string,
+      publicKeyPem: publicKey as string,
+    };
+  }
+  throw awsError("ValidationException", `Unsupported KeySpec: ${keySpec}`, 400);
+};
+
+const getOrCreateCryptoKey = (
+  ctx: ServiceContext,
+  key: StoredKey,
+): StoredCryptoKey => {
+  const stored = ctx.store.get<StoredCryptoKey>(
+    `${cryptoKeyStorePrefix}${key.KeyId}`,
+  );
+  if (stored !== undefined) return stored;
+  const cryptoKey = generateCryptoKey(key.KeySpec);
+  ctx.store.set(`${cryptoKeyStorePrefix}${key.KeyId}`, cryptoKey);
+  return cryptoKey;
+};
+
+const sigAlgParts = (alg: string): { hash: string; pss: boolean } => {
+  const hashMap = {
+    SHA_256: "sha256",
+    SHA_384: "sha384",
+    SHA_512: "sha512",
+  } as const;
+  for (const [suffix, hash] of Object.entries(hashMap)) {
+    if (alg.endsWith(suffix)) {
+      return { hash, pss: alg.includes("_PSS_") };
+    }
+  }
+  return { hash: "sha256", pss: false };
+};
+
+const macAlgToHash = (macAlgorithm: string): string => {
+  const map = {
+    HMAC_SHA_256: "sha256",
+    HMAC_SHA_384: "sha384",
+    HMAC_SHA_512: "sha512",
+    HMAC_SHA_224: "sha224",
+  } as const;
+  return (map as Record<string, string>)[macAlgorithm] ?? "sha256";
 };
 
 const CreateKey: OperationHandler = (input, ctx) => {
@@ -751,10 +850,42 @@ const Sign: OperationHandler = (input, ctx) => {
   const keyId = requireString(input, "KeyId");
   const key = requireKey(ctx, keyId);
   const signingAlgorithm = requireString(input, "SigningAlgorithm");
-  const signature = syntheticBytes(64);
+  const rawMessage = requireString(input, "Message");
+  const message = latin1ToBytes(rawMessage);
+  const messageType =
+    typeof input["MessageType"] === "string" ? input["MessageType"] : "RAW";
+
+  const cryptoKey = getOrCreateCryptoKey(ctx, key);
+  if (cryptoKey.type !== "asymmetric") {
+    throw awsError(
+      "InvalidKeyUsageException",
+      "Key is not usable for signing",
+      400,
+    );
+  }
+
+  const { hash, pss } = sigAlgParts(signingAlgorithm);
+  const algorithm = messageType === "DIGEST" ? null : hash;
+  const buf = Buffer.from(message);
+
+  let sigBuffer: Buffer;
+  if (pss) {
+    sigBuffer = nodeCrypto.sign(algorithm, buf, {
+      key: cryptoKey.privateKeyPem,
+      padding: nodeCrypto.constants.RSA_PKCS1_PSS_PADDING,
+      saltLength: nodeCrypto.constants.RSA_PSS_SALTLEN_DIGEST,
+    }) as Buffer;
+  } else {
+    sigBuffer = nodeCrypto.sign(
+      algorithm,
+      buf,
+      cryptoKey.privateKeyPem,
+    ) as Buffer;
+  }
+
   return {
     KeyId: key.Arn,
-    Signature: signature,
+    Signature: bytesToLatin1(new Uint8Array(sigBuffer)),
     SigningAlgorithm: signingAlgorithm,
   };
 };
@@ -763,9 +894,51 @@ const Verify: OperationHandler = (input, ctx) => {
   const keyId = requireString(input, "KeyId");
   const key = requireKey(ctx, keyId);
   const signingAlgorithm = requireString(input, "SigningAlgorithm");
+  const rawMessage = requireString(input, "Message");
+  const message = latin1ToBytes(rawMessage);
+  const rawSignature = requireString(input, "Signature");
+  const signature = latin1ToBytes(rawSignature);
+  const messageType =
+    typeof input["MessageType"] === "string" ? input["MessageType"] : "RAW";
+
+  const cryptoKey = getOrCreateCryptoKey(ctx, key);
+  if (cryptoKey.type !== "asymmetric") {
+    throw awsError(
+      "InvalidKeyUsageException",
+      "Key is not usable for signing",
+      400,
+    );
+  }
+
+  const { hash, pss } = sigAlgParts(signingAlgorithm);
+  const algorithm = messageType === "DIGEST" ? null : hash;
+  const msgBuf = Buffer.from(message);
+  const sigBuf = Buffer.from(signature);
+
+  let valid: boolean;
+  if (pss) {
+    valid = nodeCrypto.verify(
+      algorithm,
+      msgBuf,
+      {
+        key: cryptoKey.publicKeyPem,
+        padding: nodeCrypto.constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: nodeCrypto.constants.RSA_PSS_SALTLEN_DIGEST,
+      },
+      sigBuf,
+    );
+  } else {
+    valid = nodeCrypto.verify(
+      algorithm,
+      msgBuf,
+      cryptoKey.publicKeyPem,
+      sigBuf,
+    );
+  }
+
   return {
     KeyId: key.Arn,
-    SignatureValid: true,
+    SignatureValid: valid,
     SigningAlgorithm: signingAlgorithm,
   };
 };
@@ -774,9 +947,24 @@ const GenerateMac: OperationHandler = (input, ctx) => {
   const keyId = requireString(input, "KeyId");
   const key = requireKey(ctx, keyId);
   const macAlgorithm = requireString(input, "MacAlgorithm");
-  const mac = syntheticBytes(32);
+  const rawMessage = requireString(input, "Message");
+  const message = latin1ToBytes(rawMessage);
+
+  const cryptoKey = getOrCreateCryptoKey(ctx, key);
+  if (cryptoKey.type !== "hmac") {
+    throw awsError(
+      "InvalidKeyUsageException",
+      "Key is not usable for MAC generation",
+      400,
+    );
+  }
+
+  const hash = macAlgToHash(macAlgorithm);
+  const keyBuf = Buffer.from(cryptoKey.keyHex, "hex");
+  const mac = nodeCrypto.createHmac(hash, keyBuf).update(message).digest();
+
   return {
-    Mac: mac,
+    Mac: bytesToLatin1(new Uint8Array(mac)),
     MacAlgorithm: macAlgorithm,
     KeyId: key.Arn,
   };
@@ -786,9 +974,32 @@ const VerifyMac: OperationHandler = (input, ctx) => {
   const keyId = requireString(input, "KeyId");
   const key = requireKey(ctx, keyId);
   const macAlgorithm = requireString(input, "MacAlgorithm");
+  const rawMessage = requireString(input, "Message");
+  const message = latin1ToBytes(rawMessage);
+  const rawMac = requireString(input, "Mac");
+  const mac = latin1ToBytes(rawMac);
+
+  const cryptoKey = getOrCreateCryptoKey(ctx, key);
+  if (cryptoKey.type !== "hmac") {
+    throw awsError(
+      "InvalidKeyUsageException",
+      "Key is not usable for MAC verification",
+      400,
+    );
+  }
+
+  const hash = macAlgToHash(macAlgorithm);
+  const keyBuf = Buffer.from(cryptoKey.keyHex, "hex");
+  const expected = nodeCrypto.createHmac(hash, keyBuf).update(message).digest();
+  const macBuf = Buffer.from(mac);
+
+  const macValid =
+    expected.length === macBuf.length &&
+    nodeCrypto.timingSafeEqual(expected, macBuf);
+
   return {
     KeyId: key.Arn,
-    MacValid: true,
+    MacValid: macValid,
     MacAlgorithm: macAlgorithm,
   };
 };

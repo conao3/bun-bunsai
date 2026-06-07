@@ -48,6 +48,7 @@ export type ServiceContext = {
 
 export type HandlerOutput = {
   $headers?: Record<string, string>;
+  $status?: number;
   [k: string]: unknown;
 };
 

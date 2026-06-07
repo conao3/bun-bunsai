@@ -249,10 +249,13 @@ export const serializeOutput = (
       ? (result as Partial<HandlerOutput>)
       : undefined;
   const extraHeaders = src?.$headers;
+  const extraStatus = src?.$status;
   const stripped: unknown = (() => {
-    if (extraHeaders === undefined || src === undefined) return result;
+    if (extraHeaders === undefined && extraStatus === undefined) return result;
+    if (src === undefined) return result;
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(src)) if (k !== "$headers") out[k] = v;
+    for (const [k, v] of Object.entries(src))
+      if (k !== "$headers" && k !== "$status") out[k] = v;
     return out;
   })();
   const isXmlEscapeHatch =
@@ -275,10 +278,18 @@ export const serializeOutput = (
   } else {
     codecResult = fallbackSerializeOutput(protocol, operation, stripped);
   }
-  if (extraHeaders === undefined) return codecResult;
+  if (extraHeaders === undefined && extraStatus === undefined)
+    return codecResult;
+  const overrideContentType = extraHeaders?.["content-type"];
   return {
     ...codecResult,
-    headers: { ...extraHeaders, ...(codecResult.headers ?? {}) },
+    ...(overrideContentType !== undefined
+      ? { contentType: overrideContentType }
+      : {}),
+    ...(extraHeaders !== undefined
+      ? { headers: { ...extraHeaders, ...(codecResult.headers ?? {}) } }
+      : {}),
+    ...(extraStatus !== undefined ? { statusCode: extraStatus } : {}),
   };
 };
 

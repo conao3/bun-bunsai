@@ -6403,6 +6403,309 @@ const ImportHubContent: OperationHandler = (input, ctx) => {
   return { HubArn: hub.HubArn, HubContentArn: hubContentArn };
 };
 
+const ListAIWorkloadConfigs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let configs = ctx.store
+    .list<StoredAIWorkloadConfig>()
+    .filter((entry) => entry.key.startsWith("ai-workload-config/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    configs = configs.filter((c) =>
+      c.AIWorkloadConfigName.includes(nameContains),
+    );
+  }
+  if (maxResults !== undefined) {
+    configs = configs.slice(0, maxResults);
+  }
+  return {
+    AIWorkloadConfigs: configs.map((stored) => ({
+      AIWorkloadConfigName: stored.AIWorkloadConfigName,
+      AIWorkloadConfigArn: stored.AIWorkloadConfigArn,
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListActions: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let actions = ctx.store
+    .list<StoredAction>()
+    .filter((entry) => entry.key.startsWith("action/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    actions = actions.slice(0, maxResults);
+  }
+  return {
+    ActionSummaries: actions.map((stored) => ({
+      ActionName: stored.ActionName,
+      ActionArn: stored.ActionArn,
+      ActionType: stored.ActionType,
+      Status: stored.Status,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListAlgorithms: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let algorithms = ctx.store
+    .list<StoredAlgorithm>()
+    .filter((entry) => entry.key.startsWith("algorithm/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => a.AlgorithmName.localeCompare(b.AlgorithmName));
+  if (nameContains !== undefined) {
+    algorithms = algorithms.filter((a) =>
+      a.AlgorithmName.includes(nameContains),
+    );
+  }
+  if (maxResults !== undefined) {
+    algorithms = algorithms.slice(0, maxResults);
+  }
+  return {
+    AlgorithmSummaryList: algorithms.map((stored) => ({
+      AlgorithmName: stored.AlgorithmName,
+      AlgorithmArn: stored.AlgorithmArn,
+      AlgorithmStatus: stored.AlgorithmStatus,
+      CreationTime: stored.CreationTime,
+      AlgorithmDescription: stored.AlgorithmDescription,
+    })),
+  };
+};
+
+const ListAliases: OperationHandler = (_input, _ctx) => {
+  return { SageMakerImageVersionAliases: [] };
+};
+
+const ListAppImageConfigs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let configs = ctx.store
+    .list<StoredAppImageConfig>()
+    .filter((entry) => entry.key.startsWith("app-image-config/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    configs = configs.filter((c) =>
+      c.AppImageConfigName.includes(nameContains),
+    );
+  }
+  if (maxResults !== undefined) {
+    configs = configs.slice(0, maxResults);
+  }
+  return {
+    AppImageConfigs: configs.map((stored) => ({
+      AppImageConfigName: stored.AppImageConfigName,
+      AppImageConfigArn: stored.AppImageConfigArn,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListApps: OperationHandler = (input, ctx) => {
+  const domainIdEquals =
+    typeof input["DomainIdEquals"] === "string"
+      ? (input["DomainIdEquals"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let apps = ctx.store
+    .list<StoredApp>()
+    .filter((entry) => entry.key.startsWith("app/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (domainIdEquals !== undefined) {
+    apps = apps.filter((a) => a.DomainId === domainIdEquals);
+  }
+  if (maxResults !== undefined) {
+    apps = apps.slice(0, maxResults);
+  }
+  return {
+    Apps: apps.map((stored) => ({
+      DomainId: stored.DomainId,
+      AppType: stored.AppType,
+      AppName: stored.AppName,
+      AppArn: stored.AppArn,
+      Status: stored.Status,
+      UserProfileName: stored.UserProfileName,
+      SpaceName: stored.SpaceName,
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListArtifacts: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let artifacts = ctx.store
+    .list<StoredArtifact>()
+    .filter((entry) => entry.key.startsWith("artifact/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    artifacts = artifacts.slice(0, maxResults);
+  }
+  return {
+    ArtifactSummaries: artifacts.map((stored) => ({
+      ArtifactArn: stored.ArtifactArn,
+      ArtifactType: stored.ArtifactType,
+      ArtifactName: stored.ArtifactName,
+      Source: stored.Source,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListAssociations: OperationHandler = (input, ctx) => {
+  const sourceArn =
+    typeof input["SourceArn"] === "string"
+      ? (input["SourceArn"] as string)
+      : undefined;
+  const destinationArn =
+    typeof input["DestinationArn"] === "string"
+      ? (input["DestinationArn"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let associations = ctx.store
+    .list<StoredAssociation>()
+    .filter((entry) => entry.key.startsWith("association/"))
+    .map((entry) => entry.value);
+  if (sourceArn !== undefined) {
+    associations = associations.filter((a) => a.SourceArn === sourceArn);
+  }
+  if (destinationArn !== undefined) {
+    associations = associations.filter(
+      (a) => a.DestinationArn === destinationArn,
+    );
+  }
+  if (maxResults !== undefined) {
+    associations = associations.slice(0, maxResults);
+  }
+  return {
+    AssociationSummaries: associations.map((stored) => ({
+      SourceArn: stored.SourceArn,
+      DestinationArn: stored.DestinationArn,
+      AssociationType: stored.AssociationType,
+    })),
+  };
+};
+
+const ListAutoMLJobs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  const v1Jobs = ctx.store
+    .list<StoredAutoMLJob>()
+    .filter((entry) => entry.key.startsWith("automl-job/"))
+    .map((entry) => entry.value);
+  const v2Jobs = ctx.store
+    .list<StoredAutoMLJobV2>()
+    .filter((entry) => entry.key.startsWith("automl-job-v2/"))
+    .map((entry) => entry.value);
+  let jobs = [...v1Jobs, ...v2Jobs].sort(
+    (a, b) => b.CreationTime - a.CreationTime,
+  );
+  if (nameContains !== undefined) {
+    jobs = jobs.filter((j) => j.AutoMLJobName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    jobs = jobs.slice(0, maxResults);
+  }
+  return {
+    AutoMLJobSummaries: jobs.map((stored) => ({
+      AutoMLJobName: stored.AutoMLJobName,
+      AutoMLJobArn: stored.AutoMLJobArn,
+      AutoMLJobStatus: stored.AutoMLJobStatus,
+      AutoMLJobSecondaryStatus: stored.AutoMLJobSecondaryStatus,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListCandidatesForAutoMLJob: OperationHandler = (input, ctx) => {
+  const jobName = requireString(input, "AutoMLJobName");
+  const v1 = ctx.store.get<StoredAutoMLJob>(autoMLJobKey(jobName));
+  const v2 = ctx.store.get<StoredAutoMLJobV2>(autoMLJobV2Key(jobName));
+  if (v1 === undefined && v2 === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `AutoML job ${jobName} does not exist.`,
+      400,
+    );
+  }
+  return { Candidates: [] };
+};
+
+const ListClusterEvents: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "ClusterName");
+  requireCluster(ctx, clusterName);
+  return { Events: [] };
+};
+
+const ListClusterNodes: OperationHandler = (input, ctx) => {
+  const clusterName = requireString(input, "ClusterName");
+  requireCluster(ctx, clusterName);
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let nodes = ctx.store
+    .list<StoredClusterNode>()
+    .filter((entry) => entry.key.startsWith(`cluster-node/${clusterName}/`))
+    .map((entry) => entry.value)
+    .sort((a, b) => a.NodeId.localeCompare(b.NodeId));
+  if (maxResults !== undefined) {
+    nodes = nodes.slice(0, maxResults);
+  }
+  return {
+    ClusterNodeSummaries: nodes.map((stored) => ({
+      InstanceGroupName: stored.InstanceGroupName,
+      NodeId: stored.NodeId,
+      NodeStatus: stored.Status,
+    })),
+  };
+};
+
 const ListAIBenchmarkJobs: OperationHandler = (_input, ctx) => {
   const jobs = ctx.store
     .list<StoredAIBenchmarkJob>()
@@ -6680,6 +6983,18 @@ const sagemaker = {
     ImportHubContent,
     ListAIBenchmarkJobs,
     ListAIRecommendationJobs,
+    ListAIWorkloadConfigs,
+    ListActions,
+    ListAlgorithms,
+    ListAliases,
+    ListAppImageConfigs,
+    ListApps,
+    ListArtifacts,
+    ListAssociations,
+    ListAutoMLJobs,
+    ListCandidatesForAutoMLJob,
+    ListClusterEvents,
+    ListClusterNodes,
   },
   model,
 } as const satisfies ServiceDefinition;

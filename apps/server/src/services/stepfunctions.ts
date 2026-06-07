@@ -615,7 +615,12 @@ const ListExecutions: OperationHandler = (input, ctx) => {
   return { executions };
 };
 
-const TERMINAL_STATUSES = new Set(["SUCCEEDED", "FAILED", "ABORTED", "TIMED_OUT"]);
+const TERMINAL_STATUSES = new Set([
+  "SUCCEEDED",
+  "FAILED",
+  "ABORTED",
+  "TIMED_OUT",
+]);
 
 const StopExecution: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "executionArn");

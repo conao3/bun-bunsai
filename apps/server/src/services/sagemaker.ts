@@ -8013,6 +8013,328 @@ const ListProcessingJobs: OperationHandler = (input, ctx) => {
   };
 };
 
+const ListProjects: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let projects = ctx.store
+    .list<StoredProject>()
+    .filter((entry) => entry.key.startsWith("project/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    projects = projects.filter((p) => p.ProjectName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    projects = projects.slice(0, maxResults);
+  }
+  return {
+    ProjectSummaryList: projects.map((stored) => ({
+      ProjectName: stored.ProjectName,
+      ProjectArn: stored.ProjectArn,
+      ProjectId: stored.ProjectId,
+      ProjectDescription: stored.ProjectDescription,
+      ProjectStatus: stored.ProjectStatus,
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListResourceCatalogs: OperationHandler = (_input, _ctx) => ({
+  ResourceCatalogs: [],
+});
+
+const ListSpaces: OperationHandler = (input, ctx) => {
+  const domainIdEquals =
+    typeof input["DomainIdEquals"] === "string"
+      ? (input["DomainIdEquals"] as string)
+      : undefined;
+  const spaceNameContains =
+    typeof input["SpaceNameContains"] === "string"
+      ? (input["SpaceNameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let spaces = ctx.store
+    .list<StoredSpace>()
+    .filter((entry) => entry.key.startsWith("space/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (domainIdEquals !== undefined) {
+    spaces = spaces.filter((s) => s.DomainId === domainIdEquals);
+  }
+  if (spaceNameContains !== undefined) {
+    spaces = spaces.filter((s) => s.SpaceName.includes(spaceNameContains));
+  }
+  if (maxResults !== undefined) {
+    spaces = spaces.slice(0, maxResults);
+  }
+  return {
+    Spaces: spaces.map((stored) => ({
+      DomainId: stored.DomainId,
+      SpaceName: stored.SpaceName,
+      SpaceArn: stored.SpaceArn,
+      Status: stored.Status,
+      SpaceDisplayName: stored.SpaceDisplayName,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListStageDevices: OperationHandler = (input, ctx) => {
+  const planName = requireString(input, "EdgeDeploymentPlanName");
+  const stageName = requireString(input, "StageName");
+  void stageName;
+  const stored = ctx.store.get<StoredEdgeDeploymentPlan>(
+    edgeDeploymentPlanKey(planName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `EdgeDeploymentPlan ${planName} does not exist.`,
+      400,
+    );
+  }
+  return { DeviceDeploymentSummaries: [] };
+};
+
+const ListStudioLifecycleConfigs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const appTypeEquals =
+    typeof input["AppTypeEquals"] === "string"
+      ? (input["AppTypeEquals"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let configs = ctx.store
+    .list<StoredStudioLifecycleConfig>()
+    .filter((entry) => entry.key.startsWith("studio-lifecycle-config/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    configs = configs.filter((c) =>
+      c.StudioLifecycleConfigName.includes(nameContains),
+    );
+  }
+  if (appTypeEquals !== undefined) {
+    configs = configs.filter(
+      (c) => c.StudioLifecycleConfigAppType === appTypeEquals,
+    );
+  }
+  if (maxResults !== undefined) {
+    configs = configs.slice(0, maxResults);
+  }
+  return {
+    StudioLifecycleConfigs: configs.map((stored) => ({
+      StudioLifecycleConfigName: stored.StudioLifecycleConfigName,
+      StudioLifecycleConfigArn: stored.StudioLifecycleConfigArn,
+      StudioLifecycleConfigAppType: stored.StudioLifecycleConfigAppType,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListSubscribedWorkteams: OperationHandler = (_input, _ctx) => ({
+  SubscribedWorkteams: [],
+});
+
+const ListTags: OperationHandler = (input, ctx) => {
+  const resourceArn = requireString(input, "ResourceArn");
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  const stored = ctx.store.get<StoredTags>(tagsKey(resourceArn));
+  let tags = stored?.Tags ?? [];
+  if (maxResults !== undefined) {
+    tags = tags.slice(0, maxResults);
+  }
+  return { Tags: tags };
+};
+
+const ListTrainingJobsForHyperParameterTuningJob: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const name = requireString(input, "HyperParameterTuningJobName");
+  const stored = ctx.store.get<StoredHyperParameterTuningJob>(
+    hyperParameterTuningJobKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `HyperParameterTuningJob ${name} does not exist.`,
+      400,
+    );
+  }
+  return { TrainingJobSummaries: [] };
+};
+
+const ListTrainingPlans: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let plans = ctx.store
+    .list<StoredTrainingPlan>()
+    .filter((entry) => entry.key.startsWith("training-plan/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    plans = plans.slice(0, maxResults);
+  }
+  return {
+    TrainingPlanSummaries: plans.map((stored) => ({
+      TrainingPlanName: stored.TrainingPlanName,
+      TrainingPlanArn: stored.TrainingPlanArn,
+      Status: stored.Status,
+      StartTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListTransformJobs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const statusEquals =
+    typeof input["StatusEquals"] === "string"
+      ? (input["StatusEquals"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let jobs = ctx.store
+    .list<StoredTransformJob>()
+    .filter((entry) => entry.key.startsWith("transform-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    jobs = jobs.filter((j) => j.TransformJobName.includes(nameContains));
+  }
+  if (statusEquals !== undefined) {
+    jobs = jobs.filter((j) => j.TransformJobStatus === statusEquals);
+  }
+  if (maxResults !== undefined) {
+    jobs = jobs.slice(0, maxResults);
+  }
+  return {
+    TransformJobSummaries: jobs.map((stored) => ({
+      TransformJobName: stored.TransformJobName,
+      TransformJobArn: stored.TransformJobArn,
+      TransformJobStatus: stored.TransformJobStatus,
+      ModelName: stored.ModelName,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListTrialComponents: OperationHandler = (input, ctx) => {
+  const trialName =
+    typeof input["TrialName"] === "string"
+      ? (input["TrialName"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let components = ctx.store
+    .list<StoredTrialComponent>()
+    .filter((entry) => entry.key.startsWith("trial-component/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (trialName !== undefined) {
+    const associations = ctx.store
+      .list<StoredTrialComponentAssociation>()
+      .filter((entry) => entry.key.startsWith("trial-component-association/"))
+      .map((entry) => entry.value)
+      .filter((a) => a.TrialName === trialName);
+    const componentNames = new Set(
+      associations.map((a) => a.TrialComponentName),
+    );
+    components = components.filter((c) =>
+      componentNames.has(c.TrialComponentName),
+    );
+  }
+  if (maxResults !== undefined) {
+    components = components.slice(0, maxResults);
+  }
+  return {
+    TrialComponentSummaries: components.map((stored) => ({
+      TrialComponentName: stored.TrialComponentName,
+      TrialComponentArn: stored.TrialComponentArn,
+      DisplayName: stored.DisplayName,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListTrials: OperationHandler = (input, ctx) => {
+  const experimentName =
+    typeof input["ExperimentName"] === "string"
+      ? (input["ExperimentName"] as string)
+      : undefined;
+  const trialComponentName =
+    typeof input["TrialComponentName"] === "string"
+      ? (input["TrialComponentName"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let trials = ctx.store
+    .list<StoredTrial>()
+    .filter((entry) => entry.key.startsWith("trial/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (experimentName !== undefined) {
+    trials = trials.filter((t) => t.ExperimentName === experimentName);
+  }
+  if (trialComponentName !== undefined) {
+    const associations = ctx.store
+      .list<StoredTrialComponentAssociation>()
+      .filter((entry) =>
+        entry.key.startsWith(
+          `trial-component-association/${trialComponentName}/`,
+        ),
+      )
+      .map((entry) => entry.value);
+    const trialNames = new Set(associations.map((a) => a.TrialName));
+    trials = trials.filter((t) => trialNames.has(t.TrialName));
+  }
+  if (maxResults !== undefined) {
+    trials = trials.slice(0, maxResults);
+  }
+  return {
+    TrialSummaries: trials.map((stored) => ({
+      TrialName: stored.TrialName,
+      TrialArn: stored.TrialArn,
+      DisplayName: stored.DisplayName,
+      ExperimentName: stored.ExperimentName,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -8318,6 +8640,18 @@ const sagemaker = {
     ListPartnerApps,
     ListPipelines,
     ListProcessingJobs,
+    ListProjects,
+    ListResourceCatalogs,
+    ListSpaces,
+    ListStageDevices,
+    ListStudioLifecycleConfigs,
+    ListSubscribedWorkteams,
+    ListTags,
+    ListTrainingJobsForHyperParameterTuningJob,
+    ListTrainingPlans,
+    ListTransformJobs,
+    ListTrialComponents,
+    ListTrials,
   },
   model,
 } as const satisfies ServiceDefinition;

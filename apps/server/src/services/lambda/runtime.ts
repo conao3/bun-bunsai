@@ -22,6 +22,7 @@ export type ExecuteArgs = {
   env: Record<string, string>;
   timeoutMs: number;
   context: Record<string, unknown>;
+  nodePaths?: string[];
 };
 
 const HARNESS = `import { readFileSync, writeFileSync } from "node:fs";
@@ -95,6 +96,11 @@ export const executeNodeHandler = async (
     await writeFile(eventPath, JSON.stringify(args.event ?? null));
     await writeFile(harnessPath, HARNESS);
 
+    const nodePath =
+      args.nodePaths !== undefined && args.nodePaths.length > 0
+        ? args.nodePaths.map((p) => join(dir, p)).join(":")
+        : undefined;
+
     const start = Date.now();
     const proc = Bun.spawn(["bun", harnessPath], {
       cwd: dir,
@@ -102,6 +108,7 @@ export const executeNodeHandler = async (
         PATH: process.env.PATH,
         HOME: process.env.HOME,
         ...args.env,
+        ...(nodePath !== undefined ? { NODE_PATH: nodePath } : {}),
         __BUNSAI_EVENT: eventPath,
         __BUNSAI_RESULT: resultPath,
         __BUNSAI_HANDLER_FILE: join(dir, resolved.file),

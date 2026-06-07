@@ -2853,6 +2853,145 @@ const GetMetricDataV2: OperationHandler = (_input, _ctx) => {
   return { MetricResults: [] };
 };
 
+const GetPromptFile: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const promptId = requireString(input, "PromptId");
+  const stored = ctx.store.get<StoredPrompt>(promptKey(instanceId, promptId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Prompt ${promptId} not found.`,
+      404,
+    );
+  }
+  return {
+    PromptPresignedUrl: `https://s3.amazonaws.com/${instanceId}/prompts/${promptId}`,
+    LastModifiedTime: new Date().toISOString(),
+    LastModifiedRegion: ctx.region,
+  };
+};
+
+const GetTaskTemplate: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const taskTemplateId = requireString(input, "TaskTemplateId");
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/task-template/${taskTemplateId}`;
+  return {
+    InstanceId: instanceId,
+    Id: taskTemplateId,
+    Arn: arn,
+    Name: "task-template",
+    Status: "ACTIVE",
+    LastModifiedTime: new Date().toISOString(),
+    CreatedTime: new Date().toISOString(),
+  };
+};
+
+const GetTestCaseExecutionSummary: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {
+    StartTime: new Date().toISOString(),
+    EndTime: new Date().toISOString(),
+    Status: "COMPLETED",
+    ObservationSummary: {},
+  };
+};
+
+const GetTrafficDistribution: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "Id");
+  const stored = ctx.store.get<StoredTrafficDistributionGroup>(
+    trafficDistributionGroupKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `TrafficDistributionGroup ${id} not found.`,
+      404,
+    );
+  }
+  return {
+    TelephonyConfig: { Distributions: [] },
+    Id: stored.Id,
+    Arn: stored.Arn,
+    SignInConfig: { Distributions: [] },
+    AgentConfig: { Distributions: [] },
+  };
+};
+
+const ImportPhoneNumber: OperationHandler = (input, ctx) => {
+  const instanceId = stringOrUndefined(input["InstanceId"]);
+  const sourcePhoneNumberArn = requireString(input, "SourcePhoneNumberArn");
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:phone-number/${id}`;
+  const stored: StoredPhoneNumber = {
+    PhoneNumberId: id,
+    PhoneNumberArn: arn,
+    PhoneNumber: sourcePhoneNumberArn,
+    InstanceId: instanceId,
+    ContactFlowId: undefined,
+  };
+  ctx.store.set(phoneNumberKey(id), stored);
+  return { PhoneNumberId: id, PhoneNumberArn: arn };
+};
+
+const ImportWorkspaceMedia: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const ListAgentStatuses: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const statuses = ctx.store
+    .list<StoredAgentStatus>()
+    .filter((entry) => entry.key.startsWith(agentStatusPrefix))
+    .map((entry) => entry.value)
+    .filter((s) => s.InstanceId === instanceId);
+  return {
+    AgentStatusSummaryList: statuses.map((s) => ({
+      Id: s.AgentStatusId,
+      Arn: s.AgentStatusARN,
+      Name: s.Name,
+      Type: "CUSTOM",
+      LastModifiedTime: new Date().toISOString(),
+      LastModifiedRegion: ctx.region,
+    })),
+  };
+};
+
+const ListAnalyticsDataAssociations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { Results: [] };
+};
+
+const ListAnalyticsDataLakeDataSets: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { Results: [] };
+};
+
+const ListApprovedOrigins: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { Origins: [] };
+};
+
+const ListAssociatedContacts: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { ContactSummaryList: [] };
+};
+
+const ListAttachedFilesConfigurations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { AttachedFilesConfigurations: [] };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -2897,6 +3036,9 @@ const connect = {
           if (req.method === "POST") {
             if (parts[2] === "bot") return "DisassociateBot";
           }
+          if (req.method === "GET") {
+            if (parts[2] === "approved-origins") return "ListApprovedOrigins";
+          }
         }
         if (parts.length === 4) {
           if (
@@ -2932,6 +3074,12 @@ const connect = {
             parts[3] === "template"
           )
             return "DeleteTaskTemplate";
+          if (
+            req.method === "GET" &&
+            parts[2] === "task" &&
+            parts[3] === "template"
+          )
+            return "GetTaskTemplate";
         }
         if (parts.length === 6) {
           if (
@@ -2970,10 +3118,14 @@ const connect = {
             return "AssociateAnalyticsDataSet";
           if (parts[3] === "association" && req.method === "POST")
             return "DisassociateAnalyticsDataSet";
+          if (parts[3] === "association" && req.method === "GET")
+            return "ListAnalyticsDataAssociations";
           if (parts[3] === "associations" && req.method === "PUT")
             return "BatchAssociateAnalyticsDataSet";
           if (parts[3] === "associations" && req.method === "POST")
             return "BatchDisassociateAnalyticsDataSet";
+          if (parts[3] === "datasets" && req.method === "GET")
+            return "ListAnalyticsDataLakeDataSets";
         }
         return undefined;
 
@@ -3063,6 +3215,12 @@ const connect = {
       case "phone-number":
         if (parts.length === 2 && parts[1] === "claim" && req.method === "POST")
           return "ClaimPhoneNumber";
+        if (
+          parts.length === 2 &&
+          parts[1] === "import" &&
+          req.method === "POST"
+        )
+          return "ImportPhoneNumber";
         if (parts.length === 2 && req.method === "GET")
           return "DescribePhoneNumber";
         if (
@@ -3209,6 +3367,8 @@ const connect = {
       case "agent-status":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateAgentStatus";
+        if (parts.length === 2 && req.method === "GET")
+          return "ListAgentStatuses";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeAgentStatus";
         if (parts.length === 3 && req.method === "POST")
@@ -3228,6 +3388,12 @@ const connect = {
         }
         if (parts.length === 3 && parts[1] === "batch" && req.method === "PUT")
           return "BatchPutContact";
+        if (
+          parts.length === 3 &&
+          parts[1] === "associated" &&
+          req.method === "GET"
+        )
+          return "ListAssociatedContacts";
         if (
           parts.length === 4 &&
           parts[1] === "attributes" &&
@@ -3357,6 +3523,8 @@ const connect = {
         if (parts.length === 3 && req.method === "GET") return "DescribePrompt";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeletePrompt";
+        if (parts.length === 4 && parts[3] === "file" && req.method === "GET")
+          return "GetPromptFile";
         return undefined;
 
       case "push-notification":
@@ -3395,9 +3563,17 @@ const connect = {
           return "DescribeTestCase";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteTestCase";
+        if (
+          parts.length === 5 &&
+          parts[4] === "summary" &&
+          req.method === "GET"
+        )
+          return "GetTestCaseExecutionSummary";
         return undefined;
 
       case "attached-files-configurations":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListAttachedFilesConfigurations";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeAttachedFilesConfiguration";
         if (parts.length === 3 && req.method === "POST")
@@ -3483,6 +3659,8 @@ const connect = {
           req.method === "DELETE"
         )
           return "DeleteWorkspaceMedia";
+        if (parts.length === 4 && parts[3] === "media" && req.method === "POST")
+          return "ImportWorkspaceMedia";
         return undefined;
 
       case "metrics":
@@ -3526,6 +3704,11 @@ const connect = {
           req.method === "GET"
         )
           return "GetFederationToken";
+        return undefined;
+
+      case "traffic-distribution":
+        if (parts.length === 2 && req.method === "GET")
+          return "GetTrafficDistribution";
         return undefined;
 
       default:
@@ -3655,6 +3838,18 @@ const connect = {
     GetFlowAssociation,
     GetMetricData,
     GetMetricDataV2,
+    GetPromptFile,
+    GetTaskTemplate,
+    GetTestCaseExecutionSummary,
+    GetTrafficDistribution,
+    ImportPhoneNumber,
+    ImportWorkspaceMedia,
+    ListAgentStatuses,
+    ListAnalyticsDataAssociations,
+    ListAnalyticsDataLakeDataSets,
+    ListApprovedOrigins,
+    ListAssociatedContacts,
+    ListAttachedFilesConfigurations,
     DescribeAuthenticationProfile,
     DescribeContact,
     DescribeContactEvaluation,

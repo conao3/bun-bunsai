@@ -1,5 +1,7 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
+import { invokeTaskResource } from "../core/events.ts";
+import { parseArn } from "../core/arn.ts";
 import stepFunctionsModel from "../../../../test/vendor/aws-models/stepfunctions.json" with { type: "json" };
 import type {
   OperationHandler,
@@ -66,6 +68,7 @@ type AslState = {
   End?: boolean;
   Result?: unknown;
   ResultPath?: string | null;
+  ResultSelector?: Record<string, unknown>;
   Parameters?: Record<string, unknown>;
   OutputPath?: string | null;
   Choices?: AslChoiceRule[];
@@ -73,6 +76,7 @@ type AslState = {
   Error?: string;
   Cause?: string;
   Seconds?: number;
+  Resource?: string;
 };
 
 type AslDefinition = {
@@ -211,10 +215,11 @@ const evaluateCondition = (
   return false;
 };
 
-const interpretAsl = (
+const interpretAsl = async (
   definitionStr: string,
   inputStr: string,
-): AslExecutionResult => {
+  ctx: ServiceContext,
+): Promise<AslExecutionResult> => {
   let definition: AslDefinition;
   let currentInput: unknown;
   try {
@@ -301,6 +306,83 @@ const interpretAsl = (
     } else if (state.Type === "Wait") {
       if (state.End === true)
         return { status: "SUCCEEDED", output: JSON.stringify(currentInput) };
+      currentStateName = state.Next!;
+    } else if (state.Type === "Task") {
+      const rawInput = currentInput;
+      const effectiveInput =
+        state.Parameters !== undefined
+          ? applyParameters(state.Parameters, rawInput)
+          : rawInput;
+      const resource = state.Resource ?? "";
+      let functionArn: string;
+      let lambdaPayload: unknown;
+      let isOptimistic: boolean;
+      if (resource === "arn:aws:states:::lambda:invoke") {
+        const params = effectiveInput as Record<string, unknown>;
+        const fn = params.FunctionName;
+        if (typeof fn !== "string") {
+          return {
+            status: "FAILED",
+            output: "{}",
+            error: "States.Runtime",
+            cause:
+              "FunctionName required in Parameters for optimistic Lambda integration",
+          };
+        }
+        functionArn = fn;
+        lambdaPayload = params.Payload ?? {};
+        isOptimistic = true;
+      } else if (parseArn(resource)?.service === "lambda") {
+        functionArn = resource;
+        lambdaPayload = effectiveInput;
+        isOptimistic = false;
+      } else {
+        return {
+          status: "FAILED",
+          output: "{}",
+          error: "States.Runtime",
+          cause: `Unsupported Task resource: ${resource}`,
+        };
+      }
+      const taskResult = await invokeTaskResource(
+        ctx,
+        functionArn,
+        lambdaPayload,
+      );
+      if (!taskResult.ok) {
+        return {
+          status: "FAILED",
+          output: "{}",
+          error: taskResult.error,
+          cause: taskResult.cause,
+        };
+      }
+      const rawResult = isOptimistic
+        ? { StatusCode: 200, Payload: taskResult.result }
+        : taskResult.result;
+      const selectedResult =
+        state.ResultSelector !== undefined
+          ? applyParameters(state.ResultSelector, rawResult)
+          : rawResult;
+      let stateOutput: unknown;
+      if (state.ResultPath === null) {
+        stateOutput = rawInput;
+      } else if (state.ResultPath !== undefined) {
+        stateOutput = jsonPathSet(rawInput, state.ResultPath, selectedResult);
+      } else {
+        stateOutput = selectedResult;
+      }
+      let output: unknown;
+      if (state.OutputPath === null) {
+        output = {};
+      } else if (state.OutputPath !== undefined) {
+        output = jsonPathGet(stateOutput, state.OutputPath);
+      } else {
+        output = stateOutput;
+      }
+      if (state.End === true)
+        return { status: "SUCCEEDED", output: JSON.stringify(output) };
+      currentInput = output;
       currentStateName = state.Next!;
     } else {
       if (state.End === true)
@@ -536,7 +618,7 @@ const DescribeStateMachine: OperationHandler = (input, ctx) => {
   };
 };
 
-const StartExecution: OperationHandler = (input, ctx) => {
+const StartExecution: OperationHandler = async (input, ctx) => {
   const machineArn = requireString(input, "stateMachineArn");
   const machine = requireStateMachine(ctx, machineArn);
   const executionName = stringOrUndefined(input["name"]) ?? crypto.randomUUID();
@@ -552,7 +634,7 @@ const StartExecution: OperationHandler = (input, ctx) => {
   }
   const startDate = nowSeconds();
   const inputData = stringOrUndefined(input["input"]) ?? "{}";
-  const result = interpretAsl(machine.definition, inputData);
+  const result = await interpretAsl(machine.definition, inputData, ctx);
   const execution: StoredExecution = {
     executionArn: arn,
     stateMachineArn: machine.stateMachineArn,
@@ -952,7 +1034,7 @@ const ListStateMachineAliases: OperationHandler = (input, ctx) => {
   return { stateMachineAliases };
 };
 
-const StartSyncExecution: OperationHandler = (input, ctx) => {
+const StartSyncExecution: OperationHandler = async (input, ctx) => {
   const machineArn = requireString(input, "stateMachineArn");
   const machine = requireStateMachine(ctx, machineArn);
   const executionName = stringOrUndefined(input["name"]) ?? crypto.randomUUID();
@@ -961,7 +1043,7 @@ const StartSyncExecution: OperationHandler = (input, ctx) => {
   const startDate = nowSeconds();
   const stopDate = startDate;
   const inputData = stringOrUndefined(input["input"]) ?? "{}";
-  const result = interpretAsl(machine.definition, inputData);
+  const result = await interpretAsl(machine.definition, inputData, ctx);
   const execution: StoredExecution = {
     executionArn: arn,
     stateMachineArn: machine.stateMachineArn,

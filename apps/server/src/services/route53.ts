@@ -13,11 +13,31 @@ type ResourceRecord = {
   Value: string;
 };
 
+type AliasTarget = {
+  HostedZoneId: string;
+  DNSName: string;
+  EvaluateTargetHealth: boolean;
+};
+
+type GeoLocation = {
+  ContinentCode?: string;
+  CountryCode?: string;
+  SubdivisionCode?: string;
+};
+
 type ResourceRecordSet = {
   Name: string;
   Type: string;
   TTL?: number;
   ResourceRecords?: ResourceRecord[];
+  AliasTarget?: AliasTarget;
+  SetIdentifier?: string;
+  Weight?: number;
+  Failover?: string;
+  GeoLocation?: GeoLocation;
+  Region?: string;
+  MultiValueAnswer?: boolean;
+  HealthCheckId?: string;
 };
 
 type HostedZone = {
@@ -200,7 +220,7 @@ const getZone = (ctx: ServiceContext, id: string): HostedZone => {
 };
 
 const recordSetKey = (set: ResourceRecordSet): string =>
-  `${set.Name.toLowerCase()}|${set.Type}`;
+  `${set.Name.toLowerCase()}|${set.Type}|${set.SetIdentifier ?? ""}`;
 
 const toRecordSet = (raw: unknown): ResourceRecordSet => {
   const record = (typeof raw === "object" && raw !== null ? raw : {}) as Record<
@@ -219,11 +239,58 @@ const toRecordSet = (raw: unknown): ResourceRecordSet => {
         return [{ Value: value }];
       })
     : undefined;
+  const rawAlias = record["AliasTarget"];
+  const aliasRec =
+    typeof rawAlias === "object" && rawAlias !== null
+      ? (rawAlias as Record<string, unknown>)
+      : undefined;
+  const aliasTarget: AliasTarget | undefined = aliasRec
+    ? {
+        HostedZoneId:
+          typeof aliasRec["HostedZoneId"] === "string"
+            ? aliasRec["HostedZoneId"]
+            : "",
+        DNSName:
+          typeof aliasRec["DNSName"] === "string" ? aliasRec["DNSName"] : "",
+        EvaluateTargetHealth: aliasRec["EvaluateTargetHealth"] === true,
+      }
+    : undefined;
+  const rawGeo = record["GeoLocation"];
+  const geoRec =
+    typeof rawGeo === "object" && rawGeo !== null
+      ? (rawGeo as Record<string, unknown>)
+      : undefined;
+  const geoLocation: GeoLocation | undefined = geoRec
+    ? {
+        ...(typeof geoRec["ContinentCode"] === "string"
+          ? { ContinentCode: geoRec["ContinentCode"] }
+          : {}),
+        ...(typeof geoRec["CountryCode"] === "string"
+          ? { CountryCode: geoRec["CountryCode"] }
+          : {}),
+        ...(typeof geoRec["SubdivisionCode"] === "string"
+          ? { SubdivisionCode: geoRec["SubdivisionCode"] }
+          : {}),
+      }
+    : undefined;
   const set: ResourceRecordSet = { Name: name, Type: type };
   if (typeof rawTtl === "number") set.TTL = rawTtl;
   else if (typeof rawTtl === "string" && rawTtl !== "")
     set.TTL = Number(rawTtl);
   if (resourceRecords !== undefined) set.ResourceRecords = resourceRecords;
+  if (aliasTarget !== undefined) set.AliasTarget = aliasTarget;
+  if (typeof record["SetIdentifier"] === "string")
+    set.SetIdentifier = record["SetIdentifier"];
+  if (typeof record["Weight"] === "number") set.Weight = record["Weight"];
+  else if (typeof record["Weight"] === "string" && record["Weight"] !== "")
+    set.Weight = Number(record["Weight"]);
+  if (typeof record["Failover"] === "string") set.Failover = record["Failover"];
+  if (geoLocation !== undefined) set.GeoLocation = geoLocation;
+  if (typeof record["Region"] === "string") set.Region = record["Region"];
+  if (typeof record["MultiValueAnswer"] === "boolean")
+    set.MultiValueAnswer = record["MultiValueAnswer"];
+  if (typeof record["HealthCheckId"] === "string")
+    set.HealthCheckId = record["HealthCheckId"];
   return set;
 };
 
@@ -834,6 +901,24 @@ const route53: ServiceDefinition = {
                   Value: r.Value,
                 })),
               }
+            : {}),
+          ...(set.AliasTarget !== undefined
+            ? { AliasTarget: set.AliasTarget }
+            : {}),
+          ...(set.SetIdentifier !== undefined
+            ? { SetIdentifier: set.SetIdentifier }
+            : {}),
+          ...(set.Weight !== undefined ? { Weight: set.Weight } : {}),
+          ...(set.Failover !== undefined ? { Failover: set.Failover } : {}),
+          ...(set.GeoLocation !== undefined
+            ? { GeoLocation: set.GeoLocation }
+            : {}),
+          ...(set.Region !== undefined ? { Region: set.Region } : {}),
+          ...(set.MultiValueAnswer !== undefined
+            ? { MultiValueAnswer: set.MultiValueAnswer }
+            : {}),
+          ...(set.HealthCheckId !== undefined
+            ? { HealthCheckId: set.HealthCheckId }
             : {}),
         })),
         IsTruncated: false,

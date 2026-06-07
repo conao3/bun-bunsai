@@ -115,12 +115,27 @@ type AslDefinition = {
 };
 
 type AslExecutionResult = {
-  status: "SUCCEEDED" | "FAILED";
+  status: "SUCCEEDED" | "FAILED" | "RUNNING";
   output: string;
   error?: string;
   cause?: string;
   events: HistoryEvent[];
+  pendingToken?: string;
 };
+
+type PendingTask = {
+  readonly activityArn: string;
+  readonly input: string;
+  readonly executionArn: string;
+  readonly resume: (output: string) => Promise<AslExecutionResult>;
+  readonly fail: (
+    error: string | undefined,
+    cause: string | undefined,
+  ) => AslExecutionResult;
+};
+
+const pendingTasks = new Map<string, PendingTask>();
+const activityQueues = new Map<string, string[]>();
 
 const jsonPathGet = (data: unknown, path: string): unknown => {
   if (path === "$") return data;
@@ -246,28 +261,15 @@ const evaluateCondition = (
   return false;
 };
 
-const interpretAsl = async (
-  definitionStr: string,
-  inputStr: string,
+const runAslStates = async (
+  definition: AslDefinition,
+  initialInput: unknown,
+  startStateName: string,
+  events: HistoryEvent[],
+  idRef: { n: number },
   ctx: ServiceContext,
+  executionArn: string,
 ): Promise<AslExecutionResult> => {
-  let definition: AslDefinition;
-  let currentInput: unknown;
-  try {
-    definition = JSON.parse(definitionStr) as AslDefinition;
-    currentInput = JSON.parse(inputStr);
-  } catch {
-    return {
-      status: "FAILED",
-      output: "{}",
-      error: "States.Runtime",
-      cause: "Invalid definition or input",
-      events: [],
-    };
-  }
-
-  const events: HistoryEvent[] = [];
-  let nextId = 1;
   const addEvent = (
     type: string,
     details: Omit<
@@ -275,7 +277,7 @@ const interpretAsl = async (
       "timestamp" | "type" | "id" | "previousEventId"
     > = {},
   ): void => {
-    const id = nextId++;
+    const id = idRef.n++;
     events.push({
       timestamp: Math.floor(Date.now() / 1000),
       type,
@@ -285,11 +287,8 @@ const interpretAsl = async (
     });
   };
 
-  addEvent("ExecutionStarted", {
-    executionStartedEventDetails: { input: inputStr },
-  });
-
-  let currentStateName = definition.StartAt;
+  let currentInput = initialInput;
+  let currentStateName = startStateName;
   const maxDepth = 100;
 
   for (let depth = 0; depth < maxDepth; depth++) {
@@ -443,6 +442,130 @@ const interpretAsl = async (
           ? applyParameters(state.Parameters, rawInput)
           : rawInput;
       const resource = state.Resource ?? "";
+      const parsedResource = parseArn(resource);
+      const isActivityResource =
+        parsedResource?.service === "states" &&
+        parsedResource.resource.startsWith("activity:");
+      const isWaitForToken =
+        !isActivityResource && resource.endsWith(".waitForTaskToken");
+
+      if (isActivityResource || isWaitForToken) {
+        const activityArn = isActivityResource
+          ? resource
+          : resource.slice(0, -".waitForTaskToken".length);
+        const token = crypto.randomUUID();
+        const effectiveInputStr = JSON.stringify(effectiveInput);
+
+        addEvent("TaskScheduled", {
+          taskScheduledEventDetails: {
+            resourceType: "activity",
+            resource: activityArn,
+            region: ctx.region,
+            parameters: effectiveInputStr,
+          },
+        });
+
+        const resume = async (
+          taskOutputStr: string,
+        ): Promise<AslExecutionResult> => {
+          addEvent("TaskSucceeded", {
+            taskSucceededEventDetails: {
+              resourceType: "activity",
+              resource: activityArn,
+              output: taskOutputStr,
+            },
+          });
+          let taskOutput: unknown;
+          try {
+            taskOutput = JSON.parse(taskOutputStr);
+          } catch {
+            taskOutput = taskOutputStr;
+          }
+          const selectedResult =
+            state.ResultSelector !== undefined
+              ? applyParameters(state.ResultSelector, taskOutput)
+              : taskOutput;
+          let stateOutput: unknown;
+          if (state.ResultPath === null) {
+            stateOutput = rawInput;
+          } else if (state.ResultPath !== undefined) {
+            stateOutput = jsonPathSet(
+              rawInput,
+              state.ResultPath,
+              selectedResult,
+            );
+          } else {
+            stateOutput = selectedResult;
+          }
+          let output: unknown;
+          if (state.OutputPath === null) {
+            output = {};
+          } else if (state.OutputPath !== undefined) {
+            output = jsonPathGet(stateOutput, state.OutputPath);
+          } else {
+            output = stateOutput;
+          }
+          addEvent("TaskStateExited", {
+            stateExitedEventDetails: {
+              name: stateName,
+              output: JSON.stringify(output),
+            },
+          });
+          if (state.End === true) {
+            addEvent("ExecutionSucceeded", {
+              executionSucceededEventDetails: {
+                output: JSON.stringify(output),
+              },
+            });
+            return {
+              status: "SUCCEEDED",
+              output: JSON.stringify(output),
+              events,
+            };
+          }
+          return runAslStates(
+            definition,
+            output,
+            state.Next!,
+            events,
+            idRef,
+            ctx,
+            executionArn,
+          );
+        };
+
+        const fail = (
+          error: string | undefined,
+          cause: string | undefined,
+        ): AslExecutionResult => {
+          addEvent("TaskFailed", {
+            taskFailedEventDetails: {
+              resourceType: "activity",
+              resource: activityArn,
+              error,
+              cause,
+            },
+          });
+          addEvent("ExecutionFailed", {
+            executionFailedEventDetails: { error, cause },
+          });
+          return { status: "FAILED", output: "{}", error, cause, events };
+        };
+
+        pendingTasks.set(token, {
+          activityArn,
+          input: effectiveInputStr,
+          executionArn,
+          resume,
+          fail,
+        });
+        const queue = activityQueues.get(activityArn) ?? [];
+        queue.push(token);
+        activityQueues.set(activityArn, queue);
+
+        return { status: "RUNNING", output: "{}", events, pendingToken: token };
+      }
+
       let functionArn: string;
       let lambdaPayload: unknown;
       let isOptimistic: boolean;
@@ -469,7 +592,7 @@ const interpretAsl = async (
         functionArn = fn;
         lambdaPayload = params.Payload ?? {};
         isOptimistic = true;
-      } else if (parseArn(resource)?.service === "lambda") {
+      } else if (parsedResource?.service === "lambda") {
         functionArn = resource;
         lambdaPayload = effectiveInput;
         isOptimistic = false;
@@ -611,6 +734,61 @@ const interpretAsl = async (
     cause: "State machine execution exceeded maximum depth",
     events,
   };
+};
+
+const interpretAsl = async (
+  definitionStr: string,
+  inputStr: string,
+  ctx: ServiceContext,
+  executionArn: string,
+): Promise<AslExecutionResult> => {
+  let definition: AslDefinition;
+  let currentInput: unknown;
+  try {
+    definition = JSON.parse(definitionStr) as AslDefinition;
+    currentInput = JSON.parse(inputStr);
+  } catch {
+    return {
+      status: "FAILED",
+      output: "{}",
+      error: "States.Runtime",
+      cause: "Invalid definition or input",
+      events: [],
+    };
+  }
+
+  const events: HistoryEvent[] = [];
+  const idRef = { n: 1 };
+  const addInitEvent = (
+    type: string,
+    details: Omit<
+      HistoryEvent,
+      "timestamp" | "type" | "id" | "previousEventId"
+    > = {},
+  ): void => {
+    const id = idRef.n++;
+    events.push({
+      timestamp: Math.floor(Date.now() / 1000),
+      type,
+      id,
+      previousEventId: id - 1,
+      ...details,
+    });
+  };
+
+  addInitEvent("ExecutionStarted", {
+    executionStartedEventDetails: { input: inputStr },
+  });
+
+  return runAslStates(
+    definition,
+    currentInput,
+    definition.StartAt,
+    events,
+    idRef,
+    ctx,
+    executionArn,
+  );
 };
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -844,18 +1022,18 @@ const StartExecution: OperationHandler = async (input, ctx) => {
   }
   const startDate = nowSeconds();
   const inputData = stringOrUndefined(input["input"]) ?? "{}";
-  const result = await interpretAsl(machine.definition, inputData, ctx);
+  const result = await interpretAsl(machine.definition, inputData, ctx, arn);
   const execution: StoredExecution = {
     executionArn: arn,
     stateMachineArn: machine.stateMachineArn,
     name: executionName,
     status: result.status,
     startDate,
-    stopDate: startDate,
+    stopDate: result.status !== "RUNNING" ? startDate : undefined,
     input: inputData,
     output: result.status === "SUCCEEDED" ? result.output : undefined,
-    error: result.error,
-    cause: result.cause,
+    error: result.status === "FAILED" ? result.error : undefined,
+    cause: result.status === "FAILED" ? result.cause : undefined,
     events: result.events,
   };
   ctx.store.set(executionKey(arn), execution);
@@ -1254,7 +1432,7 @@ const StartSyncExecution: OperationHandler = async (input, ctx) => {
   const startDate = nowSeconds();
   const stopDate = startDate;
   const inputData = stringOrUndefined(input["input"]) ?? "{}";
-  const result = await interpretAsl(machine.definition, inputData, ctx);
+  const result = await interpretAsl(machine.definition, inputData, ctx, arn);
   const execution: StoredExecution = {
     executionArn: arn,
     stateMachineArn: machine.stateMachineArn,
@@ -1264,8 +1442,8 @@ const StartSyncExecution: OperationHandler = async (input, ctx) => {
     stopDate,
     input: inputData,
     output: result.status === "SUCCEEDED" ? result.output : undefined,
-    error: result.error,
-    cause: result.cause,
+    error: result.status === "FAILED" ? result.error : undefined,
+    cause: result.status === "FAILED" ? result.cause : undefined,
     events: result.events,
   };
   ctx.store.set(executionKey(arn), execution);
@@ -1278,8 +1456,8 @@ const StartSyncExecution: OperationHandler = async (input, ctx) => {
     status: result.status,
     input: inputData,
     output: result.status === "SUCCEEDED" ? result.output : undefined,
-    error: result.error,
-    cause: result.cause,
+    error: result.status === "FAILED" ? result.error : undefined,
+    cause: result.status === "FAILED" ? result.cause : undefined,
   };
 };
 
@@ -1302,18 +1480,70 @@ const GetExecutionHistory: OperationHandler = (input, ctx) => {
 const GetActivityTask: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "activityArn");
   requireActivity(ctx, arn);
+  const queue = activityQueues.get(arn);
+  const token = queue?.shift();
+  if (token === undefined) return {};
+  const task = pendingTasks.get(token);
+  if (task === undefined) return {};
+  return { taskToken: token, input: task.input };
+};
+
+const SendTaskSuccess: OperationHandler = async (input, ctx) => {
+  const token = requireString(input, "taskToken");
+  const output = requireString(input, "output");
+  const task = pendingTasks.get(token);
+  if (task === undefined) {
+    throw awsError("TaskDoesNotExist", `Task does not exist: '${token}'`, 400);
+  }
+  pendingTasks.delete(token);
+  const result = await task.resume(output);
+  const execution = ctx.store.get<StoredExecution>(
+    executionKey(task.executionArn),
+  );
+  if (execution !== undefined) {
+    execution.status = result.status;
+    if (result.status !== "RUNNING") {
+      execution.stopDate = nowSeconds();
+      execution.output =
+        result.status === "SUCCEEDED" ? result.output : undefined;
+      execution.error = result.status === "FAILED" ? result.error : undefined;
+      execution.cause = result.status === "FAILED" ? result.cause : undefined;
+    }
+    execution.events = result.events;
+    ctx.store.set(executionKey(task.executionArn), execution);
+  }
   return {};
 };
 
-const SendTaskSuccess: OperationHandler = (_input, _ctx) => {
+const SendTaskFailure: OperationHandler = (input, ctx) => {
+  const token = requireString(input, "taskToken");
+  const task = pendingTasks.get(token);
+  if (task === undefined) {
+    throw awsError("TaskDoesNotExist", `Task does not exist: '${token}'`, 400);
+  }
+  pendingTasks.delete(token);
+  const error = stringOrUndefined(input["error"]);
+  const cause = stringOrUndefined(input["cause"]);
+  const result = task.fail(error, cause);
+  const execution = ctx.store.get<StoredExecution>(
+    executionKey(task.executionArn),
+  );
+  if (execution !== undefined) {
+    execution.status = "FAILED";
+    execution.stopDate = nowSeconds();
+    execution.error = error;
+    execution.cause = cause;
+    execution.events = result.events;
+    ctx.store.set(executionKey(task.executionArn), execution);
+  }
   return {};
 };
 
-const SendTaskFailure: OperationHandler = (_input, _ctx) => {
-  return {};
-};
-
-const SendTaskHeartbeat: OperationHandler = (_input, _ctx) => {
+const SendTaskHeartbeat: OperationHandler = (input, _ctx) => {
+  const token = requireString(input, "taskToken");
+  if (!pendingTasks.has(token)) {
+    throw awsError("TaskDoesNotExist", `Task does not exist: '${token}'`, 400);
+  }
   return {};
 };
 

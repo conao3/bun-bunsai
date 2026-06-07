@@ -7871,6 +7871,417 @@ const DeleteIpamScope: OperationHandler = (input, ctx) => {
   };
 };
 
+const DeleteLaunchTemplate: OperationHandler = (input, ctx) => {
+  const launchTemplateId =
+    typeof input["LaunchTemplateId"] === "string"
+      ? input["LaunchTemplateId"]
+      : undefined;
+  const launchTemplateName =
+    typeof input["LaunchTemplateName"] === "string"
+      ? input["LaunchTemplateName"]
+      : undefined;
+  let lt: StoredLaunchTemplate | undefined;
+  if (launchTemplateId !== undefined) {
+    lt = ctx.store.get<StoredLaunchTemplate>(
+      launchTemplateKey(launchTemplateId),
+    );
+  } else if (launchTemplateName !== undefined) {
+    lt = ctx.store
+      .list<StoredLaunchTemplate>()
+      .filter((entry) => entry.key.startsWith("lt/"))
+      .map((entry) => entry.value)
+      .find((t) => t.LaunchTemplateName === launchTemplateName);
+  }
+  if (lt === undefined) {
+    throw awsError(
+      "InvalidLaunchTemplateId.NotFound",
+      `The launch template ID or name does not exist`,
+      400,
+    );
+  }
+  for (let v = 1; v <= lt.LatestVersionNumber; v++) {
+    ctx.store.delete(launchTemplateVersionKey(lt.LaunchTemplateId, v));
+  }
+  ctx.store.delete(launchTemplateKey(lt.LaunchTemplateId));
+  return {
+    LaunchTemplate: {
+      LaunchTemplateId: lt.LaunchTemplateId,
+      LaunchTemplateName: lt.LaunchTemplateName,
+      DefaultVersionNumber: lt.DefaultVersionNumber,
+      LatestVersionNumber: lt.LatestVersionNumber,
+      CreateTime: lt.CreateTime,
+      CreatedBy: lt.CreatedBy,
+      Tags: lt.Tags,
+    },
+  };
+};
+
+const DeleteLaunchTemplateVersions: OperationHandler = (input, ctx) => {
+  const launchTemplateId =
+    typeof input["LaunchTemplateId"] === "string"
+      ? input["LaunchTemplateId"]
+      : undefined;
+  const launchTemplateName =
+    typeof input["LaunchTemplateName"] === "string"
+      ? input["LaunchTemplateName"]
+      : undefined;
+  const versions = Array.isArray(input["Versions"])
+    ? (input["Versions"] as unknown[]).map(String)
+    : [];
+  let lt: StoredLaunchTemplate | undefined;
+  if (launchTemplateId !== undefined) {
+    lt = ctx.store.get<StoredLaunchTemplate>(
+      launchTemplateKey(launchTemplateId),
+    );
+  } else if (launchTemplateName !== undefined) {
+    lt = ctx.store
+      .list<StoredLaunchTemplate>()
+      .filter((entry) => entry.key.startsWith("lt/"))
+      .map((entry) => entry.value)
+      .find((t) => t.LaunchTemplateName === launchTemplateName);
+  }
+  if (lt === undefined) {
+    throw awsError(
+      "InvalidLaunchTemplateId.NotFound",
+      `The launch template ID or name does not exist`,
+      400,
+    );
+  }
+  const successfullyDeleted: Array<{
+    LaunchTemplateId: string;
+    LaunchTemplateName: string;
+    VersionNumber: number;
+  }> = [];
+  const unsuccessfullyDeleted: Array<{
+    LaunchTemplateId: string;
+    LaunchTemplateName: string;
+    VersionNumber: number;
+    ResponseError: { Code: string; Message: string };
+  }> = [];
+  for (const versionStr of versions) {
+    const versionNum = parseInt(versionStr, 10);
+    if (isNaN(versionNum)) {
+      unsuccessfullyDeleted.push({
+        LaunchTemplateId: lt.LaunchTemplateId,
+        LaunchTemplateName: lt.LaunchTemplateName,
+        VersionNumber: 0,
+        ResponseError: {
+          Code: "InvalidLaunchTemplateId.VersionNotFound",
+          Message: `Launch template version '${versionStr}' does not exist`,
+        },
+      });
+      continue;
+    }
+    const vKey = launchTemplateVersionKey(lt.LaunchTemplateId, versionNum);
+    const version = ctx.store.get<StoredLaunchTemplateVersion>(vKey);
+    if (version === undefined) {
+      unsuccessfullyDeleted.push({
+        LaunchTemplateId: lt.LaunchTemplateId,
+        LaunchTemplateName: lt.LaunchTemplateName,
+        VersionNumber: versionNum,
+        ResponseError: {
+          Code: "InvalidLaunchTemplateId.VersionNotFound",
+          Message: `Launch template version '${versionStr}' does not exist`,
+        },
+      });
+      continue;
+    }
+    ctx.store.delete(vKey);
+    successfullyDeleted.push({
+      LaunchTemplateId: lt.LaunchTemplateId,
+      LaunchTemplateName: lt.LaunchTemplateName,
+      VersionNumber: versionNum,
+    });
+  }
+  return {
+    SuccessfullyDeletedLaunchTemplateVersions: successfullyDeleted,
+    UnsuccessfullyDeletedLaunchTemplateVersions: unsuccessfullyDeleted,
+  };
+};
+
+const DeleteLocalGatewayRoute: OperationHandler = (input, ctx) => {
+  const localGatewayRouteTableId =
+    typeof input["LocalGatewayRouteTableId"] === "string"
+      ? input["LocalGatewayRouteTableId"]
+      : "";
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "";
+  const routeKey = localGatewayRouteKey(
+    localGatewayRouteTableId,
+    destinationCidrBlock,
+  );
+  const route = ctx.store.get<StoredLocalGatewayRoute>(routeKey);
+  if (route === undefined) {
+    throw awsError(
+      "InvalidRoute.NotFound",
+      `No route with destination-cidr-block '${destinationCidrBlock}' in route table '${localGatewayRouteTableId}'`,
+      400,
+    );
+  }
+  ctx.store.delete(routeKey);
+  return {
+    Route: {
+      DestinationCidrBlock: route.DestinationCidrBlock,
+      LocalGatewayVirtualInterfaceGroupId:
+        route.LocalGatewayVirtualInterfaceGroupId,
+      Type: route.Type,
+      State: route.State,
+      LocalGatewayRouteTableId: route.LocalGatewayRouteTableId,
+    },
+  };
+};
+
+const DeleteLocalGatewayRouteTable: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["LocalGatewayRouteTableId"] === "string"
+      ? input["LocalGatewayRouteTableId"]
+      : "";
+  const rtb = ctx.store.get<StoredLocalGatewayRouteTable>(
+    localGatewayRouteTableKey(id),
+  );
+  if (rtb === undefined) {
+    throw awsError(
+      "InvalidLocalGatewayRouteTableID.NotFound",
+      `The local gateway route table '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(localGatewayRouteTableKey(id));
+  return {
+    LocalGatewayRouteTable: {
+      LocalGatewayRouteTableId: rtb.LocalGatewayRouteTableId,
+      LocalGatewayRouteTableArn: rtb.LocalGatewayRouteTableArn,
+      LocalGatewayId: rtb.LocalGatewayId,
+      State: rtb.State,
+      OwnerId: rtb.OwnerId,
+      Tags: rtb.Tags,
+    },
+  };
+};
+
+const DeleteLocalGatewayRouteTableVirtualInterfaceGroupAssociation: OperationHandler =
+  (input, ctx) => {
+    const id =
+      typeof input[
+        "LocalGatewayRouteTableVirtualInterfaceGroupAssociationId"
+      ] === "string"
+        ? input["LocalGatewayRouteTableVirtualInterfaceGroupAssociationId"]
+        : "";
+    const assoc =
+      ctx.store.get<StoredLocalGatewayRouteTableVirtualInterfaceGroupAssociation>(
+        lgwVifGroupAssocKey(id),
+      );
+    if (assoc === undefined) {
+      throw awsError(
+        "InvalidLocalGatewayRouteTableVirtualInterfaceGroupAssociationId.NotFound",
+        `The association '${id}' does not exist`,
+        400,
+      );
+    }
+    ctx.store.delete(lgwVifGroupAssocKey(id));
+    return {
+      LocalGatewayRouteTableVirtualInterfaceGroupAssociation: {
+        LocalGatewayRouteTableVirtualInterfaceGroupAssociationId:
+          assoc.LocalGatewayRouteTableVirtualInterfaceGroupAssociationId,
+        LocalGatewayVirtualInterfaceGroupId:
+          assoc.LocalGatewayVirtualInterfaceGroupId,
+        LocalGatewayId: assoc.LocalGatewayId,
+        LocalGatewayRouteTableId: assoc.LocalGatewayRouteTableId,
+        LocalGatewayRouteTableArn: assoc.LocalGatewayRouteTableArn,
+        OwnerId: assoc.OwnerId,
+        State: assoc.State,
+        Tags: assoc.Tags,
+      },
+    };
+  };
+
+const DeleteLocalGatewayRouteTableVpcAssociation: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id =
+    typeof input["LocalGatewayRouteTableVpcAssociationId"] === "string"
+      ? input["LocalGatewayRouteTableVpcAssociationId"]
+      : "";
+  const assoc = ctx.store.get<StoredLocalGatewayRouteTableVpcAssociation>(
+    lgwVpcAssocKey(id),
+  );
+  if (assoc === undefined) {
+    throw awsError(
+      "InvalidLocalGatewayRouteTableVpcAssociationID.NotFound",
+      `The association '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(lgwVpcAssocKey(id));
+  return {
+    LocalGatewayRouteTableVpcAssociation: {
+      LocalGatewayRouteTableVpcAssociationId:
+        assoc.LocalGatewayRouteTableVpcAssociationId,
+      LocalGatewayRouteTableId: assoc.LocalGatewayRouteTableId,
+      LocalGatewayRouteTableArn: assoc.LocalGatewayRouteTableArn,
+      LocalGatewayId: assoc.LocalGatewayId,
+      VpcId: assoc.VpcId,
+      OwnerId: assoc.OwnerId,
+      State: assoc.State,
+      Tags: assoc.Tags,
+    },
+  };
+};
+
+const DeleteLocalGatewayVirtualInterface: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["LocalGatewayVirtualInterfaceId"] === "string"
+      ? input["LocalGatewayVirtualInterfaceId"]
+      : "";
+  const vif = ctx.store.get<StoredLocalGatewayVirtualInterface>(lgwVifKey(id));
+  if (vif === undefined) {
+    throw awsError(
+      "InvalidLocalGatewayVirtualInterfaceId.NotFound",
+      `The local gateway virtual interface '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(lgwVifKey(id));
+  return {
+    LocalGatewayVirtualInterface: {
+      LocalGatewayVirtualInterfaceId: vif.LocalGatewayVirtualInterfaceId,
+      LocalGatewayId: vif.LocalGatewayId,
+      LocalGatewayVirtualInterfaceGroupId:
+        vif.LocalGatewayVirtualInterfaceGroupId,
+      LocalGatewayVirtualInterfaceArn: vif.LocalGatewayVirtualInterfaceArn,
+      OutpostLagId: vif.OutpostLagId,
+      Vlan: vif.Vlan,
+      LocalAddress: vif.LocalAddress,
+      PeerAddress: vif.PeerAddress,
+      LocalBgpAsn: vif.LocalBgpAsn,
+      PeerBgpAsn: vif.PeerBgpAsn,
+      OwnerId: vif.OwnerId,
+      Tags: vif.Tags,
+    },
+  };
+};
+
+const DeleteLocalGatewayVirtualInterfaceGroup: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id =
+    typeof input["LocalGatewayVirtualInterfaceGroupId"] === "string"
+      ? input["LocalGatewayVirtualInterfaceGroupId"]
+      : "";
+  const group = ctx.store.get<StoredLocalGatewayVirtualInterfaceGroup>(
+    lgwVifGroupKey(id),
+  );
+  if (group === undefined) {
+    throw awsError(
+      "InvalidLocalGatewayVirtualInterfaceGroupId.NotFound",
+      `The local gateway virtual interface group '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(lgwVifGroupKey(id));
+  return {
+    LocalGatewayVirtualInterfaceGroup: {
+      LocalGatewayVirtualInterfaceGroupId:
+        group.LocalGatewayVirtualInterfaceGroupId,
+      LocalGatewayVirtualInterfaceIds: group.LocalGatewayVirtualInterfaceIds,
+      LocalGatewayId: group.LocalGatewayId,
+      OwnerId: group.OwnerId,
+      LocalBgpAsn: group.LocalBgpAsn,
+      LocalGatewayVirtualInterfaceGroupArn:
+        group.LocalGatewayVirtualInterfaceGroupArn,
+      Tags: group.Tags,
+    },
+  };
+};
+
+const DeleteManagedPrefixList: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["PrefixListId"] === "string" ? input["PrefixListId"] : "";
+  const pl = ctx.store.get<StoredManagedPrefixList>(managedPrefixListKey(id));
+  if (pl === undefined) {
+    throw awsError(
+      "InvalidPrefixListID.NotFound",
+      `The prefix list '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(managedPrefixListKey(id));
+  return {
+    PrefixList: {
+      PrefixListId: pl.PrefixListId,
+      AddressFamily: pl.AddressFamily,
+      State: "delete-complete",
+      PrefixListArn: pl.PrefixListArn,
+      PrefixListName: pl.PrefixListName,
+      MaxEntries: pl.MaxEntries,
+      Version: pl.Version,
+      Tags: pl.Tags,
+      OwnerId: pl.OwnerId,
+    },
+  };
+};
+
+const DeleteNetworkAcl: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["NetworkAclId"] === "string" ? input["NetworkAclId"] : "";
+  const acl = ctx.store.get<StoredNetworkAcl>(networkAclKey(id));
+  if (acl === undefined) {
+    throw awsError(
+      "InvalidNetworkAclID.NotFound",
+      `The network ACL '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(networkAclKey(id));
+  return {};
+};
+
+const DeleteNetworkAclEntry: OperationHandler = (input, ctx) => {
+  const networkAclId =
+    typeof input["NetworkAclId"] === "string" ? input["NetworkAclId"] : "";
+  const ruleNumber =
+    typeof input["RuleNumber"] === "number" ? input["RuleNumber"] : 0;
+  const egress = typeof input["Egress"] === "boolean" ? input["Egress"] : false;
+  const acl = ctx.store.get<StoredNetworkAcl>(networkAclKey(networkAclId));
+  if (acl === undefined) {
+    throw awsError(
+      "InvalidNetworkAclID.NotFound",
+      `The network ACL '${networkAclId}' does not exist`,
+      400,
+    );
+  }
+  acl.Entries = acl.Entries.filter(
+    (e) => !(e.RuleNumber === ruleNumber && e.Egress === egress),
+  );
+  ctx.store.set(networkAclKey(networkAclId), acl);
+  return {};
+};
+
+const DeleteNetworkInsightsAccessScope: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["NetworkInsightsAccessScopeId"] === "string"
+      ? input["NetworkInsightsAccessScopeId"]
+      : "";
+  const scope = ctx.store.get<StoredNetworkInsightsAccessScope>(
+    niAccessScopeKey(id),
+  );
+  if (scope === undefined) {
+    throw awsError(
+      "InvalidNetworkInsightsAccessScopeId.NotFound",
+      `The network insights access scope '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(niAccessScopeKey(id));
+  return {
+    NetworkInsightsAccessScopeId: id,
+  };
+};
+
 const DeleteKeyPair: OperationHandler = (input, ctx) => {
   const keyPairId =
     typeof input["KeyPairId"] === "string" ? input["KeyPairId"] : undefined;
@@ -8112,6 +8523,18 @@ const ec2: ServiceDefinition = {
     DeleteIpamResourceDiscovery,
     DeleteIpamScope,
     DeleteKeyPair,
+    DeleteLaunchTemplate,
+    DeleteLaunchTemplateVersions,
+    DeleteLocalGatewayRoute,
+    DeleteLocalGatewayRouteTable,
+    DeleteLocalGatewayRouteTableVirtualInterfaceGroupAssociation,
+    DeleteLocalGatewayRouteTableVpcAssociation,
+    DeleteLocalGatewayVirtualInterface,
+    DeleteLocalGatewayVirtualInterfaceGroup,
+    DeleteManagedPrefixList,
+    DeleteNetworkAcl,
+    DeleteNetworkAclEntry,
+    DeleteNetworkInsightsAccessScope,
   },
   model,
 } as const;

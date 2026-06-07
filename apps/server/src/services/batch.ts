@@ -637,7 +637,7 @@ const CancelJob: OperationHandler = (input, ctx) => {
     job.status !== "SUCCEEDED" &&
     job.status !== "FAILED"
   ) {
-    ctx.store.set(jobKey(jobId), { ...job, status: "CANCELLED" });
+    ctx.store.set(jobKey(jobId), { ...job, status: "FAILED" });
   }
   return {};
 };

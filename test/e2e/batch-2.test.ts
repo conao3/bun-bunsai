@@ -120,7 +120,7 @@ test("Batch job listing, cancel and terminate", async () => {
   const afterCancel = await client.send(
     new ListJobsCommand({
       jobQueue: jobQueueName,
-      jobStatus: "CANCELLED" as JobStatus,
+      jobStatus: "FAILED",
     }),
   );
   const cancelledIds = (afterCancel.jobSummaryList ?? []).map(

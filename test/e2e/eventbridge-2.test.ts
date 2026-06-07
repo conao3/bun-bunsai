@@ -315,6 +315,7 @@ test("EventBridge endpoint lifecycle", async () => {
   const client = eb();
   const epName = "bunsai-e2e-endpoint";
   const busArn = `arn:aws:events:${region}:000000000000:event-bus/default`;
+  const bus2Arn = `arn:aws:events:us-west-2:000000000000:event-bus/default`;
 
   const created = await client.send(
     new CreateEndpointCommand({
@@ -322,10 +323,10 @@ test("EventBridge endpoint lifecycle", async () => {
       RoutingConfig: {
         FailoverConfig: {
           Primary: { HealthCheck: busArn },
-          Secondary: { Route: region },
+          Secondary: { Route: "us-west-2" },
         },
       },
-      EventBuses: [{ EventBusArn: busArn }],
+      EventBuses: [{ EventBusArn: busArn }, { EventBusArn: bus2Arn }],
       Description: "e2e endpoint",
     }),
   );

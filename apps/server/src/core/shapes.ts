@@ -46,6 +46,9 @@ type RawShape = {
   locationName?: string;
   timestampFormat?: string;
   enum?: string[];
+  min?: number;
+  max?: number;
+  pattern?: string;
   xmlNamespace?: RawXmlNamespace;
   error?: ErrorTrait;
   exception?: boolean;
@@ -156,6 +159,8 @@ const normalizeShape = (raw: RawShape): Shape => {
     };
     if (raw.flattened !== undefined) shape.flattened = raw.flattened;
     if (raw.locationName !== undefined) shape.locationName = raw.locationName;
+    if (raw.min !== undefined) shape.min = raw.min;
+    if (raw.max !== undefined) shape.max = raw.max;
     return shape;
   }
   if (raw.type === "map") {
@@ -166,6 +171,8 @@ const normalizeShape = (raw: RawShape): Shape => {
     };
     if (raw.flattened !== undefined) shape.flattened = raw.flattened;
     if (raw.locationName !== undefined) shape.locationName = raw.locationName;
+    if (raw.min !== undefined) shape.min = raw.min;
+    if (raw.max !== undefined) shape.max = raw.max;
     return shape;
   }
   const type = scalarTypes.includes(raw.type as never)
@@ -175,6 +182,9 @@ const normalizeShape = (raw: RawShape): Shape => {
   const ts = normalizeTimestampFormat(raw.timestampFormat);
   if (ts !== undefined) shape.timestampFormat = ts;
   if (raw.enum !== undefined) shape.enum = raw.enum;
+  if (raw.min !== undefined) shape.min = raw.min;
+  if (raw.max !== undefined) shape.max = raw.max;
+  if (raw.pattern !== undefined) shape.pattern = raw.pattern;
   if (raw.locationName !== undefined) shape.locationName = raw.locationName;
   return shape;
 };

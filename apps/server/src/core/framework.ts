@@ -1,5 +1,5 @@
 import { parseInput, serializeError, serializeOutput } from "./protocol.ts";
-import { validateRequiredInput } from "./codec/validate.ts";
+import { validateInput } from "./codec/validate.ts";
 import { scopedStore } from "./state.ts";
 import type { StateStore } from "./state.ts";
 import {
@@ -164,7 +164,12 @@ export const dispatch = async (
             shape: inputShape,
             requestUri: op?.http?.requestUri,
           });
-    const invalid = validateRequiredInput(service.protocol, inputShape, input);
+    const invalid = validateInput(
+      service.protocol,
+      model?.registry,
+      inputShape,
+      input,
+    );
     if (invalid !== undefined) {
       return fail(
         awsError(invalid.code, invalid.message, invalid.statusCode),

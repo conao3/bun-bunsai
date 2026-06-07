@@ -106,6 +106,8 @@ export type ListShape = {
   member: Member;
   flattened?: boolean;
   locationName?: string;
+  min?: number;
+  max?: number;
 };
 
 export type MapShape = {
@@ -114,6 +116,8 @@ export type MapShape = {
   value: Member;
   flattened?: boolean;
   locationName?: string;
+  min?: number;
+  max?: number;
 };
 
 export type ScalarShape = {
@@ -128,6 +132,9 @@ export type ScalarShape = {
     | "timestamp";
   timestampFormat?: TimestampFormat;
   enum?: string[];
+  min?: number;
+  max?: number;
+  pattern?: string;
   locationName?: string;
 };
 

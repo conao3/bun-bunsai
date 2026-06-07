@@ -1,3 +1,4 @@
+import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import ec2Model from "../../../../test/vendor/aws-models/ec2.json" with { type: "json" };
@@ -4004,7 +4005,7 @@ const CreateLaunchTemplate: OperationHandler = (input, ctx) => {
       : {};
   const id = hexId("lt");
   const createTime = new Date().toISOString();
-  const createdBy = `arn:aws:iam::${ctx.account}:root`;
+  const createdBy = callerArn(ctx.account);
   const lt: StoredLaunchTemplate = {
     LaunchTemplateId: id,
     LaunchTemplateName: launchTemplateName,
@@ -4081,7 +4082,7 @@ const CreateLaunchTemplateVersion: OperationHandler = (input, ctx) => {
   }
   const newVersion = lt.LatestVersionNumber + 1;
   const createTime = new Date().toISOString();
-  const createdBy = `arn:aws:iam::${ctx.account}:root`;
+  const createdBy = callerArn(ctx.account);
   const version: StoredLaunchTemplateVersion = {
     LaunchTemplateId: lt.LaunchTemplateId,
     LaunchTemplateName: lt.LaunchTemplateName,

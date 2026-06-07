@@ -1,3 +1,4 @@
+import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import emrModel from "../../../../test/vendor/aws-models/emr.json" with { type: "json" };
@@ -771,7 +772,7 @@ const GetBlockPublicAccessConfiguration: OperationHandler = (_input, ctx) => {
     },
     BlockPublicAccessConfigurationMetadata: {
       CreationDateTime: nowEpoch(),
-      CreatedByArn: `arn:aws:iam::${ctx.account}:root`,
+      CreatedByArn: callerArn(ctx.account),
     },
   };
 };

@@ -1,3 +1,4 @@
+import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import lakeformationModel from "../../../../test/vendor/aws-models/lakeformation.json" with { type: "json" };
@@ -819,7 +820,7 @@ const ListTransactions: OperationHandler = (_rawInput, ctx) => {
 };
 
 const GetDataLakePrincipal: OperationHandler = (_rawInput, ctx) => {
-  return { Identity: `arn:aws:iam::${ctx.account}:root` };
+  return { Identity: callerArn(ctx.account) };
 };
 
 const GetDataLakeSettings: OperationHandler = (rawInput, ctx) => {

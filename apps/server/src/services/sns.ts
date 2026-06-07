@@ -4,9 +4,11 @@ import { deliverToQueue } from "./sqs.ts";
 import snsModel from "../../../../test/vendor/aws-models/sns.json" with { type: "json" };
 import type {
   OperationHandler,
+  ScopedStore,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
+import { deliverToArn, registerTarget } from "../core/events.ts";
 
 const model = loadServiceModel(snsModel);
 
@@ -251,37 +253,88 @@ const matchesFilterPolicy = (
   return true;
 };
 
-const deliverToSqsSubscriptions = (
-  ctx: ServiceContext,
+const snsLambdaEvent = (
   topicArn: string,
+  subscriptionArn: string,
   delivery: DeliveryMessage,
-): void => {
+): unknown => ({
+  Records: [
+    {
+      EventSource: "aws:sns",
+      EventVersion: "1.0",
+      EventSubscriptionArn: subscriptionArn,
+      Sns: {
+        Type: "Notification",
+        MessageId: delivery.messageId,
+        TopicArn: topicArn,
+        Subject: delivery.subject ?? null,
+        Message: delivery.message,
+        Timestamp: new Date().toISOString(),
+        MessageAttributes:
+          delivery.messageAttributes !== undefined
+            ? envelopeMessageAttributes(delivery.messageAttributes)
+            : {},
+      },
+    },
+  ],
+});
+
+const fanout = async (
+  ctx: ServiceContext,
+  snsStore: ScopedStore,
+  matchTopic: (topicArn: string) => boolean,
+  delivery: DeliveryMessage,
+): Promise<void> => {
   const sqsStore = ctx.storeFor("sqs");
-  for (const entry of ctx.store.list<StoredSubscription>()) {
+  for (const entry of snsStore.list<StoredSubscription>()) {
     if (!entry.key.startsWith("subscription/")) continue;
     const subscription = entry.value;
-    if (subscription.TopicArn !== topicArn) continue;
-    if (subscription.Protocol !== "sqs") continue;
+    if (!matchTopic(subscription.TopicArn)) continue;
     const attributes =
-      ctx.store.get<StoredSubscriptionAttributes>(
+      snsStore.get<StoredSubscriptionAttributes>(
         subscriptionAttributesKey(subscription.SubscriptionArn),
       )?.Attributes ?? {};
     if (!matchesFilterPolicy(attributes["FilterPolicy"], delivery)) continue;
-    const queueName = arnResourceName(subscription.Endpoint);
-    if (attributes["RawMessageDelivery"] === "true") {
-      deliverToQueue(sqsStore, queueName, {
+    if (subscription.Protocol === "sqs") {
+      const queueName = arnResourceName(subscription.Endpoint);
+      if (attributes["RawMessageDelivery"] === "true") {
+        deliverToQueue(sqsStore, queueName, {
+          body: delivery.message,
+          messageAttributes: delivery.messageAttributes,
+          senderId: ctx.account,
+        });
+      } else {
+        deliverToQueue(sqsStore, queueName, {
+          body: buildEnvelope(subscription.TopicArn, delivery),
+          senderId: ctx.account,
+        });
+      }
+    } else if (subscription.Protocol === "lambda") {
+      await deliverToArn(ctx, subscription.Endpoint, {
         body: delivery.message,
-        messageAttributes: delivery.messageAttributes,
-        senderId: ctx.account,
-      });
-    } else {
-      deliverToQueue(sqsStore, queueName, {
-        body: buildEnvelope(topicArn, delivery),
-        senderId: ctx.account,
+        event: snsLambdaEvent(
+          subscription.TopicArn,
+          subscription.SubscriptionArn,
+          delivery,
+        ),
       });
     }
   }
 };
+
+registerTarget("sns", async (store, resource, delivery, ctx) => {
+  await fanout(
+    ctx,
+    store,
+    (topicArn) => nameFromTopicArn(topicArn) === resource,
+    {
+      messageId: crypto.randomUUID(),
+      message: delivery.body,
+      subject: delivery.subject,
+      messageAttributes: undefined,
+    },
+  );
+});
 
 const CreateTopic: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
@@ -324,7 +377,7 @@ const ListTopics: OperationHandler = (_input, ctx) => {
   return { Topics: topics };
 };
 
-const Publish: OperationHandler = (input, ctx) => {
+const Publish: OperationHandler = async (input, ctx) => {
   const message = input["Message"];
   if (typeof message !== "string") {
     throw awsError("InvalidParameter", "Message is required.", 400);
@@ -391,7 +444,7 @@ const Publish: OperationHandler = (input, ctx) => {
       typeof messageStructure === "string" && messageStructure === "json"
         ? jsonDefaultMessage(message)
         : message;
-    deliverToSqsSubscriptions(ctx, topicArn, {
+    await fanout(ctx, ctx.store, (candidate) => candidate === topicArn, {
       messageId,
       message: deliveredMessage,
       subject:

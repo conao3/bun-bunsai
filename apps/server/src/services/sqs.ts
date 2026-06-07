@@ -7,6 +7,7 @@ import type {
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
+import { notifyEventSource, registerTarget } from "../core/events.ts";
 
 const model = loadServiceModel(sqsModel);
 
@@ -433,7 +434,48 @@ const DeleteQueue: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const SendMessage: OperationHandler = (input, ctx) => {
+const sqsEventRecord = (
+  message: StoredMessage,
+  queueArn: string,
+  region: string,
+): Record<string, unknown> => ({
+  messageId: message.MessageId,
+  receiptHandle: message.ReceiptHandle,
+  body: message.Body,
+  attributes: {
+    ApproximateReceiveCount: "1",
+    SentTimestamp: String(message.SentTimestamp),
+    SenderId: message.SenderId,
+    ApproximateFirstReceiveTimestamp: String(message.SentTimestamp),
+  },
+  messageAttributes: message.MessageAttributes ?? {},
+  md5OfBody: message.MD5OfBody,
+  eventSource: "aws:sqs",
+  eventSourceARN: queueArn,
+  awsRegion: region,
+});
+
+const triggerEventSource = async (
+  ctx: ServiceContext,
+  store: ScopedStore,
+  queueName: string,
+  message: StoredMessage,
+): Promise<void> => {
+  const queue = store.get<StoredQueue>(queueName);
+  if (queue === undefined) return;
+  const queueArn = `arn:aws:sqs:${store.scope.region}:${store.scope.account}:${queueName}`;
+  const consumed = await notifyEventSource(ctx, queueArn, [
+    sqsEventRecord(message, queueArn, store.scope.region),
+  ]);
+  if (consumed) {
+    queue.messages = queue.messages.filter(
+      (m) => m.MessageId !== message.MessageId,
+    );
+    store.set(queueName, queue);
+  }
+};
+
+const SendMessage: OperationHandler = async (input, ctx) => {
   const name = queueNameFromInput(input);
   const queue = requireQueue(ctx, name);
   const outcome = sendOne(queue, input, ctx.account);
@@ -441,6 +483,10 @@ const SendMessage: OperationHandler = (input, ctx) => {
     throw awsError(outcome.code, outcome.message, 400);
   }
   ctx.store.set(name, queue);
+  const sent = queue.messages.find(
+    (m) => m.MessageId === outcome.result.MessageId,
+  );
+  if (sent !== undefined) await triggerEventSource(ctx, ctx.store, name, sent);
   return outcome.result;
 };
 
@@ -1144,6 +1190,22 @@ export const deliverToQueue = (
   store.set(queueName, queue);
   return true;
 };
+
+registerTarget("sqs", async (store, resource, delivery, ctx) => {
+  const queue = store.get<StoredQueue>(resource);
+  if (queue === undefined) return;
+  const message = enqueueMessage(queue, {
+    body: delivery.body,
+    messageAttributes: delivery.messageAttributes,
+    delaySeconds: 0,
+    senderId: "AIDAIENSOURCEDELIVERY",
+    groupId: undefined,
+    deduplicationId: undefined,
+    sequenceNumber: undefined,
+  });
+  store.set(resource, queue);
+  await triggerEventSource(ctx, store, resource, message);
+});
 
 const sqs: ServiceDefinition = {
   name: "sqs",

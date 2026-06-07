@@ -6,6 +6,7 @@ import type {
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
+import { deliverToArn } from "../core/events.ts";
 
 const model = loadServiceModel(eventBridgeModel);
 
@@ -165,10 +166,77 @@ const ListTargetsByRule: OperationHandler = (input, ctx) => {
   return { Targets: Object.values(rule.targets) };
 };
 
-const PutEvents: OperationHandler = (input) => {
-  const entries = Array.isArray(input["Entries"])
-    ? (input["Entries"] as unknown[])
+const stringList = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string")
     : [];
+
+const patternMatches = (
+  pattern: string | undefined,
+  source: string,
+  detailType: string,
+): boolean => {
+  if (pattern === undefined) return false;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(pattern) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  const sources = stringList(parsed["source"]);
+  const detailTypes = stringList(parsed["detail-type"]);
+  if (sources.length === 0 && detailTypes.length === 0) return false;
+  if (sources.length > 0 && !sources.includes(source)) return false;
+  if (detailTypes.length > 0 && !detailTypes.includes(detailType)) return false;
+  return true;
+};
+
+const deliverEvent = async (
+  ctx: ServiceContext,
+  entry: Record<string, unknown>,
+): Promise<void> => {
+  const busName = busNameOf(entry);
+  const source = stringOrUndefined(entry["Source"]) ?? "";
+  const detailType = stringOrUndefined(entry["DetailType"]) ?? "";
+  const detailRaw = entry["Detail"];
+  let detail: unknown = {};
+  if (typeof detailRaw === "string" && detailRaw !== "") {
+    try {
+      detail = JSON.parse(detailRaw);
+    } catch {
+      detail = {};
+    }
+  }
+  const event = {
+    version: "0",
+    id: crypto.randomUUID(),
+    "detail-type": detailType,
+    source,
+    account: ctx.account,
+    time: new Date().toISOString(),
+    region: ctx.region,
+    resources: stringList(entry["Resources"]),
+    detail,
+  };
+  const body = JSON.stringify(event);
+  const prefix = `${busName}/`;
+  for (const { key, value: rule } of ctx.store.list<StoredRule>()) {
+    if (!key.startsWith(prefix)) continue;
+    if (rule.State === "DISABLED") continue;
+    if (!patternMatches(rule.EventPattern, source, detailType)) continue;
+    for (const target of Object.values(rule.targets)) {
+      const arn = target["Arn"];
+      if (typeof arn === "string")
+        await deliverToArn(ctx, arn, { body, event });
+    }
+  }
+};
+
+const PutEvents: OperationHandler = async (input, ctx) => {
+  const entries = Array.isArray(input["Entries"])
+    ? (input["Entries"] as Record<string, unknown>[])
+    : [];
+  for (const entry of entries) await deliverEvent(ctx, entry);
   const results = entries.map(() => ({ EventId: crypto.randomUUID() }));
   return { FailedEntryCount: 0, Entries: results };
 };

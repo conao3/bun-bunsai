@@ -1165,32 +1165,6 @@ const ListDeadLetterSourceQueues: OperationHandler = (input, ctx) => {
   return { queueUrls };
 };
 
-export type QueueDelivery = {
-  body: string;
-  messageAttributes?: Record<string, unknown>;
-  senderId?: string;
-};
-
-export const deliverToQueue = (
-  store: ScopedStore,
-  queueName: string,
-  delivery: QueueDelivery,
-): boolean => {
-  const queue = store.get<StoredQueue>(queueName);
-  if (queue === undefined) return false;
-  enqueueMessage(queue, {
-    body: delivery.body,
-    messageAttributes: delivery.messageAttributes,
-    delaySeconds: 0,
-    senderId: delivery.senderId ?? "AIDAIDSNSDELIVERY",
-    groupId: undefined,
-    deduplicationId: undefined,
-    sequenceNumber: undefined,
-  });
-  store.set(queueName, queue);
-  return true;
-};
-
 registerTarget("sqs", async (store, resource, delivery, ctx) => {
   const queue = store.get<StoredQueue>(resource);
   if (queue === undefined) return;

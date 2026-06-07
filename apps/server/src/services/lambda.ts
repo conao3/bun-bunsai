@@ -10,7 +10,11 @@ import type {
 import { unzip } from "./lambda/zip.ts";
 import { executeNodeHandler } from "./lambda/runtime.ts";
 import type { LambdaExecution } from "./lambda/runtime.ts";
-import { registerEventSource, registerTarget } from "../core/events.ts";
+import {
+  registerEventSource,
+  registerTarget,
+  registerTaskInvoker,
+} from "../core/events.ts";
 import { parseArn, resourceName } from "../core/arn.ts";
 
 const model = loadServiceModel(lambdaModel);
@@ -321,6 +325,33 @@ registerTarget("lambda", async (store, resource, delivery) => {
   const fn = store.get<StoredFunction>(resource);
   if (fn === undefined) return;
   await runFunction(fn, delivery.event, store.scope.region);
+});
+
+registerTaskInvoker("lambda", async (ctx, functionArn, payload) => {
+  const store = ctx.storeFor("lambda");
+  const parsed = parseArn(functionArn);
+  const name =
+    parsed !== undefined ? resourceName(parsed.resource) : functionArn;
+  const fn = store.get<StoredFunction>(name);
+  if (fn === undefined) {
+    return {
+      ok: false,
+      error: "Lambda.ResourceNotFoundException",
+      cause: `Function not found: ${name}`,
+    };
+  }
+  const execution = await runFunction(fn, payload, ctx.region);
+  if (execution.kind === "result") {
+    return { ok: true, result: execution.payload };
+  }
+  if (execution.kind === "unsupported") {
+    return { ok: true, result: payload };
+  }
+  const cause =
+    execution.kind === "timeout"
+      ? `${fn.FunctionName} timed out after ${fn.Timeout} seconds`
+      : execution.errorMessage;
+  return { ok: false, error: "Lambda.AWSLambdaException", cause };
 });
 
 registerEventSource(async (ctx, sourceArn, records) => {

@@ -21,8 +21,19 @@ export type EventSourceConsumer = (
   records: unknown[],
 ) => boolean | Promise<boolean>;
 
+export type TaskInvokeResult =
+  | { ok: true; result: unknown }
+  | { ok: false; error: string; cause: string };
+
+export type TaskInvoker = (
+  ctx: ServiceContext,
+  functionArn: string,
+  payload: unknown,
+) => Promise<TaskInvokeResult>;
+
 const targets = new Map<string, TargetDeliverer>();
 const eventSources: EventSourceConsumer[] = [];
+const taskInvokers = new Map<string, TaskInvoker>();
 
 export const registerTarget = (
   service: string,
@@ -47,6 +58,31 @@ export const deliverToArn = async (
   const store = ctx.storeFor(parsed.service);
   await deliverer(store, resourceName(parsed.resource), delivery, ctx);
   return true;
+};
+
+export const registerTaskInvoker = (
+  service: string,
+  invoker: TaskInvoker,
+): void => {
+  taskInvokers.set(service, invoker);
+};
+
+export const invokeTaskResource = async (
+  ctx: ServiceContext,
+  functionArn: string,
+  payload: unknown,
+): Promise<TaskInvokeResult> => {
+  const parsed = parseArn(functionArn);
+  const service = parsed?.service;
+  const invoker = service !== undefined ? taskInvokers.get(service) : undefined;
+  if (invoker === undefined) {
+    return {
+      ok: false,
+      error: "States.Runtime",
+      cause: `No task invoker for: ${functionArn}`,
+    };
+  }
+  return invoker(ctx, functionArn, payload);
 };
 
 export const notifyEventSource = async (

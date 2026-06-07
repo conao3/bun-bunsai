@@ -520,7 +520,17 @@ const s3: ServiceDefinition = {
       if (bucket === undefined) {
         throw awsError("InvalidBucketName", "bucket name required", 400);
       }
-      getBucket(ctx, bucket);
+      const target = getBucket(ctx, bucket);
+      if (
+        Object.keys(target.objects).length > 0 ||
+        Object.keys(target.uploads).length > 0
+      ) {
+        throw awsError(
+          "BucketNotEmpty",
+          "The bucket you tried to delete is not empty",
+          409,
+        );
+      }
       ctx.store.delete(bucket);
       return {};
     },

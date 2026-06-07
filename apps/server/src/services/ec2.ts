@@ -8565,6 +8565,307 @@ const DeleteRouteServerPeer: OperationHandler = (input, ctx) => {
   };
 };
 
+const DeleteRouteTable: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["RouteTableId"] === "string" ? input["RouteTableId"] : "";
+  const table = ctx.store.get<StoredRouteTable>(routeTableKey(id));
+  if (table === undefined) {
+    throw awsError(
+      "InvalidRouteTableID.NotFound",
+      `The route table '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(routeTableKey(id));
+  return {};
+};
+
+const DeleteSecondaryNetwork: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["SecondaryNetworkId"] === "string"
+      ? input["SecondaryNetworkId"]
+      : "";
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  const network = ctx.store.get<StoredSecondaryNetwork>(
+    secondaryNetworkKey(id),
+  );
+  if (network === undefined) {
+    throw awsError(
+      "InvalidSecondaryNetworkId.NotFound",
+      `The secondary network ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(secondaryNetworkKey(id));
+  return {
+    SecondaryNetwork: {
+      SecondaryNetworkId: network.SecondaryNetworkId,
+      SecondaryNetworkArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:secondary-network/${network.SecondaryNetworkId}`,
+      OwnerId: ctx.account,
+      Type: network.NetworkType,
+      State: network.State,
+      Ipv4CidrBlockAssociations: [
+        {
+          Ipv4CidrBlock: network.Ipv4CidrBlock,
+          Ipv4CidrBlockState: { State: "associated" },
+        },
+      ],
+      Tags: network.Tags,
+    },
+    ClientToken: clientToken,
+  };
+};
+
+const DeleteSecondarySubnet: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["SecondarySubnetId"] === "string"
+      ? input["SecondarySubnetId"]
+      : "";
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  const subnet = ctx.store.get<StoredSecondarySubnet>(secondarySubnetKey(id));
+  if (subnet === undefined) {
+    throw awsError(
+      "InvalidSecondarySubnetId.NotFound",
+      `The secondary subnet ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(secondarySubnetKey(id));
+  return {
+    SecondarySubnet: {
+      SecondarySubnetId: subnet.SecondarySubnetId,
+      SecondarySubnetArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:secondary-subnet/${subnet.SecondarySubnetId}`,
+      SecondaryNetworkId: subnet.SecondaryNetworkId,
+      OwnerId: ctx.account,
+      AvailabilityZone: subnet.AvailabilityZone,
+      State: subnet.State,
+      Ipv4CidrBlockAssociations: [
+        {
+          Ipv4CidrBlock: subnet.Ipv4CidrBlock,
+          Ipv4CidrBlockState: { State: "associated" },
+        },
+      ],
+      Tags: subnet.Tags,
+    },
+    ClientToken: clientToken,
+  };
+};
+
+const DeleteSecurityGroup: OperationHandler = (input, ctx) => {
+  const groupId =
+    typeof input["GroupId"] === "string" ? input["GroupId"] : undefined;
+  const groupName =
+    typeof input["GroupName"] === "string" ? input["GroupName"] : undefined;
+  let group: StoredSecurityGroup | undefined;
+  if (groupId !== undefined) {
+    group = ctx.store.get<StoredSecurityGroup>(sgKey(groupId));
+    if (group === undefined) {
+      throw awsError(
+        "InvalidGroup.NotFound",
+        `The security group '${groupId}' does not exist`,
+        400,
+      );
+    }
+    ctx.store.delete(sgKey(groupId));
+  } else if (groupName !== undefined) {
+    group = allSecurityGroups(ctx).find((g) => g.GroupName === groupName);
+    if (group === undefined) {
+      throw awsError(
+        "InvalidGroup.NotFound",
+        `The security group '${groupName}' does not exist`,
+        400,
+      );
+    }
+    ctx.store.delete(sgKey(group.GroupId));
+  } else {
+    throw awsError(
+      "MissingParameter",
+      "The request must contain either GroupId or GroupName",
+      400,
+    );
+  }
+  return {
+    Return: true,
+    GroupId: group.GroupId,
+  };
+};
+
+const DeleteSpotDatafeedSubscription: OperationHandler = (_input, ctx) => {
+  ctx.store.delete(spotDatafeedKey());
+  return {};
+};
+
+const DeleteSubnetCidrReservation: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["SubnetCidrReservationId"] === "string"
+      ? input["SubnetCidrReservationId"]
+      : "";
+  const reservation = ctx.store.get<StoredSubnetCidrReservation>(
+    subnetCidrReservationKey(id),
+  );
+  if (reservation === undefined) {
+    throw awsError(
+      "InvalidSubnetCidrReservationID.NotFound",
+      `The subnet CIDR reservation '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(subnetCidrReservationKey(id));
+  return {
+    DeletedSubnetCidrReservation: {
+      SubnetCidrReservationId: reservation.SubnetCidrReservationId,
+      SubnetId: reservation.SubnetId,
+      Cidr: reservation.Cidr,
+      ReservationType: reservation.ReservationType,
+      OwnerId: reservation.OwnerId,
+      Description: reservation.Description,
+      Tags: reservation.Tags,
+    },
+  };
+};
+
+const DeleteTags: OperationHandler = (input, ctx) => {
+  const resources = stringList(input["Resources"]);
+  const tags = tagList(input["Tags"]);
+  for (const resourceId of resources) {
+    const resource = resourceTagTarget(ctx, resourceId);
+    if (resource === undefined) continue;
+    if (tags.length === 0) {
+      resource.Tags = [];
+    } else {
+      resource.Tags = resource.Tags.filter(
+        (existing) =>
+          !tags.some(
+            (t) =>
+              t.Key === existing.Key &&
+              (t.Value === "" || t.Value === existing.Value),
+          ),
+      );
+    }
+    persistResource(ctx, resourceId, resource);
+  }
+  return {};
+};
+
+const DeleteTrafficMirrorFilter: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TrafficMirrorFilterId"] === "string"
+      ? input["TrafficMirrorFilterId"]
+      : "";
+  const filter = ctx.store.get<StoredTrafficMirrorFilter>(
+    trafficMirrorFilterKey(id),
+  );
+  if (filter === undefined) {
+    throw awsError(
+      "InvalidTrafficMirrorFilterId.NotFound",
+      `The Traffic Mirror filter '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(trafficMirrorFilterKey(id));
+  return { TrafficMirrorFilterId: id };
+};
+
+const DeleteTrafficMirrorFilterRule: OperationHandler = (input, ctx) => {
+  const ruleId =
+    typeof input["TrafficMirrorFilterRuleId"] === "string"
+      ? input["TrafficMirrorFilterRuleId"]
+      : "";
+  const rule = ctx.store.get<StoredTrafficMirrorFilterRule>(
+    trafficMirrorFilterRuleKey(ruleId),
+  );
+  if (rule === undefined) {
+    throw awsError(
+      "InvalidTrafficMirrorFilterRuleId.NotFound",
+      `The Traffic Mirror filter rule '${ruleId}' does not exist`,
+      400,
+    );
+  }
+  const filterId = rule.TrafficMirrorFilterId;
+  const filter = ctx.store.get<StoredTrafficMirrorFilter>(
+    trafficMirrorFilterKey(filterId),
+  );
+  if (filter !== undefined) {
+    filter.IngressFilterRules = filter.IngressFilterRules.filter(
+      (r) => r.TrafficMirrorFilterRuleId !== ruleId,
+    );
+    filter.EgressFilterRules = filter.EgressFilterRules.filter(
+      (r) => r.TrafficMirrorFilterRuleId !== ruleId,
+    );
+    ctx.store.set(trafficMirrorFilterKey(filterId), filter);
+  }
+  ctx.store.delete(trafficMirrorFilterRuleKey(ruleId));
+  return { TrafficMirrorFilterRuleId: ruleId };
+};
+
+const DeleteTrafficMirrorSession: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TrafficMirrorSessionId"] === "string"
+      ? input["TrafficMirrorSessionId"]
+      : "";
+  const session = ctx.store.get<StoredTrafficMirrorSession>(
+    trafficMirrorSessionKey(id),
+  );
+  if (session === undefined) {
+    throw awsError(
+      "InvalidTrafficMirrorSessionId.NotFound",
+      `The Traffic Mirror session '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(trafficMirrorSessionKey(id));
+  return { TrafficMirrorSessionId: id };
+};
+
+const DeleteTrafficMirrorTarget: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TrafficMirrorTargetId"] === "string"
+      ? input["TrafficMirrorTargetId"]
+      : "";
+  const target = ctx.store.get<StoredTrafficMirrorTarget>(
+    trafficMirrorTargetKey(id),
+  );
+  if (target === undefined) {
+    throw awsError(
+      "InvalidTrafficMirrorTargetId.NotFound",
+      `The Traffic Mirror target '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(trafficMirrorTargetKey(id));
+  return { TrafficMirrorTargetId: id };
+};
+
+const DeleteTransitGateway: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TransitGatewayId"] === "string"
+      ? input["TransitGatewayId"]
+      : "";
+  const gateway = ctx.store.get<StoredTransitGateway>(transitGatewayKey(id));
+  if (gateway === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayID.NotFound",
+      `The transit gateway '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayKey(id));
+  return {
+    TransitGateway: {
+      TransitGatewayId: gateway.TransitGatewayId,
+      TransitGatewayArn: gateway.TransitGatewayArn,
+      State: "deleted",
+      OwnerId: gateway.OwnerId,
+      Description: gateway.Description,
+      CreationTime: gateway.CreationTime,
+      Options: gateway.Options,
+      Tags: gateway.Tags,
+    },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -8814,6 +9115,18 @@ const ec2: ServiceDefinition = {
     DeleteRouteServer,
     DeleteRouteServerEndpoint,
     DeleteRouteServerPeer,
+    DeleteRouteTable,
+    DeleteSecondaryNetwork,
+    DeleteSecondarySubnet,
+    DeleteSecurityGroup,
+    DeleteSpotDatafeedSubscription,
+    DeleteSubnetCidrReservation,
+    DeleteTags,
+    DeleteTrafficMirrorFilter,
+    DeleteTrafficMirrorFilterRule,
+    DeleteTrafficMirrorSession,
+    DeleteTrafficMirrorTarget,
+    DeleteTransitGateway,
   },
   model,
 } as const;

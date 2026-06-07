@@ -599,12 +599,26 @@ const PutItem: OperationHandler = (input, ctx) => {
     : {};
 };
 
+const isExpired = (table: StoredTable, item: Item): boolean => {
+  const ttl = table.ttl;
+  if (ttl === undefined || !ttl.Enabled) return false;
+  const av = item[ttl.AttributeName];
+  if (av === undefined) return false;
+  const raw = av["N"];
+  if (typeof raw !== "string") return false;
+  const expires = Number(raw);
+  return Number.isFinite(expires) && expires <= Math.floor(Date.now() / 1000);
+};
+
+const liveItems = (table: StoredTable): Item[] =>
+  Object.values(table.items).filter((item) => !isExpired(table, item));
+
 const GetItem: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
   const key = keyFromKeyInput(table, asItem(input["Key"]));
   const item = table.items[key];
-  if (item === undefined) return {};
+  if (item === undefined || isExpired(table, item)) return {};
   const projection = buildProjection(input);
   return { Item: applyProjection(projection, item) };
 };
@@ -912,7 +926,7 @@ const Query: OperationHandler = (input, ctx) => {
   const schema = indexKeySchema(table, indexName);
   const baseSchema = keySchemaShape(table.KeySchema);
   const expression = input["KeyConditionExpression"];
-  let candidates = Object.values(table.items);
+  let candidates = liveItems(table);
   if (indexName !== undefined && schema.range !== undefined) {
     candidates = candidates.filter(
       (item) => item[schema.range as string] !== undefined,
@@ -1050,15 +1064,49 @@ const Scan: OperationHandler = (input, ctx) => {
     typeof input["ScanFilter"] === "object" && input["ScanFilter"] !== null
       ? (input["ScanFilter"] as Record<string, Record<string, unknown>>)
       : {};
-  const all = Object.values(table.items);
-  const matched = all.filter((item) => matchesKeyConditions(item, filter));
+  const indexName =
+    typeof input["IndexName"] === "string" ? input["IndexName"] : undefined;
+  const schema = indexKeySchema(table, indexName);
+  const baseSchema = keySchemaShape(table.KeySchema);
+  const ordered = liveItems(table).sort((a, b) => {
+    const hashCmp = compareAV(
+      a[baseSchema.hash] ?? {},
+      b[baseSchema.hash] ?? {},
+    );
+    if (hashCmp !== undefined && hashCmp !== 0) return hashCmp;
+    if (baseSchema.range === undefined) return 0;
+    return compareAV(a[baseSchema.range] ?? {}, b[baseSchema.range] ?? {}) ?? 0;
+  });
+  let startIndex = 0;
+  const startKey = input["ExclusiveStartKey"];
+  if (typeof startKey === "object" && startKey !== null) {
+    const found = ordered.findIndex((item) =>
+      keysEqual(item, startKey as Item, baseSchema),
+    );
+    if (found >= 0) startIndex = found + 1;
+  }
+  const remainder = ordered.slice(startIndex);
+  const rawLimit = input["Limit"];
+  const limit =
+    typeof rawLimit === "number" && rawLimit > 0
+      ? Math.min(rawLimit, remainder.length)
+      : remainder.length;
+  const scanned = remainder.slice(0, limit);
+  const matched = scanned.filter((item) => matchesKeyConditions(item, filter));
   const items = filterByExpression(matched, input);
   const projection = buildProjection(input);
-  return {
+  const result: Record<string, unknown> = {
     Items: items.map((item) => applyProjection(projection, item)),
     Count: items.length,
-    ScannedCount: all.length,
+    ScannedCount: scanned.length,
   };
+  if (limit < remainder.length) {
+    const last = scanned[scanned.length - 1];
+    if (last !== undefined) {
+      result["LastEvaluatedKey"] = projectKey(last, schema, baseSchema);
+    }
+  }
+  return result;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>

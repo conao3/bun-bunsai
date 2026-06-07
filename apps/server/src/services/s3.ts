@@ -76,6 +76,7 @@ type S3Bucket = {
   logging: Record<string, unknown> | undefined;
   accelerateStatus: string | undefined;
   objectLock: Record<string, unknown> | undefined;
+  acl?: string;
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
@@ -400,6 +401,7 @@ const s3: ServiceDefinition = {
         if (hasLogging) return "PutBucketLogging";
         if (hasAccelerate) return "PutBucketAccelerateConfiguration";
         if (hasObjectLock) return "PutObjectLockConfiguration";
+        if (hasAcl) return "PutBucketAcl";
         return "CreateBucket";
       }
       if (req.method === "DELETE") {
@@ -502,6 +504,7 @@ const s3: ServiceDefinition = {
         logging: undefined,
         accelerateStatus: undefined,
         objectLock: undefined,
+        acl: undefined,
       });
       return {};
     },
@@ -1718,20 +1721,21 @@ const s3: ServiceDefinition = {
       if (bucket === undefined) {
         throw awsError("InvalidBucketName", "bucket name required", 400);
       }
-      getBucket(ctx, bucket);
+      const target = getBucket(ctx, bucket);
       return {
         Owner: { ID: "bunsai", DisplayName: "bunsai" },
-        Grants: [
-          {
-            Grantee: {
-              ID: "bunsai",
-              DisplayName: "bunsai",
-              Type: "CanonicalUser",
-            },
-            Permission: "FULL_CONTROL",
-          },
-        ],
+        Grants: cannedAclGrants(target.acl),
       };
+    },
+    PutBucketAcl: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const acl = typeof input["ACL"] === "string" ? input["ACL"] : "private";
+      ctx.store.set<S3Bucket>(bucket, { ...target, acl });
+      return {};
     },
     PutBucketLifecycleConfiguration: (input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);

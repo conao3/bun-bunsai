@@ -3497,6 +3497,137 @@ const ListTestCaseExecutionRecords: OperationHandler = (input, ctx) => {
   return { ExecutionRecords: [] };
 };
 
+const ListTestCaseExecutions: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { TestCaseExecutions: [] };
+};
+
+const ListTestCases: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const cases = ctx.store
+    .list<StoredTestCase>()
+    .filter((entry) => entry.key.startsWith(testCasePrefix))
+    .map((entry) => entry.value)
+    .filter((t) => t.InstanceId === instanceId);
+  return {
+    TestCaseSummaryList: cases.map((t) => ({
+      TestCaseId: t.TestCaseId,
+      TestCaseArn: t.TestCaseArn,
+    })),
+  };
+};
+
+const ListTrafficDistributionGroupUsers: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "TrafficDistributionGroupId");
+  const stored = ctx.store.get<StoredTrafficDistributionGroup>(
+    trafficDistributionGroupKey(id),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Traffic distribution group ${id} not found.`,
+      404,
+    );
+  return { TrafficDistributionGroupUserSummaryList: [] };
+};
+
+const ListTrafficDistributionGroups: OperationHandler = (_input, ctx) => {
+  const groups = ctx.store
+    .list<StoredTrafficDistributionGroup>()
+    .filter((entry) => entry.key.startsWith(trafficDistributionGroupPrefix))
+    .map((entry) => entry.value);
+  return {
+    TrafficDistributionGroupSummaryList: groups.map((g) => ({
+      Id: g.Id,
+      Arn: g.Arn,
+    })),
+  };
+};
+
+const ListUseCases: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { UseCaseSummaryList: [] };
+};
+
+const ListUserHierarchyGroups: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const groups = ctx.store
+    .list<StoredUserHierarchyGroup>()
+    .filter((entry) => entry.key.startsWith(userHierarchyGroupPrefix))
+    .map((entry) => entry.value)
+    .filter((g) => g.InstanceId === instanceId);
+  return {
+    UserHierarchyGroupSummaryList: groups.map((g) => ({
+      Id: g.HierarchyGroupId,
+      Arn: g.HierarchyGroupArn,
+      Name: g.Name,
+    })),
+  };
+};
+
+const ListUserNotifications: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { UserNotifications: [] };
+};
+
+const ListUserProficiencies: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { UserProficiencyList: [] };
+};
+
+const ListUsers: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const users = ctx.store
+    .list<StoredUser>()
+    .filter((entry) => entry.key.startsWith(userPrefix))
+    .map((entry) => entry.value)
+    .filter((u) => u.InstanceId === instanceId);
+  return {
+    UserSummaryList: users.map((u) => ({
+      Id: u.UserId,
+      Arn: u.UserArn,
+      Username: u.Username,
+    })),
+  };
+};
+
+const ListViewVersions: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { ViewVersionSummaryList: [] };
+};
+
+const ListViews: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const views = ctx.store
+    .list<StoredView>()
+    .filter((entry) => entry.key.startsWith(viewPrefix))
+    .map((entry) => entry.value)
+    .filter((v) => v.InstanceId === instanceId);
+  return {
+    ViewsSummaryList: views.map((v) => ({
+      Id: v.Id,
+      Arn: v.Arn,
+      Name: v.Name,
+      Status: v.Status,
+    })),
+  };
+};
+
+const ListWorkspaceMedia: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { Media: [] };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -3588,6 +3719,12 @@ const connect = {
             parts[4] === "use-cases"
           )
             return "CreateUseCase";
+          if (
+            req.method === "GET" &&
+            parts[2] === "integration-associations" &&
+            parts[4] === "use-cases"
+          )
+            return "ListUseCases";
           if (
             req.method === "DELETE" &&
             parts[2] === "task" &&
@@ -3855,6 +3992,8 @@ const connect = {
           req.method === "DELETE"
         )
           return "DisassociateTrafficDistributionGroupUser";
+        if (parts.length === 3 && parts[2] === "user" && req.method === "GET")
+          return "ListTrafficDistributionGroupUsers";
         return undefined;
 
       case "users":
@@ -3879,6 +4018,18 @@ const connect = {
           req.method === "POST"
         )
           return "DismissUserContact";
+        if (
+          parts.length === 4 &&
+          parts[3] === "notifications" &&
+          req.method === "GET"
+        )
+          return "ListUserNotifications";
+        if (
+          parts.length === 4 &&
+          parts[3] === "proficiencies" &&
+          req.method === "GET"
+        )
+          return "ListUserProficiencies";
         return undefined;
 
       case "user-hierarchy-groups":
@@ -4206,6 +4357,7 @@ const connect = {
 
       case "views":
         if (parts.length === 2 && req.method === "PUT") return "CreateView";
+        if (parts.length === 2 && req.method === "GET") return "ListViews";
         if (parts.length === 3 && req.method === "GET") return "DescribeView";
         if (parts.length === 3 && req.method === "DELETE") return "DeleteView";
         if (
@@ -4214,6 +4366,12 @@ const connect = {
           req.method === "PUT"
         )
           return "CreateViewVersion";
+        if (
+          parts.length === 4 &&
+          parts[3] === "versions" &&
+          req.method === "GET"
+        )
+          return "ListViewVersions";
         if (
           parts.length === 5 &&
           parts[3] === "versions" &&
@@ -4269,6 +4427,8 @@ const connect = {
           return "DeleteWorkspaceMedia";
         if (parts.length === 4 && parts[3] === "media" && req.method === "POST")
           return "ImportWorkspaceMedia";
+        if (parts.length === 4 && parts[3] === "media" && req.method === "GET")
+          return "ListWorkspaceMedia";
         return undefined;
 
       case "metrics":
@@ -4380,6 +4540,29 @@ const connect = {
       case "tags":
         if (parts.length === 2 && req.method === "GET")
           return "ListTagsForResource";
+        return undefined;
+
+      case "test-case-executions":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListTestCaseExecutions";
+        return undefined;
+
+      case "test-cases-summary":
+        if (parts.length === 2 && req.method === "GET") return "ListTestCases";
+        return undefined;
+
+      case "traffic-distribution-groups":
+        if (parts.length === 1 && req.method === "GET")
+          return "ListTrafficDistributionGroups";
+        return undefined;
+
+      case "user-hierarchy-groups-summary":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListUserHierarchyGroups";
+        return undefined;
+
+      case "users-summary":
+        if (parts.length === 2 && req.method === "GET") return "ListUsers";
         return undefined;
 
       default:
@@ -4568,6 +4751,18 @@ const connect = {
     ListTagsForResource,
     ListTaskTemplates,
     ListTestCaseExecutionRecords,
+    ListTestCaseExecutions,
+    ListTestCases,
+    ListTrafficDistributionGroupUsers,
+    ListTrafficDistributionGroups,
+    ListUseCases,
+    ListUserHierarchyGroups,
+    ListUserNotifications,
+    ListUserProficiencies,
+    ListUsers,
+    ListViewVersions,
+    ListViews,
+    ListWorkspaceMedia,
     ListRealtimeContactAnalysisSegmentsV2,
     DescribeAuthenticationProfile,
     DescribeContact,

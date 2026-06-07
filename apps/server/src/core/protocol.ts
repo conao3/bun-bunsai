@@ -140,6 +140,7 @@ export type SerializeErrorOptions = {
   senderFault?: boolean;
   data?: Record<string, unknown>;
   jsonVersion?: string;
+  requestId?: string;
 };
 
 const fallbackParseInput = (req: ParsedRequest): Record<string, unknown> => {
@@ -265,13 +266,14 @@ export const serializeOutput = (
 const fallbackSerializeError = (
   protocol: Protocol,
   error: AwsError,
+  requestId?: string,
 ): CodecResult => {
   switch (protocol) {
     case "ec2":
       return {
         body: buildXml("Response", {
           Errors: { Error: { Code: error.code, Message: error.message } },
-          RequestID: "foo-id",
+          RequestID: requestId ?? "foo-id",
         }),
         contentType: contentTypes.ec2,
         statusCode: error.statusCode,
@@ -281,6 +283,7 @@ const fallbackSerializeError = (
       return {
         body: buildXml("ErrorResponse", {
           Error: { Code: error.code, Message: error.message },
+          RequestId: requestId ?? "foo-id",
         }),
         contentType: contentTypes[protocol],
         statusCode: error.statusCode,
@@ -319,7 +322,8 @@ export const serializeError = (
       senderFault: opts.senderFault,
       data: opts.data,
       jsonVersion: opts.jsonVersion,
+      requestId: opts.requestId,
     });
   }
-  return fallbackSerializeError(protocol, error);
+  return fallbackSerializeError(protocol, error, opts?.requestId);
 };

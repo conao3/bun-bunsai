@@ -83,13 +83,16 @@ export const dispatch = async (
   service: ServiceDefinition,
   req: ParsedRequest,
   store: StateStore,
+  requestId?: string,
 ): Promise<DispatchResult> => {
   const operation = resolveOperationName(service, req);
   const model = service.model;
   const fail = (error: AwsError, op: string): DispatchResult => {
     let serialized;
     if (model === undefined) {
-      serialized = serializeError(service.protocol, error);
+      serialized = serializeError(service.protocol, error, {
+        requestId,
+      });
     } else {
       const err = errorShapeFor(model, op, error.code);
       serialized = serializeError(service.protocol, error, {
@@ -97,6 +100,7 @@ export const dispatch = async (
         shape: err.shape,
         code: err.wireCode,
         jsonVersion: model.metadata.jsonVersion,
+        requestId,
         ...(error.data !== undefined ? { data: error.data } : {}),
       });
     }

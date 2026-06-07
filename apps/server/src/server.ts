@@ -24,6 +24,7 @@ export function createBunsaiApp() {
 
   const gatewayFetch = async (req: Request): Promise<Response> => {
     const start = performance.now();
+    const requestId = crypto.randomUUID();
     const url = new URL(req.url);
     const discovery = await handleCognitoDiscovery(req, url);
     if (discovery !== undefined) return discovery;
@@ -54,7 +55,11 @@ export function createBunsaiApp() {
       });
       return new Response(serialized.body, {
         status: error.statusCode,
-        headers: { "content-type": serialized.contentType },
+        headers: {
+          "content-type": serialized.contentType,
+          "x-amzn-RequestId": requestId,
+          ...(route.service === "s3" ? { "x-amz-request-id": requestId } : {}),
+        },
       });
     }
 
@@ -79,7 +84,11 @@ export function createBunsaiApp() {
       });
       return new Response(serialized.body, {
         status: error.statusCode,
-        headers: { "content-type": serialized.contentType },
+        headers: {
+          "content-type": serialized.contentType,
+          "x-amzn-RequestId": requestId,
+          ...(route.service === "s3" ? { "x-amz-request-id": requestId } : {}),
+        },
       });
     }
 
@@ -110,6 +119,9 @@ export function createBunsaiApp() {
       responseBodyText: bodyTextForLog(result.body),
     });
     const responseHeaders = new Headers({ "content-type": result.contentType });
+    responseHeaders.set("x-amzn-RequestId", requestId);
+    if (result.service === "s3")
+      responseHeaders.set("x-amz-request-id", requestId);
     for (const [name, value] of Object.entries(result.headers ?? {}))
       responseHeaders.set(name, value);
     return new Response(result.body, {

@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import { publicJwks, signJwt } from "../core/jwt.ts";
+import { publicJwks, signJwt, verifyJwt } from "../core/jwt.ts";
 import cognitoIdpModel from "../../../../test/vendor/aws-models/cognito-idp.json" with { type: "json" };
 import type {
   OperationHandler,
@@ -487,13 +487,38 @@ const issueTokens = async (
     username: token.username,
     jti: crypto.randomUUID(),
   };
+  const refreshClaims = {
+    sub: token.username,
+    iss,
+    client_id: token.clientId,
+    token_use: "refresh" as const,
+    iat: now,
+    exp: now + 30 * 24 * 3600,
+    jti: crypto.randomUUID(),
+  };
   return {
     AccessToken: await signJwt(accessClaims),
     IdToken: await signJwt(idClaims),
-    RefreshToken: `bunsai-refresh-${crypto.randomUUID()}`,
+    RefreshToken: await signJwt(refreshClaims),
     TokenType: "Bearer",
     ExpiresIn: 3600,
   };
+};
+
+const validateRefreshToken = async (
+  refreshToken: string,
+  clientId: string,
+): Promise<string> => {
+  let payload: Record<string, unknown>;
+  try {
+    payload = await verifyJwt(refreshToken);
+  } catch {
+    throw awsError("NotAuthorizedException", "Invalid Refresh Token.", 400);
+  }
+  if (payload["token_use"] !== "refresh" || payload["client_id"] !== clientId) {
+    throw awsError("NotAuthorizedException", "Invalid Refresh Token.", 400);
+  }
+  return typeof payload["sub"] === "string" ? payload["sub"] : "";
 };
 
 export const handleCognitoDiscovery = async (
@@ -2078,6 +2103,18 @@ const AdminInitiateAuth: OperationHandler = async (input, ctx) => {
       }),
     };
   }
+  if (authFlow === "REFRESH_TOKEN_AUTH" || authFlow === "REFRESH_TOKEN") {
+    const refreshToken = authParams["REFRESH_TOKEN"] ?? "";
+    const username = await validateRefreshToken(refreshToken, clientId);
+    const tokens = await issueTokens({
+      poolId,
+      username,
+      clientId,
+      user: pool.users[username],
+    });
+    const { RefreshToken: _rt, ...withoutRefresh } = tokens;
+    return { AuthenticationResult: withoutRefresh };
+  }
   return { ChallengeName: "PASSWORD_VERIFIER", ChallengeParameters: {} };
 };
 
@@ -2169,15 +2206,16 @@ const InitiateAuth: OperationHandler = async (input, ctx) => {
     };
   }
   if (authFlow === "REFRESH_TOKEN_AUTH" || authFlow === "REFRESH_TOKEN") {
-    const username = authParams["USERNAME"] ?? "unknown";
-    return {
-      AuthenticationResult: await issueTokens({
-        poolId: pool.Id,
-        username,
-        clientId,
-        user: pool.users[username],
-      }),
-    };
+    const refreshToken = authParams["REFRESH_TOKEN"] ?? "";
+    const username = await validateRefreshToken(refreshToken, clientId);
+    const tokens = await issueTokens({
+      poolId: pool.Id,
+      username,
+      clientId,
+      user: pool.users[username],
+    });
+    const { RefreshToken: _rt, ...withoutRefresh } = tokens;
+    return { AuthenticationResult: withoutRefresh };
   }
   if (authFlow === "USER_SRP_AUTH") {
     const username = authParams["USERNAME"] ?? "";

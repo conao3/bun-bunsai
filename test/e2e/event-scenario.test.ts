@@ -15,8 +15,10 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   CreateQueueCommand,
+  DeleteMessageCommand,
   GetQueueAttributesCommand,
   ReceiveMessageCommand,
   SQSClient,
@@ -28,7 +30,7 @@ import {
   PutItemCommand,
 } from "@aws-sdk/client-dynamodb";
 
-const { endpoint, requestHandler } = startApp();
+const { endpoint, requestHandler, gwFetch } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 const s3 = () =>
@@ -175,5 +177,91 @@ describe("cross-service event scenarios", () => {
       (await q.send(new ReceiveMessageCommand({ QueueUrl: url }))).Messages ??
         [],
     ).toHaveLength(0);
+  });
+
+  test("acceptance: presigned PUT -> S3 notify -> SQS -> worker -> DynamoDB", async () => {
+    const c = s3();
+    const q = sqs();
+    const d = ddb();
+    const url = (
+      await q.send(new CreateQueueCommand({ QueueName: "accept-q" }))
+    ).QueueUrl as string;
+    await d.send(
+      new CreateTableCommand({
+        TableName: "accept-uploads",
+        AttributeDefinitions: [{ AttributeName: "key", AttributeType: "S" }],
+        KeySchema: [{ AttributeName: "key", KeyType: "HASH" }],
+        BillingMode: "PAY_PER_REQUEST",
+      }),
+    );
+    await c.send(new CreateBucketCommand({ Bucket: "accept-bucket" }));
+    await c.send(
+      new PutBucketNotificationConfigurationCommand({
+        Bucket: "accept-bucket",
+        NotificationConfiguration: {
+          QueueConfigurations: [
+            {
+              QueueArn: await queueArnOf(q, url),
+              Events: ["s3:ObjectCreated:*"],
+            },
+          ],
+        },
+      }),
+    );
+
+    const putUrl = await getSignedUrl(
+      c,
+      new PutObjectCommand({
+        Bucket: "accept-bucket",
+        Key: "inbox/order.json",
+      }),
+      { expiresIn: 900 },
+    );
+    const putResponse = await gwFetch(putUrl, {
+      method: "PUT",
+      body: '{"orderId":"o-1"}',
+    });
+    expect(putResponse.status).toBe(200);
+
+    let processed = 0;
+    for (let i = 0; i < 5 && processed === 0; i += 1) {
+      const received = await q.send(
+        new ReceiveMessageCommand({ QueueUrl: url, WaitTimeSeconds: 1 }),
+      );
+      for (const message of received.Messages ?? []) {
+        const event = JSON.parse(message.Body ?? "{}");
+        const record = event.Records?.[0];
+        if (record?.s3 === undefined) continue;
+        await d.send(
+          new PutItemCommand({
+            TableName: "accept-uploads",
+            Item: {
+              key: { S: record.s3.object.key },
+              bucket: { S: record.s3.bucket.name },
+              status: { S: "processed" },
+            },
+            ConditionExpression: "attribute_not_exists(#k)",
+            ExpressionAttributeNames: { "#k": "key" },
+          }),
+        );
+        processed += 1;
+        await q.send(
+          new DeleteMessageCommand({
+            QueueUrl: url,
+            ReceiptHandle: message.ReceiptHandle ?? "",
+          }),
+        );
+      }
+    }
+    expect(processed).toBe(1);
+
+    const stored = await d.send(
+      new GetItemCommand({
+        TableName: "accept-uploads",
+        Key: { key: { S: "inbox/order.json" } },
+      }),
+    );
+    expect(stored.Item?.status?.S).toBe("processed");
+    expect(stored.Item?.bucket?.S).toBe("accept-bucket");
   });
 });

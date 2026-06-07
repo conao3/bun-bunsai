@@ -67,6 +67,65 @@ const requireStream = (
   return stream;
 };
 
+const bucketNameFromArn = (arn: string): string =>
+  arn.split(":").slice(-1)[0] ?? "";
+
+const md5HexBytes = (value: Uint8Array): string =>
+  new Bun.CryptoHasher("md5").update(value).digest("hex");
+
+const deliverRecordToS3 = (
+  ctx: ServiceContext,
+  stream: StoredDeliveryStream,
+  data: string,
+): string => {
+  const recordId = crypto.randomUUID();
+  const dest = stream.Destinations.find((d) => {
+    const r = asRecord(d);
+    return (
+      r["S3DestinationDescription"] !== undefined ||
+      r["ExtendedS3DestinationDescription"] !== undefined ||
+      typeof r["BucketARN"] === "string"
+    );
+  });
+  if (dest === undefined) return recordId;
+  const destRecord = asRecord(dest);
+  const s3Desc =
+    destRecord["S3DestinationDescription"] !== undefined
+      ? asRecord(destRecord["S3DestinationDescription"])
+      : destRecord["ExtendedS3DestinationDescription"] !== undefined
+        ? asRecord(destRecord["ExtendedS3DestinationDescription"])
+        : destRecord;
+  const bucketArn =
+    typeof s3Desc["BucketARN"] === "string" ? s3Desc["BucketARN"] : "";
+  const prefix = typeof s3Desc["Prefix"] === "string" ? s3Desc["Prefix"] : "";
+  const bucketName = bucketNameFromArn(bucketArn);
+  if (bucketName === "") return recordId;
+  const s3Store = ctx.storeFor("s3");
+  const bucket = s3Store.get<Record<string, unknown>>(bucketName);
+  if (bucket === undefined) return recordId;
+  const dataBytes = Buffer.from(data, "binary");
+  const objectKey = `${prefix}${recordId}`;
+  const etag = `"${md5HexBytes(dataBytes)}"`;
+  const obj = {
+    key: objectKey,
+    body: dataBytes,
+    contentType: "application/octet-stream" as const,
+    etag,
+    size: dataBytes.byteLength,
+    lastModified: Math.floor(Date.now() / 1000),
+    tagSet: [] as unknown[],
+    userMetadata: {} as Record<string, string>,
+    storageClass: "STANDARD" as const,
+  };
+  const existingObjects = bucket["objects"] as Record<string, unknown[]>;
+  const existing = existingObjects[objectKey] ?? [];
+  s3Store.set<Record<string, unknown>>(bucketName, {
+    ...bucket,
+    objects: { ...existingObjects, [objectKey]: [obj, ...existing] },
+  });
+  return recordId;
+};
+
 const CreateDeliveryStream: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DeliveryStreamName");
   if (
@@ -84,6 +143,20 @@ const CreateDeliveryStream: OperationHandler = (input, ctx) => {
     typeof input["DeliveryStreamType"] === "string"
       ? (input["DeliveryStreamType"] as string)
       : "DirectPut";
+  const destinations: Record<string, unknown>[] = [];
+  if (input["S3DestinationConfiguration"] !== undefined) {
+    destinations.push({
+      DestinationId: "destinationId-000000000001",
+      S3DestinationDescription: asRecord(input["S3DestinationConfiguration"]),
+    });
+  } else if (input["ExtendedS3DestinationConfiguration"] !== undefined) {
+    destinations.push({
+      DestinationId: "destinationId-000000000001",
+      ExtendedS3DestinationDescription: asRecord(
+        input["ExtendedS3DestinationConfiguration"],
+      ),
+    });
+  }
   const stream: StoredDeliveryStream = {
     DeliveryStreamName: name,
     DeliveryStreamARN: arn,
@@ -92,7 +165,7 @@ const CreateDeliveryStream: OperationHandler = (input, ctx) => {
     VersionId: "1",
     CreateTimestamp: now,
     LastUpdateTimestamp: now,
-    Destinations: [],
+    Destinations: destinations,
     HasMoreDestinations: false,
     Tags: [],
   };
@@ -155,23 +228,28 @@ const DeleteDeliveryStream: OperationHandler = (input, ctx) => {
 
 const PutRecord: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DeliveryStreamName");
-  requireStream(ctx, name);
+  const stream = requireStream(ctx, name);
   const record = asRecord(input["Record"]);
   if (record["Data"] === undefined) {
     throw awsError("InvalidArgumentException", "Record.Data is required.", 400);
   }
-  return { RecordId: crypto.randomUUID(), Encrypted: false };
+  const data = typeof record["Data"] === "string" ? record["Data"] : "";
+  const recordId = deliverRecordToS3(ctx, stream, data);
+  return { RecordId: recordId, Encrypted: false };
 };
 
 const PutRecordBatch: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DeliveryStreamName");
-  requireStream(ctx, name);
+  const stream = requireStream(ctx, name);
   const records = Array.isArray(input["Records"])
     ? (input["Records"] as unknown[])
     : [];
-  const responses = records.map(() => ({
-    RecordId: crypto.randomUUID(),
-  }));
+  const responses = records.map((r) => {
+    const record = asRecord(r);
+    const data = typeof record["Data"] === "string" ? record["Data"] : "";
+    const recordId = deliverRecordToS3(ctx, stream, data);
+    return { RecordId: recordId };
+  });
   return {
     FailedPutCount: 0,
     Encrypted: false,

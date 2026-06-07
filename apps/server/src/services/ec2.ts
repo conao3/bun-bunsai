@@ -7570,6 +7570,322 @@ const DeleteImageUsageReport: OperationHandler = (_input, _ctx) => {
   return { Return: true };
 };
 
+const DeleteInstanceConnectEndpoint: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["InstanceConnectEndpointId"] === "string"
+      ? input["InstanceConnectEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredInstanceConnectEndpoint>(
+    instanceConnectEndpointKey(id),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidInstanceConnectEndpointId.NotFound",
+      `The instance connect endpoint ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(instanceConnectEndpointKey(id));
+  return {
+    InstanceConnectEndpoint: {
+      OwnerId: endpoint.OwnerId,
+      InstanceConnectEndpointId: endpoint.InstanceConnectEndpointId,
+      InstanceConnectEndpointArn: endpoint.InstanceConnectEndpointArn,
+      State: "delete-complete",
+      SubnetId: endpoint.SubnetId,
+      VpcId: endpoint.VpcId,
+      PreserveClientIp: endpoint.PreserveClientIp,
+      SecurityGroupIds: endpoint.SecurityGroupIds,
+      CreatedAt: endpoint.CreatedAt,
+      Tags: endpoint.Tags,
+    },
+  };
+};
+
+const DeleteInstanceEventWindow: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["InstanceEventWindowId"] === "string"
+      ? input["InstanceEventWindowId"]
+      : "";
+  const eventWindow = ctx.store.get<StoredInstanceEventWindow>(
+    instanceEventWindowKey(id),
+  );
+  if (eventWindow === undefined) {
+    throw awsError(
+      "InvalidInstanceEventWindowId.NotFound",
+      `The instance event window ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(instanceEventWindowKey(id));
+  return {
+    InstanceEventWindowState: {
+      InstanceEventWindowId: eventWindow.InstanceEventWindowId,
+      State: "deleting",
+    },
+  };
+};
+
+const DeleteInternetGateway: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["InternetGatewayId"] === "string"
+      ? input["InternetGatewayId"]
+      : "";
+  const gateway = ctx.store.get<StoredInternetGateway>(igwKey(id));
+  if (gateway === undefined) {
+    throw awsError(
+      "InvalidInternetGatewayID.NotFound",
+      `The internet gateway ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(igwKey(id));
+  return {};
+};
+
+const DeleteIpam: OperationHandler = (input, ctx) => {
+  const id = typeof input["IpamId"] === "string" ? input["IpamId"] : "";
+  const ipam = ctx.store.get<StoredIpam>(ipamKey(id));
+  if (ipam === undefined) {
+    throw awsError(
+      "InvalidIpamId.NotFound",
+      `The IPAM ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(ipamKey(id));
+  return {
+    Ipam: {
+      IpamId: ipam.IpamId,
+      OwnerId: ipam.OwnerId,
+      IpamArn: ipam.IpamArn,
+      State: "delete-complete",
+      Description: ipam.Description,
+      PublicDefaultScopeId: ipam.PublicDefaultScopeId,
+      PrivateDefaultScopeId: ipam.PrivateDefaultScopeId,
+      ScopeCount: ipam.ScopeCount,
+      Tags: ipam.Tags,
+    },
+  };
+};
+
+const DeleteIpamExternalResourceVerificationToken: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id =
+    typeof input["IpamExternalResourceVerificationTokenId"] === "string"
+      ? input["IpamExternalResourceVerificationTokenId"]
+      : "";
+  const token = ctx.store.get<StoredIpamExternalResourceVerificationToken>(
+    ipamExternalTokenKey(id),
+  );
+  if (token === undefined) {
+    throw awsError(
+      "InvalidIpamExternalResourceVerificationTokenId.NotFound",
+      `The IPAM external resource verification token ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(ipamExternalTokenKey(id));
+  return {
+    IpamExternalResourceVerificationToken: {
+      IpamExternalResourceVerificationTokenId:
+        token.IpamExternalResourceVerificationTokenId,
+      IpamArn: token.IpamArn,
+      IpamId: token.IpamId,
+      TokenValue: token.TokenValue,
+      TokenName: token.TokenName,
+      NotAfter: token.NotAfter,
+      Status: token.Status,
+      State: "delete-complete",
+      Tags: token.Tags,
+    },
+  };
+};
+
+const DeleteIpamPolicy: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["IpamPolicyId"] === "string" ? input["IpamPolicyId"] : "";
+  const policy = ctx.store.get<StoredIpamPolicy>(ipamPolicyKey(id));
+  if (policy === undefined) {
+    throw awsError(
+      "InvalidIpamPolicyId.NotFound",
+      `The IPAM policy ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(ipamPolicyKey(id));
+  return {
+    IpamPolicy: {
+      IpamPolicyId: policy.IpamPolicyId,
+      IpamArn: policy.IpamArn,
+      Description: policy.Description,
+      Policy: policy.Policy,
+      Tags: policy.Tags,
+    },
+  };
+};
+
+const DeleteIpamPool: OperationHandler = (input, ctx) => {
+  const id = typeof input["IpamPoolId"] === "string" ? input["IpamPoolId"] : "";
+  const pool = ctx.store.get<StoredIpamPool>(ipamPoolKey(id));
+  if (pool === undefined) {
+    throw awsError(
+      "InvalidIpamPoolId.NotFound",
+      `The IPAM pool ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(ipamPoolKey(id));
+  return {
+    IpamPool: {
+      IpamPoolId: pool.IpamPoolId,
+      IpamScopeId: pool.IpamScopeId,
+      IpamId: pool.IpamId,
+      IpamArn: pool.IpamArn,
+      IpamScopeArn: pool.IpamScopeArn,
+      IpamPoolArn: pool.IpamPoolArn,
+      Locale: pool.Locale,
+      AddressFamily: pool.AddressFamily,
+      State: "delete-complete",
+      Description: pool.Description,
+      Tags: pool.Tags,
+    },
+  };
+};
+
+const DeleteIpamPrefixListResolver: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["IpamPrefixListResolverId"] === "string"
+      ? input["IpamPrefixListResolverId"]
+      : "";
+  const resolver = ctx.store.get<StoredIpamPrefixListResolver>(
+    ipamPrefixListResolverKey(id),
+  );
+  if (resolver === undefined) {
+    throw awsError(
+      "InvalidIpamPrefixListResolverId.NotFound",
+      `The IPAM prefix list resolver ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(ipamPrefixListResolverKey(id));
+  return {
+    IpamPrefixListResolver: {
+      IpamPrefixListResolverId: resolver.IpamPrefixListResolverId,
+      IpamId: resolver.IpamId,
+      IpamArn: resolver.IpamArn,
+      OwnerId: resolver.OwnerId,
+      Tags: resolver.Tags,
+    },
+  };
+};
+
+const DeleteIpamPrefixListResolverTarget: OperationHandler = (input, ctx) => {
+  const resolverId =
+    typeof input["IpamPrefixListResolverId"] === "string"
+      ? input["IpamPrefixListResolverId"]
+      : "";
+  const targetId =
+    typeof input["IpamPrefixListResolverTargetId"] === "string"
+      ? input["IpamPrefixListResolverTargetId"]
+      : "";
+  const target = ctx.store.get<StoredIpamPrefixListResolverTarget>(
+    ipamPrefixListResolverTargetKey(resolverId, targetId),
+  );
+  if (target === undefined) {
+    throw awsError(
+      "InvalidIpamPrefixListResolverTargetId.NotFound",
+      `The IPAM prefix list resolver target ID '${targetId}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(ipamPrefixListResolverTargetKey(resolverId, targetId));
+  return {
+    IpamPrefixListResolverTarget: {
+      IpamPrefixListResolverId: target.IpamPrefixListResolverId,
+      IpamPrefixListResolverTargetId: target.IpamPrefixListResolverTargetId,
+      PrefixListId: target.PrefixListId,
+      OwnerId: target.OwnerId,
+      Tags: target.Tags,
+    },
+  };
+};
+
+const DeleteIpamResourceDiscovery: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["IpamResourceDiscoveryId"] === "string"
+      ? input["IpamResourceDiscoveryId"]
+      : "";
+  const resourceDiscovery = ctx.store.get<StoredIpamResourceDiscovery>(
+    ipamResourceDiscoveryKey(id),
+  );
+  if (resourceDiscovery === undefined) {
+    throw awsError(
+      "InvalidIpamResourceDiscoveryId.NotFound",
+      `The IPAM resource discovery ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(ipamResourceDiscoveryKey(id));
+  return {
+    IpamResourceDiscovery: {
+      IpamResourceDiscoveryId: resourceDiscovery.IpamResourceDiscoveryId,
+      OwnerId: resourceDiscovery.OwnerId,
+      IpamResourceDiscoveryArn: resourceDiscovery.IpamResourceDiscoveryArn,
+      State: "delete-complete",
+      Description: resourceDiscovery.Description,
+      IsDefault: resourceDiscovery.IsDefault,
+      Tags: resourceDiscovery.Tags,
+    },
+  };
+};
+
+const DeleteIpamScope: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["IpamScopeId"] === "string" ? input["IpamScopeId"] : "";
+  const scope = ctx.store.get<StoredIpamScope>(ipamScopeKey(id));
+  if (scope === undefined) {
+    throw awsError(
+      "InvalidIpamScopeId.NotFound",
+      `The IPAM scope ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(ipamScopeKey(id));
+  return {
+    IpamScope: {
+      IpamScopeId: scope.IpamScopeId,
+      IpamId: scope.IpamId,
+      IpamScopeArn: scope.IpamScopeArn,
+      IpamArn: scope.IpamArn,
+      IpamScopeType: scope.IpamScopeType,
+      IsDefault: scope.IsDefault,
+      Description: scope.Description,
+      PoolCount: scope.PoolCount,
+      State: "delete-complete",
+      Tags: scope.Tags,
+    },
+  };
+};
+
+const DeleteKeyPair: OperationHandler = (input, ctx) => {
+  const keyPairId =
+    typeof input["KeyPairId"] === "string" ? input["KeyPairId"] : undefined;
+  const keyName =
+    typeof input["KeyName"] === "string" ? input["KeyName"] : undefined;
+  if (keyPairId !== undefined) {
+    const found = allKeyPairs(ctx).find((kp) => kp.KeyPairId === keyPairId);
+    if (found !== undefined) {
+      ctx.store.delete(keyPairKey(found.KeyName));
+    }
+  } else if (keyName !== undefined) {
+    ctx.store.delete(keyPairKey(keyName));
+  }
+  return {};
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -7783,6 +8099,18 @@ const ec2: ServiceDefinition = {
     DeleteFlowLogs,
     DeleteFpgaImage,
     DeleteImageUsageReport,
+    DeleteInstanceConnectEndpoint,
+    DeleteInstanceEventWindow,
+    DeleteInternetGateway,
+    DeleteIpam,
+    DeleteIpamExternalResourceVerificationToken,
+    DeleteIpamPolicy,
+    DeleteIpamPool,
+    DeleteIpamPrefixListResolver,
+    DeleteIpamPrefixListResolverTarget,
+    DeleteIpamResourceDiscovery,
+    DeleteIpamScope,
+    DeleteKeyPair,
   },
   model,
 } as const;

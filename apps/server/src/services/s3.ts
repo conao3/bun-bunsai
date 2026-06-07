@@ -544,16 +544,14 @@ const s3: ServiceDefinition = {
           : null;
       if (match !== null && (match[1] !== "" || match[2] !== "")) {
         const total = object.size;
-        const start =
-          match[1] === ""
-            ? Math.max(0, total - Number(match[2]))
-            : Number(match[1]);
+        const isSuffixRange = match[1] === "";
+        const start = isSuffixRange
+          ? Math.max(0, total - Number(match[2]))
+          : Number(match[1]);
         const end =
-          match[1] === ""
+          isSuffixRange || match[2] === ""
             ? total - 1
-            : match[2] === ""
-              ? total - 1
-              : Math.min(Number(match[2]), total - 1);
+            : Math.min(Number(match[2]), total - 1);
         if (start >= total || start > end) {
           throw awsError(
             "InvalidRange",

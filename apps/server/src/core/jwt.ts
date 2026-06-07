@@ -37,16 +37,8 @@ const ensureKey = (): Promise<SigningKey> => {
   return keyPromise;
 };
 
-const base64url = (input: string | Uint8Array): string => {
-  const bytes =
-    typeof input === "string" ? new TextEncoder().encode(input) : input;
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-};
+const base64url = (input: string | Uint8Array): string =>
+  Buffer.from(input).toString("base64url");
 
 export const signJwt = async (
   payload: Record<string, unknown>,

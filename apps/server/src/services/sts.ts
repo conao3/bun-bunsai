@@ -1,6 +1,6 @@
 import type { ServiceDefinition } from "../core/types.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import { parseArn } from "../core/arn.ts";
+import { callerArn, parseArn } from "../core/arn.ts";
 import stsModel from "../../../../test/vendor/aws-models/sts.json" with { type: "json" };
 
 const defaultAccount = "000000000000" as const;
@@ -30,7 +30,7 @@ const sts = {
       const acct = accountOf(ctx);
       return {
         Account: acct,
-        Arn: `arn:aws:iam::${acct}:root`,
+        Arn: callerArn(acct),
         UserId: acct,
       };
     },

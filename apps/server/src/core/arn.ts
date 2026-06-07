@@ -27,3 +27,6 @@ export const resourceName = (resource: string): string => {
     ? afterColon.slice(afterColon.lastIndexOf("/") + 1)
     : afterColon;
 };
+
+export const callerArn = (account: string): string =>
+  `arn:aws:iam::${account}:root`;

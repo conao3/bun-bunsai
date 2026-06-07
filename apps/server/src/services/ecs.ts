@@ -1,3 +1,4 @@
+import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import ecsModel from "../../../../test/vendor/aws-models/ecs.json" with { type: "json" };
@@ -1277,7 +1278,7 @@ const PutAccountSetting: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const value = requireString(input, "value");
   const principalArn =
-    optionalString(input, "principalArn") ?? `arn:aws:iam::${ctx.account}:root`;
+    optionalString(input, "principalArn") ?? callerArn(ctx.account);
   const setting: StoredAccountSetting = { name, value, principalArn };
   ctx.store.set(accountSettingKey(name, principalArn), setting);
   return { setting: accountSettingView(setting) };
@@ -1286,7 +1287,7 @@ const PutAccountSetting: OperationHandler = (input, ctx) => {
 const PutAccountSettingDefault: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const value = requireString(input, "value");
-  const principalArn = `arn:aws:iam::${ctx.account}:root`;
+  const principalArn = callerArn(ctx.account);
   const setting: StoredAccountSetting = { name, value, principalArn };
   ctx.store.set(accountSettingKey(name, "default"), setting);
   return { setting: accountSettingView(setting) };
@@ -1295,7 +1296,7 @@ const PutAccountSettingDefault: OperationHandler = (input, ctx) => {
 const DeleteAccountSetting: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const principalArn =
-    optionalString(input, "principalArn") ?? `arn:aws:iam::${ctx.account}:root`;
+    optionalString(input, "principalArn") ?? callerArn(ctx.account);
   const key = accountSettingKey(name, principalArn);
   const setting = ctx.store.get<StoredAccountSetting>(key);
   if (setting === undefined) {

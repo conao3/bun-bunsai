@@ -1,3 +1,4 @@
+import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import codecommitModel from "../../../../test/vendor/aws-models/codecommit.json" with { type: "json" };
@@ -1719,7 +1720,7 @@ const buildComment = (
     inReplyTo: params.inReplyTo,
     creationDate: now,
     lastModifiedDate: now,
-    authorArn: `arn:aws:iam::${ctx.account}:root`,
+    authorArn: callerArn(ctx.account),
     deleted: false,
     clientRequestToken: params.clientRequestToken,
     callerReactions: [],
@@ -1775,7 +1776,7 @@ const CreateApprovalRuleTemplate: OperationHandler = (input, ctx) => {
     ruleContentSha256: contentHash(content),
     lastModifiedDate: now,
     creationDate: now,
-    lastModifiedUser: `arn:aws:iam::${ctx.account}:root`,
+    lastModifiedUser: callerArn(ctx.account),
   };
   ctx.store.set(approvalRuleTemplateKey(name), template);
   return { approvalRuleTemplate: approvalRuleTemplateView(template) };
@@ -2041,7 +2042,7 @@ const CreatePullRequest: OperationHandler = (input, ctx) => {
     destinationCommit,
     mergeBase,
     pullRequestStatus: "OPEN",
-    authorArn: `arn:aws:iam::${ctx.account}:root`,
+    authorArn: callerArn(ctx.account),
     creationDate: now,
     lastActivityDate: now,
     clientRequestToken: stringOrUndefined(input["clientRequestToken"]),
@@ -2137,7 +2138,7 @@ const MergePullRequestByFastForward: OperationHandler = (input, ctx) => {
     ...pr,
     pullRequestStatus: "CLOSED",
     isMerged: true,
-    mergedBy: `arn:aws:iam::${ctx.account}:root`,
+    mergedBy: callerArn(ctx.account),
     mergeCommitId: srcRef,
     mergeOption: "FAST_FORWARD_MERGE",
     lastActivityDate: now,
@@ -2181,7 +2182,7 @@ const MergePullRequestBySquash: OperationHandler = (input, ctx) => {
     ...pr,
     pullRequestStatus: "CLOSED",
     isMerged: true,
-    mergedBy: `arn:aws:iam::${ctx.account}:root`,
+    mergedBy: callerArn(ctx.account),
     mergeCommitId: commit.commitId,
     mergeOption: "SQUASH_MERGE",
     lastActivityDate: now,
@@ -2226,7 +2227,7 @@ const MergePullRequestByThreeWay: OperationHandler = (input, ctx) => {
     ...pr,
     pullRequestStatus: "CLOSED",
     isMerged: true,
-    mergedBy: `arn:aws:iam::${ctx.account}:root`,
+    mergedBy: callerArn(ctx.account),
     mergeCommitId: commit.commitId,
     mergeOption: "THREE_WAY_MERGE",
     lastActivityDate: now,
@@ -2249,7 +2250,7 @@ const CreatePullRequestApprovalRule: OperationHandler = (input, ctx) => {
     ruleContentSha256: contentHash(ruleContent),
     creationDate: now,
     lastModifiedDate: now,
-    lastModifiedUser: `arn:aws:iam::${ctx.account}:root`,
+    lastModifiedUser: callerArn(ctx.account),
     originatesFrom: "TEMPLATE_ASSOCIATION",
   };
   ctx.store.set(prApprovalRuleKey(prId, ruleName), rule);
@@ -2311,7 +2312,7 @@ const UpdatePullRequestApprovalState: OperationHandler = (input, ctx) => {
   requireString(input, "revisionId");
   const approvalState = requireString(input, "approvalState");
   requirePullRequest(ctx, prId);
-  const userArn = `arn:aws:iam::${ctx.account}:root`;
+  const userArn = callerArn(ctx.account);
   ctx.store.set(prApprovalKey(prId, userArn), { userArn, approvalState });
   return {};
 };
@@ -2337,7 +2338,7 @@ const OverridePullRequestApprovalRules: OperationHandler = (input, ctx) => {
   requirePullRequest(ctx, prId);
   ctx.store.set(prOverrideKey(prId), {
     overridden: overrideStatus === "OVERRIDE",
-    overrider: `arn:aws:iam::${ctx.account}:root`,
+    overrider: callerArn(ctx.account),
   });
   return {};
 };
@@ -2673,7 +2674,7 @@ const PutCommentReaction: OperationHandler = (input, ctx) => {
   const commentId = requireString(input, "commentId");
   const reactionValue = requireString(input, "reactionValue");
   const comment = requireComment(ctx, commentId);
-  const userArn = `arn:aws:iam::${ctx.account}:root`;
+  const userArn = callerArn(ctx.account);
   const existing = comment.reactions[reactionValue] ?? [];
   const updated: StoredComment = {
     ...comment,

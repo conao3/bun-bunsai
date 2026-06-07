@@ -1,3 +1,4 @@
+import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import dataexchangeModel from "../../../../test/vendor/aws-models/dataexchange.json" with { type: "json" };
@@ -667,7 +668,7 @@ const CreateDataGrant: OperationHandler = (input, ctx) => {
     Id: id,
     Arn: dataGrantArn(ctx, id),
     Name: name,
-    SenderPrincipal: `arn:aws:iam::${ctx.account}:root`,
+    SenderPrincipal: callerArn(ctx.account),
     ReceiverPrincipal: receiverPrincipal,
     Description: stringOrUndefined(input["Description"]),
     AcceptanceState: "PENDING_RECEIVER_ACCEPTANCE",

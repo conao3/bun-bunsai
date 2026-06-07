@@ -1,3 +1,4 @@
+import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import connectModel from "../../../../test/vendor/aws-models/connect.json" with { type: "json" };
@@ -1796,8 +1797,8 @@ const DescribeContactEvaluation: OperationHandler = (input, ctx) => {
       Items: [],
       CreatedTime: new Date().toISOString(),
       LastModifiedTime: new Date().toISOString(),
-      CreatedBy: `arn:aws:iam::${ctx.account}:root`,
-      LastModifiedBy: `arn:aws:iam::${ctx.account}:root`,
+      CreatedBy: callerArn(ctx.account),
+      LastModifiedBy: callerArn(ctx.account),
     },
   };
 };
@@ -1966,8 +1967,8 @@ const DescribeEvaluationForm: OperationHandler = (input, ctx) => {
       Items: [],
       CreatedTime: new Date().toISOString(),
       LastModifiedTime: new Date().toISOString(),
-      CreatedBy: `arn:aws:iam::${ctx.account}:root`,
-      LastModifiedBy: `arn:aws:iam::${ctx.account}:root`,
+      CreatedBy: callerArn(ctx.account),
+      LastModifiedBy: callerArn(ctx.account),
     },
   };
 };

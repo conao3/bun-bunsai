@@ -9246,6 +9246,327 @@ const DeleteTransitGatewayRouteTableAnnouncement: OperationHandler = (
   };
 };
 
+const DeleteTransitGatewayVpcAttachment: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const stored = ctx.store.get<StoredTransitGatewayVpcAttachment>(
+    transitGatewayVpcAttachmentKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayAttachmentID.NotFound",
+      `The transit gateway attachment '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayVpcAttachmentKey(id));
+  return {
+    TransitGatewayVpcAttachment: {
+      TransitGatewayAttachmentId: stored.TransitGatewayAttachmentId,
+      TransitGatewayId: stored.TransitGatewayId,
+      VpcId: stored.VpcId,
+      VpcOwnerId: stored.VpcOwnerId,
+      State: "deleted",
+      SubnetIds: stored.SubnetIds,
+      CreationTime: stored.CreationTime,
+      Options: stored.Options,
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const DeleteVerifiedAccessEndpoint: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VerifiedAccessEndpointId"] === "string"
+      ? input["VerifiedAccessEndpointId"]
+      : "";
+  const stored = ctx.store.get<StoredVerifiedAccessEndpoint>(
+    verifiedAccessEndpointKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessEndpointId.NotFound",
+      `The verified access endpoint '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(verifiedAccessEndpointKey(id));
+  return {
+    VerifiedAccessEndpoint: {
+      VerifiedAccessInstanceId: stored.VerifiedAccessInstanceId,
+      VerifiedAccessGroupId: stored.VerifiedAccessGroupId,
+      VerifiedAccessEndpointId: stored.VerifiedAccessEndpointId,
+      ApplicationDomain: stored.ApplicationDomain,
+      EndpointType: stored.EndpointType,
+      AttachmentType: stored.AttachmentType,
+      DomainCertificateArn: stored.DomainCertificateArn,
+      EndpointDomain: stored.EndpointDomain,
+      SecurityGroupIds: stored.SecurityGroupIds,
+      Status: { Code: "deleted", Message: "" },
+      Description: stored.Description,
+      CreationTime: stored.CreationTime,
+      LastUpdatedTime: stored.LastUpdatedTime,
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const DeleteVerifiedAccessGroup: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VerifiedAccessGroupId"] === "string"
+      ? input["VerifiedAccessGroupId"]
+      : "";
+  const stored = ctx.store.get<StoredVerifiedAccessGroup>(
+    verifiedAccessGroupKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessGroupId.NotFound",
+      `The verified access group '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(verifiedAccessGroupKey(id));
+  return {
+    VerifiedAccessGroup: {
+      VerifiedAccessGroupId: stored.VerifiedAccessGroupId,
+      VerifiedAccessInstanceId: stored.VerifiedAccessInstanceId,
+      Description: stored.Description,
+      Owner: stored.Owner,
+      VerifiedAccessGroupArn: stored.VerifiedAccessGroupArn,
+      CreationTime: stored.CreationTime,
+      LastUpdatedTime: stored.LastUpdatedTime,
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const DeleteVerifiedAccessInstance: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VerifiedAccessInstanceId"] === "string"
+      ? input["VerifiedAccessInstanceId"]
+      : "";
+  const stored = ctx.store.get<StoredVerifiedAccessInstance>(vaInstanceKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessInstanceId.NotFound",
+      `The verified access instance '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(vaInstanceKey(id));
+  return {
+    VerifiedAccessInstance: {
+      VerifiedAccessInstanceId: stored.VerifiedAccessInstanceId,
+      Description: stored.Description,
+      VerifiedAccessTrustProviders: stored.TrustProviderIds.map((pid) => ({
+        VerifiedAccessTrustProviderId: pid,
+      })),
+      CreationTime: stored.CreationTime,
+      LastUpdatedTime: stored.LastUpdatedTime,
+      Tags: stored.Tags,
+      FipsEnabled: stored.FipsEnabled,
+    },
+  };
+};
+
+const DeleteVerifiedAccessTrustProvider: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VerifiedAccessTrustProviderId"] === "string"
+      ? input["VerifiedAccessTrustProviderId"]
+      : "";
+  const stored = ctx.store.get<StoredVerifiedAccessTrustProvider>(
+    vaTrustProviderKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessTrustProviderId.NotFound",
+      `The verified access trust provider '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(vaTrustProviderKey(id));
+  return {
+    VerifiedAccessTrustProvider: {
+      VerifiedAccessTrustProviderId: stored.VerifiedAccessTrustProviderId,
+      TrustProviderType: stored.TrustProviderType,
+      PolicyReferenceName: stored.PolicyReferenceName,
+      CreationTime: stored.CreationTime,
+      LastUpdatedTime: stored.LastUpdatedTime,
+      Tags: [],
+    },
+  };
+};
+
+const DeleteVpcBlockPublicAccessExclusion: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["ExclusionId"] === "string" ? input["ExclusionId"] : "";
+  const stored = ctx.store.get<StoredVpcBlockPublicAccessExclusion>(
+    vpcBlockPublicAccessExclusionKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpcBlockPublicAccessExclusionId.NotFound",
+      `The VPC block public access exclusion '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(vpcBlockPublicAccessExclusionKey(id));
+  return {
+    VpcBlockPublicAccessExclusion: {
+      ExclusionId: stored.ExclusionId,
+      InternetGatewayExclusionMode: stored.InternetGatewayExclusionMode,
+      ResourceArn: stored.ResourceArn,
+      State: "delete-complete",
+      CreationTimestamp: stored.CreationTimestamp,
+      LastUpdateTimestamp: stored.LastUpdateTimestamp,
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const DeleteVpcEncryptionControl: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpcEncryptionControlId"] === "string"
+      ? input["VpcEncryptionControlId"]
+      : "";
+  const stored = ctx.store.get<StoredVpcEncryptionControl>(
+    vpcEncryptionControlKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpcEncryptionControlId.NotFound",
+      `The VPC encryption control '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(vpcEncryptionControlKey(id));
+  return {
+    VpcEncryptionControl: {
+      VpcEncryptionControlId: stored.VpcEncryptionControlId,
+      VpcId: stored.VpcId,
+      Mode: stored.Mode,
+      State: "deleting",
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const DeleteVpcEndpointConnectionNotifications: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["ConnectionNotificationIds"]);
+  const unsuccessful: {
+    Error: { Code: string; Message: string };
+    ResourceId: string;
+  }[] = [];
+  for (const id of ids) {
+    const stored = ctx.store.get<StoredVpcEndpointConnectionNotification>(
+      vpcEndpointConnectionNotificationKey(id),
+    );
+    if (stored === undefined) {
+      unsuccessful.push({
+        Error: {
+          Code: "InvalidConnectionNotification.NotFound",
+          Message: `The connection notification '${id}' does not exist`,
+        },
+        ResourceId: id,
+      });
+    } else {
+      ctx.store.delete(vpcEndpointConnectionNotificationKey(id));
+    }
+  }
+  return { Unsuccessful: unsuccessful };
+};
+
+const DeleteVpcEndpointServiceConfigurations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["ServiceIds"]);
+  const unsuccessful: {
+    Error: { Code: string; Message: string };
+    ResourceId: string;
+  }[] = [];
+  for (const id of ids) {
+    const stored = ctx.store.get<StoredVpcEndpointServiceConfiguration>(
+      vpcEndpointServiceConfigKey(id),
+    );
+    if (stored === undefined) {
+      unsuccessful.push({
+        Error: {
+          Code: "InvalidVpcEndpointService.NotFound",
+          Message: `The VPC endpoint service '${id}' does not exist`,
+        },
+        ResourceId: id,
+      });
+    } else {
+      ctx.store.delete(vpcEndpointServiceConfigKey(id));
+    }
+  }
+  return { Unsuccessful: unsuccessful };
+};
+
+const DeleteVpcEndpoints: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VpcEndpointIds"]);
+  const unsuccessful: {
+    Error: { Code: string; Message: string };
+    ResourceId: string;
+  }[] = [];
+  for (const id of ids) {
+    const stored = ctx.store.get<StoredVpcEndpoint>(vpcEndpointKey(id));
+    if (stored === undefined) {
+      unsuccessful.push({
+        Error: {
+          Code: "InvalidVpcEndpointId.NotFound",
+          Message: `The VPC endpoint '${id}' does not exist`,
+        },
+        ResourceId: id,
+      });
+    } else {
+      ctx.store.delete(vpcEndpointKey(id));
+    }
+  }
+  return { Unsuccessful: unsuccessful };
+};
+
+const DeleteVpcPeeringConnection: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpcPeeringConnectionId"] === "string"
+      ? input["VpcPeeringConnectionId"]
+      : "";
+  const stored = ctx.store.get<StoredVpcPeeringConnection>(vpcPeeringKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpcPeeringConnectionID.NotFound",
+      `The VPC peering connection '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(vpcPeeringKey(id));
+  return { Return: true };
+};
+
+const DeleteVpnConcentrator: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpnConcentratorId"] === "string"
+      ? input["VpnConcentratorId"]
+      : "";
+  const stored = ctx.store.get<StoredVpnConcentrator>(vpnConcentratorKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpnConcentratorId.NotFound",
+      `The VPN concentrator '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(vpnConcentratorKey(id));
+  return { Return: true };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -9519,6 +9840,18 @@ const ec2: ServiceDefinition = {
     DeleteTransitGatewayRoute,
     DeleteTransitGatewayRouteTable,
     DeleteTransitGatewayRouteTableAnnouncement,
+    DeleteTransitGatewayVpcAttachment,
+    DeleteVerifiedAccessEndpoint,
+    DeleteVerifiedAccessGroup,
+    DeleteVerifiedAccessInstance,
+    DeleteVerifiedAccessTrustProvider,
+    DeleteVpcBlockPublicAccessExclusion,
+    DeleteVpcEncryptionControl,
+    DeleteVpcEndpointConnectionNotifications,
+    DeleteVpcEndpointServiceConfigurations,
+    DeleteVpcEndpoints,
+    DeleteVpcPeeringConnection,
+    DeleteVpnConcentrator,
   },
   model,
 } as const;

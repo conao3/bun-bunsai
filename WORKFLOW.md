@@ -97,6 +97,9 @@ The agent talks to Linear via the configured Linear MCP server (`mcp__linear__*`
 - Move status only when the matching quality bar is met.
 - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 - **Edit-Read efficiency**: after editing a file, do not Re-Read it just to confirm the result. Batch multiple Edits and rely on Edit's atomic semantics. Re-Read only when you need new context the prior Read did not capture. If you find yourself reading the same file 5+ times in one session, stop and rethink the approach.
+- **Large vendored files**: never `Read` the whole of `test/vendor/aws-models/<service>.json` (each file is 100KB–several MB). Use `bun scripts/aws-model-op.ts <service> [<operation>] [--with-shapes]` to extract just the operation's input/output/errors shapes, or list every operation name when the operation argument is omitted. Same idea for any single source file over 1MB: locate the symbol with `grep -n` first, then `Read offset N limit 30`.
+- **Trim Bash output**: pipe long-running commands through `| tail -<N>` / `grep -E '<pattern>'` so only the relevant lines reach the tool_result. `bun test` raw stdout in particular is large and useless to keep in the trajectory.
+- **No sub-agents**: do not invoke the `Agent` / `Task` tool. This worker is a single-thread implementer; spinning up a sub-agent multiplies context cost without adding throughput here.
 - Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.
 - **Write all GitHub communication in English**: PR title, PR description (Summary / Test plan / etc.), commit messages, PR review replies, and any inline `gh pr comment` posts must be in English regardless of the language used in the Linear issue body or workpad. The Linear workpad itself may stay in the issue's language, but anything that surfaces on GitHub is English.
 

@@ -22,6 +22,7 @@ type S3Object = {
   storageClass: string;
   versionId?: string;
   isDeleteMarker?: boolean;
+  acl?: string;
 };
 
 type S3Tag = {
@@ -107,6 +108,35 @@ const getCurrentObject = (
   if (versions === undefined || versions.length === 0) return undefined;
   const latest = versions[0];
   return latest.isDeleteMarker ? undefined : latest;
+};
+
+const ALL_USERS_URI =
+  "http://acs.amazonaws.com/groups/global/AllUsers" as const;
+const AUTH_USERS_URI =
+  "http://acs.amazonaws.com/groups/global/AuthenticatedUsers" as const;
+
+const cannedAclGrants = (acl: string | undefined) => {
+  const ownerGrant = {
+    Grantee: { ID: "bunsai", DisplayName: "bunsai", Type: "CanonicalUser" },
+    Permission: "FULL_CONTROL",
+  };
+  const allUsersRead = {
+    Grantee: { URI: ALL_USERS_URI, Type: "Group" },
+    Permission: "READ",
+  };
+  const allUsersWrite = {
+    Grantee: { URI: ALL_USERS_URI, Type: "Group" },
+    Permission: "WRITE",
+  };
+  const authUsersRead = {
+    Grantee: { URI: AUTH_USERS_URI, Type: "Group" },
+    Permission: "READ",
+  };
+  if (acl === "public-read") return [ownerGrant, allUsersRead];
+  if (acl === "public-read-write")
+    return [ownerGrant, allUsersRead, allUsersWrite];
+  if (acl === "authenticated-read") return [ownerGrant, authUsersRead];
+  return [ownerGrant];
 };
 
 const escapeXml = (value: string): string =>
@@ -400,6 +430,7 @@ const s3: ServiceDefinition = {
     const hasUploads = req.query.has("uploads");
     const hasUploadId = req.query.has("uploadId");
     const hasObjectTagging = req.query.has("tagging");
+    const hasObjectAcl = req.query.has("acl");
     if (req.method === "POST") {
       if (hasUploads) return "CreateMultipartUpload";
       if (hasUploadId) return "CompleteMultipartUpload";
@@ -412,12 +443,14 @@ const s3: ServiceDefinition = {
         return "UploadPart";
       }
       if (hasObjectTagging) return "PutObjectTagging";
+      if (hasObjectAcl) return "PutObjectAcl";
       if (req.headers.get("x-amz-copy-source") !== null) return "CopyObject";
       return "PutObject";
     }
     if (req.method === "GET") {
       if (hasUploadId) return "ListParts";
       if (hasObjectTagging) return "GetObjectTagging";
+      if (hasObjectAcl) return "GetObjectAcl";
       return "GetObject";
     }
     if (req.method === "HEAD") return "HeadObject";
@@ -501,6 +534,7 @@ const s3: ServiceDefinition = {
       const metadata = input["Metadata"];
       const storageClass = input["StorageClass"];
       const versionId = versioned ? generateVersionId() : undefined;
+      const acl = typeof input["ACL"] === "string" ? input["ACL"] : undefined;
       const object: S3Object = {
         key,
         body,
@@ -517,6 +551,7 @@ const s3: ServiceDefinition = {
         storageClass:
           typeof storageClass === "string" ? storageClass : "STANDARD",
         versionId,
+        acl,
       };
       const existing = target.objects[key] ?? [];
       const versions = versioned ? [object, ...existing] : [object];
@@ -1471,6 +1506,40 @@ const s3: ServiceDefinition = {
         { ...object, tagSet: [] as S3Tag[] },
         ...versions.slice(1),
       ];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        objects: { ...target.objects, [key]: updated },
+      });
+      return {};
+    },
+    GetObjectAcl: (_input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const object = getCurrentObject(target.objects[key]);
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      return {
+        Owner: { ID: "bunsai", DisplayName: "bunsai" },
+        Grants: cannedAclGrants(object.acl),
+      };
+    },
+    PutObjectAcl: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const versions = target.objects[key] ?? [];
+      const object = getCurrentObject(versions);
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const acl = typeof input["ACL"] === "string" ? input["ACL"] : "private";
+      const updated = [{ ...object, acl }, ...versions.slice(1)];
       ctx.store.set<S3Bucket>(bucket, {
         ...target,
         objects: { ...target.objects, [key]: updated },

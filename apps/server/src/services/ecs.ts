@@ -875,10 +875,22 @@ const DescribeTasks: OperationHandler = (input, ctx) => {
   const failures: Record<string, unknown>[] = [];
   for (const identifier of identifiers) {
     const id = lastSegment(identifier);
-    const task = ctx.store.get<StoredTask>(taskKey(id));
+    let task = ctx.store.get<StoredTask>(taskKey(id));
     if (task === undefined) {
       failures.push({ arn: identifier, reason: "MISSING" });
     } else {
+      if (task.lastStatus === "PENDING" && task.desiredStatus === "RUNNING") {
+        const running: StoredTask = {
+          ...task,
+          lastStatus: "RUNNING",
+          containers: task.containers.map((c) => ({
+            ...c,
+            lastStatus: "RUNNING",
+          })),
+        };
+        ctx.store.set(taskKey(id), running);
+        task = running;
+      }
       tasks.push(taskView(task));
     }
   }

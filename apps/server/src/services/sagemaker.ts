@@ -580,6 +580,15 @@ type StoredDeviceFleet = {
   CreationTime: number;
 };
 
+type StoredDevice = {
+  DeviceName: string;
+  DeviceFleetName: string;
+  DeviceArn: string;
+  IotThingName?: string;
+  Description?: string;
+  RegistrationTime: number;
+};
+
 type StoredEdgeDeploymentPlan = {
   EdgeDeploymentPlanName: string;
   EdgeDeploymentPlanArn: string;
@@ -862,6 +871,9 @@ const dataQualityJobDefinitionKey = (name: string): string =>
   `data-quality-job-definition/${name}`;
 
 const deviceFleetKey = (name: string): string => `device-fleet/${name}`;
+
+const deviceKey = (fleetName: string, deviceName: string): string =>
+  `device/${fleetName}/${deviceName}`;
 
 const edgeDeploymentPlanKey = (name: string): string =>
   `edge-deployment-plan/${name}`;
@@ -6995,8 +7007,35 @@ const ListDeviceFleets: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListDevices: OperationHandler = (_input, _ctx) => {
-  return { DeviceSummaries: [] };
+const ListDevices: OperationHandler = (input, ctx) => {
+  const fleetName =
+    typeof input["DeviceFleetName"] === "string"
+      ? (input["DeviceFleetName"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let devices = ctx.store
+    .list<StoredDevice>()
+    .filter((entry) => entry.key.startsWith("device/"))
+    .map((entry) => entry.value);
+  if (fleetName !== undefined) {
+    devices = devices.filter((d) => d.DeviceFleetName === fleetName);
+  }
+  if (maxResults !== undefined) {
+    devices = devices.slice(0, maxResults);
+  }
+  return {
+    DeviceSummaries: devices.map((stored) => ({
+      DeviceName: stored.DeviceName,
+      DeviceFleetName: stored.DeviceFleetName,
+      DeviceArn: stored.DeviceArn,
+      IotThingName: stored.IotThingName,
+      Description: stored.Description,
+      RegistrationTime: stored.RegistrationTime,
+    })),
+  };
 };
 
 const ListDomains: OperationHandler = (input, ctx) => {
@@ -8335,6 +8374,267 @@ const ListTrials: OperationHandler = (input, ctx) => {
   };
 };
 
+const ListUltraServersByReservedCapacity: OperationHandler = (input, _ctx) => {
+  void requireString(input, "ReservedCapacityArn");
+  return { UltraServers: [] };
+};
+
+const ListUserProfiles: OperationHandler = (input, ctx) => {
+  const domainIdEquals =
+    typeof input["DomainIdEquals"] === "string"
+      ? (input["DomainIdEquals"] as string)
+      : undefined;
+  const nameContains =
+    typeof input["UserProfileNameContains"] === "string"
+      ? (input["UserProfileNameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let profiles = ctx.store
+    .list<StoredUserProfile>()
+    .filter((entry) => entry.key.startsWith("user-profile/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (domainIdEquals !== undefined) {
+    profiles = profiles.filter((p) => p.DomainId === domainIdEquals);
+  }
+  if (nameContains !== undefined) {
+    profiles = profiles.filter((p) => p.UserProfileName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    profiles = profiles.slice(0, maxResults);
+  }
+  return {
+    UserProfiles: profiles.map((stored) => ({
+      DomainId: stored.DomainId,
+      UserProfileName: stored.UserProfileName,
+      Status: stored.Status,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListWorkforces: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let workforces = ctx.store
+    .list<StoredWorkforce>()
+    .filter((entry) => entry.key.startsWith("workforce/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    workforces = workforces.filter((w) =>
+      w.WorkforceName.includes(nameContains),
+    );
+  }
+  if (maxResults !== undefined) {
+    workforces = workforces.slice(0, maxResults);
+  }
+  return {
+    Workforces: workforces.map((stored) => ({
+      WorkforceName: stored.WorkforceName,
+      WorkforceArn: stored.WorkforceArn,
+      CognitoConfig: stored.CognitoConfig,
+      OidcConfig: stored.OidcConfig,
+      SourceIpConfig: stored.SourceIpConfig,
+      WorkforceVpcConfig: stored.WorkforceVpcConfig,
+      CreateDate: stored.CreationTime,
+      LastUpdatedDate: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListWorkteams: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let workteams = ctx.store
+    .list<StoredWorkteam>()
+    .filter((entry) => entry.key.startsWith("workteam/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreateDate - a.CreateDate);
+  if (nameContains !== undefined) {
+    workteams = workteams.filter((w) => w.WorkteamName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    workteams = workteams.slice(0, maxResults);
+  }
+  return {
+    Workteams: workteams.map((stored) => ({
+      WorkteamName: stored.WorkteamName,
+      WorkteamArn: stored.WorkteamArn,
+      Description: stored.Description,
+      MemberDefinitions: stored.MemberDefinitions,
+      NotificationConfiguration: stored.NotificationConfiguration,
+      WorkerAccessConfiguration: stored.WorkerAccessConfiguration,
+      CreateDate: stored.CreateDate,
+      LastUpdatedDate: stored.LastUpdatedDate,
+      ProductListingIds: [],
+    })),
+  };
+};
+
+const PutModelPackageGroupPolicy: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ModelPackageGroupName");
+  const resourcePolicy = requireString(input, "ResourcePolicy");
+  const group = ctx.store.get<StoredModelPackageGroup>(
+    modelPackageGroupKey(name),
+  );
+  if (group === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Model package group ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(modelPackageGroupPolicyKey(name), {
+    ModelPackageGroupArn: group.ModelPackageGroupArn,
+    ResourcePolicy: resourcePolicy,
+  });
+  return { ModelPackageGroupArn: group.ModelPackageGroupArn };
+};
+
+const QueryLineage: OperationHandler = (input, ctx) => {
+  const startArns = Array.isArray(input["StartArns"])
+    ? (input["StartArns"] as string[])
+    : [];
+  const artifacts = ctx.store
+    .list<StoredArtifact>()
+    .filter((entry) => entry.key.startsWith("artifact/"))
+    .map((entry) => entry.value);
+  const contexts = ctx.store
+    .list<StoredContext>()
+    .filter((entry) => entry.key.startsWith("context/"))
+    .map((entry) => entry.value);
+  const actions = ctx.store
+    .list<StoredAction>()
+    .filter((entry) => entry.key.startsWith("action/"))
+    .map((entry) => entry.value);
+  const allArns = new Map<string, string>([
+    ...artifacts.map((a): [string, string] => [a.ArtifactArn, "Artifact"]),
+    ...contexts.map((c): [string, string] => [c.ContextArn, "Context"]),
+    ...actions.map((a): [string, string] => [a.ActionArn, "Action"]),
+  ]);
+  const targetArns =
+    startArns.length === 0
+      ? [...allArns.keys()]
+      : startArns.filter((arn) => allArns.has(arn));
+  const vertices = targetArns.map((arn) => ({
+    Arn: arn,
+    Type: allArns.get(arn) ?? "Artifact",
+    LineageType: allArns.get(arn) ?? "Artifact",
+  }));
+  return { Vertices: vertices, Edges: [] };
+};
+
+const RegisterDevices: OperationHandler = (input, ctx) => {
+  const fleetName = requireString(input, "DeviceFleetName");
+  const devices = Array.isArray(input["Devices"])
+    ? (input["Devices"] as Array<{
+        DeviceName: string;
+        IotThingName?: string;
+        Description?: string;
+      }>)
+    : [];
+  const now = nowSeconds();
+  for (const device of devices) {
+    const arn = `arn:aws:sagemaker:${ctx.region}:${ctx.account}:device-fleet/${fleetName}/device/${device.DeviceName}`;
+    const stored: StoredDevice = {
+      DeviceName: device.DeviceName,
+      DeviceFleetName: fleetName,
+      DeviceArn: arn,
+      IotThingName: device.IotThingName,
+      Description: device.Description,
+      RegistrationTime: now,
+    };
+    ctx.store.set(deviceKey(fleetName, device.DeviceName), stored);
+  }
+  return {};
+};
+
+const RenderUiTemplate: OperationHandler = (input, _ctx) => {
+  const template = input["UiTemplate"] as { Content?: string } | undefined;
+  const content =
+    template?.Content ?? "<html><body>{{task.input}}</body></html>";
+  return {
+    RenderedContent: content,
+    Errors: [],
+  };
+};
+
+const RetryPipelineExecution: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "PipelineExecutionArn");
+  const stored = requirePipelineExecution(ctx, arn);
+  ctx.store.set(pipelineExecutionKey(arn), {
+    ...stored,
+    PipelineExecutionStatus: "Executing",
+    LastModifiedTime: nowSeconds(),
+  });
+  return { PipelineExecutionArn: arn };
+};
+
+const Search: OperationHandler = (input, ctx) => {
+  const resource = requireString(input, "Resource");
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  const prefixMap: Record<string, string> = {
+    Experiment: "experiment/",
+    TrainingJob: "training-job/",
+    ExperimentTrial: "trial/",
+    ExperimentTrialComponent: "trial-component/",
+    FeatureGroup: "feature-group/",
+    ModelPackage: "model-package/",
+    ModelPackageGroup: "model-package-group/",
+    Pipeline: "pipeline/",
+    PipelineExecution: "pipeline-execution/",
+    Project: "project/",
+  };
+  const prefix = prefixMap[resource];
+  if (prefix === undefined) {
+    return { Results: [], TotalHits: { Value: 0, Relation: "Equals" } };
+  }
+  let entries = ctx.store
+    .list<Record<string, unknown>>()
+    .filter((entry) => entry.key.startsWith(prefix))
+    .map((entry) => entry.value);
+  if (maxResults !== undefined) {
+    entries = entries.slice(0, maxResults);
+  }
+  const results = entries.map((value) => ({ [resource]: value }));
+  return {
+    Results: results,
+    TotalHits: { Value: results.length, Relation: "Equals" },
+  };
+};
+
+const SearchTrainingPlanOfferings: OperationHandler = (_input, _ctx) => {
+  return {
+    TrainingPlanOfferings: [],
+    TrainingPlanExtensionOfferings: [],
+  };
+};
+
+const SendPipelineExecutionStepFailure: OperationHandler = (input, _ctx) => {
+  void requireString(input, "CallbackToken");
+  return { PipelineExecutionArn: undefined };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -8652,6 +8952,18 @@ const sagemaker = {
     ListTransformJobs,
     ListTrialComponents,
     ListTrials,
+    ListUltraServersByReservedCapacity,
+    ListUserProfiles,
+    ListWorkforces,
+    ListWorkteams,
+    PutModelPackageGroupPolicy,
+    QueryLineage,
+    RegisterDevices,
+    RenderUiTemplate,
+    RetryPipelineExecution,
+    Search,
+    SearchTrainingPlanOfferings,
+    SendPipelineExecutionStepFailure,
   },
   model,
 } as const satisfies ServiceDefinition;

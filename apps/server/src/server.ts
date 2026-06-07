@@ -41,7 +41,7 @@ export function createBunsaiApp() {
         message: `Service '${route.service ?? "?"}' is not emulated by bunsai`,
         statusCode: 400,
       };
-      const serialized = serializeError(protocol, error);
+      const serialized = serializeError(protocol, error, { requestId });
       recordLog(log, {
         service: route.service ?? "unknown",
         operation: route.target ?? "unknown",
@@ -70,7 +70,7 @@ export function createBunsaiApp() {
         message: "Request has expired",
         statusCode: 403,
       };
-      const serialized = serializeError(service.protocol, error);
+      const serialized = serializeError(service.protocol, error, { requestId });
       recordLog(log, {
         service: route.service,
         operation: route.target ?? "unknown",
@@ -106,7 +106,7 @@ export function createBunsaiApp() {
       route,
       service.protocol,
     );
-    const result = await dispatch(service, parsed, store);
+    const result = await dispatch(service, parsed, store, requestId);
     recordLog(log, {
       service: result.service,
       operation: result.operation,

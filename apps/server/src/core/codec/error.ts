@@ -12,6 +12,7 @@ export type SerializeErrorRequest = {
   data?: Record<string, unknown>;
   senderFault?: boolean;
   jsonVersion?: string;
+  requestId?: string;
 };
 
 const escapeXml = (value: string): string =>
@@ -99,7 +100,7 @@ export const serializeShapeError = (
       )
         inner += `<Message>${escapeXml(message)}</Message>`;
       inner += dataMembersBody(req.shape, data);
-      const body = `<Response><Errors><Error>${inner}</Error></Errors><RequestID>foo-id</RequestID></Response>`;
+      const body = `<Response><Errors><Error>${inner}</Error></Errors><RequestID>${req.requestId ?? "foo-id"}</RequestID></Response>`;
       return {
         body,
         contentType: contentTypes.ec2,
@@ -117,7 +118,7 @@ export const serializeShapeError = (
       )
         inner += `<Message>${escapeXml(message)}</Message>`;
       inner += dataMembersBody(req.shape, data);
-      const body = `<ErrorResponse><Error>${inner}</Error><RequestId>foo-id</RequestId></ErrorResponse>`;
+      const body = `<ErrorResponse><Error>${inner}</Error><RequestId>${req.requestId ?? "foo-id"}</RequestId></ErrorResponse>`;
       return {
         body,
         contentType: contentTypes[req.protocol],

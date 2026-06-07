@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { deflateRawSync } from "node:zlib";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startApp } from "./harness.ts";
+import { makeZip, markerHandler } from "./event-helpers.ts";
 import {
   CreateEventSourceMappingCommand,
   CreateFunctionCommand,
@@ -33,70 +33,6 @@ const sqs = () =>
 const sns = () =>
   new SNSClient({ endpoint, region, credentials, requestHandler });
 
-const u16 = (n: number): number[] => [n & 0xff, (n >> 8) & 0xff];
-const u32 = (n: number): number[] => [
-  n & 0xff,
-  (n >> 8) & 0xff,
-  (n >> 16) & 0xff,
-  (n >> 24) & 0xff,
-];
-
-const makeZip = (name: string, source: string): Uint8Array => {
-  const encoder = new TextEncoder();
-  const nameBytes = [...encoder.encode(name)];
-  const content = encoder.encode(source);
-  const compressed = [...deflateRawSync(content)];
-  const local = [
-    ...u32(0x04034b50),
-    ...u16(20),
-    ...u16(0),
-    ...u16(8),
-    ...u16(0),
-    ...u16(0),
-    ...u32(0),
-    ...u32(compressed.length),
-    ...u32(content.length),
-    ...u16(nameBytes.length),
-    ...u16(0),
-    ...nameBytes,
-    ...compressed,
-  ];
-  const central = [
-    ...u32(0x02014b50),
-    ...u16(20),
-    ...u16(20),
-    ...u16(0),
-    ...u16(8),
-    ...u16(0),
-    ...u16(0),
-    ...u32(0),
-    ...u32(compressed.length),
-    ...u32(content.length),
-    ...u16(nameBytes.length),
-    ...u16(0),
-    ...u16(0),
-    ...u16(0),
-    ...u16(0),
-    ...u32(0),
-    ...u32(0),
-    ...nameBytes,
-  ];
-  const eocd = [
-    ...u32(0x06054b50),
-    ...u16(0),
-    ...u16(0),
-    ...u16(1),
-    ...u16(1),
-    ...u32(central.length),
-    ...u32(local.length),
-    ...u16(0),
-  ];
-  return new Uint8Array([...local, ...central, ...eocd]);
-};
-
-const markerHandler =
-  "const fs = require('fs'); exports.handler = async (event) => { fs.writeFileSync(process.env.MARKER_PATH, JSON.stringify(event)); return { ok: true }; };";
-
 describe("SNS to SQS to Lambda chain", () => {
   test("publishing to a topic triggers the queue's event source mapping", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bunsai-sns-esm-"));
@@ -120,7 +56,7 @@ describe("SNS to SQS to Lambda chain", () => {
         Runtime: "nodejs20.x",
         Role: "arn:aws:iam::000000000000:role/r",
         Handler: "index.handler",
-        Code: { ZipFile: makeZip("index.js", markerHandler) },
+        Code: { ZipFile: makeZip({ "index.js": markerHandler }) },
         Environment: { Variables: { MARKER_PATH: marker } },
       }),
     );

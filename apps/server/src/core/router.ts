@@ -40,11 +40,7 @@ const parseQueryCredentialScope = (url: URL): CredentialScope | undefined => {
 
 const accountFromAccessKeyId = (
   accessKeyId: string | undefined,
-): string | undefined => {
-  if (accessKeyId === undefined) return undefined;
-  const match = accessKeyId.match(/^ASIA(\d{12})/);
-  return match === null ? undefined : match[1];
-};
+): string | undefined => accessKeyId?.match(/^ASIA(\d{12})/)?.[1];
 
 const presignedIsExpired = (url: URL): boolean => {
   const date = url.searchParams.get("X-Amz-Date");

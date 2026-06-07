@@ -57,10 +57,14 @@ const md5Hex = (value: string): string => {
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-const encodeLengthPrefixed = (parts: Uint8Array[], bytes: Uint8Array): void => {
+const updateLengthPrefixed = (
+  hasher: Bun.CryptoHasher,
+  bytes: Uint8Array,
+): void => {
   const length = new Uint8Array(4);
   new DataView(length.buffer).setUint32(0, bytes.length, false);
-  parts.push(length, bytes);
+  hasher.update(length);
+  hasher.update(bytes);
 };
 
 const md5OfMessageAttributes = (
@@ -70,40 +74,31 @@ const md5OfMessageAttributes = (
   const names = Object.keys(attributes).sort();
   if (names.length === 0) return undefined;
   const encoder = new TextEncoder();
-  const parts: Uint8Array[] = [];
+  const hasher = new Bun.CryptoHasher("md5");
   for (const name of names) {
     const attribute = attributes[name] as Record<string, unknown>;
     const dataType =
       typeof attribute["DataType"] === "string"
         ? (attribute["DataType"] as string)
         : "String";
-    encodeLengthPrefixed(parts, encoder.encode(name));
-    encodeLengthPrefixed(parts, encoder.encode(dataType));
+    updateLengthPrefixed(hasher, encoder.encode(name));
+    updateLengthPrefixed(hasher, encoder.encode(dataType));
     const stringValue = attribute["StringValue"];
     const binaryValue = attribute["BinaryValue"];
     if (typeof stringValue === "string") {
-      parts.push(new Uint8Array([1]));
-      encodeLengthPrefixed(parts, encoder.encode(stringValue));
+      hasher.update(new Uint8Array([1]));
+      updateLengthPrefixed(hasher, encoder.encode(stringValue));
     } else if (binaryValue !== undefined) {
-      parts.push(new Uint8Array([2]));
+      hasher.update(new Uint8Array([2]));
       const bytes =
         binaryValue instanceof Uint8Array
           ? binaryValue
           : typeof binaryValue === "string"
             ? Uint8Array.from(atob(binaryValue), (c) => c.charCodeAt(0))
             : new Uint8Array();
-      encodeLengthPrefixed(parts, bytes);
+      updateLengthPrefixed(hasher, bytes);
     }
   }
-  const total = parts.reduce((sum, part) => sum + part.length, 0);
-  const buffer = new Uint8Array(total);
-  let offset = 0;
-  for (const part of parts) {
-    buffer.set(part, offset);
-    offset += part.length;
-  }
-  const hasher = new Bun.CryptoHasher("md5");
-  hasher.update(buffer);
   return hasher.digest("hex");
 };
 

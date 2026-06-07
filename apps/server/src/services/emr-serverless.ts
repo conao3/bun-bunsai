@@ -1,4 +1,5 @@
 import { awsError } from "../core/framework.ts";
+import { callerArn } from "../core/arn.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import emrServerlessModel from "../../../../test/vendor/aws-models/emr-serverless.json" with { type: "json" };
 import type {
@@ -90,9 +91,6 @@ const newId = (): string =>
   `00${crypto.randomUUID().replaceAll("-", "")}`.slice(0, 16);
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
-
-const callerArn = (ctx: ServiceContext): string =>
-  `arn:aws:iam::${ctx.account}:root`;
 
 const requireApplication = (
   ctx: ServiceContext,
@@ -346,7 +344,7 @@ const StartJobRun: OperationHandler = (input, ctx) => {
     jobRunId: id,
     name: stringOrUndefined(input["name"]),
     arn,
-    createdBy: callerArn(ctx),
+    createdBy: callerArn(ctx.account),
     createdAt: now,
     updatedAt: now,
     executionRole,
@@ -440,7 +438,7 @@ const StartSession: OperationHandler = (input, ctx) => {
     stateDetails: "",
     releaseLabel: app.releaseLabel,
     executionRoleArn,
-    createdBy: callerArn(ctx),
+    createdBy: callerArn(ctx.account),
     createdAt: now,
     updatedAt: now,
     tags: recordOrEmpty(input["tags"]),

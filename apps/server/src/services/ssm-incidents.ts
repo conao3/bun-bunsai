@@ -1,4 +1,5 @@
 import { awsError } from "../core/framework.ts";
+import { callerArn as iamCallerArn } from "../core/arn.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import ssmIncidentsModel from "../../../../test/vendor/aws-models/ssm-incidents.json" with { type: "json" };
 import type {
@@ -327,7 +328,7 @@ const StartIncident: OperationHandler = (input, ctx) => {
         ? plan.incidentTemplate.impact
         : 3;
   const triggerDetails = recordOrUndefined(input.triggerDetails);
-  const callerArn = `arn:aws:iam::${ctx.account}:root`;
+  const callerArn = iamCallerArn(ctx.account);
   const rec: StoredIncidentRecord = {
     arn,
     title,
@@ -567,7 +568,7 @@ const CreateReplicationSet: OperationHandler = (input, ctx) => {
   const id = crypto.randomUUID();
   const arn = buildReplicationSetArn(ctx, id);
   const now = nowSeconds();
-  const callerArn = `arn:aws:iam::${ctx.account}:root`;
+  const callerArn = iamCallerArn(ctx.account);
   const regionMap: Record<string, unknown> = {};
   for (const regionName of Object.keys(regions)) {
     regionMap[regionName] = {
@@ -604,7 +605,7 @@ const UpdateReplicationSet: OperationHandler = (input, ctx) => {
   const rs = requireReplicationSet(ctx, arn);
   const actions = arrayOrEmpty(input.actions);
   const now = nowSeconds();
-  const callerArn = `arn:aws:iam::${ctx.account}:root`;
+  const callerArn = iamCallerArn(ctx.account);
   const regionMap = { ...rs.regionMap } as Record<string, unknown>;
   for (const action of actions) {
     const a = recordOrUndefined(action);

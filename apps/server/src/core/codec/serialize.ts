@@ -331,6 +331,8 @@ const restStatusCode = (
   shape: StructureShape,
   source: Record<string, unknown>,
 ): number | undefined => {
+  if (typeof source["__statusCode"] === "number")
+    return source["__statusCode"] as number;
   for (const [name, member] of Object.entries(shape.members)) {
     if (member.location === "statusCode" && source[name] !== undefined)
       return Number(source[name]);

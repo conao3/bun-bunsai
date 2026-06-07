@@ -97,6 +97,17 @@ const concatBytes = (parts: Uint8Array[]): Uint8Array => {
 const hashWithPrefix = (prefix: string, body: Uint8Array): string =>
   hashBody(concatBytes([new TextEncoder().encode(prefix), body]));
 
+const escapeXml = (value: string): string =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+const decodeXmlEntities = (value: string): string =>
+  value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+
 const bucketKeyFromPath = (
   path: string,
 ): { bucket: string | undefined; key: string | undefined } => {
@@ -366,6 +377,10 @@ const s3: ServiceDefinition = {
         if (req.query.get("list-type") === "2") return "ListObjectsV2";
         return "ListObjects";
       }
+      if (req.method === "POST") {
+        if (req.query.has("delete")) return "DeleteObjects";
+        return undefined;
+      }
       if (req.method === "HEAD") return "HeadBucket";
       return undefined;
     }
@@ -513,16 +528,52 @@ const s3: ServiceDefinition = {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
       evaluateConditional(input, object);
-      return {
-        Body: object.body,
+      const common = {
         ContentType: object.contentType,
-        ContentLength: object.size,
         ETag: object.etag,
         LastModified: object.lastModified,
         Metadata: object.userMetadata,
         ...(object.storageClass === "STANDARD"
           ? {}
           : { StorageClass: object.storageClass }),
+      };
+      const rangeHeader = req.headers.get("range");
+      const match =
+        typeof rangeHeader === "string"
+          ? rangeHeader.match(/^bytes=(\d*)-(\d*)$/)
+          : null;
+      if (match !== null && (match[1] !== "" || match[2] !== "")) {
+        const total = object.size;
+        const start =
+          match[1] === ""
+            ? Math.max(0, total - Number(match[2]))
+            : Number(match[1]);
+        const end =
+          match[1] === ""
+            ? total - 1
+            : match[2] === ""
+              ? total - 1
+              : Math.min(Number(match[2]), total - 1);
+        if (start >= total || start > end) {
+          throw awsError(
+            "InvalidRange",
+            "The requested range is not satisfiable",
+            416,
+          );
+        }
+        const slice = object.body.slice(start, end + 1);
+        return {
+          ...common,
+          Body: slice,
+          ContentLength: slice.byteLength,
+          ContentRange: `bytes ${start}-${end}/${total}`,
+          __statusCode: 206,
+        };
+      }
+      return {
+        ...common,
+        Body: object.body,
+        ContentLength: object.size,
       };
     },
     HeadObject: (input, ctx, req) => {
@@ -646,6 +697,43 @@ const s3: ServiceDefinition = {
         );
       }
       return {};
+    },
+    DeleteObjects: async (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const quiet = /<Quiet>\s*true\s*<\/Quiet>/i.test(req.bodyText);
+      const keys = [...req.bodyText.matchAll(/<Key>([\s\S]*?)<\/Key>/g)].map(
+        (m) => decodeXmlEntities(m[1]),
+      );
+      const objects = { ...target.objects };
+      const deleted: string[] = [];
+      for (const key of keys) {
+        const existed = objects[key] !== undefined;
+        delete objects[key];
+        deleted.push(key);
+        if (existed) {
+          await emitS3Notification(
+            ctx,
+            bucket,
+            target.notification,
+            "ObjectRemoved:Delete",
+            key,
+            undefined,
+          );
+        }
+      }
+      ctx.store.set<S3Bucket>(bucket, { ...target, objects });
+      const body = quiet
+        ? ""
+        : deleted
+            .map((key) => `<Deleted><Key>${escapeXml(key)}</Key></Deleted>`)
+            .join("");
+      return {
+        __xml: `<?xml version="1.0" encoding="UTF-8"?><DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">${body}</DeleteResult>`,
+      };
     },
     ListObjects: (_input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);

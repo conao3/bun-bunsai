@@ -127,3 +127,112 @@ describe("EventBridge PutEvents delivery", () => {
     ).toHaveLength(0);
   });
 });
+
+describe("EventBridge detail-content pattern matching", () => {
+  test("delivers matching events with detail-only pattern and skips non-matching", async () => {
+    const eb = events();
+    const q = sqs();
+    const url = (
+      await q.send(new CreateQueueCommand({ QueueName: "detail-q" }))
+    ).QueueUrl as string;
+    const queueArn = await queueArnOf(q, url);
+
+    await eb.send(
+      new PutRuleCommand({
+        Name: "detail-rule",
+        EventPattern: JSON.stringify({ detail: { status: ["completed"] } }),
+      }),
+    );
+    await eb.send(
+      new PutTargetsCommand({
+        Rule: "detail-rule",
+        Targets: [{ Id: "1", Arn: queueArn }],
+      }),
+    );
+
+    await eb.send(
+      new PutEventsCommand({
+        Entries: [
+          {
+            Source: "any.source",
+            DetailType: "AnyType",
+            Detail: JSON.stringify({ status: "completed", id: "e1" }),
+          },
+        ],
+      }),
+    );
+    const got = await q.send(new ReceiveMessageCommand({ QueueUrl: url }));
+    expect(got.Messages).toHaveLength(1);
+    const delivered = JSON.parse(got.Messages![0]!.Body!);
+    expect(delivered.detail.status).toBe("completed");
+    expect(delivered.detail.id).toBe("e1");
+
+    await eb.send(
+      new PutEventsCommand({
+        Entries: [
+          {
+            Source: "any.source",
+            DetailType: "AnyType",
+            Detail: JSON.stringify({ status: "pending", id: "e2" }),
+          },
+        ],
+      }),
+    );
+    const got2 = await q.send(new ReceiveMessageCommand({ QueueUrl: url }));
+    expect(got2.Messages ?? []).toHaveLength(0);
+  });
+
+  test("prefix operator delivers matching and skips non-matching", async () => {
+    const eb = events();
+    const q = sqs();
+    const url = (
+      await q.send(new CreateQueueCommand({ QueueName: "prefix-q" }))
+    ).QueueUrl as string;
+    const queueArn = await queueArnOf(q, url);
+
+    await eb.send(
+      new PutRuleCommand({
+        Name: "prefix-rule",
+        EventPattern: JSON.stringify({
+          detail: { code: [{ prefix: "200" }] },
+        }),
+      }),
+    );
+    await eb.send(
+      new PutTargetsCommand({
+        Rule: "prefix-rule",
+        Targets: [{ Id: "1", Arn: queueArn }],
+      }),
+    );
+
+    await eb.send(
+      new PutEventsCommand({
+        Entries: [
+          {
+            Source: "svc",
+            DetailType: "T",
+            Detail: JSON.stringify({ code: "200-OK" }),
+          },
+        ],
+      }),
+    );
+    const got = await q.send(new ReceiveMessageCommand({ QueueUrl: url }));
+    expect(got.Messages).toHaveLength(1);
+    const delivered = JSON.parse(got.Messages![0]!.Body!);
+    expect(delivered.detail.code).toBe("200-OK");
+
+    await eb.send(
+      new PutEventsCommand({
+        Entries: [
+          {
+            Source: "svc",
+            DetailType: "T",
+            Detail: JSON.stringify({ code: "404-Not Found" }),
+          },
+        ],
+      }),
+    );
+    const got2 = await q.send(new ReceiveMessageCommand({ QueueUrl: url }));
+    expect(got2.Messages ?? []).toHaveLength(0);
+  });
+});

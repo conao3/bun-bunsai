@@ -34,7 +34,7 @@ import {
   UpdateUserPoolClientCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 
-const { endpoint, requestHandler } = startApp();
+const { endpoint, requestHandler, gwFetch } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
@@ -377,6 +377,15 @@ describe("cognito-idp e2e", () => {
       new AdminCreateUserCommand({ UserPoolId: poolId, Username: "auth-user" }),
     );
 
+    await client.send(
+      new AdminSetUserPasswordCommand({
+        UserPoolId: poolId,
+        Username: "auth-user",
+        Password: "Pass1234!",
+        Permanent: true,
+      }),
+    );
+
     const initiated = await client.send(
       new AdminInitiateAuthCommand({
         UserPoolId: poolId,
@@ -421,5 +430,121 @@ describe("cognito-idp e2e", () => {
     );
     expect(listed.Tags?.["env"]).toBe("test");
     expect(listed.Tags?.["owner"]).toBe("bunsai");
+  });
+
+  test("auth flow: password verification", async () => {
+    const client = cognito();
+    const pool = await client.send(
+      new CreateUserPoolCommand({ PoolName: "bunsai-e2e-pwauth-pool" }),
+    );
+    const poolId = pool.UserPool?.Id;
+
+    const appClient = await client.send(
+      new CreateUserPoolClientCommand({
+        UserPoolId: poolId,
+        ClientName: "pwauth-client",
+        ExplicitAuthFlows: [
+          "ALLOW_ADMIN_USER_PASSWORD_AUTH",
+          "ALLOW_USER_PASSWORD_AUTH",
+          "ALLOW_REFRESH_TOKEN_AUTH",
+        ],
+      }),
+    );
+    const appClientId = appClient.UserPoolClient?.ClientId;
+
+    await client.send(
+      new AdminCreateUserCommand({ UserPoolId: poolId, Username: "pw-user" }),
+    );
+    await client.send(
+      new AdminSetUserPasswordCommand({
+        UserPoolId: poolId,
+        Username: "pw-user",
+        Password: "Correct1!",
+        Permanent: true,
+      }),
+    );
+    await client.send(
+      new AdminCreateUserCommand({
+        UserPoolId: poolId,
+        Username: "nopass-user",
+      }),
+    );
+
+    const adminResult = await client.send(
+      new AdminInitiateAuthCommand({
+        UserPoolId: poolId,
+        ClientId: appClientId,
+        AuthFlow: "ADMIN_USER_PASSWORD_AUTH",
+        AuthParameters: { USERNAME: "pw-user", PASSWORD: "Correct1!" },
+      }),
+    );
+    expect(adminResult.AuthenticationResult?.AccessToken).toBeDefined();
+    expect(adminResult.AuthenticationResult?.TokenType).toBe("Bearer");
+
+    await expect(
+      client.send(
+        new AdminInitiateAuthCommand({
+          UserPoolId: poolId,
+          ClientId: appClientId,
+          AuthFlow: "ADMIN_USER_PASSWORD_AUTH",
+          AuthParameters: { USERNAME: "pw-user", PASSWORD: "Wrong1!" },
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "NotAuthorizedException" });
+
+    await expect(
+      client.send(
+        new AdminInitiateAuthCommand({
+          UserPoolId: poolId,
+          ClientId: appClientId,
+          AuthFlow: "ADMIN_USER_PASSWORD_AUTH",
+          AuthParameters: { USERNAME: "nopass-user", PASSWORD: "anypass" },
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "NotAuthorizedException" });
+
+    const authHeader =
+      "AWS4-HMAC-SHA256 Credential=test/20260607/us-east-1/cognito-idp/aws4_request, SignedHeaders=content-type;x-amz-target, Signature=fakesig";
+    const initiateAuth = async (params: Record<string, unknown>) =>
+      gwFetch(`${endpoint}/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-amz-json-1.1",
+          "X-Amz-Target": "AWSCognitoIdentityProviderService.InitiateAuth",
+          Authorization: authHeader,
+        },
+        body: JSON.stringify(params),
+      }).then(async (res) => ({
+        status: res.status,
+        body: (await res.json()) as Record<string, unknown>,
+      }));
+
+    const userOk = await initiateAuth({
+      ClientId: appClientId,
+      AuthFlow: "USER_PASSWORD_AUTH",
+      AuthParameters: { USERNAME: "pw-user", PASSWORD: "Correct1!" },
+    });
+    expect(userOk.status).toBe(200);
+    expect(
+      (userOk.body["AuthenticationResult"] as Record<string, unknown>)?.[
+        "AccessToken"
+      ],
+    ).toBeDefined();
+
+    const userWrong = await initiateAuth({
+      ClientId: appClientId,
+      AuthFlow: "USER_PASSWORD_AUTH",
+      AuthParameters: { USERNAME: "pw-user", PASSWORD: "Wrong1!" },
+    });
+    expect(userWrong.status).toBe(400);
+    expect(userWrong.body["__type"]).toBe("NotAuthorizedException");
+
+    const userNoPass = await initiateAuth({
+      ClientId: appClientId,
+      AuthFlow: "USER_PASSWORD_AUTH",
+      AuthParameters: { USERNAME: "nopass-user", PASSWORD: "anypass" },
+    });
+    expect(userNoPass.status).toBe(400);
+    expect(userNoPass.body["__type"]).toBe("NotAuthorizedException");
   });
 });

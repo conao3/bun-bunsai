@@ -1071,22 +1071,56 @@ const s3: ServiceDefinition = {
       const versioned = target.versioningStatus === "Enabled";
       const versionId = versioned ? generateVersionId() : undefined;
       const lastModified = nowSeconds();
+      const useReplace = input["MetadataDirective"] === "REPLACE";
+      const reqStorageClass = input["StorageClass"];
+      const reqMetadata = input["Metadata"];
       const object: S3Object = {
         key,
         body: source.body,
-        contentType: source.contentType,
+        contentType: useReplace
+          ? typeof input["ContentType"] === "string"
+            ? input["ContentType"]
+            : "application/octet-stream"
+          : source.contentType,
         etag: source.etag,
         size: source.size,
         lastModified,
         tagSet: [],
-        userMetadata: source.userMetadata,
-        storageClass: source.storageClass,
+        userMetadata: useReplace
+          ? typeof reqMetadata === "object" && reqMetadata !== null
+            ? (reqMetadata as Record<string, string>)
+            : {}
+          : source.userMetadata,
+        storageClass:
+          typeof reqStorageClass === "string"
+            ? reqStorageClass
+            : source.storageClass,
         versionId,
-        contentDisposition: source.contentDisposition,
-        cacheControl: source.cacheControl,
-        contentEncoding: source.contentEncoding,
-        contentLanguage: source.contentLanguage,
-        expires: source.expires,
+        contentDisposition: useReplace
+          ? typeof input["ContentDisposition"] === "string"
+            ? input["ContentDisposition"]
+            : undefined
+          : source.contentDisposition,
+        cacheControl: useReplace
+          ? typeof input["CacheControl"] === "string"
+            ? input["CacheControl"]
+            : undefined
+          : source.cacheControl,
+        contentEncoding: useReplace
+          ? typeof input["ContentEncoding"] === "string"
+            ? input["ContentEncoding"]
+            : undefined
+          : source.contentEncoding,
+        contentLanguage: useReplace
+          ? typeof input["ContentLanguage"] === "string"
+            ? input["ContentLanguage"]
+            : undefined
+          : source.contentLanguage,
+        expires: useReplace
+          ? typeof input["Expires"] === "number"
+            ? input["Expires"]
+            : undefined
+          : source.expires,
       };
       const existing = target.objects[key] ?? [];
       const versions = versioned ? [object, ...existing] : [object];

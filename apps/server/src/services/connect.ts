@@ -4028,6 +4028,184 @@ const SearchQueues: OperationHandler = (input, ctx) => {
   };
 };
 
+const SearchQuickConnects: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const items = ctx.store
+    .list<StoredQuickConnect>()
+    .filter((entry) => entry.key.startsWith(quickConnectPrefix))
+    .map((entry) => entry.value)
+    .filter((q) => q.InstanceId === instanceId);
+  return {
+    QuickConnects: items.map((q) => ({
+      QuickConnectId: q.QuickConnectId,
+      QuickConnectARN: q.QuickConnectARN,
+      Name: q.Name,
+    })),
+    ApproximateTotalCount: items.length,
+  };
+};
+
+const SearchResourceTags: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { Tags: [] };
+};
+
+const SearchRoutingProfiles: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const items = ctx.store
+    .list<StoredRoutingProfile>()
+    .filter((entry) => entry.key.startsWith(routingProfilePrefix))
+    .map((entry) => entry.value)
+    .filter((r) => r.InstanceId === instanceId);
+  return {
+    RoutingProfiles: items.map((r) => ({
+      RoutingProfileId: r.RoutingProfileId,
+      RoutingProfileArn: r.RoutingProfileArn,
+      Name: r.Name,
+    })),
+    ApproximateTotalCount: items.length,
+  };
+};
+
+const SearchSecurityProfiles: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const items = ctx.store
+    .list<StoredSecurityProfile>()
+    .filter((entry) => entry.key.startsWith(securityProfilePrefix))
+    .map((entry) => entry.value)
+    .filter((s) => s.InstanceId === instanceId);
+  return {
+    SecurityProfiles: items.map((s) => ({
+      Id: s.SecurityProfileId,
+      Arn: s.SecurityProfileArn,
+      SecurityProfileName: s.SecurityProfileName,
+    })),
+    ApproximateTotalCount: items.length,
+  };
+};
+
+const SearchTestCases: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const items = ctx.store
+    .list<StoredTestCase>()
+    .filter((entry) => entry.key.startsWith(testCasePrefix))
+    .map((entry) => entry.value)
+    .filter((t) => t.InstanceId === instanceId);
+  return {
+    TestCases: items.map((t) => ({
+      Id: t.TestCaseId,
+      Arn: t.TestCaseArn,
+    })),
+    ApproximateTotalCount: items.length,
+  };
+};
+
+const SearchUserHierarchyGroups: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const items = ctx.store
+    .list<StoredUserHierarchyGroup>()
+    .filter((entry) => entry.key.startsWith(userHierarchyGroupPrefix))
+    .map((entry) => entry.value)
+    .filter((g) => g.InstanceId === instanceId);
+  return {
+    UserHierarchyGroups: items.map((g) => ({
+      Id: g.HierarchyGroupId,
+      Arn: g.HierarchyGroupArn,
+      Name: g.Name,
+    })),
+    ApproximateTotalCount: items.length,
+  };
+};
+
+const SearchUsers: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const items = ctx.store
+    .list<StoredUser>()
+    .filter((entry) => entry.key.startsWith(userPrefix))
+    .map((entry) => entry.value)
+    .filter((u) => u.InstanceId === instanceId);
+  return {
+    Users: items.map((u) => ({
+      Id: u.UserId,
+      Arn: u.UserArn,
+      Username: u.Username,
+    })),
+    ApproximateTotalCount: items.length,
+  };
+};
+
+const SearchViews: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const items = ctx.store
+    .list<StoredView>()
+    .filter((entry) => entry.key.startsWith(viewPrefix))
+    .map((entry) => entry.value)
+    .filter((v) => v.InstanceId === instanceId);
+  return {
+    Views: items.map((v) => ({
+      Id: v.Id,
+      Arn: v.Arn,
+      Name: v.Name,
+      Status: v.Status,
+    })),
+    ApproximateTotalCount: items.length,
+  };
+};
+
+const SearchVocabularies: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const items = ctx.store
+    .list<StoredVocabulary>()
+    .filter((entry) => entry.key.startsWith(vocabularyPrefix))
+    .map((entry) => entry.value)
+    .filter((v) => v.InstanceId === instanceId);
+  return {
+    VocabularySummaryList: items.map((v) => ({
+      Id: v.VocabularyId,
+      Arn: v.VocabularyArn,
+      Name: v.VocabularyName,
+      State: "ACTIVE",
+    })),
+  };
+};
+
+const SearchWorkspaceAssociations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { WorkspaceAssociations: [], ApproximateTotalCount: 0 };
+};
+
+const SearchWorkspaces: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const items = ctx.store
+    .list<StoredWorkspace>()
+    .filter((entry) => entry.key.startsWith(workspacePrefix))
+    .map((entry) => entry.value)
+    .filter((w) => w.InstanceId === instanceId);
+  return {
+    Workspaces: items.map((w) => ({
+      Id: w.WorkspaceId,
+      Arn: w.WorkspaceArn,
+      Name: w.Name,
+    })),
+    ApproximateTotalCount: items.length,
+  };
+};
+
+const SendChatIntegrationEvent: OperationHandler = (_input, _ctx) => {
+  return { InitialContactId: crypto.randomUUID(), NewChatCreated: true };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -5060,6 +5238,64 @@ const connect = {
         if (parts.length === 1 && req.method === "POST") return "SearchQueues";
         return undefined;
 
+      case "search-quick-connects":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchQuickConnects";
+        return undefined;
+
+      case "search-resource-tags":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchResourceTags";
+        return undefined;
+
+      case "search-routing-profiles":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchRoutingProfiles";
+        return undefined;
+
+      case "search-security-profiles":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchSecurityProfiles";
+        return undefined;
+
+      case "search-test-cases":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchTestCases";
+        return undefined;
+
+      case "search-user-hierarchy-groups":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchUserHierarchyGroups";
+        return undefined;
+
+      case "search-users":
+        if (parts.length === 1 && req.method === "POST") return "SearchUsers";
+        return undefined;
+
+      case "search-views":
+        if (parts.length === 1 && req.method === "POST") return "SearchViews";
+        return undefined;
+
+      case "vocabulary-summary":
+        if (parts.length === 2 && req.method === "POST")
+          return "SearchVocabularies";
+        return undefined;
+
+      case "search-workspace-associations":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchWorkspaceAssociations";
+        return undefined;
+
+      case "search-workspaces":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchWorkspaces";
+        return undefined;
+
+      case "chat-integration-event":
+        if (parts.length === 1 && req.method === "POST")
+          return "SendChatIntegrationEvent";
+        return undefined;
+
       default:
         return undefined;
     }
@@ -5346,6 +5582,18 @@ const connect = {
     SearchPredefinedAttributes,
     SearchPrompts,
     SearchQueues,
+    SearchQuickConnects,
+    SearchResourceTags,
+    SearchRoutingProfiles,
+    SearchSecurityProfiles,
+    SearchTestCases,
+    SearchUserHierarchyGroups,
+    SearchUsers,
+    SearchViews,
+    SearchVocabularies,
+    SearchWorkspaceAssociations,
+    SearchWorkspaces,
+    SendChatIntegrationEvent,
   },
   model,
 } as const satisfies ServiceDefinition;

@@ -61,6 +61,7 @@ type StoredJob = {
   jobId: string;
   jobQueue: string;
   status: string;
+  statusReason?: string;
   jobDefinition: string;
   createdAt: number;
   startedAt: number;
@@ -242,12 +243,33 @@ const jobDefinitionView = (
   tags: jobDefinition.tags,
 });
 
+const JOB_STATUS_PROGRESSION = [
+  "SUBMITTED",
+  "RUNNABLE",
+  "STARTING",
+  "RUNNING",
+  "SUCCEEDED",
+] as const;
+
+const advanceJobStatus = (job: StoredJob, ctx: ServiceContext): StoredJob => {
+  if (job.status === "SUCCEEDED" || job.status === "FAILED") return job;
+  const idx = JOB_STATUS_PROGRESSION.indexOf(
+    job.status as (typeof JOB_STATUS_PROGRESSION)[number],
+  );
+  const nextIdx =
+    idx === -1 ? 0 : Math.min(idx + 1, JOB_STATUS_PROGRESSION.length - 1);
+  const updated = { ...job, status: JOB_STATUS_PROGRESSION[nextIdx] };
+  ctx.store.set(jobKey(job.jobId), updated);
+  return updated;
+};
+
 const jobView = (job: StoredJob): Record<string, unknown> => ({
   jobArn: job.jobArn,
   jobName: job.jobName,
   jobId: job.jobId,
   jobQueue: job.jobQueue,
   status: job.status,
+  statusReason: job.statusReason,
   jobDefinition: job.jobDefinition,
   createdAt: job.createdAt,
   startedAt: job.startedAt,
@@ -605,13 +627,11 @@ const SubmitJob: OperationHandler = (input, ctx) => {
 
 const DescribeJobs: OperationHandler = (input, ctx) => {
   const requested = stringListFromInput(input["jobs"]);
+  const jobs = listJobs(ctx).filter(
+    (job) => requested.includes(job.jobId) || requested.includes(job.jobArn),
+  );
   return {
-    jobs: listJobs(ctx)
-      .filter(
-        (job) =>
-          requested.includes(job.jobId) || requested.includes(job.jobArn),
-      )
-      .map(jobView),
+    jobs: jobs.map((job) => jobView(advanceJobStatus(job, ctx))),
   };
 };
 
@@ -630,24 +650,32 @@ const ListJobs: OperationHandler = (input, ctx) => {
 
 const CancelJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "jobId");
-  requireString(input, "reason");
+  const reason = requireString(input, "reason");
   const job = ctx.store.get<StoredJob>(jobKey(jobId));
   if (
     job !== undefined &&
     job.status !== "SUCCEEDED" &&
     job.status !== "FAILED"
   ) {
-    ctx.store.set(jobKey(jobId), { ...job, status: "FAILED" });
+    ctx.store.set(jobKey(jobId), {
+      ...job,
+      status: "FAILED",
+      statusReason: reason,
+    });
   }
   return {};
 };
 
 const TerminateJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "jobId");
-  requireString(input, "reason");
+  const reason = requireString(input, "reason");
   const job = ctx.store.get<StoredJob>(jobKey(jobId));
   if (job !== undefined) {
-    ctx.store.set(jobKey(jobId), { ...job, status: "FAILED" });
+    ctx.store.set(jobKey(jobId), {
+      ...job,
+      status: "FAILED",
+      statusReason: reason,
+    });
   }
   return {};
 };

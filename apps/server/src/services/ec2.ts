@@ -520,6 +520,16 @@ type StoredNetworkInsightsPath = {
   Tags: Tag[];
 };
 
+type StoredNetworkInsightsAnalysis = {
+  NetworkInsightsAnalysisId: string;
+  NetworkInsightsPathId: string;
+};
+
+type StoredNetworkInsightsAccessScopeAnalysis = {
+  NetworkInsightsAccessScopeAnalysisId: string;
+  NetworkInsightsAccessScopeId: string;
+};
+
 type StoredNetworkInterface = {
   NetworkInterfaceId: string;
   SubnetId: string;
@@ -1193,6 +1203,8 @@ const niAccessScopeKey = (id: string): string => `ni-scope/${id}`;
 const niPathKey = (id: string): string => `ni-path/${id}`;
 const networkInterfaceKey = (id: string): string => `eni/${id}`;
 const niPermissionKey = (id: string): string => `ni-perm/${id}`;
+const niAnalysisKey = (id: string): string => `ni-analysis/${id}`;
+const niScopeAnalysisKey = (id: string): string => `ni-scope-analysis/${id}`;
 const localGatewayRouteKey = (rtbId: string, cidr: string): string =>
   `lgw-route/${rtbId}/${cidr}`;
 const iamProfileAssocKey = (id: string): string => `iam-profile-assoc/${id}`;
@@ -8298,6 +8310,261 @@ const DeleteKeyPair: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const DeleteNetworkInsightsAccessScopeAnalysis: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id =
+    typeof input["NetworkInsightsAccessScopeAnalysisId"] === "string"
+      ? input["NetworkInsightsAccessScopeAnalysisId"]
+      : "";
+  const analysis = ctx.store.get<StoredNetworkInsightsAccessScopeAnalysis>(
+    niScopeAnalysisKey(id),
+  );
+  if (analysis === undefined) {
+    throw awsError(
+      "InvalidNetworkInsightsAccessScopeAnalysisId.NotFound",
+      `The network insights access scope analysis '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(niScopeAnalysisKey(id));
+  return { NetworkInsightsAccessScopeAnalysisId: id };
+};
+
+const DeleteNetworkInsightsAnalysis: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["NetworkInsightsAnalysisId"] === "string"
+      ? input["NetworkInsightsAnalysisId"]
+      : "";
+  const analysis = ctx.store.get<StoredNetworkInsightsAnalysis>(
+    niAnalysisKey(id),
+  );
+  if (analysis === undefined) {
+    throw awsError(
+      "InvalidNetworkInsightsAnalysisId.NotFound",
+      `The network insights analysis '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(niAnalysisKey(id));
+  return { NetworkInsightsAnalysisId: id };
+};
+
+const DeleteNetworkInsightsPath: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["NetworkInsightsPathId"] === "string"
+      ? input["NetworkInsightsPathId"]
+      : "";
+  const path = ctx.store.get<StoredNetworkInsightsPath>(niPathKey(id));
+  if (path === undefined) {
+    throw awsError(
+      "InvalidNetworkInsightsPathId.NotFound",
+      `The network insights path '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(niPathKey(id));
+  return { NetworkInsightsPathId: id };
+};
+
+const DeleteNetworkInterface: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const ni = ctx.store.get<StoredNetworkInterface>(networkInterfaceKey(id));
+  if (ni === undefined) {
+    throw awsError(
+      "InvalidNetworkInterfaceID.NotFound",
+      `The network interface '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(networkInterfaceKey(id));
+  return {};
+};
+
+const DeleteNetworkInterfacePermission: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["NetworkInterfacePermissionId"] === "string"
+      ? input["NetworkInterfacePermissionId"]
+      : "";
+  const perm = ctx.store.get<StoredNetworkInterfacePermission>(
+    niPermissionKey(id),
+  );
+  if (perm === undefined) {
+    throw awsError(
+      "InvalidNetworkInterfacePermissionID.NotFound",
+      `The network interface permission '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(niPermissionKey(id));
+  return { Return: true };
+};
+
+const DeletePlacementGroup: OperationHandler = (input, ctx) => {
+  const groupName =
+    typeof input["GroupName"] === "string" ? input["GroupName"] : "";
+  const entry = ctx.store
+    .list<StoredPlacementGroup>()
+    .find((e) => e.key.startsWith("pg/") && e.value.GroupName === groupName);
+  if (entry === undefined) {
+    throw awsError(
+      "InvalidPlacementGroup.Unknown",
+      `The placement group '${groupName}' is unknown`,
+      400,
+    );
+  }
+  ctx.store.delete(entry.key);
+  return {};
+};
+
+const DeletePublicIpv4Pool: OperationHandler = (input, ctx) => {
+  const poolId = typeof input["PoolId"] === "string" ? input["PoolId"] : "";
+  const pool = ctx.store.get<StoredPublicIpv4Pool>(publicIpv4PoolKey(poolId));
+  if (pool === undefined) {
+    throw awsError(
+      "InvalidPublicIpv4PoolID.NotFound",
+      `The public IPv4 pool '${poolId}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(publicIpv4PoolKey(poolId));
+  return { ReturnValue: true };
+};
+
+const DeleteQueuedReservedInstances: OperationHandler = (input, _ctx) => {
+  const ids = Array.isArray(input["ReservedInstancesIds"])
+    ? (input["ReservedInstancesIds"] as string[])
+    : [];
+  return {
+    SuccessfulQueuedPurchaseDeletions: ids.map((id) => ({
+      ReservedInstancesId: id,
+    })),
+    FailedQueuedPurchaseDeletions: [],
+  };
+};
+
+const DeleteRoute: OperationHandler = (input, ctx) => {
+  const routeTableId =
+    typeof input["RouteTableId"] === "string" ? input["RouteTableId"] : "";
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : undefined;
+  const destinationIpv6CidrBlock =
+    typeof input["DestinationIpv6CidrBlock"] === "string"
+      ? input["DestinationIpv6CidrBlock"]
+      : undefined;
+  const destinationPrefixListId =
+    typeof input["DestinationPrefixListId"] === "string"
+      ? input["DestinationPrefixListId"]
+      : undefined;
+  const table = ctx.store.get<StoredRouteTable>(routeTableKey(routeTableId));
+  if (table === undefined) {
+    throw awsError(
+      "InvalidRouteTableID.NotFound",
+      `The route table '${routeTableId}' does not exist`,
+      400,
+    );
+  }
+  const dest =
+    destinationCidrBlock ??
+    destinationIpv6CidrBlock ??
+    destinationPrefixListId ??
+    "";
+  table.Routes = table.Routes.filter((r) => r.DestinationCidrBlock !== dest);
+  ctx.store.set(routeTableKey(routeTableId), table);
+  return {};
+};
+
+const DeleteRouteServer: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["RouteServerId"] === "string" ? input["RouteServerId"] : "";
+  const server = ctx.store.get<StoredRouteServer>(routeServerKey(id));
+  if (server === undefined) {
+    throw awsError(
+      "InvalidRouteServerId.NotFound",
+      `The route server '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(routeServerKey(id));
+  return {
+    RouteServer: {
+      RouteServerId: server.RouteServerId,
+      AmazonSideAsn: server.AmazonSideAsn,
+      State: server.State,
+      PersistRoutesState: server.PersistRoutesState,
+      PersistRoutesDuration: server.PersistRoutesDuration,
+      SnsNotificationsEnabled: server.SnsNotificationsEnabled,
+      Tags: server.Tags,
+    },
+  };
+};
+
+const DeleteRouteServerEndpoint: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["RouteServerEndpointId"] === "string"
+      ? input["RouteServerEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredRouteServerEndpoint>(
+    routeServerEndpointKey(id),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidRouteServerEndpointId.NotFound",
+      `The route server endpoint '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(routeServerEndpointKey(id));
+  return {
+    RouteServerEndpoint: {
+      RouteServerEndpointId: endpoint.RouteServerEndpointId,
+      RouteServerId: endpoint.RouteServerId,
+      VpcId: endpoint.VpcId,
+      SubnetId: endpoint.SubnetId,
+      EniId: endpoint.EniId,
+      EniAddress: endpoint.EniAddress,
+      State: endpoint.State,
+      Tags: endpoint.Tags,
+    },
+  };
+};
+
+const DeleteRouteServerPeer: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["RouteServerPeerId"] === "string"
+      ? input["RouteServerPeerId"]
+      : "";
+  const peer = ctx.store.get<StoredRouteServerPeer>(routeServerPeerKey(id));
+  if (peer === undefined) {
+    throw awsError(
+      "InvalidRouteServerPeerId.NotFound",
+      `The route server peer '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(routeServerPeerKey(id));
+  return {
+    RouteServerPeer: {
+      RouteServerPeerId: peer.RouteServerPeerId,
+      RouteServerEndpointId: peer.RouteServerEndpointId,
+      RouteServerId: peer.RouteServerId,
+      VpcId: peer.VpcId,
+      SubnetId: peer.SubnetId,
+      State: peer.State,
+      PeerAddress: peer.PeerAddress,
+      EndpointEniId: peer.EndpointEniId,
+      EndpointEniAddress: peer.EndpointEniAddress,
+      Tags: peer.Tags,
+    },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -8535,6 +8802,18 @@ const ec2: ServiceDefinition = {
     DeleteNetworkAcl,
     DeleteNetworkAclEntry,
     DeleteNetworkInsightsAccessScope,
+    DeleteNetworkInsightsAccessScopeAnalysis,
+    DeleteNetworkInsightsAnalysis,
+    DeleteNetworkInsightsPath,
+    DeleteNetworkInterface,
+    DeleteNetworkInterfacePermission,
+    DeletePlacementGroup,
+    DeletePublicIpv4Pool,
+    DeleteQueuedReservedInstances,
+    DeleteRoute,
+    DeleteRouteServer,
+    DeleteRouteServerEndpoint,
+    DeleteRouteServerPeer,
   },
   model,
 } as const;

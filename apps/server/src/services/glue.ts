@@ -5473,6 +5473,359 @@ const TagResource: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const TestConnection: OperationHandler = (input, ctx) => {
+  const connectionName =
+    typeof input["ConnectionName"] === "string"
+      ? (input["ConnectionName"] as string)
+      : "";
+  if (connectionName !== "") {
+    requireConnection(ctx, connectionName);
+  }
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string"
+      ? (input["ResourceArn"] as string)
+      : "";
+  const tagsToRemove = Array.isArray(input["TagsToRemove"])
+    ? (input["TagsToRemove"] as string[])
+    : null;
+  if (resourceArn === "" || tagsToRemove === null) {
+    throw awsError(
+      "InvalidInputException",
+      "ResourceArn and TagsToRemove are required.",
+      400,
+    );
+  }
+  const existing =
+    ctx.store.get<Record<string, string>>(`${tagsPrefix}${resourceArn}`) ?? {};
+  const updated = { ...existing };
+  for (const key of tagsToRemove) {
+    delete updated[key];
+  }
+  ctx.store.set(`${tagsPrefix}${resourceArn}`, updated);
+  return {};
+};
+
+const UpdateBlueprint: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["Name"] === "string" ? (input["Name"] as string) : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  const stored = ctx.store.get<StoredBlueprint>(`${blueprintPrefix}${name}`);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Blueprint ${name} not found.`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const updatedStored: StoredBlueprint = {
+    ...stored,
+    input: {
+      ...stored.input,
+      ...(typeof input["Description"] === "string"
+        ? { Description: input["Description"] }
+        : {}),
+      ...(typeof input["BlueprintLocation"] === "string"
+        ? { BlueprintLocation: input["BlueprintLocation"] }
+        : {}),
+    },
+    lastModifiedOn: now,
+  };
+  ctx.store.set(`${blueprintPrefix}${name}`, updatedStored);
+  return { Name: name };
+};
+
+const UpdateCatalog: OperationHandler = (input, ctx) => {
+  const catalogId =
+    typeof input["CatalogId"] === "string"
+      ? (input["CatalogId"] as string)
+      : "";
+  if (!catalogId) {
+    throw awsError("InvalidInputException", "CatalogId is required.", 400);
+  }
+  const stored = ctx.store.get<StoredCatalog>(`${catalogPrefix}${catalogId}`);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Catalog ${catalogId} not found.`,
+      400,
+    );
+  }
+  const catalogInput = asRecord(input["CatalogInput"]);
+  const now = Math.floor(Date.now() / 1000);
+  const updatedStored: StoredCatalog = {
+    ...stored,
+    input: catalogInput,
+    updateTime: now,
+  };
+  ctx.store.set(`${catalogPrefix}${catalogId}`, updatedStored);
+  return {};
+};
+
+const UpdateClassifier: OperationHandler = (input, ctx) => {
+  const name = classifierName(input);
+  const stored = requireClassifier(ctx, name);
+  const now = Math.floor(Date.now() / 1000);
+  const sub = classifierSubInput(input);
+  const updatedStored: StoredClassifier = {
+    ...stored,
+    input: { ...stored.input, ...sub },
+    lastUpdated: now,
+  };
+  ctx.store.set(`${classifierPrefix}${name}`, updatedStored);
+  return {};
+};
+
+const UpdateColumnStatisticsForTable: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  requireTable(ctx, databaseName, tableName);
+  const columnStatisticsList = Array.isArray(input["ColumnStatisticsList"])
+    ? (input["ColumnStatisticsList"] as Record<string, unknown>[])
+    : [];
+  const errors: Record<string, unknown>[] = [];
+  const now = Math.floor(Date.now() / 1000);
+  for (const cs of columnStatisticsList) {
+    const columnName =
+      typeof cs["ColumnName"] === "string" ? (cs["ColumnName"] as string) : "";
+    const stats = asRecord(cs["Statistics"]);
+    const columnType =
+      typeof stats["ColumnType"] === "string"
+        ? (stats["ColumnType"] as string)
+        : "";
+    const statisticsData = asRecord(stats["StatisticsData"]);
+    const analyzedTime =
+      typeof stats["AnalyzedTime"] === "number"
+        ? (stats["AnalyzedTime"] as number)
+        : now;
+    if (!columnName) {
+      errors.push({
+        ColumnStatistics: cs,
+        Error: {
+          ErrorCode: "InvalidInputException",
+          ErrorMessage: "ColumnName is required.",
+        },
+      });
+      continue;
+    }
+    const key = colstatsTKey(databaseName, tableName, columnName);
+    const colStats: StoredColumnStats = {
+      columnName,
+      columnType,
+      analyzedTime,
+      statisticsData,
+    };
+    ctx.store.set(key, colStats);
+  }
+  return { Errors: errors };
+};
+
+const UpdateColumnStatisticsForPartition: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const partitionValues = Array.isArray(input["PartitionValues"])
+    ? (input["PartitionValues"] as string[])
+    : [];
+  requireTable(ctx, databaseName, tableName);
+  const columnStatisticsList = Array.isArray(input["ColumnStatisticsList"])
+    ? (input["ColumnStatisticsList"] as Record<string, unknown>[])
+    : [];
+  const errors: Record<string, unknown>[] = [];
+  const now = Math.floor(Date.now() / 1000);
+  for (const cs of columnStatisticsList) {
+    const columnName =
+      typeof cs["ColumnName"] === "string" ? (cs["ColumnName"] as string) : "";
+    const stats = asRecord(cs["Statistics"]);
+    const columnType =
+      typeof stats["ColumnType"] === "string"
+        ? (stats["ColumnType"] as string)
+        : "";
+    const statisticsData = asRecord(stats["StatisticsData"]);
+    const analyzedTime =
+      typeof stats["AnalyzedTime"] === "number"
+        ? (stats["AnalyzedTime"] as number)
+        : now;
+    if (!columnName) {
+      errors.push({
+        ColumnStatistics: cs,
+        Error: {
+          ErrorCode: "InvalidInputException",
+          ErrorMessage: "ColumnName is required.",
+        },
+      });
+      continue;
+    }
+    const key = colstatsPKey(
+      databaseName,
+      tableName,
+      partitionValues,
+      columnName,
+    );
+    const colStats: StoredColumnStats = {
+      columnName,
+      columnType,
+      analyzedTime,
+      statisticsData,
+    };
+    ctx.store.set(key, colStats);
+  }
+  return { Errors: errors };
+};
+
+const UpdateColumnStatisticsTaskSettings: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  if (databaseName === "" || tableName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName and TableName are required.",
+      400,
+    );
+  }
+  const key = `${colStatsTaskSettingsPrefix}${databaseName}:${tableName}`;
+  const stored = ctx.store.get<StoredColStatsTaskSettings>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `ColumnStatisticsTaskSettings not found for ${databaseName}.${tableName}`,
+      400,
+    );
+  }
+  const role =
+    typeof input["Role"] === "string" ? (input["Role"] as string) : stored.role;
+  const updatedStored: StoredColStatsTaskSettings = {
+    ...stored,
+    role,
+    input: { ...stored.input, ...asRecord(input) },
+  };
+  ctx.store.set(key, updatedStored);
+  return {};
+};
+
+const UpdateConnection: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const existing = requireConnection(ctx, name);
+  const connInput = asRecord(input["ConnectionInput"]);
+  const now = Math.floor(Date.now() / 1000);
+  const updatedStored: StoredConnection = {
+    input: connInput,
+    creationTime: existing.creationTime,
+    lastUpdatedTime: now,
+  };
+  ctx.store.set(`${connPrefix}${name}`, updatedStored);
+  return {};
+};
+
+const UpdateCrawler: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const stored = requireCrawler(ctx, name);
+  const now = Math.floor(Date.now() / 1000);
+  const updatedInput: Record<string, unknown> = { ...stored.input };
+  for (const field of [
+    "Role",
+    "DatabaseName",
+    "Description",
+    "Targets",
+    "Schedule",
+    "Classifiers",
+    "TablePrefix",
+    "SchemaChangePolicy",
+    "RecrawlPolicy",
+    "LineageConfiguration",
+    "LakeFormationConfiguration",
+    "Configuration",
+    "CrawlerSecurityConfiguration",
+  ]) {
+    if (input[field] !== undefined) {
+      updatedInput[field] = input[field];
+    }
+  }
+  const updatedStored: StoredCrawler = {
+    ...stored,
+    input: updatedInput,
+    lastUpdated: now,
+  };
+  ctx.store.set(`${crawlerPrefix}${name}`, updatedStored);
+  return {};
+};
+
+const UpdateCrawlerSchedule: OperationHandler = (input, ctx) => {
+  const crawlerName =
+    typeof input["CrawlerName"] === "string"
+      ? (input["CrawlerName"] as string)
+      : "";
+  if (crawlerName === "") {
+    throw awsError("InvalidInputException", "CrawlerName is required.", 400);
+  }
+  const stored = requireCrawler(ctx, crawlerName);
+  const now = Math.floor(Date.now() / 1000);
+  const updatedInput: Record<string, unknown> = { ...stored.input };
+  if (typeof input["Schedule"] === "string") {
+    updatedInput["Schedule"] = input["Schedule"];
+  }
+  const updatedStored: StoredCrawler = {
+    ...stored,
+    input: updatedInput,
+    lastUpdated: now,
+  };
+  ctx.store.set(`${crawlerPrefix}${crawlerName}`, updatedStored);
+  return {};
+};
+
+const UpdateDataQualityRuleset: OperationHandler = (input, ctx) => {
+  const name = requireName(asRecord(input));
+  const key = `${dqRulesetPrefix}${name}`;
+  const stored = ctx.store.get<StoredDataQualityRuleset>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `DataQualityRuleset ${name} not found.`,
+      400,
+    );
+  }
+  const updatedInput: Record<string, unknown> = { ...stored.input };
+  if (typeof input["Description"] === "string") {
+    updatedInput["Description"] = input["Description"];
+  }
+  if (typeof input["Ruleset"] === "string") {
+    updatedInput["Ruleset"] = input["Ruleset"];
+  }
+  const updatedStored: StoredDataQualityRuleset = {
+    ...stored,
+    input: updatedInput,
+  };
+  ctx.store.set(key, updatedStored);
+  return {
+    Name: name,
+    ...(typeof updatedInput["Description"] === "string"
+      ? { Description: updatedInput["Description"] }
+      : {}),
+    ...(typeof updatedInput["Ruleset"] === "string"
+      ? { Ruleset: updatedInput["Ruleset"] }
+      : {}),
+  };
+};
+
 const isDatabaseKey = (key: string): boolean =>
   !key.startsWith(crawlerPrefix) &&
   !key.startsWith(jobPrefix) &&
@@ -5774,6 +6127,18 @@ const glue: ServiceDefinition = {
     StopTrigger,
     StopWorkflowRun,
     TagResource,
+    TestConnection,
+    UntagResource,
+    UpdateBlueprint,
+    UpdateCatalog,
+    UpdateClassifier,
+    UpdateColumnStatisticsForPartition,
+    UpdateColumnStatisticsForTable,
+    UpdateColumnStatisticsTaskSettings,
+    UpdateConnection,
+    UpdateCrawler,
+    UpdateCrawlerSchedule,
+    UpdateDataQualityRuleset,
   },
   model,
 } as const;

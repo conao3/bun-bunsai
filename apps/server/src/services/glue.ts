@@ -52,6 +52,12 @@ const securityConfigPrefix = "securityConfig:";
 const usageProfilePrefix = "usageProfile:";
 const udfPrefix = "udf:";
 const glueIdcPrefix = "glueIdc:";
+const dataCatalogEncryptionKey = "dataCatalogEncryptionSettings";
+const resourcePolicyPrefix = "resourcePolicy:";
+const schemaVersionMetaPrefix = "schemaVersionMeta:";
+const workflowRunPropsPrefix = "workflowRunProps:";
+const connTypePrefix = "connType:";
+const sessionStmtCountPrefix = "sessionStmtCount:";
 
 type StoredCrawler = {
   input: Record<string, unknown>;
@@ -253,6 +259,23 @@ type StoredUDF = {
 type StoredGlueIdc = {
   instanceArn: string;
   applicationArn: string;
+  input: Record<string, unknown>;
+};
+
+type StoredDataCatalogEncryptionSettings = {
+  settings: Record<string, unknown>;
+};
+
+type StoredResourcePolicy = {
+  policyInJson: string;
+  policyHash: string;
+  createTime: number;
+  updateTime: number;
+};
+
+type StoredConnectionType = {
+  connectionType: string;
+  connectionTypeArn: string;
   input: Record<string, unknown>;
 };
 
@@ -3542,7 +3565,13 @@ const GetCustomEntityType: OperationHandler = (input, ctx) => {
   };
 };
 
-const GetDataCatalogEncryptionSettings: OperationHandler = (_input, _ctx) => {
+const GetDataCatalogEncryptionSettings: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<StoredDataCatalogEncryptionSettings>(
+    dataCatalogEncryptionKey,
+  );
+  if (stored !== undefined) {
+    return { DataCatalogEncryptionSettings: stored.settings };
+  }
   return {
     DataCatalogEncryptionSettings: {
       EncryptionAtRest: { CatalogEncryptionMode: "DISABLED" },
@@ -3917,7 +3946,19 @@ const GetResourcePolicies: OperationHandler = (_input, _ctx) => {
   return { GetResourcePoliciesResponseList: [] };
 };
 
-const GetResourcePolicy: OperationHandler = (_input, _ctx) => {
+const GetResourcePolicy: OperationHandler = (input, ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string" ? input["ResourceArn"] : "";
+  const key = `${resourcePolicyPrefix}${resourceArn}`;
+  const stored = ctx.store.get<StoredResourcePolicy>(key);
+  if (stored !== undefined) {
+    return {
+      PolicyInJson: stored.policyInJson,
+      PolicyHash: stored.policyHash,
+      CreateTime: stored.createTime,
+      UpdateTime: stored.updateTime,
+    };
+  }
   return {
     PolicyInJson: JSON.stringify({ Version: "2012-10-17", Statement: [] }),
     PolicyHash: "abc123",
@@ -4383,7 +4424,7 @@ const GetWorkflowRun: OperationHandler = (input, _ctx) => {
   };
 };
 
-const GetWorkflowRunProperties: OperationHandler = (input, _ctx) => {
+const GetWorkflowRunProperties: OperationHandler = (input, ctx) => {
   const name =
     typeof input["Name"] === "string" ? (input["Name"] as string) : "";
   const runId =
@@ -4395,7 +4436,9 @@ const GetWorkflowRunProperties: OperationHandler = (input, _ctx) => {
       400,
     );
   }
-  return { RunProperties: {} };
+  const key = `${workflowRunPropsPrefix}${name}:${runId}`;
+  const stored = ctx.store.get<Record<string, unknown>>(key);
+  return { RunProperties: stored ?? {} };
 };
 
 const GetWorkflowRuns: OperationHandler = (input, _ctx) => {
@@ -4734,6 +4777,325 @@ const ModifyIntegration: OperationHandler = (input, ctx) => {
   };
 };
 
+const PutDataCatalogEncryptionSettings: OperationHandler = (input, ctx) => {
+  const settings = asRecord(input["DataCatalogEncryptionSettings"] ?? {});
+  ctx.store.set<StoredDataCatalogEncryptionSettings>(dataCatalogEncryptionKey, {
+    settings,
+  });
+  return {};
+};
+
+const PutDataQualityProfileAnnotation: OperationHandler = (input, _ctx) => {
+  const profileId =
+    typeof input["ProfileId"] === "string" ? input["ProfileId"] : "";
+  const annotation =
+    typeof input["InclusionAnnotation"] === "string"
+      ? input["InclusionAnnotation"]
+      : "";
+  if (profileId === "" || annotation === "") {
+    throw awsError(
+      "InvalidInputException",
+      "ProfileId and InclusionAnnotation are required.",
+      400,
+    );
+  }
+  return {};
+};
+
+const PutResourcePolicy: OperationHandler = (input, ctx) => {
+  const policyInJson =
+    typeof input["PolicyInJson"] === "string" ? input["PolicyInJson"] : "";
+  if (policyInJson === "") {
+    throw awsError("InvalidInputException", "PolicyInJson is required.", 400);
+  }
+  const resourceArn =
+    typeof input["ResourceArn"] === "string" ? input["ResourceArn"] : "";
+  const key = `${resourcePolicyPrefix}${resourceArn}`;
+  const now = Math.floor(Date.now() / 1000);
+  const existing = ctx.store.get<StoredResourcePolicy>(key);
+  const policyHash = crypto.randomUUID().replace(/-/g, "").slice(0, 32);
+  ctx.store.set<StoredResourcePolicy>(key, {
+    policyInJson,
+    policyHash,
+    createTime: existing?.createTime ?? now,
+    updateTime: now,
+  });
+  return { PolicyHash: policyHash };
+};
+
+const PutSchemaVersionMetadata: OperationHandler = (input, ctx) => {
+  const schemaVersionId =
+    typeof input["SchemaVersionId"] === "string"
+      ? input["SchemaVersionId"]
+      : "";
+  const metadataKeyValue = asRecord(input["MetadataKeyValue"] ?? {});
+  const metaKey =
+    typeof metadataKeyValue["MetadataKey"] === "string"
+      ? metadataKeyValue["MetadataKey"]
+      : "";
+  const metaValue =
+    typeof metadataKeyValue["MetadataValue"] === "string"
+      ? metadataKeyValue["MetadataValue"]
+      : "";
+  if (schemaVersionId === "" || metaKey === "") {
+    throw awsError(
+      "InvalidInputException",
+      "SchemaVersionId and MetadataKey are required.",
+      400,
+    );
+  }
+  const storeKey = `${schemaVersionMetaPrefix}${schemaVersionId}:${metaKey}`;
+  ctx.store.set(storeKey, { metaKey, metaValue });
+  return {
+    SchemaVersionId: schemaVersionId,
+    MetadataKey: metaKey,
+    MetadataValue: metaValue,
+  };
+};
+
+const PutWorkflowRunProperties: OperationHandler = (input, ctx) => {
+  const name = typeof input["Name"] === "string" ? input["Name"] : "";
+  const runId = typeof input["RunId"] === "string" ? input["RunId"] : "";
+  const runProperties = asRecord(input["RunProperties"] ?? {});
+  if (name === "" || runId === "") {
+    throw awsError(
+      "InvalidInputException",
+      "Name and RunId are required.",
+      400,
+    );
+  }
+  if (ctx.store.get<StoredWorkflow>(`${workflowPrefix}${name}`) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Workflow ${name} not found.`,
+      400,
+    );
+  }
+  const key = `${workflowRunPropsPrefix}${name}:${runId}`;
+  ctx.store.set(key, runProperties);
+  return {};
+};
+
+const QuerySchemaVersionMetadata: OperationHandler = (input, ctx) => {
+  const schemaVersionId =
+    typeof input["SchemaVersionId"] === "string"
+      ? input["SchemaVersionId"]
+      : "";
+  if (schemaVersionId === "") {
+    throw awsError(
+      "InvalidInputException",
+      "SchemaVersionId is required.",
+      400,
+    );
+  }
+  const prefix = `${schemaVersionMetaPrefix}${schemaVersionId}:`;
+  const entries = ctx.store
+    .list<{ metaKey: string; metaValue: string }>()
+    .filter((e) => e.key.startsWith(prefix));
+  const metadataList = asRecord(input["MetadataList"] ?? {});
+  const filterKeys = Array.isArray(metadataList)
+    ? (metadataList as unknown[])
+        .map((m) => asRecord(m))
+        .map((m) =>
+          typeof m["MetadataKey"] === "string" ? m["MetadataKey"] : "",
+        )
+        .filter((k) => k !== "")
+    : [];
+  const filtered =
+    filterKeys.length > 0
+      ? entries.filter((e) => filterKeys.includes(e.value.metaKey))
+      : entries;
+  const metadataInfoMap: Record<string, unknown> = {};
+  for (const entry of filtered) {
+    metadataInfoMap[entry.value.metaKey] = {
+      MetadataValue: entry.value.metaValue,
+      OtherMetadataValueList: [],
+    };
+  }
+  return { MetadataInfoMap: metadataInfoMap, SchemaVersionId: schemaVersionId };
+};
+
+const RegisterConnectionType: OperationHandler = (input, ctx) => {
+  const connectionType =
+    typeof input["ConnectionType"] === "string" ? input["ConnectionType"] : "";
+  if (connectionType === "") {
+    throw awsError("InvalidInputException", "ConnectionType is required.", 400);
+  }
+  const connectionTypeArn = `arn:aws:glue:${ctx.region}:${ctx.account}:connectionType/${connectionType}`;
+  const stored: StoredConnectionType = {
+    connectionType,
+    connectionTypeArn,
+    input: asRecord(input),
+  };
+  ctx.store.set(`${connTypePrefix}${connectionType}`, stored);
+  return { ConnectionTypeArn: connectionTypeArn };
+};
+
+const RegisterSchemaVersion: OperationHandler = (input, ctx) => {
+  const schemaId = asRecord(input["SchemaId"] ?? {});
+  const key = resolveSchemaKey(schemaId);
+  const stored = ctx.store.get<StoredSchema>(key);
+  if (stored === undefined) {
+    throw awsError("EntityNotFoundException", `Schema not found.`, 400);
+  }
+  const newVersionId = crypto.randomUUID();
+  const newVersion = stored.latestSchemaVersion + 1;
+  ctx.store.set<StoredSchema>(key, {
+    ...stored,
+    latestSchemaVersion: newVersion,
+    nextSchemaVersion: newVersion + 1,
+    schemaCheckpoint: newVersion,
+  });
+  return {
+    SchemaVersionId: newVersionId,
+    VersionNumber: newVersion,
+    Status: "AVAILABLE",
+  };
+};
+
+const RemoveSchemaVersionMetadata: OperationHandler = (input, ctx) => {
+  const schemaVersionId =
+    typeof input["SchemaVersionId"] === "string"
+      ? input["SchemaVersionId"]
+      : "";
+  const metadataKeyValue = asRecord(input["MetadataKeyValue"] ?? {});
+  const metaKey =
+    typeof metadataKeyValue["MetadataKey"] === "string"
+      ? metadataKeyValue["MetadataKey"]
+      : "";
+  const metaValue =
+    typeof metadataKeyValue["MetadataValue"] === "string"
+      ? metadataKeyValue["MetadataValue"]
+      : "";
+  if (schemaVersionId === "" || metaKey === "") {
+    throw awsError(
+      "InvalidInputException",
+      "SchemaVersionId and MetadataKey are required.",
+      400,
+    );
+  }
+  const storeKey = `${schemaVersionMetaPrefix}${schemaVersionId}:${metaKey}`;
+  ctx.store.delete(storeKey);
+  return {
+    SchemaVersionId: schemaVersionId,
+    MetadataKey: metaKey,
+    MetadataValue: metaValue,
+  };
+};
+
+const ResumeWorkflowRun: OperationHandler = (input, ctx) => {
+  const name = typeof input["Name"] === "string" ? input["Name"] : "";
+  const runId = typeof input["RunId"] === "string" ? input["RunId"] : "";
+  const nodeIds = Array.isArray(input["NodeIds"])
+    ? (input["NodeIds"] as unknown[])
+        .filter((n) => typeof n === "string")
+        .map((n) => n as string)
+    : [];
+  if (name === "" || runId === "" || nodeIds.length === 0) {
+    throw awsError(
+      "InvalidInputException",
+      "Name, RunId, and NodeIds are required.",
+      400,
+    );
+  }
+  if (ctx.store.get<StoredWorkflow>(`${workflowPrefix}${name}`) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Workflow ${name} not found.`,
+      400,
+    );
+  }
+  const newRunId = crypto.randomUUID();
+  return { RunId: newRunId, NodeIds: nodeIds };
+};
+
+const RunStatement: OperationHandler = (input, ctx) => {
+  const sessionId =
+    typeof input["SessionId"] === "string" ? input["SessionId"] : "";
+  const code = typeof input["Code"] === "string" ? input["Code"] : "";
+  if (sessionId === "" || code === "") {
+    throw awsError(
+      "InvalidInputException",
+      "SessionId and Code are required.",
+      400,
+    );
+  }
+  if (
+    ctx.store.get<StoredSession>(`${sessionPrefix}${sessionId}`) === undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Session ${sessionId} not found.`,
+      400,
+    );
+  }
+  const countKey = `${sessionStmtCountPrefix}${sessionId}`;
+  const current = ctx.store.get<number>(countKey) ?? 0;
+  const nextId = current + 1;
+  ctx.store.set(countKey, nextId);
+  return { Id: nextId };
+};
+
+const isDatabaseKey = (key: string): boolean =>
+  !key.startsWith(crawlerPrefix) &&
+  !key.startsWith(jobPrefix) &&
+  !key.startsWith(triggerPrefix) &&
+  !key.startsWith(jobRunPrefix) &&
+  !key.startsWith(jobBookmarkPrefix) &&
+  !key.startsWith(connPrefix) &&
+  !key.startsWith(classifierPrefix) &&
+  !key.startsWith(catalogPrefix) &&
+  !key.startsWith(partitionPrefix) &&
+  !key.startsWith(colstatsTPrefix) &&
+  !key.startsWith(colstatsPPrefix) &&
+  !key.startsWith(itpPrefix) &&
+  !key.startsWith(devEndpointPrefix) &&
+  !key.startsWith(mlTransformPrefix) &&
+  !key.startsWith(registryPrefix) &&
+  !key.startsWith(schemaPrefix) &&
+  !key.startsWith(blueprintPrefix) &&
+  !key.startsWith(workflowPrefix) &&
+  !key.startsWith(sessionPrefix) &&
+  !key.startsWith(dqRulesetPrefix) &&
+  !key.startsWith(customEntityTypePrefix) &&
+  !key.startsWith(tableOptimizerPrefix) &&
+  !key.startsWith(colStatsTaskSettingsPrefix) &&
+  !key.startsWith(integrationPrefix) &&
+  !key.startsWith(integrationResourcePropertyPrefix) &&
+  !key.startsWith(securityConfigPrefix) &&
+  !key.startsWith(usageProfilePrefix) &&
+  !key.startsWith(udfPrefix) &&
+  !key.startsWith(glueIdcPrefix) &&
+  !key.startsWith(resourcePolicyPrefix) &&
+  !key.startsWith(schemaVersionMetaPrefix) &&
+  !key.startsWith(workflowRunPropsPrefix) &&
+  !key.startsWith(connTypePrefix) &&
+  !key.startsWith(sessionStmtCountPrefix) &&
+  key !== dataCatalogEncryptionKey;
+
+const SearchTables: OperationHandler = (input, ctx) => {
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : ctx.account;
+  const searchText =
+    typeof input["SearchText"] === "string"
+      ? input["SearchText"].toLowerCase()
+      : "";
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : 1000;
+  const allDatabases = ctx.store
+    .list<StoredDatabase>()
+    .filter((entry) => isDatabaseKey(entry.key));
+  const tableList: Record<string, unknown>[] = [];
+  for (const { value: db } of allDatabases) {
+    for (const [name, table] of Object.entries(db.tables)) {
+      if (searchText === "" || name.toLowerCase().includes(searchText)) {
+        tableList.push(tableView(name, table, catalogId));
+      }
+    }
+  }
+  return { TableList: tableList.slice(0, maxResults) };
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -4937,6 +5299,18 @@ const glue: ServiceDefinition = {
     ListUsageProfiles,
     ListWorkflows,
     ModifyIntegration,
+    PutDataCatalogEncryptionSettings,
+    PutDataQualityProfileAnnotation,
+    PutResourcePolicy,
+    PutSchemaVersionMetadata,
+    PutWorkflowRunProperties,
+    QuerySchemaVersionMetadata,
+    RegisterConnectionType,
+    RegisterSchemaVersion,
+    RemoveSchemaVersionMetadata,
+    ResumeWorkflowRun,
+    RunStatement,
+    SearchTables,
   },
   model,
 } as const;

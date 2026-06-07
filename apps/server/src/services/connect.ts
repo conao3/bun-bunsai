@@ -2993,6 +2993,133 @@ const ListAttachedFilesConfigurations: OperationHandler = (input, ctx) => {
   return { AttachedFilesConfigurations: [] };
 };
 
+const ListAuthenticationProfiles: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { AuthenticationProfileSummaryList: [] };
+};
+
+const ListBots: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { LexBots: [] };
+};
+
+const ListChildHoursOfOperations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { ChildHoursOfOperationsSummaryList: [] };
+};
+
+const ListContactEvaluations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { EvaluationSummaryList: [] };
+};
+
+const ListContactFlowModuleAliases: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const moduleId = requireString(input, "ContactFlowModuleId");
+  const aliases = ctx.store
+    .list<StoredContactFlowModuleAlias>()
+    .filter((entry) => entry.key.startsWith(contactFlowModuleAliasPrefix))
+    .map((entry) => entry.value)
+    .filter(
+      (a) => a.InstanceId === instanceId && a.ContactFlowModuleId === moduleId,
+    );
+  return {
+    ContactFlowModuleAliasSummaryList: aliases.map((a) => ({
+      Id: a.Id,
+      Arn: a.ContactFlowModuleArn,
+    })),
+  };
+};
+
+const ListContactFlowModuleVersions: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { ContactFlowModuleVersionSummaryList: [] };
+};
+
+const ListContactFlowModules: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const modules = ctx.store
+    .list<StoredContactFlowModule>()
+    .filter((entry) => entry.key.startsWith(contactFlowModulePrefix))
+    .map((entry) => entry.value)
+    .filter((m) => m.InstanceId === instanceId);
+  return {
+    ContactFlowModulesSummaryList: modules.map((m) => ({
+      Id: m.Id,
+      Arn: m.Arn,
+      Name: m.Name,
+    })),
+  };
+};
+
+const ListContactFlowVersions: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { ContactFlowVersionSummaryList: [] };
+};
+
+const ListContactFlows: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const flows = ctx.store
+    .list<StoredContactFlow>()
+    .filter((entry) => entry.key.startsWith(contactFlowPrefix))
+    .map((entry) => entry.value)
+    .filter((f) => f.InstanceId === instanceId);
+  return {
+    ContactFlowSummaryList: flows.map((f) => ({
+      Id: f.ContactFlowId,
+      Arn: f.ContactFlowArn,
+      Name: f.Name,
+      ContactFlowType: f.Type,
+    })),
+  };
+};
+
+const ListContactReferences: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { ReferenceSummaryList: [] };
+};
+
+const ListDataTableAttributes: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const tableId = requireString(input, "DataTableId");
+  const attrs = ctx.store
+    .list<StoredDataTableAttribute>()
+    .filter((entry) => entry.key.startsWith(dataTableAttributePrefix))
+    .map((entry) => entry.value)
+    .filter((a) => a.InstanceId === instanceId && a.DataTableId === tableId);
+  return {
+    Attributes: attrs.map((a) => ({
+      Name: a.Name,
+      AttributeId: a.AttributeId,
+    })),
+  };
+};
+
+const ListDataTablePrimaryValues: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const tableId = requireString(input, "DataTableId");
+  const values = ctx.store
+    .list<StoredDataTableValue>()
+    .filter((entry) => entry.key.startsWith(dataTableValuePrefix))
+    .map((entry) => entry.value)
+    .filter((v) => v.InstanceId === instanceId && v.DataTableId === tableId);
+  return {
+    PrimaryValuesList: values.map((v) => ({ Key: v.Key })),
+  };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -3039,6 +3166,7 @@ const connect = {
           }
           if (req.method === "GET") {
             if (parts[2] === "approved-origins") return "ListApprovedOrigins";
+            if (parts[2] === "bots") return "ListBots";
           }
         }
         if (parts.length === 4) {
@@ -3181,6 +3309,8 @@ const connect = {
           return "DescribeHoursOfOperation";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteHoursOfOperation";
+        if (parts.length === 4 && parts[3] === "hours" && req.method === "GET")
+          return "ListChildHoursOfOperations";
         if (
           parts.length === 4 &&
           parts[3] === "associate-hours" &&
@@ -3397,6 +3527,12 @@ const connect = {
           return "ListAssociatedContacts";
         if (
           parts.length === 4 &&
+          parts[1] === "references" &&
+          req.method === "GET"
+        )
+          return "ListContactReferences";
+        if (
+          parts.length === 4 &&
           parts[1] === "attributes" &&
           req.method === "GET"
         )
@@ -3416,6 +3552,12 @@ const connect = {
           return "DescribeContactFlow";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteContactFlow";
+        if (
+          parts.length === 4 &&
+          req.method === "GET" &&
+          parts[3] === "versions"
+        )
+          return "ListContactFlowVersions";
         if (
           parts.length === 4 &&
           req.method === "PUT" &&
@@ -3442,6 +3584,10 @@ const connect = {
           return "DescribeContactFlowModule";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteContactFlowModule";
+        if (parts.length === 4 && req.method === "GET") {
+          if (parts[3] === "aliases") return "ListContactFlowModuleAliases";
+          if (parts[3] === "versions") return "ListContactFlowModuleVersions";
+        }
         if (parts.length === 4 && req.method === "PUT") {
           if (parts[3] === "alias") return "CreateContactFlowModuleAlias";
           if (parts[3] === "version") return "CreateContactFlowModuleVersion";
@@ -3473,6 +3619,12 @@ const connect = {
         if (
           parts.length === 4 &&
           parts[3] === "attributes" &&
+          req.method === "POST"
+        )
+          return "ListDataTableAttributes";
+        if (
+          parts.length === 4 &&
+          parts[3] === "attributes" &&
           req.method === "PUT"
         )
           return "CreateDataTableAttribute";
@@ -3498,6 +3650,7 @@ const connect = {
           if (parts[4] === "describe") return "BatchDescribeDataTableValue";
           if (parts[4] === "update") return "BatchUpdateDataTableValue";
           if (parts[4] === "evaluate") return "EvaluateDataTableValues";
+          if (parts[4] === "list-primary") return "ListDataTablePrimaryValues";
         }
         return undefined;
 
@@ -3588,7 +3741,24 @@ const connect = {
           return "UpdateAuthenticationProfile";
         return undefined;
 
+      case "authentication-profiles-summary":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListAuthenticationProfiles";
+        return undefined;
+
+      case "contact-flows-summary":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListContactFlows";
+        return undefined;
+
+      case "contact-flow-modules-summary":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListContactFlowModules";
+        return undefined;
+
       case "contact-evaluations":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListContactEvaluations";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeContactEvaluation";
         if (parts.length === 3 && req.method === "POST")
@@ -3851,6 +4021,18 @@ const connect = {
     ListApprovedOrigins,
     ListAssociatedContacts,
     ListAttachedFilesConfigurations,
+    ListAuthenticationProfiles,
+    ListBots,
+    ListChildHoursOfOperations,
+    ListContactEvaluations,
+    ListContactFlowModuleAliases,
+    ListContactFlowModuleVersions,
+    ListContactFlowModules,
+    ListContactFlowVersions,
+    ListContactFlows,
+    ListContactReferences,
+    ListDataTableAttributes,
+    ListDataTablePrimaryValues,
     DescribeAuthenticationProfile,
     DescribeContact,
     DescribeContactEvaluation,

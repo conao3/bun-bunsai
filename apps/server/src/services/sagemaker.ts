@@ -7089,6 +7089,347 @@ const ListEdgePackagingJobs: OperationHandler = (input, ctx) => {
   };
 };
 
+const ListExperiments: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let experiments = ctx.store
+    .list<StoredExperiment>()
+    .filter((entry) => entry.key.startsWith("experiment/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    experiments = experiments.slice(0, maxResults);
+  }
+  return {
+    ExperimentSummaries: experiments.map((stored) => ({
+      ExperimentArn: stored.ExperimentArn,
+      ExperimentName: stored.ExperimentName,
+      DisplayName: stored.DisplayName,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListFeatureGroups: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let groups = ctx.store
+    .list<StoredFeatureGroup>()
+    .filter((entry) => entry.key.startsWith("feature-group/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    groups = groups.filter((g) => g.FeatureGroupName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    groups = groups.slice(0, maxResults);
+  }
+  return {
+    FeatureGroupSummaries: groups.map((stored) => ({
+      FeatureGroupName: stored.FeatureGroupName,
+      FeatureGroupArn: stored.FeatureGroupArn,
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListFlowDefinitions: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let defs = ctx.store
+    .list<StoredFlowDefinition>()
+    .filter((entry) => entry.key.startsWith("flow-definition/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    defs = defs.slice(0, maxResults);
+  }
+  return {
+    FlowDefinitionSummaries: defs.map((stored) => ({
+      FlowDefinitionName: stored.FlowDefinitionName,
+      FlowDefinitionArn: stored.FlowDefinitionArn,
+      FlowDefinitionStatus: "Active",
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListHubContentVersions: OperationHandler = (input, ctx) => {
+  const hubName = requireString(input, "HubName");
+  requireHub(ctx, hubName);
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let items = ctx.store
+    .list<unknown>()
+    .filter((entry) => entry.key.startsWith(`hub-content/${hubName}/`))
+    .map(() => ({}));
+  if (maxResults !== undefined) {
+    items = items.slice(0, maxResults);
+  }
+  return { HubContentSummaries: items };
+};
+
+const ListHubContents: OperationHandler = (input, ctx) => {
+  const hubName = requireString(input, "HubName");
+  requireHub(ctx, hubName);
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let items = ctx.store
+    .list<unknown>()
+    .filter((entry) => entry.key.startsWith(`hub-content/${hubName}/`));
+  if (nameContains !== undefined) {
+    items = items.filter((e) => e.key.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    items = items.slice(0, maxResults);
+  }
+  return { HubContentSummaries: items.map(() => ({})) };
+};
+
+const ListHubs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let hubs = ctx.store
+    .list<StoredHub>()
+    .filter((entry) => entry.key.startsWith("hub/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    hubs = hubs.filter((h) => h.HubName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    hubs = hubs.slice(0, maxResults);
+  }
+  return {
+    HubSummaries: hubs.map((stored) => ({
+      HubName: stored.HubName,
+      HubArn: stored.HubArn,
+      HubDescription: stored.HubDescription,
+      HubDisplayName: stored.HubDisplayName,
+      HubStatus: "InService",
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListHumanTaskUis: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let uis = ctx.store
+    .list<StoredHumanTaskUi>()
+    .filter((entry) => entry.key.startsWith("human-task-ui/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    uis = uis.slice(0, maxResults);
+  }
+  return {
+    HumanTaskUiSummaries: uis.map((stored) => ({
+      HumanTaskUiName: stored.HumanTaskUiName,
+      HumanTaskUiArn: stored.HumanTaskUiArn,
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListHyperParameterTuningJobs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let jobs = ctx.store
+    .list<StoredHyperParameterTuningJob>()
+    .filter((entry) => entry.key.startsWith("hyper-parameter-tuning-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    jobs = jobs.filter((j) =>
+      j.HyperParameterTuningJobName.includes(nameContains),
+    );
+  }
+  if (maxResults !== undefined) {
+    jobs = jobs.slice(0, maxResults);
+  }
+  return {
+    HyperParameterTuningJobSummaries: jobs.map((stored) => ({
+      HyperParameterTuningJobName: stored.HyperParameterTuningJobName,
+      HyperParameterTuningJobArn: stored.HyperParameterTuningJobArn,
+      HyperParameterTuningJobStatus: stored.HyperParameterTuningJobStatus,
+      Strategy: "Bayesian",
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+      TrainingJobStatusCounters: {
+        Completed: 0,
+        InProgress: 0,
+        RetryableError: 0,
+        NonRetryableError: 0,
+        Stopped: 0,
+      },
+      ObjectiveStatusCounters: {
+        Succeeded: 0,
+        Pending: 0,
+        Failed: 0,
+      },
+    })),
+  };
+};
+
+const ListImageVersions: OperationHandler = (input, ctx) => {
+  const imageName = requireString(input, "ImageName");
+  requireImage(ctx, imageName);
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let versions = ctx.store
+    .list<StoredImageVersion>()
+    .filter((entry) => entry.key.startsWith(`image-version/${imageName}/`))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    versions = versions.slice(0, maxResults);
+  }
+  return {
+    ImageVersions: versions.map((stored) => ({
+      ImageVersionArn: stored.ImageVersionArn,
+      ImageArn: ctx.store.get<StoredImage>(imageKey(imageName))?.ImageArn,
+      Version: stored.Version,
+      ImageVersionStatus: "CREATED",
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListImages: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let images = ctx.store
+    .list<StoredImage>()
+    .filter((entry) => entry.key.startsWith("image/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    images = images.filter((img) => img.ImageName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    images = images.slice(0, maxResults);
+  }
+  return {
+    Images: images.map((stored) => ({
+      ImageName: stored.ImageName,
+      ImageArn: stored.ImageArn,
+      DisplayName: stored.DisplayName,
+      Description: stored.Description,
+      ImageStatus: "CREATED",
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListInferenceComponents: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let components = ctx.store
+    .list<StoredInferenceComponent>()
+    .filter((entry) => entry.key.startsWith("inference-component/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    components = components.filter((c) =>
+      c.InferenceComponentName.includes(nameContains),
+    );
+  }
+  if (maxResults !== undefined) {
+    components = components.slice(0, maxResults);
+  }
+  return {
+    InferenceComponents: components.map((stored) => ({
+      InferenceComponentName: stored.InferenceComponentName,
+      InferenceComponentArn: stored.InferenceComponentArn,
+      EndpointName: stored.EndpointName,
+      VariantName: stored.VariantName,
+      InferenceComponentStatus: "InService",
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListInferenceExperiments: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let experiments = ctx.store
+    .list<StoredInferenceExperiment>()
+    .filter((entry) => entry.key.startsWith("inference-experiment/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    experiments = experiments.filter((e) => e.Name.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    experiments = experiments.slice(0, maxResults);
+  }
+  return {
+    InferenceExperiments: experiments.map((stored) => ({
+      Name: stored.Name,
+      Type: stored.Type,
+      Status: "Running",
+      Description: stored.Description,
+      RoleArn: stored.RoleArn,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.CreationTime,
+    })),
+  };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -7358,6 +7699,18 @@ const sagemaker = {
     ListDomains,
     ListEdgeDeploymentPlans,
     ListEdgePackagingJobs,
+    ListExperiments,
+    ListFeatureGroups,
+    ListFlowDefinitions,
+    ListHubContentVersions,
+    ListHubContents,
+    ListHubs,
+    ListHumanTaskUis,
+    ListHyperParameterTuningJobs,
+    ListImageVersions,
+    ListImages,
+    ListInferenceComponents,
+    ListInferenceExperiments,
   },
   model,
 } as const satisfies ServiceDefinition;

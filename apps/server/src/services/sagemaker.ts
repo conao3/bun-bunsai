@@ -6004,6 +6004,236 @@ const CreatePresignedMlflowTrackingServerUrl: OperationHandler = (
   return { AuthorizedUrl: url };
 };
 
+const DescribeSpace: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  const spaceName = requireString(input, "SpaceName");
+  const stored = ctx.store.get<StoredSpace>(spaceKey(domainId, spaceName));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Space ${spaceName} in domain ${domainId} does not exist.`,
+      400,
+    );
+  }
+  return {
+    DomainId: stored.DomainId,
+    SpaceArn: stored.SpaceArn,
+    SpaceName: stored.SpaceName,
+    Status: stored.Status,
+    SpaceDisplayName: stored.SpaceDisplayName,
+    SpaceSettings: stored.SpaceSettings,
+    OwnershipSettings: stored.OwnershipSettings,
+    SpaceSharingSettings: stored.SpaceSharingSettings,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeStudioLifecycleConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "StudioLifecycleConfigName");
+  const stored = ctx.store.get<StoredStudioLifecycleConfig>(
+    studioLifecycleConfigKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `StudioLifecycleConfig ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    StudioLifecycleConfigArn: stored.StudioLifecycleConfigArn,
+    StudioLifecycleConfigName: stored.StudioLifecycleConfigName,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+    StudioLifecycleConfigContent: stored.StudioLifecycleConfigContent,
+    StudioLifecycleConfigAppType: stored.StudioLifecycleConfigAppType,
+  };
+};
+
+const DescribeSubscribedWorkteam: OperationHandler = (input, _ctx) => {
+  const workteamArn = requireString(input, "WorkteamArn");
+  return {
+    SubscribedWorkteam: {
+      WorkteamArn: workteamArn,
+      MarketplaceTitle: "Bunsai Subscribed Workteam",
+      SellerName: "bunsai",
+      MarketplaceDescription: "Synthetic subscribed workteam for testing.",
+      ListingId: "bunsai-listing-id",
+    },
+  };
+};
+
+const DescribeTrainingPlanExtensionHistory: OperationHandler = (input, ctx) => {
+  const trainingPlanArn = requireString(input, "TrainingPlanArn");
+  const arnParts = trainingPlanArn.split("training-plan/");
+  const name = arnParts.length > 1 ? arnParts[1] : "";
+  const stored = ctx.store.get<StoredTrainingPlan>(trainingPlanKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `TrainingPlan ${trainingPlanArn} does not exist.`,
+      400,
+    );
+  }
+  return {
+    TrainingPlanExtensions: [],
+  };
+};
+
+const DescribeTransformJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TransformJobName");
+  const stored = ctx.store.get<StoredTransformJob>(transformJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `TransformJob ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    TransformJobName: stored.TransformJobName,
+    TransformJobArn: stored.TransformJobArn,
+    TransformJobStatus: stored.TransformJobStatus,
+    ModelName: stored.ModelName,
+    TransformInput: stored.TransformInput,
+    TransformOutput: stored.TransformOutput,
+    TransformResources: stored.TransformResources,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeTrial: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrialName");
+  const stored = ctx.store.get<StoredTrial>(trialKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Trial ${name} does not exist.`, 400);
+  }
+  return {
+    TrialName: stored.TrialName,
+    TrialArn: stored.TrialArn,
+    DisplayName: stored.DisplayName,
+    ExperimentName: stored.ExperimentName,
+    MetadataProperties: stored.MetadataProperties,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeTrialComponent: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrialComponentName");
+  const stored = ctx.store.get<StoredTrialComponent>(trialComponentKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `TrialComponent ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    TrialComponentName: stored.TrialComponentName,
+    TrialComponentArn: stored.TrialComponentArn,
+    DisplayName: stored.DisplayName,
+    Status: stored.Status,
+    StartTime: stored.StartTime,
+    EndTime: stored.EndTime,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeUserProfile: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  const userProfileName = requireString(input, "UserProfileName");
+  const stored = ctx.store.get<StoredUserProfile>(
+    userProfileKey(domainId, userProfileName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `UserProfile ${userProfileName} in domain ${domainId} does not exist.`,
+      400,
+    );
+  }
+  return {
+    DomainId: stored.DomainId,
+    UserProfileArn: stored.UserProfileArn,
+    UserProfileName: stored.UserProfileName,
+    Status: stored.Status,
+    SingleSignOnUserIdentifier: stored.SingleSignOnUserIdentifier,
+    SingleSignOnUserValue: stored.SingleSignOnUserValue,
+    UserSettings: stored.UserSettings,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeWorkforce: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "WorkforceName");
+  const stored = ctx.store.get<StoredWorkforce>(workforceKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Workforce ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    Workforce: {
+      WorkforceName: stored.WorkforceName,
+      WorkforceArn: stored.WorkforceArn,
+      CognitoConfig: stored.CognitoConfig,
+      OidcConfig: stored.OidcConfig,
+      SourceIpConfig: stored.SourceIpConfig,
+      WorkforceVpcConfig: stored.WorkforceVpcConfig,
+      CreateDate: stored.CreationTime,
+      LastUpdatedDate: stored.LastModifiedTime,
+    },
+  };
+};
+
+const DescribeWorkteam: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "WorkteamName");
+  const stored = ctx.store.get<StoredWorkteam>(workteamKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Workteam ${name} does not exist.`, 400);
+  }
+  return {
+    Workteam: {
+      WorkteamName: stored.WorkteamName,
+      WorkteamArn: stored.WorkteamArn,
+      Description: stored.Description,
+      MemberDefinitions: stored.MemberDefinitions,
+      NotificationConfiguration: stored.NotificationConfiguration,
+      WorkerAccessConfiguration: stored.WorkerAccessConfiguration,
+      CreateDate: stored.CreateDate,
+      LastUpdatedDate: stored.LastUpdatedDate,
+    },
+  };
+};
+
+const DetachClusterNodeVolume: OperationHandler = (input, _ctx) => {
+  const clusterArn = requireString(input, "ClusterArn");
+  const nodeId = requireString(input, "NodeId");
+  const volumeId = requireString(input, "VolumeId");
+  return {
+    ClusterArn: clusterArn,
+    NodeId: nodeId,
+    VolumeId: volumeId,
+    AttachTime: nowSeconds(),
+    Status: "detached",
+    DeviceName: "/dev/xvdf",
+  };
+};
+
+const DisableSagemakerServicecatalogPortfolio: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return {};
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -6225,6 +6455,18 @@ const sagemaker = {
     DeleteUserProfile,
     DeleteWorkforce,
     DeleteWorkteam,
+    DescribeSpace,
+    DescribeStudioLifecycleConfig,
+    DescribeSubscribedWorkteam,
+    DescribeTrainingPlanExtensionHistory,
+    DescribeTransformJob,
+    DescribeTrial,
+    DescribeTrialComponent,
+    DescribeUserProfile,
+    DescribeWorkforce,
+    DescribeWorkteam,
+    DetachClusterNodeVolume,
+    DisableSagemakerServicecatalogPortfolio,
   },
   model,
 } as const satisfies ServiceDefinition;

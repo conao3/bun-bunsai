@@ -45,6 +45,23 @@ type StoredSecret = {
 const arnOf = (ctx: ServiceContext, name: string, suffix: string): string =>
   `arn:aws:secretsmanager:${ctx.region}:${ctx.account}:secret:${name}-${suffix}`;
 
+const promoteToCurrent = (
+  secret: StoredSecret,
+  oldVersionId: string,
+  newVersionId: string,
+): void => {
+  for (const v of Object.values(secret.versions))
+    v.VersionStages = v.VersionStages.filter((s) => s !== "AWSPREVIOUS");
+  const oldVersion = secret.versions[oldVersionId];
+  if (oldVersion !== undefined && oldVersionId !== newVersionId) {
+    oldVersion.VersionStages = oldVersion.VersionStages.filter(
+      (s) => s !== "AWSCURRENT",
+    );
+    oldVersion.VersionStages.push("AWSPREVIOUS");
+  }
+  secret.currentVersionId = newVersionId;
+};
+
 const randomSuffix = (): string =>
   crypto.randomUUID().replace(/-/g, "").slice(0, 6);
 
@@ -127,9 +144,20 @@ const CreateSecret: OperationHandler = (input, ctx) => {
 
 const GetSecretValue: OperationHandler = (input, ctx) => {
   const secret = requireSecret(ctx, secretIdFromInput(input));
+  const requestedStage = stringOrUndefined(input["VersionStage"]);
   const requestedVersion = stringOrUndefined(input["VersionId"]);
-  const versionId = requestedVersion ?? secret.currentVersionId;
-  const version = secret.versions[versionId];
+  let version: StoredVersion | undefined;
+  if (requestedStage !== undefined) {
+    version = Object.values(secret.versions).find((v) =>
+      v.VersionStages.includes(requestedStage),
+    );
+  } else if (requestedVersion !== undefined) {
+    version = secret.versions[requestedVersion];
+  } else {
+    version = Object.values(secret.versions).find((v) =>
+      v.VersionStages.includes("AWSCURRENT"),
+    );
+  }
   if (version === undefined) {
     throw awsError(
       "ResourceNotFoundException",
@@ -163,14 +191,12 @@ const PutSecretValue: OperationHandler = (input, ctx) => {
     CreatedDate: nowSeconds(),
   };
   if (stages.includes("AWSCURRENT")) {
-    const previous = secret.versions[secret.currentVersionId];
-    if (previous !== undefined)
-      previous.VersionStages = previous.VersionStages.filter(
-        (stage) => stage !== "AWSCURRENT",
-      );
-    secret.currentVersionId = versionId;
+    const oldVersionId = secret.currentVersionId;
+    secret.versions[versionId] = version;
+    promoteToCurrent(secret, oldVersionId, versionId);
+  } else {
+    secret.versions[versionId] = version;
   }
-  secret.versions[versionId] = version;
   secret.LastChangedDate = nowSeconds();
   ctx.store.set(secret.Name, secret);
   return {
@@ -243,11 +269,7 @@ const UpdateSecret: OperationHandler = (input, ctx) => {
   if (secretString !== undefined || secretBinary !== undefined) {
     versionId =
       stringOrUndefined(input["ClientRequestToken"]) ?? crypto.randomUUID();
-    const previous = secret.versions[secret.currentVersionId];
-    if (previous !== undefined)
-      previous.VersionStages = previous.VersionStages.filter(
-        (stage) => stage !== "AWSCURRENT",
-      );
+    const oldVersionId = secret.currentVersionId;
     secret.versions[versionId] = {
       VersionId: versionId,
       SecretString: secretString,
@@ -255,7 +277,7 @@ const UpdateSecret: OperationHandler = (input, ctx) => {
       VersionStages: ["AWSCURRENT"],
       CreatedDate: nowSeconds(),
     };
-    secret.currentVersionId = versionId;
+    promoteToCurrent(secret, oldVersionId, versionId);
   }
   secret.LastChangedDate = nowSeconds();
   ctx.store.set(secret.Name, secret);

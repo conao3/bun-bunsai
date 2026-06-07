@@ -1,5 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
+import { deliverToQueue } from "./sqs.ts";
 import snsModel from "../../../../test/vendor/aws-models/sns.json" with { type: "json" };
 import type {
   OperationHandler,
@@ -110,6 +111,178 @@ const requireTopic = (ctx: ServiceContext, arn: string): StoredTopic => {
   return topic;
 };
 
+const arnResourceName = (arn: string): string => arn.split(":").pop() ?? "";
+
+const jsonDefaultMessage = (message: string): string => {
+  try {
+    const parsed = JSON.parse(message) as Record<string, unknown>;
+    return typeof parsed["default"] === "string"
+      ? (parsed["default"] as string)
+      : message;
+  } catch {
+    return message;
+  }
+};
+
+const toBase64 = (value: unknown): string => {
+  if (value instanceof Uint8Array) {
+    return Buffer.from(value).toString("base64");
+  }
+  return typeof value === "string" ? value : "";
+};
+
+const envelopeMessageAttributes = (
+  messageAttributes: Record<string, unknown>,
+): Record<string, { Type: string; Value: string }> => {
+  const result: Record<string, { Type: string; Value: string }> = {};
+  for (const [name, raw] of Object.entries(messageAttributes)) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const value = raw as Record<string, unknown>;
+    const dataType =
+      typeof value["DataType"] === "string"
+        ? (value["DataType"] as string)
+        : "String";
+    if (typeof value["StringValue"] === "string") {
+      result[name] = { Type: dataType, Value: value["StringValue"] as string };
+    } else if (value["BinaryValue"] !== undefined) {
+      result[name] = { Type: dataType, Value: toBase64(value["BinaryValue"]) };
+    }
+  }
+  return result;
+};
+
+type DeliveryMessage = {
+  messageId: string;
+  message: string;
+  subject: string | undefined;
+  messageAttributes: Record<string, unknown> | undefined;
+};
+
+const buildEnvelope = (topicArn: string, delivery: DeliveryMessage): string => {
+  const envelope: Record<string, unknown> = {
+    Type: "Notification",
+    MessageId: delivery.messageId,
+    TopicArn: topicArn,
+    Message: delivery.message,
+    Timestamp: new Date().toISOString(),
+    SignatureVersion: "1",
+    Signature: "bunsai-local-unsigned",
+    SigningCertURL:
+      "http://localhost:4566/SimpleNotificationService-bunsai.pem",
+    UnsubscribeURL: `http://localhost:4566/?Action=Unsubscribe&SubscriptionArn=${topicArn}`,
+  };
+  if (delivery.subject !== undefined) envelope["Subject"] = delivery.subject;
+  if (
+    delivery.messageAttributes !== undefined &&
+    Object.keys(delivery.messageAttributes).length > 0
+  ) {
+    envelope["MessageAttributes"] = envelopeMessageAttributes(
+      delivery.messageAttributes,
+    );
+  }
+  return JSON.stringify(envelope);
+};
+
+type ActualAttribute = { value: string; isNumber: boolean };
+
+const attributeValueFor = (
+  messageAttributes: Record<string, unknown> | undefined,
+  key: string,
+): ActualAttribute | undefined => {
+  const attribute = messageAttributes?.[key];
+  if (typeof attribute !== "object" || attribute === null) return undefined;
+  const value = attribute as Record<string, unknown>;
+  if (typeof value["StringValue"] === "string") {
+    return {
+      value: value["StringValue"] as string,
+      isNumber: value["DataType"] === "Number",
+    };
+  }
+  return undefined;
+};
+
+const ruleMatches = (
+  rule: unknown,
+  actual: ActualAttribute | undefined,
+): boolean => {
+  if (typeof rule === "string") {
+    return actual !== undefined && actual.value === rule;
+  }
+  if (typeof rule === "number") {
+    return (
+      actual !== undefined && actual.isNumber && Number(actual.value) === rule
+    );
+  }
+  if (typeof rule !== "object" || rule === null) return false;
+  const operator = rule as Record<string, unknown>;
+  if ("exists" in operator) {
+    return (operator["exists"] === true) === (actual !== undefined);
+  }
+  if ("anything-but" in operator) {
+    const raw = operator["anything-but"];
+    const excluded = Array.isArray(raw) ? raw.map(String) : [String(raw)];
+    return actual !== undefined && !excluded.includes(actual.value);
+  }
+  if (typeof operator["prefix"] === "string") {
+    return actual !== undefined && actual.value.startsWith(operator["prefix"]);
+  }
+  return false;
+};
+
+const matchesFilterPolicy = (
+  policyRaw: string | undefined,
+  delivery: DeliveryMessage,
+): boolean => {
+  if (typeof policyRaw !== "string" || policyRaw === "") return true;
+  let policy: unknown;
+  try {
+    policy = JSON.parse(policyRaw);
+  } catch {
+    return true;
+  }
+  if (typeof policy !== "object" || policy === null) return true;
+  for (const [key, rules] of Object.entries(
+    policy as Record<string, unknown>,
+  )) {
+    if (!Array.isArray(rules)) continue;
+    const actual = attributeValueFor(delivery.messageAttributes, key);
+    if (!rules.some((rule) => ruleMatches(rule, actual))) return false;
+  }
+  return true;
+};
+
+const deliverToSqsSubscriptions = (
+  ctx: ServiceContext,
+  topicArn: string,
+  delivery: DeliveryMessage,
+): void => {
+  const sqsStore = ctx.storeFor("sqs");
+  for (const entry of ctx.store.list<StoredSubscription>()) {
+    if (!entry.key.startsWith("subscription/")) continue;
+    const subscription = entry.value;
+    if (subscription.TopicArn !== topicArn) continue;
+    if (subscription.Protocol !== "sqs") continue;
+    const attributes =
+      ctx.store.get<StoredSubscriptionAttributes>(
+        subscriptionAttributesKey(subscription.SubscriptionArn),
+      )?.Attributes ?? {};
+    if (!matchesFilterPolicy(attributes["FilterPolicy"], delivery)) continue;
+    const queueName = arnResourceName(subscription.Endpoint);
+    if (attributes["RawMessageDelivery"] === "true") {
+      deliverToQueue(sqsStore, queueName, {
+        body: delivery.message,
+        messageAttributes: delivery.messageAttributes,
+        senderId: ctx.account,
+      });
+    } else {
+      deliverToQueue(sqsStore, queueName, {
+        body: buildEnvelope(topicArn, delivery),
+        senderId: ctx.account,
+      });
+    }
+  }
+};
+
 const CreateTopic: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   const arn = topicArnOf(ctx.region, ctx.account, name);
@@ -212,7 +385,26 @@ const Publish: OperationHandler = (input, ctx) => {
       }
     }
   }
-  return { MessageId: crypto.randomUUID() };
+  const messageId = crypto.randomUUID();
+  if (typeof topicArn === "string" && topicArn !== "") {
+    const deliveredMessage =
+      typeof messageStructure === "string" && messageStructure === "json"
+        ? jsonDefaultMessage(message)
+        : message;
+    deliverToSqsSubscriptions(ctx, topicArn, {
+      messageId,
+      message: deliveredMessage,
+      subject:
+        typeof input["Subject"] === "string"
+          ? (input["Subject"] as string)
+          : undefined,
+      messageAttributes:
+        typeof attributes === "object" && attributes !== null
+          ? (attributes as Record<string, unknown>)
+          : undefined,
+    });
+  }
+  return { MessageId: messageId };
 };
 
 const Subscribe: OperationHandler = (input, ctx) => {

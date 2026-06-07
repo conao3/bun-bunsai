@@ -4006,6 +4006,247 @@ const DescribeInferenceComponent: OperationHandler = (input, ctx) => {
   };
 };
 
+const DescribeInferenceExperiment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const stored = ctx.store.get<StoredInferenceExperiment>(
+    inferenceExperimentKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `InferenceExperiment ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    Name: stored.Name,
+    Arn: stored.InferenceExperimentArn,
+    Type: stored.Type,
+    Status: "Running",
+    RoleArn: stored.RoleArn,
+    EndpointName: stored.EndpointName,
+    ModelVariants: stored.ModelVariants,
+    ShadowModeConfig: stored.ShadowModeConfig,
+    Description: stored.Description,
+    Schedule: stored.Schedule,
+    DataStorageConfig: stored.DataStorageConfig,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+  };
+};
+
+const DescribeInferenceRecommendationsJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "JobName");
+  const stored = ctx.store.get<StoredInferenceRecommendationsJob>(
+    inferenceRecommendationsJobKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `InferenceRecommendationsJob ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    JobName: stored.JobName,
+    JobArn: stored.JobArn,
+    JobType: stored.JobType,
+    Status: "COMPLETED",
+    RoleArn: stored.RoleArn,
+    InputConfig: stored.InputConfig,
+    JobDescription: stored.JobDescription,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+    CompletionTime: stored.CreationTime,
+  };
+};
+
+const DescribeLabelingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "LabelingJobName");
+  const stored = ctx.store.get<StoredLabelingJob>(labelingJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `LabelingJob ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    LabelingJobName: stored.LabelingJobName,
+    LabelingJobArn: stored.LabelingJobArn,
+    LabelingJobStatus: stored.LabelingJobStatus,
+    LabelAttributeName: stored.LabelAttributeName,
+    InputConfig: stored.InputConfig,
+    OutputConfig: stored.OutputConfig,
+    RoleArn: stored.RoleArn,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+    LabelCounters: {
+      TotalLabeled: 0,
+      HumanLabeled: 0,
+      MachineLabeled: 0,
+      FailedNonRetryableError: 0,
+      Unlabeled: 0,
+    },
+  };
+};
+
+const DescribeLineageGroup: OperationHandler = (input, _ctx) => {
+  const name = requireString(input, "LineageGroupName");
+  return {
+    LineageGroupName: name,
+    LineageGroupArn: `arn:aws:sagemaker:us-east-1:123456789012:lineage-group/${name}`,
+    DisplayName: name,
+    Description: "",
+    CreationTime: 0,
+    LastModifiedTime: 0,
+  };
+};
+
+const DescribeMlflowApp: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "Arn");
+  const stored = requireMlflowApp(ctx, arn);
+  return {
+    Name: stored.Name,
+    Arn: stored.Arn,
+    Status: "InService",
+    ArtifactStoreUri: stored.ArtifactStoreUri,
+    RoleArn: stored.RoleArn,
+    ModelRegistrationMode: stored.ModelRegistrationMode,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+  };
+};
+
+const DescribeMlflowTrackingServer: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrackingServerName");
+  const stored = ctx.store.get<StoredMlflowTrackingServer>(
+    mlflowTrackingServerKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `MlflowTrackingServer ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    TrackingServerName: stored.TrackingServerName,
+    TrackingServerArn: stored.TrackingServerArn,
+    TrackingServerStatus: "Created",
+    ArtifactStoreUri: stored.ArtifactStoreUri,
+    TrackingServerSize: stored.TrackingServerSize,
+    MlflowVersion: stored.MlflowVersion,
+    RoleArn: stored.RoleArn,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+  };
+};
+
+const DescribeMonitoringSchedule: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "MonitoringScheduleName");
+  const stored = requireMonitoringSchedule(ctx, name);
+  return {
+    MonitoringScheduleName: stored.MonitoringScheduleName,
+    MonitoringScheduleArn: stored.MonitoringScheduleArn,
+    MonitoringScheduleStatus: "Scheduled",
+    MonitoringScheduleConfig: stored.MonitoringScheduleConfig,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+  };
+};
+
+const DescribeOptimizationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "OptimizationJobName");
+  const stored = ctx.store.get<StoredOptimizationJob>(optimizationJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `OptimizationJob ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    OptimizationJobName: stored.OptimizationJobName,
+    OptimizationJobArn: stored.OptimizationJobArn,
+    OptimizationJobStatus: stored.OptimizationJobStatus,
+    RoleArn: stored.RoleArn,
+    ModelSource: stored.ModelSource,
+    DeploymentInstanceType: stored.DeploymentInstanceType,
+    OptimizationConfigs: stored.OptimizationConfigs,
+    OutputConfig: stored.OutputConfig,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribePartnerApp: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "Arn");
+  const stored = requirePartnerApp(ctx, arn);
+  return {
+    Arn: stored.Arn,
+    Name: stored.Name,
+    Status: "Available",
+    Type: stored.Type,
+    ExecutionRoleArn: stored.ExecutionRoleArn,
+    Tier: stored.Tier,
+    AuthType: stored.AuthType,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.CreationTime,
+  };
+};
+
+const DescribeProcessingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ProcessingJobName");
+  const stored = requireProcessingJob(ctx, name);
+  return {
+    ProcessingJobName: stored.ProcessingJobName,
+    ProcessingJobArn: stored.ProcessingJobArn,
+    ProcessingJobStatus: stored.ProcessingJobStatus,
+    AppSpecification: stored.AppSpecification,
+    ProcessingInputs: stored.ProcessingInputs,
+    ProcessingOutputConfig: stored.ProcessingOutputConfig,
+    ProcessingResources: stored.ProcessingResources,
+    RoleArn: stored.RoleArn,
+    StoppingCondition: stored.StoppingCondition,
+    CreationTime: stored.CreationTime,
+    LastModifiedTime: stored.LastModifiedTime,
+  };
+};
+
+const DescribeProject: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ProjectName");
+  const stored = ctx.store.get<StoredProject>(projectKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Project ${name} does not exist.`, 400);
+  }
+  return {
+    ProjectName: stored.ProjectName,
+    ProjectArn: stored.ProjectArn,
+    ProjectId: stored.ProjectId,
+    ProjectDescription: stored.ProjectDescription,
+    ServiceCatalogProvisioningDetails: stored.ServiceCatalogProvisioningDetails,
+    ProjectStatus: stored.ProjectStatus,
+    CreationTime: stored.CreationTime,
+  };
+};
+
+const DescribeReservedCapacity: OperationHandler = (input, _ctx) => {
+  const arn = requireString(input, "ReservedCapacityArn");
+  return {
+    ReservedCapacityArn: arn,
+    ReservedCapacityName: arn.split("/").pop() ?? "reserved-capacity",
+    Status: "Active",
+    InstanceType: "ml.p4d.24xlarge",
+    TotalInstanceCount: 1,
+    AvailableInstanceCount: 1,
+    UsedInstanceCount: 0,
+    Duration: "1Month",
+    StartTime: 0,
+    EndTime: 0,
+  };
+};
+
 const AddAssociation: OperationHandler = (input, ctx) => {
   const sourceArn = requireString(input, "SourceArn");
   const destinationArn = requireString(input, "DestinationArn");
@@ -5869,6 +6110,18 @@ const sagemaker = {
     DescribeImage,
     DescribeImageVersion,
     DescribeInferenceComponent,
+    DescribeInferenceExperiment,
+    DescribeInferenceRecommendationsJob,
+    DescribeLabelingJob,
+    DescribeLineageGroup,
+    DescribeMlflowApp,
+    DescribeMlflowTrackingServer,
+    DescribeMonitoringSchedule,
+    DescribeOptimizationJob,
+    DescribePartnerApp,
+    DescribeProcessingJob,
+    DescribeProject,
+    DescribeReservedCapacity,
     CreateSpace,
     CreateUserProfile,
     CreatePresignedDomainUrl,

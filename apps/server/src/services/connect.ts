@@ -3826,6 +3826,208 @@ const SearchContactEvaluations: OperationHandler = (input, ctx) => {
   return { EvaluationSearchSummaryList: [], ApproximateTotalCount: 0 };
 };
 
+const SearchContactFlowModules: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const modules = ctx.store
+    .list<StoredContactFlowModule>()
+    .filter((entry) => entry.key.startsWith(contactFlowModulePrefix))
+    .map((entry) => entry.value)
+    .filter((m) => m.InstanceId === instanceId);
+  return {
+    ContactFlowModules: modules.map((m) => ({
+      Id: m.Id,
+      Arn: m.Arn,
+      Name: m.Name,
+    })),
+    ApproximateTotalCount: modules.length,
+  };
+};
+
+const SearchContactFlows: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const flows = ctx.store
+    .list<StoredContactFlow>()
+    .filter((entry) => entry.key.startsWith(contactFlowPrefix))
+    .map((entry) => entry.value)
+    .filter((f) => f.InstanceId === instanceId);
+  return {
+    ContactFlows: flows.map((f) => ({
+      Id: f.ContactFlowId,
+      Arn: f.ContactFlowArn,
+      Name: f.Name,
+      ContactFlowType: f.Type,
+    })),
+    ApproximateTotalCount: flows.length,
+  };
+};
+
+const SearchContacts: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contacts = ctx.store
+    .list<StoredContact>()
+    .filter((entry) => entry.key.startsWith(contactPrefix))
+    .map((entry) => entry.value)
+    .filter((c) => c.InstanceId === instanceId);
+  return {
+    Contacts: contacts.map((c) => ({ Id: c.ContactId, Arn: c.ContactArn })),
+    TotalCount: contacts.length,
+  };
+};
+
+const SearchDataTables: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const tables = ctx.store
+    .list<StoredDataTable>()
+    .filter((entry) => entry.key.startsWith(dataTablePrefix))
+    .map((entry) => entry.value)
+    .filter((t) => t.InstanceId === instanceId);
+  return {
+    DataTables: tables.map((t) => ({ Id: t.Id, Arn: t.Arn })),
+    ApproximateTotalCount: tables.length,
+  };
+};
+
+const SearchEmailAddresses: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const addresses = ctx.store
+    .list<StoredEmailAddress>()
+    .filter((entry) => entry.key.startsWith(emailAddressPrefix))
+    .map((entry) => entry.value)
+    .filter((a) => a.InstanceId === instanceId);
+  return {
+    EmailAddresses: addresses.map((a) => ({
+      EmailAddressId: a.EmailAddressId,
+      EmailAddressArn: a.EmailAddressArn,
+      EmailAddress: a.EmailAddress,
+    })),
+    ApproximateTotalCount: addresses.length,
+  };
+};
+
+const SearchEvaluationForms: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const forms = ctx.store
+    .list<StoredEvaluationForm>()
+    .filter((entry) => entry.key.startsWith(evaluationFormPrefix))
+    .map((entry) => entry.value)
+    .filter((f) => f.InstanceId === instanceId);
+  return {
+    EvaluationFormSearchSummaryList: forms.map((f) => ({
+      EvaluationFormId: f.EvaluationFormId,
+      EvaluationFormArn: f.EvaluationFormArn,
+    })),
+    ApproximateTotalCount: forms.length,
+  };
+};
+
+const SearchHoursOfOperationOverrides: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const overrides = ctx.store
+    .list<StoredHoursOfOperationOverride>()
+    .filter((entry) => entry.key.startsWith(hoursOfOperationOverridePrefix))
+    .map((entry) => entry.value)
+    .filter((o) => o.InstanceId === instanceId);
+  return {
+    HoursOfOperationOverrides: overrides.map((o) => ({
+      HoursOfOperationOverrideId: o.HoursOfOperationOverrideId,
+      HoursOfOperationId: o.HoursOfOperationId,
+    })),
+    ApproximateTotalCount: overrides.length,
+  };
+};
+
+const SearchHoursOfOperations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hours = ctx.store
+    .list<StoredHoursOfOperation>()
+    .filter((entry) => entry.key.startsWith(hoursOfOperationPrefix))
+    .map((entry) => entry.value)
+    .filter((h) => h.InstanceId === instanceId);
+  return {
+    HoursOfOperations: hours.map((h) => ({
+      HoursOfOperationId: h.HoursOfOperationId,
+      HoursOfOperationArn: h.HoursOfOperationArn,
+      Name: h.Name,
+    })),
+    ApproximateTotalCount: hours.length,
+  };
+};
+
+const SearchNotifications: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const notifications = ctx.store
+    .list<StoredNotification>()
+    .filter((entry) => entry.key.startsWith(notificationPrefix))
+    .map((entry) => entry.value)
+    .filter((n) => n.InstanceId === instanceId);
+  return {
+    Notifications: notifications.map((n) => ({
+      NotificationId: n.NotificationId,
+      NotificationArn: n.NotificationArn,
+    })),
+    ApproximateTotalCount: notifications.length,
+  };
+};
+
+const SearchPredefinedAttributes: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const attrs = ctx.store
+    .list<StoredPredefinedAttribute>()
+    .filter((entry) => entry.key.startsWith(predefinedAttributePrefix))
+    .map((entry) => entry.value)
+    .filter((a) => a.InstanceId === instanceId);
+  return {
+    PredefinedAttributes: attrs.map((a) => ({ Name: a.Name })),
+    ApproximateTotalCount: attrs.length,
+  };
+};
+
+const SearchPrompts: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const prompts = ctx.store
+    .list<StoredPrompt>()
+    .filter((entry) => entry.key.startsWith(promptPrefix))
+    .map((entry) => entry.value)
+    .filter((p) => p.InstanceId === instanceId);
+  return {
+    Prompts: prompts.map((p) => ({
+      PromptId: p.PromptId,
+      PromptARN: p.PromptArn,
+      Name: p.Name,
+    })),
+    ApproximateTotalCount: prompts.length,
+  };
+};
+
+const SearchQueues: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const queues = ctx.store
+    .list<StoredQueue>()
+    .filter((entry) => entry.key.startsWith(queuePrefix))
+    .map((entry) => entry.value)
+    .filter((q) => q.InstanceId === instanceId);
+  return {
+    Queues: queues.map((q) => ({
+      QueueId: q.QueueId,
+      QueueArn: q.QueueArn,
+      Name: q.Name,
+    })),
+    ApproximateTotalCount: queues.length,
+  };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -4800,6 +5002,64 @@ const connect = {
           return "SearchContactEvaluations";
         return undefined;
 
+      case "search-contact-flow-modules":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchContactFlowModules";
+        return undefined;
+
+      case "search-contact-flows":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchContactFlows";
+        return undefined;
+
+      case "search-contacts":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchContacts";
+        return undefined;
+
+      case "search-data-tables":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchDataTables";
+        return undefined;
+
+      case "search-email-addresses":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchEmailAddresses";
+        return undefined;
+
+      case "search-evaluation-forms":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchEvaluationForms";
+        return undefined;
+
+      case "search-hours-of-operation-overrides":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchHoursOfOperationOverrides";
+        return undefined;
+
+      case "search-hours-of-operations":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchHoursOfOperations";
+        return undefined;
+
+      case "search-notifications":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchNotifications";
+        return undefined;
+
+      case "search-predefined-attributes":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchPredefinedAttributes";
+        return undefined;
+
+      case "search-prompts":
+        if (parts.length === 1 && req.method === "POST") return "SearchPrompts";
+        return undefined;
+
+      case "search-queues":
+        if (parts.length === 1 && req.method === "POST") return "SearchQueues";
+        return undefined;
+
       default:
         return undefined;
     }
@@ -5074,6 +5334,18 @@ const connect = {
     SearchAgentStatuses,
     SearchAvailablePhoneNumbers,
     SearchContactEvaluations,
+    SearchContactFlowModules,
+    SearchContactFlows,
+    SearchContacts,
+    SearchDataTables,
+    SearchEmailAddresses,
+    SearchEvaluationForms,
+    SearchHoursOfOperationOverrides,
+    SearchHoursOfOperations,
+    SearchNotifications,
+    SearchPredefinedAttributes,
+    SearchPrompts,
+    SearchQueues,
   },
   model,
 } as const satisfies ServiceDefinition;

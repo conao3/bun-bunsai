@@ -15,6 +15,13 @@ type StackResource = {
   PhysicalResourceId: string;
 };
 
+type StackOutput = {
+  OutputKey: string;
+  OutputValue: string;
+  Description?: string;
+  ExportName?: string;
+};
+
 type StoredStack = {
   StackId: string;
   StackName: string;
@@ -28,6 +35,7 @@ type StoredStack = {
   EnableTerminationProtection: boolean;
   StackPolicy: string;
   StackResources: StackResource[];
+  StackOutputs: StackOutput[];
 };
 
 type StoredChangeSet = {
@@ -247,6 +255,124 @@ const resourcesOf = (
               ? (item["Properties"] as Record<string, unknown>)
               : {},
         };
+      },
+    );
+  } catch {
+    return [];
+  }
+};
+
+const getAtt = (
+  ctx: ServiceContext,
+  resourceType: string,
+  physicalId: string,
+  attribute: string,
+): string => {
+  if (resourceType === "AWS::SQS::Queue") {
+    if (attribute === "Arn") {
+      const segments = physicalId.split("/");
+      const name = segments[segments.length - 1] ?? physicalId;
+      return `arn:aws:sqs:${ctx.region}:${ctx.account}:${name}`;
+    }
+    if (attribute === "QueueUrl") return physicalId;
+  }
+  if (resourceType === "AWS::SNS::Topic") {
+    if (attribute === "TopicArn") return physicalId;
+  }
+  if (resourceType === "AWS::DynamoDB::Table") {
+    if (attribute === "Arn")
+      return `arn:aws:dynamodb:${ctx.region}:${ctx.account}:table/${physicalId}`;
+  }
+  if (resourceType === "AWS::S3::Bucket") {
+    if (attribute === "Arn") return `arn:aws:s3:::${physicalId}`;
+    if (attribute === "DomainName") return `${physicalId}.s3.amazonaws.com`;
+    if (attribute === "WebsiteURL")
+      return `http://${physicalId}.s3-website-${ctx.region}.amazonaws.com`;
+  }
+  return physicalId;
+};
+
+const resolveValue = (
+  ctx: ServiceContext,
+  value: unknown,
+  resources: StackResource[],
+): string => {
+  if (typeof value === "string") return value;
+  if (value === null || typeof value !== "object") return String(value ?? "");
+  const obj = value as Record<string, unknown>;
+  if ("Ref" in obj) {
+    const logicalId = String(obj["Ref"]);
+    const resource = resources.find((r) => r.LogicalResourceId === logicalId);
+    return resource?.PhysicalResourceId ?? logicalId;
+  }
+  if ("Fn::GetAtt" in obj) {
+    const raw = obj["Fn::GetAtt"];
+    if (Array.isArray(raw) && raw.length >= 2) {
+      const logicalId = String(raw[0]);
+      const attribute = String(raw[1]);
+      const resource = resources.find((r) => r.LogicalResourceId === logicalId);
+      if (resource !== undefined) {
+        return getAtt(
+          ctx,
+          resource.ResourceType,
+          resource.PhysicalResourceId,
+          attribute,
+        );
+      }
+    }
+  }
+  if ("Fn::Sub" in obj) {
+    const tpl = String(obj["Fn::Sub"]);
+    return tpl.replace(/\$\{([^}]+)\}/g, (_, expr: string) => {
+      const dot = expr.indexOf(".");
+      if (dot === -1) {
+        const resource = resources.find((r) => r.LogicalResourceId === expr);
+        return resource?.PhysicalResourceId ?? expr;
+      }
+      const logicalId = expr.slice(0, dot);
+      const attribute = expr.slice(dot + 1);
+      const resource = resources.find((r) => r.LogicalResourceId === logicalId);
+      if (resource !== undefined) {
+        return getAtt(
+          ctx,
+          resource.ResourceType,
+          resource.PhysicalResourceId,
+          attribute,
+        );
+      }
+      return expr;
+    });
+  }
+  return "";
+};
+
+const resolveOutputs = (
+  ctx: ServiceContext,
+  templateBody: string,
+  resources: StackResource[],
+): StackOutput[] => {
+  if (templateBody === "") return [];
+  try {
+    const parsed = JSON.parse(templateBody) as Record<string, unknown>;
+    const outputs = parsed["Outputs"];
+    if (outputs === null || typeof outputs !== "object") return [];
+    return Object.entries(outputs as Record<string, unknown>).map(
+      ([key, val]) => {
+        const item = (val ?? {}) as Record<string, unknown>;
+        const result: StackOutput = {
+          OutputKey: key,
+          OutputValue: resolveValue(ctx, item["Value"], resources),
+        };
+        if (typeof item["Description"] === "string") {
+          result.Description = item["Description"];
+        }
+        if (typeof item["Export"] === "object" && item["Export"] !== null) {
+          const exportObj = item["Export"] as Record<string, unknown>;
+          if (typeof exportObj["Name"] === "string") {
+            result.ExportName = exportObj["Name"];
+          }
+        }
+        return result;
       },
     );
   } catch {
@@ -529,6 +655,7 @@ const toStack = (stack: StoredStack) => ({
   Tags: stack.Tags,
   EnableTerminationProtection: stack.EnableTerminationProtection,
   DriftInformation: { StackDriftStatus: "NOT_CHECKED" },
+  ...(stack.StackOutputs?.length ? { Outputs: stack.StackOutputs } : {}),
 });
 
 const toSummary = (stack: StoredStack) => ({
@@ -578,6 +705,7 @@ const CreateStack: OperationHandler = (input, ctx) => {
     EnableTerminationProtection: false,
     StackPolicy: "",
     StackResources: stackResources,
+    StackOutputs: resolveOutputs(ctx, templateBody, stackResources),
   };
   ctx.store.set(name, stack);
   return { StackId: arn };
@@ -650,6 +778,7 @@ const UpdateStack: OperationHandler = (input, ctx) => {
     StackStatus: "UPDATE_COMPLETE",
     LastUpdatedTime: new Date().toISOString(),
     StackResources: newResources,
+    StackOutputs: resolveOutputs(ctx, newTemplateBody, newResources),
   };
   ctx.store.set(name, updated);
   return { StackId: updated.StackId };
@@ -1058,18 +1187,22 @@ const ExecuteChangeSet: OperationHandler = (input, ctx) => {
       EnableTerminationProtection: false,
       StackPolicy: "",
       StackResources: csStackResources,
+      StackOutputs: resolveOutputs(ctx, cs.TemplateBody, csStackResources),
     };
     ctx.store.set(cs.StackName, newStack);
   } else {
+    const csBody = cs.TemplateBody || stack.TemplateBody;
+    const csResources = stack.StackResources ?? [];
     const updated: StoredStack = {
       ...stack,
-      TemplateBody: cs.TemplateBody || stack.TemplateBody,
+      TemplateBody: csBody,
       Parameters: cs.Parameters.length > 0 ? cs.Parameters : stack.Parameters,
       Capabilities:
         cs.Capabilities.length > 0 ? cs.Capabilities : stack.Capabilities,
       Tags: cs.Tags.length > 0 ? cs.Tags : stack.Tags,
       StackStatus: "UPDATE_COMPLETE",
       LastUpdatedTime: now,
+      StackOutputs: resolveOutputs(ctx, csBody, csResources),
     };
     ctx.store.set(stack.StackName, updated);
   }

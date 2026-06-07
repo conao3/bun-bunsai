@@ -131,6 +131,9 @@ type StoredContact = {
   ContactId: string;
   ContactArn: string;
   InstanceId: string;
+  TotalPauseCount: number;
+  LastPausedTimestamp?: string;
+  LastResumedTimestamp?: string;
 };
 
 type StoredEmailAddress = {
@@ -177,6 +180,7 @@ type StoredUser = {
   UserArn: string;
   Username: string;
   InstanceId: string;
+  AgentStatusId?: string;
 };
 
 type StoredUserHierarchyGroup = {
@@ -1122,6 +1126,7 @@ const CreateContact: OperationHandler = (input, ctx) => {
     ContactId: id,
     ContactArn: arn,
     InstanceId: instanceId,
+    TotalPauseCount: 0,
   };
   ctx.store.set(contactKey(instanceId, id), stored);
   return { ContactId: id, ContactArn: arn };
@@ -1770,6 +1775,13 @@ const DescribeContact: OperationHandler = (input, ctx) => {
     Contact: {
       Id: stored.ContactId,
       Arn: stored.ContactArn,
+      TotalPauseCount: stored.TotalPauseCount,
+      ...(stored.LastPausedTimestamp !== undefined
+        ? { LastPausedTimestamp: new Date(stored.LastPausedTimestamp) }
+        : {}),
+      ...(stored.LastResumedTimestamp !== undefined
+        ? { LastResumedTimestamp: new Date(stored.LastResumedTimestamp) }
+        : {}),
     },
   };
 };
@@ -3628,6 +3640,192 @@ const ListWorkspaceMedia: OperationHandler = (input, ctx) => {
   return { Media: [] };
 };
 
+const ListWorkspacePages: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const workspaceId = requireString(input, "WorkspaceId");
+  const stored = ctx.store.get<StoredWorkspace>(
+    workspaceKey(instanceId, workspaceId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Workspace ${workspaceId} not found.`,
+      404,
+    );
+  }
+  return { WorkspacePageList: [] };
+};
+
+const ListWorkspaces: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const workspaces = ctx.store
+    .list<StoredWorkspace>()
+    .filter((entry) => entry.key.startsWith(workspacePrefix))
+    .map((entry) => entry.value)
+    .filter((w) => w.InstanceId === instanceId);
+  return {
+    WorkspaceSummaryList: workspaces.map((w) => ({
+      Id: w.WorkspaceId,
+      Arn: w.WorkspaceArn,
+      Name: w.Name,
+    })),
+  };
+};
+
+const MonitorContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  const monitorId = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact/${monitorId}`;
+  return { ContactId: monitorId, ContactArn: arn };
+};
+
+const PauseContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(contactKey(instanceId, contactId), {
+    ...stored,
+    TotalPauseCount: stored.TotalPauseCount + 1,
+    LastPausedTimestamp: new Date().toISOString(),
+  });
+  return {};
+};
+
+const PutUserStatus: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const userId = requireString(input, "UserId");
+  const agentStatusId = requireString(input, "AgentStatusId");
+  const stored = ctx.store.get<StoredUser>(userKey(instanceId, userId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `User ${userId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(userKey(instanceId, userId), {
+    ...stored,
+    AgentStatusId: agentStatusId,
+  });
+  return {};
+};
+
+const ReleasePhoneNumber: OperationHandler = (input, ctx) => {
+  const phoneNumberId = requireString(input, "PhoneNumberId");
+  const stored = ctx.store.get<StoredPhoneNumber>(
+    phoneNumberKey(phoneNumberId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `PhoneNumber ${phoneNumberId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(phoneNumberKey(phoneNumberId));
+  return {};
+};
+
+const ReplicateInstance: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${id}`;
+  return { Id: id, Arn: arn };
+};
+
+const ResumeContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(contactKey(instanceId, contactId), {
+    ...stored,
+    LastResumedTimestamp: new Date().toISOString(),
+  });
+  return {};
+};
+
+const ResumeContactRecording: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const SearchAgentStatuses: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const statuses = ctx.store
+    .list<StoredAgentStatus>()
+    .filter((entry) => entry.key.startsWith(agentStatusPrefix))
+    .map((entry) => entry.value)
+    .filter((s) => s.InstanceId === instanceId);
+  return {
+    AgentStatuses: statuses.map((s) => ({
+      AgentStatusId: s.AgentStatusId,
+      AgentStatusARN: s.AgentStatusARN,
+      Name: s.Name,
+      State: s.State,
+    })),
+    ApproximateTotalCount: statuses.length,
+  };
+};
+
+const SearchAvailablePhoneNumbers: OperationHandler = (_input, _ctx) => {
+  return { AvailableNumbersList: [] };
+};
+
+const SearchContactEvaluations: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { EvaluationSearchSummaryList: [], ApproximateTotalCount: 0 };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -3671,6 +3869,7 @@ const connect = {
           }
           if (req.method === "POST") {
             if (parts[2] === "bot") return "DisassociateBot";
+            if (parts[2] === "replicate") return "ReplicateInstance";
           }
           if (req.method === "GET") {
             if (parts[2] === "approved-origins") return "ListApprovedOrigins";
@@ -3896,8 +4095,16 @@ const connect = {
           return "ImportPhoneNumber";
         if (parts.length === 2 && parts[1] === "list" && req.method === "POST")
           return "ListPhoneNumbersV2";
+        if (
+          parts.length === 2 &&
+          parts[1] === "search-available" &&
+          req.method === "POST"
+        )
+          return "SearchAvailablePhoneNumbers";
         if (parts.length === 2 && req.method === "GET")
           return "DescribePhoneNumber";
+        if (parts.length === 2 && req.method === "DELETE")
+          return "ReleasePhoneNumber";
         if (
           parts.length === 3 &&
           parts[2] === "contact-flow" &&
@@ -4030,6 +4237,8 @@ const connect = {
           req.method === "GET"
         )
           return "ListUserProficiencies";
+        if (parts.length === 4 && parts[3] === "status" && req.method === "PUT")
+          return "PutUserStatus";
         return undefined;
 
       case "user-hierarchy-groups":
@@ -4083,6 +4292,14 @@ const connect = {
             return "UpdateContactAttributes";
           if (parts[1] === "schedule" && req.method === "POST")
             return "UpdateContactSchedule";
+          if (parts[1] === "monitor" && req.method === "POST")
+            return "MonitorContact";
+          if (parts[1] === "pause" && req.method === "POST")
+            return "PauseContact";
+          if (parts[1] === "resume" && req.method === "POST")
+            return "ResumeContact";
+          if (parts[1] === "resume-recording" && req.method === "POST")
+            return "ResumeContactRecording";
         }
         if (parts.length === 3 && parts[1] === "batch" && req.method === "PUT")
           return "BatchPutContact";
@@ -4395,6 +4612,7 @@ const connect = {
       case "workspaces":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateWorkspace";
+        if (parts.length === 2 && req.method === "GET") return "ListWorkspaces";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeWorkspace";
         if (parts.length === 3 && req.method === "DELETE")
@@ -4411,6 +4629,8 @@ const connect = {
           req.method === "POST"
         )
           return "DisassociateWorkspace";
+        if (parts.length === 4 && parts[3] === "pages" && req.method === "GET")
+          return "ListWorkspacePages";
         if (parts.length === 4 && parts[3] === "pages" && req.method === "PUT")
           return "CreateWorkspacePage";
         if (
@@ -4563,6 +4783,21 @@ const connect = {
 
       case "users-summary":
         if (parts.length === 2 && req.method === "GET") return "ListUsers";
+        return undefined;
+
+      case "search-agent-statuses":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchAgentStatuses";
+        return undefined;
+
+      case "search-available-phone-numbers":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchAvailablePhoneNumbers";
+        return undefined;
+
+      case "search-contact-evaluations":
+        if (parts.length === 1 && req.method === "POST")
+          return "SearchContactEvaluations";
         return undefined;
 
       default:
@@ -4763,6 +4998,8 @@ const connect = {
     ListViewVersions,
     ListViews,
     ListWorkspaceMedia,
+    ListWorkspacePages,
+    ListWorkspaces,
     ListRealtimeContactAnalysisSegmentsV2,
     DescribeAuthenticationProfile,
     DescribeContact,
@@ -4827,6 +5064,16 @@ const connect = {
     UpdateContactFlowName,
     UpdateContactRoutingData,
     UpdateContactSchedule,
+    MonitorContact,
+    PauseContact,
+    PutUserStatus,
+    ReleasePhoneNumber,
+    ReplicateInstance,
+    ResumeContact,
+    ResumeContactRecording,
+    SearchAgentStatuses,
+    SearchAvailablePhoneNumbers,
+    SearchContactEvaluations,
   },
   model,
 } as const satisfies ServiceDefinition;

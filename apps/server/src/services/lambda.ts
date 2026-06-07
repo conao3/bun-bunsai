@@ -268,8 +268,55 @@ const runFunction = async (
   });
 };
 
+const resolveQualifier = (
+  ctx: ServiceContext,
+  fn: StoredFunction,
+  qualifier: string | undefined,
+): StoredFunction => {
+  if (qualifier === undefined || qualifier === "$LATEST") return fn;
+  let versionNum: number;
+  if (/^\d+$/.test(qualifier)) {
+    versionNum = parseInt(qualifier, 10);
+  } else {
+    const alias = ctx.store.get<StoredAlias>(
+      aliasKey(fn.FunctionName, qualifier),
+    );
+    if (alias === undefined) {
+      throw awsError(
+        "ResourceNotFoundException",
+        `Alias not found: ${qualifier}`,
+        404,
+      );
+    }
+    if (alias.FunctionVersion === "$LATEST") return fn;
+    versionNum = parseInt(alias.FunctionVersion, 10);
+  }
+  const snap = ctx.store.get<StoredVersionSnapshot>(
+    snapshotKey(fn.FunctionName, versionNum),
+  );
+  if (snap === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Version not found: ${qualifier}`,
+      404,
+    );
+  }
+  return {
+    ...fn,
+    Version: String(versionNum),
+    FunctionArn: `${fn.FunctionArn}:${versionNum}`,
+    CodeZipFile: snap.CodeZipFile,
+    Environment: snap.Environment,
+    Handler: snap.Handler,
+    Runtime: snap.Runtime,
+    Timeout: snap.Timeout,
+  };
+};
+
 const Invoke: OperationHandler = async (input, ctx) => {
-  const fn = requireFunction(ctx, functionNameFromInput(input));
+  const baseFn = requireFunction(ctx, functionNameFromInput(input));
+  const qualifier = stringOrUndefined(input["Qualifier"]);
+  const fn = resolveQualifier(ctx, baseFn, qualifier);
   const invocationType =
     stringOrUndefined(input["InvocationType"]) ?? "RequestResponse";
   if (invocationType === "DryRun") {
@@ -406,7 +453,18 @@ type StoredVersion = {
   number: number;
 };
 
+type StoredVersionSnapshot = {
+  CodeZipFile: Uint8Array | undefined;
+  Environment: Record<string, string> | undefined;
+  Handler: string | undefined;
+  Runtime: string | undefined;
+  Timeout: number;
+};
+
 const versionKey = (name: string): string => `version:${name}`;
+
+const snapshotKey = (name: string, ver: number): string =>
+  `version:snapshot:${name}:${ver}`;
 
 const PublishVersion: OperationHandler = (input, ctx) => {
   const fn = requireFunction(ctx, functionNameFromInput(input));
@@ -414,6 +472,14 @@ const PublishVersion: OperationHandler = (input, ctx) => {
   const existing = ctx.store.get<StoredVersion>(key);
   const next = (existing?.number ?? 0) + 1;
   ctx.store.set(key, { number: next });
+  const snapshot: StoredVersionSnapshot = {
+    CodeZipFile: fn.CodeZipFile,
+    Environment: fn.Environment,
+    Handler: fn.Handler,
+    Runtime: fn.Runtime,
+    Timeout: fn.Timeout,
+  };
+  ctx.store.set(snapshotKey(fn.FunctionName, next), snapshot);
   const version = String(next);
   return {
     ...configurationOf(fn),

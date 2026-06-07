@@ -171,10 +171,97 @@ const stringList = (value: unknown): string[] =>
     ? value.filter((v): v is string => typeof v === "string")
     : [];
 
+type BusEvent = {
+  source: string;
+  "detail-type": string;
+  account: string;
+  region: string;
+  resources: string[];
+  detail: unknown;
+};
+
+const matchesFilterRule = (value: unknown, rule: unknown): boolean => {
+  if (typeof rule === "string") return value === rule;
+  if (typeof rule !== "object" || rule === null) return false;
+  const r = rule as Record<string, unknown>;
+  if ("prefix" in r)
+    return typeof value === "string" && value.startsWith(r["prefix"] as string);
+  if ("suffix" in r)
+    return typeof value === "string" && value.endsWith(r["suffix"] as string);
+  if ("equals-ignore-case" in r)
+    return (
+      typeof value === "string" &&
+      value.toLowerCase() === (r["equals-ignore-case"] as string).toLowerCase()
+    );
+  if ("anything-but" in r) {
+    const excl = r["anything-but"];
+    return Array.isArray(excl) ? !excl.includes(value) : value !== excl;
+  }
+  if ("exists" in r)
+    return (value !== undefined && value !== null) === Boolean(r["exists"]);
+  if ("numeric" in r) {
+    if (typeof value !== "number") return false;
+    const ops = r["numeric"] as unknown[];
+    const chk = (op: string, n: number): boolean => {
+      if (op === "=") return value === n;
+      if (op === "!=") return value !== n;
+      if (op === "<") return value < n;
+      if (op === "<=") return value <= n;
+      if (op === ">") return value > n;
+      if (op === ">=") return value >= n;
+      return false;
+    };
+    if (ops.length === 2) return chk(ops[0] as string, ops[1] as number);
+    if (ops.length === 4)
+      return (
+        chk(ops[0] as string, ops[1] as number) &&
+        chk(ops[2] as string, ops[3] as number)
+      );
+    return false;
+  }
+  if ("wildcard" in r) {
+    if (typeof value !== "string") return false;
+    const pat = (r["wildcard"] as string)
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*")
+      .replace(/\?/g, ".");
+    return new RegExp(`^${pat}$`).test(value);
+  }
+  if ("cidr" in r) {
+    if (typeof value !== "string") return false;
+    const [network, prefixLen] = (r["cidr"] as string).split("/");
+    const mask = ~((1 << (32 - Number(prefixLen))) - 1) >>> 0;
+    const toInt = (ip: string): number =>
+      ip
+        .split(".")
+        .reduce((acc: number, p: string) => (acc << 8) | Number(p), 0) >>> 0;
+    return (toInt(value) & mask) === (toInt(network) & mask);
+  }
+  return false;
+};
+
+const matchesDetailPattern = (
+  value: unknown,
+  pattern: Record<string, unknown>,
+): boolean => {
+  if (typeof value !== "object" || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  for (const [k, rules] of Object.entries(pattern)) {
+    const v = obj[k];
+    if (Array.isArray(rules)) {
+      if (!(rules as unknown[]).some((r) => matchesFilterRule(v, r)))
+        return false;
+    } else if (typeof rules === "object" && rules !== null) {
+      if (!matchesDetailPattern(v, rules as Record<string, unknown>))
+        return false;
+    }
+  }
+  return true;
+};
+
 const patternMatches = (
   pattern: string | undefined,
-  source: string,
-  detailType: string,
+  event: BusEvent,
 ): boolean => {
   if (pattern === undefined) return false;
   let parsed: Record<string, unknown>;
@@ -184,10 +271,33 @@ const patternMatches = (
     return false;
   }
   const sources = stringList(parsed["source"]);
+  if (sources.length > 0 && !sources.includes(event.source)) return false;
   const detailTypes = stringList(parsed["detail-type"]);
-  if (sources.length === 0 && detailTypes.length === 0) return false;
-  if (sources.length > 0 && !sources.includes(source)) return false;
-  if (detailTypes.length > 0 && !detailTypes.includes(detailType)) return false;
+  if (detailTypes.length > 0 && !detailTypes.includes(event["detail-type"]))
+    return false;
+  const accounts = stringList(parsed["account"]);
+  if (accounts.length > 0 && !accounts.includes(event.account)) return false;
+  const regions = stringList(parsed["region"]);
+  if (regions.length > 0 && !regions.includes(event.region)) return false;
+  const resources = stringList(parsed["resources"]);
+  if (
+    resources.length > 0 &&
+    !event.resources.some((r) => resources.includes(r))
+  )
+    return false;
+  if (
+    "detail" in parsed &&
+    typeof parsed["detail"] === "object" &&
+    parsed["detail"] !== null
+  ) {
+    if (
+      !matchesDetailPattern(
+        event.detail,
+        parsed["detail"] as Record<string, unknown>,
+      )
+    )
+      return false;
+  }
   return true;
 };
 
@@ -223,7 +333,7 @@ const deliverEvent = async (
   for (const { key, value: rule } of ctx.store.list<StoredRule>()) {
     if (!key.startsWith(prefix)) continue;
     if (rule.State === "DISABLED") continue;
-    if (!patternMatches(rule.EventPattern, source, detailType)) continue;
+    if (!patternMatches(rule.EventPattern, event)) continue;
     for (const target of Object.values(rule.targets)) {
       const arn = target["Arn"];
       if (typeof arn === "string")
@@ -506,25 +616,24 @@ const ListRuleNamesByTarget: OperationHandler = (input, ctx) => {
 const TestEventPattern: OperationHandler = (input) => {
   const patternStr = requireString(input, "EventPattern");
   const eventStr = requireString(input, "Event");
-  let pattern: Record<string, unknown>;
-  let event: Record<string, unknown>;
+  let eventObj: Record<string, unknown>;
   try {
-    pattern = JSON.parse(patternStr) as Record<string, unknown>;
-    event = JSON.parse(eventStr) as Record<string, unknown>;
+    eventObj = JSON.parse(eventStr) as Record<string, unknown>;
   } catch {
     throw awsError("InvalidEventPatternException", "Invalid JSON.", 400);
   }
-  const result = Object.entries(pattern).every(([key, val]) => {
-    const eventVal = event[key];
-    if (Array.isArray(val)) {
-      return (val as unknown[]).some((v) => {
-        if (typeof v === "object" && v !== null) return true;
-        return v === eventVal;
-      });
-    }
-    return true;
-  });
-  return { Result: result };
+  const busEvent: BusEvent = {
+    source: typeof eventObj["source"] === "string" ? eventObj["source"] : "",
+    "detail-type":
+      typeof eventObj["detail-type"] === "string"
+        ? eventObj["detail-type"]
+        : "",
+    account: typeof eventObj["account"] === "string" ? eventObj["account"] : "",
+    region: typeof eventObj["region"] === "string" ? eventObj["region"] : "",
+    resources: stringList(eventObj["resources"]),
+    detail: eventObj["detail"] ?? {},
+  };
+  return { Result: patternMatches(patternStr, busEvent) };
 };
 
 // ========== Connections ==========

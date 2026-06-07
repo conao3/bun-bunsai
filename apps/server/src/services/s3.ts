@@ -637,8 +637,32 @@ const s3: ServiceDefinition = {
         }
       }
       evaluateConditional(input, object);
+      const responseContentType =
+        typeof input["ResponseContentType"] === "string"
+          ? input["ResponseContentType"]
+          : undefined;
+      const responseContentDisposition =
+        typeof input["ResponseContentDisposition"] === "string"
+          ? input["ResponseContentDisposition"]
+          : undefined;
+      const responseCacheControl =
+        typeof input["ResponseCacheControl"] === "string"
+          ? input["ResponseCacheControl"]
+          : undefined;
+      const responseContentEncoding =
+        typeof input["ResponseContentEncoding"] === "string"
+          ? input["ResponseContentEncoding"]
+          : undefined;
+      const responseContentLanguage =
+        typeof input["ResponseContentLanguage"] === "string"
+          ? input["ResponseContentLanguage"]
+          : undefined;
+      const responseExpires =
+        typeof input["ResponseExpires"] === "number"
+          ? input["ResponseExpires"]
+          : undefined;
       const common = {
-        ContentType: object.contentType,
+        ContentType: responseContentType ?? object.contentType,
         ETag: object.etag,
         LastModified: object.lastModified,
         Metadata: object.userMetadata,
@@ -648,19 +672,31 @@ const s3: ServiceDefinition = {
         ...(object.versionId !== undefined
           ? { VersionId: object.versionId }
           : {}),
-        ...(object.contentDisposition !== undefined
-          ? { ContentDisposition: object.contentDisposition }
+        ...((responseContentDisposition ?? object.contentDisposition) !==
+        undefined
+          ? {
+              ContentDisposition:
+                responseContentDisposition ?? object.contentDisposition,
+            }
           : {}),
-        ...(object.cacheControl !== undefined
-          ? { CacheControl: object.cacheControl }
+        ...((responseCacheControl ?? object.cacheControl) !== undefined
+          ? { CacheControl: responseCacheControl ?? object.cacheControl }
           : {}),
-        ...(object.contentEncoding !== undefined
-          ? { ContentEncoding: object.contentEncoding }
+        ...((responseContentEncoding ?? object.contentEncoding) !== undefined
+          ? {
+              ContentEncoding:
+                responseContentEncoding ?? object.contentEncoding,
+            }
           : {}),
-        ...(object.contentLanguage !== undefined
-          ? { ContentLanguage: object.contentLanguage }
+        ...((responseContentLanguage ?? object.contentLanguage) !== undefined
+          ? {
+              ContentLanguage:
+                responseContentLanguage ?? object.contentLanguage,
+            }
           : {}),
-        ...(object.expires !== undefined ? { Expires: object.expires } : {}),
+        ...((responseExpires ?? object.expires) !== undefined
+          ? { Expires: responseExpires ?? object.expires }
+          : {}),
       };
       const rangeHeader = req.headers.get("range");
       const match =

@@ -21,6 +21,35 @@ type StoredStateMachine = {
   creationDate: number;
 };
 
+type HistoryEvent = {
+  timestamp: number;
+  type: string;
+  id: number;
+  previousEventId: number;
+  executionStartedEventDetails?: { input: string };
+  executionSucceededEventDetails?: { output: string };
+  executionFailedEventDetails?: { error?: string; cause?: string };
+  stateEnteredEventDetails?: { name: string; input: string };
+  stateExitedEventDetails?: { name: string; output: string };
+  taskScheduledEventDetails?: {
+    resourceType: string;
+    resource: string;
+    region: string;
+    parameters: string;
+  };
+  taskSucceededEventDetails?: {
+    resourceType: string;
+    resource: string;
+    output: string;
+  };
+  taskFailedEventDetails?: {
+    resourceType: string;
+    resource: string;
+    error?: string;
+    cause?: string;
+  };
+};
+
 type StoredExecution = {
   executionArn: string;
   stateMachineArn: string;
@@ -32,6 +61,7 @@ type StoredExecution = {
   output: string | undefined;
   error: string | undefined;
   cause: string | undefined;
+  events: HistoryEvent[];
 };
 
 type AslChoiceCondition = {
@@ -89,6 +119,7 @@ type AslExecutionResult = {
   output: string;
   error?: string;
   cause?: string;
+  events: HistoryEvent[];
 };
 
 const jsonPathGet = (data: unknown, path: string): unknown => {
@@ -231,8 +262,32 @@ const interpretAsl = async (
       output: "{}",
       error: "States.Runtime",
       cause: "Invalid definition or input",
+      events: [],
     };
   }
+
+  const events: HistoryEvent[] = [];
+  let nextId = 1;
+  const addEvent = (
+    type: string,
+    details: Omit<
+      HistoryEvent,
+      "timestamp" | "type" | "id" | "previousEventId"
+    > = {},
+  ): void => {
+    const id = nextId++;
+    events.push({
+      timestamp: Math.floor(Date.now() / 1000),
+      type,
+      id,
+      previousEventId: id - 1,
+      ...details,
+    });
+  };
+
+  addEvent("ExecutionStarted", {
+    executionStartedEventDetails: { input: inputStr },
+  });
 
   let currentStateName = definition.StartAt;
   const maxDepth = 100;
@@ -240,15 +295,28 @@ const interpretAsl = async (
   for (let depth = 0; depth < maxDepth; depth++) {
     const state = definition.States[currentStateName];
     if (state === undefined) {
+      addEvent("ExecutionFailed", {
+        executionFailedEventDetails: {
+          error: "States.Runtime",
+          cause: `State '${currentStateName}' not found`,
+        },
+      });
       return {
         status: "FAILED",
         output: "{}",
         error: "States.Runtime",
         cause: `State '${currentStateName}' not found`,
+        events,
       };
     }
 
+    const stateName = currentStateName;
+    const stateInput = JSON.stringify(currentInput);
+
     if (state.Type === "Pass") {
+      addEvent("PassStateEntered", {
+        stateEnteredEventDetails: { name: stateName, input: stateInput },
+      });
       const rawInput = currentInput;
       const effectiveInput =
         state.Parameters !== undefined
@@ -271,11 +339,24 @@ const interpretAsl = async (
       } else {
         output = stateOutput;
       }
-      if (state.End === true)
-        return { status: "SUCCEEDED", output: JSON.stringify(output) };
+      addEvent("PassStateExited", {
+        stateExitedEventDetails: {
+          name: stateName,
+          output: JSON.stringify(output),
+        },
+      });
+      if (state.End === true) {
+        addEvent("ExecutionSucceeded", {
+          executionSucceededEventDetails: { output: JSON.stringify(output) },
+        });
+        return { status: "SUCCEEDED", output: JSON.stringify(output), events };
+      }
       currentInput = output;
       currentStateName = state.Next!;
     } else if (state.Type === "Choice") {
+      addEvent("ChoiceStateEntered", {
+        stateEnteredEventDetails: { name: stateName, input: stateInput },
+      });
       const choices = state.Choices ?? [];
       let nextState: string | undefined;
       for (const choice of choices) {
@@ -286,28 +367,76 @@ const interpretAsl = async (
       }
       if (nextState === undefined) nextState = state.Default;
       if (nextState === undefined) {
+        addEvent("ExecutionFailed", {
+          executionFailedEventDetails: {
+            error: "States.NoChoiceMatched",
+            cause: "No choice matched and no default state",
+          },
+        });
         return {
           status: "FAILED",
           output: "{}",
           error: "States.NoChoiceMatched",
           cause: "No choice matched and no default state",
+          events,
         };
       }
+      addEvent("ChoiceStateExited", {
+        stateExitedEventDetails: { name: stateName, output: stateInput },
+      });
       currentStateName = nextState;
     } else if (state.Type === "Succeed") {
-      return { status: "SUCCEEDED", output: JSON.stringify(currentInput) };
+      addEvent("SucceedStateEntered", {
+        stateEnteredEventDetails: { name: stateName, input: stateInput },
+      });
+      addEvent("ExecutionSucceeded", {
+        executionSucceededEventDetails: {
+          output: JSON.stringify(currentInput),
+        },
+      });
+      return {
+        status: "SUCCEEDED",
+        output: JSON.stringify(currentInput),
+        events,
+      };
     } else if (state.Type === "Fail") {
+      addEvent("FailStateEntered", {
+        stateEnteredEventDetails: { name: stateName, input: stateInput },
+      });
+      addEvent("ExecutionFailed", {
+        executionFailedEventDetails: { error: state.Error, cause: state.Cause },
+      });
       return {
         status: "FAILED",
         output: "{}",
         error: state.Error,
         cause: state.Cause,
+        events,
       };
     } else if (state.Type === "Wait") {
-      if (state.End === true)
-        return { status: "SUCCEEDED", output: JSON.stringify(currentInput) };
+      addEvent("WaitStateEntered", {
+        stateEnteredEventDetails: { name: stateName, input: stateInput },
+      });
+      addEvent("WaitStateExited", {
+        stateExitedEventDetails: { name: stateName, output: stateInput },
+      });
+      if (state.End === true) {
+        addEvent("ExecutionSucceeded", {
+          executionSucceededEventDetails: {
+            output: JSON.stringify(currentInput),
+          },
+        });
+        return {
+          status: "SUCCEEDED",
+          output: JSON.stringify(currentInput),
+          events,
+        };
+      }
       currentStateName = state.Next!;
     } else if (state.Type === "Task") {
+      addEvent("TaskStateEntered", {
+        stateEnteredEventDetails: { name: stateName, input: stateInput },
+      });
       const rawInput = currentInput;
       const effectiveInput =
         state.Parameters !== undefined
@@ -321,12 +450,20 @@ const interpretAsl = async (
         const params = effectiveInput as Record<string, unknown>;
         const fn = params.FunctionName;
         if (typeof fn !== "string") {
+          addEvent("ExecutionFailed", {
+            executionFailedEventDetails: {
+              error: "States.Runtime",
+              cause:
+                "FunctionName required in Parameters for optimistic Lambda integration",
+            },
+          });
           return {
             status: "FAILED",
             output: "{}",
             error: "States.Runtime",
             cause:
               "FunctionName required in Parameters for optimistic Lambda integration",
+            events,
           };
         }
         functionArn = fn;
@@ -337,29 +474,66 @@ const interpretAsl = async (
         lambdaPayload = effectiveInput;
         isOptimistic = false;
       } else {
+        addEvent("ExecutionFailed", {
+          executionFailedEventDetails: {
+            error: "States.Runtime",
+            cause: `Unsupported Task resource: ${resource}`,
+          },
+        });
         return {
           status: "FAILED",
           output: "{}",
           error: "States.Runtime",
           cause: `Unsupported Task resource: ${resource}`,
+          events,
         };
       }
+      addEvent("TaskScheduled", {
+        taskScheduledEventDetails: {
+          resourceType: "lambda",
+          resource: "invoke",
+          region: ctx.region,
+          parameters: JSON.stringify(lambdaPayload),
+        },
+      });
       const taskResult = await invokeTaskResource(
         ctx,
         functionArn,
         lambdaPayload,
       );
       if (!taskResult.ok) {
+        addEvent("TaskFailed", {
+          taskFailedEventDetails: {
+            resourceType: "lambda",
+            resource: "invoke",
+            error: taskResult.error,
+            cause: taskResult.cause,
+          },
+        });
+        addEvent("ExecutionFailed", {
+          executionFailedEventDetails: {
+            error: taskResult.error,
+            cause: taskResult.cause,
+          },
+        });
         return {
           status: "FAILED",
           output: "{}",
           error: taskResult.error,
           cause: taskResult.cause,
+          events,
         };
       }
       const rawResult = isOptimistic
         ? { StatusCode: 200, Payload: taskResult.result }
         : taskResult.result;
+      addEvent("TaskSucceeded", {
+        taskSucceededEventDetails: {
+          resourceType: "lambda",
+          resource: "invoke",
+          output: JSON.stringify(rawResult),
+        },
+      });
       const selectedResult =
         state.ResultSelector !== undefined
           ? applyParameters(state.ResultSelector, rawResult)
@@ -380,26 +554,62 @@ const interpretAsl = async (
       } else {
         output = stateOutput;
       }
-      if (state.End === true)
-        return { status: "SUCCEEDED", output: JSON.stringify(output) };
+      addEvent("TaskStateExited", {
+        stateExitedEventDetails: {
+          name: stateName,
+          output: JSON.stringify(output),
+        },
+      });
+      if (state.End === true) {
+        addEvent("ExecutionSucceeded", {
+          executionSucceededEventDetails: { output: JSON.stringify(output) },
+        });
+        return { status: "SUCCEEDED", output: JSON.stringify(output), events };
+      }
       currentInput = output;
       currentStateName = state.Next!;
     } else {
-      if (state.End === true)
-        return { status: "SUCCEEDED", output: JSON.stringify(currentInput) };
+      if (state.End === true) {
+        addEvent("ExecutionSucceeded", {
+          executionSucceededEventDetails: {
+            output: JSON.stringify(currentInput),
+          },
+        });
+        return {
+          status: "SUCCEEDED",
+          output: JSON.stringify(currentInput),
+          events,
+        };
+      }
       if (state.Next !== undefined) {
         currentStateName = state.Next;
       } else {
-        return { status: "SUCCEEDED", output: JSON.stringify(currentInput) };
+        addEvent("ExecutionSucceeded", {
+          executionSucceededEventDetails: {
+            output: JSON.stringify(currentInput),
+          },
+        });
+        return {
+          status: "SUCCEEDED",
+          output: JSON.stringify(currentInput),
+          events,
+        };
       }
     }
   }
 
+  addEvent("ExecutionFailed", {
+    executionFailedEventDetails: {
+      error: "States.Runtime",
+      cause: "State machine execution exceeded maximum depth",
+    },
+  });
   return {
     status: "FAILED",
     output: "{}",
     error: "States.Runtime",
     cause: "State machine execution exceeded maximum depth",
+    events,
   };
 };
 
@@ -646,6 +856,7 @@ const StartExecution: OperationHandler = async (input, ctx) => {
     output: result.status === "SUCCEEDED" ? result.output : undefined,
     error: result.error,
     cause: result.cause,
+    events: result.events,
   };
   ctx.store.set(executionKey(arn), execution);
   return { executionArn: arn, startDate };
@@ -1055,6 +1266,7 @@ const StartSyncExecution: OperationHandler = async (input, ctx) => {
     output: result.status === "SUCCEEDED" ? result.output : undefined,
     error: result.error,
     cause: result.cause,
+    events: result.events,
   };
   ctx.store.set(executionKey(arn), execution);
   return {
@@ -1080,27 +1292,10 @@ const RedriveExecution: OperationHandler = (input, ctx) => {
 const GetExecutionHistory: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "executionArn");
   const execution = requireExecution(ctx, arn);
-  const endType =
-    execution.status === "SUCCEEDED"
-      ? "ExecutionSucceeded"
-      : execution.status === "ABORTED"
-        ? "ExecutionAborted"
-        : "ExecutionFailed";
-  const events = [
-    {
-      timestamp: execution.startDate,
-      type: "ExecutionStarted",
-      id: 1,
-      previousEventId: 0,
-      executionStartedEventDetails: { input: execution.input },
-    },
-    {
-      timestamp: execution.stopDate ?? execution.startDate,
-      type: endType,
-      id: 2,
-      previousEventId: 1,
-    },
-  ];
+  const reverseOrder = input["reverseOrder"] === true;
+  const events = reverseOrder
+    ? [...(execution.events ?? [])].reverse()
+    : (execution.events ?? []);
   return { events };
 };
 

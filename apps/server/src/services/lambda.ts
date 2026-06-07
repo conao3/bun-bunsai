@@ -4,6 +4,7 @@ import lambdaModel from "../../../../test/vendor/aws-models/lambda.json" with { 
 import type {
   OperationHandler,
   ParsedRequest,
+  ScopedStore,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
@@ -37,6 +38,7 @@ type StoredFunction = {
   State: string;
   CodeZipFile?: Uint8Array;
   Environment?: Record<string, string>;
+  Layers?: string[];
 };
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -126,6 +128,9 @@ const configurationOf = (fn: StoredFunction): Record<string, unknown> => ({
   ...(fn.Environment !== undefined
     ? { Environment: { Variables: fn.Environment } }
     : {}),
+  ...(fn.Layers !== undefined
+    ? { Layers: fn.Layers.map((arn) => ({ Arn: arn })) }
+    : {}),
 });
 
 const CreateFunction: OperationHandler = (input, ctx) => {
@@ -139,6 +144,8 @@ const CreateFunction: OperationHandler = (input, ctx) => {
     );
   }
   const zip = codeZipOf(input);
+  const layerArns = stringListOf(input["Layers"]);
+  if (layerArns.length > 0) resolveLayerArns(ctx, layerArns);
   const fn: StoredFunction = {
     FunctionName: name,
     FunctionArn: arnOf(ctx, name),
@@ -161,6 +168,7 @@ const CreateFunction: OperationHandler = (input, ctx) => {
     State: "Active",
     CodeZipFile: zip,
     Environment: environmentOf(input),
+    ...(layerArns.length > 0 ? { Layers: layerArns } : {}),
   };
   ctx.store.set(name, fn);
   return configurationOf(fn);
@@ -242,19 +250,40 @@ const runFunction = async (
   fn: StoredFunction,
   event: unknown,
   region: string,
+  store: ScopedStore,
 ): Promise<LambdaExecution> => {
   const files =
     fn.CodeZipFile !== undefined ? unzip(fn.CodeZipFile) : undefined;
   if (files === undefined || fn.Handler === undefined) {
     return { kind: "unsupported" };
   }
+  const mergedFiles: Record<string, Uint8Array> = { ...files };
+  if (fn.Layers !== undefined && fn.Layers.length > 0) {
+    for (const arn of fn.Layers) {
+      const parsed = parseLayerVersionArn(arn);
+      if (parsed === undefined) continue;
+      const layer = store.get<StoredLayerVersion>(
+        layerVersionKey(parsed.name, parsed.version),
+      );
+      if (layer?.ZipFile === undefined) continue;
+      const layerFiles = unzip(layer.ZipFile);
+      if (layerFiles === undefined) continue;
+      for (const [path, content] of Object.entries(layerFiles)) {
+        mergedFiles[`opt/${path}`] = content;
+      }
+    }
+  }
   return executeNodeHandler({
-    files,
+    files: mergedFiles,
     handler: fn.Handler,
     runtime: fn.Runtime,
     event,
     env: { ...reservedEnv(fn, region), ...(fn.Environment ?? {}) },
     timeoutMs: fn.Timeout * 1000,
+    nodePaths:
+      fn.Layers !== undefined && fn.Layers.length > 0
+        ? ["opt/nodejs/node_modules", "opt/nodejs"]
+        : undefined,
     context: {
       functionName: fn.FunctionName,
       functionVersion: fn.Version,
@@ -326,6 +355,7 @@ const Invoke: OperationHandler = async (input, ctx) => {
     fn,
     decodePayload(input["Payload"]),
     ctx.region,
+    ctx.store,
   );
   const statusCode = invocationType === "Event" ? 202 : 200;
   if (execution.kind === "unsupported") {
@@ -371,7 +401,7 @@ const Invoke: OperationHandler = async (input, ctx) => {
 registerTarget("lambda", async (store, resource, delivery) => {
   const fn = store.get<StoredFunction>(resource);
   if (fn === undefined) return;
-  await runFunction(fn, delivery.event, store.scope.region);
+  await runFunction(fn, delivery.event, store.scope.region, store);
 });
 
 registerTaskInvoker("lambda", async (ctx, functionArn, payload) => {
@@ -387,7 +417,7 @@ registerTaskInvoker("lambda", async (ctx, functionArn, payload) => {
       cause: `Function not found: ${name}`,
     };
   }
-  const execution = await runFunction(fn, payload, ctx.region);
+  const execution = await runFunction(fn, payload, ctx.region, store);
   if (execution.kind === "result") {
     return { ok: true, result: execution.payload };
   }
@@ -417,6 +447,7 @@ registerEventSource(async (ctx, sourceArn, records) => {
       fn,
       { Records: records },
       parsed.region,
+      store,
     );
     if (execution.kind === "result") consumed = true;
   }
@@ -443,6 +474,11 @@ const UpdateFunctionConfiguration: OperationHandler = (input, ctx) => {
     fn.MemorySize = input["MemorySize"];
   const environment = environmentOf(input);
   if (environment !== undefined) fn.Environment = environment;
+  if (Array.isArray(input["Layers"])) {
+    const layerArns = stringListOf(input["Layers"]);
+    if (layerArns.length > 0) resolveLayerArns(ctx, layerArns);
+    fn.Layers = layerArns.length > 0 ? layerArns : undefined;
+  }
   fn.RevisionId = crypto.randomUUID();
   fn.LastModified = nowIso();
   ctx.store.set(fn.FunctionName, fn);
@@ -833,6 +869,7 @@ type StoredLayerVersion = {
   LicenseInfo: string | undefined;
   CodeSize: number;
   CodeSha256: string;
+  ZipFile?: Uint8Array;
 };
 
 const layerNameFromInput = (input: Record<string, unknown>): string => {
@@ -855,6 +892,46 @@ const layerCounterKey = (name: string): string => `layer-counter:${name}`;
 
 const layerVersionKey = (name: string, version: number): string =>
   `layer:${name}:${version}`;
+
+const parseLayerVersionArn = (
+  arn: string,
+): { name: string; version: number } | undefined => {
+  const parsed = parseArn(arn);
+  if (parsed === undefined) return undefined;
+  const parts = parsed.resource.split(":");
+  if (parts[0] !== "layer" || parts.length < 3) return undefined;
+  const name = parts[1];
+  const version = parseInt(parts[2] ?? "", 10);
+  if (name === undefined || name === "" || !Number.isFinite(version))
+    return undefined;
+  return { name, version };
+};
+
+const resolveLayerArns = (
+  ctx: ServiceContext,
+  arns: string[],
+): StoredLayerVersion[] =>
+  arns.map((arn) => {
+    const parsed = parseLayerVersionArn(arn);
+    if (parsed === undefined) {
+      throw awsError(
+        "ResourceNotFoundException",
+        `Layer version not found: ${arn}`,
+        404,
+      );
+    }
+    const layer = ctx.store.get<StoredLayerVersion>(
+      layerVersionKey(parsed.name, parsed.version),
+    );
+    if (layer === undefined) {
+      throw awsError(
+        "ResourceNotFoundException",
+        `Layer version not found: ${arn}`,
+        404,
+      );
+    }
+    return layer;
+  });
 
 const stringListOf = (value: unknown): string[] =>
   Array.isArray(value)
@@ -879,14 +956,19 @@ const layerVersionResponse = (
   LicenseInfo: layer.LicenseInfo,
 });
 
-const layerContentSize = (input: Record<string, unknown>): number => {
+const layerContentZipOf = (
+  input: Record<string, unknown>,
+): Uint8Array | undefined => {
   const content = input["Content"];
   if (typeof content === "object" && content !== null) {
-    const zip = (content as Record<string, unknown>)["ZipFile"];
-    if (typeof zip === "string") return zip.length;
-    if (zip instanceof Uint8Array) return zip.byteLength;
+    return zipBytesOf((content as Record<string, unknown>)["ZipFile"]);
   }
-  return 0;
+  return undefined;
+};
+
+const layerContentSize = (input: Record<string, unknown>): number => {
+  const zip = layerContentZipOf(input);
+  return zip !== undefined ? zip.byteLength : 0;
 };
 
 const PublishLayerVersion: OperationHandler = (input, ctx) => {
@@ -896,6 +978,7 @@ const PublishLayerVersion: OperationHandler = (input, ctx) => {
   const version = (existing?.value ?? 0) + 1;
   ctx.store.set(counterKey, { value: version });
   const layerArn = layerArnOf(ctx, name);
+  const zipFile = layerContentZipOf(input);
   const layer: StoredLayerVersion = {
     LayerName: name,
     LayerArn: layerArn,
@@ -908,6 +991,7 @@ const PublishLayerVersion: OperationHandler = (input, ctx) => {
     LicenseInfo: stringOrUndefined(input["LicenseInfo"]),
     CodeSize: layerContentSize(input),
     CodeSha256: sha256Of(`${name}:${version}:${nowIso()}`),
+    ...(zipFile !== undefined ? { ZipFile: zipFile } : {}),
   };
   ctx.store.set(layerVersionKey(name, version), layer);
   return layerVersionResponse(layer);

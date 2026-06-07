@@ -3163,6 +3163,140 @@ const ListEvaluationFormVersions: OperationHandler = (input, ctx) => {
   return { EvaluationFormVersionSummaryList: [] };
 };
 
+const ListLambdaFunctions: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { LambdaFunctions: [] };
+};
+
+const ListLexBots: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { LexBots: [] };
+};
+
+const ListNotifications: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const notifications = ctx.store
+    .list<StoredNotification>()
+    .filter((entry) => entry.key.startsWith(notificationPrefix))
+    .map((entry) => entry.value)
+    .filter((n) => n.InstanceId === instanceId);
+  return {
+    NotificationSummaryList: notifications.map((n) => ({
+      NotificationId: n.NotificationId,
+      NotificationArn: n.NotificationArn,
+    })),
+  };
+};
+
+const ListPhoneNumbers: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const numbers = ctx.store
+    .list<StoredPhoneNumber>()
+    .filter((entry) => entry.key.startsWith(phoneNumberPrefix))
+    .map((entry) => entry.value)
+    .filter((p) => p.InstanceId === instanceId);
+  return {
+    PhoneNumberSummaryList: numbers.map((p) => ({
+      Id: p.PhoneNumberId,
+      Arn: p.PhoneNumberArn,
+      PhoneNumber: p.PhoneNumber,
+    })),
+  };
+};
+
+const ListPhoneNumbersV2: OperationHandler = (_input, _ctx) => {
+  return { ListPhoneNumbersSummaryList: [] };
+};
+
+const ListPredefinedAttributes: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const attrs = ctx.store
+    .list<StoredPredefinedAttribute>()
+    .filter((entry) => entry.key.startsWith(predefinedAttributePrefix))
+    .map((entry) => entry.value)
+    .filter((a) => a.InstanceId === instanceId);
+  return {
+    PredefinedAttributeSummaryList: attrs.map((a) => ({ Name: a.Name })),
+  };
+};
+
+const ListPrompts: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const prompts = ctx.store
+    .list<StoredPrompt>()
+    .filter((entry) => entry.key.startsWith(promptPrefix))
+    .map((entry) => entry.value)
+    .filter((p) => p.InstanceId === instanceId);
+  return {
+    PromptSummaryList: prompts.map((p) => ({
+      Id: p.PromptId,
+      Arn: p.PromptArn,
+      Name: p.Name,
+    })),
+  };
+};
+
+const ListQueueEmailAddresses: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { EmailAddressMetadataList: [] };
+};
+
+const ListQueueQuickConnects: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { QuickConnectSummaryList: [] };
+};
+
+const ListQueues: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const queues = ctx.store
+    .list<StoredQueue>()
+    .filter((entry) => entry.key.startsWith(queuePrefix))
+    .map((entry) => entry.value)
+    .filter((q) => q.InstanceId === instanceId);
+  return {
+    QueueSummaryList: queues.map((q) => ({
+      Id: q.QueueId,
+      Arn: q.QueueArn,
+      Name: q.Name,
+    })),
+  };
+};
+
+const ListQuickConnects: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const connects = ctx.store
+    .list<StoredQuickConnect>()
+    .filter((entry) => entry.key.startsWith(quickConnectPrefix))
+    .map((entry) => entry.value)
+    .filter((q) => q.InstanceId === instanceId);
+  return {
+    QuickConnectSummaryList: connects.map((q) => ({
+      Id: q.QuickConnectId,
+      Arn: q.QuickConnectARN,
+      Name: q.Name,
+    })),
+  };
+};
+
+const ListRealtimeContactAnalysisSegmentsV2: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { Channel: "CHAT", Status: "COMPLETED", Segments: [] };
+};
+
 const ListEvaluationForms: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
@@ -3306,6 +3440,8 @@ const connect = {
             if (parts[2] === "approved-origins") return "ListApprovedOrigins";
             if (parts[2] === "bots") return "ListBots";
             if (parts[2] === "attributes") return "ListInstanceAttributes";
+            if (parts[2] === "lambda-functions") return "ListLambdaFunctions";
+            if (parts[2] === "lex-bots") return "ListLexBots";
             if (parts[2] === "storage-configs")
               return "ListInstanceStorageConfigs";
             if (parts[2] === "integration-associations")
@@ -3509,6 +3645,8 @@ const connect = {
           req.method === "POST"
         )
           return "ImportPhoneNumber";
+        if (parts.length === 2 && parts[1] === "list" && req.method === "POST")
+          return "ListPhoneNumbersV2";
         if (parts.length === 2 && req.method === "GET")
           return "DescribePhoneNumber";
         if (
@@ -3529,6 +3667,10 @@ const connect = {
         if (parts.length === 2 && req.method === "PUT") return "CreateQueue";
         if (parts.length === 3 && req.method === "GET") return "DescribeQueue";
         if (parts.length === 3 && req.method === "DELETE") return "DeleteQueue";
+        if (parts.length === 4 && req.method === "GET") {
+          if (parts[3] === "email-addresses") return "ListQueueEmailAddresses";
+          if (parts[3] === "quick-connects") return "ListQueueQuickConnects";
+        }
         if (parts.length === 4 && req.method === "POST") {
           if (parts[3] === "associate-email-addresses")
             return "AssociateQueueEmailAddresses";
@@ -3700,6 +3842,12 @@ const connect = {
           req.method === "POST"
         )
           return "CreatePersistentContactAssociation";
+        if (
+          parts.length === 4 &&
+          parts[1] === "list-real-time-analysis-segments-v2" &&
+          req.method === "POST"
+        )
+          return "ListRealtimeContactAnalysisSegmentsV2";
         return undefined;
 
       case "contact-flows":
@@ -3816,6 +3964,8 @@ const connect = {
       case "notifications":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateNotification";
+        if (parts.length === 2 && req.method === "GET")
+          return "ListNotifications";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeNotification";
         if (parts.length === 3 && req.method === "DELETE")
@@ -3825,6 +3975,8 @@ const connect = {
       case "predefined-attributes":
         if (parts.length === 2 && req.method === "PUT")
           return "CreatePredefinedAttribute";
+        if (parts.length === 2 && req.method === "GET")
+          return "ListPredefinedAttributes";
         if (parts.length === 3 && req.method === "GET")
           return "DescribePredefinedAttribute";
         if (parts.length === 3 && req.method === "DELETE")
@@ -3858,6 +4010,8 @@ const connect = {
       case "quick-connects":
         if (parts.length === 2 && req.method === "PUT")
           return "CreateQuickConnect";
+        if (parts.length === 2 && req.method === "GET")
+          return "ListQuickConnects";
         if (parts.length === 3 && req.method === "GET")
           return "DescribeQuickConnect";
         if (parts.length === 3 && req.method === "DELETE")
@@ -4061,6 +4215,19 @@ const connect = {
           return "ListHoursOfOperations";
         return undefined;
 
+      case "phone-numbers-summary":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListPhoneNumbers";
+        return undefined;
+
+      case "prompts-summary":
+        if (parts.length === 2 && req.method === "GET") return "ListPrompts";
+        return undefined;
+
+      case "queues-summary":
+        if (parts.length === 2 && req.method === "GET") return "ListQueues";
+        return undefined;
+
       default:
         return undefined;
     }
@@ -4224,6 +4391,18 @@ const connect = {
     ListInstanceAttributes,
     ListInstanceStorageConfigs,
     ListIntegrationAssociations,
+    ListLambdaFunctions,
+    ListLexBots,
+    ListNotifications,
+    ListPhoneNumbers,
+    ListPhoneNumbersV2,
+    ListPredefinedAttributes,
+    ListPrompts,
+    ListQueueEmailAddresses,
+    ListQueueQuickConnects,
+    ListQueues,
+    ListQuickConnects,
+    ListRealtimeContactAnalysisSegmentsV2,
     DescribeAuthenticationProfile,
     DescribeContact,
     DescribeContactEvaluation,

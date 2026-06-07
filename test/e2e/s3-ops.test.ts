@@ -7,6 +7,7 @@ import {
   DeleteObjectCommand,
   DeleteObjectTaggingCommand,
   GetBucketAclCommand,
+  PutBucketAclCommand,
   GetBucketLifecycleConfigurationCommand,
   GetBucketPolicyCommand,
   GetBucketVersioningCommand,
@@ -138,17 +139,39 @@ describe("S3 ops e2e", () => {
     await client.send(new DeleteBucketCommand({ Bucket: tagBucket }));
   });
 
-  test("bucket acl get", async () => {
+  test("bucket acl round-trip", async () => {
     const client = s3();
     const aclBucket = "bunsai-e2e-s3-acl";
     await client.send(new CreateBucketCommand({ Bucket: aclBucket }));
 
-    const acl = await client.send(
+    const defaultAcl = await client.send(
       new GetBucketAclCommand({ Bucket: aclBucket }),
     );
-    expect(acl.Owner?.ID).toBeDefined();
-    expect((acl.Grants ?? []).length).toBeGreaterThan(0);
-    expect(acl.Grants?.[0]?.Permission).toBe("FULL_CONTROL");
+    expect(defaultAcl.Owner?.ID).toBeDefined();
+    expect((defaultAcl.Grants ?? []).length).toBe(1);
+    expect(defaultAcl.Grants?.[0]?.Permission).toBe("FULL_CONTROL");
+
+    await client.send(
+      new PutBucketAclCommand({ Bucket: aclBucket, ACL: "public-read" }),
+    );
+
+    const publicAcl = await client.send(
+      new GetBucketAclCommand({ Bucket: aclBucket }),
+    );
+    expect(publicAcl.Owner?.ID).toBeDefined();
+    const grants = publicAcl.Grants ?? [];
+    expect(grants.length).toBe(2);
+    const allUsersGrant = grants.find(
+      (g) =>
+        g.Grantee?.URI === "http://acs.amazonaws.com/groups/global/AllUsers",
+    );
+    expect(allUsersGrant).toBeDefined();
+    expect(allUsersGrant?.Permission).toBe("READ");
+
+    const noSuchErr = await client
+      .send(new GetBucketAclCommand({ Bucket: "bunsai-e2e-s3-no-such-bucket" }))
+      .catch((e: unknown) => e);
+    expect((noSuchErr as { name?: string }).name).toBe("NoSuchBucket");
 
     await client.send(new DeleteBucketCommand({ Bucket: aclBucket }));
   });

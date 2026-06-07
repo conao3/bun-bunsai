@@ -6738,6 +6738,357 @@ const ListAIRecommendationJobs: OperationHandler = (_input, ctx) => {
   };
 };
 
+const ListClusterSchedulerConfigs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const clusterArn =
+    typeof input["ClusterArn"] === "string"
+      ? (input["ClusterArn"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let configs = ctx.store
+    .list<StoredClusterSchedulerConfig>()
+    .filter((entry) => entry.key.startsWith("cluster-scheduler-config/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    configs = configs.filter((c) =>
+      c.ClusterSchedulerConfigName.includes(nameContains),
+    );
+  }
+  if (clusterArn !== undefined) {
+    configs = configs.filter((c) => c.ClusterArn === clusterArn);
+  }
+  if (maxResults !== undefined) {
+    configs = configs.slice(0, maxResults);
+  }
+  return {
+    ClusterSchedulerConfigSummaries: configs.map((stored) => ({
+      ClusterSchedulerConfigName: stored.ClusterSchedulerConfigName,
+      ClusterSchedulerConfigArn: stored.ClusterSchedulerConfigArn,
+      ClusterSchedulerConfigId: stored.ClusterSchedulerConfigId,
+      ClusterArn: stored.ClusterArn,
+      Status: stored.Status,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListClusters: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let clusters = ctx.store
+    .list<StoredCluster>()
+    .filter((entry) => entry.key.startsWith("cluster/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    clusters = clusters.filter((c) => c.ClusterName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    clusters = clusters.slice(0, maxResults);
+  }
+  return {
+    ClusterSummaries: clusters.map((stored) => ({
+      ClusterName: stored.ClusterName,
+      ClusterArn: stored.ClusterArn,
+      ClusterStatus: stored.ClusterStatus,
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListCodeRepositories: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let repos = ctx.store
+    .list<StoredCodeRepository>()
+    .filter((entry) => entry.key.startsWith("code-repository/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => a.CodeRepositoryName.localeCompare(b.CodeRepositoryName));
+  if (nameContains !== undefined) {
+    repos = repos.filter((r) => r.CodeRepositoryName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    repos = repos.slice(0, maxResults);
+  }
+  return {
+    CodeRepositorySummaryList: repos.map((stored) => ({
+      CodeRepositoryName: stored.CodeRepositoryName,
+      CodeRepositoryArn: stored.CodeRepositoryArn,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+      GitConfig: stored.GitConfig,
+    })),
+  };
+};
+
+const ListCompilationJobs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let jobs = ctx.store
+    .list<StoredCompilationJob>()
+    .filter((entry) => entry.key.startsWith("compilation-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    jobs = jobs.filter((j) => j.CompilationJobName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    jobs = jobs.slice(0, maxResults);
+  }
+  return {
+    CompilationJobSummaries: jobs.map((stored) => ({
+      CompilationJobName: stored.CompilationJobName,
+      CompilationJobArn: stored.CompilationJobArn,
+      CompilationJobStatus: stored.CompilationJobStatus,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListComputeQuotas: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let quotas = ctx.store
+    .list<StoredComputeQuota>()
+    .filter((entry) => entry.key.startsWith("compute-quota/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    quotas = quotas.filter((q) => q.ComputeQuotaName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    quotas = quotas.slice(0, maxResults);
+  }
+  return {
+    ComputeQuotaSummaries: quotas.map((stored) => ({
+      ComputeQuotaName: stored.ComputeQuotaName,
+      ComputeQuotaArn: stored.ComputeQuotaArn,
+      ComputeQuotaId: stored.ComputeQuotaId,
+      Status: stored.Status,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListContexts: OperationHandler = (input, ctx) => {
+  const contextType =
+    typeof input["ContextType"] === "string"
+      ? (input["ContextType"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let contexts = ctx.store
+    .list<StoredContext>()
+    .filter((entry) => entry.key.startsWith("context/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (contextType !== undefined) {
+    contexts = contexts.filter((c) => c.ContextType === contextType);
+  }
+  if (maxResults !== undefined) {
+    contexts = contexts.slice(0, maxResults);
+  }
+  return {
+    ContextSummaries: contexts.map((stored) => ({
+      ContextName: stored.ContextName,
+      ContextArn: stored.ContextArn,
+      ContextType: stored.ContextType,
+      Source: stored.Source,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListDataQualityJobDefinitions: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let defs = ctx.store
+    .list<StoredDataQualityJobDefinition>()
+    .filter((entry) => entry.key.startsWith("data-quality-job-definition/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    defs = defs.filter((d) => d.JobDefinitionName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    defs = defs.slice(0, maxResults);
+  }
+  return {
+    JobDefinitionSummaries: defs.map((stored) => ({
+      MonitoringJobDefinitionName: stored.JobDefinitionName,
+      MonitoringJobDefinitionArn: stored.JobDefinitionArn,
+      CreationTime: stored.CreationTime,
+      EndpointName: "",
+    })),
+  };
+};
+
+const ListDeviceFleets: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let fleets = ctx.store
+    .list<StoredDeviceFleet>()
+    .filter((entry) => entry.key.startsWith("device-fleet/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    fleets = fleets.filter((f) => f.DeviceFleetName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    fleets = fleets.slice(0, maxResults);
+  }
+  return {
+    DeviceFleetSummaries: fleets.map((stored) => ({
+      DeviceFleetName: stored.DeviceFleetName,
+      DeviceFleetArn: stored.DeviceFleetArn,
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListDevices: OperationHandler = (_input, _ctx) => {
+  return { DeviceSummaries: [] };
+};
+
+const ListDomains: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let domains = ctx.store
+    .list<StoredDomain>()
+    .filter((entry) => entry.key.startsWith("domain/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    domains = domains.slice(0, maxResults);
+  }
+  return {
+    Domains: domains.map((stored) => ({
+      DomainId: stored.DomainId,
+      DomainArn: stored.DomainArn,
+      DomainName: stored.DomainName,
+      Status: stored.Status,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+      Url: stored.Url,
+    })),
+  };
+};
+
+const ListEdgeDeploymentPlans: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let plans = ctx.store
+    .list<StoredEdgeDeploymentPlan>()
+    .filter((entry) => entry.key.startsWith("edge-deployment-plan/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    plans = plans.filter((p) =>
+      p.EdgeDeploymentPlanName.includes(nameContains),
+    );
+  }
+  if (maxResults !== undefined) {
+    plans = plans.slice(0, maxResults);
+  }
+  return {
+    EdgeDeploymentPlanSummaries: plans.map((stored) => ({
+      EdgeDeploymentPlanName: stored.EdgeDeploymentPlanName,
+      EdgeDeploymentPlanArn: stored.EdgeDeploymentPlanArn,
+      DeviceFleetName: stored.DeviceFleetName ?? "",
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListEdgePackagingJobs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let jobs = ctx.store
+    .list<StoredEdgePackagingJob>()
+    .filter((entry) => entry.key.startsWith("edge-packaging-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    jobs = jobs.filter((j) => j.EdgePackagingJobName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    jobs = jobs.slice(0, maxResults);
+  }
+  return {
+    EdgePackagingJobSummaries: jobs.map((stored) => ({
+      EdgePackagingJobName: stored.EdgePackagingJobName,
+      EdgePackagingJobArn: stored.EdgePackagingJobArn,
+      EdgePackagingJobStatus: "COMPLETED",
+      ModelName: stored.ModelName,
+      ModelVersion: stored.ModelVersion,
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -6995,6 +7346,18 @@ const sagemaker = {
     ListCandidatesForAutoMLJob,
     ListClusterEvents,
     ListClusterNodes,
+    ListClusterSchedulerConfigs,
+    ListClusters,
+    ListCodeRepositories,
+    ListCompilationJobs,
+    ListComputeQuotas,
+    ListContexts,
+    ListDataQualityJobDefinitions,
+    ListDeviceFleets,
+    ListDevices,
+    ListDomains,
+    ListEdgeDeploymentPlans,
+    ListEdgePackagingJobs,
   },
   model,
 } as const satisfies ServiceDefinition;

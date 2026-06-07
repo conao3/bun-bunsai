@@ -8635,6 +8635,158 @@ const SendPipelineExecutionStepFailure: OperationHandler = (input, _ctx) => {
   return { PipelineExecutionArn: undefined };
 };
 
+const SendPipelineExecutionStepSuccess: OperationHandler = (input, _ctx) => {
+  void requireString(input, "CallbackToken");
+  return { PipelineExecutionArn: undefined };
+};
+
+const StartClusterHealthCheck: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ClusterName");
+  const stored = requireCluster(ctx, name);
+  return { ClusterArn: stored.ClusterArn };
+};
+
+const StartEdgeDeploymentStage: OperationHandler = (input, ctx) => {
+  const planName = requireString(input, "EdgeDeploymentPlanName");
+  void requireString(input, "StageName");
+  requireEdgeDeploymentPlan(ctx, planName);
+  return {};
+};
+
+const StartInferenceExperiment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const stored = ctx.store.get<StoredInferenceExperiment>(
+    inferenceExperimentKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `InferenceExperiment ${name} does not exist.`,
+      400,
+    );
+  }
+  return { InferenceExperimentArn: stored.InferenceExperimentArn };
+};
+
+const StartMlflowTrackingServer: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrackingServerName");
+  const stored = ctx.store.get<StoredMlflowTrackingServer>(
+    mlflowTrackingServerKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `MlflowTrackingServer ${name} does not exist.`,
+      400,
+    );
+  }
+  return { TrackingServerArn: stored.TrackingServerArn };
+};
+
+const StartMonitoringSchedule: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "MonitoringScheduleName");
+  requireMonitoringSchedule(ctx, name);
+  return {};
+};
+
+const StartNotebookInstance: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "NotebookInstanceName");
+  const stored = ctx.store.get<StoredNotebookInstance>(
+    notebookInstanceKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ValidationException",
+      `RecordNotFound: notebook instance "${name}".`,
+      400,
+    );
+  }
+  ctx.store.set(notebookInstanceKey(name), {
+    ...stored,
+    NotebookInstanceStatus: "InService",
+    LastModifiedTime: nowSeconds(),
+  });
+  return {};
+};
+
+const StartPipelineExecution: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "PipelineName");
+  const pipeline = requirePipeline(ctx, name);
+  const executionId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  const arn = pipelineExecutionArnOf(
+    ctx.region,
+    ctx.account,
+    name,
+    executionId,
+  );
+  const now = nowSeconds();
+  const stored: StoredPipelineExecution = {
+    PipelineArn: pipeline.PipelineArn,
+    PipelineExecutionArn: arn,
+    PipelineExecutionDisplayName:
+      typeof input["PipelineExecutionDisplayName"] === "string"
+        ? (input["PipelineExecutionDisplayName"] as string)
+        : undefined,
+    PipelineExecutionStatus: "Executing",
+    CreationTime: now,
+    LastModifiedTime: now,
+    PipelineParameters: Array.isArray(input["PipelineParameters"])
+      ? (input["PipelineParameters"] as Array<{ Name: string; Value: string }>)
+      : [],
+  };
+  ctx.store.set(pipelineExecutionKey(arn), stored);
+  return { PipelineExecutionArn: arn };
+};
+
+const StartSession: OperationHandler = (input, ctx) => {
+  void requireString(input, "ResourceIdentifier");
+  const sessionId = crypto.randomUUID();
+  return {
+    SessionId: sessionId,
+    StreamUrl: `wss://session.sagemaker.${ctx.region}.amazonaws.com/${sessionId}`,
+    TokenValue: "bunsai-session-token",
+  };
+};
+
+const StopAIBenchmarkJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AIBenchmarkJobName");
+  const stored = requireAIBenchmarkJob(ctx, name);
+  ctx.store.set(aiBenchmarkJobKey(name), {
+    ...stored,
+    AIBenchmarkJobStatus: "Stopping",
+  });
+  return { AIBenchmarkJobArn: stored.AIBenchmarkJobArn };
+};
+
+const StopAIRecommendationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AIRecommendationJobName");
+  const stored = requireAIRecommendationJob(ctx, name);
+  ctx.store.set(aiRecommendationJobKey(name), {
+    ...stored,
+    AIRecommendationJobStatus: "Stopping",
+  });
+  return { AIRecommendationJobArn: stored.AIRecommendationJobArn };
+};
+
+const StopAutoMLJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AutoMLJobName");
+  const stored = ctx.store.get<StoredAutoMLJob>(autoMLJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `AutoMLJob ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(autoMLJobKey(name), {
+    ...stored,
+    AutoMLJobStatus: "Stopping",
+    AutoMLJobSecondaryStatus: "Stopping",
+    LastModifiedTime: nowSeconds(),
+  });
+  return {};
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -8964,6 +9116,18 @@ const sagemaker = {
     Search,
     SearchTrainingPlanOfferings,
     SendPipelineExecutionStepFailure,
+    SendPipelineExecutionStepSuccess,
+    StartClusterHealthCheck,
+    StartEdgeDeploymentStage,
+    StartInferenceExperiment,
+    StartMlflowTrackingServer,
+    StartMonitoringSchedule,
+    StartNotebookInstance,
+    StartPipelineExecution,
+    StartSession,
+    StopAIBenchmarkJob,
+    StopAIRecommendationJob,
+    StopAutoMLJob,
   },
   model,
 } as const satisfies ServiceDefinition;

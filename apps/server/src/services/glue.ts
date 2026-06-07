@@ -6194,6 +6194,186 @@ const SearchTables: OperationHandler = (input, ctx) => {
   return { TableList: tableList.slice(0, maxResults) };
 };
 
+const UpdateTable: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableInput = asRecord(input["TableInput"]);
+  const name =
+    typeof input["Name"] === "string"
+      ? (input["Name"] as string)
+      : typeof tableInput["Name"] === "string"
+        ? (tableInput["Name"] as string)
+        : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  const database = requireDatabase(ctx, databaseName);
+  if (database.tables[name] === undefined) {
+    throw awsError("EntityNotFoundException", `Table ${name} not found.`, 400);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  database.tables[name] = {
+    ...database.tables[name],
+    input: tableInput,
+    updateTime: now,
+  };
+  ctx.store.set(databaseName, database);
+  return {};
+};
+
+const UpdateTableOptimizer: OperationHandler = (input, ctx) => {
+  const catalogId =
+    typeof input["CatalogId"] === "string"
+      ? (input["CatalogId"] as string)
+      : "";
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const type =
+    typeof input["Type"] === "string" ? (input["Type"] as string) : "";
+  if (
+    catalogId === "" ||
+    databaseName === "" ||
+    tableName === "" ||
+    type === ""
+  ) {
+    throw awsError(
+      "InvalidInputException",
+      "CatalogId, DatabaseName, TableName, and Type are required.",
+      400,
+    );
+  }
+  const key = `${tableOptimizerPrefix}${catalogId}:${databaseName}:${tableName}:${type}`;
+  const stored = ctx.store.get<StoredTableOptimizer>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `TableOptimizer not found for ${databaseName}.${tableName} type ${type}`,
+      400,
+    );
+  }
+  const configuration =
+    typeof input["TableOptimizerConfiguration"] === "object" &&
+    input["TableOptimizerConfiguration"] !== null
+      ? (input["TableOptimizerConfiguration"] as Record<string, unknown>)
+      : stored.configuration;
+  const updatedStored: StoredTableOptimizer = { ...stored, configuration };
+  ctx.store.set(key, updatedStored);
+  return {};
+};
+
+const UpdateTrigger: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const trigger = requireTrigger(ctx, name);
+  const triggerUpdate = asRecord(input["TriggerUpdate"]);
+  const updated: StoredTrigger = {
+    ...trigger,
+    input: { ...trigger.input, ...triggerUpdate },
+  };
+  ctx.store.set(`${triggerPrefix}${name}`, updated);
+  return { Trigger: triggerView(name, updated) };
+};
+
+const UpdateUsageProfile: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const key = `${usageProfilePrefix}${name}`;
+  const stored = ctx.store.get<StoredUsageProfile>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `UsageProfile ${name} not found.`,
+      400,
+    );
+  }
+  const updatedInput: Record<string, unknown> = { ...stored.input };
+  if (
+    typeof input["Configuration"] === "object" &&
+    input["Configuration"] !== null
+  ) {
+    updatedInput["Configuration"] = input["Configuration"];
+  }
+  if (typeof input["Description"] === "string") {
+    updatedInput["Description"] = input["Description"];
+  }
+  const updatedStored: StoredUsageProfile = { ...stored, input: updatedInput };
+  ctx.store.set(key, updatedStored);
+  return { Name: name };
+};
+
+const UpdateUserDefinedFunction: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  if (databaseName === "") {
+    throw awsError("InvalidInputException", "DatabaseName is required.", 400);
+  }
+  const functionName =
+    typeof input["FunctionName"] === "string"
+      ? (input["FunctionName"] as string)
+      : "";
+  if (functionName === "") {
+    throw awsError("InvalidInputException", "FunctionName is required.", 400);
+  }
+  const key = `${udfPrefix}${databaseName}:${functionName}`;
+  const stored = ctx.store.get<StoredUDF>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `UserDefinedFunction ${databaseName}.${functionName} not found.`,
+      400,
+    );
+  }
+  const functionInput = asRecord(input["FunctionInput"]);
+  const updatedStored: StoredUDF = { ...stored, input: functionInput };
+  ctx.store.set(key, updatedStored);
+  return {};
+};
+
+const UpdateWorkflow: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["Name"] === "string" ? (input["Name"] as string) : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  const stored = ctx.store.get<StoredWorkflow>(`${workflowPrefix}${name}`);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Workflow ${name} not found.`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const updatedInput: Record<string, unknown> = { ...stored.input };
+  if (typeof input["Description"] === "string") {
+    updatedInput["Description"] = input["Description"];
+  }
+  if (
+    typeof input["DefaultRunProperties"] === "object" &&
+    input["DefaultRunProperties"] !== null
+  ) {
+    updatedInput["DefaultRunProperties"] = input["DefaultRunProperties"];
+  }
+  if (typeof input["MaxConcurrentRuns"] === "number") {
+    updatedInput["MaxConcurrentRuns"] = input["MaxConcurrentRuns"];
+  }
+  const updatedStored: StoredWorkflow = {
+    ...stored,
+    input: updatedInput,
+    lastModifiedOn: now,
+  };
+  ctx.store.set(`${workflowPrefix}${name}`, updatedStored);
+  return { Name: name };
+};
+
 const glue: ServiceDefinition = {
   name: "glue",
   protocol: "json",
@@ -6457,6 +6637,12 @@ const glue: ServiceDefinition = {
     UpdateRegistry,
     UpdateSchema,
     UpdateSourceControlFromJob,
+    UpdateTable,
+    UpdateTableOptimizer,
+    UpdateTrigger,
+    UpdateUsageProfile,
+    UpdateUserDefinedFunction,
+    UpdateWorkflow,
   },
   model,
 } as const;

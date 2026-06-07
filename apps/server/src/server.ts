@@ -7,6 +7,7 @@ import type { Protocol } from "./core/types.ts";
 import { handleManagement } from "./management/api.ts";
 import { findService } from "./services/index.ts";
 import { virtualHostBucket } from "./services/s3.ts";
+import { handleCognitoDiscovery } from "./services/cognito-idp.ts";
 
 const bodyTextForLog = (body: string | Uint8Array): string => {
   if (typeof body === "string") return body;
@@ -24,6 +25,8 @@ export function createBunsaiApp() {
   const gatewayFetch = async (req: Request): Promise<Response> => {
     const start = performance.now();
     const url = new URL(req.url);
+    const discovery = await handleCognitoDiscovery(req, url);
+    if (discovery !== undefined) return discovery;
     const bodyBytes = new Uint8Array(await req.arrayBuffer());
     const route = routeRequest(req, url);
     const service =

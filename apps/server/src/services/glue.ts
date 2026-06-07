@@ -58,6 +58,8 @@ const schemaVersionMetaPrefix = "schemaVersionMeta:";
 const workflowRunPropsPrefix = "workflowRunProps:";
 const connTypePrefix = "connType:";
 const sessionStmtCountPrefix = "sessionStmtCount:";
+const tagsPrefix = "tags:";
+const workflowRunPrefix = "workflowRun:";
 
 type StoredCrawler = {
   input: Record<string, unknown>;
@@ -192,6 +194,7 @@ type StoredSession = {
   id: string;
   input: Record<string, unknown>;
   createdOn: number;
+  status?: string;
 };
 
 type StoredDataQualityRuleset = {
@@ -2595,7 +2598,7 @@ const sessionView = (stored: StoredSession): Record<string, unknown> => ({
     ? { WorkerType: stored.input["WorkerType"] }
     : {}),
   CreatedOn: stored.createdOn,
-  Status: "READY",
+  Status: stored.status ?? "READY",
 });
 
 const CreateSession: OperationHandler = (input, ctx) => {
@@ -4225,7 +4228,7 @@ const GetTableVersions: OperationHandler = (input, ctx) => {
   };
 };
 
-const GetTags: OperationHandler = (input, _ctx) => {
+const GetTags: OperationHandler = (input, ctx) => {
   const resourceArn =
     typeof input["ResourceArn"] === "string"
       ? (input["ResourceArn"] as string)
@@ -4233,7 +4236,10 @@ const GetTags: OperationHandler = (input, _ctx) => {
   if (resourceArn === "") {
     throw awsError("InvalidInputException", "ResourceArn is required.", 400);
   }
-  return { Tags: {} };
+  const stored = ctx.store.get<Record<string, string>>(
+    `${tagsPrefix}${resourceArn}`,
+  );
+  return { Tags: stored ?? {} };
 };
 
 const GetUnfilteredPartitionMetadata: OperationHandler = (input, ctx) => {
@@ -5280,6 +5286,193 @@ const StartMLLabelingSetGenerationTaskRun: OperationHandler = (input, ctx) => {
   return { TaskRunId: taskRunId };
 };
 
+const StartMaterializedViewRefreshTaskRun: OperationHandler = (input, _ctx) => {
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : "";
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  if (catalogId === "" || databaseName === "" || tableName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "CatalogId, DatabaseName, and TableName are required.",
+      400,
+    );
+  }
+  const taskRunId = crypto.randomUUID();
+  return { MaterializedViewRefreshTaskRunId: taskRunId };
+};
+
+const StartTrigger: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const trigger = requireTrigger(ctx, name);
+  const updated: StoredTrigger = { ...trigger, state: "ACTIVATED" };
+  ctx.store.set(`${triggerPrefix}${name}`, updated);
+  return { Name: name };
+};
+
+const StartWorkflowRun: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  if (ctx.store.get<StoredWorkflow>(`${workflowPrefix}${name}`) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Workflow ${name} not found.`,
+      400,
+    );
+  }
+  const runId = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  ctx.store.set(`${workflowRunPrefix}${name}:${runId}`, {
+    workflowName: name,
+    runId,
+    startedOn: now,
+    status: "RUNNING",
+  });
+  return { RunId: runId };
+};
+
+const StopColumnStatisticsTaskRun: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  if (databaseName === "" || tableName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName and TableName are required.",
+      400,
+    );
+  }
+  requireTable(ctx, databaseName, tableName);
+  return {};
+};
+
+const StopColumnStatisticsTaskRunSchedule: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  if (databaseName === "" || tableName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName and TableName are required.",
+      400,
+    );
+  }
+  requireTable(ctx, databaseName, tableName);
+  return {};
+};
+
+const StopCrawler: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const crawler = requireCrawler(ctx, name);
+  if (crawler.state !== "RUNNING") {
+    throw awsError(
+      "CrawlerNotRunningException",
+      `Crawler ${name} is not running.`,
+      400,
+    );
+  }
+  const updated: StoredCrawler = {
+    ...crawler,
+    state: "READY",
+    lastUpdated: Math.floor(Date.now() / 1000),
+  };
+  ctx.store.set(`${crawlerPrefix}${name}`, updated);
+  return {};
+};
+
+const StopCrawlerSchedule: OperationHandler = (input, ctx) => {
+  const crawlerName =
+    typeof input["CrawlerName"] === "string" ? input["CrawlerName"] : "";
+  if (crawlerName === "") {
+    throw awsError("InvalidInputException", "CrawlerName is required.", 400);
+  }
+  requireCrawler(ctx, crawlerName);
+  return {};
+};
+
+const StopMaterializedViewRefreshTaskRun: OperationHandler = (input, _ctx) => {
+  const catalogId =
+    typeof input["CatalogId"] === "string" ? input["CatalogId"] : "";
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  if (catalogId === "" || databaseName === "" || tableName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "CatalogId, DatabaseName, and TableName are required.",
+      400,
+    );
+  }
+  return {};
+};
+
+const StopSession: OperationHandler = (input, ctx) => {
+  const id = typeof input["Id"] === "string" ? (input["Id"] as string) : "";
+  if (id === "") {
+    throw awsError("InvalidInputException", "Id is required.", 400);
+  }
+  const stored = ctx.store.get<StoredSession>(`${sessionPrefix}${id}`);
+  if (stored === undefined) {
+    throw awsError("EntityNotFoundException", `Session ${id} not found.`, 400);
+  }
+  const updated: StoredSession = { ...stored, status: "STOPPED" };
+  ctx.store.set(`${sessionPrefix}${id}`, updated);
+  return { Id: id };
+};
+
+const StopTrigger: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const trigger = requireTrigger(ctx, name);
+  const updated: StoredTrigger = { ...trigger, state: "DEACTIVATED" };
+  ctx.store.set(`${triggerPrefix}${name}`, updated);
+  return { Name: name };
+};
+
+const StopWorkflowRun: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const runId =
+    typeof input["RunId"] === "string" ? (input["RunId"] as string) : "";
+  if (runId === "") {
+    throw awsError("InvalidInputException", "RunId is required.", 400);
+  }
+  if (ctx.store.get<StoredWorkflow>(`${workflowPrefix}${name}`) === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Workflow ${name} not found.`,
+      400,
+    );
+  }
+  return {};
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string"
+      ? (input["ResourceArn"] as string)
+      : "";
+  const tagsToAdd =
+    typeof input["TagsToAdd"] === "object" &&
+    input["TagsToAdd"] !== null &&
+    !Array.isArray(input["TagsToAdd"])
+      ? (input["TagsToAdd"] as Record<string, string>)
+      : null;
+  if (resourceArn === "" || tagsToAdd === null) {
+    throw awsError(
+      "InvalidInputException",
+      "ResourceArn and TagsToAdd are required.",
+      400,
+    );
+  }
+  const existing =
+    ctx.store.get<Record<string, string>>(`${tagsPrefix}${resourceArn}`) ?? {};
+  ctx.store.set(`${tagsPrefix}${resourceArn}`, { ...existing, ...tagsToAdd });
+  return {};
+};
+
 const isDatabaseKey = (key: string): boolean =>
   !key.startsWith(crawlerPrefix) &&
   !key.startsWith(jobPrefix) &&
@@ -5315,6 +5508,8 @@ const isDatabaseKey = (key: string): boolean =>
   !key.startsWith(workflowRunPropsPrefix) &&
   !key.startsWith(connTypePrefix) &&
   !key.startsWith(sessionStmtCountPrefix) &&
+  !key.startsWith(tagsPrefix) &&
+  !key.startsWith(workflowRunPrefix) &&
   key !== dataCatalogEncryptionKey;
 
 const SearchTables: OperationHandler = (input, ctx) => {
@@ -5567,6 +5762,18 @@ const glue: ServiceDefinition = {
     StartJobRun,
     StartMLEvaluationTaskRun,
     StartMLLabelingSetGenerationTaskRun,
+    StartMaterializedViewRefreshTaskRun,
+    StartTrigger,
+    StartWorkflowRun,
+    StopColumnStatisticsTaskRun,
+    StopColumnStatisticsTaskRunSchedule,
+    StopCrawler,
+    StopCrawlerSchedule,
+    StopMaterializedViewRefreshTaskRun,
+    StopSession,
+    StopTrigger,
+    StopWorkflowRun,
+    TagResource,
   },
   model,
 } as const;

@@ -9,6 +9,9 @@ import type {
 } from "../core/types.ts";
 import { unzip } from "./lambda/zip.ts";
 import { executeNodeHandler } from "./lambda/runtime.ts";
+import type { LambdaExecution } from "./lambda/runtime.ts";
+import { registerEventSource, registerTarget } from "../core/events.ts";
+import { parseArn, resourceName } from "../core/arn.ts";
 
 const model = loadServiceModel(lambdaModel);
 
@@ -220,16 +223,46 @@ const jsonPayload = (value: unknown): Uint8Array =>
   new TextEncoder().encode(JSON.stringify(value));
 
 const reservedEnv = (
-  ctx: ServiceContext,
   fn: StoredFunction,
+  region: string,
 ): Record<string, string> => ({
   AWS_LAMBDA_FUNCTION_NAME: fn.FunctionName,
   AWS_LAMBDA_FUNCTION_VERSION: fn.Version,
   AWS_LAMBDA_FUNCTION_MEMORY_SIZE: String(fn.MemorySize),
-  AWS_REGION: ctx.region,
-  AWS_DEFAULT_REGION: ctx.region,
+  AWS_REGION: region,
+  AWS_DEFAULT_REGION: region,
   _HANDLER: fn.Handler ?? "",
 });
+
+const runFunction = async (
+  fn: StoredFunction,
+  event: unknown,
+  region: string,
+): Promise<LambdaExecution> => {
+  const files =
+    fn.CodeZipFile !== undefined ? unzip(fn.CodeZipFile) : undefined;
+  if (files === undefined || fn.Handler === undefined) {
+    return { kind: "unsupported" };
+  }
+  return executeNodeHandler({
+    files,
+    handler: fn.Handler,
+    runtime: fn.Runtime,
+    event,
+    env: { ...reservedEnv(fn, region), ...(fn.Environment ?? {}) },
+    timeoutMs: fn.Timeout * 1000,
+    context: {
+      functionName: fn.FunctionName,
+      functionVersion: fn.Version,
+      invokedFunctionArn: fn.FunctionArn,
+      memoryLimitInMB: String(fn.MemorySize),
+      awsRequestId: crypto.randomUUID(),
+      logGroupName: `/aws/lambda/${fn.FunctionName}`,
+      logStreamName: nowIso(),
+      callbackWaitsForEmptyEventLoop: true,
+    },
+  });
+};
 
 const Invoke: OperationHandler = async (input, ctx) => {
   const fn = requireFunction(ctx, functionNameFromInput(input));
@@ -238,29 +271,11 @@ const Invoke: OperationHandler = async (input, ctx) => {
   if (invocationType === "DryRun") {
     return { StatusCode: 204, ExecutedVersion: fn.Version };
   }
-  const files =
-    fn.CodeZipFile !== undefined ? unzip(fn.CodeZipFile) : undefined;
-  const execution =
-    files !== undefined && fn.Handler !== undefined
-      ? await executeNodeHandler({
-          files,
-          handler: fn.Handler,
-          runtime: fn.Runtime,
-          event: decodePayload(input["Payload"]),
-          env: { ...reservedEnv(ctx, fn), ...(fn.Environment ?? {}) },
-          timeoutMs: fn.Timeout * 1000,
-          context: {
-            functionName: fn.FunctionName,
-            functionVersion: fn.Version,
-            invokedFunctionArn: fn.FunctionArn,
-            memoryLimitInMB: String(fn.MemorySize),
-            awsRequestId: crypto.randomUUID(),
-            logGroupName: `/aws/lambda/${fn.FunctionName}`,
-            logStreamName: nowIso(),
-            callbackWaitsForEmptyEventLoop: true,
-          },
-        })
-      : { kind: "unsupported" as const };
+  const execution = await runFunction(
+    fn,
+    decodePayload(input["Payload"]),
+    ctx.region,
+  );
   const statusCode = invocationType === "Event" ? 202 : 200;
   if (execution.kind === "unsupported") {
     return {
@@ -301,6 +316,34 @@ const Invoke: OperationHandler = async (input, ctx) => {
     ...(logResult !== undefined ? { LogResult: logResult } : {}),
   };
 };
+
+registerTarget("lambda", async (store, resource, delivery) => {
+  const fn = store.get<StoredFunction>(resource);
+  if (fn === undefined) return;
+  await runFunction(fn, delivery.event, store.scope.region);
+});
+
+registerEventSource(async (ctx, sourceArn, records) => {
+  const parsed = parseArn(sourceArn);
+  if (parsed === undefined) return false;
+  const store = ctx.storeFor("lambda");
+  let consumed = false;
+  for (const { key, value } of store.list<StoredEventSourceMapping>()) {
+    if (!key.startsWith("esm:")) continue;
+    if (value.EventSourceArn !== sourceArn) continue;
+    if (value.Enabled === false || value.State === "Disabled") continue;
+    const name = resourceName(parseArn(value.FunctionArn)?.resource ?? "");
+    const fn = store.get<StoredFunction>(name);
+    if (fn === undefined) continue;
+    const execution = await runFunction(
+      fn,
+      { Records: records },
+      parsed.region,
+    );
+    if (execution.kind === "result") consumed = true;
+  }
+  return consumed;
+});
 
 const GetFunctionConfiguration: OperationHandler = (input, ctx) => {
   const fn = requireFunction(ctx, functionNameFromInput(input));

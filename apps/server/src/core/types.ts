@@ -43,6 +43,7 @@ export type ServiceContext = {
   store: ScopedStore;
   account: string;
   region: string;
+  storeFor: (service: string) => ScopedStore;
 };
 
 export type OperationHandler = (

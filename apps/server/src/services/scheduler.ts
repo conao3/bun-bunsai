@@ -1,4 +1,5 @@
 import { awsError } from "../core/framework.ts";
+import { deliverToArn } from "../core/events.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import schedulerModel from "../../../../test/vendor/aws-models/scheduler.json" with { type: "json" };
 import type {
@@ -42,6 +43,96 @@ type StoredGroup = {
   State: string;
   CreationDate: number;
   LastModificationDate: number;
+};
+
+const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+const parseAt = (expr: string): number | undefined => {
+  const m = /^at\((.+)\)$/.exec(expr);
+  if (m === null) return undefined;
+  const ms = new Date(m[1]).getTime();
+  return Number.isNaN(ms) ? undefined : ms;
+};
+
+const parseRate = (expr: string): number | undefined => {
+  const m = /^rate\((\d+)\s+(minute|minutes|hour|hours|day|days)\)$/.exec(expr);
+  if (m === null) return undefined;
+  const val = parseInt(m[1], 10);
+  const unitMs: Record<string, number> = {
+    minute: 60_000,
+    minutes: 60_000,
+    hour: 3_600_000,
+    hours: 3_600_000,
+    day: 86_400_000,
+    days: 86_400_000,
+  };
+  return val * (unitMs[m[2]] ?? 0);
+};
+
+const cancelTimer = (key: string): void => {
+  const t = pendingTimers.get(key);
+  if (t !== undefined) {
+    clearTimeout(t);
+    pendingTimers.delete(key);
+  }
+};
+
+const fireSchedule = async (
+  key: string,
+  ctx: ServiceContext,
+): Promise<void> => {
+  const schedule = ctx.store.get<StoredSchedule>(key);
+  if (schedule === undefined || schedule.State !== "ENABLED") return;
+  const targetArn =
+    typeof schedule.Target["Arn"] === "string"
+      ? schedule.Target["Arn"]
+      : undefined;
+  if (targetArn === undefined) return;
+  const body =
+    typeof schedule.Target["Input"] === "string"
+      ? schedule.Target["Input"]
+      : "{}";
+  await deliverToArn(ctx, targetArn, {
+    body,
+    event: { source: "aws.scheduler" },
+  });
+};
+
+const armTimer = (
+  key: string,
+  schedule: StoredSchedule,
+  ctx: ServiceContext,
+): void => {
+  cancelTimer(key);
+  if (schedule.State !== "ENABLED") return;
+  const expr = schedule.ScheduleExpression;
+  const atMs = parseAt(expr);
+  if (atMs !== undefined) {
+    const delay = Math.max(0, atMs - Date.now());
+    pendingTimers.set(
+      key,
+      setTimeout(() => {
+        pendingTimers.delete(key);
+        void fireSchedule(key, ctx);
+      }, delay),
+    );
+    return;
+  }
+  const rateMs = parseRate(expr);
+  if (rateMs !== undefined) {
+    const fire = (): void => {
+      void (async () => {
+        pendingTimers.delete(key);
+        await fireSchedule(key, ctx);
+        const current = ctx.store.get<StoredSchedule>(key);
+        if (current !== undefined && current.State === "ENABLED") {
+          pendingTimers.set(key, setTimeout(fire, rateMs));
+        }
+      })();
+    };
+    pendingTimers.set(key, setTimeout(fire, rateMs));
+    return;
+  }
 };
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -165,6 +256,7 @@ const CreateSchedule: OperationHandler = (input, ctx) => {
     LastModificationDate: now,
   };
   ctx.store.set(scheduleKey(group, name), schedule);
+  armTimer(scheduleKey(group, name), schedule, ctx);
   return { ScheduleArn: arn };
 };
 
@@ -236,6 +328,7 @@ const UpdateSchedule: OperationHandler = (input, ctx) => {
     LastModificationDate: now,
   };
   ctx.store.set(scheduleKey(group, name), schedule);
+  armTimer(scheduleKey(group, name), schedule, ctx);
   return { ScheduleArn: existing.Arn };
 };
 
@@ -249,6 +342,7 @@ const DeleteSchedule: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  cancelTimer(scheduleKey(group, name));
   ctx.store.delete(scheduleKey(group, name));
   return {};
 };

@@ -15,6 +15,12 @@ import {
   UntagResourceCommand,
   UpdateScheduleCommand,
 } from "@aws-sdk/client-scheduler";
+import {
+  CreateQueueCommand,
+  DeleteQueueCommand,
+  ReceiveMessageCommand,
+  SQSClient,
+} from "@aws-sdk/client-sqs";
 
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
@@ -152,4 +158,91 @@ test("Scheduler tag, list tags, and untag roundtrip", async () => {
   expect(afterTagMap["team"]).toBe("platform");
 
   await client.send(new DeleteScheduleGroupCommand({ Name: groupName }));
+});
+
+test("Scheduler at() past expression delivers to SQS target", async () => {
+  const client = scheduler();
+  const sqsClient = new SQSClient({
+    endpoint,
+    region,
+    credentials,
+    requestHandler,
+  });
+  const queueName = `bunsai-sched-at-q-${Date.now()}`;
+  const scheduleName = `bunsai-sched-at-${Date.now()}`;
+  const queueArn = `arn:aws:sqs:${region}:000000000000:${queueName}`;
+
+  const queue = await sqsClient.send(
+    new CreateQueueCommand({ QueueName: queueName }),
+  );
+  const queueUrl = queue.QueueUrl!;
+
+  await client.send(
+    new CreateScheduleCommand({
+      Name: scheduleName,
+      ScheduleExpression: "at(2020-01-01T00:00:00Z)",
+      FlexibleTimeWindow: { Mode: "OFF" },
+      Target: {
+        Arn: queueArn,
+        RoleArn: "arn:aws:iam::000000000000:role/demo",
+        Input: '{"hello":"scheduler"}',
+      },
+    }),
+  );
+
+  await Bun.sleep(500);
+
+  const received = await sqsClient.send(
+    new ReceiveMessageCommand({ QueueUrl: queueUrl }),
+  );
+  expect(received.Messages).toHaveLength(1);
+  const body = JSON.parse(received.Messages![0]!.Body!);
+  expect(body.hello).toBe("scheduler");
+
+  await client.send(new DeleteScheduleCommand({ Name: scheduleName }));
+  await sqsClient.send(new DeleteQueueCommand({ QueueUrl: queueUrl }));
+});
+
+test("Scheduler DeleteSchedule cancels pending timer", async () => {
+  const client = scheduler();
+  const sqsClient = new SQSClient({
+    endpoint,
+    region,
+    credentials,
+    requestHandler,
+  });
+  const queueName = `bunsai-sched-cancel-q-${Date.now()}`;
+  const scheduleName = `bunsai-sched-cancel-${Date.now()}`;
+  const queueArn = `arn:aws:sqs:${region}:000000000000:${queueName}`;
+
+  const queue = await sqsClient.send(
+    new CreateQueueCommand({ QueueName: queueName }),
+  );
+  const queueUrl = queue.QueueUrl!;
+
+  const futureMs = Date.now() + 30_000;
+  const futureIso = new Date(futureMs).toISOString().slice(0, 19);
+  await client.send(
+    new CreateScheduleCommand({
+      Name: scheduleName,
+      ScheduleExpression: `at(${futureIso})`,
+      FlexibleTimeWindow: { Mode: "OFF" },
+      Target: {
+        Arn: queueArn,
+        RoleArn: "arn:aws:iam::000000000000:role/demo",
+        Input: '{"cancelled":true}',
+      },
+    }),
+  );
+
+  await client.send(new DeleteScheduleCommand({ Name: scheduleName }));
+
+  await Bun.sleep(200);
+
+  const received = await sqsClient.send(
+    new ReceiveMessageCommand({ QueueUrl: queueUrl }),
+  );
+  expect(received.Messages ?? []).toHaveLength(0);
+
+  await sqsClient.send(new DeleteQueueCommand({ QueueUrl: queueUrl }));
 });

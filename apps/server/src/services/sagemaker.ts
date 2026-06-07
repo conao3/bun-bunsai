@@ -898,6 +898,14 @@ const workforceKey = (name: string): string => `workforce/${name}`;
 
 const workteamKey = (name: string): string => `workteam/${name}`;
 
+const lineageGroupPolicyKey = (name: string): string =>
+  `lineage-group-policy/${name}`;
+
+const modelPackageGroupPolicyKey = (name: string): string =>
+  `model-package-group-policy/${name}`;
+
+const portfolioStatusKey = (): string => `servicecatalog-portfolio-status`;
+
 const trainingJobArnOf = (
   region: string,
   account: string,
@@ -6229,9 +6237,202 @@ const DetachClusterNodeVolume: OperationHandler = (input, _ctx) => {
 
 const DisableSagemakerServicecatalogPortfolio: OperationHandler = (
   _input,
-  _ctx,
+  ctx,
 ) => {
+  ctx.store.set(portfolioStatusKey(), { Status: "Disabled" });
   return {};
+};
+
+const DisassociateTrialComponent: OperationHandler = (input, ctx) => {
+  const trialComponentName = requireString(input, "TrialComponentName");
+  const trialName = requireString(input, "TrialName");
+  const stored = ctx.store.get<StoredTrialComponentAssociation>(
+    trialComponentAssociationKey(trialComponentName, trialName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Association between trial component ${trialComponentName} and trial ${trialName} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(trialComponentAssociationKey(trialComponentName, trialName));
+  return {
+    TrialComponentArn: stored.TrialComponentArn,
+    TrialArn: stored.TrialArn,
+  };
+};
+
+const EnableSagemakerServicecatalogPortfolio: OperationHandler = (
+  _input,
+  ctx,
+) => {
+  ctx.store.set(portfolioStatusKey(), { Status: "Enabled" });
+  return {};
+};
+
+const ExtendTrainingPlan: OperationHandler = (input, ctx) => {
+  const offeringId = requireString(input, "TrainingPlanExtensionOfferingId");
+  void ctx;
+  const now = nowSeconds();
+  return {
+    TrainingPlanExtensions: [
+      {
+        TrainingPlanExtensionOfferingId: offeringId,
+        ExtendedAt: now,
+        StartDate: now,
+        EndDate: now + 86400,
+        Status: "Active",
+        PaymentStatus: "Completed",
+      },
+    ],
+  };
+};
+
+const GetDeviceFleetReport: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "DeviceFleetName");
+  const stored = requireDeviceFleet(ctx, name);
+  return {
+    DeviceFleetArn: stored.DeviceFleetArn,
+    DeviceFleetName: stored.DeviceFleetName,
+    Description: stored.Description,
+    OutputConfig: stored.OutputConfig,
+    ReportGenerated: nowSeconds(),
+    DeviceStats: { ConnectedDeviceCount: 0, RegisteredDeviceCount: 0 },
+    AgentVersions: [],
+    ModelStats: [],
+  };
+};
+
+const GetLineageGroupPolicy: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "LineageGroupName");
+  const stored = ctx.store.get<{
+    LineageGroupArn: string;
+    ResourcePolicy: string;
+  }>(lineageGroupPolicyKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Lineage group ${name} does not exist.`,
+      400,
+    );
+  }
+  return {
+    LineageGroupArn: stored.LineageGroupArn,
+    ResourcePolicy: stored.ResourcePolicy,
+  };
+};
+
+const GetModelPackageGroupPolicy: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ModelPackageGroupName");
+  const stored = ctx.store.get<{
+    ModelPackageGroupArn: string;
+    ResourcePolicy: string;
+  }>(modelPackageGroupPolicyKey(name));
+  if (stored === undefined) {
+    const group = ctx.store.get<StoredModelPackageGroup>(
+      modelPackageGroupKey(name),
+    );
+    if (group === undefined) {
+      throw awsError(
+        "ResourceNotFound",
+        `Model package group ${name} does not exist.`,
+        400,
+      );
+    }
+    return { ResourcePolicy: "" };
+  }
+  return { ResourcePolicy: stored.ResourcePolicy };
+};
+
+const GetSagemakerServicecatalogPortfolioStatus: OperationHandler = (
+  _input,
+  ctx,
+) => {
+  const stored = ctx.store.get<{ Status: string }>(portfolioStatusKey());
+  return { Status: stored?.Status ?? "Disabled" };
+};
+
+const GetScalingConfigurationRecommendation: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const jobName = requireString(input, "InferenceRecommendationsJobName");
+  const stored = ctx.store.get<StoredInferenceRecommendationsJob>(
+    inferenceRecommendationsJobKey(jobName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Inference recommendations job ${jobName} does not exist.`,
+      400,
+    );
+  }
+  return {
+    InferenceRecommendationsJobName: stored.JobName,
+    RecommendationId: input["RecommendationId"],
+    EndpointName: input["EndpointName"],
+    TargetCpuUtilizationPerCore: input["TargetCpuUtilizationPerCore"] ?? 50,
+    ScalingPolicyObjective: input["ScalingPolicyObjective"],
+    Metric: undefined,
+    DynamicScalingConfiguration: { MinCapacity: 1, MaxCapacity: 10 },
+  };
+};
+
+const GetSearchSuggestions: OperationHandler = (_input, _ctx) => {
+  return { PropertyNameSuggestions: [] };
+};
+
+const ImportHubContent: OperationHandler = (input, ctx) => {
+  const hubName = requireString(input, "HubName");
+  const contentName = requireString(input, "HubContentName");
+  const contentType = requireString(input, "HubContentType");
+  const hub = requireHub(ctx, hubName);
+  const contentVersion =
+    typeof input["HubContentVersion"] === "string"
+      ? (input["HubContentVersion"] as string)
+      : "1.0.0";
+  const hubContentArn = hubContentArnOf(
+    ctx.region,
+    ctx.account,
+    hubName,
+    contentType,
+    contentName,
+    contentVersion,
+  );
+  return { HubArn: hub.HubArn, HubContentArn: hubContentArn };
+};
+
+const ListAIBenchmarkJobs: OperationHandler = (_input, ctx) => {
+  const jobs = ctx.store
+    .list<StoredAIBenchmarkJob>()
+    .filter((entry) => entry.key.startsWith("ai-benchmark-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  return {
+    AIBenchmarkJobs: jobs.map((stored) => ({
+      AIBenchmarkJobName: stored.AIBenchmarkJobName,
+      AIBenchmarkJobArn: stored.AIBenchmarkJobArn,
+      AIBenchmarkJobStatus: stored.AIBenchmarkJobStatus,
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListAIRecommendationJobs: OperationHandler = (_input, ctx) => {
+  const jobs = ctx.store
+    .list<StoredAIRecommendationJob>()
+    .filter((entry) => entry.key.startsWith("ai-recommendation-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  return {
+    AIRecommendationJobs: jobs.map((stored) => ({
+      AIRecommendationJobName: stored.AIRecommendationJobName,
+      AIRecommendationJobArn: stored.AIRecommendationJobArn,
+      AIRecommendationJobStatus: stored.AIRecommendationJobStatus,
+      CreationTime: stored.CreationTime,
+    })),
+  };
 };
 
 const sagemaker = {
@@ -6467,6 +6668,18 @@ const sagemaker = {
     DescribeWorkteam,
     DetachClusterNodeVolume,
     DisableSagemakerServicecatalogPortfolio,
+    DisassociateTrialComponent,
+    EnableSagemakerServicecatalogPortfolio,
+    ExtendTrainingPlan,
+    GetDeviceFleetReport,
+    GetLineageGroupPolicy,
+    GetModelPackageGroupPolicy,
+    GetSagemakerServicecatalogPortfolioStatus,
+    GetScalingConfigurationRecommendation,
+    GetSearchSuggestions,
+    ImportHubContent,
+    ListAIBenchmarkJobs,
+    ListAIRecommendationJobs,
   },
   model,
 } as const satisfies ServiceDefinition;

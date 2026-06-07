@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
   AssumeRoleCommand,
+  GetCallerIdentityCommand,
   GetFederationTokenCommand,
   GetSessionTokenCommand,
   STSClient,
@@ -51,4 +52,34 @@ test("STS GetFederationToken returns Credentials and FederatedUser", async () =>
   expect(out.Credentials?.AccessKeyId).toBeDefined();
   expect(out.FederatedUser?.Arn).toContain("federated-user/bunsai-e2e-user");
   expect(out.FederatedUser?.FederatedUserId).toContain("bunsai-e2e-user");
+});
+
+test("AssumeRole into another account flows through to later calls", async () => {
+  const caller = sts();
+  const assumed = await caller.send(
+    new AssumeRoleCommand({
+      RoleArn: "arn:aws:iam::111122223333:role/cross-account",
+      RoleSessionName: "bunsai-cross",
+    }),
+  );
+  expect(assumed.AssumedRoleUser?.Arn).toContain(
+    "arn:aws:sts::111122223333:assumed-role/cross-account/bunsai-cross",
+  );
+
+  const assumedClient = new STSClient({
+    endpoint,
+    region,
+    requestHandler,
+    credentials: {
+      accessKeyId: assumed.Credentials?.AccessKeyId ?? "",
+      secretAccessKey: assumed.Credentials?.SecretAccessKey ?? "",
+      sessionToken: assumed.Credentials?.SessionToken ?? "",
+    },
+  });
+  const identity = await assumedClient.send(new GetCallerIdentityCommand({}));
+  expect(identity.Account).toBe("111122223333");
+  expect(identity.Arn).toBe("arn:aws:iam::111122223333:root");
+
+  const defaultIdentity = await caller.send(new GetCallerIdentityCommand({}));
+  expect(defaultIdentity.Account).toBe("000000000000");
 });

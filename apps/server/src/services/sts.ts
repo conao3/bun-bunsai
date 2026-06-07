@@ -1,5 +1,6 @@
 import type { ServiceDefinition } from "../core/types.ts";
 import { loadServiceModel } from "../core/shapes.ts";
+import { parseArn } from "../core/arn.ts";
 import stsModel from "../../../../test/vendor/aws-models/sts.json" with { type: "json" };
 
 const defaultAccount = "000000000000" as const;
@@ -9,10 +10,15 @@ const model = loadServiceModel(stsModel);
 const accountOf = (ctx: { account: string }): string =>
   ctx.account === "" ? defaultAccount : ctx.account;
 
-const issueCredentials = (durationSeconds: number) => ({
-  AccessKeyId: "ASIAIOSFODNN7EXAMPLE",
+const accountFromRoleArn = (roleArn: string, fallback: string): string => {
+  const account = parseArn(roleArn)?.account ?? "";
+  return /^\d{12}$/.test(account) ? account : fallback;
+};
+
+const issueCredentials = (account: string, durationSeconds: number) => ({
+  AccessKeyId: `ASIA${account}BNSI`,
   SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-  SessionToken: "FQoGZXIvYXdzEXAMPLEtokenbunsai",
+  SessionToken: `FQoGZXIvYXdzEXAMPLEtokenbunsai${account}`,
   Expiration: Math.floor(Date.now() / 1000) + durationSeconds,
 });
 
@@ -39,19 +45,23 @@ const sts = {
       const sessionName = params.RoleSessionName ?? "bunsai-session";
       const roleName = roleArn.split("/").pop() ?? "bunsai";
       const duration = params.DurationSeconds ?? 3600;
+      const assumedAccount = accountFromRoleArn(roleArn, acct);
       return {
-        Credentials: issueCredentials(duration),
+        Credentials: issueCredentials(assumedAccount, duration),
         AssumedRoleUser: {
           AssumedRoleId: `AROABUNSAIEXAMPLEID:${sessionName}`,
-          Arn: `arn:aws:sts::${acct}:assumed-role/${roleName}/${sessionName}`,
+          Arn: `arn:aws:sts::${assumedAccount}:assumed-role/${roleName}/${sessionName}`,
         },
         PackedPolicySize: 6,
       };
     },
-    GetSessionToken: (input) => {
+    GetSessionToken: (input, ctx) => {
       const params = input as { DurationSeconds?: number };
       return {
-        Credentials: issueCredentials(params.DurationSeconds ?? 43200),
+        Credentials: issueCredentials(
+          accountOf(ctx),
+          params.DurationSeconds ?? 43200,
+        ),
       };
     },
     GetFederationToken: (input, ctx) => {
@@ -59,7 +69,7 @@ const sts = {
       const params = input as { Name?: string; DurationSeconds?: number };
       const name = params.Name ?? "bunsai-federated";
       return {
-        Credentials: issueCredentials(params.DurationSeconds ?? 43200),
+        Credentials: issueCredentials(acct, params.DurationSeconds ?? 43200),
         FederatedUser: {
           FederatedUserId: `${acct}:${name}`,
           Arn: `arn:aws:sts::${acct}:federated-user/${name}`,

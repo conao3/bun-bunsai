@@ -46,6 +46,39 @@ describe("ProjectionExpression", () => {
     expect(out).toEqual({ d: { L: [{ S: "first" }] } });
   });
 
+  test("single list element compacts to one-element list", () => {
+    const out = project("a[2]", {
+      a: { L: [{ S: "zero" }, { S: "one" }, { S: "two" }, { S: "three" }] },
+    });
+    expect(out).toEqual({ a: { L: [{ S: "two" }] } });
+  });
+
+  test("multiple list elements compact preserving relative order", () => {
+    const out = project("a[0], a[2]", {
+      a: { L: [{ S: "zero" }, { S: "one" }, { S: "two" }, { S: "three" }] },
+    });
+    expect(out).toEqual({ a: { L: [{ S: "zero" }, { S: "two" }] } });
+  });
+
+  test("nested list element compacts without empty placeholders", () => {
+    const out = project("a.list[1].c", {
+      a: {
+        M: {
+          list: {
+            L: [
+              { M: { c: { S: "zero" } } },
+              { M: { c: { S: "one" } } },
+              { M: { c: { S: "two" } } },
+            ],
+          },
+        },
+      },
+    });
+    expect(out).toEqual({
+      a: { M: { list: { L: [{ M: { c: { S: "one" } } }] } } },
+    });
+  });
+
   test("missing path is silently skipped", () => {
     const out = project("ghost, a", { a: { S: "A" } });
     expect(out).toEqual({ a: { S: "A" } });

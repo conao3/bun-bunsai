@@ -54,20 +54,15 @@ describe("DynamoDB TransactWriteItems rollback semantics", () => {
       new TransactWriteItemsCommand({
         TransactItems: [
           {
-            ConditionCheck: {
-              TableName: table,
-              Key: { pk: { S: "k1" } },
-              ConditionExpression: "version = :v",
-              ExpressionAttributeValues: { ":v": { N: "1" } },
-            },
-          },
-          {
             Update: {
               TableName: table,
               Key: { pk: { S: "k1" } },
               UpdateExpression: "SET balance = balance - :amt",
-              ConditionExpression: "balance >= :amt",
-              ExpressionAttributeValues: { ":amt": { N: "30" } },
+              ConditionExpression: "version = :v AND balance >= :amt",
+              ExpressionAttributeValues: {
+                ":v": { N: "1" },
+                ":amt": { N: "30" },
+              },
             },
           },
           {

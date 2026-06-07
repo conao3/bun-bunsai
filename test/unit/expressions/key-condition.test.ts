@@ -5,7 +5,7 @@ import type { AttributeBindings } from "../../../apps/server/src/core/expression
 
 const resolve = (
   expression: string,
-  schema: { hash: string; range?: string },
+  schema: { hash: string; range?: string; rangeType?: string },
   bindings: Partial<AttributeBindings> = {},
 ) => {
   const ast = parseKeyConditionExpression(expression, {
@@ -64,6 +64,26 @@ describe("KeyConditionExpression", () => {
       op: "begins_with",
       prefix: { S: "pre" },
     });
+  });
+
+  test("begins_with on a Number sort key rejected", () => {
+    expect(() =>
+      resolve(
+        "pk = :pk AND begins_with(sk, :p)",
+        { hash: "pk", range: "sk", rangeType: "N" },
+        { values: { ":pk": { S: "p" }, ":p": { S: "pre" } } },
+      ),
+    ).toThrow(/begins_with/);
+  });
+
+  test("begins_with with a Number operand rejected", () => {
+    expect(() =>
+      resolve(
+        "pk = :pk AND begins_with(sk, :p)",
+        { hash: "pk", range: "sk", rangeType: "S" },
+        { values: { ":pk": { S: "p" }, ":p": { N: "1" } } },
+      ),
+    ).toThrow(/operand type: N/);
   });
 
   test("sort key with inequality", () => {

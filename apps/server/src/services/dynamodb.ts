@@ -358,15 +358,113 @@ const updateReturnAttributes = (
     return previous === undefined ? {} : { Attributes: previous };
   }
   if (returnValues === "UPDATED_NEW") {
-    return { Attributes: projectItem({ paths: updatedPaths }, updated) };
+    const projected = projectItem({ paths: updatedPaths }, updated);
+    return Object.keys(projected).length === 0 ? {} : { Attributes: projected };
   }
   if (returnValues === "UPDATED_OLD") {
     if (previous === undefined) return {};
-    return {
-      Attributes: projectItem({ paths: updatedPaths }, previous),
-    };
+    const projected = projectItem({ paths: updatedPaths }, previous);
+    return Object.keys(projected).length === 0 ? {} : { Attributes: projected };
   }
   return {};
+};
+
+const ensurePutDeleteReturnValues = (input: Record<string, unknown>): void => {
+  const returnValues = input["ReturnValues"];
+  if (
+    returnValues !== undefined &&
+    returnValues !== "NONE" &&
+    returnValues !== "ALL_OLD"
+  ) {
+    throw awsError(
+      "ValidationException",
+      "ReturnValues can only be ALL_OLD or NONE",
+      400,
+    );
+  }
+};
+
+const conditionFailure = (
+  input: Record<string, unknown>,
+  current: Item | undefined,
+): never => {
+  const data =
+    input["ReturnValuesOnConditionCheckFailure"] === "ALL_OLD" &&
+    current !== undefined
+      ? { Item: current }
+      : undefined;
+  throw awsError(
+    "ConditionalCheckFailedException",
+    "The conditional request failed",
+    400,
+    data,
+  );
+};
+
+const compareExpected = (
+  actual: AttributeValue,
+  operator: string,
+  list: AttributeValue[],
+): boolean => {
+  const target = list[0];
+  if (operator === "EQ")
+    return target !== undefined && equalsAV(actual, target);
+  if (operator === "NE")
+    return target !== undefined && !equalsAV(actual, target);
+  if (operator === "BETWEEN") {
+    const lo = list[0];
+    const hi = list[1];
+    if (lo === undefined || hi === undefined) return false;
+    const cmpLo = compareAV(actual, lo);
+    const cmpHi = compareAV(actual, hi);
+    return (
+      cmpLo !== undefined && cmpHi !== undefined && cmpLo >= 0 && cmpHi <= 0
+    );
+  }
+  if (target === undefined) return false;
+  const cmp = compareAV(actual, target);
+  if (cmp === undefined) return false;
+  if (operator === "LE") return cmp <= 0;
+  if (operator === "LT") return cmp < 0;
+  if (operator === "GE") return cmp >= 0;
+  if (operator === "GT") return cmp > 0;
+  return false;
+};
+
+const evaluateExpectedEntry = (
+  entry: Record<string, unknown>,
+  actual: AttributeValue | undefined,
+): boolean => {
+  const exists = entry["Exists"];
+  if (exists === false) return actual === undefined;
+  const value = entry["Value"];
+  const list = Array.isArray(entry["AttributeValueList"])
+    ? (entry["AttributeValueList"] as AttributeValue[])
+    : value !== undefined
+      ? [value as AttributeValue]
+      : [];
+  if (list.length === 0) return actual !== undefined;
+  if (actual === undefined) return false;
+  const operator =
+    typeof entry["ComparisonOperator"] === "string"
+      ? entry["ComparisonOperator"]
+      : "EQ";
+  return compareExpected(actual, operator, list);
+};
+
+const evaluateExpected = (
+  expected: Record<string, Record<string, unknown>>,
+  current: Item | undefined,
+  conditionalOperator: unknown,
+): boolean => {
+  const item = current ?? {};
+  const orMode = conditionalOperator === "OR";
+  let result = !orMode;
+  for (const [attribute, entry] of Object.entries(expected)) {
+    const passed = evaluateExpectedEntry(entry, item[attribute]);
+    result = orMode ? result || passed : result && passed;
+  }
+  return result;
 };
 
 const ensureConditionPasses = (
@@ -374,27 +472,35 @@ const ensureConditionPasses = (
   current: Item | undefined,
 ): void => {
   const expression = input["ConditionExpression"];
-  if (typeof expression !== "string" || expression === "") return;
-  const values = (
-    typeof input["ExpressionAttributeValues"] === "object" &&
-    input["ExpressionAttributeValues"] !== null
-      ? (input["ExpressionAttributeValues"] as Record<string, AttributeValue>)
-      : {}
-  ) as Record<string, AttributeValue>;
-  const names = (
-    typeof input["ExpressionAttributeNames"] === "object" &&
-    input["ExpressionAttributeNames"] !== null
-      ? (input["ExpressionAttributeNames"] as Record<string, string>)
-      : {}
-  ) as Record<string, string>;
-  const ast = parseConditionExpression(expression, { names, values });
-  const item = current ?? {};
-  if (!evaluateCondition(ast, item)) {
-    throw awsError(
-      "ConditionalCheckFailedException",
-      "The conditional request failed",
-      400,
+  if (typeof expression === "string" && expression !== "") {
+    const values = (
+      typeof input["ExpressionAttributeValues"] === "object" &&
+      input["ExpressionAttributeValues"] !== null
+        ? (input["ExpressionAttributeValues"] as Record<string, AttributeValue>)
+        : {}
+    ) as Record<string, AttributeValue>;
+    const names = (
+      typeof input["ExpressionAttributeNames"] === "object" &&
+      input["ExpressionAttributeNames"] !== null
+        ? (input["ExpressionAttributeNames"] as Record<string, string>)
+        : {}
+    ) as Record<string, string>;
+    const ast = parseConditionExpression(expression, { names, values });
+    if (!evaluateCondition(ast, current ?? {})) {
+      conditionFailure(input, current);
+    }
+    return;
+  }
+  const expected = input["Expected"];
+  if (typeof expected === "object" && expected !== null) {
+    const passed = evaluateExpected(
+      expected as Record<string, Record<string, unknown>>,
+      current,
+      input["ConditionalOperator"],
     );
+    if (!passed) {
+      conditionFailure(input, current);
+    }
   }
 };
 
@@ -481,6 +587,7 @@ const DescribeTable: OperationHandler = (input, ctx) => {
 const PutItem: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
+  ensurePutDeleteReturnValues(input);
   const item = asItem(input["Item"]);
   const key = keyOf(table, item);
   const previous = table.items[key];
@@ -505,6 +612,7 @@ const GetItem: OperationHandler = (input, ctx) => {
 const DeleteItem: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
+  ensurePutDeleteReturnValues(input);
   const key = keyFromKeyInput(table, asItem(input["Key"]));
   const previous = table.items[key];
   ensureConditionPasses(input, previous);
@@ -680,21 +788,28 @@ const filterByExpression = (
 
 const keySchemaShape = (
   elements: KeySchemaElement[],
-): { hash: string; range?: string } => {
+  definitions: AttributeDefinition[] = [],
+): { hash: string; range?: string; rangeType?: string } => {
   let hash = "";
   let range: string | undefined;
   for (const element of elements) {
     if (element.KeyType === "HASH") hash = element.AttributeName;
     else if (element.KeyType === "RANGE") range = element.AttributeName;
   }
-  return range === undefined ? { hash } : { hash, range };
+  if (range === undefined) return { hash };
+  const rangeType = definitions.find(
+    (def) => def.AttributeName === range,
+  )?.AttributeType;
+  return { hash, range, rangeType };
 };
 
 const indexKeySchema = (
   table: StoredTable,
   indexName: string | undefined,
-): { hash: string; range?: string } => {
-  if (indexName === undefined) return keySchemaShape(table.KeySchema);
+): { hash: string; range?: string; rangeType?: string } => {
+  if (indexName === undefined) {
+    return keySchemaShape(table.KeySchema, table.AttributeDefinitions);
+  }
   const candidates = [
     ...(table.globalSecondaryIndexes ?? []),
     ...(table.localSecondaryIndexes ?? []),
@@ -707,7 +822,7 @@ const indexKeySchema = (
       400,
     );
   }
-  return keySchemaShape(index.KeySchema);
+  return keySchemaShape(index.KeySchema, table.AttributeDefinitions);
 };
 
 const matchesResolvedKeyCondition = (
@@ -822,7 +937,16 @@ const Query: OperationHandler = (input, ctx) => {
       const rangeAttr = schema.range;
       matched.sort((a, b) => {
         const cmp = compareAV(a[rangeAttr] ?? {}, b[rangeAttr] ?? {});
-        return cmp ?? 0;
+        if (cmp !== undefined && cmp !== 0) return cmp;
+        const hashCmp = compareAV(
+          a[baseSchema.hash] ?? {},
+          b[baseSchema.hash] ?? {},
+        );
+        if (hashCmp !== undefined && hashCmp !== 0) return hashCmp;
+        if (baseSchema.range === undefined) return 0;
+        return (
+          compareAV(a[baseSchema.range] ?? {}, b[baseSchema.range] ?? {}) ?? 0
+        );
       });
     }
   } else {
@@ -842,8 +966,25 @@ const Query: OperationHandler = (input, ctx) => {
   const startKey = input["ExclusiveStartKey"];
   if (typeof startKey === "object" && startKey !== null) {
     const start = startKey as Item;
-    const found = matched.findIndex((item) => keysEqual(item, start, schema));
-    if (found >= 0) startIndex = found + 1;
+    const found = matched.findIndex(
+      (item) =>
+        keysEqual(item, start, schema) && keysEqual(item, start, baseSchema),
+    );
+    if (found >= 0) {
+      startIndex = found + 1;
+    } else if (
+      schema.range !== undefined &&
+      start[schema.range] !== undefined
+    ) {
+      const forward = input["ScanIndexForward"] !== false;
+      const startRange = start[schema.range] as AttributeValue;
+      const pos = matched.findIndex((item) => {
+        const cmp = compareAV(item[schema.range as string] ?? {}, startRange);
+        if (cmp === undefined) return false;
+        return forward ? cmp > 0 : cmp < 0;
+      });
+      startIndex = pos >= 0 ? pos : matched.length;
+    }
   }
   const remainder = matched.slice(startIndex);
   const rawLimit = input["Limit"];
@@ -873,6 +1014,37 @@ const Scan: OperationHandler = (input, ctx) => {
   const table = requireTable(ctx, name);
   if (typeof input["IndexName"] === "string") {
     requireIndex(table, input["IndexName"]);
+  }
+  const segment = input["Segment"];
+  const totalSegments = input["TotalSegments"];
+  if ((segment === undefined) !== (totalSegments === undefined)) {
+    throw awsError(
+      "ValidationException",
+      segment === undefined
+        ? "The Segment parameter is required but was not present in the request when TotalSegments parameter is present"
+        : "The TotalSegments parameter is required but was not present in the request when Segment parameter is present",
+      400,
+    );
+  }
+  if (typeof segment === "number" && typeof totalSegments === "number") {
+    if (
+      !Number.isInteger(totalSegments) ||
+      totalSegments < 1 ||
+      totalSegments > 1000000
+    ) {
+      throw awsError(
+        "ValidationException",
+        "TotalSegments must be a value between 1 and 1000000.",
+        400,
+      );
+    }
+    if (!Number.isInteger(segment) || segment < 0 || segment >= totalSegments) {
+      throw awsError(
+        "ValidationException",
+        `The Segment parameter is zero-based and must be less than parameter TotalSegments: Segment: ${segment} is not less than TotalSegments: ${totalSegments}`,
+        400,
+      );
+    }
   }
   const filter =
     typeof input["ScanFilter"] === "object" && input["ScanFilter"] !== null
@@ -997,6 +1169,32 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
   const transactItems = Array.isArray(input["TransactItems"])
     ? (input["TransactItems"] as Record<string, unknown>[])
     : [];
+  if (transactItems.length < 1) {
+    throw awsError(
+      "ValidationException",
+      "1 validation error detected: Value '[]' at 'transactItems' failed to satisfy constraint: Member must have length greater than or equal to 1",
+      400,
+    );
+  }
+  if (transactItems.length > 100) {
+    throw awsError(
+      "ValidationException",
+      "1 validation error detected: Value at 'transactItems' failed to satisfy constraint: Member must have length less than or equal to 100",
+      400,
+    );
+  }
+  const targets = new Set<string>();
+  const ensureUniqueTarget = (name: string, key: string): void => {
+    const identifier = `${name} ${key}`;
+    if (targets.has(identifier)) {
+      throw awsError(
+        "ValidationException",
+        "Transaction request cannot include multiple operations on one item",
+        400,
+      );
+    }
+    targets.add(identifier);
+  };
   const snapshots = new Map<string, StoredTable>();
   const tableFor = (name: string): StoredTable => {
     const existing = snapshots.get(name);
@@ -1020,8 +1218,18 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
     const update = entry["Update"];
     if (conditionCheck !== undefined) {
       const spec = asRecord(conditionCheck);
-      const table = tableFor(requireString(spec, "TableName"));
+      const expression = spec["ConditionExpression"];
+      if (typeof expression !== "string" || expression === "") {
+        throw awsError(
+          "ValidationException",
+          "ConditionExpression is required for ConditionCheck",
+          400,
+        );
+      }
+      const name = requireString(spec, "TableName");
+      const table = tableFor(name);
       const key = keyFromKeyInput(table, asItem(spec["Key"]));
+      ensureUniqueTarget(name, key);
       const current = table.items[key];
       const verdict = evaluateOptionalCondition(spec, current);
       if (!verdict.ok) {
@@ -1032,9 +1240,11 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
     }
     if (put !== undefined) {
       const spec = asRecord(put);
-      const table = tableFor(requireString(spec, "TableName"));
+      const name = requireString(spec, "TableName");
+      const table = tableFor(name);
       const value = asItem(spec["Item"]);
       const key = keyOf(table, value);
+      ensureUniqueTarget(name, key);
       const current = table.items[key];
       const verdict = evaluateOptionalCondition(spec, current);
       if (!verdict.ok) {
@@ -1046,8 +1256,10 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
     }
     if (del !== undefined) {
       const spec = asRecord(del);
-      const table = tableFor(requireString(spec, "TableName"));
+      const name = requireString(spec, "TableName");
+      const table = tableFor(name);
       const key = keyFromKeyInput(table, asItem(spec["Key"]));
+      ensureUniqueTarget(name, key);
       const current = table.items[key];
       const verdict = evaluateOptionalCondition(spec, current);
       if (!verdict.ok) {
@@ -1059,8 +1271,10 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
     }
     if (update !== undefined) {
       const spec = asRecord(update);
-      const table = tableFor(requireString(spec, "TableName"));
+      const name = requireString(spec, "TableName");
+      const table = tableFor(name);
       const key = keyFromKeyInput(table, asItem(spec["Key"]));
+      ensureUniqueTarget(name, key);
       const current = table.items[key];
       const verdict = evaluateOptionalCondition(spec, current);
       if (!verdict.ok) {
@@ -1483,6 +1697,7 @@ const partiQLWhereMatch = (
   if (trimmed === "") return true;
   const values: Record<string, AttributeValue> = {};
   let counter = 0;
+  let litCounter = 0;
   const replaced = trimmed
     .replace(/"([A-Za-z_][A-Za-z0-9_]*)"/g, "$1")
     .replace(/\?/g, () => {
@@ -1490,46 +1705,152 @@ const partiQLWhereMatch = (
       const v = params[counter++];
       if (v !== undefined) values[name] = v;
       return name;
+    })
+    .replace(/'((?:[^']|'')*)'/g, (_full, contents: string) => {
+      const name = `:_lit_${litCounter++}`;
+      values[name] = { S: contents.replace(/''/g, "'") };
+      return name;
+    })
+    .replace(/(?<![:\w.])-?\d+(?:\.\d+)?/g, (literal) => {
+      const name = `:_lit_${litCounter++}`;
+      values[name] = { N: literal };
+      return name;
     });
   const ast = parseConditionExpression(replaced, { names: {}, values });
   return evaluateCondition(ast, item);
 };
 
 const parsePartiQLValue = (expr: string, params: AttributeValue[]): Item => {
-  const item: Item = {};
+  let pos = 0;
   let paramIdx = 0;
-  const inner = expr.slice(1, -1);
-  const pattern = /'([^']+)'\s*:\s*(\?|'[^']*'|-?\d+(?:\.\d+)?)/g;
-  let m: RegExpExecArray | null;
-  while ((m = pattern.exec(inner)) !== null) {
-    const fieldName = m[1];
-    const valueToken = m[2];
-    if (valueToken === "?") {
-      const param = params[paramIdx++];
-      if (param !== undefined) item[fieldName] = param;
-    } else if (valueToken.startsWith("'")) {
-      item[fieldName] = { S: valueToken.slice(1, -1) };
-    } else {
-      item[fieldName] = { N: valueToken };
+  const fail = (): never => {
+    throw awsError(
+      "ValidationException",
+      "Unable to parse PartiQL statement value",
+      400,
+    );
+  };
+  const skipSpace = (): void => {
+    while (pos < expr.length && /\s/.test(expr[pos])) pos++;
+  };
+  const readString = (): string => {
+    pos++;
+    let out = "";
+    while (pos < expr.length) {
+      const ch = expr[pos];
+      if (ch === "'") {
+        if (expr[pos + 1] === "'") {
+          out += "'";
+          pos += 2;
+          continue;
+        }
+        pos++;
+        return out;
+      }
+      out += ch;
+      pos++;
     }
-  }
-  return item;
+    return fail();
+  };
+  const parseValue = (): AttributeValue => {
+    skipSpace();
+    const ch = expr[pos];
+    if (ch === "?") {
+      pos++;
+      const param = params[paramIdx++];
+      return param ?? fail();
+    }
+    if (ch === "'") return { S: readString() };
+    if (ch === "{") return { M: parseMap() };
+    if (ch === "[") return { L: parseList() };
+    if (expr.startsWith("true", pos)) {
+      pos += 4;
+      return { BOOL: true };
+    }
+    if (expr.startsWith("false", pos)) {
+      pos += 5;
+      return { BOOL: false };
+    }
+    if (expr.startsWith("null", pos)) {
+      pos += 4;
+      return { NULL: true };
+    }
+    const numMatch = /^-?\d+(?:\.\d+)?/.exec(expr.slice(pos));
+    if (numMatch !== null) {
+      pos += numMatch[0].length;
+      return { N: numMatch[0] };
+    }
+    return fail();
+  };
+  const parseMap = (): Item => {
+    const map: Item = {};
+    pos++;
+    skipSpace();
+    if (expr[pos] === "}") {
+      pos++;
+      return map;
+    }
+    for (;;) {
+      skipSpace();
+      if (expr[pos] !== "'") return fail();
+      const key = readString();
+      skipSpace();
+      if (expr[pos] !== ":") return fail();
+      pos++;
+      map[key] = parseValue();
+      skipSpace();
+      if (expr[pos] === ",") {
+        pos++;
+        continue;
+      }
+      if (expr[pos] === "}") {
+        pos++;
+        return map;
+      }
+      return fail();
+    }
+  };
+  const parseList = (): AttributeValue[] => {
+    const list: AttributeValue[] = [];
+    pos++;
+    skipSpace();
+    if (expr[pos] === "]") {
+      pos++;
+      return list;
+    }
+    for (;;) {
+      list.push(parseValue());
+      skipSpace();
+      if (expr[pos] === ",") {
+        pos++;
+        continue;
+      }
+      if (expr[pos] === "]") {
+        pos++;
+        return list;
+      }
+      return fail();
+    }
+  };
+  skipSpace();
+  return parseMap();
 };
 
-const parsePartiQLSets = (
+const parsePartiQLUpdate = (
   setClause: string,
   params: AttributeValue[],
-): Item => {
-  const result: Item = {};
-  let paramIdx = 0;
-  for (const assignment of setClause.split(",").map((s) => s.trim())) {
-    const m = /^"?(\w+)"?\s*=\s*\?/.exec(assignment);
-    if (m !== null) {
-      const param = params[paramIdx++];
-      if (param !== undefined) result[m[1]] = param;
-    }
-  }
-  return result;
+): { expression: string; values: Record<string, AttributeValue> } => {
+  const values: Record<string, AttributeValue> = {};
+  let counter = 0;
+  const expression = `SET ${setClause
+    .replace(/"([A-Za-z_][A-Za-z0-9_]*)"/g, "$1")
+    .replace(/\?/g, () => {
+      const name = `:_s_${counter}`;
+      const v = params[counter++];
+      if (v !== undefined) values[name] = v;
+      return name;
+    })}`;
+  return { expression, values };
 };
 
 const countParams = (s: string): number => (s.match(/\?/g) ?? []).length;
@@ -1562,7 +1883,15 @@ const executePartiQL = (
     const table = requireTable(ctx, tableName);
     const item = parsePartiQLValue(valueExpr, parameters);
     if (Object.keys(item).length > 0) {
-      table.items[keyOf(table, item)] = item;
+      const key = keyOf(table, item);
+      if (table.items[key] !== undefined) {
+        throw awsError(
+          "DuplicateItemException",
+          "Duplicate primary key exists in table",
+          400,
+        );
+      }
+      table.items[key] = item;
       ctx.store.set(tableName, table);
     }
     return [];
@@ -1576,7 +1905,11 @@ const executePartiQL = (
     const whereClause = updateMatch[3];
     const table = requireTable(ctx, tableName);
     const setParamCount = countParams(setClause);
-    const setValues = parsePartiQLSets(setClause, parameters);
+    const { expression, values } = parsePartiQLUpdate(
+      setClause,
+      parameters.slice(0, setParamCount),
+    );
+    const ast = parseUpdateExpression(expression, { names: {}, values });
     const whereParams = parameters.slice(setParamCount);
     const allItems = Object.values(table.items);
     const matched =
@@ -1585,12 +1918,14 @@ const executePartiQL = (
             partiQLWhereMatch(item, whereClause, whereParams),
           )
         : allItems;
-    for (const item of matched) {
+    const updated = matched.map((item) => {
       const key = keyFromKeyInput(table, item);
-      table.items[key] = { ...item, ...setValues };
-    }
+      const next = applyUpdate(ast, item);
+      table.items[key] = next;
+      return next;
+    });
     if (matched.length > 0) ctx.store.set(tableName, table);
-    return matched.map((item) => ({ ...item, ...setValues }));
+    return updated;
   }
 
   const deleteMatch =
@@ -2159,15 +2494,35 @@ const ExecuteTransaction: OperationHandler = (input, ctx) => {
   const transactStatements = Array.isArray(input["TransactStatements"])
     ? (input["TransactStatements"] as Record<string, unknown>[])
     : [];
+  const snapshots = ctx.store
+    .list<StoredTable>()
+    .filter(
+      (entry) =>
+        entry.value !== null &&
+        typeof entry.value === "object" &&
+        typeof entry.value.items === "object" &&
+        entry.value.items !== null,
+    )
+    .map((entry) => ({
+      key: entry.key,
+      value: { ...entry.value, items: { ...entry.value.items } },
+    }));
   const responses: Record<string, unknown>[] = [];
-  for (const stmt of transactStatements) {
-    const statement =
-      typeof stmt["Statement"] === "string" ? stmt["Statement"] : "";
-    const parameters = Array.isArray(stmt["Parameters"])
-      ? (stmt["Parameters"] as AttributeValue[])
-      : [];
-    const items = executePartiQL(statement, parameters, ctx);
-    responses.push(items[0] !== undefined ? { Item: items[0] } : {});
+  try {
+    for (const stmt of transactStatements) {
+      const statement =
+        typeof stmt["Statement"] === "string" ? stmt["Statement"] : "";
+      const parameters = Array.isArray(stmt["Parameters"])
+        ? (stmt["Parameters"] as AttributeValue[])
+        : [];
+      const items = executePartiQL(statement, parameters, ctx);
+      responses.push(items[0] !== undefined ? { Item: items[0] } : {});
+    }
+  } catch (err) {
+    for (const snapshot of snapshots) {
+      ctx.store.set(snapshot.key, snapshot.value);
+    }
+    throw err;
   }
   return { Responses: responses };
 };

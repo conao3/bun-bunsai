@@ -3,6 +3,7 @@ import { loadServiceModel } from "../core/shapes.ts";
 import sqsModel from "../../../../test/vendor/aws-models/sqs.json" with { type: "json" };
 import type {
   OperationHandler,
+  ScopedStore,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
@@ -1116,6 +1117,32 @@ const ListDeadLetterSourceQueues: OperationHandler = (input, ctx) => {
     .filter((entry) => redriveTargetArn(entry.value) === targetArn)
     .map((entry) => entry.value.QueueUrl);
   return { queueUrls };
+};
+
+export type QueueDelivery = {
+  body: string;
+  messageAttributes?: Record<string, unknown>;
+  senderId?: string;
+};
+
+export const deliverToQueue = (
+  store: ScopedStore,
+  queueName: string,
+  delivery: QueueDelivery,
+): boolean => {
+  const queue = store.get<StoredQueue>(queueName);
+  if (queue === undefined) return false;
+  enqueueMessage(queue, {
+    body: delivery.body,
+    messageAttributes: delivery.messageAttributes,
+    delaySeconds: 0,
+    senderId: delivery.senderId ?? "AIDAIDSNSDELIVERY",
+    groupId: undefined,
+    deduplicationId: undefined,
+    sequenceNumber: undefined,
+  });
+  store.set(queueName, queue);
+  return true;
 };
 
 const sqs: ServiceDefinition = {

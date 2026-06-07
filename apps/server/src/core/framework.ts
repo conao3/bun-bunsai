@@ -139,6 +139,12 @@ export const dispatch = async (
     }),
     account: req.account,
     region: req.region,
+    storeFor: (target: string) =>
+      scopedStore(store, {
+        account: req.account,
+        region: req.region,
+        service: target,
+      }),
   };
 
   try {

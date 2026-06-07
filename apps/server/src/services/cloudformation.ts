@@ -9,6 +9,12 @@ import type {
 
 const model = loadServiceModel(cloudformationModel);
 
+type StackResource = {
+  LogicalResourceId: string;
+  ResourceType: string;
+  PhysicalResourceId: string;
+};
+
 type StoredStack = {
   StackId: string;
   StackName: string;
@@ -21,6 +27,7 @@ type StoredStack = {
   LastUpdatedTime: string | undefined;
   EnableTerminationProtection: boolean;
   StackPolicy: string;
+  StackResources: StackResource[];
 };
 
 type StoredChangeSet = {
@@ -218,7 +225,11 @@ const findChangeSet = (
 
 const resourcesOf = (
   templateBody: string,
-): { LogicalResourceId: string; ResourceType: string }[] => {
+): {
+  LogicalResourceId: string;
+  ResourceType: string;
+  Properties: Record<string, unknown>;
+}[] => {
   if (templateBody === "") return [];
   try {
     const parsed = JSON.parse(templateBody) as Record<string, unknown>;
@@ -230,11 +241,189 @@ const resourcesOf = (
         return {
           LogicalResourceId: logicalId,
           ResourceType: String(item["Type"] ?? "AWS::CloudFormation::Unknown"),
+          Properties:
+            typeof item["Properties"] === "object" &&
+            item["Properties"] !== null
+              ? (item["Properties"] as Record<string, unknown>)
+              : {},
         };
       },
     );
   } catch {
     return [];
+  }
+};
+
+const physicalNameOf = (
+  stackName: string,
+  logicalId: string,
+  props: Record<string, unknown>,
+  propKey: string,
+): string =>
+  typeof props[propKey] === "string" && (props[propKey] as string) !== ""
+    ? (props[propKey] as string)
+    : `${stackName}-${logicalId}`;
+
+const provisionSqsQueue = (
+  ctx: ServiceContext,
+  stackName: string,
+  logicalId: string,
+  props: Record<string, unknown>,
+): string => {
+  const name = physicalNameOf(stackName, logicalId, props, "QueueName");
+  const url = `http://localhost:4566/${ctx.account}/${name}`;
+  const sqs = ctx.storeFor("sqs");
+  if (sqs.get(name) !== undefined) return url;
+  const now = Date.now();
+  sqs.set(name, {
+    QueueName: name,
+    QueueUrl: url,
+    Attributes: {},
+    Tags: {},
+    messages: [],
+    createdAt: now,
+    modifiedAt: now,
+    sequence: 1,
+    dedup: {},
+  });
+  return url;
+};
+
+const provisionDynamoTable = (
+  ctx: ServiceContext,
+  stackName: string,
+  logicalId: string,
+  props: Record<string, unknown>,
+): string => {
+  const name = physicalNameOf(stackName, logicalId, props, "TableName");
+  const dynamo = ctx.storeFor("dynamodb");
+  if (dynamo.get(name) !== undefined) return name;
+  dynamo.set(name, {
+    TableName: name,
+    AttributeDefinitions: Array.isArray(props["AttributeDefinitions"])
+      ? (props["AttributeDefinitions"] as {
+          AttributeName: string;
+          AttributeType: string;
+        }[])
+      : [],
+    KeySchema: Array.isArray(props["KeySchema"])
+      ? (props["KeySchema"] as { AttributeName: string; KeyType: string }[])
+      : [],
+    CreationDateTime: Math.floor(Date.now() / 1000),
+    items: {},
+  });
+  return name;
+};
+
+const provisionSnsTopic = (
+  ctx: ServiceContext,
+  stackName: string,
+  logicalId: string,
+  props: Record<string, unknown>,
+): string => {
+  const name = physicalNameOf(stackName, logicalId, props, "TopicName");
+  const arn = `arn:aws:sns:${ctx.region}:${ctx.account}:${name}`;
+  const sns = ctx.storeFor("sns");
+  if (sns.get(`topic/${name}`) !== undefined) return arn;
+  sns.set(`topic/${name}`, {
+    TopicArn: arn,
+    Name: name,
+    Attributes: {},
+  });
+  return arn;
+};
+
+const provisionS3Bucket = (
+  ctx: ServiceContext,
+  stackName: string,
+  logicalId: string,
+  props: Record<string, unknown>,
+): string => {
+  const name = physicalNameOf(stackName, logicalId, props, "BucketName");
+  const s3 = ctx.storeFor("s3");
+  if (s3.get(name) !== undefined) return name;
+  s3.set(name, {
+    name,
+    creationDate: Math.floor(Date.now() / 1000),
+    objects: {},
+    tagSet: [],
+    uploads: {},
+    versioningStatus: undefined,
+    mfaDelete: undefined,
+    policy: undefined,
+    lifecycleRules: [],
+    corsRules: [],
+    website: undefined,
+    encryptionRules: [],
+    notification: undefined,
+    publicAccessBlock: undefined,
+    logging: undefined,
+    accelerateStatus: undefined,
+    objectLock: undefined,
+  });
+  return name;
+};
+
+const provisionResource = (
+  ctx: ServiceContext,
+  stackName: string,
+  logicalId: string,
+  resourceType: string,
+  props: Record<string, unknown>,
+): string => {
+  if (resourceType === "AWS::SQS::Queue")
+    return provisionSqsQueue(ctx, stackName, logicalId, props);
+  if (resourceType === "AWS::DynamoDB::Table")
+    return provisionDynamoTable(ctx, stackName, logicalId, props);
+  if (resourceType === "AWS::SNS::Topic")
+    return provisionSnsTopic(ctx, stackName, logicalId, props);
+  if (resourceType === "AWS::S3::Bucket")
+    return provisionS3Bucket(ctx, stackName, logicalId, props);
+  return `${stackName}-${logicalId}`;
+};
+
+const deprovisionSqsQueue = (ctx: ServiceContext, physicalId: string): void => {
+  const segments = physicalId.split("/");
+  const name = segments[segments.length - 1] ?? physicalId;
+  ctx.storeFor("sqs").delete(name);
+};
+
+const deprovisionDynamoTable = (
+  ctx: ServiceContext,
+  physicalId: string,
+): void => {
+  ctx.storeFor("dynamodb").delete(physicalId);
+};
+
+const deprovisionSnsTopic = (ctx: ServiceContext, physicalId: string): void => {
+  const parts = physicalId.split(":");
+  const name = parts[parts.length - 1] ?? physicalId;
+  ctx.storeFor("sns").delete(`topic/${name}`);
+};
+
+const deprovisionS3Bucket = (ctx: ServiceContext, physicalId: string): void => {
+  ctx.storeFor("s3").delete(physicalId);
+};
+
+const deprovisionResource = (
+  ctx: ServiceContext,
+  resourceType: string,
+  physicalId: string,
+): void => {
+  if (resourceType === "AWS::SQS::Queue") {
+    deprovisionSqsQueue(ctx, physicalId);
+    return;
+  }
+  if (resourceType === "AWS::DynamoDB::Table") {
+    deprovisionDynamoTable(ctx, physicalId);
+    return;
+  }
+  if (resourceType === "AWS::SNS::Topic") {
+    deprovisionSnsTopic(ctx, physicalId);
+    return;
+  }
+  if (resourceType === "AWS::S3::Bucket") {
+    deprovisionS3Bucket(ctx, physicalId);
   }
 };
 
@@ -362,10 +551,24 @@ const CreateStack: OperationHandler = (input, ctx) => {
   }
   const id = crypto.randomUUID();
   const arn = stackArn(ctx, name, id);
+  const templateBody = templateBodyOf(input);
+  const stackResources: StackResource[] = resourcesOf(templateBody).map(
+    (resource) => ({
+      LogicalResourceId: resource.LogicalResourceId,
+      ResourceType: resource.ResourceType,
+      PhysicalResourceId: provisionResource(
+        ctx,
+        name,
+        resource.LogicalResourceId,
+        resource.ResourceType,
+        resource.Properties,
+      ),
+    }),
+  );
   const stack: StoredStack = {
     StackId: arn,
     StackName: name,
-    TemplateBody: templateBodyOf(input),
+    TemplateBody: templateBody,
     Parameters: parametersOf(input),
     Capabilities: capabilitiesOf(input),
     Tags: tagsOf(input),
@@ -374,6 +577,7 @@ const CreateStack: OperationHandler = (input, ctx) => {
     LastUpdatedTime: undefined,
     EnableTerminationProtection: false,
     StackPolicy: "",
+    StackResources: stackResources,
   };
   ctx.store.set(name, stack);
   return { StackId: arn };
@@ -402,9 +606,38 @@ const UpdateStack: OperationHandler = (input, ctx) => {
   if (stack === undefined) {
     throw awsError("ValidationError", `Stack [${name}] does not exist`, 400);
   }
+  const newTemplateBody = templateBodyOf(input) || stack.TemplateBody;
+  const oldResources = stack.StackResources ?? [];
+  const newResourceDefs = resourcesOf(newTemplateBody);
+  for (const oldRes of oldResources) {
+    if (
+      !newResourceDefs.some(
+        (r) => r.LogicalResourceId === oldRes.LogicalResourceId,
+      )
+    ) {
+      deprovisionResource(ctx, oldRes.ResourceType, oldRes.PhysicalResourceId);
+    }
+  }
+  const newResources: StackResource[] = newResourceDefs.map((resource) => {
+    const existing = oldResources.find(
+      (r) => r.LogicalResourceId === resource.LogicalResourceId,
+    );
+    if (existing !== undefined) return existing;
+    return {
+      LogicalResourceId: resource.LogicalResourceId,
+      ResourceType: resource.ResourceType,
+      PhysicalResourceId: provisionResource(
+        ctx,
+        name,
+        resource.LogicalResourceId,
+        resource.ResourceType,
+        resource.Properties,
+      ),
+    };
+  });
   const updated: StoredStack = {
     ...stack,
-    TemplateBody: templateBodyOf(input) || stack.TemplateBody,
+    TemplateBody: newTemplateBody,
     Parameters:
       input["Parameters"] === undefined
         ? stack.Parameters
@@ -416,6 +649,7 @@ const UpdateStack: OperationHandler = (input, ctx) => {
     Tags: input["Tags"] === undefined ? stack.Tags : tagsOf(input),
     StackStatus: "UPDATE_COMPLETE",
     LastUpdatedTime: new Date().toISOString(),
+    StackResources: newResources,
   };
   ctx.store.set(name, updated);
   return { StackId: updated.StackId };
@@ -425,6 +659,13 @@ const DeleteStack: OperationHandler = (input, ctx) => {
   const name = requireStackName(input);
   const stack = findByNameOrId(ctx, name);
   if (stack !== undefined) {
+    for (const resource of stack.StackResources ?? []) {
+      deprovisionResource(
+        ctx,
+        resource.ResourceType,
+        resource.PhysicalResourceId,
+      );
+    }
     ctx.store.delete(stack.StackName);
   }
   return {};
@@ -640,9 +881,9 @@ const ListStackResources: OperationHandler = (input, ctx) => {
     );
   }
   const timestamp = stack.LastUpdatedTime ?? stack.CreationTime;
-  const summaries = resourcesOf(stack.TemplateBody).map((resource) => ({
+  const summaries = (stack.StackResources ?? []).map((resource) => ({
     LogicalResourceId: resource.LogicalResourceId,
-    PhysicalResourceId: `${stack.StackName}-${resource.LogicalResourceId}`,
+    PhysicalResourceId: resource.PhysicalResourceId,
     ResourceType: resource.ResourceType,
     LastUpdatedTimestamp: timestamp,
     ResourceStatus: "CREATE_COMPLETE",
@@ -666,7 +907,7 @@ const DescribeStackResources: OperationHandler = (input, ctx) => {
   }
   const logicalFilter = input["LogicalResourceId"];
   const timestamp = stack.LastUpdatedTime ?? stack.CreationTime;
-  const resources = resourcesOf(stack.TemplateBody)
+  const resources = (stack.StackResources ?? [])
     .filter((resource) =>
       typeof logicalFilter === "string" && logicalFilter !== ""
         ? resource.LogicalResourceId === logicalFilter
@@ -676,7 +917,7 @@ const DescribeStackResources: OperationHandler = (input, ctx) => {
       StackName: stack.StackName,
       StackId: stack.StackId,
       LogicalResourceId: resource.LogicalResourceId,
-      PhysicalResourceId: `${stack.StackName}-${resource.LogicalResourceId}`,
+      PhysicalResourceId: resource.PhysicalResourceId,
       ResourceType: resource.ResourceType,
       Timestamp: timestamp,
       ResourceStatus: "CREATE_COMPLETE",
@@ -791,6 +1032,19 @@ const ExecuteChangeSet: OperationHandler = (input, ctx) => {
   if (stack === undefined) {
     const id = crypto.randomUUID();
     const arn = stackArn(ctx, cs.StackName, id);
+    const csStackResources: StackResource[] = resourcesOf(cs.TemplateBody).map(
+      (resource) => ({
+        LogicalResourceId: resource.LogicalResourceId,
+        ResourceType: resource.ResourceType,
+        PhysicalResourceId: provisionResource(
+          ctx,
+          cs.StackName,
+          resource.LogicalResourceId,
+          resource.ResourceType,
+          resource.Properties,
+        ),
+      }),
+    );
     const newStack: StoredStack = {
       StackId: arn,
       StackName: cs.StackName,
@@ -803,6 +1057,7 @@ const ExecuteChangeSet: OperationHandler = (input, ctx) => {
       LastUpdatedTime: undefined,
       EnableTerminationProtection: false,
       StackPolicy: "",
+      StackResources: csStackResources,
     };
     ctx.store.set(cs.StackName, newStack);
   } else {

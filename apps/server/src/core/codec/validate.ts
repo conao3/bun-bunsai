@@ -168,7 +168,7 @@ const validateRequiredInput = (
   const structure: StructureShape = shape;
   for (const member of structure.required ?? []) {
     if (structure.members[member] === undefined) continue;
-    if (!isPresent(input[member])) return missingFor(protocol, member);
+    if (!isNonNull(input[member])) return missingFor(protocol, member);
   }
   return undefined;
 };

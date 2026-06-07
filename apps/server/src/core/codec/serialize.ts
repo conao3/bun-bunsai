@@ -77,6 +77,7 @@ const jsonValue = (
       return typeof value === "number" ? value : Number(value);
     return epochSecondsToTimestamp(value, fmt);
   }
+  if (typeof value === "bigint") return Number(value);
   return value;
 };
 

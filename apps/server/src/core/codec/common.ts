@@ -37,12 +37,24 @@ const numberFromString = (text: string): number | string => {
   return Number.isNaN(n) ? text : n;
 };
 
+const longFromString = (text: string): number | bigint => {
+  const n = Number(text);
+  if (!Number.isFinite(n)) return n;
+  if (Number.isSafeInteger(n)) return n;
+  try {
+    return BigInt(text);
+  } catch {
+    return n;
+  }
+};
+
 export const parseScalar = (shape: ScalarShape, text: string): unknown => {
   switch (shape.type) {
     case "boolean":
       return text === "true";
-    case "integer":
     case "long":
+      return longFromString(text);
+    case "integer":
     case "double":
     case "float":
       return numberFromString(text);

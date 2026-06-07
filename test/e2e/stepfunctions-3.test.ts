@@ -338,18 +338,18 @@ test("GetActivityTask returns empty task for activity with no queued tasks", asy
   expect(task.input).toBeUndefined();
 });
 
-test("SendTaskSuccess, SendTaskFailure, SendTaskHeartbeat are stubs", async () => {
+test("SendTaskSuccess, SendTaskFailure, SendTaskHeartbeat reject unknown tokens", async () => {
   const client = sfn();
-  const taskToken = "test-task-token";
+  const taskToken = "test-task-token-unknown";
   await expect(
     client.send(new SendTaskSuccessCommand({ taskToken, output: "{}" })),
-  ).resolves.toBeDefined();
+  ).rejects.toThrow();
   await expect(
     client.send(new SendTaskFailureCommand({ taskToken })),
-  ).resolves.toBeDefined();
+  ).rejects.toThrow();
   await expect(
     client.send(new SendTaskHeartbeatCommand({ taskToken })),
-  ).resolves.toBeDefined();
+  ).rejects.toThrow();
 });
 
 test("DescribeMapRun throws ResourceNotFound for nonexistent map run", async () => {

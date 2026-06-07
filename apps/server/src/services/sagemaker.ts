@@ -375,6 +375,7 @@ type StoredInferenceRecommendationsJob = {
 type StoredMonitoringSchedule = {
   MonitoringScheduleName: string;
   MonitoringScheduleArn: string;
+  MonitoringScheduleStatus: string;
   MonitoringScheduleConfig?: unknown;
   CreationTime: number;
 };
@@ -3314,6 +3315,7 @@ const CreateMonitoringSchedule: OperationHandler = (input, ctx) => {
   const stored: StoredMonitoringSchedule = {
     MonitoringScheduleName: name,
     MonitoringScheduleArn: arn,
+    MonitoringScheduleStatus: "Scheduled",
     MonitoringScheduleConfig: input["MonitoringScheduleConfig"],
     CreationTime: nowSeconds(),
   };
@@ -4169,7 +4171,7 @@ const DescribeMonitoringSchedule: OperationHandler = (input, ctx) => {
   return {
     MonitoringScheduleName: stored.MonitoringScheduleName,
     MonitoringScheduleArn: stored.MonitoringScheduleArn,
-    MonitoringScheduleStatus: "Scheduled",
+    MonitoringScheduleStatus: stored.MonitoringScheduleStatus,
     MonitoringScheduleConfig: stored.MonitoringScheduleConfig,
     CreationTime: stored.CreationTime,
     LastModifiedTime: stored.CreationTime,
@@ -8748,6 +8750,181 @@ const StartSession: OperationHandler = (input, ctx) => {
   };
 };
 
+const StopCompilationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CompilationJobName");
+  const stored = requireCompilationJob(ctx, name);
+  ctx.store.set(compilationJobKey(name), {
+    ...stored,
+    CompilationJobStatus: "Stopping",
+    LastModifiedTime: nowSeconds(),
+  });
+  return {};
+};
+
+const StopEdgeDeploymentStage: OperationHandler = (input, ctx) => {
+  const planName = requireString(input, "EdgeDeploymentPlanName");
+  void requireString(input, "StageName");
+  requireEdgeDeploymentPlan(ctx, planName);
+  return {};
+};
+
+const StopEdgePackagingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "EdgePackagingJobName");
+  const stored = ctx.store.get<StoredEdgePackagingJob>(
+    edgePackagingJobKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `EdgePackagingJob ${name} does not exist.`,
+      400,
+    );
+  }
+  return {};
+};
+
+const StopHyperParameterTuningJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "HyperParameterTuningJobName");
+  const stored = ctx.store.get<StoredHyperParameterTuningJob>(
+    hyperParameterTuningJobKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `HyperParameterTuningJob ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(hyperParameterTuningJobKey(name), {
+    ...stored,
+    HyperParameterTuningJobStatus: "Stopping",
+    LastModifiedTime: nowSeconds(),
+  });
+  return {};
+};
+
+const StopInferenceExperiment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const stored = ctx.store.get<StoredInferenceExperiment>(
+    inferenceExperimentKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `InferenceExperiment ${name} does not exist.`,
+      400,
+    );
+  }
+  return { InferenceExperimentArn: stored.InferenceExperimentArn };
+};
+
+const StopInferenceRecommendationsJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "JobName");
+  const stored = ctx.store.get<StoredInferenceRecommendationsJob>(
+    inferenceRecommendationsJobKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `InferenceRecommendationsJob ${name} does not exist.`,
+      400,
+    );
+  }
+  return {};
+};
+
+const StopLabelingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "LabelingJobName");
+  const stored = ctx.store.get<StoredLabelingJob>(labelingJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `LabelingJob ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(labelingJobKey(name), {
+    ...stored,
+    LabelingJobStatus: "Stopping",
+    LastModifiedTime: nowSeconds(),
+  });
+  return {};
+};
+
+const StopMlflowTrackingServer: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrackingServerName");
+  const stored = ctx.store.get<StoredMlflowTrackingServer>(
+    mlflowTrackingServerKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `MlflowTrackingServer ${name} does not exist.`,
+      400,
+    );
+  }
+  return { TrackingServerArn: stored.TrackingServerArn };
+};
+
+const StopMonitoringSchedule: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "MonitoringScheduleName");
+  const stored = requireMonitoringSchedule(ctx, name);
+  ctx.store.set(monitoringScheduleKey(name), {
+    ...stored,
+    MonitoringScheduleStatus: "Stopped",
+  });
+  return {};
+};
+
+const StopNotebookInstance: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "NotebookInstanceName");
+  const stored = ctx.store.get<StoredNotebookInstance>(
+    notebookInstanceKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `NotebookInstance ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(notebookInstanceKey(name), {
+    ...stored,
+    NotebookInstanceStatus: "Stopping",
+    LastModifiedTime: nowSeconds(),
+  });
+  return {};
+};
+
+const StopOptimizationJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "OptimizationJobName");
+  const stored = ctx.store.get<StoredOptimizationJob>(optimizationJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `OptimizationJob ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(optimizationJobKey(name), {
+    ...stored,
+    OptimizationJobStatus: "Stopping",
+    LastModifiedTime: nowSeconds(),
+  });
+  return {};
+};
+
+const StopPipelineExecution: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "PipelineExecutionArn");
+  const stored = requirePipelineExecution(ctx, arn);
+  ctx.store.set(pipelineExecutionKey(arn), {
+    ...stored,
+    PipelineExecutionStatus: "Stopping",
+    LastModifiedTime: nowSeconds(),
+  });
+  return { PipelineExecutionArn: arn };
+};
+
 const StopAIBenchmarkJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "AIBenchmarkJobName");
   const stored = requireAIBenchmarkJob(ctx, name);
@@ -9128,6 +9305,18 @@ const sagemaker = {
     StopAIBenchmarkJob,
     StopAIRecommendationJob,
     StopAutoMLJob,
+    StopCompilationJob,
+    StopEdgeDeploymentStage,
+    StopEdgePackagingJob,
+    StopHyperParameterTuningJob,
+    StopInferenceExperiment,
+    StopInferenceRecommendationsJob,
+    StopLabelingJob,
+    StopMlflowTrackingServer,
+    StopMonitoringSchedule,
+    StopNotebookInstance,
+    StopOptimizationJob,
+    StopPipelineExecution,
   },
   model,
 } as const satisfies ServiceDefinition;

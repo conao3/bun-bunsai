@@ -59,7 +59,8 @@ const ops = model.operations ?? {};
 const opNames = Object.keys(ops).sort();
 
 if (!operation) {
-  const protocol = (model.metadata as { protocol?: string } | undefined)?.protocol ?? "?";
+  const protocol =
+    (model.metadata as { protocol?: string } | undefined)?.protocol ?? "?";
   const apiVersion =
     (model.metadata as { apiVersion?: string } | undefined)?.apiVersion ?? "?";
   process.stdout.write(

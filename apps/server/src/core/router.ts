@@ -11,27 +11,39 @@ export type RouteResult = {
   presignedExpired: boolean;
 };
 
-const parseCredentialScope = (
-  authorization: string | null,
-): { service: string; region: string } | undefined => {
-  if (authorization === null) return undefined;
-  const match = authorization.match(
-    /Credential=[^/]+\/[^/]+\/([^/]+)\/([^/]+)\/aws4_request/,
-  );
-  if (match === null) return undefined;
-  return { region: match[1], service: match[2] };
+type CredentialScope = {
+  accessKeyId: string;
+  service: string;
+  region: string;
 };
 
-const parseQueryCredentialScope = (
-  url: URL,
-): { service: string; region: string } | undefined => {
+const parseCredentialScope = (
+  authorization: string | null,
+): CredentialScope | undefined => {
+  if (authorization === null) return undefined;
+  const match = authorization.match(
+    /Credential=([^/]+)\/[^/]+\/([^/]+)\/([^/]+)\/aws4_request/,
+  );
+  if (match === null) return undefined;
+  return { accessKeyId: match[1], region: match[2], service: match[3] };
+};
+
+const parseQueryCredentialScope = (url: URL): CredentialScope | undefined => {
   const credential = url.searchParams.get("X-Amz-Credential");
   if (credential === null) return undefined;
   const match = credential.match(
-    /^[^/]+\/[^/]+\/([^/]+)\/([^/]+)\/aws4_request$/,
+    /^([^/]+)\/[^/]+\/([^/]+)\/([^/]+)\/aws4_request$/,
   );
   if (match === null) return undefined;
-  return { region: match[1], service: match[2] };
+  return { accessKeyId: match[1], region: match[2], service: match[3] };
+};
+
+const accountFromAccessKeyId = (
+  accessKeyId: string | undefined,
+): string | undefined => {
+  if (accessKeyId === undefined) return undefined;
+  const match = accessKeyId.match(/^ASIA(\d{12})/);
+  return match === null ? undefined : match[1];
 };
 
 const presignedIsExpired = (url: URL): boolean => {
@@ -87,7 +99,7 @@ export const routeRequest = (req: Request, url: URL): RouteResult => {
   return {
     service,
     region,
-    account: defaultAccount,
+    account: accountFromAccessKeyId(credential?.accessKeyId) ?? defaultAccount,
     target,
     presignedExpired:
       url.searchParams.has("X-Amz-Credential") && presignedIsExpired(url),

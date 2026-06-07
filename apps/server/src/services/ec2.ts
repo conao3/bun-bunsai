@@ -9796,6 +9796,176 @@ const DeregisterTransitGatewayMulticastGroupSources: OperationHandler = (
   };
 };
 
+const allBundleTasks = (ctx: ServiceContext): StoredBundleTask[] =>
+  ctx.store
+    .list<StoredBundleTask>()
+    .filter((entry) => entry.key.startsWith("bundle/"))
+    .map((entry) => entry.value);
+
+const allCapacityManagerDataExports = (
+  ctx: ServiceContext,
+): StoredCapacityManagerDataExport[] =>
+  ctx.store
+    .list<StoredCapacityManagerDataExport>()
+    .filter((entry) => entry.key.startsWith("cmde/"))
+    .map((entry) => entry.value);
+
+const DescribeAddressTransfers: OperationHandler = (_input, _ctx) => {
+  return { AddressTransfers: [] };
+};
+
+const DescribeAddressesAttribute: OperationHandler = (input, ctx) => {
+  const allocationIds = stringList(input["AllocationIds"]);
+  const addresses = allAddresses(ctx).filter(
+    (a) => allocationIds.length === 0 || allocationIds.includes(a.AllocationId),
+  );
+  return {
+    Addresses: addresses.map((a) => ({
+      AllocationId: a.AllocationId,
+      PublicIp: a.PublicIp,
+      PtrRecord: `ec2-${a.PublicIp.replace(/\./g, "-")}.compute-1.amazonaws.com`,
+    })),
+  };
+};
+
+const DescribeAggregateIdFormat: OperationHandler = (_input, _ctx) => {
+  return { UseLongIdsAggregated: true, Statuses: [] };
+};
+
+const DescribeAwsNetworkPerformanceMetricSubscriptions: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Subscriptions: [] };
+};
+
+const DescribeBundleTasks: OperationHandler = (input, ctx) => {
+  const bundleIds = stringList(input["BundleIds"]);
+  const tasks = allBundleTasks(ctx).filter(
+    (t) => bundleIds.length === 0 || bundleIds.includes(t.BundleId),
+  );
+  return {
+    BundleTasks: tasks.map((t) => ({
+      BundleId: t.BundleId,
+      InstanceId: t.InstanceId,
+      State: t.State,
+      StartTime: t.StartTime,
+      UpdateTime: t.UpdateTime,
+      Progress: t.Progress,
+      Storage: {},
+    })),
+  };
+};
+
+const DescribeByoipCidrs: OperationHandler = (_input, ctx) => {
+  const cidrs = ctx.store
+    .list<{ Cidr: string; State: string }>()
+    .filter((entry) => entry.key.startsWith("byoip-cidr/"))
+    .map((entry) => entry.value);
+  return {
+    ByoipCidrs: cidrs.map((c) => ({
+      Cidr: c.Cidr,
+      State: c.State,
+      StatusMessage: "",
+      AsnAssociations: [],
+    })),
+  };
+};
+
+const DescribeCapacityBlockExtensionHistory: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { CapacityBlockExtensions: [] };
+};
+
+const DescribeCapacityBlockExtensionOfferings: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const reservationId =
+    typeof input["CapacityReservationId"] === "string"
+      ? input["CapacityReservationId"]
+      : "cr-placeholder";
+  const durationHours =
+    typeof input["CapacityBlockExtensionDurationHours"] === "number"
+      ? input["CapacityBlockExtensionDurationHours"]
+      : 24;
+  return {
+    CapacityBlockExtensionOfferings: [
+      {
+        CapacityBlockExtensionOfferingId: `cbo-ext-${reservationId.slice(-8)}`,
+        InstanceType: "p4d.24xlarge",
+        InstanceCount: 1,
+        AvailabilityZone: "us-east-1a",
+        AvailabilityZoneId: "use1-az1",
+        StartDate: new Date().toISOString(),
+        CapacityBlockExtensionStartDate: new Date().toISOString(),
+        CapacityBlockExtensionEndDate: new Date(
+          Date.now() + durationHours * 3600 * 1000,
+        ).toISOString(),
+        CapacityBlockExtensionDurationHours: durationHours,
+        UpfrontFee: { Amount: "0.00", CurrencyCode: "USD" },
+        Tenancy: "default",
+      },
+    ],
+  };
+};
+
+const DescribeCapacityBlockOfferings: OperationHandler = (input, _ctx) => {
+  const instanceType =
+    typeof input["InstanceType"] === "string"
+      ? input["InstanceType"]
+      : "p4d.24xlarge";
+  const durationHours =
+    typeof input["CapacityDurationHours"] === "number"
+      ? input["CapacityDurationHours"]
+      : 24;
+  return {
+    CapacityBlockOfferings: [
+      {
+        CapacityBlockOfferingId: "cbo-0a1b2c3d4e5f6a7b8",
+        InstanceType: instanceType,
+        AvailabilityZone: "us-east-1a",
+        InstanceCount: 1,
+        StartDate: new Date().toISOString(),
+        EndDate: new Date(
+          Date.now() + durationHours * 3600 * 1000,
+        ).toISOString(),
+        CapacityBlockDurationHours: durationHours,
+        UpfrontFee: { Amount: "0.00", CurrencyCode: "USD" },
+        Tenancy: "default",
+        UltraserverType: null,
+        UltraserverCount: null,
+        AvailabilityZoneId: "use1-az1",
+      },
+    ],
+  };
+};
+
+const DescribeCapacityBlockStatus: OperationHandler = (_input, _ctx) => {
+  return { CapacityBlockStatuses: [] };
+};
+
+const DescribeCapacityBlocks: OperationHandler = (_input, _ctx) => {
+  return { CapacityBlocks: [] };
+};
+
+const DescribeCapacityManagerDataExports: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["CapacityManagerDataExportIds"]);
+  const exports = allCapacityManagerDataExports(ctx).filter(
+    (e) => ids.length === 0 || ids.includes(e.CapacityManagerDataExportId),
+  );
+  return {
+    CapacityManagerDataExports: exports.map((e) => ({
+      CapacityManagerDataExportId: e.CapacityManagerDataExportId,
+      S3Bucket: "",
+      S3Prefix: "",
+      DataExportStatus: "active",
+    })),
+  };
+};
+
 const DescribeAccountAttributes: OperationHandler = (input, _ctx) => {
   const requestedNames = Array.isArray(input["AttributeNames"])
     ? (input["AttributeNames"] as string[])
@@ -10129,6 +10299,18 @@ const ec2: ServiceDefinition = {
     DeregisterInstanceEventNotificationAttributes,
     DeregisterTransitGatewayMulticastGroupMembers,
     DeregisterTransitGatewayMulticastGroupSources,
+    DescribeAddressTransfers,
+    DescribeAddressesAttribute,
+    DescribeAggregateIdFormat,
+    DescribeAwsNetworkPerformanceMetricSubscriptions,
+    DescribeBundleTasks,
+    DescribeByoipCidrs,
+    DescribeCapacityBlockExtensionHistory,
+    DescribeCapacityBlockExtensionOfferings,
+    DescribeCapacityBlockOfferings,
+    DescribeCapacityBlockStatus,
+    DescribeCapacityBlocks,
+    DescribeCapacityManagerDataExports,
     DescribeAccountAttributes,
   },
   model,

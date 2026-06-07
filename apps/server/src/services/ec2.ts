@@ -8866,6 +8866,386 @@ const DeleteTransitGateway: OperationHandler = (input, ctx) => {
   };
 };
 
+const DeleteTransitGatewayClientVpnAttachment: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const stored = ctx.store.get<StoredTgwAttachment>(tgwAttachmentKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayAttachmentID.NotFound",
+      `The transit gateway attachment '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(tgwAttachmentKey(id));
+  return {
+    TransitGatewayClientVpnAttachment: {
+      TransitGatewayAttachmentId: stored.TransitGatewayAttachmentId,
+      TransitGatewayId: stored.TransitGatewayId,
+      ClientVpnEndpointId: stored.ResourceId,
+      Region: ctx.region,
+      Status: { Code: "deleted", Message: "" },
+      State: "deleted",
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const DeleteTransitGatewayConnect: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const connect = ctx.store.get<StoredTransitGatewayConnect>(
+    transitGatewayConnectKey(id),
+  );
+  if (connect === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayAttachmentID.NotFound",
+      `The transit gateway attachment '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayConnectKey(id));
+  return {
+    TransitGatewayConnect: {
+      TransitGatewayAttachmentId: connect.TransitGatewayAttachmentId,
+      TransportTransitGatewayAttachmentId:
+        connect.TransportTransitGatewayAttachmentId,
+      TransitGatewayId: connect.TransitGatewayId,
+      State: "deleted",
+      CreationTime: connect.CreationTime,
+      Options: connect.Options,
+      Tags: connect.Tags,
+    },
+  };
+};
+
+const DeleteTransitGatewayConnectPeer: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TransitGatewayConnectPeerId"] === "string"
+      ? input["TransitGatewayConnectPeerId"]
+      : "";
+  const peer = ctx.store.get<StoredTransitGatewayConnectPeer>(
+    transitGatewayConnectPeerKey(id),
+  );
+  if (peer === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayConnectPeerID.NotFound",
+      `The transit gateway connect peer '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayConnectPeerKey(id));
+  return {
+    TransitGatewayConnectPeer: {
+      TransitGatewayAttachmentId: peer.TransitGatewayAttachmentId,
+      TransitGatewayConnectPeerId: peer.TransitGatewayConnectPeerId,
+      State: "deleted",
+      CreationTime: peer.CreationTime,
+      ConnectPeerConfiguration: peer.ConnectPeerConfiguration,
+      Tags: peer.Tags,
+    },
+  };
+};
+
+const DeleteTransitGatewayMeteringPolicy: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TransitGatewayMeteringPolicyId"] === "string"
+      ? input["TransitGatewayMeteringPolicyId"]
+      : "";
+  const policy = ctx.store.get<StoredTransitGatewayMeteringPolicy>(
+    transitGatewayMeteringPolicyKey(id),
+  );
+  if (policy === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayMeteringPolicyID.NotFound",
+      `The transit gateway metering policy '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayMeteringPolicyKey(id));
+  return {
+    TransitGatewayMeteringPolicy: {
+      TransitGatewayMeteringPolicyId: policy.TransitGatewayMeteringPolicyId,
+      TransitGatewayId: policy.TransitGatewayId,
+      MiddleboxAttachmentIds: policy.MiddleboxAttachmentIds,
+      State: "deleted",
+      UpdateEffectiveAt: policy.UpdateEffectiveAt,
+      Tags: policy.Tags,
+    },
+  };
+};
+
+const DeleteTransitGatewayMeteringPolicyEntry: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const policyId =
+    typeof input["TransitGatewayMeteringPolicyId"] === "string"
+      ? input["TransitGatewayMeteringPolicyId"]
+      : "";
+  const ruleNumber =
+    typeof input["PolicyRuleNumber"] === "number"
+      ? String(input["PolicyRuleNumber"])
+      : "";
+  const entry = ctx.store.get<StoredTransitGatewayMeteringPolicyEntry>(
+    transitGatewayMeteringPolicyEntryKey(policyId, ruleNumber),
+  );
+  if (entry === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayMeteringPolicyEntryID.NotFound",
+      `The transit gateway metering policy entry '${policyId}/${ruleNumber}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayMeteringPolicyEntryKey(policyId, ruleNumber));
+  return {
+    TransitGatewayMeteringPolicyEntry: {
+      PolicyRuleNumber: entry.PolicyRuleNumber,
+      MeteredAccount: entry.MeteredAccount,
+      State: "deleted",
+      UpdatedAt: entry.UpdatedAt,
+      UpdateEffectiveAt: entry.UpdateEffectiveAt,
+      MeteringPolicyRule: entry.MeteringPolicyRule,
+    },
+  };
+};
+
+const DeleteTransitGatewayMulticastDomain: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TransitGatewayMulticastDomainId"] === "string"
+      ? input["TransitGatewayMulticastDomainId"]
+      : "";
+  const domain = ctx.store.get<StoredTransitGatewayMulticastDomain>(
+    transitGatewayMulticastDomainKey(id),
+  );
+  if (domain === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayMulticastDomainId.NotFound",
+      `The transit gateway multicast domain '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayMulticastDomainKey(id));
+  return {
+    TransitGatewayMulticastDomain: {
+      TransitGatewayMulticastDomainId: domain.TransitGatewayMulticastDomainId,
+      TransitGatewayId: domain.TransitGatewayId,
+      TransitGatewayMulticastDomainArn: domain.TransitGatewayMulticastDomainArn,
+      OwnerId: domain.OwnerId,
+      Options: domain.Options,
+      State: "deleted",
+      CreationTime: domain.CreationTime,
+      Tags: domain.Tags,
+    },
+  };
+};
+
+const DeleteTransitGatewayPeeringAttachment: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const attachment = ctx.store.get<StoredTransitGatewayPeeringAttachment>(
+    transitGatewayPeeringAttachmentKey(id),
+  );
+  if (attachment === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayAttachmentID.NotFound",
+      `The transit gateway attachment '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayPeeringAttachmentKey(id));
+  return {
+    TransitGatewayPeeringAttachment: {
+      TransitGatewayAttachmentId: attachment.TransitGatewayAttachmentId,
+      AccepterTransitGatewayAttachmentId:
+        attachment.AccepterTransitGatewayAttachmentId,
+      RequesterTgwInfo: attachment.RequesterTgwInfo,
+      AccepterTgwInfo: attachment.AccepterTgwInfo,
+      Options: attachment.Options,
+      Status: attachment.Status,
+      State: "deleted",
+      CreationTime: attachment.CreationTime,
+      Tags: attachment.Tags,
+    },
+  };
+};
+
+const DeleteTransitGatewayPolicyTable: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TransitGatewayPolicyTableId"] === "string"
+      ? input["TransitGatewayPolicyTableId"]
+      : "";
+  const table = ctx.store.get<StoredTransitGatewayPolicyTable>(
+    transitGatewayPolicyTableKey(id),
+  );
+  if (table === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayPolicyTableID.NotFound",
+      `The transit gateway policy table '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayPolicyTableKey(id));
+  return {
+    TransitGatewayPolicyTable: {
+      TransitGatewayPolicyTableId: table.TransitGatewayPolicyTableId,
+      TransitGatewayId: table.TransitGatewayId,
+      State: "deleted",
+      CreationTime: table.CreationTime,
+      Tags: table.Tags,
+    },
+  };
+};
+
+const DeleteTransitGatewayPrefixListReference: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const prefixListId =
+    typeof input["PrefixListId"] === "string" ? input["PrefixListId"] : "";
+  const ref = ctx.store.get<StoredTransitGatewayPrefixListReference>(
+    transitGatewayPrefixListReferenceKey(routeTableId, prefixListId),
+  );
+  if (ref === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayPrefixListReferenceID.NotFound",
+      `The transit gateway prefix list reference '${prefixListId}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(
+    transitGatewayPrefixListReferenceKey(routeTableId, prefixListId),
+  );
+  return {
+    TransitGatewayPrefixListReference: {
+      TransitGatewayRouteTableId: ref.TransitGatewayRouteTableId,
+      PrefixListId: ref.PrefixListId,
+      PrefixListOwnerId: ref.PrefixListOwnerId,
+      State: "deleted",
+      Blackhole: ref.Blackhole,
+      TransitGatewayAttachment: ref.TransitGatewayAttachment,
+    },
+  };
+};
+
+const DeleteTransitGatewayRoute: OperationHandler = (input, ctx) => {
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "";
+  const route = ctx.store.get<StoredTransitGatewayRoute>(
+    transitGatewayRouteKey(routeTableId, destinationCidrBlock),
+  );
+  if (route === undefined) {
+    throw awsError(
+      "InvalidRoute.NotFound",
+      `The route '${destinationCidrBlock}' does not exist in route table '${routeTableId}'`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayRouteKey(routeTableId, destinationCidrBlock));
+  return {
+    Route: {
+      DestinationCidrBlock: route.DestinationCidrBlock,
+      TransitGatewayAttachments: route.TransitGatewayAttachmentId
+        ? [
+            {
+              TransitGatewayAttachmentId: route.TransitGatewayAttachmentId,
+              ResourceType: "vpc",
+            },
+          ]
+        : [],
+      Type: route.Type,
+      State: "deleted",
+    },
+  };
+};
+
+const DeleteTransitGatewayRouteTable: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const rtb = ctx.store.get<StoredTransitGatewayRouteTable>(
+    transitGatewayRouteTableKey(id),
+  );
+  if (rtb === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayRouteTableID.NotFound",
+      `The transit gateway route table '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayRouteTableKey(id));
+  return {
+    TransitGatewayRouteTable: {
+      TransitGatewayRouteTableId: rtb.TransitGatewayRouteTableId,
+      TransitGatewayId: rtb.TransitGatewayId,
+      State: "deleted",
+      DefaultAssociationRouteTable: rtb.DefaultAssociationRouteTable,
+      DefaultPropagationRouteTable: rtb.DefaultPropagationRouteTable,
+      CreationTime: rtb.CreationTime,
+      Tags: rtb.Tags,
+    },
+  };
+};
+
+const DeleteTransitGatewayRouteTableAnnouncement: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id =
+    typeof input["TransitGatewayRouteTableAnnouncementId"] === "string"
+      ? input["TransitGatewayRouteTableAnnouncementId"]
+      : "";
+  const announcement =
+    ctx.store.get<StoredTransitGatewayRouteTableAnnouncement>(
+      transitGatewayRouteTableAnnouncementKey(id),
+    );
+  if (announcement === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayRouteTableAnnouncementId.NotFound",
+      `The transit gateway route table announcement '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(transitGatewayRouteTableAnnouncementKey(id));
+  return {
+    TransitGatewayRouteTableAnnouncement: {
+      TransitGatewayRouteTableAnnouncementId:
+        announcement.TransitGatewayRouteTableAnnouncementId,
+      TransitGatewayId: announcement.TransitGatewayId,
+      PeerTransitGatewayId: announcement.PeerTransitGatewayId,
+      PeeringAttachmentId: announcement.PeeringAttachmentId,
+      AnnouncementDirection: announcement.AnnouncementDirection,
+      TransitGatewayRouteTableId: announcement.TransitGatewayRouteTableId,
+      State: "deleted",
+      CreationTime: announcement.CreationTime,
+      Tags: announcement.Tags,
+    },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -9127,6 +9507,18 @@ const ec2: ServiceDefinition = {
     DeleteTrafficMirrorSession,
     DeleteTrafficMirrorTarget,
     DeleteTransitGateway,
+    DeleteTransitGatewayClientVpnAttachment,
+    DeleteTransitGatewayConnect,
+    DeleteTransitGatewayConnectPeer,
+    DeleteTransitGatewayMeteringPolicy,
+    DeleteTransitGatewayMeteringPolicyEntry,
+    DeleteTransitGatewayMulticastDomain,
+    DeleteTransitGatewayPeeringAttachment,
+    DeleteTransitGatewayPolicyTable,
+    DeleteTransitGatewayPrefixListReference,
+    DeleteTransitGatewayRoute,
+    DeleteTransitGatewayRouteTable,
+    DeleteTransitGatewayRouteTableAnnouncement,
   },
   model,
 } as const;

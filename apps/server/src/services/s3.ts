@@ -6,6 +6,7 @@ import type {
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import s3Model from "../../../../test/vendor/aws-models/s3.json" with { type: "json" };
+import { deliverToArn } from "../core/events.ts";
 
 const model = loadServiceModel(s3Model);
 
@@ -190,6 +191,98 @@ const getBucket = (ctx: ServiceContext, name: string): S3Bucket => {
   return bucket;
 };
 
+const asArray = (value: unknown): Record<string, unknown>[] => {
+  if (Array.isArray(value)) return value as Record<string, unknown>[];
+  if (typeof value === "object" && value !== null)
+    return [value as Record<string, unknown>];
+  return [];
+};
+
+const eventMatches = (configured: string, actual: string): boolean => {
+  if (configured.endsWith("*"))
+    return actual.startsWith(configured.slice(0, -1));
+  return configured === actual;
+};
+
+const filterMatches = (filter: unknown, key: string): boolean => {
+  const filterKey =
+    typeof filter === "object" && filter !== null
+      ? (filter as Record<string, unknown>)["Key"]
+      : undefined;
+  const rules =
+    typeof filterKey === "object" && filterKey !== null
+      ? asArray((filterKey as Record<string, unknown>)["FilterRules"])
+      : [];
+  for (const rule of rules) {
+    const name = String(rule["Name"] ?? "").toLowerCase();
+    const value = String(rule["Value"] ?? "");
+    if (name === "prefix" && !key.startsWith(value)) return false;
+    if (name === "suffix" && !key.endsWith(value)) return false;
+  }
+  return true;
+};
+
+const emitS3Notification = async (
+  ctx: ServiceContext,
+  bucketName: string,
+  notification: Record<string, unknown> | undefined,
+  eventName: string,
+  key: string,
+  object: S3Object | undefined,
+): Promise<void> => {
+  if (notification === undefined) return;
+  const fullEventName = `s3:${eventName}`;
+  const record = {
+    eventVersion: "2.1",
+    eventSource: "aws:s3",
+    awsRegion: ctx.region,
+    eventTime: new Date().toISOString(),
+    eventName,
+    s3: {
+      s3SchemaVersion: "1.0",
+      bucket: { name: bucketName, arn: `arn:aws:s3:::${bucketName}` },
+      object: {
+        key,
+        size: object?.size ?? 0,
+        eTag: object?.etag.replaceAll('"', "") ?? "",
+      },
+    },
+  };
+  const payload = JSON.stringify({ Records: [record] });
+  const configs: { arnKey: string; entries: Record<string, unknown>[] }[] = [
+    {
+      arnKey: "QueueArn",
+      entries: asArray(notification["QueueConfigurations"]),
+    },
+    {
+      arnKey: "TopicArn",
+      entries: asArray(notification["TopicConfigurations"]),
+    },
+    {
+      arnKey: "LambdaFunctionArn",
+      entries: asArray(notification["LambdaFunctionConfigurations"]),
+    },
+  ];
+  for (const { arnKey, entries } of configs) {
+    for (const entry of entries) {
+      const arn = entry[arnKey];
+      if (typeof arn !== "string") continue;
+      const rawEvents = entry["Events"];
+      const events = Array.isArray(rawEvents)
+        ? (rawEvents as string[])
+        : typeof rawEvents === "string"
+          ? [rawEvents]
+          : [];
+      if (!events.some((e) => eventMatches(e, fullEventName))) continue;
+      if (!filterMatches(entry["Filter"], key)) continue;
+      await deliverToArn(ctx, arn, {
+        body: payload,
+        event: { Records: [record] },
+      });
+    }
+  }
+};
+
 const parseTagSet = (tagging: unknown): S3Tag[] => {
   const rawTagSet =
     typeof tagging === "object" && tagging !== null
@@ -368,7 +461,7 @@ const s3: ServiceDefinition = {
       getBucket(ctx, bucket);
       return {};
     },
-    PutObject: (input, ctx, req) => {
+    PutObject: async (input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
       if (bucket === undefined || key === undefined) {
         throw awsError("InvalidRequest", "bucket and key required", 400);
@@ -399,6 +492,14 @@ const s3: ServiceDefinition = {
         objects: { ...target.objects, [key]: object },
       };
       ctx.store.set<S3Bucket>(bucket, next);
+      await emitS3Notification(
+        ctx,
+        bucket,
+        target.notification,
+        "ObjectCreated:Put",
+        key,
+        object,
+      );
       return { ETag: object.etag };
     },
     GetObject: (input, ctx, req) => {
@@ -525,7 +626,7 @@ const s3: ServiceDefinition = {
           : {}),
       };
     },
-    DeleteObject: (_input, ctx, req) => {
+    DeleteObject: async (_input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
       if (bucket === undefined || key === undefined) {
         throw awsError("InvalidRequest", "bucket and key required", 400);
@@ -535,6 +636,14 @@ const s3: ServiceDefinition = {
         const rest = { ...target.objects };
         delete rest[key];
         ctx.store.set<S3Bucket>(bucket, { ...target, objects: rest });
+        await emitS3Notification(
+          ctx,
+          bucket,
+          target.notification,
+          "ObjectRemoved:Delete",
+          key,
+          undefined,
+        );
       }
       return {};
     },

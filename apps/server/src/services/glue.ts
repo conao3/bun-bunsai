@@ -5826,6 +5826,312 @@ const UpdateDataQualityRuleset: OperationHandler = (input, ctx) => {
   };
 };
 
+const UpdateDatabase: OperationHandler = (input, ctx) => {
+  const databaseInput = asRecord(input["DatabaseInput"]);
+  const name =
+    typeof input["Name"] === "string"
+      ? (input["Name"] as string)
+      : requireName(databaseInput);
+  const existing = requireDatabase(ctx, name);
+  const updated: StoredDatabase = {
+    ...existing,
+    input: databaseInput,
+  };
+  ctx.store.set(name, updated);
+  return {};
+};
+
+const UpdateDevEndpoint: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["EndpointName"] === "string"
+      ? (input["EndpointName"] as string)
+      : "";
+  if (name === "") {
+    throw awsError("InvalidInputException", "EndpointName is required.", 400);
+  }
+  const stored = ctx.store.get<StoredDevEndpoint>(
+    `${devEndpointPrefix}${name}`,
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `DevEndpoint ${name} not found.`,
+      400,
+    );
+  }
+  const updatedInput: Record<string, unknown> = { ...stored.input };
+  for (const field of [
+    "PublicKey",
+    "AddPublicKeys",
+    "DeletePublicKeys",
+    "CustomLibraries",
+    "UpdateEtlLibraries",
+    "DeleteArguments",
+    "AddArguments",
+  ]) {
+    if (input[field] !== undefined) {
+      updatedInput[field] = input[field];
+    }
+  }
+  const updatedStored: StoredDevEndpoint = {
+    ...stored,
+    input: updatedInput,
+  };
+  ctx.store.set(`${devEndpointPrefix}${name}`, updatedStored);
+  return {};
+};
+
+const UpdateGlueIdentityCenterConfiguration: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const stored = ctx.store.get<StoredGlueIdc>(glueIdcPrefix);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      "GlueIdentityCenterConfiguration not found.",
+      400,
+    );
+  }
+  const updatedInput: Record<string, unknown> = { ...stored.input };
+  if (input["Scopes"] !== undefined) {
+    updatedInput["Scopes"] = input["Scopes"];
+  }
+  if (input["UserBackgroundSessionsEnabled"] !== undefined) {
+    updatedInput["UserBackgroundSessionsEnabled"] =
+      input["UserBackgroundSessionsEnabled"];
+  }
+  const updatedStored: StoredGlueIdc = { ...stored, input: updatedInput };
+  ctx.store.set(glueIdcPrefix, updatedStored);
+  return {};
+};
+
+const UpdateIntegrationResourceProperty: OperationHandler = (input, ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string" ? input["ResourceArn"] : "";
+  if (resourceArn === "") {
+    throw awsError("InvalidInputException", "ResourceArn is required.", 400);
+  }
+  const key = `${integrationResourcePropertyPrefix}${resourceArn}`;
+  const stored = ctx.store.get<StoredIntegrationResourceProperty>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `IntegrationResourceProperty for ${resourceArn} not found.`,
+      400,
+    );
+  }
+  const sourceProcessingProperties =
+    typeof input["SourceProcessingProperties"] === "object" &&
+    input["SourceProcessingProperties"] !== null
+      ? (input["SourceProcessingProperties"] as Record<string, unknown>)
+      : stored.sourceProcessingProperties;
+  const targetProcessingProperties =
+    typeof input["TargetProcessingProperties"] === "object" &&
+    input["TargetProcessingProperties"] !== null
+      ? (input["TargetProcessingProperties"] as Record<string, unknown>)
+      : stored.targetProcessingProperties;
+  const updatedStored: StoredIntegrationResourceProperty = {
+    ...stored,
+    sourceProcessingProperties,
+    targetProcessingProperties,
+  };
+  ctx.store.set(key, updatedStored);
+  return {
+    ResourceArn: resourceArn,
+    ResourcePropertyArn: stored.resourcePropertyArn,
+    ...(sourceProcessingProperties !== undefined
+      ? { SourceProcessingProperties: sourceProcessingProperties }
+      : {}),
+    ...(targetProcessingProperties !== undefined
+      ? { TargetProcessingProperties: targetProcessingProperties }
+      : {}),
+  };
+};
+
+const UpdateIntegrationTableProperties: OperationHandler = (input, ctx) => {
+  const resourceArn =
+    typeof input["ResourceArn"] === "string"
+      ? (input["ResourceArn"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const key = `${itpPrefix}${resourceArn}:${tableName}`;
+  const stored = ctx.store.get<StoredITP>(key);
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Integration table properties not found.`,
+      400,
+    );
+  }
+  const updatedStored: StoredITP = {
+    ...stored,
+    sourceTableConfig:
+      typeof input["SourceTableConfig"] === "object" &&
+      input["SourceTableConfig"] !== null
+        ? (input["SourceTableConfig"] as Record<string, unknown>)
+        : stored.sourceTableConfig,
+    targetTableConfig:
+      typeof input["TargetTableConfig"] === "object" &&
+      input["TargetTableConfig"] !== null
+        ? (input["TargetTableConfig"] as Record<string, unknown>)
+        : stored.targetTableConfig,
+  };
+  ctx.store.set(key, updatedStored);
+  return {};
+};
+
+const UpdateJob: OperationHandler = (input, ctx) => {
+  const name = requireJobName(input);
+  const existing = requireJob(ctx, name);
+  const jobUpdate = asRecord(input["JobUpdate"]);
+  const now = Math.floor(Date.now() / 1000);
+  const updatedJob: StoredJob = {
+    input: { ...existing.input, ...jobUpdate },
+    createdOn: existing.createdOn,
+    lastModifiedOn: now,
+  };
+  ctx.store.set(`${jobPrefix}${name}`, updatedJob);
+  return { JobName: name };
+};
+
+const UpdateJobFromSourceControl: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["JobName"] === "string" ? (input["JobName"] as string) : "";
+  if (name !== "") {
+    requireJob(ctx, name);
+  }
+  return { JobName: name };
+};
+
+const UpdateMLTransform: OperationHandler = (input, ctx) => {
+  const transformId =
+    typeof input["TransformId"] === "string"
+      ? (input["TransformId"] as string)
+      : "";
+  if (transformId === "") {
+    throw awsError("InvalidInputException", "TransformId is required.", 400);
+  }
+  const stored = ctx.store.get<StoredMLTransform>(
+    `${mlTransformPrefix}${transformId}`,
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "EntityNotFoundException",
+      `MLTransform ${transformId} not found.`,
+      400,
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const updatedInput: Record<string, unknown> = { ...stored.input };
+  for (const field of [
+    "Name",
+    "Description",
+    "Parameters",
+    "Role",
+    "GlueVersion",
+    "MaxCapacity",
+    "WorkerType",
+    "NumberOfWorkers",
+    "Timeout",
+    "MaxRetries",
+  ]) {
+    if (input[field] !== undefined) {
+      updatedInput[field] = input[field];
+    }
+  }
+  const updatedStored: StoredMLTransform = {
+    ...stored,
+    input: updatedInput,
+    lastModifiedOn: now,
+  };
+  ctx.store.set(`${mlTransformPrefix}${transformId}`, updatedStored);
+  return { TransformId: transformId };
+};
+
+const UpdatePartition: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string"
+      ? (input["DatabaseName"] as string)
+      : "";
+  const tableName =
+    typeof input["TableName"] === "string"
+      ? (input["TableName"] as string)
+      : "";
+  const partitionValueList = Array.isArray(input["PartitionValueList"])
+    ? (input["PartitionValueList"] as string[])
+    : [];
+  const key = partitionStoreKey(databaseName, tableName, partitionValueList);
+  const existing = ctx.store.get<StoredPartition>(key);
+  if (existing === undefined) {
+    throw awsError("EntityNotFoundException", `Partition not found.`, 400);
+  }
+  const partitionInput = asRecord(input["PartitionInput"]);
+  const now = Math.floor(Date.now() / 1000);
+  const updated: StoredPartition = {
+    ...existing,
+    input: partitionInput,
+    updateTime: now,
+  };
+  ctx.store.set(key, updated);
+  return {};
+};
+
+const UpdateRegistry: OperationHandler = (input, ctx) => {
+  const registryId = asRecord(input["RegistryId"] ?? {});
+  const { name, stored } = requireRegistryByid(ctx, registryId);
+  const description =
+    typeof input["Description"] === "string"
+      ? (input["Description"] as string)
+      : stored.description;
+  const updatedStored: StoredRegistry = { ...stored, description };
+  ctx.store.set(`${registryPrefix}${name}`, updatedStored);
+  return {
+    RegistryName: name,
+    RegistryArn: stored.registryArn,
+  };
+};
+
+const UpdateSchema: OperationHandler = (input, ctx) => {
+  const schemaId = asRecord(input["SchemaId"] ?? {});
+  const key = resolveSchemaKey(schemaId);
+  const stored = ctx.store.get<StoredSchema>(key);
+  if (stored === undefined) {
+    throw awsError("EntityNotFoundException", `Schema not found.`, 400);
+  }
+  const compatibility =
+    typeof input["Compatibility"] === "string"
+      ? (input["Compatibility"] as string)
+      : stored.compatibility;
+  const description =
+    typeof input["Description"] === "string"
+      ? (input["Description"] as string)
+      : stored.description;
+  const updatedStored: StoredSchema = {
+    ...stored,
+    compatibility,
+    description,
+  };
+  ctx.store.set(key, updatedStored);
+  return {
+    SchemaArn: stored.schemaArn,
+    SchemaName: stored.schemaName,
+    RegistryName: stored.registryName,
+  };
+};
+
+const UpdateSourceControlFromJob: OperationHandler = (input, ctx) => {
+  const name =
+    typeof input["JobName"] === "string" ? (input["JobName"] as string) : "";
+  if (name !== "") {
+    requireJob(ctx, name);
+  }
+  return { JobName: name };
+};
+
 const isDatabaseKey = (key: string): boolean =>
   !key.startsWith(crawlerPrefix) &&
   !key.startsWith(jobPrefix) &&
@@ -6139,6 +6445,18 @@ const glue: ServiceDefinition = {
     UpdateCrawler,
     UpdateCrawlerSchedule,
     UpdateDataQualityRuleset,
+    UpdateDatabase,
+    UpdateDevEndpoint,
+    UpdateGlueIdentityCenterConfiguration,
+    UpdateIntegrationResourceProperty,
+    UpdateIntegrationTableProperties,
+    UpdateJob,
+    UpdateJobFromSourceControl,
+    UpdateMLTransform,
+    UpdatePartition,
+    UpdateRegistry,
+    UpdateSchema,
+    UpdateSourceControlFromJob,
   },
   model,
 } as const;

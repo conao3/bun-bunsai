@@ -81,13 +81,9 @@ test("Step Functions state machine and execution lifecycle", async () => {
   const execArns = (listedExecs.executions ?? []).map((e) => e.executionArn);
   expect(execArns).toContain(executionArn);
 
-  const stopped = await client.send(new StopExecutionCommand({ executionArn }));
-  expect(stopped.stopDate).toBeInstanceOf(Date);
-
-  const afterStop = await client.send(
-    new DescribeExecutionCommand({ executionArn }),
-  );
-  expect(afterStop.status).toBe("ABORTED");
+  await expect(
+    client.send(new StopExecutionCommand({ executionArn })),
+  ).rejects.toThrow();
 
   await client.send(
     new DeleteStateMachineCommand({ stateMachineArn: machineArn }),

@@ -1988,6 +1988,14 @@ const AdminInitiateAuth: OperationHandler = async (input, ctx) => {
     if (!user.Enabled) {
       throw awsError("NotAuthorizedException", `User is disabled.`, 400);
     }
+    const password = authParams["PASSWORD"] ?? "";
+    if (user.Password === undefined || user.Password !== password) {
+      throw awsError(
+        "NotAuthorizedException",
+        "Incorrect username or password.",
+        400,
+      );
+    }
     return {
       AuthenticationResult: await issueTokens({
         poolId,
@@ -2069,6 +2077,14 @@ const InitiateAuth: OperationHandler = async (input, ctx) => {
     const user = pool.users[username];
     if (user === undefined) {
       throw awsError("UserNotFoundException", `User does not exist.`, 400);
+    }
+    const password = authParams["PASSWORD"] ?? "";
+    if (user.Password === undefined || user.Password !== password) {
+      throw awsError(
+        "NotAuthorizedException",
+        "Incorrect username or password.",
+        400,
+      );
     }
     return {
       AuthenticationResult: await issueTokens({

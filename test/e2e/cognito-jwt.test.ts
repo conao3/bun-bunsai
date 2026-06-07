@@ -3,6 +3,7 @@ import { startApp } from "./harness.ts";
 import {
   AdminCreateUserCommand,
   AdminInitiateAuthCommand,
+  AdminSetUserPasswordCommand,
   CognitoIdentityProviderClient,
   CreateUserPoolClientCommand,
   CreateUserPoolCommand,
@@ -54,6 +55,15 @@ describe("Cognito issues verifiable RS256 JWTs", () => {
         UserPoolId: poolId,
         Username: "jwt-user",
         UserAttributes: [{ Name: "email", Value: "jwt@example.com" }],
+      }),
+    );
+
+    await client.send(
+      new AdminSetUserPasswordCommand({
+        UserPoolId: poolId,
+        Username: "jwt-user",
+        Password: "Pass1234!",
+        Permanent: true,
       }),
     );
 

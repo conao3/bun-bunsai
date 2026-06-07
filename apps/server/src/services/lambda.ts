@@ -361,7 +361,12 @@ const Invoke: OperationHandler = async (input, ctx) => {
   if (execution.kind === "unsupported") {
     return {
       StatusCode: statusCode,
-      Payload: echoPayload(input["Payload"]),
+      FunctionError: "Unhandled",
+      Payload: jsonPayload({
+        errorType: "Runtime.Unsupported",
+        errorMessage: `Runtime ${fn.Runtime ?? "unknown"} is not supported`,
+        trace: [],
+      }),
       ExecutedVersion: fn.Version,
     };
   }

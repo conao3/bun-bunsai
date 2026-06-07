@@ -46,6 +46,11 @@ export type ServiceContext = {
   storeFor: (service: string) => ScopedStore;
 };
 
+export type HandlerOutput = {
+  $headers?: Record<string, string>;
+  [k: string]: unknown;
+};
+
 export type OperationHandler = (
   input: Record<string, unknown>,
   ctx: ServiceContext,

@@ -520,7 +520,7 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidBucketName", "bucket name required", 400);
       }
       getBucket(ctx, bucket);
-      return {};
+      return { $headers: { "x-amz-bucket-region": req.region } };
     },
     PutObject: async (input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);

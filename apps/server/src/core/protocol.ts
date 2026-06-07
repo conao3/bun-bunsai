@@ -1,5 +1,6 @@
 import type {
   AwsError,
+  HandlerOutput,
   ParsedRequest,
   Protocol,
   Shape,
@@ -243,24 +244,42 @@ export const serializeOutput = (
   result: unknown,
   opts?: SerializeOptions,
 ): CodecResult => {
+  const src =
+    typeof result === "object" && result !== null
+      ? (result as Partial<HandlerOutput>)
+      : undefined;
+  const extraHeaders = src?.$headers;
+  const stripped: unknown = (() => {
+    if (extraHeaders === undefined || src === undefined) return result;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(src)) if (k !== "$headers") out[k] = v;
+    return out;
+  })();
   const isXmlEscapeHatch =
-    typeof result === "object" &&
-    result !== null &&
-    "__xml" in (result as Record<string, unknown>);
+    typeof stripped === "object" &&
+    stripped !== null &&
+    "__xml" in (stripped as Record<string, unknown>);
+  let codecResult: CodecResult;
   if (opts?.registry !== undefined && !isXmlEscapeHatch) {
-    return serializeShapeOutput({
+    codecResult = serializeShapeOutput({
       protocol,
       registry: opts.registry,
       shape: opts.shape,
       operation,
-      result,
+      result: stripped,
       resultWrapper: opts.resultWrapper,
       xmlNamespace: opts.xmlNamespace,
       outputShapeName: opts.outputShapeName,
       jsonVersion: opts.jsonVersion,
     });
+  } else {
+    codecResult = fallbackSerializeOutput(protocol, operation, stripped);
   }
-  return fallbackSerializeOutput(protocol, operation, result);
+  if (extraHeaders === undefined) return codecResult;
+  return {
+    ...codecResult,
+    headers: { ...extraHeaders, ...(codecResult.headers ?? {}) },
+  };
 };
 
 const fallbackSerializeError = (

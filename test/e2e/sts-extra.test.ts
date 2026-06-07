@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
   AssumeRoleCommand,
+  AssumeRoleWithSAMLCommand,
+  AssumeRoleWithWebIdentityCommand,
   GetCallerIdentityCommand,
   GetFederationTokenCommand,
   GetSessionTokenCommand,
@@ -14,6 +16,29 @@ const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 const sts = () =>
   new STSClient({ endpoint, region, credentials, requestHandler });
+
+const federationHandler = {
+  handle(req: Parameters<typeof requestHandler.handle>[0]) {
+    const headers = req.headers.authorization
+      ? req.headers
+      : {
+          ...req.headers,
+          authorization:
+            "AWS4-HMAC-SHA256 Credential=test/20260101/us-east-1/sts/aws4_request, SignedHeaders=host, Signature=0000000000000000000000000000000000000000000000000000000000000000",
+        };
+    return requestHandler.handle({ ...req, headers });
+  },
+  updateHttpClientConfig: () => {},
+  httpHandlerConfigs: () => ({}) as Record<string, never>,
+} as const;
+
+const stsF = () =>
+  new STSClient({
+    endpoint,
+    region,
+    credentials,
+    requestHandler: federationHandler,
+  });
 
 test("STS AssumeRole returns Credentials and AssumedRoleUser", async () => {
   const client = sts();
@@ -52,6 +77,117 @@ test("STS GetFederationToken returns Credentials and FederatedUser", async () =>
   expect(out.Credentials?.AccessKeyId).toBeDefined();
   expect(out.FederatedUser?.Arn).toContain("federated-user/bunsai-e2e-user");
   expect(out.FederatedUser?.FederatedUserId).toContain("bunsai-e2e-user");
+});
+
+test("STS AssumeRoleWithWebIdentity returns Credentials and SubjectFromWebIdentityToken", async () => {
+  const client = stsF();
+  const out = await client.send(
+    new AssumeRoleWithWebIdentityCommand({
+      RoleArn: "arn:aws:iam::111122223333:role/oidc-role",
+      RoleSessionName: "oidc-session",
+      WebIdentityToken: "eyJhbGciOiJSUzI1NiJ9.dummy.token",
+    }),
+  );
+  expect(out.Credentials?.AccessKeyId).toBeDefined();
+  expect(out.Credentials?.SecretAccessKey).toBeDefined();
+  expect(out.Credentials?.SessionToken).toBeDefined();
+  expect(out.Credentials?.Expiration).toBeInstanceOf(Date);
+  expect(out.SubjectFromWebIdentityToken).toBeDefined();
+  expect(out.AssumedRoleUser?.Arn).toContain(
+    "arn:aws:sts::111122223333:assumed-role/oidc-role/oidc-session",
+  );
+});
+
+test("AssumeRoleWithWebIdentity credentials route GetCallerIdentity to role account", async () => {
+  const caller = stsF();
+  const assumed = await caller.send(
+    new AssumeRoleWithWebIdentityCommand({
+      RoleArn: "arn:aws:iam::222233334444:role/irsa-role",
+      RoleSessionName: "irsa-session",
+      WebIdentityToken: "eyJhbGciOiJSUzI1NiJ9.dummy.irsa",
+    }),
+  );
+  const assumedClient = new STSClient({
+    endpoint,
+    region,
+    requestHandler,
+    credentials: {
+      accessKeyId: assumed.Credentials?.AccessKeyId ?? "",
+      secretAccessKey: assumed.Credentials?.SecretAccessKey ?? "",
+      sessionToken: assumed.Credentials?.SessionToken ?? "",
+    },
+  });
+  const identity = await assumedClient.send(new GetCallerIdentityCommand({}));
+  expect(identity.Account).toBe("222233334444");
+});
+
+test("AssumeRoleWithWebIdentity with empty token returns error", async () => {
+  const client = stsF();
+  await expect(
+    client.send(
+      new AssumeRoleWithWebIdentityCommand({
+        RoleArn: "arn:aws:iam::000000000000:role/bunsai",
+        RoleSessionName: "bunsai-session",
+        WebIdentityToken: "",
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("STS AssumeRoleWithSAML returns Credentials Subject and Issuer", async () => {
+  const client = stsF();
+  const out = await client.send(
+    new AssumeRoleWithSAMLCommand({
+      RoleArn: "arn:aws:iam::333344445555:role/saml-role",
+      PrincipalArn: "arn:aws:iam::333344445555:saml-provider/MySAML",
+      SAMLAssertion: "PHNhbWxwOkFzc2VydGlvbj5kdW1teTwvc2FtbHA6QXNzZXJ0aW9uPg==",
+    }),
+  );
+  expect(out.Credentials?.AccessKeyId).toBeDefined();
+  expect(out.Credentials?.SecretAccessKey).toBeDefined();
+  expect(out.Credentials?.SessionToken).toBeDefined();
+  expect(out.Credentials?.Expiration).toBeInstanceOf(Date);
+  expect(out.Subject).toBeDefined();
+  expect(out.Issuer).toBeDefined();
+  expect(out.AssumedRoleUser?.Arn).toContain(
+    "arn:aws:sts::333344445555:assumed-role/saml-role/",
+  );
+});
+
+test("AssumeRoleWithSAML credentials route GetCallerIdentity to role account", async () => {
+  const caller = stsF();
+  const assumed = await caller.send(
+    new AssumeRoleWithSAMLCommand({
+      RoleArn: "arn:aws:iam::444455556666:role/saml-cross",
+      PrincipalArn: "arn:aws:iam::444455556666:saml-provider/MySAML",
+      SAMLAssertion: "PHNhbWxwOkFzc2VydGlvbj5kdW1teTwvc2FtbHA6QXNzZXJ0aW9uPg==",
+    }),
+  );
+  const assumedClient = new STSClient({
+    endpoint,
+    region,
+    requestHandler,
+    credentials: {
+      accessKeyId: assumed.Credentials?.AccessKeyId ?? "",
+      secretAccessKey: assumed.Credentials?.SecretAccessKey ?? "",
+      sessionToken: assumed.Credentials?.SessionToken ?? "",
+    },
+  });
+  const identity = await assumedClient.send(new GetCallerIdentityCommand({}));
+  expect(identity.Account).toBe("444455556666");
+});
+
+test("AssumeRoleWithSAML with empty assertion returns error", async () => {
+  const client = stsF();
+  await expect(
+    client.send(
+      new AssumeRoleWithSAMLCommand({
+        RoleArn: "arn:aws:iam::000000000000:role/bunsai",
+        PrincipalArn: "arn:aws:iam::000000000000:saml-provider/MySAML",
+        SAMLAssertion: "",
+      }),
+    ),
+  ).rejects.toThrow();
 });
 
 test("AssumeRole into another account flows through to later calls", async () => {

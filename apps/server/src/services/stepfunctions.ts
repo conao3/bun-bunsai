@@ -28,6 +28,297 @@ type StoredExecution = {
   stopDate: number | undefined;
   input: string;
   output: string | undefined;
+  error: string | undefined;
+  cause: string | undefined;
+};
+
+type AslChoiceCondition = {
+  Variable?: string;
+  StringEquals?: string;
+  StringEqualsPath?: string;
+  StringGreaterThan?: string;
+  StringLessThan?: string;
+  StringGreaterThanOrEquals?: string;
+  StringLessThanOrEquals?: string;
+  NumericEquals?: number;
+  NumericEqualsPath?: string;
+  NumericGreaterThan?: number;
+  NumericLessThan?: number;
+  NumericGreaterThanOrEquals?: number;
+  NumericLessThanOrEquals?: number;
+  BooleanEquals?: boolean;
+  BooleanEqualsPath?: string;
+  IsNull?: boolean;
+  IsPresent?: boolean;
+  IsNumeric?: boolean;
+  IsString?: boolean;
+  IsBoolean?: boolean;
+  And?: AslChoiceCondition[];
+  Or?: AslChoiceCondition[];
+  Not?: AslChoiceCondition;
+};
+
+type AslChoiceRule = AslChoiceCondition & { Next: string };
+
+type AslState = {
+  Type: string;
+  Next?: string;
+  End?: boolean;
+  Result?: unknown;
+  ResultPath?: string | null;
+  Parameters?: Record<string, unknown>;
+  OutputPath?: string | null;
+  Choices?: AslChoiceRule[];
+  Default?: string;
+  Error?: string;
+  Cause?: string;
+  Seconds?: number;
+};
+
+type AslDefinition = {
+  StartAt: string;
+  States: Record<string, AslState>;
+};
+
+type AslExecutionResult = {
+  status: "SUCCEEDED" | "FAILED";
+  output: string;
+  error?: string;
+  cause?: string;
+};
+
+const jsonPathGet = (data: unknown, path: string): unknown => {
+  if (path === "$") return data;
+  if (!path.startsWith("$.")) return undefined;
+  const parts = path.slice(2).split(".");
+  let current: unknown = data;
+  for (const part of parts) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+};
+
+const jsonPathSet = (data: unknown, path: string, value: unknown): unknown => {
+  if (path === "$") return value;
+  const inputObj =
+    typeof data === "object" && data !== null
+      ? (data as Record<string, unknown>)
+      : {};
+  const parts = path.slice(2).split(".");
+  const clone: Record<string, unknown> = { ...inputObj };
+  let current = clone;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i]!;
+    const child = current[part];
+    current[part] =
+      typeof child === "object" && child !== null
+        ? { ...(child as Record<string, unknown>) }
+        : {};
+    current = current[part] as Record<string, unknown>;
+  }
+  const lastPart = parts[parts.length - 1];
+  if (lastPart !== undefined) current[lastPart] = value;
+  return clone;
+};
+
+const applyParameters = (
+  params: Record<string, unknown>,
+  input: unknown,
+): unknown => {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (key.endsWith(".$")) {
+      result[key.slice(0, -2)] =
+        typeof value === "string" ? jsonPathGet(input, value) : undefined;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+};
+
+const evaluateCondition = (
+  condition: AslChoiceCondition,
+  input: unknown,
+): boolean => {
+  if (condition.And !== undefined)
+    return condition.And.every((c) => evaluateCondition(c, input));
+  if (condition.Or !== undefined)
+    return condition.Or.some((c) => evaluateCondition(c, input));
+  if (condition.Not !== undefined)
+    return !evaluateCondition(condition.Not, input);
+
+  const varValue =
+    condition.Variable !== undefined
+      ? jsonPathGet(input, condition.Variable)
+      : undefined;
+
+  if (condition.IsPresent !== undefined)
+    return condition.IsPresent === (varValue !== undefined);
+  if (condition.IsNull !== undefined)
+    return condition.IsNull === (varValue === null);
+  if (condition.IsNumeric !== undefined)
+    return condition.IsNumeric === (typeof varValue === "number");
+  if (condition.IsString !== undefined)
+    return condition.IsString === (typeof varValue === "string");
+  if (condition.IsBoolean !== undefined)
+    return condition.IsBoolean === (typeof varValue === "boolean");
+  if (condition.StringEquals !== undefined)
+    return varValue === condition.StringEquals;
+  if (condition.StringEqualsPath !== undefined)
+    return varValue === jsonPathGet(input, condition.StringEqualsPath);
+  if (condition.StringGreaterThan !== undefined)
+    return (
+      typeof varValue === "string" && varValue > condition.StringGreaterThan
+    );
+  if (condition.StringLessThan !== undefined)
+    return typeof varValue === "string" && varValue < condition.StringLessThan;
+  if (condition.StringGreaterThanOrEquals !== undefined)
+    return (
+      typeof varValue === "string" &&
+      varValue >= condition.StringGreaterThanOrEquals
+    );
+  if (condition.StringLessThanOrEquals !== undefined)
+    return (
+      typeof varValue === "string" &&
+      varValue <= condition.StringLessThanOrEquals
+    );
+  if (condition.NumericEquals !== undefined)
+    return varValue === condition.NumericEquals;
+  if (condition.NumericEqualsPath !== undefined)
+    return varValue === jsonPathGet(input, condition.NumericEqualsPath);
+  if (condition.NumericGreaterThan !== undefined)
+    return (
+      typeof varValue === "number" && varValue > condition.NumericGreaterThan
+    );
+  if (condition.NumericLessThan !== undefined)
+    return typeof varValue === "number" && varValue < condition.NumericLessThan;
+  if (condition.NumericGreaterThanOrEquals !== undefined)
+    return (
+      typeof varValue === "number" &&
+      varValue >= condition.NumericGreaterThanOrEquals
+    );
+  if (condition.NumericLessThanOrEquals !== undefined)
+    return (
+      typeof varValue === "number" &&
+      varValue <= condition.NumericLessThanOrEquals
+    );
+  if (condition.BooleanEquals !== undefined)
+    return varValue === condition.BooleanEquals;
+  if (condition.BooleanEqualsPath !== undefined)
+    return varValue === jsonPathGet(input, condition.BooleanEqualsPath);
+  return false;
+};
+
+const interpretAsl = (
+  definitionStr: string,
+  inputStr: string,
+): AslExecutionResult => {
+  let definition: AslDefinition;
+  let currentInput: unknown;
+  try {
+    definition = JSON.parse(definitionStr) as AslDefinition;
+    currentInput = JSON.parse(inputStr);
+  } catch {
+    return {
+      status: "FAILED",
+      output: "{}",
+      error: "States.Runtime",
+      cause: "Invalid definition or input",
+    };
+  }
+
+  let currentStateName = definition.StartAt;
+  const maxDepth = 100;
+
+  for (let depth = 0; depth < maxDepth; depth++) {
+    const state = definition.States[currentStateName];
+    if (state === undefined) {
+      return {
+        status: "FAILED",
+        output: "{}",
+        error: "States.Runtime",
+        cause: `State '${currentStateName}' not found`,
+      };
+    }
+
+    if (state.Type === "Pass") {
+      const rawInput = currentInput;
+      const effectiveInput =
+        state.Parameters !== undefined
+          ? applyParameters(state.Parameters, rawInput)
+          : rawInput;
+      const result = state.Result !== undefined ? state.Result : effectiveInput;
+      let stateOutput: unknown;
+      if (state.ResultPath === null) {
+        stateOutput = rawInput;
+      } else if (state.ResultPath !== undefined) {
+        stateOutput = jsonPathSet(rawInput, state.ResultPath, result);
+      } else {
+        stateOutput = result;
+      }
+      let output: unknown;
+      if (state.OutputPath === null) {
+        output = {};
+      } else if (state.OutputPath !== undefined) {
+        output = jsonPathGet(stateOutput, state.OutputPath);
+      } else {
+        output = stateOutput;
+      }
+      if (state.End === true)
+        return { status: "SUCCEEDED", output: JSON.stringify(output) };
+      currentInput = output;
+      currentStateName = state.Next!;
+    } else if (state.Type === "Choice") {
+      const choices = state.Choices ?? [];
+      let nextState: string | undefined;
+      for (const choice of choices) {
+        if (evaluateCondition(choice, currentInput)) {
+          nextState = choice.Next;
+          break;
+        }
+      }
+      if (nextState === undefined) nextState = state.Default;
+      if (nextState === undefined) {
+        return {
+          status: "FAILED",
+          output: "{}",
+          error: "States.NoChoiceMatched",
+          cause: "No choice matched and no default state",
+        };
+      }
+      currentStateName = nextState;
+    } else if (state.Type === "Succeed") {
+      return { status: "SUCCEEDED", output: JSON.stringify(currentInput) };
+    } else if (state.Type === "Fail") {
+      return {
+        status: "FAILED",
+        output: "{}",
+        error: state.Error,
+        cause: state.Cause,
+      };
+    } else if (state.Type === "Wait") {
+      if (state.End === true)
+        return { status: "SUCCEEDED", output: JSON.stringify(currentInput) };
+      currentStateName = state.Next!;
+    } else {
+      if (state.End === true)
+        return { status: "SUCCEEDED", output: JSON.stringify(currentInput) };
+      if (state.Next !== undefined) {
+        currentStateName = state.Next;
+      } else {
+        return { status: "SUCCEEDED", output: JSON.stringify(currentInput) };
+      }
+    }
+  }
+
+  return {
+    status: "FAILED",
+    output: "{}",
+    error: "States.Runtime",
+    cause: "State machine execution exceeded maximum depth",
+  };
 };
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -261,15 +552,18 @@ const StartExecution: OperationHandler = (input, ctx) => {
   }
   const startDate = nowSeconds();
   const inputData = stringOrUndefined(input["input"]) ?? "{}";
+  const result = interpretAsl(machine.definition, inputData);
   const execution: StoredExecution = {
     executionArn: arn,
     stateMachineArn: machine.stateMachineArn,
     name: executionName,
-    status: "SUCCEEDED",
+    status: result.status,
     startDate,
     stopDate: startDate,
     input: inputData,
-    output: inputData,
+    output: result.status === "SUCCEEDED" ? result.output : undefined,
+    error: result.error,
+    cause: result.cause,
   };
   ctx.store.set(executionKey(arn), execution);
   return { executionArn: arn, startDate };
@@ -287,6 +581,8 @@ const DescribeExecution: OperationHandler = (input, ctx) => {
     stopDate: execution.stopDate,
     input: execution.input,
     output: execution.output,
+    error: execution.error,
+    cause: execution.cause,
   };
 };
 
@@ -319,9 +615,18 @@ const ListExecutions: OperationHandler = (input, ctx) => {
   return { executions };
 };
 
+const TERMINAL_STATUSES = new Set(["SUCCEEDED", "FAILED", "ABORTED", "TIMED_OUT"]);
+
 const StopExecution: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "executionArn");
   const execution = requireExecution(ctx, arn);
+  if (TERMINAL_STATUSES.has(execution.status)) {
+    throw awsError(
+      "InvalidParameter",
+      `Execution '${arn}' is already in a terminal state.`,
+      400,
+    );
+  }
   const stopDate = nowSeconds();
   execution.status = "ABORTED";
   execution.stopDate = stopDate;
@@ -651,15 +956,18 @@ const StartSyncExecution: OperationHandler = (input, ctx) => {
   const startDate = nowSeconds();
   const stopDate = startDate;
   const inputData = stringOrUndefined(input["input"]) ?? "{}";
+  const result = interpretAsl(machine.definition, inputData);
   const execution: StoredExecution = {
     executionArn: arn,
     stateMachineArn: machine.stateMachineArn,
     name: executionName,
-    status: "SUCCEEDED",
+    status: result.status,
     startDate,
     stopDate,
     input: inputData,
-    output: inputData,
+    output: result.status === "SUCCEEDED" ? result.output : undefined,
+    error: result.error,
+    cause: result.cause,
   };
   ctx.store.set(executionKey(arn), execution);
   return {
@@ -668,9 +976,11 @@ const StartSyncExecution: OperationHandler = (input, ctx) => {
     name: executionName,
     startDate,
     stopDate,
-    status: "SUCCEEDED",
+    status: result.status,
     input: inputData,
-    output: inputData,
+    output: result.status === "SUCCEEDED" ? result.output : undefined,
+    error: result.error,
+    cause: result.cause,
   };
 };
 

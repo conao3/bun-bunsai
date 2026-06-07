@@ -197,6 +197,53 @@ const bytesToLatin1 = (buf: Uint8Array): string => {
   return s;
 };
 
+const pemToDer = (pem: string): string => {
+  const b64 = pem
+    .split("\n")
+    .filter((l) => !l.startsWith("-----"))
+    .join("");
+  return bytesToLatin1(new Uint8Array(Buffer.from(b64, "base64")));
+};
+
+const keySpecToSigningAlgorithms = (
+  keySpec: string,
+  keyUsage: string,
+): string[] => {
+  if (keyUsage !== "SIGN_VERIFY") return [];
+  if (keySpec.startsWith("RSA_")) {
+    return [
+      "RSASSA_PKCS1_V1_5_SHA_256",
+      "RSASSA_PKCS1_V1_5_SHA_384",
+      "RSASSA_PKCS1_V1_5_SHA_512",
+      "RSASSA_PSS_SHA_256",
+      "RSASSA_PSS_SHA_384",
+      "RSASSA_PSS_SHA_512",
+    ];
+  }
+  if (keySpec === "ECC_NIST_P256" || keySpec === "ECC_SECG_P256K1") {
+    return ["ECDSA_SHA_256"];
+  }
+  if (keySpec === "ECC_NIST_P384") return ["ECDSA_SHA_384"];
+  if (keySpec === "ECC_NIST_P521") return ["ECDSA_SHA_512"];
+  return [];
+};
+
+const keySpecToEncryptionAlgorithms = (
+  keySpec: string,
+  keyUsage: string,
+): string[] => {
+  if (keyUsage !== "ENCRYPT_DECRYPT") return [];
+  if (keySpec.startsWith("RSA_")) {
+    return ["RSAES_OAEP_SHA_1", "RSAES_OAEP_SHA_256"];
+  }
+  return [];
+};
+
+const keySpecToKeyAgreementAlgorithms = (keyUsage: string): string[] => {
+  if (keyUsage === "KEY_AGREEMENT") return ["ECDH"];
+  return [];
+};
+
 const keySpecToCurve = (keySpec: string): string => {
   const map = {
     ECC_NIST_P256: "prime256v1",
@@ -1015,13 +1062,21 @@ const GenerateDataKeyPair: OperationHandler = (input, ctx) => {
   const keyId = requireString(input, "KeyId");
   const key = requireKey(ctx, keyId);
   const keyPairSpec = requireString(input, "KeyPairSpec");
-  const privateKeyPlaintext = syntheticBytes(32);
-  const publicKey = syntheticBytes(91);
-  const privateKeyCiphertext = `${key.KeyId}${envelopeSeparator}${privateKeyPlaintext}`;
+  const cryptoKey = generateCryptoKey(keyPairSpec);
+  if (cryptoKey.type !== "asymmetric") {
+    throw awsError(
+      "ValidationException",
+      `KeyPairSpec ${keyPairSpec} is not asymmetric`,
+      400,
+    );
+  }
+  const privateKeyDer = pemToDer(cryptoKey.privateKeyPem);
+  const publicKeyDer = pemToDer(cryptoKey.publicKeyPem);
+  const privateKeyCiphertext = `${key.KeyId}${envelopeSeparator}${privateKeyDer}`;
   return {
     PrivateKeyCiphertextBlob: privateKeyCiphertext,
-    PrivateKeyPlaintext: privateKeyPlaintext,
-    PublicKey: publicKey,
+    PrivateKeyPlaintext: privateKeyDer,
+    PublicKey: publicKeyDer,
     KeyId: key.Arn,
     KeyPairSpec: keyPairSpec,
   };
@@ -1031,12 +1086,20 @@ const GenerateDataKeyPairWithoutPlaintext: OperationHandler = (input, ctx) => {
   const keyId = requireString(input, "KeyId");
   const key = requireKey(ctx, keyId);
   const keyPairSpec = requireString(input, "KeyPairSpec");
-  const privateKeyPlaintext = syntheticBytes(32);
-  const publicKey = syntheticBytes(91);
-  const privateKeyCiphertext = `${key.KeyId}${envelopeSeparator}${privateKeyPlaintext}`;
+  const cryptoKey = generateCryptoKey(keyPairSpec);
+  if (cryptoKey.type !== "asymmetric") {
+    throw awsError(
+      "ValidationException",
+      `KeyPairSpec ${keyPairSpec} is not asymmetric`,
+      400,
+    );
+  }
+  const privateKeyDer = pemToDer(cryptoKey.privateKeyPem);
+  const publicKeyDer = pemToDer(cryptoKey.publicKeyPem);
+  const privateKeyCiphertext = `${key.KeyId}${envelopeSeparator}${privateKeyDer}`;
   return {
     PrivateKeyCiphertextBlob: privateKeyCiphertext,
-    PublicKey: publicKey,
+    PublicKey: publicKeyDer,
     KeyId: key.Arn,
     KeyPairSpec: keyPairSpec,
   };
@@ -1045,14 +1108,25 @@ const GenerateDataKeyPairWithoutPlaintext: OperationHandler = (input, ctx) => {
 const GetPublicKey: OperationHandler = (input, ctx) => {
   const keyId = requireString(input, "KeyId");
   const key = requireKey(ctx, keyId);
+  const cryptoKey = getOrCreateCryptoKey(ctx, key);
+  if (cryptoKey.type !== "asymmetric") {
+    throw awsError(
+      "InvalidKeyUsageException",
+      "Key is not an asymmetric key",
+      400,
+    );
+  }
   return {
     KeyId: key.Arn,
-    PublicKey: syntheticBytes(91),
+    PublicKey: pemToDer(cryptoKey.publicKeyPem),
     KeySpec: key.KeySpec,
     KeyUsage: key.KeyUsage,
-    EncryptionAlgorithms: ["SYMMETRIC_DEFAULT"],
-    SigningAlgorithms: [],
-    KeyAgreementAlgorithms: [],
+    EncryptionAlgorithms: keySpecToEncryptionAlgorithms(
+      key.KeySpec,
+      key.KeyUsage,
+    ),
+    SigningAlgorithms: keySpecToSigningAlgorithms(key.KeySpec, key.KeyUsage),
+    KeyAgreementAlgorithms: keySpecToKeyAgreementAlgorithms(key.KeyUsage),
   };
 };
 

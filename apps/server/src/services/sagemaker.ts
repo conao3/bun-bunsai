@@ -7722,6 +7722,297 @@ const ListModelExplainabilityJobDefinitions: OperationHandler = (
   };
 };
 
+const ListModelMetadata: OperationHandler = (_input, _ctx) => ({
+  ModelMetadataSummaries: [],
+});
+
+const ListModelPackageGroups: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let groups = ctx.store
+    .list<StoredModelPackageGroup>()
+    .filter((entry) => entry.key.startsWith("model-package-group/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    groups = groups.filter((g) =>
+      g.ModelPackageGroupName.includes(nameContains),
+    );
+  }
+  if (maxResults !== undefined) {
+    groups = groups.slice(0, maxResults);
+  }
+  return {
+    ModelPackageGroupSummaryList: groups.map((stored) => ({
+      ModelPackageGroupName: stored.ModelPackageGroupName,
+      ModelPackageGroupArn: stored.ModelPackageGroupArn,
+      ModelPackageGroupDescription: stored.ModelPackageGroupDescription,
+      CreationTime: stored.CreationTime,
+      ModelPackageGroupStatus: stored.ModelPackageGroupStatus,
+    })),
+  };
+};
+
+const ListModelPackages: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const modelPackageGroupName =
+    typeof input["ModelPackageGroupName"] === "string"
+      ? (input["ModelPackageGroupName"] as string)
+      : undefined;
+  const modelApprovalStatus =
+    typeof input["ModelApprovalStatus"] === "string"
+      ? (input["ModelApprovalStatus"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let pkgs = ctx.store
+    .list<StoredModelPackage>()
+    .filter((entry) => entry.key.startsWith("model-package/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    pkgs = pkgs.filter((p) => p.ModelPackageName.includes(nameContains));
+  }
+  if (modelPackageGroupName !== undefined) {
+    pkgs = pkgs.filter(
+      (p) => p.ModelPackageGroupName === modelPackageGroupName,
+    );
+  }
+  if (modelApprovalStatus !== undefined) {
+    pkgs = pkgs.filter((p) => p.ModelApprovalStatus === modelApprovalStatus);
+  }
+  if (maxResults !== undefined) {
+    pkgs = pkgs.slice(0, maxResults);
+  }
+  return {
+    ModelPackageSummaryList: pkgs.map((stored) => ({
+      ModelPackageName: stored.ModelPackageName,
+      ModelPackageGroupName: stored.ModelPackageGroupName,
+      ModelPackageArn: stored.ModelPackageArn,
+      ModelPackageDescription: stored.ModelPackageDescription,
+      CreationTime: stored.CreationTime,
+      ModelPackageStatus: stored.ModelPackageStatus,
+      ModelApprovalStatus: stored.ModelApprovalStatus,
+    })),
+  };
+};
+
+const ListModelQualityJobDefinitions: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let defs = ctx.store
+    .list<StoredModelQualityJobDefinition>()
+    .filter((entry) => entry.key.startsWith("model-quality-job-definition/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    defs = defs.filter((d) => d.JobDefinitionName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    defs = defs.slice(0, maxResults);
+  }
+  return {
+    JobDefinitionSummaries: defs.map((stored) => ({
+      MonitoringJobDefinitionName: stored.JobDefinitionName,
+      MonitoringJobDefinitionArn: stored.JobDefinitionArn,
+      CreationTime: stored.CreationTime,
+      EndpointName: "",
+    })),
+  };
+};
+
+const ListMonitoringAlertHistory: OperationHandler = (input, ctx) => {
+  const scheduleName =
+    typeof input["MonitoringScheduleName"] === "string"
+      ? (input["MonitoringScheduleName"] as string)
+      : undefined;
+  if (scheduleName !== undefined) {
+    requireMonitoringSchedule(ctx, scheduleName);
+  }
+  return { MonitoringAlertHistory: [] };
+};
+
+const ListMonitoringAlerts: OperationHandler = (input, ctx) => {
+  const scheduleName = requireString(input, "MonitoringScheduleName");
+  requireMonitoringSchedule(ctx, scheduleName);
+  return { MonitoringAlertSummaries: [] };
+};
+
+const ListMonitoringExecutions: OperationHandler = (_input, _ctx) => ({
+  MonitoringExecutionSummaries: [],
+});
+
+const ListMonitoringSchedules: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let schedules = ctx.store
+    .list<StoredMonitoringSchedule>()
+    .filter((entry) => entry.key.startsWith("monitoring-schedule/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    schedules = schedules.filter((s) =>
+      s.MonitoringScheduleName.includes(nameContains),
+    );
+  }
+  if (maxResults !== undefined) {
+    schedules = schedules.slice(0, maxResults);
+  }
+  return {
+    MonitoringScheduleSummaries: schedules.map((stored) => ({
+      MonitoringScheduleName: stored.MonitoringScheduleName,
+      MonitoringScheduleArn: stored.MonitoringScheduleArn,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.CreationTime,
+      MonitoringScheduleStatus: "Pending",
+    })),
+  };
+};
+
+const ListOptimizationJobs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let jobs = ctx.store
+    .list<StoredOptimizationJob>()
+    .filter((entry) => entry.key.startsWith("optimization-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    jobs = jobs.filter((j) => j.OptimizationJobName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    jobs = jobs.slice(0, maxResults);
+  }
+  return {
+    OptimizationJobSummaries: jobs.map((stored) => ({
+      OptimizationJobName: stored.OptimizationJobName,
+      OptimizationJobArn: stored.OptimizationJobArn,
+      CreationTime: stored.CreationTime,
+      OptimizationJobStatus: stored.OptimizationJobStatus,
+      DeploymentInstanceType: stored.DeploymentInstanceType ?? "",
+      OptimizationTypes: [],
+    })),
+  };
+};
+
+const ListPartnerApps: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let apps = ctx.store
+    .list<StoredPartnerApp>()
+    .filter((entry) => entry.key.startsWith("partner-app/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (maxResults !== undefined) {
+    apps = apps.slice(0, maxResults);
+  }
+  return {
+    Summaries: apps.map((stored) => ({
+      Arn: stored.Arn,
+      Name: stored.Name,
+      Type: stored.Type,
+      CreationTime: stored.CreationTime,
+    })),
+  };
+};
+
+const ListPipelines: OperationHandler = (input, ctx) => {
+  const pipelineNamePrefix =
+    typeof input["PipelineNamePrefix"] === "string"
+      ? (input["PipelineNamePrefix"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let pipelines = ctx.store
+    .list<StoredPipeline>()
+    .filter((entry) => entry.key.startsWith("pipeline/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (pipelineNamePrefix !== undefined) {
+    pipelines = pipelines.filter((p) =>
+      p.PipelineName.startsWith(pipelineNamePrefix),
+    );
+  }
+  if (maxResults !== undefined) {
+    pipelines = pipelines.slice(0, maxResults);
+  }
+  return {
+    PipelineSummaries: pipelines.map((stored) => ({
+      PipelineArn: stored.PipelineArn,
+      PipelineName: stored.PipelineName,
+      PipelineDisplayName: stored.PipelineDisplayName,
+      PipelineDescription: stored.PipelineDescription,
+      RoleArn: stored.RoleArn,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+    })),
+  };
+};
+
+const ListProcessingJobs: OperationHandler = (input, ctx) => {
+  const nameContains =
+    typeof input["NameContains"] === "string"
+      ? (input["NameContains"] as string)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  let jobs = ctx.store
+    .list<StoredProcessingJob>()
+    .filter((entry) => entry.key.startsWith("processing-job/"))
+    .map((entry) => entry.value)
+    .sort((a, b) => b.CreationTime - a.CreationTime);
+  if (nameContains !== undefined) {
+    jobs = jobs.filter((j) => j.ProcessingJobName.includes(nameContains));
+  }
+  if (maxResults !== undefined) {
+    jobs = jobs.slice(0, maxResults);
+  }
+  return {
+    ProcessingJobSummaries: jobs.map((stored) => ({
+      ProcessingJobName: stored.ProcessingJobName,
+      ProcessingJobArn: stored.ProcessingJobArn,
+      CreationTime: stored.CreationTime,
+      LastModifiedTime: stored.LastModifiedTime,
+      ProcessingJobStatus: stored.ProcessingJobStatus,
+    })),
+  };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -8015,6 +8306,18 @@ const sagemaker = {
     ListModelCardVersions,
     ListModelCards,
     ListModelExplainabilityJobDefinitions,
+    ListModelMetadata,
+    ListModelPackageGroups,
+    ListModelPackages,
+    ListModelQualityJobDefinitions,
+    ListMonitoringAlertHistory,
+    ListMonitoringAlerts,
+    ListMonitoringExecutions,
+    ListMonitoringSchedules,
+    ListOptimizationJobs,
+    ListPartnerApps,
+    ListPipelines,
+    ListProcessingJobs,
   },
   model,
 } as const satisfies ServiceDefinition;

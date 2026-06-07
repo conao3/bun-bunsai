@@ -3392,6 +3392,111 @@ const ListIntegrationAssociations: OperationHandler = (input, ctx) => {
   return { IntegrationAssociationSummaryList: [] };
 };
 
+const ListRoutingProfileManualAssignmentQueues: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { RoutingProfileManualAssignmentQueueConfigSummaryList: [] };
+};
+
+const ListRoutingProfileQueues: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { RoutingProfileQueueConfigSummaryList: [] };
+};
+
+const ListRoutingProfiles: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const profiles = ctx.store
+    .list<StoredRoutingProfile>()
+    .filter((entry) => entry.key.startsWith(routingProfilePrefix))
+    .map((entry) => entry.value)
+    .filter((p) => p.InstanceId === instanceId);
+  return {
+    RoutingProfileSummaryList: profiles.map((p) => ({
+      Id: p.RoutingProfileId,
+      Arn: p.RoutingProfileArn,
+      Name: p.Name,
+    })),
+  };
+};
+
+const ListRules: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const rules = ctx.store
+    .list<StoredRule>()
+    .filter((entry) => entry.key.startsWith(rulePrefix))
+    .map((entry) => entry.value)
+    .filter((r) => r.InstanceId === instanceId);
+  return {
+    RuleSummaryList: rules.map((r) => ({
+      RuleId: r.RuleId,
+      RuleArn: r.RuleArn,
+    })),
+  };
+};
+
+const ListSecurityKeys: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { SecurityKeys: [] };
+};
+
+const ListSecurityProfileApplications: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { Applications: [] };
+};
+
+const ListSecurityProfileFlowModules: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { AllowedFlowModules: [] };
+};
+
+const ListSecurityProfilePermissions: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { Permissions: [] };
+};
+
+const ListSecurityProfiles: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const profiles = ctx.store
+    .list<StoredSecurityProfile>()
+    .filter((entry) => entry.key.startsWith(securityProfilePrefix))
+    .map((entry) => entry.value)
+    .filter((p) => p.InstanceId === instanceId);
+  return {
+    SecurityProfileSummaryList: profiles.map((p) => ({
+      Id: p.SecurityProfileId,
+      Arn: p.SecurityProfileArn,
+      Name: p.SecurityProfileName,
+    })),
+  };
+};
+
+const ListTagsForResource: OperationHandler = (_input, _ctx) => {
+  return { tags: {} };
+};
+
+const ListTaskTemplates: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { TaskTemplates: [] };
+};
+
+const ListTestCaseExecutionRecords: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return { ExecutionRecords: [] };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -3446,6 +3551,7 @@ const connect = {
               return "ListInstanceStorageConfigs";
             if (parts[2] === "integration-associations")
               return "ListIntegrationAssociations";
+            if (parts[2] === "security-keys") return "ListSecurityKeys";
           }
         }
         if (parts.length === 4) {
@@ -3455,6 +3561,12 @@ const connect = {
             parts[3] === "template"
           )
             return "CreateTaskTemplate";
+          if (
+            req.method === "GET" &&
+            parts[2] === "task" &&
+            parts[3] === "template"
+          )
+            return "ListTaskTemplates";
           if (req.method === "GET" && parts[2] === "attribute")
             return "DescribeInstanceAttribute";
           if (req.method === "GET" && parts[2] === "storage-config")
@@ -3690,6 +3802,11 @@ const connect = {
           return "DescribeRoutingProfile";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteRoutingProfile";
+        if (parts.length === 4 && req.method === "GET") {
+          if (parts[3] === "queues") return "ListRoutingProfileQueues";
+          if (parts[3] === "manual-assignment-queues")
+            return "ListRoutingProfileManualAssignmentQueues";
+        }
         if (
           parts.length === 4 &&
           parts[3] === "associate-queues" &&
@@ -4020,6 +4137,7 @@ const connect = {
 
       case "rules":
         if (parts.length === 2 && req.method === "POST") return "CreateRule";
+        if (parts.length === 2 && req.method === "GET") return "ListRules";
         if (parts.length === 3 && req.method === "GET") return "DescribeRule";
         if (parts.length === 3 && req.method === "DELETE") return "DeleteRule";
         return undefined;
@@ -4036,6 +4154,12 @@ const connect = {
           req.method === "GET"
         )
           return "GetTestCaseExecutionSummary";
+        if (
+          parts.length === 5 &&
+          parts[4] === "records" &&
+          req.method === "GET"
+        )
+          return "ListTestCaseExecutionRecords";
         return undefined;
 
       case "attached-files-configurations":
@@ -4228,6 +4352,36 @@ const connect = {
         if (parts.length === 2 && req.method === "GET") return "ListQueues";
         return undefined;
 
+      case "routing-profiles-summary":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListRoutingProfiles";
+        return undefined;
+
+      case "security-profiles-applications":
+        if (parts.length === 3 && req.method === "GET")
+          return "ListSecurityProfileApplications";
+        return undefined;
+
+      case "security-profiles-flow-modules":
+        if (parts.length === 3 && req.method === "GET")
+          return "ListSecurityProfileFlowModules";
+        return undefined;
+
+      case "security-profiles-permissions":
+        if (parts.length === 3 && req.method === "GET")
+          return "ListSecurityProfilePermissions";
+        return undefined;
+
+      case "security-profiles-summary":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListSecurityProfiles";
+        return undefined;
+
+      case "tags":
+        if (parts.length === 2 && req.method === "GET")
+          return "ListTagsForResource";
+        return undefined;
+
       default:
         return undefined;
     }
@@ -4402,6 +4556,18 @@ const connect = {
     ListQueueQuickConnects,
     ListQueues,
     ListQuickConnects,
+    ListRoutingProfileManualAssignmentQueues,
+    ListRoutingProfileQueues,
+    ListRoutingProfiles,
+    ListRules,
+    ListSecurityKeys,
+    ListSecurityProfileApplications,
+    ListSecurityProfileFlowModules,
+    ListSecurityProfilePermissions,
+    ListSecurityProfiles,
+    ListTagsForResource,
+    ListTaskTemplates,
+    ListTestCaseExecutionRecords,
     ListRealtimeContactAnalysisSegmentsV2,
     DescribeAuthenticationProfile,
     DescribeContact,

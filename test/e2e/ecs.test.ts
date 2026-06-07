@@ -5,6 +5,7 @@ import {
   DeleteClusterCommand,
   DescribeClustersCommand,
   DescribeTaskDefinitionCommand,
+  DescribeTasksCommand,
   ECSClient,
   ListClustersCommand,
   ListTasksCommand,
@@ -97,6 +98,14 @@ describe("ecs e2e", () => {
     expect(task?.lastStatus).toBe("PENDING");
     expect(task?.taskDefinitionArn).toBe(taskDefArn);
 
+    const described = await client.send(
+      new DescribeTasksCommand({ cluster: clusterName, tasks: [taskArn] }),
+    );
+    const describedTask = (described.tasks ?? [])[0];
+    expect(describedTask?.lastStatus).toBe("RUNNING");
+    const describedContainer = (describedTask?.containers ?? [])[0];
+    expect(describedContainer?.lastStatus).toBe("RUNNING");
+
     const listed = await client.send(
       new ListTasksCommand({ cluster: clusterName }),
     );
@@ -111,6 +120,7 @@ describe("ecs e2e", () => {
     );
     expect(stopped.task?.lastStatus).toBe("STOPPED");
     expect(stopped.task?.desiredStatus).toBe("STOPPED");
+    expect(stopped.task?.stoppedReason).toBe("test");
 
     await client.send(new DeleteClusterCommand({ cluster: clusterName }));
   });

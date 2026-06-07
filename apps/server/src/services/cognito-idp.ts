@@ -1,5 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
+import { publicJwks, signJwt } from "../core/jwt.ts";
 import cognitoIdpModel from "../../../../test/vendor/aws-models/cognito-idp.json" with { type: "json" };
 import type {
   OperationHandler,
@@ -329,20 +330,123 @@ const clientType = (client: StoredClient): Record<string, unknown> => ({
   EnableTokenRevocation: client.EnableTokenRevocation,
 });
 
-const syntheticTokens = (
-  username: string,
-  poolId: string,
+const regionFromPoolId = (poolId: string): string => {
+  const region = poolId.split("_")[0];
+  return region !== undefined && region !== "" ? region : "us-east-1";
+};
+
+const issuerForPool = (poolId: string): string =>
+  `https://cognito-idp.${regionFromPoolId(poolId)}.amazonaws.com/${poolId}`;
+
+const STANDARD_ID_CLAIMS = new Set([
+  "email",
+  "email_verified",
+  "phone_number",
+  "phone_number_verified",
+  "name",
+  "given_name",
+  "family_name",
+  "preferred_username",
+]);
+
+const idClaimsFromUser = (
+  user: StoredUser | undefined,
 ): Record<string, unknown> => {
-  const ts = Math.floor(Date.now() / 1000);
-  const fake = (typ: string) =>
-    `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(JSON.stringify({ sub: username, pool: poolId, type: typ, iat: ts })).replace(/=/g, "")}.fakesig`;
+  const claims: Record<string, unknown> = {};
+  if (user === undefined) return claims;
+  for (const attribute of user.Attributes) {
+    if (attribute.Value === undefined) continue;
+    if (
+      attribute.Name === "email_verified" ||
+      attribute.Name === "phone_number_verified"
+    ) {
+      claims[attribute.Name] = attribute.Value === "true";
+    } else if (STANDARD_ID_CLAIMS.has(attribute.Name)) {
+      claims[attribute.Name] = attribute.Value;
+    } else if (attribute.Name === "sub") {
+      claims["sub"] = attribute.Value;
+    }
+  }
+  return claims;
+};
+
+type TokenContext = {
+  poolId: string;
+  username: string;
+  clientId: string;
+  user?: StoredUser;
+};
+
+const issueTokens = async (
+  token: TokenContext,
+): Promise<Record<string, unknown>> => {
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + 3600;
+  const iss = issuerForPool(token.poolId);
+  const extra = idClaimsFromUser(token.user);
+  const sub =
+    typeof extra["sub"] === "string"
+      ? (extra["sub"] as string)
+      : token.username;
+  const idClaims = {
+    ...extra,
+    sub,
+    iss,
+    aud: token.clientId,
+    token_use: "id",
+    auth_time: now,
+    iat: now,
+    exp,
+    "cognito:username": token.username,
+    event_id: crypto.randomUUID(),
+    jti: crypto.randomUUID(),
+  };
+  const accessClaims = {
+    sub,
+    iss,
+    client_id: token.clientId,
+    token_use: "access",
+    scope: "aws.cognito.signin.user.admin",
+    auth_time: now,
+    iat: now,
+    exp,
+    version: 2,
+    username: token.username,
+    jti: crypto.randomUUID(),
+  };
   return {
-    AccessToken: fake("access"),
-    IdToken: fake("id"),
-    RefreshToken: fake("refresh"),
+    AccessToken: await signJwt(accessClaims),
+    IdToken: await signJwt(idClaims),
+    RefreshToken: `bunsai-refresh-${crypto.randomUUID()}`,
     TokenType: "Bearer",
     ExpiresIn: 3600,
   };
+};
+
+export const handleCognitoDiscovery = async (
+  req: Request,
+  url: URL,
+): Promise<Response | undefined> => {
+  if (req.method !== "GET") return undefined;
+  const match = url.pathname.match(
+    /^\/([^/]+)\/\.well-known\/(jwks\.json|openid-configuration)$/,
+  );
+  if (match === null) return undefined;
+  const poolId = match[1];
+  const headers = { "content-type": "application/json" };
+  if (match[2] === "jwks.json") {
+    return new Response(JSON.stringify(await publicJwks()), { headers });
+  }
+  const iss = issuerForPool(poolId);
+  const config = {
+    issuer: iss,
+    jwks_uri: `${iss}/.well-known/jwks.json`,
+    id_token_signing_alg_values_supported: ["RS256"],
+    response_types_supported: ["code", "token"],
+    subject_types_supported: ["public"],
+    token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
+  };
+  return new Response(JSON.stringify(config), { headers });
 };
 
 const idpKey = (poolId: string, providerName: string): string =>
@@ -1861,9 +1965,11 @@ const AdminUpdateDeviceStatus: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const AdminInitiateAuth: OperationHandler = (input, ctx) => {
+const AdminInitiateAuth: OperationHandler = async (input, ctx) => {
   const poolId = requireString(input, "UserPoolId");
   const pool = requirePool(ctx, poolId);
+  const clientId =
+    typeof input["ClientId"] === "string" ? (input["ClientId"] as string) : "";
   const authFlow = requireString(input, "AuthFlow");
   const authParams =
     typeof input["AuthParameters"] === "object" &&
@@ -1882,24 +1988,40 @@ const AdminInitiateAuth: OperationHandler = (input, ctx) => {
     if (!user.Enabled) {
       throw awsError("NotAuthorizedException", `User is disabled.`, 400);
     }
-    return { AuthenticationResult: syntheticTokens(username, poolId) };
+    return {
+      AuthenticationResult: await issueTokens({
+        poolId,
+        username,
+        clientId,
+        user,
+      }),
+    };
   }
   return { ChallengeName: "PASSWORD_VERIFIER", ChallengeParameters: {} };
 };
 
-const AdminRespondToAuthChallenge: OperationHandler = (input, ctx) => {
+const AdminRespondToAuthChallenge: OperationHandler = async (input, ctx) => {
   const poolId = requireString(input, "UserPoolId");
-  requirePool(ctx, poolId);
+  const pool = requirePool(ctx, poolId);
+  const clientId =
+    typeof input["ClientId"] === "string" ? (input["ClientId"] as string) : "";
   const challengeResponses =
     typeof input["ChallengeResponses"] === "object" &&
     input["ChallengeResponses"] !== null
       ? (input["ChallengeResponses"] as Record<string, string>)
       : {};
   const username = challengeResponses["USERNAME"] ?? "unknown";
-  return { AuthenticationResult: syntheticTokens(username, poolId) };
+  return {
+    AuthenticationResult: await issueTokens({
+      poolId,
+      username,
+      clientId,
+      user: pool.users[username],
+    }),
+  };
 };
 
-const InitiateAuth: OperationHandler = (input, ctx) => {
+const InitiateAuth: OperationHandler = async (input, ctx) => {
   const authFlow = requireString(input, "AuthFlow");
   const clientId = requireString(input, "ClientId");
   const authParams =
@@ -1948,16 +2070,30 @@ const InitiateAuth: OperationHandler = (input, ctx) => {
     if (user === undefined) {
       throw awsError("UserNotFoundException", `User does not exist.`, 400);
     }
-    return { AuthenticationResult: syntheticTokens(username, pool.Id) };
+    return {
+      AuthenticationResult: await issueTokens({
+        poolId: pool.Id,
+        username,
+        clientId,
+        user,
+      }),
+    };
   }
   if (authFlow === "REFRESH_TOKEN_AUTH" || authFlow === "REFRESH_TOKEN") {
     const username = authParams["USERNAME"] ?? "unknown";
-    return { AuthenticationResult: syntheticTokens(username, pool.Id) };
+    return {
+      AuthenticationResult: await issueTokens({
+        poolId: pool.Id,
+        username,
+        clientId,
+        user: pool.users[username],
+      }),
+    };
   }
   return { ChallengeName: "PASSWORD_VERIFIER", ChallengeParameters: {} };
 };
 
-const RespondToAuthChallenge: OperationHandler = (input, ctx) => {
+const RespondToAuthChallenge: OperationHandler = async (input, ctx) => {
   const clientId = requireString(input, "ClientId");
   const challengeResponses =
     typeof input["ChallengeResponses"] === "object" &&
@@ -1966,7 +2102,7 @@ const RespondToAuthChallenge: OperationHandler = (input, ctx) => {
       : {};
   const username = challengeResponses["USERNAME"] ?? "unknown";
   const entries = ctx.store.list<StoredPool>();
-  let poolId = "unknown";
+  let pool: StoredPool | undefined;
   for (const entry of entries) {
     if (
       !entry.key.startsWith("group#") &&
@@ -1975,21 +2111,28 @@ const RespondToAuthChallenge: OperationHandler = (input, ctx) => {
       typeof entry.value.Id === "string" &&
       entry.value.clients?.[clientId] !== undefined
     ) {
-      poolId = entry.value.Id;
+      pool = entry.value;
       break;
     }
   }
-  return { AuthenticationResult: syntheticTokens(username, poolId) };
+  return {
+    AuthenticationResult: await issueTokens({
+      poolId: pool?.Id ?? "unknown",
+      username,
+      clientId,
+      user: pool?.users[username],
+    }),
+  };
 };
 
-const GetTokensFromRefreshToken: OperationHandler = (input, ctx) => {
+const GetTokensFromRefreshToken: OperationHandler = async (input, ctx) => {
   const clientId = requireString(input, "ClientId");
   const username =
     typeof input["Username"] === "string"
       ? (input["Username"] as string)
       : "unknown";
   const entries = ctx.store.list<StoredPool>();
-  let poolId = "unknown";
+  let pool: StoredPool | undefined;
   for (const entry of entries) {
     if (
       !entry.key.startsWith("group#") &&
@@ -1998,11 +2141,18 @@ const GetTokensFromRefreshToken: OperationHandler = (input, ctx) => {
       typeof entry.value.Id === "string" &&
       entry.value.clients?.[clientId] !== undefined
     ) {
-      poolId = entry.value.Id;
+      pool = entry.value;
       break;
     }
   }
-  return { AuthenticationResult: syntheticTokens(username, poolId) };
+  return {
+    AuthenticationResult: await issueTokens({
+      poolId: pool?.Id ?? "unknown",
+      username,
+      clientId,
+      user: pool?.users[username],
+    }),
+  };
 };
 
 const SignUp: OperationHandler = (input, ctx) => {

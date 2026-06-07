@@ -301,6 +301,58 @@ const patternMatches = (
   return true;
 };
 
+const resolveJsonPath = (root: unknown, path: string): unknown => {
+  if (!path.startsWith("$")) return undefined;
+  const segments = path
+    .slice(1)
+    .split(".")
+    .filter((s) => s !== "");
+  let current: unknown = root;
+  for (const seg of segments) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[seg];
+  }
+  return current;
+};
+
+const applyTargetTransform = (
+  event: unknown,
+  target: Record<string, unknown>,
+): string | undefined => {
+  const input = target["Input"];
+  if (typeof input === "string") return input;
+
+  const inputPath = target["InputPath"];
+  if (typeof inputPath === "string") {
+    const val = resolveJsonPath(event, inputPath);
+    return val === undefined ? undefined : JSON.stringify(val);
+  }
+
+  const transformer = target["InputTransformer"];
+  if (transformer !== null && typeof transformer === "object") {
+    const t = transformer as Record<string, unknown>;
+    const pathsMap = t["InputPathsMap"];
+    const template = t["InputTemplate"];
+    if (typeof template === "string") {
+      let result = template;
+      if (pathsMap !== null && typeof pathsMap === "object") {
+        for (const [varName, jsonPath] of Object.entries(
+          pathsMap as Record<string, unknown>,
+        )) {
+          if (typeof jsonPath !== "string") continue;
+          const val = resolveJsonPath(event, jsonPath);
+          const replacement =
+            typeof val === "string" ? val : JSON.stringify(val);
+          result = result.replaceAll(`<${varName}>`, replacement);
+        }
+      }
+      return result;
+    }
+  }
+
+  return JSON.stringify(event);
+};
+
 const deliverEvent = async (
   ctx: ServiceContext,
   entry: Record<string, unknown>,
@@ -328,7 +380,6 @@ const deliverEvent = async (
     resources: stringList(entry["Resources"]),
     detail,
   };
-  const body = JSON.stringify(event);
   const prefix = `${busName}/`;
   for (const { key, value: rule } of ctx.store.list<StoredRule>()) {
     if (!key.startsWith(prefix)) continue;
@@ -336,8 +387,11 @@ const deliverEvent = async (
     if (!patternMatches(rule.EventPattern, event)) continue;
     for (const target of Object.values(rule.targets)) {
       const arn = target["Arn"];
-      if (typeof arn === "string")
+      if (typeof arn === "string") {
+        const body = applyTargetTransform(event, target);
+        if (body === undefined) continue;
         await deliverToArn(ctx, arn, { body, event });
+      }
     }
   }
 };

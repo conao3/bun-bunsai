@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import kinesisModel from "../../../../test/vendor/aws-models/kinesis.json" with { type: "json" };
@@ -14,6 +15,7 @@ type StoredRecord = {
   Data: string;
   PartitionKey: string;
   ApproximateArrivalTimestamp: number;
+  ShardId: string;
 };
 
 type StoredShard = {
@@ -53,11 +55,6 @@ type StoredStream = {
   maxRecordSizeInKiB: number;
   warmThroughputMiBps: number | undefined;
 };
-
-const initialHashKeyRange = {
-  start: "0",
-  end: "340282366920938463463374607431768211455",
-} as const;
 
 const streamKey = (name: string): string => `stream/${name}`;
 
@@ -198,21 +195,46 @@ const shardDescription = (shard: StoredShard): Record<string, unknown> => {
   return desc;
 };
 
-const makeInitialShard = (sequence: number): StoredShard => ({
-  ShardId: newShardId(0),
-  ParentShardId: undefined,
-  AdjacentParentShardId: undefined,
-  StartingHashKey: initialHashKeyRange.start,
-  EndingHashKey: initialHashKeyRange.end,
-  Status: "OPEN",
-  StartingSequenceNumber: sequenceString(sequence),
-  EndingSequenceNumber: undefined,
-});
-
 const countConsumers = (ctx: ServiceContext, streamArn: string): number =>
   ctx.store
     .list<StoredConsumer>()
     .filter((entry) => entry.key.startsWith(`consumer/${streamArn}/`)).length;
+
+const partitionKeyToHashKey = (partitionKey: string): bigint =>
+  BigInt("0x" + createHash("md5").update(partitionKey).digest("hex"));
+
+const findShardForHashKey = (
+  shards: StoredShard[],
+  hashKey: bigint,
+): StoredShard => {
+  const open = shards.filter((s) => s.Status === "OPEN");
+  return (
+    open.find(
+      (s) =>
+        BigInt(s.StartingHashKey) <= hashKey &&
+        hashKey <= BigInt(s.EndingHashKey),
+    ) ?? (open[0] as StoredShard)
+  );
+};
+
+const makeInitialShards = (
+  count: number,
+  startSequence: number,
+): StoredShard[] => {
+  const total = BigInt("340282366920938463463374607431768211455");
+  const perShard = total / BigInt(count);
+  return Array.from({ length: count }, (_, i) => ({
+    ShardId: newShardId(i),
+    ParentShardId: undefined,
+    AdjacentParentShardId: undefined,
+    StartingHashKey: String(BigInt(i) * perShard),
+    EndingHashKey:
+      i === count - 1 ? String(total) : String(BigInt(i + 1) * perShard - 1n),
+    Status: "OPEN" as const,
+    StartingSequenceNumber: sequenceString(startSequence),
+    EndingSequenceNumber: undefined,
+  }));
+};
 
 const CreateStream: OperationHandler = (input, ctx) => {
   const name = requireString(input, "StreamName");
@@ -224,6 +246,11 @@ const CreateStream: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const shardCount =
+    typeof input["ShardCount"] === "number"
+      ? (input["ShardCount"] as number)
+      : 1;
+  const shards = makeInitialShards(shardCount, 0);
   const stream: StoredStream = {
     StreamName: name,
     StreamARN: streamArnOf(ctx.region, ctx.account, name),
@@ -231,8 +258,8 @@ const CreateStream: OperationHandler = (input, ctx) => {
     RetentionPeriodHours: 24,
     StreamCreationTimestamp: Math.floor(Date.now() / 1000),
     nextSequence: 0,
-    nextShardIndex: 1,
-    shards: [makeInitialShard(0)],
+    nextShardIndex: shardCount,
+    shards,
     records: [],
     tags: {},
     shardLevelMetrics: [],
@@ -316,12 +343,14 @@ const appendRecord = (
   stream: StoredStream,
   data: unknown,
   partitionKey: string,
+  shardId: string,
 ): StoredRecord => {
   const record: StoredRecord = {
     SequenceNumber: sequenceString(stream.nextSequence),
     Data: blobToBinary(data),
     PartitionKey: partitionKey,
     ApproximateArrivalTimestamp: Math.floor(Date.now() / 1000),
+    ShardId: shardId,
   };
   stream.nextSequence += 1;
   stream.records.push(record);
@@ -332,11 +361,17 @@ const PutRecord: OperationHandler = (input, ctx) => {
   const name = resolveStreamName(input);
   const stream = requireStream(ctx, name);
   const partitionKey = requireString(input, "PartitionKey");
-  const record = appendRecord(stream, input["Data"], partitionKey);
+  const hashKey = partitionKeyToHashKey(partitionKey);
+  const shard = findShardForHashKey(stream.shards, hashKey);
+  const record = appendRecord(
+    stream,
+    input["Data"],
+    partitionKey,
+    shard.ShardId,
+  );
   ctx.store.set(streamKey(name), stream);
   return {
-    ShardId:
-      stream.shards.find((s) => s.Status === "OPEN")?.ShardId ?? newShardId(0),
+    ShardId: shard.ShardId,
     SequenceNumber: record.SequenceNumber,
     EncryptionType: stream.encryptionType,
   };
@@ -345,8 +380,6 @@ const PutRecord: OperationHandler = (input, ctx) => {
 const PutRecords: OperationHandler = (input, ctx) => {
   const name = resolveStreamName(input);
   const stream = requireStream(ctx, name);
-  const openShardId =
-    stream.shards.find((s) => s.Status === "OPEN")?.ShardId ?? newShardId(0);
   const entries = Array.isArray(input["Records"])
     ? (input["Records"] as Record<string, unknown>[])
     : [];
@@ -355,10 +388,17 @@ const PutRecords: OperationHandler = (input, ctx) => {
       typeof entry["PartitionKey"] === "string"
         ? (entry["PartitionKey"] as string)
         : "";
-    const record = appendRecord(stream, entry["Data"], partitionKey);
+    const hashKey = partitionKeyToHashKey(partitionKey);
+    const shard = findShardForHashKey(stream.shards, hashKey);
+    const record = appendRecord(
+      stream,
+      entry["Data"],
+      partitionKey,
+      shard.ShardId,
+    );
     return {
       SequenceNumber: record.SequenceNumber,
-      ShardId: openShardId,
+      ShardId: shard.ShardId,
     };
   });
   ctx.store.set(streamKey(name), stream);
@@ -412,9 +452,13 @@ const GetRecords: OperationHandler = (input, ctx) => {
   const stream = requireStream(ctx, name);
   const limit =
     typeof input["Limit"] === "number" ? (input["Limit"] as number) : 10000;
-  const available = stream.records.slice(position);
+  const available = stream.records.filter(
+    (r) => r.ShardId === itShardId && Number(r.SequenceNumber) >= position,
+  );
   const selected = available.slice(0, limit);
-  const nextPosition = position + selected.length;
+  const lastSeq = selected[selected.length - 1];
+  const nextPosition =
+    lastSeq !== undefined ? Number(lastSeq.SequenceNumber) + 1 : position;
   return {
     Records: selected.map((record) => ({
       SequenceNumber: record.SequenceNumber,

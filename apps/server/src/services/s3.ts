@@ -20,6 +20,8 @@ type S3Object = {
   tagSet: S3Tag[];
   userMetadata: Record<string, string>;
   storageClass: string;
+  versionId?: string;
+  isDeleteMarker?: boolean;
 };
 
 type S3Tag = {
@@ -48,7 +50,7 @@ type S3Upload = {
 type S3Bucket = {
   name: string;
   creationDate: number;
-  objects: Record<string, S3Object>;
+  objects: Record<string, S3Object[]>;
   tagSet: S3Tag[];
   uploads: Record<string, S3Upload>;
   versioningStatus: string | undefined;
@@ -96,6 +98,16 @@ const concatBytes = (parts: Uint8Array[]): Uint8Array => {
 
 const hashWithPrefix = (prefix: string, body: Uint8Array): string =>
   hashBody(concatBytes([new TextEncoder().encode(prefix), body]));
+
+const generateVersionId = (): string => crypto.randomUUID().replace(/-/g, "");
+
+const getCurrentObject = (
+  versions: S3Object[] | undefined,
+): S3Object | undefined => {
+  if (versions === undefined || versions.length === 0) return undefined;
+  const latest = versions[0];
+  return latest.isDeleteMarker ? undefined : latest;
+};
 
 const escapeXml = (value: string): string =>
   value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -374,6 +386,7 @@ const s3: ServiceDefinition = {
         if (hasLogging) return "GetBucketLogging";
         if (hasAccelerate) return "GetBucketAccelerateConfiguration";
         if (hasObjectLock) return "GetObjectLockConfiguration";
+        if (req.query.has("versions")) return "ListObjectVersions";
         if (req.query.get("list-type") === "2") return "ListObjectsV2";
         return "ListObjects";
       }
@@ -482,10 +495,12 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
+      const versioned = target.versioningStatus === "Enabled";
       const body = req.bodyBytes;
       const etag = `"${md5Hex(body)}"`;
       const metadata = input["Metadata"];
       const storageClass = input["StorageClass"];
+      const versionId = versioned ? generateVersionId() : undefined;
       const object: S3Object = {
         key,
         body,
@@ -501,10 +516,13 @@ const s3: ServiceDefinition = {
             : {},
         storageClass:
           typeof storageClass === "string" ? storageClass : "STANDARD",
+        versionId,
       };
+      const existing = target.objects[key] ?? [];
+      const versions = versioned ? [object, ...existing] : [object];
       const next: S3Bucket = {
         ...target,
-        objects: { ...target.objects, [key]: object },
+        objects: { ...target.objects, [key]: versions },
       };
       ctx.store.set<S3Bucket>(bucket, next);
       await emitS3Notification(
@@ -515,7 +533,10 @@ const s3: ServiceDefinition = {
         key,
         object,
       );
-      return { ETag: object.etag };
+      return {
+        ETag: object.etag,
+        ...(versionId !== undefined ? { VersionId: versionId } : {}),
+      };
     },
     GetObject: (input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
@@ -523,9 +544,29 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
-      const object = target.objects[key];
-      if (object === undefined) {
-        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      const requestedVersionId =
+        typeof input["VersionId"] === "string" ? input["VersionId"] : undefined;
+      let object: S3Object | undefined;
+      if (requestedVersionId !== undefined) {
+        const found = (target.objects[key] ?? []).find(
+          (v) => v.versionId === requestedVersionId,
+        );
+        if (found === undefined) {
+          throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+        }
+        if (found.isDeleteMarker) {
+          throw awsError(
+            "MethodNotAllowed",
+            "The specified method is not allowed against this resource.",
+            405,
+          );
+        }
+        object = found;
+      } else {
+        object = getCurrentObject(target.objects[key]);
+        if (object === undefined) {
+          throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+        }
       }
       evaluateConditional(input, object);
       const common = {
@@ -536,6 +577,9 @@ const s3: ServiceDefinition = {
         ...(object.storageClass === "STANDARD"
           ? {}
           : { StorageClass: object.storageClass }),
+        ...(object.versionId !== undefined
+          ? { VersionId: object.versionId }
+          : {}),
       };
       const rangeHeader = req.headers.get("range");
       const match =
@@ -580,9 +624,22 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
-      const object = target.objects[key];
-      if (object === undefined) {
-        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      const requestedVersionId =
+        typeof input["VersionId"] === "string" ? input["VersionId"] : undefined;
+      let object: S3Object | undefined;
+      if (requestedVersionId !== undefined) {
+        const found = (target.objects[key] ?? []).find(
+          (v) => v.versionId === requestedVersionId,
+        );
+        if (found === undefined || found.isDeleteMarker) {
+          throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+        }
+        object = found;
+      } else {
+        object = getCurrentObject(target.objects[key]);
+        if (object === undefined) {
+          throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+        }
       }
       evaluateConditional(input, object);
       return {
@@ -594,6 +651,9 @@ const s3: ServiceDefinition = {
         ...(object.storageClass === "STANDARD"
           ? {}
           : { StorageClass: object.storageClass }),
+        ...(object.versionId !== undefined
+          ? { VersionId: object.versionId }
+          : {}),
       };
     },
     ListObjectsV2: (input, ctx, req) => {
@@ -617,6 +677,8 @@ const s3: ServiceDefinition = {
           ? Math.min(input["MaxKeys"], 1000)
           : 1000;
       const candidates = Object.values(target.objects)
+        .map((vs) => getCurrentObject(vs))
+        .filter((o): o is S3Object => o !== undefined)
         .filter((o) => o.key.startsWith(prefix))
         .filter((o) => o.key > after)
         .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
@@ -675,12 +737,77 @@ const s3: ServiceDefinition = {
           : {}),
       };
     },
-    DeleteObject: async (_input, ctx, req) => {
+    DeleteObject: async (input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
       if (bucket === undefined || key === undefined) {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
+      const versioned = target.versioningStatus === "Enabled";
+      const requestedVersionId =
+        typeof input["VersionId"] === "string" ? input["VersionId"] : undefined;
+      if (versioned && requestedVersionId === undefined) {
+        const versionId = generateVersionId();
+        const marker: S3Object = {
+          key,
+          body: new Uint8Array(0),
+          contentType: "",
+          etag: "",
+          size: 0,
+          lastModified: nowSeconds(),
+          tagSet: [],
+          userMetadata: {},
+          storageClass: "STANDARD",
+          versionId,
+          isDeleteMarker: true,
+        };
+        const existing = target.objects[key] ?? [];
+        ctx.store.set<S3Bucket>(bucket, {
+          ...target,
+          objects: { ...target.objects, [key]: [marker, ...existing] },
+        });
+        await emitS3Notification(
+          ctx,
+          bucket,
+          target.notification,
+          "ObjectRemoved:DeleteMarkerCreated",
+          key,
+          undefined,
+        );
+        return { DeleteMarker: true, VersionId: versionId };
+      }
+      if (versioned && requestedVersionId !== undefined) {
+        const existing = target.objects[key] ?? [];
+        const idx = existing.findIndex(
+          (v) => v.versionId === requestedVersionId,
+        );
+        if (idx === -1) return {};
+        const removed = existing[idx];
+        const filtered = existing.filter((_, i) => i !== idx);
+        const objects =
+          filtered.length > 0
+            ? { ...target.objects, [key]: filtered }
+            : (() => {
+                const r = { ...target.objects };
+                delete r[key];
+                return r;
+              })();
+        ctx.store.set<S3Bucket>(bucket, { ...target, objects });
+        if (!removed.isDeleteMarker) {
+          await emitS3Notification(
+            ctx,
+            bucket,
+            target.notification,
+            "ObjectRemoved:Delete",
+            key,
+            undefined,
+          );
+        }
+        return {
+          DeleteMarker: removed.isDeleteMarker ?? false,
+          VersionId: requestedVersionId,
+        };
+      }
       if (target.objects[key] !== undefined) {
         const rest = { ...target.objects };
         delete rest[key];
@@ -702,33 +829,94 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidBucketName", "bucket name required", 400);
       }
       const target = getBucket(ctx, bucket);
+      const versioned = target.versioningStatus === "Enabled";
       const quiet = /<Quiet>\s*true\s*<\/Quiet>/i.test(req.bodyText);
-      const keys = [...req.bodyText.matchAll(/<Key>([\s\S]*?)<\/Key>/g)].map(
-        (m) => decodeXmlEntities(m[1]),
-      );
+      const objectEntries = [
+        ...req.bodyText.matchAll(/<Object>([\s\S]*?)<\/Object>/g),
+      ].map((m) => {
+        const block = m[1];
+        const keyMatch = block.match(/<Key>([\s\S]*?)<\/Key>/);
+        const vidMatch = block.match(/<VersionId>([\s\S]*?)<\/VersionId>/);
+        return {
+          key: keyMatch ? decodeXmlEntities(keyMatch[1]) : "",
+          versionId: vidMatch ? decodeXmlEntities(vidMatch[1]) : undefined,
+        };
+      });
       const objects = { ...target.objects };
-      const deleted: string[] = [];
-      for (const key of keys) {
-        const existed = objects[key] !== undefined;
-        delete objects[key];
-        deleted.push(key);
-        if (existed) {
+      const deletedParts: string[] = [];
+      for (const entry of objectEntries) {
+        const { key, versionId } = entry;
+        if (key === "") continue;
+        if (versioned && versionId === undefined) {
+          const newVersionId = generateVersionId();
+          const marker: S3Object = {
+            key,
+            body: new Uint8Array(0),
+            contentType: "",
+            etag: "",
+            size: 0,
+            lastModified: nowSeconds(),
+            tagSet: [],
+            userMetadata: {},
+            storageClass: "STANDARD",
+            versionId: newVersionId,
+            isDeleteMarker: true,
+          };
+          objects[key] = [marker, ...(objects[key] ?? [])];
           await emitS3Notification(
             ctx,
             bucket,
             target.notification,
-            "ObjectRemoved:Delete",
+            "ObjectRemoved:DeleteMarkerCreated",
             key,
             undefined,
           );
+          deletedParts.push(
+            `<Deleted><Key>${escapeXml(key)}</Key><DeleteMarker>true</DeleteMarker><DeleteMarkerVersionId>${escapeXml(newVersionId)}</DeleteMarkerVersionId></Deleted>`,
+          );
+        } else if (versioned && versionId !== undefined) {
+          const existing = objects[key] ?? [];
+          const idx = existing.findIndex((v) => v.versionId === versionId);
+          if (idx !== -1) {
+            const removed = existing[idx];
+            const filtered = existing.filter((_, i) => i !== idx);
+            if (filtered.length > 0) {
+              objects[key] = filtered;
+            } else {
+              delete objects[key];
+            }
+            if (!removed.isDeleteMarker) {
+              await emitS3Notification(
+                ctx,
+                bucket,
+                target.notification,
+                "ObjectRemoved:Delete",
+                key,
+                undefined,
+              );
+            }
+            deletedParts.push(
+              `<Deleted><Key>${escapeXml(key)}</Key><VersionId>${escapeXml(versionId)}</VersionId>${removed.isDeleteMarker ? "<DeleteMarker>true</DeleteMarker>" : ""}</Deleted>`,
+            );
+          }
+        } else {
+          const existed = objects[key] !== undefined;
+          delete objects[key];
+          if (existed) {
+            await emitS3Notification(
+              ctx,
+              bucket,
+              target.notification,
+              "ObjectRemoved:Delete",
+              key,
+              undefined,
+            );
+          }
+          deletedParts.push(`<Deleted><Key>${escapeXml(key)}</Key></Deleted>`);
         }
       }
       ctx.store.set<S3Bucket>(bucket, { ...target, objects });
-      const body = quiet
-        ? ""
-        : deleted
-            .map((key) => `<Deleted><Key>${escapeXml(key)}</Key></Deleted>`)
-            .join("");
+      const body = quiet ? "" : deletedParts.join("");
       return {
         __xml: `<?xml version="1.0" encoding="UTF-8"?><DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">${body}</DeleteResult>`,
       };
@@ -742,6 +930,8 @@ const s3: ServiceDefinition = {
       const prefix = req.query.get("prefix") ?? "";
       const marker = req.query.get("marker") ?? "";
       const all = Object.values(target.objects)
+        .map((vs) => getCurrentObject(vs))
+        .filter((o): o is S3Object => o !== undefined)
         .filter((o) => o.key.startsWith(prefix))
         .filter((o) => o.key > marker)
         .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
@@ -780,10 +970,12 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidArgument", "invalid copy source", 400);
       }
       const sourceBucket = getBucket(ctx, srcBucket);
-      const source = sourceBucket.objects[srcKey];
+      const source = getCurrentObject(sourceBucket.objects[srcKey]);
       if (source === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
+      const versioned = target.versioningStatus === "Enabled";
+      const versionId = versioned ? generateVersionId() : undefined;
       const lastModified = nowSeconds();
       const object: S3Object = {
         key,
@@ -795,16 +987,20 @@ const s3: ServiceDefinition = {
         tagSet: [],
         userMetadata: source.userMetadata,
         storageClass: source.storageClass,
+        versionId,
       };
+      const existing = target.objects[key] ?? [];
+      const versions = versioned ? [object, ...existing] : [object];
       ctx.store.set<S3Bucket>(bucket, {
         ...target,
-        objects: { ...target.objects, [key]: object },
+        objects: { ...target.objects, [key]: versions },
       });
       return {
         CopyObjectResult: {
           ETag: object.etag,
           LastModified: lastModified,
         },
+        ...(versionId !== undefined ? { VersionId: versionId } : {}),
       };
     },
     PutBucketTagging: (input, ctx, req) => {
@@ -952,7 +1148,9 @@ const s3: ServiceDefinition = {
       if (srcBucket === undefined || srcKey === undefined) {
         throw awsError("InvalidArgument", "invalid copy source", 400);
       }
-      const source = getBucket(ctx, srcBucket).objects[srcKey];
+      const source = getCurrentObject(
+        getBucket(ctx, srcBucket).objects[srcKey],
+      );
       if (source === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
@@ -1044,6 +1242,8 @@ const s3: ServiceDefinition = {
       });
       const combined = concatBytes(bodies);
       const etag = `"${md5Hex(concatBytes(bodies.map(md5Bytes)))}-${requested.length}"`;
+      const versioned = target.versioningStatus === "Enabled";
+      const versionId = versioned ? generateVersionId() : undefined;
       const object: S3Object = {
         key,
         body: combined,
@@ -1054,12 +1254,15 @@ const s3: ServiceDefinition = {
         tagSet: [],
         userMetadata: upload.userMetadata,
         storageClass: upload.storageClass,
+        versionId,
       };
+      const existingVersions = target.objects[key] ?? [];
+      const versions = versioned ? [object, ...existingVersions] : [object];
       const rest = { ...target.uploads };
       delete rest[uploadId];
       ctx.store.set<S3Bucket>(bucket, {
         ...target,
-        objects: { ...target.objects, [key]: object },
+        objects: { ...target.objects, [key]: versions },
         uploads: rest,
       });
       return {
@@ -1223,14 +1426,16 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
-      const object = target.objects[key];
+      const versions = target.objects[key] ?? [];
+      const object = getCurrentObject(versions);
       if (object === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
       const tagSet = parseTagSet(input["Tagging"]);
+      const updated = [{ ...object, tagSet }, ...versions.slice(1)];
       ctx.store.set<S3Bucket>(bucket, {
         ...target,
-        objects: { ...target.objects, [key]: { ...object, tagSet } },
+        objects: { ...target.objects, [key]: updated },
       });
       return {};
     },
@@ -1240,7 +1445,7 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
-      const object = target.objects[key];
+      const object = getCurrentObject(target.objects[key]);
       if (object === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
@@ -1257,13 +1462,18 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
-      const object = target.objects[key];
+      const versions = target.objects[key] ?? [];
+      const object = getCurrentObject(versions);
       if (object === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
+      const updated = [
+        { ...object, tagSet: [] as S3Tag[] },
+        ...versions.slice(1),
+      ];
       ctx.store.set<S3Bucket>(bucket, {
         ...target,
-        objects: { ...target.objects, [key]: { ...object, tagSet: [] } },
+        objects: { ...target.objects, [key]: updated },
       });
       return {};
     },
@@ -1571,6 +1781,61 @@ const s3: ServiceDefinition = {
         );
       }
       return { ObjectLockConfiguration: target.objectLock };
+    },
+    ListObjectVersions: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const prefix = req.query.get("prefix") ?? "";
+      const keyMarker = req.query.get("key-marker") ?? "";
+      const toIso = (ts: number): string => new Date(ts * 1000).toISOString();
+      const allVersions = Object.values(target.objects)
+        .flatMap((vs) => vs)
+        .filter((v) => v.key.startsWith(prefix))
+        .filter((v) => v.key >= keyMarker)
+        .sort((a, b) => {
+          if (a.key !== b.key) return a.key < b.key ? -1 : 1;
+          return b.lastModified - a.lastModified;
+        });
+      const versionXml = allVersions
+        .map((v) => {
+          if (v.isDeleteMarker) {
+            return [
+              `<DeleteMarker>`,
+              `<Key>${escapeXml(v.key)}</Key>`,
+              `<VersionId>${escapeXml(v.versionId ?? "null")}</VersionId>`,
+              `<IsLatest>${(target.objects[v.key] ?? [])[0]?.versionId === v.versionId ? "true" : "false"}</IsLatest>`,
+              `<LastModified>${toIso(v.lastModified)}</LastModified>`,
+              `</DeleteMarker>`,
+            ].join("");
+          }
+          return [
+            `<Version>`,
+            `<Key>${escapeXml(v.key)}</Key>`,
+            `<VersionId>${escapeXml(v.versionId ?? "null")}</VersionId>`,
+            `<IsLatest>${(target.objects[v.key] ?? [])[0]?.versionId === v.versionId ? "true" : "false"}</IsLatest>`,
+            `<LastModified>${toIso(v.lastModified)}</LastModified>`,
+            `<ETag>${escapeXml(v.etag)}</ETag>`,
+            `<Size>${v.size}</Size>`,
+            `<StorageClass>${escapeXml(v.storageClass)}</StorageClass>`,
+            `</Version>`,
+          ].join("");
+        })
+        .join("");
+      return {
+        __xml: [
+          `<?xml version="1.0" encoding="UTF-8"?>`,
+          `<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`,
+          `<IsTruncated>false</IsTruncated>`,
+          `<Name>${escapeXml(bucket)}</Name>`,
+          `<Prefix>${escapeXml(prefix)}</Prefix>`,
+          `<MaxKeys>1000</MaxKeys>`,
+          versionXml,
+          `</ListVersionsResult>`,
+        ].join(""),
+      };
     },
   },
   model,

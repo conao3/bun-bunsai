@@ -152,3 +152,47 @@ describe("Lambda real Node.js execution", () => {
     expect(res.StatusCode).toBe(204);
   });
 });
+
+describe("Lambda unsupported runtime", () => {
+  test("python3.x runtime returns Runtime.Unsupported error, not echoed input", async () => {
+    const client = lambda();
+    await client.send(
+      new CreateFunctionCommand({
+        FunctionName: "fn-python",
+        Runtime: "python3.12",
+        Role: "arn:aws:iam::000000000000:role/bunsai-e2e",
+        Handler: "index.handler",
+        Code: {
+          ZipFile: makeZip({
+            "index.py": "def handler(event, context): return event",
+          }),
+        },
+      }),
+    );
+    const sentPayload = { key: "should-not-be-echoed" };
+    const r = await invokeJson(client, "fn-python", sentPayload);
+    expect(r.StatusCode).toBe(200);
+    expect(r.FunctionError).toBe("Unhandled");
+    expect((r.payload as Record<string, unknown>).errorType).toBe(
+      "Runtime.Unsupported",
+    );
+    expect(typeof (r.payload as Record<string, unknown>).errorMessage).toBe(
+      "string",
+    );
+    expect(
+      (r.payload as Record<string, unknown>).errorMessage as string,
+    ).toContain("python3.12");
+    expect(r.payload).not.toEqual(sentPayload);
+  });
+
+  test("nodejs runtime still executes normally after unsupported-runtime fix", async () => {
+    const client = lambda();
+    await createFn(client, "fn-node-after-fix", {
+      "index.js": "exports.handler = async (e) => ({ result: e.x * 2 });",
+    });
+    const r = await invokeJson(client, "fn-node-after-fix", { x: 7 });
+    expect(r.StatusCode).toBe(200);
+    expect(r.FunctionError).toBeUndefined();
+    expect(r.payload).toEqual({ result: 14 });
+  });
+});

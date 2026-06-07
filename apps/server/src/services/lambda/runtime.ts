@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 export type LambdaExecution =
   | { kind: "unsupported" }
+  | { kind: "unsupported_runtime"; runtime: string | undefined }
   | { kind: "result"; payload: unknown; logs: string }
   | {
       kind: "error";
@@ -79,7 +80,8 @@ type ResultFile =
 export const executeNodeHandler = async (
   args: ExecuteArgs,
 ): Promise<LambdaExecution> => {
-  if (!isNodeRuntime(args.runtime)) return { kind: "unsupported" };
+  if (!isNodeRuntime(args.runtime))
+    return { kind: "unsupported_runtime", runtime: args.runtime };
   const resolved = resolveHandlerFile(args.files, args.handler);
   if (resolved === undefined) return { kind: "unsupported" };
 

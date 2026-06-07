@@ -361,10 +361,17 @@ const Invoke: OperationHandler = async (input, ctx) => {
   if (execution.kind === "unsupported") {
     return {
       StatusCode: statusCode,
+      Payload: echoPayload(input["Payload"]),
+      ExecutedVersion: fn.Version,
+    };
+  }
+  if (execution.kind === "unsupported_runtime") {
+    return {
+      StatusCode: statusCode,
       FunctionError: "Unhandled",
       Payload: jsonPayload({
         errorType: "Runtime.Unsupported",
-        errorMessage: `Runtime ${fn.Runtime ?? "unknown"} is not supported`,
+        errorMessage: `Runtime ${execution.runtime ?? "unknown"} is not supported`,
         trace: [],
       }),
       ExecutedVersion: fn.Version,
@@ -428,6 +435,13 @@ registerTaskInvoker("lambda", async (ctx, functionArn, payload) => {
   }
   if (execution.kind === "unsupported") {
     return { ok: true, result: payload };
+  }
+  if (execution.kind === "unsupported_runtime") {
+    return {
+      ok: false,
+      error: "Lambda.AWSLambdaException",
+      cause: `Runtime ${execution.runtime ?? "unknown"} is not supported`,
+    };
   }
   const cause =
     execution.kind === "timeout"

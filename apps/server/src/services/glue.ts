@@ -63,6 +63,7 @@ type StoredCrawler = {
   input: Record<string, unknown>;
   creationTime: number;
   lastUpdated: number;
+  state?: string;
 };
 
 type StoredJob = {
@@ -590,7 +591,7 @@ const crawlerView = (
   ...(typeof crawler.input["Configuration"] === "string"
     ? { Configuration: crawler.input["Configuration"] }
     : {}),
-  State: "READY",
+  State: crawler.state ?? "READY",
   CreationTime: crawler.creationTime,
   LastUpdated: crawler.lastUpdated,
 });
@@ -5036,6 +5037,249 @@ const RunStatement: OperationHandler = (input, ctx) => {
   return { Id: nextId };
 };
 
+const StartBlueprintRun: OperationHandler = (input, ctx) => {
+  const blueprintName =
+    typeof input["BlueprintName"] === "string" ? input["BlueprintName"] : "";
+  const roleArn = typeof input["RoleArn"] === "string" ? input["RoleArn"] : "";
+  if (blueprintName === "" || roleArn === "") {
+    throw awsError(
+      "InvalidInputException",
+      "BlueprintName and RoleArn are required.",
+      400,
+    );
+  }
+  if (
+    ctx.store.get<StoredBlueprint>(`${blueprintPrefix}${blueprintName}`) ===
+    undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `Blueprint ${blueprintName} not found.`,
+      400,
+    );
+  }
+  const runId = crypto.randomUUID();
+  return { RunId: runId };
+};
+
+const StartColumnStatisticsTaskRun: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  const role = typeof input["Role"] === "string" ? input["Role"] : "";
+  if (databaseName === "" || tableName === "" || role === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName, TableName, and Role are required.",
+      400,
+    );
+  }
+  requireTable(ctx, databaseName, tableName);
+  const runId = crypto.randomUUID();
+  return { ColumnStatisticsTaskRunId: runId };
+};
+
+const StartColumnStatisticsTaskRunSchedule: OperationHandler = (input, ctx) => {
+  const databaseName =
+    typeof input["DatabaseName"] === "string" ? input["DatabaseName"] : "";
+  const tableName =
+    typeof input["TableName"] === "string" ? input["TableName"] : "";
+  if (databaseName === "" || tableName === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DatabaseName and TableName are required.",
+      400,
+    );
+  }
+  requireTable(ctx, databaseName, tableName);
+  return {};
+};
+
+const StartCrawler: OperationHandler = (input, ctx) => {
+  const name = requireName(input);
+  const crawler = requireCrawler(ctx, name);
+  if (crawler.state === "RUNNING") {
+    throw awsError(
+      "CrawlerRunningException",
+      `Crawler ${name} is already running.`,
+      400,
+    );
+  }
+  const updated: StoredCrawler = {
+    ...crawler,
+    state: "READY",
+    lastUpdated: Math.floor(Date.now() / 1000),
+  };
+  ctx.store.set(`${crawlerPrefix}${name}`, updated);
+  return {};
+};
+
+const StartCrawlerSchedule: OperationHandler = (input, ctx) => {
+  const crawlerName =
+    typeof input["CrawlerName"] === "string" ? input["CrawlerName"] : "";
+  if (crawlerName === "") {
+    throw awsError("InvalidInputException", "CrawlerName is required.", 400);
+  }
+  requireCrawler(ctx, crawlerName);
+  return {};
+};
+
+const StartDataQualityRuleRecommendationRun: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const dataSource = input["DataSource"];
+  const role = typeof input["Role"] === "string" ? input["Role"] : "";
+  if (dataSource === undefined || role === "") {
+    throw awsError(
+      "InvalidInputException",
+      "DataSource and Role are required.",
+      400,
+    );
+  }
+  const runId = crypto.randomUUID();
+  return { RunId: runId };
+};
+
+const StartDataQualityRulesetEvaluationRun: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const dataSource = input["DataSource"];
+  const role = typeof input["Role"] === "string" ? input["Role"] : "";
+  const rulesetNames = input["RulesetNames"];
+  if (dataSource === undefined || role === "" || !Array.isArray(rulesetNames)) {
+    throw awsError(
+      "InvalidInputException",
+      "DataSource, Role, and RulesetNames are required.",
+      400,
+    );
+  }
+  const runId = crypto.randomUUID();
+  return { RunId: runId };
+};
+
+const StartExportLabelsTaskRun: OperationHandler = (input, ctx) => {
+  const transformId =
+    typeof input["TransformId"] === "string" ? input["TransformId"] : "";
+  const outputS3Path =
+    typeof input["OutputS3Path"] === "string" ? input["OutputS3Path"] : "";
+  if (transformId === "" || outputS3Path === "") {
+    throw awsError(
+      "InvalidInputException",
+      "TransformId and OutputS3Path are required.",
+      400,
+    );
+  }
+  if (
+    ctx.store.get<StoredMLTransform>(`${mlTransformPrefix}${transformId}`) ===
+    undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `MLTransform ${transformId} not found.`,
+      400,
+    );
+  }
+  const taskRunId = crypto.randomUUID();
+  return { TaskRunId: taskRunId };
+};
+
+const StartImportLabelsTaskRun: OperationHandler = (input, ctx) => {
+  const transformId =
+    typeof input["TransformId"] === "string" ? input["TransformId"] : "";
+  const inputS3Path =
+    typeof input["InputS3Path"] === "string" ? input["InputS3Path"] : "";
+  if (transformId === "" || inputS3Path === "") {
+    throw awsError(
+      "InvalidInputException",
+      "TransformId and InputS3Path are required.",
+      400,
+    );
+  }
+  if (
+    ctx.store.get<StoredMLTransform>(`${mlTransformPrefix}${transformId}`) ===
+    undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `MLTransform ${transformId} not found.`,
+      400,
+    );
+  }
+  const taskRunId = crypto.randomUUID();
+  return { TaskRunId: taskRunId };
+};
+
+const StartJobRun: OperationHandler = (input, ctx) => {
+  const jobName = requireJobName(input);
+  requireJob(ctx, jobName);
+  const now = Math.floor(Date.now() / 1000);
+  const jobRunId = crypto.randomUUID();
+  const run: StoredJobRun = {
+    jobName,
+    jobRunId,
+    startedOn: now,
+    completedOn: now,
+    jobRunState: "SUCCEEDED",
+    arguments:
+      typeof input["Arguments"] === "object" &&
+      input["Arguments"] !== null &&
+      !Array.isArray(input["Arguments"])
+        ? (input["Arguments"] as Record<string, unknown>)
+        : {},
+  };
+  ctx.store.set(`${jobRunPrefix}${jobName}:${jobRunId}`, run);
+  return { JobRunId: jobRunId };
+};
+
+const StartMLEvaluationTaskRun: OperationHandler = (input, ctx) => {
+  const transformId =
+    typeof input["TransformId"] === "string" ? input["TransformId"] : "";
+  if (transformId === "") {
+    throw awsError("InvalidInputException", "TransformId is required.", 400);
+  }
+  if (
+    ctx.store.get<StoredMLTransform>(`${mlTransformPrefix}${transformId}`) ===
+    undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `MLTransform ${transformId} not found.`,
+      400,
+    );
+  }
+  const taskRunId = crypto.randomUUID();
+  return { TaskRunId: taskRunId };
+};
+
+const StartMLLabelingSetGenerationTaskRun: OperationHandler = (input, ctx) => {
+  const transformId =
+    typeof input["TransformId"] === "string" ? input["TransformId"] : "";
+  const outputS3Path =
+    typeof input["OutputS3Path"] === "string" ? input["OutputS3Path"] : "";
+  if (transformId === "" || outputS3Path === "") {
+    throw awsError(
+      "InvalidInputException",
+      "TransformId and OutputS3Path are required.",
+      400,
+    );
+  }
+  if (
+    ctx.store.get<StoredMLTransform>(`${mlTransformPrefix}${transformId}`) ===
+    undefined
+  ) {
+    throw awsError(
+      "EntityNotFoundException",
+      `MLTransform ${transformId} not found.`,
+      400,
+    );
+  }
+  const taskRunId = crypto.randomUUID();
+  return { TaskRunId: taskRunId };
+};
+
 const isDatabaseKey = (key: string): boolean =>
   !key.startsWith(crawlerPrefix) &&
   !key.startsWith(jobPrefix) &&
@@ -5311,6 +5555,18 @@ const glue: ServiceDefinition = {
     ResumeWorkflowRun,
     RunStatement,
     SearchTables,
+    StartBlueprintRun,
+    StartColumnStatisticsTaskRun,
+    StartColumnStatisticsTaskRunSchedule,
+    StartCrawler,
+    StartCrawlerSchedule,
+    StartDataQualityRuleRecommendationRun,
+    StartDataQualityRulesetEvaluationRun,
+    StartExportLabelsTaskRun,
+    StartImportLabelsTaskRun,
+    StartJobRun,
+    StartMLEvaluationTaskRun,
+    StartMLLabelingSetGenerationTaskRun,
   },
   model,
 } as const;

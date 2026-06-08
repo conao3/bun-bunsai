@@ -214,6 +214,7 @@ type StoredView = {
   Name: string;
   Status: string;
   Content?: unknown;
+  Description?: string;
   InstanceId: string;
 };
 
@@ -229,6 +230,10 @@ type StoredWorkspace = {
   WorkspaceArn: string;
   Name: string;
   InstanceId: string;
+  Description?: string;
+  Title?: string;
+  Theme?: unknown;
+  Visibility?: string;
 };
 
 type StoredDataTableValue = {
@@ -2148,6 +2153,7 @@ const DescribeView: OperationHandler = (input, ctx) => {
       Arn: stored.Arn,
       Name: stored.Name,
       Status: stored.Status,
+      Description: stored.Description,
       Version: 1,
       Content: stored.Content,
     },
@@ -2197,6 +2203,10 @@ const DescribeWorkspace: OperationHandler = (input, ctx) => {
       WorkspaceId: stored.WorkspaceId,
       Arn: stored.WorkspaceArn,
       Name: stored.Name,
+      Description: stored.Description,
+      Title: stored.Title,
+      Theme: stored.Theme,
+      Visibility: stored.Visibility,
     },
   };
 };
@@ -3489,6 +3499,121 @@ const UpdateViewContent: OperationHandler = (input, ctx) => {
       Content: content,
     },
   };
+};
+
+const UpdateViewMetadata: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const viewId = requireString(input, "ViewId");
+  const stored = ctx.store.get<StoredView>(viewKey(instanceId, viewId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `View ${viewId} not found.`,
+      404,
+    );
+  }
+  const name = typeof input["Name"] === "string" ? input["Name"] : stored.Name;
+  const description =
+    typeof input["Description"] === "string"
+      ? input["Description"]
+      : stored.Description;
+  ctx.store.set(viewKey(instanceId, viewId), {
+    ...stored,
+    Name: name,
+    Description: description,
+  });
+  return {};
+};
+
+const UpdateWorkspaceMetadata: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const workspaceId = requireString(input, "WorkspaceId");
+  const stored = ctx.store.get<StoredWorkspace>(
+    workspaceKey(instanceId, workspaceId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Workspace ${workspaceId} not found.`,
+      404,
+    );
+  }
+  const name = typeof input["Name"] === "string" ? input["Name"] : stored.Name;
+  const description =
+    typeof input["Description"] === "string"
+      ? input["Description"]
+      : stored.Description;
+  const title =
+    typeof input["Title"] === "string" ? input["Title"] : stored.Title;
+  ctx.store.set(workspaceKey(instanceId, workspaceId), {
+    ...stored,
+    Name: name,
+    Description: description,
+    Title: title,
+  });
+  return {};
+};
+
+const UpdateWorkspacePage: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const workspaceId = requireString(input, "WorkspaceId");
+  const stored = ctx.store.get<StoredWorkspace>(
+    workspaceKey(instanceId, workspaceId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Workspace ${workspaceId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateWorkspaceTheme: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const workspaceId = requireString(input, "WorkspaceId");
+  const stored = ctx.store.get<StoredWorkspace>(
+    workspaceKey(instanceId, workspaceId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Workspace ${workspaceId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(workspaceKey(instanceId, workspaceId), {
+    ...stored,
+    Theme: input["Theme"] ?? stored.Theme,
+  });
+  return {};
+};
+
+const UpdateWorkspaceVisibility: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const workspaceId = requireString(input, "WorkspaceId");
+  const stored = ctx.store.get<StoredWorkspace>(
+    workspaceKey(instanceId, workspaceId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Workspace ${workspaceId} not found.`,
+      404,
+    );
+  }
+  const visibility = requireString(input, "Visibility");
+  ctx.store.set(workspaceKey(instanceId, workspaceId), {
+    ...stored,
+    Visibility: visibility,
+  });
+  return {};
 };
 
 const DeleteWorkspacePage: OperationHandler = (input, ctx) => {
@@ -6541,6 +6666,12 @@ const connect = {
           req.method === "DELETE"
         )
           return "DeleteViewVersion";
+        if (
+          parts.length === 4 &&
+          parts[3] === "metadata" &&
+          req.method === "POST"
+        )
+          return "UpdateViewMetadata";
         return undefined;
 
       case "vocabulary":
@@ -6595,6 +6726,22 @@ const connect = {
           return "ImportWorkspaceMedia";
         if (parts.length === 4 && parts[3] === "media" && req.method === "GET")
           return "ListWorkspaceMedia";
+        if (
+          parts.length === 4 &&
+          parts[3] === "metadata" &&
+          req.method === "POST"
+        )
+          return "UpdateWorkspaceMetadata";
+        if (parts.length === 5 && parts[3] === "pages" && req.method === "POST")
+          return "UpdateWorkspacePage";
+        if (parts.length === 4 && parts[3] === "theme" && req.method === "POST")
+          return "UpdateWorkspaceTheme";
+        if (
+          parts.length === 4 &&
+          parts[3] === "visibility" &&
+          req.method === "POST"
+        )
+          return "UpdateWorkspaceVisibility";
         return undefined;
 
       case "metrics":
@@ -7237,6 +7384,11 @@ const connect = {
     UpdateUserRoutingProfile,
     UpdateUserSecurityProfiles,
     UpdateViewContent,
+    UpdateViewMetadata,
+    UpdateWorkspaceMetadata,
+    UpdateWorkspacePage,
+    UpdateWorkspaceTheme,
+    UpdateWorkspaceVisibility,
   },
   model,
 } as const satisfies ServiceDefinition;

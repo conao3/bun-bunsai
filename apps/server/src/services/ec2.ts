@@ -15179,6 +15179,267 @@ const GetSpotPlacementScores: OperationHandler = (_input, _ctx) => {
   };
 };
 
+const GetSubnetCidrReservations: OperationHandler = (input, ctx) => {
+  const subnetId =
+    typeof input["SubnetId"] === "string" ? input["SubnetId"] : "";
+  const subnet = ctx.store.get<StoredSubnet>(subnetKey(subnetId));
+  if (subnet === undefined) {
+    throw awsError(
+      "InvalidSubnetID.NotFound",
+      `The subnet ID '${subnetId}' does not exist`,
+      400,
+    );
+  }
+  const reservations = ctx.store
+    .list<StoredSubnetCidrReservation>()
+    .filter((e) => e.key.startsWith("scr/") && e.value.SubnetId === subnetId)
+    .map((e) => e.value);
+  const toItem = (r: StoredSubnetCidrReservation) => ({
+    SubnetCidrReservationId: r.SubnetCidrReservationId,
+    SubnetId: r.SubnetId,
+    Cidr: r.Cidr,
+    ReservationType: r.ReservationType,
+    OwnerId: r.OwnerId,
+    Description: r.Description,
+    Tags: r.Tags,
+  });
+  return {
+    SubnetIpv4CidrReservations: reservations
+      .filter((r) => !r.Cidr.includes(":"))
+      .map(toItem),
+    SubnetIpv6CidrReservations: reservations
+      .filter((r) => r.Cidr.includes(":"))
+      .map(toItem),
+  };
+};
+
+const GetTransitGatewayAttachmentPropagations: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { TransitGatewayAttachmentPropagations: [] };
+};
+
+const GetTransitGatewayMeteringPolicyEntries: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const policyId =
+    typeof input["TransitGatewayMeteringPolicyId"] === "string"
+      ? input["TransitGatewayMeteringPolicyId"]
+      : "";
+  const policy = ctx.store.get<StoredTransitGatewayMeteringPolicy>(
+    transitGatewayMeteringPolicyKey(policyId),
+  );
+  if (policy === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayMeteringPolicyID.NotFound",
+      `The transit gateway metering policy ID '${policyId}' does not exist`,
+      400,
+    );
+  }
+  const entries = ctx.store
+    .list<StoredTransitGatewayMeteringPolicyEntry>()
+    .filter((e) => e.key.startsWith(`tgw-mpe/${policyId}/`))
+    .map((e) => ({
+      PolicyRuleNumber: e.value.PolicyRuleNumber,
+      MeteredAccount: e.value.MeteredAccount,
+      State: e.value.State,
+      UpdatedAt: e.value.UpdatedAt,
+      UpdateEffectiveAt: e.value.UpdateEffectiveAt,
+      MeteringPolicyRule: e.value.MeteringPolicyRule,
+    }));
+  return { TransitGatewayMeteringPolicyEntries: entries };
+};
+
+const GetTransitGatewayMulticastDomainAssociations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const domainId =
+    typeof input["TransitGatewayMulticastDomainId"] === "string"
+      ? input["TransitGatewayMulticastDomainId"]
+      : "";
+  const domain = ctx.store.get<StoredTransitGatewayMulticastDomain>(
+    transitGatewayMulticastDomainKey(domainId),
+  );
+  if (domain === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayMulticastDomainId.NotFound",
+      `The transit gateway multicast domain '${domainId}' does not exist`,
+      400,
+    );
+  }
+  return { MulticastDomainAssociations: [] };
+};
+
+const GetTransitGatewayPolicyTableAssociations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const tableId =
+    typeof input["TransitGatewayPolicyTableId"] === "string"
+      ? input["TransitGatewayPolicyTableId"]
+      : "";
+  const table = ctx.store.get<StoredTransitGatewayPolicyTable>(
+    transitGatewayPolicyTableKey(tableId),
+  );
+  if (table === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayPolicyTableID.NotFound",
+      `The transit gateway policy table '${tableId}' does not exist`,
+      400,
+    );
+  }
+  return { Associations: [] };
+};
+
+const GetTransitGatewayPolicyTableEntries: OperationHandler = (input, ctx) => {
+  const tableId =
+    typeof input["TransitGatewayPolicyTableId"] === "string"
+      ? input["TransitGatewayPolicyTableId"]
+      : "";
+  const table = ctx.store.get<StoredTransitGatewayPolicyTable>(
+    transitGatewayPolicyTableKey(tableId),
+  );
+  if (table === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayPolicyTableID.NotFound",
+      `The transit gateway policy table '${tableId}' does not exist`,
+      400,
+    );
+  }
+  return { TransitGatewayPolicyTableEntries: [] };
+};
+
+const GetTransitGatewayPrefixListReferences: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const rtb = ctx.store.get<StoredTransitGatewayRouteTable>(
+    transitGatewayRouteTableKey(routeTableId),
+  );
+  if (rtb === undefined) {
+    throw awsError(
+      "InvalidRouteTableID.NotFound",
+      `The transit gateway route table '${routeTableId}' does not exist`,
+      400,
+    );
+  }
+  const refs = ctx.store
+    .list<StoredTransitGatewayPrefixListReference>()
+    .filter((e) => e.key.startsWith(`tgw-plr/${routeTableId}/`))
+    .map((e) => ({
+      TransitGatewayRouteTableId: e.value.TransitGatewayRouteTableId,
+      PrefixListId: e.value.PrefixListId,
+      PrefixListOwnerId: e.value.PrefixListOwnerId,
+      State: e.value.State,
+      Blackhole: e.value.Blackhole,
+      TransitGatewayAttachment: e.value.TransitGatewayAttachment,
+    }));
+  return { TransitGatewayPrefixListReferences: refs };
+};
+
+const GetTransitGatewayRouteTableAssociations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const rtb = ctx.store.get<StoredTransitGatewayRouteTable>(
+    transitGatewayRouteTableKey(routeTableId),
+  );
+  if (rtb === undefined) {
+    throw awsError(
+      "InvalidRouteTableID.NotFound",
+      `The transit gateway route table '${routeTableId}' does not exist`,
+      400,
+    );
+  }
+  return { Associations: [] };
+};
+
+const GetTransitGatewayRouteTablePropagations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const rtb = ctx.store.get<StoredTransitGatewayRouteTable>(
+    transitGatewayRouteTableKey(routeTableId),
+  );
+  if (rtb === undefined) {
+    throw awsError(
+      "InvalidRouteTableID.NotFound",
+      `The transit gateway route table '${routeTableId}' does not exist`,
+      400,
+    );
+  }
+  return { TransitGatewayRouteTablePropagations: [] };
+};
+
+const GetVerifiedAccessEndpointPolicy: OperationHandler = (input, ctx) => {
+  const endpointId =
+    typeof input["VerifiedAccessEndpointId"] === "string"
+      ? input["VerifiedAccessEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredVerifiedAccessEndpoint>(
+    verifiedAccessEndpointKey(endpointId),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessEndpointId.NotFound",
+      `The verified access endpoint '${endpointId}' does not exist`,
+      400,
+    );
+  }
+  return { PolicyEnabled: false, PolicyDocument: "" };
+};
+
+const GetVerifiedAccessEndpointTargets: OperationHandler = (input, ctx) => {
+  const endpointId =
+    typeof input["VerifiedAccessEndpointId"] === "string"
+      ? input["VerifiedAccessEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredVerifiedAccessEndpoint>(
+    verifiedAccessEndpointKey(endpointId),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessEndpointId.NotFound",
+      `The verified access endpoint '${endpointId}' does not exist`,
+      400,
+    );
+  }
+  return { VerifiedAccessEndpointTargets: [] };
+};
+
+const GetVerifiedAccessGroupPolicy: OperationHandler = (input, ctx) => {
+  const groupId =
+    typeof input["VerifiedAccessGroupId"] === "string"
+      ? input["VerifiedAccessGroupId"]
+      : "";
+  const group = ctx.store.get<StoredVerifiedAccessGroup>(
+    verifiedAccessGroupKey(groupId),
+  );
+  if (group === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessGroupId.NotFound",
+      `The verified access group '${groupId}' does not exist`,
+      400,
+    );
+  }
+  return { PolicyEnabled: false, PolicyDocument: "" };
+};
+
 const ProvisionIpamPoolCidr: OperationHandler = (input, ctx) => {
   const poolId =
     typeof input["IpamPoolId"] === "string" ? input["IpamPoolId"] : "";
@@ -15784,6 +16045,18 @@ const ec2: ServiceDefinition = {
     GetRouteServerRoutingDatabase,
     GetSecurityGroupsForVpc,
     GetSpotPlacementScores,
+    GetSubnetCidrReservations,
+    GetTransitGatewayAttachmentPropagations,
+    GetTransitGatewayMeteringPolicyEntries,
+    GetTransitGatewayMulticastDomainAssociations,
+    GetTransitGatewayPolicyTableAssociations,
+    GetTransitGatewayPolicyTableEntries,
+    GetTransitGatewayPrefixListReferences,
+    GetTransitGatewayRouteTableAssociations,
+    GetTransitGatewayRouteTablePropagations,
+    GetVerifiedAccessEndpointPolicy,
+    GetVerifiedAccessEndpointTargets,
+    GetVerifiedAccessGroupPolicy,
     ProvisionIpamPoolCidr,
   },
   model,

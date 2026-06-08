@@ -65,6 +65,9 @@ type StoredTable = {
   pointInTimeRecovery?: boolean;
   globalSecondaryIndexes?: SecondaryIndex[];
   localSecondaryIndexes?: SecondaryIndex[];
+  streamSpecification?: { StreamEnabled: boolean; StreamViewType: string };
+  latestStreamArn?: string;
+  latestStreamLabel?: string;
 };
 
 type StoredBackup = {
@@ -150,8 +153,64 @@ type StoredResourcePolicy = {
   RevisionId: string;
 };
 
+type StoredStreamRecord = {
+  eventID: string;
+  eventVersion: string;
+  eventSource: string;
+  awsRegion: string;
+  eventName: "INSERT" | "MODIFY" | "REMOVE";
+  dynamodb: {
+    ApproximateCreationDateTime: number;
+    Keys: Item;
+    NewImage?: Item;
+    OldImage?: Item;
+    SequenceNumber: string;
+    SizeBytes: number;
+    StreamViewType: string;
+  };
+};
+
+type StoredStream = {
+  kind: "stream";
+  streamArn: string;
+  tableName: string;
+  shardId: string;
+  records: StoredStreamRecord[];
+  sequenceNumber: number;
+};
+
 const tableArn = (region: string, account: string, name: string): string =>
   `arn:aws:dynamodb:${region}:${account}:table/${name}`;
+
+const streamArnFor = (
+  region: string,
+  account: string,
+  name: string,
+  label: string,
+): string =>
+  `arn:aws:dynamodb:${region}:${account}:table/${name}/stream/${label}`;
+
+const streamKey = (arn: string): string => `stream:${arn}`;
+
+const shardIdFor = (label: string): string =>
+  `shardId-00000001234567890123-${label.replace(/[^0-9a-z]/gi, "").slice(0, 8)}`;
+
+const encodeIterator = (arn: string, shard: string, position: number): string =>
+  btoa(JSON.stringify({ arn, shard, position }));
+
+const decodeIterator = (
+  iterator: string,
+): { arn: string; shard: string; position: number } => {
+  try {
+    return JSON.parse(atob(iterator)) as {
+      arn: string;
+      shard: string;
+      position: number;
+    };
+  } catch {
+    throw awsError("InvalidParameterException", "Invalid ShardIterator", 400);
+  }
+};
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -306,6 +365,13 @@ const tableDescription = (
     description["LocalSecondaryIndexes"] = table.localSecondaryIndexes.map(
       (index) => lsiDescription(ctx, table, index),
     );
+  }
+  if (table.streamSpecification !== undefined) {
+    description["StreamSpecification"] = table.streamSpecification;
+  }
+  if (table.latestStreamArn !== undefined) {
+    description["LatestStreamArn"] = table.latestStreamArn;
+    description["LatestStreamLabel"] = table.latestStreamLabel;
   }
   return description;
 };
@@ -545,6 +611,29 @@ const CreateTable: OperationHandler = (input, ctx) => {
   if (gsi.length > 0) table.globalSecondaryIndexes = gsi;
   const lsi = parseSecondaryIndexes(input["LocalSecondaryIndexes"]);
   if (lsi.length > 0) table.localSecondaryIndexes = lsi;
+  const streamSpec = asRecord(input["StreamSpecification"]);
+  if (streamSpec["StreamEnabled"] === true) {
+    const viewType =
+      typeof streamSpec["StreamViewType"] === "string"
+        ? streamSpec["StreamViewType"]
+        : "NEW_IMAGE";
+    const label = new Date().toISOString().replace(/[:.]/g, "");
+    table.streamSpecification = {
+      StreamEnabled: true,
+      StreamViewType: viewType,
+    };
+    table.latestStreamArn = streamArnFor(ctx.region, ctx.account, name, label);
+    table.latestStreamLabel = label;
+    const stream: StoredStream = {
+      kind: "stream",
+      streamArn: table.latestStreamArn,
+      tableName: name,
+      shardId: shardIdFor(label),
+      records: [],
+      sequenceNumber: 0,
+    };
+    ctx.store.set(streamKey(table.latestStreamArn), stream);
+  }
   ctx.store.set(name, table);
   return { TableDescription: tableDescription(ctx, table, "ACTIVE") };
 };
@@ -584,6 +673,66 @@ const DescribeTable: OperationHandler = (input, ctx) => {
   return { Table: tableDescription(ctx, table, "ACTIVE") };
 };
 
+const keyProjection = (table: StoredTable, item: Item): Item => {
+  const result: Item = {};
+  for (const element of table.KeySchema) {
+    const av = item[element.AttributeName];
+    if (av !== undefined) result[element.AttributeName] = av;
+  }
+  return result;
+};
+
+const appendStreamRecord = (
+  ctx: ServiceContext,
+  table: StoredTable,
+  eventName: "INSERT" | "MODIFY" | "REMOVE",
+  newImage: Item | undefined,
+  oldImage: Item | undefined,
+): void => {
+  const spec = table.streamSpecification;
+  if (
+    spec === undefined ||
+    !spec.StreamEnabled ||
+    table.latestStreamArn === undefined
+  )
+    return;
+  const key = streamKey(table.latestStreamArn);
+  const stream = ctx.store.get<StoredStream>(key);
+  if (stream === undefined) return;
+  const seqNum = stream.sequenceNumber + 1;
+  const source = newImage ?? oldImage ?? {};
+  const keys = keyProjection(table, source);
+  const rec: StoredStreamRecord = {
+    eventID: crypto.randomUUID(),
+    eventVersion: "1.1",
+    eventSource: "aws:dynamodb",
+    awsRegion: ctx.region,
+    eventName,
+    dynamodb: {
+      ApproximateCreationDateTime: Math.floor(Date.now() / 1000),
+      Keys: keys,
+      SequenceNumber: String(seqNum).padStart(21, "0"),
+      SizeBytes: 1,
+      StreamViewType: spec.StreamViewType,
+    },
+  };
+  if (
+    spec.StreamViewType === "NEW_IMAGE" ||
+    spec.StreamViewType === "NEW_AND_OLD_IMAGES"
+  ) {
+    if (newImage !== undefined) rec.dynamodb.NewImage = newImage;
+  }
+  if (
+    spec.StreamViewType === "OLD_IMAGE" ||
+    spec.StreamViewType === "NEW_AND_OLD_IMAGES"
+  ) {
+    if (oldImage !== undefined) rec.dynamodb.OldImage = oldImage;
+  }
+  stream.records.push(rec);
+  stream.sequenceNumber = seqNum;
+  ctx.store.set(key, stream);
+};
+
 const PutItem: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
@@ -594,6 +743,8 @@ const PutItem: OperationHandler = (input, ctx) => {
   ensureConditionPasses(input, previous);
   table.items[key] = item;
   ctx.store.set(name, table);
+  const eventName = previous === undefined ? "INSERT" : "MODIFY";
+  appendStreamRecord(ctx, table, eventName, item, previous);
   return input["ReturnValues"] === "ALL_OLD" && previous !== undefined
     ? { Attributes: previous }
     : {};
@@ -633,6 +784,7 @@ const DeleteItem: OperationHandler = (input, ctx) => {
   if (previous !== undefined) {
     delete table.items[key];
     ctx.store.set(name, table);
+    appendStreamRecord(ctx, table, "REMOVE", undefined, previous);
   }
   return input["ReturnValues"] === "ALL_OLD" && previous !== undefined
     ? { Attributes: previous }
@@ -725,6 +877,7 @@ const UpdateItem: OperationHandler = (input, ctx) => {
   }
   table.items[key] = updated;
   ctx.store.set(name, table);
+  appendStreamRecord(ctx, table, "MODIFY", updated, previous);
   return updateReturnAttributes(
     input["ReturnValues"],
     previous,
@@ -1497,6 +1650,43 @@ const UpdateTable: OperationHandler = (input, ctx) => {
       existing.set(definition.AttributeName, definition);
     }
     table.AttributeDefinitions = [...existing.values()];
+    ctx.store.set(name, table);
+  }
+  const streamSpec = asRecord(input["StreamSpecification"]);
+  if (typeof streamSpec["StreamEnabled"] === "boolean") {
+    if (streamSpec["StreamEnabled"] === true) {
+      const viewType =
+        typeof streamSpec["StreamViewType"] === "string"
+          ? streamSpec["StreamViewType"]
+          : "NEW_IMAGE";
+      const label = new Date().toISOString().replace(/[:.]/g, "");
+      table.streamSpecification = {
+        StreamEnabled: true,
+        StreamViewType: viewType,
+      };
+      table.latestStreamArn = streamArnFor(
+        ctx.region,
+        ctx.account,
+        name,
+        label,
+      );
+      table.latestStreamLabel = label;
+      const stream: StoredStream = {
+        kind: "stream",
+        streamArn: table.latestStreamArn,
+        tableName: name,
+        shardId: shardIdFor(label),
+        records: [],
+        sequenceNumber: 0,
+      };
+      ctx.store.set(streamKey(table.latestStreamArn), stream);
+    } else {
+      table.streamSpecification = {
+        StreamEnabled: false,
+        StreamViewType:
+          table.streamSpecification?.StreamViewType ?? "NEW_IMAGE",
+      };
+    }
     ctx.store.set(name, table);
   }
   return { TableDescription: tableDescription(ctx, table, "ACTIVE") };
@@ -2665,6 +2855,152 @@ const ExecuteTransaction: OperationHandler = (input, ctx) => {
   return { Responses: responses };
 };
 
+const isStreamEntry = (value: unknown): value is StoredStream =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as Record<string, unknown>)["kind"] === "stream";
+
+const listStreams = (ctx: ServiceContext): StoredStream[] =>
+  ctx.store
+    .list<StoredStream>()
+    .map((entry) => entry.value)
+    .filter(isStreamEntry);
+
+const requireStream = (ctx: ServiceContext, arn: string): StoredStream => {
+  const stream = ctx.store.get<StoredStream>(streamKey(arn));
+  if (stream === undefined || !isStreamEntry(stream)) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Requested resource not found: Stream: ${arn} not found`,
+      400,
+    );
+  }
+  return stream;
+};
+
+const ListStreams: OperationHandler = (input, ctx) => {
+  const tableFilter =
+    typeof input["TableName"] === "string" ? input["TableName"] : undefined;
+  const streams = listStreams(ctx).filter(
+    (s) => tableFilter === undefined || s.tableName === tableFilter,
+  );
+  const limit =
+    typeof input["Limit"] === "number" && input["Limit"] > 0
+      ? input["Limit"]
+      : streams.length;
+  const exclusiveStart =
+    typeof input["ExclusiveStartStreamArn"] === "string"
+      ? input["ExclusiveStartStreamArn"]
+      : undefined;
+  const startIdx =
+    exclusiveStart !== undefined
+      ? streams.findIndex((s) => s.streamArn === exclusiveStart) + 1
+      : 0;
+  const sliced = streams.slice(startIdx, startIdx + limit);
+  const result: Record<string, unknown> = {
+    Streams: sliced.map((s) => ({
+      StreamArn: s.streamArn,
+      TableName: s.tableName,
+      StreamLabel: s.streamArn.split("/stream/")[1] ?? "",
+    })),
+  };
+  if (sliced.length === limit && startIdx + limit < streams.length) {
+    result["LastEvaluatedStreamArn"] =
+      sliced[sliced.length - 1]?.streamArn ?? "";
+  }
+  return result;
+};
+
+const DescribeStream: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "StreamArn");
+  const stream = requireStream(ctx, arn);
+  const label = arn.split("/stream/")[1] ?? "";
+  return {
+    StreamDescription: {
+      StreamArn: stream.streamArn,
+      StreamLabel: label,
+      StreamStatus: "ENABLED",
+      StreamViewType:
+        ctx.store.get<StoredTable>(stream.tableName)?.streamSpecification
+          ?.StreamViewType ?? "NEW_IMAGE",
+      CreationRequestDateTime: Math.floor(Date.now() / 1000),
+      TableName: stream.tableName,
+      KeySchema: ctx.store.get<StoredTable>(stream.tableName)?.KeySchema ?? [],
+      Shards: [
+        {
+          ShardId: stream.shardId,
+          SequenceNumberRange: {
+            StartingSequenceNumber: "000000000000000000001",
+          },
+        },
+      ],
+    },
+  };
+};
+
+const GetShardIterator: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "StreamArn");
+  const shardId = requireString(input, "ShardId");
+  const iteratorType =
+    typeof input["ShardIteratorType"] === "string"
+      ? input["ShardIteratorType"]
+      : "TRIM_HORIZON";
+  const stream = requireStream(ctx, arn);
+  if (stream.shardId !== shardId) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Shard ${shardId} not found in stream ${arn}`,
+      400,
+    );
+  }
+  let position: number;
+  if (iteratorType === "TRIM_HORIZON") {
+    position = 0;
+  } else if (iteratorType === "LATEST") {
+    position = stream.records.length;
+  } else if (
+    iteratorType === "AT_SEQUENCE_NUMBER" ||
+    iteratorType === "AFTER_SEQUENCE_NUMBER"
+  ) {
+    const seqNum =
+      typeof input["SequenceNumber"] === "string"
+        ? input["SequenceNumber"]
+        : "";
+    const idx = stream.records.findIndex(
+      (r) => r.dynamodb.SequenceNumber === seqNum,
+    );
+    position =
+      idx < 0 ? 0 : iteratorType === "AFTER_SEQUENCE_NUMBER" ? idx + 1 : idx;
+  } else {
+    position = 0;
+  }
+  return { ShardIterator: encodeIterator(arn, shardId, position) };
+};
+
+const GetRecords: OperationHandler = (input, ctx) => {
+  const rawIterator = requireString(input, "ShardIterator");
+  const { arn, shard, position } = decodeIterator(rawIterator);
+  const stream = requireStream(ctx, arn);
+  if (stream.shardId !== shard) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Shard ${shard} not found in stream ${arn}`,
+      400,
+    );
+  }
+  const limit =
+    typeof input["Limit"] === "number" && input["Limit"] > 0
+      ? input["Limit"]
+      : 1000;
+  const slice = stream.records.slice(position, position + limit);
+  const nextPosition = position + slice.length;
+  return {
+    Records: slice,
+    NextShardIterator: encodeIterator(arn, shard, nextPosition),
+    MillisBehindLatest: 0,
+  };
+};
+
 const dynamodb: ServiceDefinition = {
   name: "dynamodb",
   protocol: "json",
@@ -2689,6 +3025,7 @@ const dynamodb: ServiceDefinition = {
     DescribeImport,
     DescribeKinesisStreamingDestination,
     DescribeLimits,
+    DescribeStream,
     DescribeTable,
     DescribeTableReplicaAutoScaling,
     DescribeTimeToLive,
@@ -2698,10 +3035,13 @@ const dynamodb: ServiceDefinition = {
     ExecuteTransaction,
     ExportTableToPointInTime,
     GetItem,
+    GetRecords,
     GetResourcePolicy,
+    GetShardIterator,
     ImportTable,
     ListBackups,
     ListContributorInsights,
+    ListStreams,
     ListExports,
     ListGlobalTables,
     ListImports,

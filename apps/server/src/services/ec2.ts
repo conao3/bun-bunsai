@@ -25,6 +25,14 @@ type StoredInstance = {
   VpcId: string | undefined;
   ReservationId: string;
   Tags: Tag[];
+  MetadataOptions?: {
+    HttpTokens?: string;
+    HttpPutResponseHopLimit?: number;
+    HttpEndpoint?: string;
+    HttpProtocolIpv6?: string;
+    InstanceMetadataTags?: string;
+  };
+  CpuCredits?: string;
 };
 
 type StoredVpcCidrAssoc = {
@@ -10762,7 +10770,7 @@ const DescribeInstanceCreditSpecifications: OperationHandler = (input, ctx) => {
   return {
     InstanceCreditSpecifications: instances.map((instance) => ({
       InstanceId: instance.InstanceId,
-      CpuCredits: "standard",
+      CpuCredits: instance.CpuCredits ?? "standard",
     })),
   };
 };
@@ -16037,6 +16045,293 @@ const ModifyIdentityIdFormat: OperationHandler = (_input, _ctx) => {
   return {};
 };
 
+const ModifyImageAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(id));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${id}]' does not exist`,
+      400,
+    );
+  }
+  const desc = input["Description"] as { Value?: string } | undefined;
+  if (desc !== undefined && typeof desc["Value"] === "string") {
+    image.Description = desc["Value"];
+  }
+  ctx.store.set(imageKey(id), image);
+  return {};
+};
+
+const ModifyInstanceAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${id}' does not exist`,
+      400,
+    );
+  }
+  const instanceType = input["InstanceType"] as { Value?: string } | undefined;
+  if (instanceType !== undefined && typeof instanceType["Value"] === "string") {
+    instance.InstanceType = instanceType["Value"];
+  }
+  ctx.store.set(instanceKey(id), instance);
+  return {};
+};
+
+const ModifyInstanceCapacityReservationAttributes: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id = typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { Return: true };
+};
+
+const ModifyInstanceConnectEndpoint: OperationHandler = (input, ctx) => {
+  const endpointId =
+    typeof input["InstanceConnectEndpointId"] === "string"
+      ? input["InstanceConnectEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredInstanceConnectEndpoint>(
+    instanceConnectEndpointKey(endpointId),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidInstanceConnectEndpointId.NotFound",
+      `The EC2 Instance Connect Endpoint '${endpointId}' does not exist`,
+      400,
+    );
+  }
+  const sgs = input["SecurityGroupIds"];
+  if (Array.isArray(sgs)) {
+    endpoint.SecurityGroupIds = sgs.map((g) => String(g));
+  }
+  if (typeof input["PreserveClientIp"] === "boolean") {
+    endpoint.PreserveClientIp = input["PreserveClientIp"];
+  }
+  ctx.store.set(instanceConnectEndpointKey(endpointId), endpoint);
+  return { Return: true };
+};
+
+const ModifyInstanceCpuOptions: OperationHandler = (input, ctx) => {
+  const id = typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return {
+    InstanceId: id,
+    CoreCount:
+      typeof input["CoreCount"] === "number" ? input["CoreCount"] : undefined,
+    ThreadsPerCore:
+      typeof input["ThreadsPerCore"] === "number"
+        ? input["ThreadsPerCore"]
+        : undefined,
+    NestedVirtualization:
+      typeof input["NestedVirtualization"] === "string"
+        ? input["NestedVirtualization"]
+        : undefined,
+  };
+};
+
+const ModifyInstanceCreditSpecification: OperationHandler = (input, ctx) => {
+  const specs = input["InstanceCreditSpecifications"];
+  const items = Array.isArray(specs) ? specs : [];
+  const successful: { InstanceId: string }[] = [];
+  for (const item of items) {
+    if (typeof item !== "object" || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    const id = typeof rec["InstanceId"] === "string" ? rec["InstanceId"] : "";
+    const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+    if (instance === undefined) continue;
+    if (typeof rec["CpuCredits"] === "string") {
+      instance.CpuCredits = rec["CpuCredits"];
+      ctx.store.set(instanceKey(id), instance);
+    }
+    successful.push({ InstanceId: id });
+  }
+  return {
+    SuccessfulInstanceCreditSpecifications: successful,
+    UnsuccessfulInstanceCreditSpecifications: [],
+  };
+};
+
+const ModifyInstanceEventStartTime: OperationHandler = (input, ctx) => {
+  const id = typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { Event: undefined };
+};
+
+const ModifyInstanceEventWindow: OperationHandler = (input, ctx) => {
+  const windowId =
+    typeof input["InstanceEventWindowId"] === "string"
+      ? input["InstanceEventWindowId"]
+      : "";
+  const eventWindow = ctx.store.get<StoredInstanceEventWindow>(
+    instanceEventWindowKey(windowId),
+  );
+  if (eventWindow === undefined) {
+    throw awsError(
+      "InvalidInstanceEventWindowId.NotFound",
+      `The event window '${windowId}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Name"] === "string") {
+    eventWindow.Name = input["Name"];
+  }
+  if (typeof input["CronExpression"] === "string") {
+    eventWindow.CronExpression = input["CronExpression"];
+    eventWindow.TimeRanges = [];
+  }
+  const timeRanges = input["TimeRanges"];
+  if (Array.isArray(timeRanges)) {
+    eventWindow.CronExpression = undefined;
+    eventWindow.TimeRanges = timeRanges.map((r) => {
+      const rec = (r as Record<string, unknown>) ?? {};
+      return {
+        StartWeekDay:
+          typeof rec["StartWeekDay"] === "string" ? rec["StartWeekDay"] : "",
+        StartHour: typeof rec["StartHour"] === "number" ? rec["StartHour"] : 0,
+        EndWeekDay:
+          typeof rec["EndWeekDay"] === "string" ? rec["EndWeekDay"] : "",
+        EndHour: typeof rec["EndHour"] === "number" ? rec["EndHour"] : 0,
+      };
+    });
+  }
+  ctx.store.set(instanceEventWindowKey(windowId), eventWindow);
+  return {
+    InstanceEventWindow: {
+      InstanceEventWindowId: eventWindow.InstanceEventWindowId,
+      Name: eventWindow.Name,
+      CronExpression: eventWindow.CronExpression,
+      TimeRanges: eventWindow.TimeRanges,
+      State: eventWindow.State,
+      Tags: eventWindow.Tags,
+    },
+  };
+};
+
+const ModifyInstanceMaintenanceOptions: OperationHandler = (input, ctx) => {
+  const id = typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return {
+    InstanceId: id,
+    AutoRecovery:
+      typeof input["AutoRecovery"] === "string"
+        ? input["AutoRecovery"]
+        : "default",
+    RebootMigration:
+      typeof input["RebootMigration"] === "string"
+        ? input["RebootMigration"]
+        : "default",
+  };
+};
+
+const ModifyInstanceMetadataOptions: OperationHandler = (input, ctx) => {
+  const id = typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${id}' does not exist`,
+      400,
+    );
+  }
+  const current = instance.MetadataOptions ?? {};
+  if (typeof input["HttpTokens"] === "string") {
+    current.HttpTokens = input["HttpTokens"];
+  }
+  if (typeof input["HttpPutResponseHopLimit"] === "number") {
+    current.HttpPutResponseHopLimit = input["HttpPutResponseHopLimit"];
+  }
+  if (typeof input["HttpEndpoint"] === "string") {
+    current.HttpEndpoint = input["HttpEndpoint"];
+  }
+  if (typeof input["HttpProtocolIpv6"] === "string") {
+    current.HttpProtocolIpv6 = input["HttpProtocolIpv6"];
+  }
+  if (typeof input["InstanceMetadataTags"] === "string") {
+    current.InstanceMetadataTags = input["InstanceMetadataTags"];
+  }
+  instance.MetadataOptions = current;
+  ctx.store.set(instanceKey(id), instance);
+  return {
+    InstanceId: id,
+    InstanceMetadataOptions: {
+      HttpTokens: current.HttpTokens,
+      HttpPutResponseHopLimit: current.HttpPutResponseHopLimit,
+      HttpEndpoint: current.HttpEndpoint,
+      HttpProtocolIpv6: current.HttpProtocolIpv6,
+      InstanceMetadataTags: current.InstanceMetadataTags,
+      State: "applied",
+    },
+  };
+};
+
+const ModifyInstanceNetworkPerformanceOptions: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id = typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return {
+    InstanceId: id,
+    BandwidthWeighting:
+      typeof input["BandwidthWeighting"] === "string"
+        ? input["BandwidthWeighting"]
+        : "default",
+  };
+};
+
+const ModifyInstancePlacement: OperationHandler = (input, ctx) => {
+  const id = typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { Return: true };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -16669,6 +16964,18 @@ const ec2: ServiceDefinition = {
     ModifyHosts,
     ModifyIdFormat,
     ModifyIdentityIdFormat,
+    ModifyImageAttribute,
+    ModifyInstanceAttribute,
+    ModifyInstanceCapacityReservationAttributes,
+    ModifyInstanceConnectEndpoint,
+    ModifyInstanceCpuOptions,
+    ModifyInstanceCreditSpecification,
+    ModifyInstanceEventStartTime,
+    ModifyInstanceEventWindow,
+    ModifyInstanceMaintenanceOptions,
+    ModifyInstanceMetadataOptions,
+    ModifyInstanceNetworkPerformanceOptions,
+    ModifyInstancePlacement,
     ProvisionIpamPoolCidr,
   },
   model,

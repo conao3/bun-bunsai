@@ -34,10 +34,15 @@ test("ACM certificate request, describe and delete lifecycle", async () => {
   const certificateArn = requested.CertificateArn;
   expect(certificateArn).toBeDefined();
 
+  const pending = await client.send(
+    new DescribeCertificateCommand({ CertificateArn: certificateArn }),
+  );
+  expect(pending.Certificate?.DomainName).toBe(domainName);
+  expect(pending.Certificate?.Status).toBe("PENDING_VALIDATION");
+
   const described = await client.send(
     new DescribeCertificateCommand({ CertificateArn: certificateArn }),
   );
-  expect(described.Certificate?.DomainName).toBe(domainName);
   expect(described.Certificate?.Status).toBe("ISSUED");
 
   const listed = await client.send(new ListCertificatesCommand({}));

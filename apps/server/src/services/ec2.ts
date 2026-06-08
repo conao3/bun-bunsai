@@ -1339,6 +1339,12 @@ const tgwMcastSourceKey = (
   groupIp: string,
   niId: string,
 ): string => `tgw-mcast-source/${domainId}/${groupIp}/${niId}`;
+const defaultCreditSpecKey = (instanceFamily: string): string =>
+  `default-credit-spec/${instanceFamily}`;
+const ebsDefaultKmsKeyIdKey = (): string => `ebs-default-kms-key-id/singleton`;
+const enabledIpamPolicyKey = (): string => `enabled-ipam-policy/singleton`;
+const instanceMetadataDefaultsKey = (): string =>
+  `instance-metadata-defaults/singleton`;
 
 const allInstances = (ctx: ServiceContext): StoredInstance[] =>
   ctx.store
@@ -14601,6 +14607,226 @@ const GetDeclarativePoliciesReportSummary: OperationHandler = (input, _ctx) => {
   );
 };
 
+const ModifyDefaultCreditSpecification: OperationHandler = (input, ctx) => {
+  const instanceFamily =
+    typeof input["InstanceFamily"] === "string" ? input["InstanceFamily"] : "";
+  const cpuCredits =
+    typeof input["CpuCredits"] === "string" ? input["CpuCredits"] : "standard";
+  ctx.store.set(defaultCreditSpecKey(instanceFamily), {
+    InstanceFamily: instanceFamily,
+    CpuCredits: cpuCredits,
+  });
+  return {
+    InstanceFamilyCreditSpecification: {
+      InstanceFamily: instanceFamily,
+      CpuCredits: cpuCredits,
+    },
+  };
+};
+
+const GetDefaultCreditSpecification: OperationHandler = (input, ctx) => {
+  const instanceFamily =
+    typeof input["InstanceFamily"] === "string" ? input["InstanceFamily"] : "";
+  const stored = ctx.store.get<{ InstanceFamily: string; CpuCredits: string }>(
+    defaultCreditSpecKey(instanceFamily),
+  );
+  return {
+    InstanceFamilyCreditSpecification: {
+      InstanceFamily: instanceFamily,
+      CpuCredits: stored?.CpuCredits ?? "standard",
+    },
+  };
+};
+
+const ModifyEbsDefaultKmsKeyId: OperationHandler = (input, ctx) => {
+  const kmsKeyId =
+    typeof input["KmsKeyId"] === "string" ? input["KmsKeyId"] : "";
+  ctx.store.set(ebsDefaultKmsKeyIdKey(), { KmsKeyId: kmsKeyId });
+  return { KmsKeyId: kmsKeyId };
+};
+
+const ResetEbsDefaultKmsKeyId: OperationHandler = (_input, ctx) => {
+  ctx.store.delete(ebsDefaultKmsKeyIdKey());
+  return { KmsKeyId: "alias/aws/ebs" };
+};
+
+const GetEbsDefaultKmsKeyId: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<{ KmsKeyId: string }>(ebsDefaultKmsKeyIdKey());
+  return { KmsKeyId: stored?.KmsKeyId ?? "alias/aws/ebs" };
+};
+
+const GetEnabledIpamPolicy: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<{ IpamPolicyId: string }>(
+    enabledIpamPolicyKey(),
+  );
+  if (stored === undefined) {
+    return { IpamPolicyEnabled: false };
+  }
+  return {
+    IpamPolicyEnabled: true,
+    IpamPolicyId: stored.IpamPolicyId,
+    ManagedBy: "account",
+  };
+};
+
+const GetFlowLogsIntegrationTemplate: OperationHandler = (input, ctx) => {
+  const flowLogId =
+    typeof input["FlowLogId"] === "string" ? input["FlowLogId"] : "";
+  const flowLog = ctx.store.get<StoredFlowLog>(flowLogKey(flowLogId));
+  if (flowLog === undefined) {
+    throw awsError(
+      "InvalidFlowLogId.NotFound",
+      `The flow log '${flowLogId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    Result: `AWSTemplateFormatVersion: '2010-09-09'\nDescription: Flow Logs Integration Template for ${flowLogId}\n`,
+  };
+};
+
+const GetGroupsForCapacityReservation: OperationHandler = (input, ctx) => {
+  const reservationId =
+    typeof input["CapacityReservationId"] === "string"
+      ? input["CapacityReservationId"]
+      : "";
+  const reservation = ctx.store.get<StoredCapacityReservation>(
+    capacityReservationKey(reservationId),
+  );
+  if (reservation === undefined) {
+    throw awsError(
+      "InvalidCapacityReservationId.NotFound",
+      `The capacity reservation '${reservationId}' does not exist`,
+      400,
+    );
+  }
+  return { CapacityReservationGroups: [] };
+};
+
+const GetHostReservationPurchasePreview: OperationHandler = (_input, _ctx) => {
+  return {
+    CurrencyCode: "USD",
+    Purchase: [],
+    TotalHourlyPrice: "0.000",
+    TotalUpfrontPrice: "0.00",
+  };
+};
+
+const GetImageAncestry: OperationHandler = (input, ctx) => {
+  const imageId = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(imageId));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The AMI '${imageId}' does not exist`,
+      400,
+    );
+  }
+  return { ImageAncestryEntries: [] };
+};
+
+const ModifyInstanceMetadataDefaults: OperationHandler = (input, ctx) => {
+  const existing =
+    ctx.store.get<Record<string, unknown>>(instanceMetadataDefaultsKey()) ?? {};
+  if (typeof input["HttpTokens"] === "string") {
+    existing["HttpTokens"] = input["HttpTokens"];
+  }
+  if (typeof input["HttpPutResponseHopLimit"] === "number") {
+    existing["HttpPutResponseHopLimit"] = input["HttpPutResponseHopLimit"];
+  }
+  if (typeof input["HttpEndpoint"] === "string") {
+    existing["HttpEndpoint"] = input["HttpEndpoint"];
+  }
+  if (typeof input["InstanceMetadataTags"] === "string") {
+    existing["InstanceMetadataTags"] = input["InstanceMetadataTags"];
+  }
+  ctx.store.set(instanceMetadataDefaultsKey(), existing);
+  return { Return: true };
+};
+
+const GetInstanceMetadataDefaults: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<Record<string, unknown>>(
+    instanceMetadataDefaultsKey(),
+  );
+  return {
+    AccountLevel: {
+      HttpTokens: stored?.["HttpTokens"] ?? "optional",
+      HttpPutResponseHopLimit: stored?.["HttpPutResponseHopLimit"] ?? 1,
+      HttpEndpoint: stored?.["HttpEndpoint"] ?? "enabled",
+      InstanceMetadataTags: stored?.["InstanceMetadataTags"] ?? "disabled",
+    },
+  };
+};
+
+const GetInstanceTpmEkPub: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(instanceId));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${instanceId}' does not exist`,
+      400,
+    );
+  }
+  const keyType =
+    typeof input["KeyType"] === "string" ? input["KeyType"] : "rsa-2048";
+  const keyFormat =
+    typeof input["KeyFormat"] === "string" ? input["KeyFormat"] : "der";
+  return {
+    InstanceId: instanceId,
+    KeyType: keyType,
+    KeyFormat: keyFormat,
+    KeyValue: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA",
+  };
+};
+
+const GetInstanceTypesFromInstanceRequirements: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return {
+    InstanceTypes: [
+      { InstanceType: "t3.micro" },
+      { InstanceType: "t3.small" },
+      { InstanceType: "t3.medium" },
+      { InstanceType: "m5.large" },
+      { InstanceType: "m5.xlarge" },
+    ],
+  };
+};
+
+const GetInstanceUefiData: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(instanceId));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${instanceId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    InstanceId: instanceId,
+    UefiData: "AAAA",
+  };
+};
+
+const GetIpamAddressHistory: OperationHandler = (input, ctx) => {
+  const scopeId =
+    typeof input["IpamScopeId"] === "string" ? input["IpamScopeId"] : "";
+  const scope = ctx.store.get<StoredIpamScope>(ipamScopeKey(scopeId));
+  if (scope === undefined) {
+    throw awsError(
+      "InvalidIpamScopeId.NotFound",
+      `The IPAM scope '${scopeId}' does not exist`,
+      400,
+    );
+  }
+  return { HistoryRecords: [] };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -15157,6 +15383,22 @@ const ec2: ServiceDefinition = {
     GetConsoleOutput,
     GetConsoleScreenshot,
     GetDeclarativePoliciesReportSummary,
+    ModifyDefaultCreditSpecification,
+    GetDefaultCreditSpecification,
+    ModifyEbsDefaultKmsKeyId,
+    ResetEbsDefaultKmsKeyId,
+    GetEbsDefaultKmsKeyId,
+    GetEnabledIpamPolicy,
+    GetFlowLogsIntegrationTemplate,
+    GetGroupsForCapacityReservation,
+    GetHostReservationPurchasePreview,
+    GetImageAncestry,
+    ModifyInstanceMetadataDefaults,
+    GetInstanceMetadataDefaults,
+    GetInstanceTpmEkPub,
+    GetInstanceTypesFromInstanceRequirements,
+    GetInstanceUefiData,
+    GetIpamAddressHistory,
   },
   model,
 } as const;

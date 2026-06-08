@@ -2632,7 +2632,9 @@ const UpdateApiKey: OperationHandler = (input, ctx) => {
     enabled:
       patched["enabled"] === "false" || patched["enabled"] === false
         ? false
-        : k.enabled,
+        : patched["enabled"] === "true" || patched["enabled"] === true
+          ? true
+          : k.enabled,
     lastUpdatedDate: new Date(),
   };
   ctx.store.set(apiKeyKey(id), updated);
@@ -3279,18 +3281,29 @@ const UpdateUsagePlan: OperationHandler = (input, ctx) => {
     apiStages: Array.isArray(patched["apiStages"])
       ? (patched["apiStages"] as Array<{ apiId: string; stage: string }>)
       : plan.apiStages,
-    throttle:
-      patched["throttle"] != null && typeof patched["throttle"] === "object"
-        ? (patched["throttle"] as { burstLimit?: number; rateLimit?: number })
-        : plan.throttle,
-    quota:
-      patched["quota"] != null && typeof patched["quota"] === "object"
-        ? (patched["quota"] as {
-            limit?: number;
-            offset?: number;
-            period?: string;
-          })
-        : plan.quota,
+    throttle: (() => {
+      const b = patched["throttle/burstLimit"];
+      const r = patched["throttle/rateLimit"];
+      if (b !== undefined || r !== undefined) {
+        return {
+          burstLimit: b !== undefined ? Number(b) : plan.throttle?.burstLimit,
+          rateLimit: r !== undefined ? Number(r) : plan.throttle?.rateLimit,
+        };
+      }
+      return plan.throttle;
+    })(),
+    quota: (() => {
+      const l = patched["quota/limit"];
+      const p = patched["quota/period"];
+      if (l !== undefined || p !== undefined) {
+        return {
+          limit: l !== undefined ? Number(l) : plan.quota?.limit,
+          offset: plan.quota?.offset,
+          period: p !== undefined ? String(p) : plan.quota?.period,
+        };
+      }
+      return plan.quota;
+    })(),
     productCode: stringOrUndefined(patched["productCode"]) ?? plan.productCode,
     tags: plan.tags,
   };

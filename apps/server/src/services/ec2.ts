@@ -645,6 +645,7 @@ type StoredImage = {
   OwnerId: string;
   CreationDate: string;
   Tags: Tag[];
+  DeprecationTime?: string;
 };
 
 type StoredInstanceConnectEndpoint = {
@@ -1305,6 +1306,12 @@ const publicIpv4PoolCidrKey = (poolId: string, cidr: string): string =>
   `ipv4-pool-cidr/${poolId}/${cidr}`;
 const instanceEventNotificationKey = (): string => `ien/singleton`;
 const ebsEncryptionByDefaultKey = (): string => `ebs-enc-by-default/singleton`;
+const serialConsoleAccessKey = (): string => `serial-console-access/singleton`;
+const imageBlockPublicAccessKey = (): string =>
+  `image-block-public-access/singleton`;
+const snapshotBlockPublicAccessKey = (): string =>
+  `snapshot-block-public-access/singleton`;
+const vpcClassicLinkKey = (id: string): string => `vpc-classic-link/${id}`;
 const spotInstanceRequestKey = (id: string): string => `sir/${id}`;
 const spotFleetRequestKey = (id: string): string => `sfr/${id}`;
 const tgwMcastMemberKey = (
@@ -13183,8 +13190,23 @@ const DescribeVpcBlockPublicAccessOptions: OperationHandler = (
   };
 };
 
-const DescribeVpcClassicLink: OperationHandler = (_input, _ctx) => {
-  return { Vpcs: [] };
+const DescribeVpcClassicLink: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VpcIds"]);
+  const vpcs = allVpcs(ctx).filter(
+    (v) => ids.length === 0 || ids.includes(v.VpcId),
+  );
+  return {
+    Vpcs: vpcs.map((v) => {
+      const cl = ctx.store.get<{ enabled: boolean }>(
+        vpcClassicLinkKey(v.VpcId),
+      );
+      return {
+        VpcId: v.VpcId,
+        ClassicLinkEnabled: cl?.enabled ?? false,
+        Tags: v.Tags,
+      };
+    }),
+  };
 };
 
 const DescribeVpcClassicLinkDnsSupport: OperationHandler = (_input, _ctx) => {
@@ -13508,6 +13530,142 @@ const DisableImage: OperationHandler = (input, ctx) => {
   }
   ctx.store.set(imageKey(imageId), { ...image, State: "disabled" });
   return { Return: true };
+};
+
+const DisableImageBlockPublicAccess: OperationHandler = (_input, ctx) => {
+  ctx.store.set(imageBlockPublicAccessKey(), { state: "unblocked" });
+  return { ImageBlockPublicAccessState: "unblocked" };
+};
+
+const DisableImageDeprecation: OperationHandler = (input, ctx) => {
+  const imageId = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(imageId));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${imageId}]' does not exist`,
+      400,
+    );
+  }
+  ctx.store.set(imageKey(imageId), { ...image, DeprecationTime: undefined });
+  return { Return: true };
+};
+
+const DisableImageDeregistrationProtection: OperationHandler = (input, ctx) => {
+  const imageId = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(imageId));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${imageId}]' does not exist`,
+      400,
+    );
+  }
+  return { Return: "successful" };
+};
+
+const DisableInstanceSqlHaStandbyDetections: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const instanceIds = stringList(input["InstanceIds"]);
+  return {
+    Instances: instanceIds.map((id) => ({ InstanceId: id })),
+  };
+};
+
+const DisableIpamOrganizationAdminAccount: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Success: true };
+};
+
+const DisableIpamPolicy: OperationHandler = (input, ctx) => {
+  const policyId =
+    typeof input["IpamPolicyId"] === "string" ? input["IpamPolicyId"] : "";
+  const policy = ctx.store.get<StoredIpamPolicy>(ipamPolicyKey(policyId));
+  if (policy === undefined) {
+    throw awsError(
+      "InvalidIpamPolicyId.NotFound",
+      `The IPAM policy ID '${policyId}' does not exist`,
+      400,
+    );
+  }
+  return { Return: true };
+};
+
+const DisableRouteServerPropagation: OperationHandler = (input, _ctx) => {
+  const routeServerId =
+    typeof input["RouteServerId"] === "string" ? input["RouteServerId"] : "";
+  const routeTableId =
+    typeof input["RouteTableId"] === "string" ? input["RouteTableId"] : "";
+  return {
+    RouteServerPropagation: {
+      RouteServerId: routeServerId,
+      RouteTableId: routeTableId,
+      State: "deleting",
+    },
+  };
+};
+
+const DisableSerialConsoleAccess: OperationHandler = (_input, ctx) => {
+  ctx.store.set(serialConsoleAccessKey(), { enabled: false });
+  return { SerialConsoleAccessEnabled: false };
+};
+
+const DisableSnapshotBlockPublicAccess: OperationHandler = (_input, ctx) => {
+  ctx.store.set(snapshotBlockPublicAccessKey(), { state: "unblocked" });
+  return { State: "unblocked" };
+};
+
+const DisableTransitGatewayRouteTablePropagation: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const rtbId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : undefined;
+  return {
+    Propagation: {
+      TransitGatewayRouteTableId: rtbId,
+      TransitGatewayAttachmentId: attachmentId,
+      State: "disabled",
+    },
+  };
+};
+
+const DisableVgwRoutePropagation: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
+const DisableVpcClassicLink: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const vpc = ctx.store.get<StoredVpc>(vpcKey(vpcId));
+  if (vpc === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${vpcId}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.set(vpcClassicLinkKey(vpcId), { enabled: false });
+  return { Return: true };
+};
+
+const EnableSerialConsoleAccess: OperationHandler = (_input, ctx) => {
+  ctx.store.set(serialConsoleAccessKey(), { enabled: true });
+  return { SerialConsoleAccessEnabled: true };
+};
+
+const GetSerialConsoleAccessStatus: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<{ enabled: boolean }>(serialConsoleAccessKey());
+  return { SerialConsoleAccessEnabled: stored?.enabled ?? true };
 };
 
 const ec2: ServiceDefinition = {
@@ -13989,6 +14147,20 @@ const ec2: ServiceDefinition = {
     DisableFastLaunch,
     DisableFastSnapshotRestores,
     DisableImage,
+    DisableImageBlockPublicAccess,
+    DisableImageDeprecation,
+    DisableImageDeregistrationProtection,
+    DisableInstanceSqlHaStandbyDetections,
+    DisableIpamOrganizationAdminAccount,
+    DisableIpamPolicy,
+    DisableRouteServerPropagation,
+    DisableSerialConsoleAccess,
+    DisableSnapshotBlockPublicAccess,
+    DisableTransitGatewayRouteTablePropagation,
+    DisableVgwRoutePropagation,
+    DisableVpcClassicLink,
+    EnableSerialConsoleAccess,
+    GetSerialConsoleAccessStatus,
   },
   model,
 } as const;

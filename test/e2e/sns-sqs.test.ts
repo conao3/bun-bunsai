@@ -154,3 +154,75 @@ describe("SNS to SQS delivery e2e", () => {
     }
   });
 });
+
+describe("SNS MessageStructure=json e2e", () => {
+  test("sqs-specific body is delivered when sqs key present", async () => {
+    const { queueUrl, queueArn } = await makeQueue(
+      "bunsai-e2e-ms-json-sqs-key",
+    );
+    const topic = await sns().send(
+      new CreateTopicCommand({ Name: "bunsai-e2e-ms-json-sqs-topic" }),
+    );
+    const topicArn = topic.TopicArn ?? "";
+    await sns().send(
+      new SubscribeCommand({
+        TopicArn: topicArn,
+        Protocol: "sqs",
+        Endpoint: queueArn,
+      }),
+    );
+
+    await sns().send(
+      new PublishCommand({
+        TopicArn: topicArn,
+        MessageStructure: "json",
+        Message: JSON.stringify({
+          default: "fallback-body",
+          sqs: "sqs-specific-body",
+        }),
+      }),
+    );
+
+    const message = await receiveOne(queueUrl);
+    expect(message).toBeDefined();
+    const envelope = JSON.parse(message?.Body ?? "{}");
+    expect(envelope.Message).toBe("sqs-specific-body");
+
+    await sqs().send(new DeleteQueueCommand({ QueueUrl: queueUrl }));
+  });
+
+  test("default body is used when sqs key absent", async () => {
+    const { queueUrl, queueArn } = await makeQueue(
+      "bunsai-e2e-ms-json-default",
+    );
+    const topic = await sns().send(
+      new CreateTopicCommand({ Name: "bunsai-e2e-ms-json-default-topic" }),
+    );
+    const topicArn = topic.TopicArn ?? "";
+    await sns().send(
+      new SubscribeCommand({
+        TopicArn: topicArn,
+        Protocol: "sqs",
+        Endpoint: queueArn,
+      }),
+    );
+
+    await sns().send(
+      new PublishCommand({
+        TopicArn: topicArn,
+        MessageStructure: "json",
+        Message: JSON.stringify({
+          default: "only-default-body",
+          email: "email-specific-body",
+        }),
+      }),
+    );
+
+    const message = await receiveOne(queueUrl);
+    expect(message).toBeDefined();
+    const envelope = JSON.parse(message?.Body ?? "{}");
+    expect(envelope.Message).toBe("only-default-body");
+
+    await sqs().send(new DeleteQueueCommand({ QueueUrl: queueUrl }));
+  });
+});

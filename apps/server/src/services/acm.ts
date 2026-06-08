@@ -9,6 +9,13 @@ import type {
 
 const model = loadServiceModel(acmModel);
 
+type StoredDomainValidationOption = {
+  DomainName: string;
+  ValidationMethod: string;
+  ValidationStatus: string;
+  ResourceRecord?: { Name: string; Type: string; Value: string };
+};
+
 type StoredCertificate = {
   CertificateArn: string;
   DomainName: string;
@@ -17,8 +24,10 @@ type StoredCertificate = {
   Type: string;
   KeyAlgorithm: string;
   CreatedAt: number;
-  IssuedAt: number;
+  IssuedAt?: number;
   ValidationMethod: string;
+  DomainValidationOptions: StoredDomainValidationOption[];
+  describeCount: number;
   pem: string;
   tags: { Key: string; Value?: string }[];
   renewalSummary?: { RenewalStatus: string; UpdatedAt: number };
@@ -73,6 +82,13 @@ const requireCertificate = (
   return certificate;
 };
 
+const dnsResourceRecordOf = (domainName: string) =>
+  ({
+    Name: `_acm-challenge.${domainName}.`,
+    Type: "CNAME",
+    Value: `_acm-challenge.${domainName}.acm-validations.aws.`,
+  }) as const;
+
 const pemOf = (id: string): string =>
   `-----BEGIN CERTIFICATE-----\n${Buffer.from(id, "utf8").toString("base64")}\n-----END CERTIFICATE-----`;
 
@@ -95,19 +111,29 @@ const RequestCertificate: OperationHandler = (input, ctx) => {
   const id = crypto.randomUUID();
   const arn = certificateArnOf(ctx.region, ctx.account, id);
   const now = Math.floor(Date.now() / 1000);
+  const domainValidationOptions: StoredDomainValidationOption[] =
+    subjectAlternativeNames.map((name) => ({
+      DomainName: name,
+      ValidationMethod: validationMethod,
+      ValidationStatus: "PENDING_VALIDATION",
+      ...(validationMethod === "DNS"
+        ? { ResourceRecord: dnsResourceRecordOf(name) }
+        : {}),
+    }));
   const certificate: StoredCertificate = {
     CertificateArn: arn,
     DomainName: domainName,
     SubjectAlternativeNames: subjectAlternativeNames,
-    Status: "ISSUED",
+    Status: "PENDING_VALIDATION",
     Type: "AMAZON_ISSUED",
     KeyAlgorithm:
       typeof input["KeyAlgorithm"] === "string"
         ? (input["KeyAlgorithm"] as string)
         : "RSA_2048",
     CreatedAt: now,
-    IssuedAt: now,
     ValidationMethod: validationMethod,
+    DomainValidationOptions: domainValidationOptions,
+    describeCount: 0,
     pem: pemOf(id),
     tags: [],
   };
@@ -121,12 +147,18 @@ const certificateDetail = (
   CertificateArn: certificate.CertificateArn,
   DomainName: certificate.DomainName,
   SubjectAlternativeNames: certificate.SubjectAlternativeNames,
-  DomainValidationOptions: certificate.SubjectAlternativeNames.map((name) => ({
-    DomainName: name,
-    ValidationDomain: name,
-    ValidationStatus: "SUCCESS",
-    ValidationMethod: certificate.ValidationMethod,
-  })),
+  DomainValidationOptions: certificate.DomainValidationOptions.map((opt) => {
+    const entry: Record<string, unknown> = {
+      DomainName: opt.DomainName,
+      ValidationDomain: opt.DomainName,
+      ValidationStatus: opt.ValidationStatus,
+      ValidationMethod: opt.ValidationMethod,
+    };
+    if (opt.ResourceRecord !== undefined) {
+      entry["ResourceRecord"] = opt.ResourceRecord;
+    }
+    return entry;
+  }),
   Status: certificate.Status,
   Type: certificate.Type,
   KeyAlgorithm: certificate.KeyAlgorithm,
@@ -157,7 +189,26 @@ const certificateDetail = (
 
 const DescribeCertificate: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "CertificateArn");
-  const certificate = requireCertificate(ctx, arn);
+  let certificate = requireCertificate(ctx, arn);
+  if (certificate.Status === "PENDING_VALIDATION") {
+    if (certificate.describeCount >= 1) {
+      const now = Math.floor(Date.now() / 1000);
+      certificate = {
+        ...certificate,
+        Status: "ISSUED",
+        IssuedAt: now,
+        DomainValidationOptions: certificate.DomainValidationOptions.map(
+          (opt) => ({ ...opt, ValidationStatus: "SUCCESS" }),
+        ),
+      };
+    } else {
+      certificate = {
+        ...certificate,
+        describeCount: certificate.describeCount + 1,
+      };
+    }
+    ctx.store.set(certificateKey(idFromArn(arn)), certificate);
+  }
   return { Certificate: certificateDetail(certificate) };
 };
 
@@ -296,6 +347,11 @@ const ImportCertificate: OperationHandler = (input, ctx) => {
       Type: "IMPORTED",
       ImportedAt: now,
       Status: "ISSUED",
+      IssuedAt: now,
+      DomainValidationOptions: existing.DomainValidationOptions.map((opt) => ({
+        ...opt,
+        ValidationStatus: "SUCCESS",
+      })),
     };
     ctx.store.set(certificateKey(idFromArn(existingArn)), updated);
     return { CertificateArn: existingArn };
@@ -314,6 +370,14 @@ const ImportCertificate: OperationHandler = (input, ctx) => {
     IssuedAt: now,
     ImportedAt: now,
     ValidationMethod: "NONE",
+    DomainValidationOptions: [
+      {
+        DomainName: "imported.example.com",
+        ValidationMethod: "NONE",
+        ValidationStatus: "SUCCESS",
+      },
+    ],
+    describeCount: 0,
     pem: pemOf(id),
     tags,
   };

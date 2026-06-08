@@ -241,6 +241,13 @@ type StoredVerifiedAccessInstance = {
   LastUpdatedTime: string;
   Tags: Tag[];
   FipsEnabled: boolean;
+  AccessLogs?: {
+    S3: { Enabled: boolean };
+    CloudWatchLogs: { Enabled: boolean };
+    KinesisDataFirehose: { Enabled: boolean };
+    LogVersion: string;
+    IncludeTrustContext: boolean;
+  };
 };
 
 type StoredVerifiedAccessTrustProvider = {
@@ -1081,6 +1088,8 @@ type StoredVerifiedAccessEndpoint = {
   CreationTime: string;
   LastUpdatedTime: string;
   Tags: Tag[];
+  PolicyEnabled?: boolean;
+  PolicyDocument?: string;
 };
 
 type StoredVerifiedAccessGroup = {
@@ -1092,6 +1101,8 @@ type StoredVerifiedAccessGroup = {
   CreationTime: string;
   LastUpdatedTime: string;
   Tags: Tag[];
+  PolicyEnabled?: boolean;
+  PolicyDocument?: string;
 };
 
 type StoredVpcEndpoint = {
@@ -13105,7 +13116,7 @@ const DescribeVerifiedAccessInstanceLoggingConfigurations: OperationHandler = (
   return {
     LoggingConfigurations: instances.map((i) => ({
       VerifiedAccessInstanceId: i.VerifiedAccessInstanceId,
-      AccessLogs: {
+      AccessLogs: i.AccessLogs ?? {
         S3: { Enabled: false },
         CloudWatchLogs: { Enabled: false },
         KinesisDataFirehose: { Enabled: false },
@@ -15461,7 +15472,10 @@ const GetVerifiedAccessEndpointPolicy: OperationHandler = (input, ctx) => {
       400,
     );
   }
-  return { PolicyEnabled: false, PolicyDocument: "" };
+  return {
+    PolicyEnabled: endpoint.PolicyEnabled ?? false,
+    PolicyDocument: endpoint.PolicyDocument ?? "",
+  };
 };
 
 const GetVerifiedAccessEndpointTargets: OperationHandler = (input, ctx) => {
@@ -15497,7 +15511,10 @@ const GetVerifiedAccessGroupPolicy: OperationHandler = (input, ctx) => {
       400,
     );
   }
-  return { PolicyEnabled: false, PolicyDocument: "" };
+  return {
+    PolicyEnabled: group.PolicyEnabled ?? false,
+    PolicyDocument: group.PolicyDocument ?? "",
+  };
 };
 
 const ProvisionIpamPoolCidr: OperationHandler = (input, ctx) => {
@@ -16996,6 +17013,576 @@ const ModifySubnetAttribute: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const ModifyTrafficMirrorFilterRule: OperationHandler = (input, ctx) => {
+  const ruleId =
+    typeof input["TrafficMirrorFilterRuleId"] === "string"
+      ? input["TrafficMirrorFilterRuleId"]
+      : "";
+  const rule = ctx.store.get<StoredTrafficMirrorFilterRule>(
+    trafficMirrorFilterRuleKey(ruleId),
+  );
+  if (rule === undefined) {
+    throw awsError(
+      "InvalidTrafficMirrorFilterRuleId.NotFound",
+      `The Traffic Mirror filter rule '${ruleId}' does not exist`,
+      400,
+    );
+  }
+  const removeFields = stringList(input["RemoveFields"]);
+  if (typeof input["TrafficDirection"] === "string")
+    rule.TrafficDirection = input["TrafficDirection"];
+  if (integerOf(input["RuleNumber"]) !== undefined)
+    rule.RuleNumber = integerOf(input["RuleNumber"])!;
+  if (typeof input["RuleAction"] === "string")
+    rule.RuleAction = input["RuleAction"];
+  if (typeof input["DestinationCidrBlock"] === "string")
+    rule.DestinationCidrBlock = input["DestinationCidrBlock"];
+  if (typeof input["SourceCidrBlock"] === "string")
+    rule.SourceCidrBlock = input["SourceCidrBlock"];
+  if (typeof input["Description"] === "string")
+    rule.Description = input["Description"];
+  if (
+    typeof input["Protocol"] === "number" ||
+    typeof input["Protocol"] === "string"
+  )
+    rule.Protocol = integerOf(input["Protocol"]);
+  const destPortRangeRaw =
+    typeof input["DestinationPortRange"] === "object" &&
+    input["DestinationPortRange"] !== null
+      ? (input["DestinationPortRange"] as Record<string, unknown>)
+      : undefined;
+  if (destPortRangeRaw !== undefined) {
+    rule.DestinationPortRange = {
+      FromPort: integerOf(destPortRangeRaw["FromPort"]) ?? 0,
+      ToPort: integerOf(destPortRangeRaw["ToPort"]) ?? 65535,
+    };
+  }
+  const srcPortRangeRaw =
+    typeof input["SourcePortRange"] === "object" &&
+    input["SourcePortRange"] !== null
+      ? (input["SourcePortRange"] as Record<string, unknown>)
+      : undefined;
+  if (srcPortRangeRaw !== undefined) {
+    rule.SourcePortRange = {
+      FromPort: integerOf(srcPortRangeRaw["FromPort"]) ?? 0,
+      ToPort: integerOf(srcPortRangeRaw["ToPort"]) ?? 65535,
+    };
+  }
+  if (removeFields.includes("destination-port-range"))
+    rule.DestinationPortRange = undefined;
+  if (removeFields.includes("source-port-range"))
+    rule.SourcePortRange = undefined;
+  if (removeFields.includes("protocol")) rule.Protocol = undefined;
+  if (removeFields.includes("description")) rule.Description = "";
+  ctx.store.set(trafficMirrorFilterRuleKey(ruleId), rule);
+  const filter = ctx.store.get<StoredTrafficMirrorFilter>(
+    trafficMirrorFilterKey(rule.TrafficMirrorFilterId),
+  );
+  if (filter !== undefined) {
+    const updateRule = (rules: StoredTrafficMirrorFilterRule[]) => {
+      const idx = rules.findIndex(
+        (r) => r.TrafficMirrorFilterRuleId === ruleId,
+      );
+      if (idx >= 0) rules[idx] = rule;
+    };
+    updateRule(filter.IngressFilterRules);
+    updateRule(filter.EgressFilterRules);
+    ctx.store.set(trafficMirrorFilterKey(rule.TrafficMirrorFilterId), filter);
+  }
+  return {
+    TrafficMirrorFilterRule: {
+      TrafficMirrorFilterRuleId: rule.TrafficMirrorFilterRuleId,
+      TrafficMirrorFilterId: rule.TrafficMirrorFilterId,
+      TrafficDirection: rule.TrafficDirection,
+      RuleNumber: rule.RuleNumber,
+      RuleAction: rule.RuleAction,
+      Protocol: rule.Protocol,
+      DestinationPortRange: rule.DestinationPortRange,
+      SourcePortRange: rule.SourcePortRange,
+      DestinationCidrBlock: rule.DestinationCidrBlock,
+      SourceCidrBlock: rule.SourceCidrBlock,
+      Description: rule.Description,
+      Tags: rule.Tags,
+    },
+  };
+};
+
+const ModifyTrafficMirrorSession: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TrafficMirrorSessionId"] === "string"
+      ? input["TrafficMirrorSessionId"]
+      : "";
+  const session = ctx.store.get<StoredTrafficMirrorSession>(
+    trafficMirrorSessionKey(id),
+  );
+  if (session === undefined) {
+    throw awsError(
+      "InvalidTrafficMirrorSessionId.NotFound",
+      `The Traffic Mirror session '${id}' does not exist`,
+      400,
+    );
+  }
+  const removeFields = stringList(input["RemoveFields"]);
+  if (typeof input["TrafficMirrorTargetId"] === "string")
+    session.TrafficMirrorTargetId = input["TrafficMirrorTargetId"];
+  if (typeof input["TrafficMirrorFilterId"] === "string")
+    session.TrafficMirrorFilterId = input["TrafficMirrorFilterId"];
+  if (integerOf(input["SessionNumber"]) !== undefined)
+    session.SessionNumber = integerOf(input["SessionNumber"])!;
+  if (typeof input["Description"] === "string")
+    session.Description = input["Description"];
+  if (
+    typeof input["PacketLength"] === "number" ||
+    typeof input["PacketLength"] === "string"
+  )
+    session.PacketLength = integerOf(input["PacketLength"]);
+  if (
+    typeof input["VirtualNetworkId"] === "number" ||
+    typeof input["VirtualNetworkId"] === "string"
+  )
+    session.VirtualNetworkId = integerOf(input["VirtualNetworkId"]);
+  if (removeFields.includes("packet-length")) session.PacketLength = undefined;
+  if (removeFields.includes("virtual-network-id"))
+    session.VirtualNetworkId = undefined;
+  if (removeFields.includes("description")) session.Description = "";
+  ctx.store.set(trafficMirrorSessionKey(id), session);
+  return {
+    TrafficMirrorSession: {
+      TrafficMirrorSessionId: session.TrafficMirrorSessionId,
+      TrafficMirrorTargetId: session.TrafficMirrorTargetId,
+      TrafficMirrorFilterId: session.TrafficMirrorFilterId,
+      NetworkInterfaceId: session.NetworkInterfaceId,
+      OwnerId: session.OwnerId,
+      PacketLength: session.PacketLength,
+      SessionNumber: session.SessionNumber,
+      VirtualNetworkId: session.VirtualNetworkId,
+      Description: session.Description,
+      Tags: session.Tags,
+    },
+  };
+};
+
+const ModifyTransitGateway: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TransitGatewayId"] === "string"
+      ? input["TransitGatewayId"]
+      : "";
+  const gateway = ctx.store.get<StoredTransitGateway>(transitGatewayKey(id));
+  if (gateway === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayID.NotFound",
+      `The transit gateway '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Description"] === "string")
+    gateway.Description = input["Description"];
+  const opts =
+    typeof input["Options"] === "object" && input["Options"] !== null
+      ? (input["Options"] as Record<string, unknown>)
+      : {};
+  if (typeof opts["AutoAcceptSharedAttachments"] === "string")
+    gateway.Options.AutoAcceptSharedAttachments =
+      opts["AutoAcceptSharedAttachments"];
+  if (typeof opts["DefaultRouteTableAssociation"] === "string")
+    gateway.Options.DefaultRouteTableAssociation =
+      opts["DefaultRouteTableAssociation"];
+  if (typeof opts["DefaultRouteTablePropagation"] === "string")
+    gateway.Options.DefaultRouteTablePropagation =
+      opts["DefaultRouteTablePropagation"];
+  if (typeof opts["VpnEcmpSupport"] === "string")
+    gateway.Options.VpnEcmpSupport = opts["VpnEcmpSupport"];
+  if (typeof opts["DnsSupport"] === "string")
+    gateway.Options.DnsSupport = opts["DnsSupport"];
+  ctx.store.set(transitGatewayKey(id), gateway);
+  return {
+    TransitGateway: {
+      TransitGatewayId: gateway.TransitGatewayId,
+      TransitGatewayArn: gateway.TransitGatewayArn,
+      State: gateway.State,
+      OwnerId: gateway.OwnerId,
+      Description: gateway.Description,
+      CreationTime: gateway.CreationTime,
+      Options: gateway.Options,
+      Tags: gateway.Tags,
+    },
+  };
+};
+
+const ModifyTransitGatewayMeteringPolicy: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TransitGatewayMeteringPolicyId"] === "string"
+      ? input["TransitGatewayMeteringPolicyId"]
+      : "";
+  const policy = ctx.store.get<StoredTransitGatewayMeteringPolicy>(
+    transitGatewayMeteringPolicyKey(id),
+  );
+  if (policy === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayMeteringPolicyID.NotFound",
+      `The transit gateway metering policy '${id}' does not exist`,
+      400,
+    );
+  }
+  const addIds = stringList(input["AddMiddleboxAttachmentIds"]);
+  const removeIds = stringList(input["RemoveMiddleboxAttachmentIds"]);
+  for (const aid of addIds) {
+    if (!policy.MiddleboxAttachmentIds.includes(aid))
+      policy.MiddleboxAttachmentIds.push(aid);
+  }
+  policy.MiddleboxAttachmentIds = policy.MiddleboxAttachmentIds.filter(
+    (x) => !removeIds.includes(x),
+  );
+  ctx.store.set(transitGatewayMeteringPolicyKey(id), policy);
+  return {
+    TransitGatewayMeteringPolicy: {
+      TransitGatewayMeteringPolicyId: policy.TransitGatewayMeteringPolicyId,
+      TransitGatewayId: policy.TransitGatewayId,
+      MiddleboxAttachmentIds: policy.MiddleboxAttachmentIds,
+      State: policy.State,
+      UpdateEffectiveAt: policy.UpdateEffectiveAt,
+      Tags: policy.Tags,
+    },
+  };
+};
+
+const ModifyTransitGatewayPrefixListReference: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const prefixListId =
+    typeof input["PrefixListId"] === "string" ? input["PrefixListId"] : "";
+  const ref = ctx.store.get<StoredTransitGatewayPrefixListReference>(
+    transitGatewayPrefixListReferenceKey(routeTableId, prefixListId),
+  );
+  if (ref === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayPrefixListReferenceID.NotFound",
+      `The transit gateway prefix list reference '${prefixListId}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["TransitGatewayAttachmentId"] === "string")
+    ref.TransitGatewayAttachment.TransitGatewayAttachmentId =
+      input["TransitGatewayAttachmentId"];
+  if (typeof input["Blackhole"] === "boolean")
+    ref.Blackhole = input["Blackhole"];
+  ref.State = "available";
+  ctx.store.set(
+    transitGatewayPrefixListReferenceKey(routeTableId, prefixListId),
+    ref,
+  );
+  return {
+    TransitGatewayPrefixListReference: {
+      TransitGatewayRouteTableId: ref.TransitGatewayRouteTableId,
+      PrefixListId: ref.PrefixListId,
+      PrefixListOwnerId: ref.PrefixListOwnerId,
+      State: ref.State,
+      Blackhole: ref.Blackhole,
+      TransitGatewayAttachment: ref.TransitGatewayAttachment,
+    },
+  };
+};
+
+const ModifyTransitGatewayVpcAttachment: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const attachment = ctx.store.get<StoredTransitGatewayVpcAttachment>(
+    transitGatewayVpcAttachmentKey(id),
+  );
+  if (attachment === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayAttachmentID.NotFound",
+      `The transit gateway attachment '${id}' does not exist`,
+      400,
+    );
+  }
+  const addSubnets = stringList(input["AddSubnetIds"]);
+  const removeSubnets = stringList(input["RemoveSubnetIds"]);
+  for (const s of addSubnets) {
+    if (!attachment.SubnetIds.includes(s)) attachment.SubnetIds.push(s);
+  }
+  attachment.SubnetIds = attachment.SubnetIds.filter(
+    (s) => !removeSubnets.includes(s),
+  );
+  const opts =
+    typeof input["Options"] === "object" && input["Options"] !== null
+      ? (input["Options"] as Record<string, unknown>)
+      : {};
+  if (typeof opts["DnsSupport"] === "string")
+    attachment.Options.DnsSupport = opts["DnsSupport"];
+  if (typeof opts["SecurityGroupReferencingSupport"] === "string")
+    attachment.Options.SecurityGroupReferencingSupport =
+      opts["SecurityGroupReferencingSupport"];
+  if (typeof opts["Ipv6Support"] === "string")
+    attachment.Options.Ipv6Support = opts["Ipv6Support"];
+  if (typeof opts["ApplianceModeSupport"] === "string")
+    attachment.Options.ApplianceModeSupport = opts["ApplianceModeSupport"];
+  ctx.store.set(transitGatewayVpcAttachmentKey(id), attachment);
+  return {
+    TransitGatewayVpcAttachment: {
+      TransitGatewayAttachmentId: attachment.TransitGatewayAttachmentId,
+      TransitGatewayId: attachment.TransitGatewayId,
+      VpcId: attachment.VpcId,
+      VpcOwnerId: attachment.VpcOwnerId,
+      State: attachment.State,
+      SubnetIds: attachment.SubnetIds,
+      CreationTime: attachment.CreationTime,
+      Options: attachment.Options,
+      Tags: attachment.Tags,
+    },
+  };
+};
+
+const ModifyVerifiedAccessEndpoint: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VerifiedAccessEndpointId"] === "string"
+      ? input["VerifiedAccessEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredVerifiedAccessEndpoint>(
+    verifiedAccessEndpointKey(id),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessEndpointId.NotFound",
+      `The verified access endpoint '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Description"] === "string")
+    endpoint.Description = input["Description"];
+  if (typeof input["VerifiedAccessGroupId"] === "string")
+    endpoint.VerifiedAccessGroupId = input["VerifiedAccessGroupId"];
+  endpoint.LastUpdatedTime = new Date().toISOString();
+  ctx.store.set(verifiedAccessEndpointKey(id), endpoint);
+  return {
+    VerifiedAccessEndpoint: {
+      VerifiedAccessInstanceId: endpoint.VerifiedAccessInstanceId,
+      VerifiedAccessGroupId: endpoint.VerifiedAccessGroupId,
+      VerifiedAccessEndpointId: endpoint.VerifiedAccessEndpointId,
+      ApplicationDomain: endpoint.ApplicationDomain,
+      EndpointType: endpoint.EndpointType,
+      AttachmentType: endpoint.AttachmentType,
+      DomainCertificateArn: endpoint.DomainCertificateArn,
+      EndpointDomain: endpoint.EndpointDomain,
+      SecurityGroupIds: endpoint.SecurityGroupIds,
+      Status: { Code: "active", Message: "" },
+      Description: endpoint.Description,
+      CreationTime: endpoint.CreationTime,
+      LastUpdatedTime: endpoint.LastUpdatedTime,
+      Tags: endpoint.Tags,
+    },
+  };
+};
+
+const ModifyVerifiedAccessEndpointPolicy: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VerifiedAccessEndpointId"] === "string"
+      ? input["VerifiedAccessEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredVerifiedAccessEndpoint>(
+    verifiedAccessEndpointKey(id),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessEndpointId.NotFound",
+      `The verified access endpoint '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["PolicyEnabled"] === "boolean")
+    endpoint.PolicyEnabled = input["PolicyEnabled"];
+  if (typeof input["PolicyDocument"] === "string")
+    endpoint.PolicyDocument = input["PolicyDocument"];
+  ctx.store.set(verifiedAccessEndpointKey(id), endpoint);
+  return {
+    PolicyEnabled: endpoint.PolicyEnabled ?? false,
+    PolicyDocument: endpoint.PolicyDocument ?? "",
+  };
+};
+
+const ModifyVerifiedAccessGroup: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VerifiedAccessGroupId"] === "string"
+      ? input["VerifiedAccessGroupId"]
+      : "";
+  const group = ctx.store.get<StoredVerifiedAccessGroup>(
+    verifiedAccessGroupKey(id),
+  );
+  if (group === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessGroupId.NotFound",
+      `The verified access group '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Description"] === "string")
+    group.Description = input["Description"];
+  if (typeof input["VerifiedAccessInstanceId"] === "string")
+    group.VerifiedAccessInstanceId = input["VerifiedAccessInstanceId"];
+  group.LastUpdatedTime = new Date().toISOString();
+  ctx.store.set(verifiedAccessGroupKey(id), group);
+  return {
+    VerifiedAccessGroup: {
+      VerifiedAccessGroupId: group.VerifiedAccessGroupId,
+      VerifiedAccessInstanceId: group.VerifiedAccessInstanceId,
+      Description: group.Description,
+      Owner: group.Owner,
+      VerifiedAccessGroupArn: group.VerifiedAccessGroupArn,
+      CreationTime: group.CreationTime,
+      LastUpdatedTime: group.LastUpdatedTime,
+      Tags: group.Tags,
+    },
+  };
+};
+
+const ModifyVerifiedAccessGroupPolicy: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VerifiedAccessGroupId"] === "string"
+      ? input["VerifiedAccessGroupId"]
+      : "";
+  const group = ctx.store.get<StoredVerifiedAccessGroup>(
+    verifiedAccessGroupKey(id),
+  );
+  if (group === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessGroupId.NotFound",
+      `The verified access group '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["PolicyEnabled"] === "boolean")
+    group.PolicyEnabled = input["PolicyEnabled"];
+  if (typeof input["PolicyDocument"] === "string")
+    group.PolicyDocument = input["PolicyDocument"];
+  ctx.store.set(verifiedAccessGroupKey(id), group);
+  return {
+    PolicyEnabled: group.PolicyEnabled ?? false,
+    PolicyDocument: group.PolicyDocument ?? "",
+  };
+};
+
+const ModifyVerifiedAccessInstance: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VerifiedAccessInstanceId"] === "string"
+      ? input["VerifiedAccessInstanceId"]
+      : "";
+  const instance = ctx.store.get<StoredVerifiedAccessInstance>(
+    vaInstanceKey(id),
+  );
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessInstanceId.NotFound",
+      `The verified access instance '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Description"] === "string")
+    instance.Description = input["Description"];
+  instance.LastUpdatedTime = new Date().toISOString();
+  ctx.store.set(vaInstanceKey(id), instance);
+  return {
+    VerifiedAccessInstance: {
+      VerifiedAccessInstanceId: instance.VerifiedAccessInstanceId,
+      Description: instance.Description,
+      VerifiedAccessTrustProviders: instance.TrustProviderIds.map((tid) => ({
+        VerifiedAccessTrustProviderId: tid,
+        TrustProviderType: "user",
+      })),
+      CreationTime: instance.CreationTime,
+      LastUpdatedTime: instance.LastUpdatedTime,
+      Tags: instance.Tags,
+      FipsEnabled: instance.FipsEnabled,
+    },
+  };
+};
+
+const ModifyVerifiedAccessInstanceLoggingConfiguration: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id =
+    typeof input["VerifiedAccessInstanceId"] === "string"
+      ? input["VerifiedAccessInstanceId"]
+      : "";
+  const instance = ctx.store.get<StoredVerifiedAccessInstance>(
+    vaInstanceKey(id),
+  );
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessInstanceId.NotFound",
+      `The verified access instance '${id}' does not exist`,
+      400,
+    );
+  }
+  const accessLogsRaw =
+    typeof input["AccessLogs"] === "object" && input["AccessLogs"] !== null
+      ? (input["AccessLogs"] as Record<string, unknown>)
+      : {};
+  const s3Raw =
+    typeof accessLogsRaw["S3"] === "object" && accessLogsRaw["S3"] !== null
+      ? (accessLogsRaw["S3"] as Record<string, unknown>)
+      : {};
+  const cwRaw =
+    typeof accessLogsRaw["CloudWatchLogs"] === "object" &&
+    accessLogsRaw["CloudWatchLogs"] !== null
+      ? (accessLogsRaw["CloudWatchLogs"] as Record<string, unknown>)
+      : {};
+  const kdfRaw =
+    typeof accessLogsRaw["KinesisDataFirehose"] === "object" &&
+    accessLogsRaw["KinesisDataFirehose"] !== null
+      ? (accessLogsRaw["KinesisDataFirehose"] as Record<string, unknown>)
+      : {};
+  const existing = instance.AccessLogs ?? {
+    S3: { Enabled: false },
+    CloudWatchLogs: { Enabled: false },
+    KinesisDataFirehose: { Enabled: false },
+    LogVersion: "ocsf-0.1",
+    IncludeTrustContext: false,
+  };
+  instance.AccessLogs = {
+    S3: {
+      Enabled:
+        typeof s3Raw["Enabled"] === "boolean"
+          ? s3Raw["Enabled"]
+          : existing.S3.Enabled,
+    },
+    CloudWatchLogs: {
+      Enabled:
+        typeof cwRaw["Enabled"] === "boolean"
+          ? cwRaw["Enabled"]
+          : existing.CloudWatchLogs.Enabled,
+    },
+    KinesisDataFirehose: {
+      Enabled:
+        typeof kdfRaw["Enabled"] === "boolean"
+          ? kdfRaw["Enabled"]
+          : existing.KinesisDataFirehose.Enabled,
+    },
+    LogVersion:
+      typeof accessLogsRaw["LogVersion"] === "string"
+        ? accessLogsRaw["LogVersion"]
+        : existing.LogVersion,
+    IncludeTrustContext:
+      typeof accessLogsRaw["IncludeTrustContext"] === "boolean"
+        ? accessLogsRaw["IncludeTrustContext"]
+        : existing.IncludeTrustContext,
+  };
+  ctx.store.set(vaInstanceKey(id), instance);
+  return {
+    LoggingConfiguration: {
+      VerifiedAccessInstanceId: instance.VerifiedAccessInstanceId,
+      AccessLogs: instance.AccessLogs,
+    },
+  };
+};
+
 const ModifyTrafficMirrorFilterNetworkServices: OperationHandler = (
   input,
   ctx,
@@ -17713,6 +18300,18 @@ const ec2: ServiceDefinition = {
     ModifySpotFleetRequest,
     ModifySubnetAttribute,
     ModifyTrafficMirrorFilterNetworkServices,
+    ModifyTrafficMirrorFilterRule,
+    ModifyTrafficMirrorSession,
+    ModifyTransitGateway,
+    ModifyTransitGatewayMeteringPolicy,
+    ModifyTransitGatewayPrefixListReference,
+    ModifyTransitGatewayVpcAttachment,
+    ModifyVerifiedAccessEndpoint,
+    ModifyVerifiedAccessEndpointPolicy,
+    ModifyVerifiedAccessGroup,
+    ModifyVerifiedAccessGroupPolicy,
+    ModifyVerifiedAccessInstance,
+    ModifyVerifiedAccessInstanceLoggingConfiguration,
     ProvisionIpamPoolCidr,
   },
   model,

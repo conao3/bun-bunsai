@@ -9445,6 +9445,260 @@ const UpdateImageVersion: OperationHandler = (input, ctx) => {
   return { ImageVersionArn: stored.ImageVersionArn };
 };
 
+const UpdateInferenceComponent: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "InferenceComponentName");
+  const stored = ctx.store.get<StoredInferenceComponent>(
+    inferenceComponentKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `InferenceComponent ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(inferenceComponentKey(name), {
+    ...stored,
+    Specification:
+      input["Specification"] !== undefined
+        ? input["Specification"]
+        : stored.Specification,
+    Specifications:
+      input["Specifications"] !== undefined
+        ? input["Specifications"]
+        : stored.Specifications,
+    RuntimeConfig:
+      input["RuntimeConfig"] !== undefined
+        ? input["RuntimeConfig"]
+        : stored.RuntimeConfig,
+  });
+  return { InferenceComponentArn: stored.InferenceComponentArn };
+};
+
+const UpdateInferenceComponentRuntimeConfig: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const name = requireString(input, "InferenceComponentName");
+  const stored = ctx.store.get<StoredInferenceComponent>(
+    inferenceComponentKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `InferenceComponent ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(inferenceComponentKey(name), {
+    ...stored,
+    RuntimeConfig:
+      input["DesiredRuntimeConfig"] !== undefined
+        ? input["DesiredRuntimeConfig"]
+        : stored.RuntimeConfig,
+  });
+  return { InferenceComponentArn: stored.InferenceComponentArn };
+};
+
+const UpdateInferenceExperiment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "Name");
+  const stored = ctx.store.get<StoredInferenceExperiment>(
+    inferenceExperimentKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `InferenceExperiment ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(inferenceExperimentKey(name), {
+    ...stored,
+    Schedule:
+      input["Schedule"] !== undefined ? input["Schedule"] : stored.Schedule,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : stored.Description,
+    ModelVariants:
+      input["ModelVariants"] !== undefined
+        ? input["ModelVariants"]
+        : stored.ModelVariants,
+    DataStorageConfig:
+      input["DataStorageConfig"] !== undefined
+        ? input["DataStorageConfig"]
+        : stored.DataStorageConfig,
+    ShadowModeConfig:
+      input["ShadowModeConfig"] !== undefined
+        ? input["ShadowModeConfig"]
+        : stored.ShadowModeConfig,
+  });
+  return { InferenceExperimentArn: stored.InferenceExperimentArn };
+};
+
+const UpdateMlflowApp: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "Arn");
+  const stored = requireMlflowApp(ctx, arn);
+  ctx.store.set(mlflowAppKey(stored.Name), {
+    ...stored,
+    ArtifactStoreUri:
+      typeof input["ArtifactStoreUri"] === "string"
+        ? (input["ArtifactStoreUri"] as string)
+        : stored.ArtifactStoreUri,
+    ModelRegistrationMode:
+      typeof input["ModelRegistrationMode"] === "string"
+        ? (input["ModelRegistrationMode"] as string)
+        : stored.ModelRegistrationMode,
+  });
+  return { Arn: stored.Arn };
+};
+
+const UpdateMlflowTrackingServer: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrackingServerName");
+  const stored = ctx.store.get<StoredMlflowTrackingServer>(
+    mlflowTrackingServerKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `MlflowTrackingServer ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(mlflowTrackingServerKey(name), {
+    ...stored,
+    ArtifactStoreUri:
+      typeof input["ArtifactStoreUri"] === "string"
+        ? (input["ArtifactStoreUri"] as string)
+        : stored.ArtifactStoreUri,
+    TrackingServerSize:
+      typeof input["TrackingServerSize"] === "string"
+        ? (input["TrackingServerSize"] as string)
+        : stored.TrackingServerSize,
+  });
+  return { TrackingServerArn: stored.TrackingServerArn };
+};
+
+const UpdateModelCard: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ModelCardName");
+  const stored = requireModelCard(ctx, name);
+  ctx.store.set(modelCardKey(name), {
+    ...stored,
+    Content:
+      typeof input["Content"] === "string"
+        ? (input["Content"] as string)
+        : stored.Content,
+    ModelCardStatus:
+      typeof input["ModelCardStatus"] === "string"
+        ? (input["ModelCardStatus"] as string)
+        : stored.ModelCardStatus,
+    ModelCardVersion: stored.ModelCardVersion + 1,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { ModelCardArn: stored.ModelCardArn };
+};
+
+const UpdateModelPackage: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ModelPackageArn");
+  const pkgName = arn.split("/").pop() ?? arn;
+  const stored = ctx.store.get<StoredModelPackage>(modelPackageKey(pkgName));
+  if (stored === undefined) {
+    throw awsError(
+      "ValidationException",
+      `Could not find model package "${pkgName}".`,
+      400,
+    );
+  }
+  ctx.store.set(modelPackageKey(pkgName), {
+    ...stored,
+    ModelApprovalStatus:
+      typeof input["ModelApprovalStatus"] === "string"
+        ? (input["ModelApprovalStatus"] as string)
+        : stored.ModelApprovalStatus,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { ModelPackageArn: stored.ModelPackageArn };
+};
+
+const UpdateMonitoringAlert: OperationHandler = (input, ctx) => {
+  const scheduleName = requireString(input, "MonitoringScheduleName");
+  const alertName = requireString(input, "MonitoringAlertName");
+  const stored = requireMonitoringSchedule(ctx, scheduleName);
+  return {
+    MonitoringScheduleArn: stored.MonitoringScheduleArn,
+    MonitoringAlertName: alertName,
+  };
+};
+
+const UpdateMonitoringSchedule: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "MonitoringScheduleName");
+  const stored = requireMonitoringSchedule(ctx, name);
+  ctx.store.set(monitoringScheduleKey(name), {
+    ...stored,
+    MonitoringScheduleConfig:
+      input["MonitoringScheduleConfig"] !== undefined
+        ? input["MonitoringScheduleConfig"]
+        : stored.MonitoringScheduleConfig,
+  });
+  return { MonitoringScheduleArn: stored.MonitoringScheduleArn };
+};
+
+const UpdateNotebookInstance: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "NotebookInstanceName");
+  const stored = ctx.store.get<StoredNotebookInstance>(
+    notebookInstanceKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ValidationException",
+      `RecordNotFound: notebook instance "${name}".`,
+      400,
+    );
+  }
+  ctx.store.set(notebookInstanceKey(name), {
+    ...stored,
+    InstanceType:
+      typeof input["InstanceType"] === "string"
+        ? (input["InstanceType"] as string)
+        : stored.InstanceType,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : stored.RoleArn,
+    LastModifiedTime: nowSeconds(),
+  });
+  return {};
+};
+
+const UpdateNotebookInstanceLifecycleConfig: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const name = requireString(input, "NotebookInstanceLifecycleConfigName");
+  const stored = requireNotebookInstanceLifecycleConfig(ctx, name);
+  ctx.store.set(notebookInstanceLifecycleConfigKey(name), {
+    ...stored,
+    OnCreate:
+      input["OnCreate"] !== undefined ? input["OnCreate"] : stored.OnCreate,
+    OnStart: input["OnStart"] !== undefined ? input["OnStart"] : stored.OnStart,
+    LastModifiedTime: nowSeconds(),
+  });
+  return {};
+};
+
+const UpdatePartnerApp: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "Arn");
+  const stored = requirePartnerApp(ctx, arn);
+  ctx.store.set(partnerAppKey(stored.Name), {
+    ...stored,
+    Tier:
+      typeof input["Tier"] === "string"
+        ? (input["Tier"] as string)
+        : stored.Tier,
+  });
+  return { Arn: stored.Arn };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -9822,6 +10076,18 @@ const sagemaker = {
     UpdateHubContentReference,
     UpdateImage,
     UpdateImageVersion,
+    UpdateInferenceComponent,
+    UpdateInferenceComponentRuntimeConfig,
+    UpdateInferenceExperiment,
+    UpdateMlflowApp,
+    UpdateMlflowTrackingServer,
+    UpdateModelCard,
+    UpdateModelPackage,
+    UpdateMonitoringAlert,
+    UpdateMonitoringSchedule,
+    UpdateNotebookInstance,
+    UpdateNotebookInstanceLifecycleConfig,
+    UpdatePartnerApp,
   },
   model,
 } as const satisfies ServiceDefinition;

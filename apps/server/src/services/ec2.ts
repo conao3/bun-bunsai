@@ -390,6 +390,11 @@ type StoredIpamPrefixListResolverTarget = {
   Tags: Tag[];
 };
 
+type StoredIpamPoolCidr = {
+  Cidr: string;
+  State: string;
+};
+
 type StoredLaunchTemplate = {
   LaunchTemplateId: string;
   LaunchTemplateName: string;
@@ -14827,6 +14832,159 @@ const GetIpamAddressHistory: OperationHandler = (input, ctx) => {
   return { HistoryRecords: [] };
 };
 
+const GetIpamDiscoveredAccounts: OperationHandler = (_input, _ctx) => {
+  return { IpamDiscoveredAccounts: [] };
+};
+
+const GetIpamDiscoveredPublicAddresses: OperationHandler = (_input, _ctx) => {
+  return {
+    IpamDiscoveredPublicAddresses: [],
+    OldestSampleTime: new Date().toISOString(),
+  };
+};
+
+const GetIpamDiscoveredResourceCidrs: OperationHandler = (_input, _ctx) => {
+  return { IpamDiscoveredResourceCidrs: [] };
+};
+
+const GetIpamPolicyAllocationRules: OperationHandler = (input, ctx) => {
+  const policyId =
+    typeof input["IpamPolicyId"] === "string" ? input["IpamPolicyId"] : "";
+  const policy = ctx.store.get<StoredIpamPolicy>(ipamPolicyKey(policyId));
+  if (policy === undefined) {
+    throw awsError(
+      "InvalidIpamPolicyId.NotFound",
+      `The IPAM policy '${policyId}' does not exist`,
+      400,
+    );
+  }
+  return { IpamPolicyDocuments: [] };
+};
+
+const GetIpamPolicyOrganizationTargets: OperationHandler = (input, ctx) => {
+  const policyId =
+    typeof input["IpamPolicyId"] === "string" ? input["IpamPolicyId"] : "";
+  const policy = ctx.store.get<StoredIpamPolicy>(ipamPolicyKey(policyId));
+  if (policy === undefined) {
+    throw awsError(
+      "InvalidIpamPolicyId.NotFound",
+      `The IPAM policy '${policyId}' does not exist`,
+      400,
+    );
+  }
+  return { OrganizationTargets: [] };
+};
+
+const GetIpamPoolAllocations: OperationHandler = (_input, _ctx) => {
+  return { IpamPoolAllocations: [] };
+};
+
+const GetIpamPoolCidrs: OperationHandler = (input, ctx) => {
+  const poolId =
+    typeof input["IpamPoolId"] === "string" ? input["IpamPoolId"] : "";
+  const cidrs = ctx.store
+    .list<StoredIpamPoolCidr>()
+    .filter((entry) => entry.key.startsWith(`ipam-pool-cidr/${poolId}/`))
+    .map((entry) => ({
+      Cidr: entry.value.Cidr,
+      State: entry.value.State,
+    }));
+  return { IpamPoolCidrs: cidrs };
+};
+
+const GetIpamPrefixListResolverRules: OperationHandler = (input, ctx) => {
+  const resolverId =
+    typeof input["IpamPrefixListResolverId"] === "string"
+      ? input["IpamPrefixListResolverId"]
+      : "";
+  const resolver = ctx.store.get<StoredIpamPrefixListResolver>(
+    ipamPrefixListResolverKey(resolverId),
+  );
+  if (resolver === undefined) {
+    throw awsError(
+      "InvalidIpamPrefixListResolverId.NotFound",
+      `The IPAM prefix list resolver ID '${resolverId}' does not exist`,
+      400,
+    );
+  }
+  return { Rules: [] };
+};
+
+const GetIpamPrefixListResolverVersionEntries: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Entries: [] };
+};
+
+const GetIpamPrefixListResolverVersions: OperationHandler = (input, ctx) => {
+  const resolverId =
+    typeof input["IpamPrefixListResolverId"] === "string"
+      ? input["IpamPrefixListResolverId"]
+      : "";
+  const resolver = ctx.store.get<StoredIpamPrefixListResolver>(
+    ipamPrefixListResolverKey(resolverId),
+  );
+  if (resolver === undefined) {
+    throw awsError(
+      "InvalidIpamPrefixListResolverId.NotFound",
+      `The IPAM prefix list resolver ID '${resolverId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    IpamPrefixListResolverVersions: [
+      {
+        IpamPrefixListResolverId: resolverId,
+        Version: 1,
+        Status: "current",
+      },
+    ],
+  };
+};
+
+const GetIpamResourceCidrs: OperationHandler = (input, ctx) => {
+  const scopeId =
+    typeof input["IpamScopeId"] === "string" ? input["IpamScopeId"] : "";
+  const scope = ctx.store.get<StoredIpamScope>(ipamScopeKey(scopeId));
+  if (scope === undefined) {
+    throw awsError(
+      "InvalidIpamScopeId.NotFound",
+      `The IPAM scope '${scopeId}' does not exist`,
+      400,
+    );
+  }
+  return { IpamResourceCidrs: [] };
+};
+
+const GetLaunchTemplateData: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(instanceId));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${instanceId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    LaunchTemplateData: {
+      ImageId: instance.ImageId,
+      InstanceType: instance.InstanceType,
+    },
+  };
+};
+
+const ProvisionIpamPoolCidr: OperationHandler = (input, ctx) => {
+  const poolId =
+    typeof input["IpamPoolId"] === "string" ? input["IpamPoolId"] : "";
+  const cidr = typeof input["Cidr"] === "string" ? input["Cidr"] : "10.0.0.0/8";
+  const stored: StoredIpamPoolCidr = { Cidr: cidr, State: "provisioned" };
+  ctx.store.set(ipamPoolCidrKey(poolId, cidr), stored);
+  return { IpamPoolCidr: { Cidr: cidr, State: "provisioned" } };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -15399,6 +15557,19 @@ const ec2: ServiceDefinition = {
     GetInstanceTypesFromInstanceRequirements,
     GetInstanceUefiData,
     GetIpamAddressHistory,
+    GetIpamDiscoveredAccounts,
+    GetIpamDiscoveredPublicAddresses,
+    GetIpamDiscoveredResourceCidrs,
+    GetIpamPolicyAllocationRules,
+    GetIpamPolicyOrganizationTargets,
+    GetIpamPoolAllocations,
+    GetIpamPoolCidrs,
+    GetIpamPrefixListResolverRules,
+    GetIpamPrefixListResolverVersionEntries,
+    GetIpamPrefixListResolverVersions,
+    GetIpamResourceCidrs,
+    GetLaunchTemplateData,
+    ProvisionIpamPoolCidr,
   },
   model,
 } as const;

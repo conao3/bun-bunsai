@@ -11995,6 +11995,44 @@ const allTransitGatewayVpcAttachments = (
     .filter((entry) => entry.key.startsWith("tgw-vpc-attach/"))
     .map((entry) => entry.value);
 
+const allTransitGateways = (ctx: ServiceContext): StoredTransitGateway[] =>
+  ctx.store
+    .list<StoredTransitGateway>()
+    .filter((entry) => entry.key.startsWith("tgw/"))
+    .map((entry) => entry.value);
+
+const allVerifiedAccessInstances = (
+  ctx: ServiceContext,
+): StoredVerifiedAccessInstance[] =>
+  ctx.store
+    .list<StoredVerifiedAccessInstance>()
+    .filter((entry) => entry.key.startsWith("vai/"))
+    .map((entry) => entry.value);
+
+const allVerifiedAccessTrustProviders = (
+  ctx: ServiceContext,
+): StoredVerifiedAccessTrustProvider[] =>
+  ctx.store
+    .list<StoredVerifiedAccessTrustProvider>()
+    .filter((entry) => entry.key.startsWith("vatp/"))
+    .map((entry) => entry.value);
+
+const allVerifiedAccessGroups = (
+  ctx: ServiceContext,
+): StoredVerifiedAccessGroup[] =>
+  ctx.store
+    .list<StoredVerifiedAccessGroup>()
+    .filter((entry) => entry.key.startsWith("vag/"))
+    .map((entry) => entry.value);
+
+const allVerifiedAccessEndpoints = (
+  ctx: ServiceContext,
+): StoredVerifiedAccessEndpoint[] =>
+  ctx.store
+    .list<StoredVerifiedAccessEndpoint>()
+    .filter((entry) => entry.key.startsWith("vae/"))
+    .map((entry) => entry.value);
+
 const DescribeReservedInstancesOfferings: OperationHandler = (_input, _ctx) => {
   return {
     ReservedInstancesOfferings: [
@@ -12784,6 +12822,250 @@ const DescribeTransitGatewayRouteTables: OperationHandler = (input, ctx) => {
   };
 };
 
+const DescribeTransitGatewayVpcAttachments: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["TransitGatewayAttachmentIds"]);
+  const attachments = allTransitGatewayVpcAttachments(ctx).filter((a) => {
+    if (ids.length > 0 && !ids.includes(a.TransitGatewayAttachmentId))
+      return false;
+    return true;
+  });
+  return {
+    TransitGatewayVpcAttachments: attachments.map((a) => ({
+      TransitGatewayAttachmentId: a.TransitGatewayAttachmentId,
+      TransitGatewayId: a.TransitGatewayId,
+      VpcId: a.VpcId,
+      VpcOwnerId: a.VpcOwnerId,
+      State: a.State,
+      SubnetIds: a.SubnetIds,
+      CreationTime: a.CreationTime,
+      Options: a.Options,
+      Tags: a.Tags,
+    })),
+  };
+};
+
+const DescribeTransitGateways: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["TransitGatewayIds"]);
+  const gateways = allTransitGateways(ctx).filter((g) => {
+    if (ids.length > 0 && !ids.includes(g.TransitGatewayId)) return false;
+    return true;
+  });
+  return {
+    TransitGateways: gateways.map((g) => ({
+      TransitGatewayId: g.TransitGatewayId,
+      TransitGatewayArn: g.TransitGatewayArn,
+      State: g.State,
+      OwnerId: g.OwnerId,
+      Description: g.Description,
+      CreationTime: g.CreationTime,
+      Options: g.Options,
+      Tags: g.Tags,
+    })),
+  };
+};
+
+const DescribeTrunkInterfaceAssociations: OperationHandler = (_input, _ctx) => {
+  return { InterfaceAssociations: [] };
+};
+
+const DescribeVerifiedAccessEndpoints: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VerifiedAccessEndpointIds"]);
+  const instanceId =
+    typeof input["VerifiedAccessInstanceId"] === "string"
+      ? input["VerifiedAccessInstanceId"]
+      : undefined;
+  const groupId =
+    typeof input["VerifiedAccessGroupId"] === "string"
+      ? input["VerifiedAccessGroupId"]
+      : undefined;
+  const endpoints = allVerifiedAccessEndpoints(ctx).filter((e) => {
+    if (ids.length > 0 && !ids.includes(e.VerifiedAccessEndpointId))
+      return false;
+    if (instanceId && e.VerifiedAccessInstanceId !== instanceId) return false;
+    if (groupId && e.VerifiedAccessGroupId !== groupId) return false;
+    return true;
+  });
+  return {
+    VerifiedAccessEndpoints: endpoints.map((e) => ({
+      VerifiedAccessInstanceId: e.VerifiedAccessInstanceId,
+      VerifiedAccessGroupId: e.VerifiedAccessGroupId,
+      VerifiedAccessEndpointId: e.VerifiedAccessEndpointId,
+      ApplicationDomain: e.ApplicationDomain,
+      EndpointType: e.EndpointType,
+      AttachmentType: e.AttachmentType,
+      DomainCertificateArn: e.DomainCertificateArn,
+      EndpointDomain: e.EndpointDomain,
+      SecurityGroupIds: e.SecurityGroupIds,
+      Status: { Code: "active", Message: "" },
+      Description: e.Description,
+      CreationTime: e.CreationTime,
+      LastUpdatedTime: e.LastUpdatedTime,
+      Tags: e.Tags,
+    })),
+  };
+};
+
+const DescribeVerifiedAccessGroups: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VerifiedAccessGroupIds"]);
+  const instanceId =
+    typeof input["VerifiedAccessInstanceId"] === "string"
+      ? input["VerifiedAccessInstanceId"]
+      : undefined;
+  const groups = allVerifiedAccessGroups(ctx).filter((g) => {
+    if (ids.length > 0 && !ids.includes(g.VerifiedAccessGroupId)) return false;
+    if (instanceId && g.VerifiedAccessInstanceId !== instanceId) return false;
+    return true;
+  });
+  return {
+    VerifiedAccessGroups: groups.map((g) => ({
+      VerifiedAccessGroupId: g.VerifiedAccessGroupId,
+      VerifiedAccessInstanceId: g.VerifiedAccessInstanceId,
+      Description: g.Description,
+      Owner: g.Owner,
+      VerifiedAccessGroupArn: g.VerifiedAccessGroupArn,
+      CreationTime: g.CreationTime,
+      LastUpdatedTime: g.LastUpdatedTime,
+      Tags: g.Tags,
+    })),
+  };
+};
+
+const DescribeVerifiedAccessInstanceLoggingConfigurations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["VerifiedAccessInstanceIds"]);
+  const instances = allVerifiedAccessInstances(ctx).filter((i) => {
+    if (ids.length > 0 && !ids.includes(i.VerifiedAccessInstanceId))
+      return false;
+    return true;
+  });
+  return {
+    LoggingConfigurations: instances.map((i) => ({
+      VerifiedAccessInstanceId: i.VerifiedAccessInstanceId,
+      AccessLogs: {
+        S3: { Enabled: false },
+        CloudWatchLogs: { Enabled: false },
+        KinesisDataFirehose: { Enabled: false },
+        LogVersion: "ocsf-0.1",
+        IncludeTrustContext: false,
+      },
+    })),
+  };
+};
+
+const DescribeVerifiedAccessInstances: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VerifiedAccessInstanceIds"]);
+  const instances = allVerifiedAccessInstances(ctx).filter((i) => {
+    if (ids.length > 0 && !ids.includes(i.VerifiedAccessInstanceId))
+      return false;
+    return true;
+  });
+  return {
+    VerifiedAccessInstances: instances.map((i) => ({
+      VerifiedAccessInstanceId: i.VerifiedAccessInstanceId,
+      Description: i.Description,
+      VerifiedAccessTrustProviders: i.TrustProviderIds.map((id) => ({
+        VerifiedAccessTrustProviderId: id,
+        TrustProviderType: "user",
+      })),
+      CreationTime: i.CreationTime,
+      LastUpdatedTime: i.LastUpdatedTime,
+      Tags: i.Tags,
+      FipsEnabled: i.FipsEnabled,
+    })),
+  };
+};
+
+const DescribeVerifiedAccessTrustProviders: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VerifiedAccessTrustProviderIds"]);
+  const providers = allVerifiedAccessTrustProviders(ctx).filter((p) => {
+    if (ids.length > 0 && !ids.includes(p.VerifiedAccessTrustProviderId))
+      return false;
+    return true;
+  });
+  return {
+    VerifiedAccessTrustProviders: providers.map((p) => ({
+      VerifiedAccessTrustProviderId: p.VerifiedAccessTrustProviderId,
+      TrustProviderType: p.TrustProviderType,
+      PolicyReferenceName: p.PolicyReferenceName,
+      CreationTime: p.CreationTime,
+      LastUpdatedTime: p.LastUpdatedTime,
+      Tags: [],
+    })),
+  };
+};
+
+const DescribeVolumeAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["VolumeId"] === "string" ? input["VolumeId"] : "";
+  const attribute =
+    typeof input["Attribute"] === "string" ? input["Attribute"] : "";
+  const volume = ctx.store.get<StoredVolume>(volumeKey(id));
+  if (volume === undefined) {
+    throw awsError(
+      "InvalidVolume.NotFound",
+      `The volume '${id}' does not exist.`,
+      400,
+    );
+  }
+  const result: Record<string, unknown> = { VolumeId: id };
+  if (attribute === "autoEnableIO") {
+    result["AutoEnableIO"] = { Value: false };
+  } else if (attribute === "productCodes") {
+    result["ProductCodes"] = [];
+  }
+  return result;
+};
+
+const DescribeVolumeStatus: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VolumeIds"]);
+  const volumes = allVolumes(ctx).filter((v) =>
+    ids.length === 0 ? true : ids.includes(v.VolumeId),
+  );
+  return {
+    VolumeStatuses: volumes.map((v) => ({
+      VolumeId: v.VolumeId,
+      AvailabilityZone: v.AvailabilityZone,
+      VolumeStatus: {
+        Status: "ok",
+        Details: [
+          { Name: "io-enabled", Status: "passed" },
+          { Name: "io-performance", Status: "not-applicable" },
+        ],
+      },
+      Events: [],
+      Actions: [],
+    })),
+  };
+};
+
+const DescribeVolumesModifications: OperationHandler = (_input, _ctx) => {
+  return { VolumesModifications: [] };
+};
+
+const DescribeVpcAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const attribute =
+    typeof input["Attribute"] === "string" ? input["Attribute"] : "";
+  const vpc = ctx.store.get<StoredVpc>(vpcKey(id));
+  if (vpc === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${id}' does not exist`,
+      400,
+    );
+  }
+  const result: Record<string, unknown> = { VpcId: id };
+  if (attribute === "enableDnsHostnames") {
+    result["EnableDnsHostnames"] = { Value: true };
+  } else if (attribute === "enableDnsSupport") {
+    result["EnableDnsSupport"] = { Value: true };
+  } else if (attribute === "enableNetworkAddressUsageMetrics") {
+    result["EnableNetworkAddressUsageMetrics"] = { Value: false };
+  }
+  return result;
+};
+
 const DescribeNetworkInterfaceAttribute: OperationHandler = (input, ctx) => {
   const id =
     typeof input["NetworkInterfaceId"] === "string"
@@ -13251,6 +13533,18 @@ const ec2: ServiceDefinition = {
     DescribeTransitGatewayPolicyTables,
     DescribeTransitGatewayRouteTableAnnouncements,
     DescribeTransitGatewayRouteTables,
+    DescribeTransitGatewayVpcAttachments,
+    DescribeTransitGateways,
+    DescribeTrunkInterfaceAssociations,
+    DescribeVerifiedAccessEndpoints,
+    DescribeVerifiedAccessGroups,
+    DescribeVerifiedAccessInstanceLoggingConfigurations,
+    DescribeVerifiedAccessInstances,
+    DescribeVerifiedAccessTrustProviders,
+    DescribeVolumeAttribute,
+    DescribeVolumeStatus,
+    DescribeVolumesModifications,
+    DescribeVpcAttribute,
   },
   model,
 } as const;

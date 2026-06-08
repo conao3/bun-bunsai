@@ -45,6 +45,10 @@ type StoredDBInstance = {
   PreferredBackupWindow: string | undefined;
   PreferredMaintenanceWindow: string | undefined;
   VpcSecurityGroups: { VpcSecurityGroupId: string; Status: string }[];
+  DBParameterGroupName: string | undefined;
+  DBSubnetGroupName: string | undefined;
+  ReadReplicaSourceDBInstanceIdentifier: string | undefined;
+  ReadReplicaDBInstanceIdentifiers: string[];
 };
 
 type StoredDBSnapshot = {
@@ -636,6 +640,20 @@ const presentInstance = (instance: StoredDBInstance) => ({
   PreferredBackupWindow: instance.PreferredBackupWindow,
   PreferredMaintenanceWindow: instance.PreferredMaintenanceWindow,
   VpcSecurityGroups: instance.VpcSecurityGroups,
+  DBParameterGroups: instance.DBParameterGroupName
+    ? [
+        {
+          DBParameterGroupName: instance.DBParameterGroupName,
+          ParameterApplyStatus: "in-sync",
+        },
+      ]
+    : [],
+  DBSubnetGroup: instance.DBSubnetGroupName
+    ? { DBSubnetGroupName: instance.DBSubnetGroupName }
+    : undefined,
+  ReadReplicaSourceDBInstanceIdentifier:
+    instance.ReadReplicaSourceDBInstanceIdentifier,
+  ReadReplicaDBInstanceIdentifiers: instance.ReadReplicaDBInstanceIdentifiers,
 });
 
 const presentSnapshot = (snapshot: StoredDBSnapshot) => ({
@@ -1121,6 +1139,10 @@ const newInstanceFromParams = (
       "PreferredMaintenanceWindow",
     ),
     VpcSecurityGroups: [],
+    DBParameterGroupName: optionalString(input, "DBParameterGroupName"),
+    DBSubnetGroupName: optionalString(input, "DBSubnetGroupName"),
+    ReadReplicaSourceDBInstanceIdentifier: undefined,
+    ReadReplicaDBInstanceIdentifiers: [],
   };
 };
 
@@ -1146,11 +1168,45 @@ const DescribeDBInstances: OperationHandler = (input, ctx) => {
     const instance = requireInstance(ctx, id);
     return { DBInstances: [presentInstance(instance)] };
   }
-  const instances = ctx.store
+  const rawFilters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as unknown[])
+    : [];
+  const filterVals = (name: string): string[] =>
+    rawFilters
+      .filter(
+        (f): f is Record<string, unknown> =>
+          typeof f === "object" && f !== null,
+      )
+      .filter(
+        (f) =>
+          (typeof f["Name"] === "string" && f["Name"] === name) ||
+          (typeof f["name"] === "string" && f["name"] === name),
+      )
+      .flatMap((f) => {
+        const vals = f["Values"] ?? f["values"];
+        return Array.isArray(vals) ? (vals as string[]) : [];
+      });
+  const idFilter = filterVals("db-instance-id");
+  const statusFilter = filterVals("db-instance-status");
+  const engineFilter = filterVals("engine");
+  let instances = ctx.store
     .list<StoredDBInstance>()
     .filter((entry) => entry.key.startsWith("instance/"))
-    .map((entry) => presentInstance(entry.value));
-  return { DBInstances: instances };
+    .map((entry) => entry.value);
+  if (idFilter.length > 0) {
+    instances = instances.filter((inst) =>
+      idFilter.includes(inst.DBInstanceIdentifier),
+    );
+  }
+  if (statusFilter.length > 0) {
+    instances = instances.filter((inst) =>
+      statusFilter.includes(inst.DBInstanceStatus),
+    );
+  }
+  if (engineFilter.length > 0) {
+    instances = instances.filter((inst) => engineFilter.includes(inst.Engine));
+  }
+  return { DBInstances: instances.map(presentInstance) };
 };
 
 const DeleteDBInstance: OperationHandler = (input, ctx) => {
@@ -1972,6 +2028,11 @@ const CreateDBInstanceReadReplica: OperationHandler = (input, ctx) => {
     const src = ctx.store.get<StoredDBInstance>(instanceKey(srcId));
     if (src !== undefined) {
       engine = src.Engine;
+      src.ReadReplicaDBInstanceIdentifiers = [
+        ...src.ReadReplicaDBInstanceIdentifiers,
+        id,
+      ];
+      ctx.store.set(instanceKey(srcId), src);
     }
   }
   const availabilityZone =
@@ -2001,6 +2062,10 @@ const CreateDBInstanceReadReplica: OperationHandler = (input, ctx) => {
     PreferredBackupWindow: undefined,
     PreferredMaintenanceWindow: undefined,
     VpcSecurityGroups: [],
+    DBParameterGroupName: undefined,
+    DBSubnetGroupName: undefined,
+    ReadReplicaSourceDBInstanceIdentifier: srcId,
+    ReadReplicaDBInstanceIdentifiers: [],
   };
   ctx.store.set(instanceKey(id), instance);
   return { DBInstance: presentInstance(instance) };
@@ -2565,6 +2630,10 @@ const RestoreDBInstanceFromDBSnapshot: OperationHandler = (input, ctx) => {
     PreferredBackupWindow: undefined,
     PreferredMaintenanceWindow: undefined,
     VpcSecurityGroups: [],
+    DBParameterGroupName: optionalString(input, "DBParameterGroupName"),
+    DBSubnetGroupName: optionalString(input, "DBSubnetGroupName"),
+    ReadReplicaSourceDBInstanceIdentifier: undefined,
+    ReadReplicaDBInstanceIdentifiers: [],
   };
   ctx.store.set(instanceKey(id), instance);
   return { DBInstance: presentInstance(instance) };
@@ -2634,6 +2703,10 @@ const RestoreDBInstanceToPointInTime: OperationHandler = (input, ctx) => {
     PreferredBackupWindow: undefined,
     PreferredMaintenanceWindow: undefined,
     VpcSecurityGroups: [],
+    DBParameterGroupName: undefined,
+    DBSubnetGroupName: undefined,
+    ReadReplicaSourceDBInstanceIdentifier: undefined,
+    ReadReplicaDBInstanceIdentifiers: [],
   };
   ctx.store.set(instanceKey(id), instance);
   return { DBInstance: presentInstance(instance) };

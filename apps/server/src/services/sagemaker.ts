@@ -9699,6 +9699,273 @@ const UpdatePartnerApp: OperationHandler = (input, ctx) => {
   return { Arn: stored.Arn };
 };
 
+const UpdatePipeline: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "PipelineName");
+  const stored = requirePipeline(ctx, name);
+  ctx.store.set(pipelineKey(name), {
+    ...stored,
+    PipelineDisplayName:
+      typeof input["PipelineDisplayName"] === "string"
+        ? (input["PipelineDisplayName"] as string)
+        : stored.PipelineDisplayName,
+    PipelineDefinition:
+      typeof input["PipelineDefinition"] === "string"
+        ? (input["PipelineDefinition"] as string)
+        : stored.PipelineDefinition,
+    PipelineDescription:
+      typeof input["PipelineDescription"] === "string"
+        ? (input["PipelineDescription"] as string)
+        : stored.PipelineDescription,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : stored.RoleArn,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { PipelineArn: stored.PipelineArn };
+};
+
+const UpdatePipelineExecution: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "PipelineExecutionArn");
+  const stored = requirePipelineExecution(ctx, arn);
+  ctx.store.set(pipelineExecutionKey(arn), {
+    ...stored,
+    PipelineExecutionDisplayName:
+      typeof input["PipelineExecutionDisplayName"] === "string"
+        ? (input["PipelineExecutionDisplayName"] as string)
+        : stored.PipelineExecutionDisplayName,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { PipelineExecutionArn: stored.PipelineExecutionArn };
+};
+
+const UpdatePipelineVersion: OperationHandler = (input, ctx) => {
+  const pipelineArn = requireString(input, "PipelineArn");
+  const pipelineVersionId =
+    typeof input["PipelineVersionId"] === "number"
+      ? (input["PipelineVersionId"] as number)
+      : 0;
+  const pipelineName = pipelineArn.split(":pipeline/")[1];
+  if (pipelineName === undefined) {
+    throw awsError("ResourceNotFound", `Pipeline not found.`, 400);
+  }
+  requirePipeline(ctx, pipelineName);
+  return { PipelineArn: pipelineArn, PipelineVersionId: pipelineVersionId };
+};
+
+const UpdateProject: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ProjectName");
+  const stored = ctx.store.get<StoredProject>(projectKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Project ${name} does not exist.`, 400);
+  }
+  ctx.store.set(projectKey(name), {
+    ...stored,
+    ProjectDescription:
+      typeof input["ProjectDescription"] === "string"
+        ? (input["ProjectDescription"] as string)
+        : stored.ProjectDescription,
+    ServiceCatalogProvisioningDetails:
+      input["ServiceCatalogProvisioningUpdateDetails"] !== undefined
+        ? input["ServiceCatalogProvisioningUpdateDetails"]
+        : stored.ServiceCatalogProvisioningDetails,
+  });
+  return { ProjectArn: stored.ProjectArn };
+};
+
+const UpdateSpace: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  const spaceName = requireString(input, "SpaceName");
+  const stored = ctx.store.get<StoredSpace>(spaceKey(domainId, spaceName));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Space ${spaceName} in domain ${domainId} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(spaceKey(domainId, spaceName), {
+    ...stored,
+    SpaceSettings:
+      input["SpaceSettings"] !== undefined
+        ? input["SpaceSettings"]
+        : stored.SpaceSettings,
+    SpaceDisplayName:
+      typeof input["SpaceDisplayName"] === "string"
+        ? (input["SpaceDisplayName"] as string)
+        : stored.SpaceDisplayName,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { SpaceArn: stored.SpaceArn };
+};
+
+const UpdateTrainingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrainingJobName");
+  const stored = requireTrainingJob(ctx, name);
+  ctx.store.set(trainingJobKey(name), {
+    ...stored,
+    ResourceConfig:
+      input["ResourceConfig"] !== undefined
+        ? input["ResourceConfig"]
+        : stored.ResourceConfig,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { TrainingJobArn: stored.TrainingJobArn };
+};
+
+const UpdateTrial: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrialName");
+  const stored = ctx.store.get<StoredTrial>(trialKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Trial ${name} does not exist.`, 400);
+  }
+  ctx.store.set(trialKey(name), {
+    ...stored,
+    DisplayName:
+      typeof input["DisplayName"] === "string"
+        ? (input["DisplayName"] as string)
+        : stored.DisplayName,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { TrialArn: stored.TrialArn };
+};
+
+const UpdateTrialComponent: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TrialComponentName");
+  const stored = ctx.store.get<StoredTrialComponent>(trialComponentKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `TrialComponent ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(trialComponentKey(name), {
+    ...stored,
+    DisplayName:
+      typeof input["DisplayName"] === "string"
+        ? (input["DisplayName"] as string)
+        : stored.DisplayName,
+    Status: input["Status"] !== undefined ? input["Status"] : stored.Status,
+    StartTime:
+      typeof input["StartTime"] === "number"
+        ? (input["StartTime"] as number)
+        : stored.StartTime,
+    EndTime:
+      typeof input["EndTime"] === "number"
+        ? (input["EndTime"] as number)
+        : stored.EndTime,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { TrialComponentArn: stored.TrialComponentArn };
+};
+
+const UpdateUserProfile: OperationHandler = (input, ctx) => {
+  const domainId = requireString(input, "DomainId");
+  const userProfileName = requireString(input, "UserProfileName");
+  const stored = ctx.store.get<StoredUserProfile>(
+    userProfileKey(domainId, userProfileName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `UserProfile ${userProfileName} in domain ${domainId} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(userProfileKey(domainId, userProfileName), {
+    ...stored,
+    UserSettings:
+      input["UserSettings"] !== undefined
+        ? input["UserSettings"]
+        : stored.UserSettings,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { UserProfileArn: stored.UserProfileArn };
+};
+
+const UpdateWorkforce: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "WorkforceName");
+  const stored = ctx.store.get<StoredWorkforce>(workforceKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Workforce ${name} does not exist.`,
+      400,
+    );
+  }
+  const updated: StoredWorkforce = {
+    ...stored,
+    SourceIpConfig:
+      input["SourceIpConfig"] !== undefined
+        ? input["SourceIpConfig"]
+        : stored.SourceIpConfig,
+    OidcConfig:
+      input["OidcConfig"] !== undefined
+        ? input["OidcConfig"]
+        : stored.OidcConfig,
+    WorkforceVpcConfig:
+      input["WorkforceVpcConfig"] !== undefined
+        ? input["WorkforceVpcConfig"]
+        : stored.WorkforceVpcConfig,
+    LastModifiedTime: nowSeconds(),
+  };
+  ctx.store.set(workforceKey(name), updated);
+  return {
+    Workforce: {
+      WorkforceName: updated.WorkforceName,
+      WorkforceArn: updated.WorkforceArn,
+      CognitoConfig: updated.CognitoConfig,
+      OidcConfig: updated.OidcConfig,
+      SourceIpConfig: updated.SourceIpConfig,
+      WorkforceVpcConfig: updated.WorkforceVpcConfig,
+      CreateDate: updated.CreationTime,
+      LastUpdatedDate: updated.LastModifiedTime,
+    },
+  };
+};
+
+const UpdateWorkteam: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "WorkteamName");
+  const stored = ctx.store.get<StoredWorkteam>(workteamKey(name));
+  if (stored === undefined) {
+    throw awsError("ResourceNotFound", `Workteam ${name} does not exist.`, 400);
+  }
+  const updated: StoredWorkteam = {
+    ...stored,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : stored.Description,
+    MemberDefinitions:
+      input["MemberDefinitions"] !== undefined
+        ? input["MemberDefinitions"]
+        : stored.MemberDefinitions,
+    NotificationConfiguration:
+      input["NotificationConfiguration"] !== undefined
+        ? input["NotificationConfiguration"]
+        : stored.NotificationConfiguration,
+    WorkerAccessConfiguration:
+      input["WorkerAccessConfiguration"] !== undefined
+        ? input["WorkerAccessConfiguration"]
+        : stored.WorkerAccessConfiguration,
+    LastUpdatedDate: nowSeconds(),
+  };
+  ctx.store.set(workteamKey(name), updated);
+  return {
+    Workteam: {
+      WorkteamName: updated.WorkteamName,
+      WorkteamArn: updated.WorkteamArn,
+      Description: updated.Description,
+      MemberDefinitions: updated.MemberDefinitions,
+      NotificationConfiguration: updated.NotificationConfiguration,
+      WorkerAccessConfiguration: updated.WorkerAccessConfiguration,
+      CreateDate: updated.CreateDate,
+      LastUpdatedDate: updated.LastUpdatedDate,
+    },
+  };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -10088,6 +10355,17 @@ const sagemaker = {
     UpdateNotebookInstance,
     UpdateNotebookInstanceLifecycleConfig,
     UpdatePartnerApp,
+    UpdatePipeline,
+    UpdatePipelineExecution,
+    UpdatePipelineVersion,
+    UpdateProject,
+    UpdateSpace,
+    UpdateTrainingJob,
+    UpdateTrial,
+    UpdateTrialComponent,
+    UpdateUserProfile,
+    UpdateWorkforce,
+    UpdateWorkteam,
   },
   model,
 } as const satisfies ServiceDefinition;

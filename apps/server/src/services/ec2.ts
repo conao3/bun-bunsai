@@ -770,6 +770,12 @@ type StoredReservedInstancesListing = {
   Tags: Tag[];
 };
 
+type StoredReservedInstances = {
+  ReservedInstancesId: string;
+  InstanceCount: number;
+  State: string;
+};
+
 type StoredRouteServer = {
   RouteServerId: string;
   AmazonSideAsn: number;
@@ -1242,6 +1248,7 @@ const vpnGwKey = (id: string): string => `vpngw/${id}`;
 const vaInstanceKey = (id: string): string => `vai/${id}`;
 const vaTrustProviderKey = (id: string): string => `vatp/${id}`;
 const capacityReservationKey = (id: string): string => `cr/${id}`;
+const reservedInstancesKey = (id: string): string => `ri/${id}`;
 const carrierGatewayKey = (id: string): string => `cagw/${id}`;
 const clientVpnEndpointKey = (id: string): string => `cvpn/${id}`;
 const clientVpnRouteKey = (endpointId: string, cidr: string): string =>
@@ -11881,15 +11888,26 @@ const DescribePublicIpv4Pools: OperationHandler = (input, ctx) => {
   const pools = allPublicIpv4Pools(ctx).filter((p) =>
     ids.length === 0 ? true : ids.includes(p.PoolId),
   );
+  const allCidrEntries = ctx.store
+    .list<{ Cidr: string }>()
+    .filter((e) => e.key.startsWith("ipv4-pool-cidr/"));
   return {
-    PublicIpv4Pools: pools.map((p) => ({
-      PoolId: p.PoolId,
-      NetworkBorderGroup: p.NetworkBorderGroup,
-      Tags: p.Tags,
-      PoolAddressRanges: [],
-      TotalAddressCount: 0,
-      TotalAvailableAddressCount: 0,
-    })),
+    PublicIpv4Pools: pools.map((p) => {
+      const ranges = allCidrEntries
+        .filter((e) => e.key.startsWith(`ipv4-pool-cidr/${p.PoolId}/`))
+        .map((e) => ({
+          FirstAddress: e.value.Cidr.split("/")[0],
+          LastAddress: e.value.Cidr.split("/")[0],
+        }));
+      return {
+        PoolId: p.PoolId,
+        NetworkBorderGroup: p.NetworkBorderGroup,
+        Tags: p.Tags,
+        PoolAddressRanges: ranges,
+        TotalAddressCount: ranges.length,
+        TotalAvailableAddressCount: ranges.length,
+      };
+    }),
   };
 };
 
@@ -11964,8 +11982,16 @@ const DescribeReplaceRootVolumeTasks: OperationHandler = (input, ctx) => {
   };
 };
 
-const DescribeReservedInstances: OperationHandler = (_input, _ctx) => {
-  return { ReservedInstances: [] };
+const DescribeReservedInstances: OperationHandler = (_input, ctx) => {
+  const reservations = ctx.store
+    .list<StoredReservedInstances>()
+    .filter((e) => e.key.startsWith("ri/"))
+    .map((e) => ({
+      ReservedInstancesId: e.value.ReservedInstancesId,
+      InstanceCount: e.value.InstanceCount,
+      State: e.value.State,
+    }));
+  return { ReservedInstances: reservations };
 };
 
 const allReservedInstancesListings = (
@@ -18295,6 +18321,255 @@ const ModifyVpcEndpointServicePermissions: OperationHandler = (input, ctx) => {
   };
 };
 
+const ProvisionPublicIpv4PoolCidr: OperationHandler = (input, ctx) => {
+  const poolId = typeof input["PoolId"] === "string" ? input["PoolId"] : "";
+  const pool = ctx.store.get<StoredPublicIpv4Pool>(publicIpv4PoolKey(poolId));
+  if (pool === undefined) {
+    throw awsError(
+      "InvalidPublicIpv4PoolID.NotFound",
+      `The public IPv4 pool ID '${poolId}' does not exist`,
+      400,
+    );
+  }
+  const netmaskLength =
+    typeof input["NetmaskLength"] === "number" ? input["NetmaskLength"] : 24;
+  const cidr = `0.0.0.0/${netmaskLength}`;
+  ctx.store.set(publicIpv4PoolCidrKey(poolId, cidr), { Cidr: cidr });
+  return {
+    PoolId: poolId,
+    PoolAddressRange: {
+      FirstAddress: "0.0.0.0",
+      LastAddress: "0.0.0.0",
+    },
+  };
+};
+
+const PurchaseCapacityBlock: OperationHandler = (input, ctx) => {
+  const platform =
+    typeof input["InstancePlatform"] === "string"
+      ? input["InstancePlatform"]
+      : "Linux/UNIX";
+  const id = hexId("cr");
+  const reservation: StoredCapacityReservation = {
+    CapacityReservationId: id,
+    AvailabilityZone: `${ctx.region}a`,
+    InstanceType: "p4d.24xlarge",
+    InstancePlatform: platform,
+    TotalInstanceCount: 0,
+    AvailableInstanceCount: 0,
+    EbsOptimized: false,
+    EphemeralStorage: false,
+    State: "active",
+    Tenancy: "default",
+    EndDateType: "unlimited",
+    InstanceMatchCriteria: "open",
+    CreateDate: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(capacityReservationKey(id), reservation);
+  return {
+    CapacityReservation: {
+      CapacityReservationId: reservation.CapacityReservationId,
+      State: reservation.State,
+    },
+    CapacityBlocks: [],
+  };
+};
+
+const PurchaseCapacityBlockExtension: OperationHandler = (_input, _ctx) => {
+  return { CapacityBlockExtensions: [] };
+};
+
+const PurchaseHostReservation: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : "";
+  const currencyCode =
+    typeof input["CurrencyCode"] === "string" ? input["CurrencyCode"] : "USD";
+  const hostIds = Array.isArray(input["HostIdSet"])
+    ? (input["HostIdSet"] as string[])
+    : [];
+  const offeringId =
+    typeof input["OfferingId"] === "string" ? input["OfferingId"] : "";
+  return {
+    ClientToken: clientToken,
+    CurrencyCode: currencyCode,
+    Purchase: hostIds.map((hostId) => ({
+      HostIdSet: [hostId],
+      OfferingId: offeringId,
+      HourlyPrice: "0.00",
+      UpfrontPrice: "0.00",
+      Duration: 31536000,
+      PaymentOption: "NoUpfront",
+    })),
+    TotalHourlyPrice: "0.00",
+    TotalUpfrontPrice: "0.00",
+  };
+};
+
+const PurchaseReservedInstancesOffering: OperationHandler = (input, ctx) => {
+  const instanceCount =
+    typeof input["InstanceCount"] === "number" ? input["InstanceCount"] : 1;
+  const id = hexId("ri");
+  const reservation: StoredReservedInstances = {
+    ReservedInstancesId: id,
+    InstanceCount: instanceCount,
+    State: "active",
+  };
+  ctx.store.set(reservedInstancesKey(id), reservation);
+  return { ReservedInstancesId: id };
+};
+
+const PurchaseScheduledInstances: OperationHandler = (_input, _ctx) => {
+  return { ScheduledInstanceSet: [] };
+};
+
+const RebootInstances: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["InstanceIds"]);
+  for (const id of ids) {
+    const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+    if (instance === undefined) {
+      throw awsError(
+        "InvalidInstanceID.NotFound",
+        `The instance ID '${id}' does not exist`,
+        400,
+      );
+    }
+  }
+  return {};
+};
+
+const RegisterImage: OperationHandler = (input, ctx) => {
+  const name = typeof input["Name"] === "string" ? input["Name"] : "unnamed";
+  const id = hexId("ami");
+  const image: StoredImage = {
+    ImageId: id,
+    Name: name,
+    Description:
+      typeof input["Description"] === "string" ? input["Description"] : "",
+    InstanceId: "",
+    State: "available",
+    OwnerId: ctx.account,
+    CreationDate: new Date().toISOString(),
+    Tags: [],
+  };
+  ctx.store.set(imageKey(id), image);
+  return { ImageId: id };
+};
+
+const RegisterInstanceEventNotificationAttributes: OperationHandler = (
+  input,
+  ctx,
+) => {
+  type StoredIen = {
+    InstanceTagKeys: string[];
+    IncludeAllTagsOfInstance: boolean;
+  };
+  const attr =
+    typeof input["InstanceTagAttribute"] === "object" &&
+    input["InstanceTagAttribute"] !== null
+      ? (input["InstanceTagAttribute"] as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+  const includeAll = attr["IncludeAllTagsOfInstance"] === true;
+  const newKeys = Array.isArray(attr["InstanceTagKeys"])
+    ? (attr["InstanceTagKeys"] as string[])
+    : [];
+  const existing = ctx.store.get<StoredIen>(instanceEventNotificationKey()) ?? {
+    InstanceTagKeys: [],
+    IncludeAllTagsOfInstance: false,
+  };
+  const merged = Array.from(new Set([...existing.InstanceTagKeys, ...newKeys]));
+  const updated: StoredIen = {
+    InstanceTagKeys: includeAll ? merged : merged,
+    IncludeAllTagsOfInstance: includeAll,
+  };
+  ctx.store.set(instanceEventNotificationKey(), updated);
+  return {
+    InstanceTagAttribute: {
+      InstanceTagKeys: updated.InstanceTagKeys,
+      IncludeAllTagsOfInstance: updated.IncludeAllTagsOfInstance,
+    },
+  };
+};
+
+const RegisterTransitGatewayMulticastGroupMembers: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const domainId =
+    typeof input["TransitGatewayMulticastDomainId"] === "string"
+      ? input["TransitGatewayMulticastDomainId"]
+      : "";
+  const groupIp =
+    typeof input["GroupIpAddress"] === "string" ? input["GroupIpAddress"] : "";
+  const niIds = Array.isArray(input["NetworkInterfaceIds"])
+    ? (input["NetworkInterfaceIds"] as string[])
+    : [];
+  for (const niId of niIds) {
+    ctx.store.set(tgwMcastMemberKey(domainId, groupIp, niId), {
+      NetworkInterfaceId: niId,
+      TransitGatewayMulticastDomainId: domainId,
+      GroupIpAddress: groupIp,
+    });
+  }
+  return {
+    RegisteredMulticastGroupMembers: {
+      TransitGatewayMulticastDomainId: domainId,
+      RegisteredNetworkInterfaceIds: niIds,
+      GroupIpAddress: groupIp,
+    },
+  };
+};
+
+const RegisterTransitGatewayMulticastGroupSources: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const domainId =
+    typeof input["TransitGatewayMulticastDomainId"] === "string"
+      ? input["TransitGatewayMulticastDomainId"]
+      : "";
+  const groupIp =
+    typeof input["GroupIpAddress"] === "string" ? input["GroupIpAddress"] : "";
+  const niIds = Array.isArray(input["NetworkInterfaceIds"])
+    ? (input["NetworkInterfaceIds"] as string[])
+    : [];
+  for (const niId of niIds) {
+    ctx.store.set(tgwMcastSourceKey(domainId, groupIp, niId), {
+      NetworkInterfaceId: niId,
+      TransitGatewayMulticastDomainId: domainId,
+      GroupIpAddress: groupIp,
+    });
+  }
+  return {
+    RegisteredMulticastGroupSources: {
+      TransitGatewayMulticastDomainId: domainId,
+      RegisteredNetworkInterfaceIds: niIds,
+      GroupIpAddress: groupIp,
+    },
+  };
+};
+
+const RejectCapacityReservationBillingOwnership: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id =
+    typeof input["CapacityReservationId"] === "string"
+      ? input["CapacityReservationId"]
+      : "";
+  const reservation = ctx.store.get<StoredCapacityReservation>(
+    capacityReservationKey(id),
+  );
+  if (reservation === undefined) {
+    throw awsError(
+      "InvalidCapacityReservationId.NotFound",
+      `The capacity reservation ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { Return: true };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -19000,6 +19275,18 @@ const ec2: ServiceDefinition = {
     ProvisionByoipCidr,
     ProvisionIpamByoasn,
     ProvisionIpamPoolCidr,
+    ProvisionPublicIpv4PoolCidr,
+    PurchaseCapacityBlock,
+    PurchaseCapacityBlockExtension,
+    PurchaseHostReservation,
+    PurchaseReservedInstancesOffering,
+    PurchaseScheduledInstances,
+    RebootInstances,
+    RegisterImage,
+    RegisterInstanceEventNotificationAttributes,
+    RegisterTransitGatewayMulticastGroupMembers,
+    RegisterTransitGatewayMulticastGroupSources,
+    RejectCapacityReservationBillingOwnership,
   },
   model,
 } as const;

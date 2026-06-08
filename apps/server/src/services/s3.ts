@@ -28,6 +28,8 @@ type S3Object = {
   contentEncoding?: string;
   contentLanguage?: string;
   expires?: number;
+  retention?: { Mode: string; RetainUntilDate: number };
+  legalHold?: string;
 };
 
 type S3Tag = {
@@ -443,6 +445,9 @@ const s3: ServiceDefinition = {
     const hasUploadId = req.query.has("uploadId");
     const hasObjectTagging = req.query.has("tagging");
     const hasObjectAcl = req.query.has("acl");
+    const hasRetention = req.query.has("retention");
+    const hasLegalHold = req.query.has("legal-hold");
+    const hasAttributes = req.query.has("attributes");
     if (req.method === "POST") {
       if (hasUploads) return "CreateMultipartUpload";
       if (hasUploadId) return "CompleteMultipartUpload";
@@ -456,6 +461,8 @@ const s3: ServiceDefinition = {
       }
       if (hasObjectTagging) return "PutObjectTagging";
       if (hasObjectAcl) return "PutObjectAcl";
+      if (hasRetention) return "PutObjectRetention";
+      if (hasLegalHold) return "PutObjectLegalHold";
       if (req.headers.get("x-amz-copy-source") !== null) return "CopyObject";
       return "PutObject";
     }
@@ -463,6 +470,9 @@ const s3: ServiceDefinition = {
       if (hasUploadId) return "ListParts";
       if (hasObjectTagging) return "GetObjectTagging";
       if (hasObjectAcl) return "GetObjectAcl";
+      if (hasRetention) return "GetObjectRetention";
+      if (hasLegalHold) return "GetObjectLegalHold";
+      if (hasAttributes) return "GetObjectAttributes";
       return "GetObject";
     }
     if (req.method === "HEAD") return "HeadObject";
@@ -1715,6 +1725,107 @@ const s3: ServiceDefinition = {
         objects: { ...target.objects, [key]: updated },
       });
       return {};
+    },
+    PutObjectRetention: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const versions = target.objects[key] ?? [];
+      const object = getCurrentObject(versions);
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const raw = input["Retention"];
+      const retRaw =
+        typeof raw === "object" && raw !== null
+          ? (raw as { Mode?: unknown; RetainUntilDate?: unknown })
+          : {};
+      const mode = typeof retRaw.Mode === "string" ? retRaw.Mode : "";
+      const retainUntilDate =
+        typeof retRaw.RetainUntilDate === "number" ? retRaw.RetainUntilDate : 0;
+      const updated = [
+        {
+          ...object,
+          retention: { Mode: mode, RetainUntilDate: retainUntilDate },
+        },
+        ...versions.slice(1),
+      ];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        objects: { ...target.objects, [key]: updated },
+      });
+      return {};
+    },
+    GetObjectRetention: (_input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const object = getCurrentObject(target.objects[key]);
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      return { Retention: object.retention ?? {} };
+    },
+    PutObjectLegalHold: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const versions = target.objects[key] ?? [];
+      const object = getCurrentObject(versions);
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const raw = input["LegalHold"];
+      const holdRaw =
+        typeof raw === "object" && raw !== null
+          ? (raw as { Status?: unknown })
+          : {};
+      const status =
+        typeof holdRaw.Status === "string" ? holdRaw.Status : "OFF";
+      const updated = [{ ...object, legalHold: status }, ...versions.slice(1)];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        objects: { ...target.objects, [key]: updated },
+      });
+      return {};
+    },
+    GetObjectLegalHold: (_input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const object = getCurrentObject(target.objects[key]);
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      return { LegalHold: { Status: object.legalHold ?? "OFF" } };
+    },
+    GetObjectAttributes: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const object = getCurrentObject(target.objects[key]);
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const attrs = Array.isArray(input["ObjectAttributes"])
+        ? (input["ObjectAttributes"] as string[])
+        : [];
+      const result: Record<string, unknown> = {};
+      if (attrs.includes("ETag")) result["ETag"] = object.etag;
+      if (attrs.includes("ObjectSize")) result["ObjectSize"] = object.size;
+      if (attrs.includes("StorageClass"))
+        result["StorageClass"] = object.storageClass;
+      return result;
     },
     GetBucketAcl: (_input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);

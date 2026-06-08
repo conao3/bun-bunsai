@@ -134,6 +134,8 @@ type StoredContact = {
   TotalPauseCount: number;
   LastPausedTimestamp?: string;
   LastResumedTimestamp?: string;
+  RecordingEnabled?: boolean;
+  StreamingId?: string;
 };
 
 type StoredEmailAddress = {
@@ -1781,6 +1783,9 @@ const DescribeContact: OperationHandler = (input, ctx) => {
         : {}),
       ...(stored.LastResumedTimestamp !== undefined
         ? { LastResumedTimestamp: new Date(stored.LastResumedTimestamp) }
+        : {}),
+      ...(stored.RecordingEnabled
+        ? { Recordings: [{ StorageType: "S3", Type: "AUDIO" }] }
         : {}),
     },
   };
@@ -4206,6 +4211,194 @@ const SendChatIntegrationEvent: OperationHandler = (_input, _ctx) => {
   return { InitialContactId: crypto.randomUUID(), NewChatCreated: true };
 };
 
+const SendOutboundEmail: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const StartAttachedFileUpload: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/attached-file/${id}`;
+  return {
+    FileArn: arn,
+    FileId: id,
+    CreationTime: new Date().toISOString(),
+    FileStatus: "APPROVED",
+    UploadUrlMetadata: {
+      Url: `https://s3.example.com/${id}`,
+      UrlExpiry: new Date().toISOString(),
+      HeadersToInclude: {},
+    },
+  };
+};
+
+const StartChatContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact/${id}`;
+  const stored: StoredContact = {
+    ContactId: id,
+    ContactArn: arn,
+    InstanceId: instanceId,
+    TotalPauseCount: 0,
+  };
+  ctx.store.set(contactKey(instanceId, id), stored);
+  return {
+    ContactId: id,
+    ParticipantId: crypto.randomUUID(),
+    ParticipantToken: crypto.randomUUID(),
+  };
+};
+
+const StartContactEvaluation: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const storedContact = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (storedContact === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact-evaluation/${id}`;
+  return { EvaluationId: id, EvaluationArn: arn };
+};
+
+const StartContactMediaProcessing: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const StartContactRecording: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(contactKey(instanceId, contactId), {
+    ...stored,
+    RecordingEnabled: true,
+  });
+  return {};
+};
+
+const StartContactStreaming: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  const streamingId = crypto.randomUUID();
+  ctx.store.set(contactKey(instanceId, contactId), {
+    ...stored,
+    StreamingId: streamingId,
+  });
+  return { StreamingId: streamingId };
+};
+
+const StartEmailContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact/${id}`;
+  const stored: StoredContact = {
+    ContactId: id,
+    ContactArn: arn,
+    InstanceId: instanceId,
+    TotalPauseCount: 0,
+  };
+  ctx.store.set(contactKey(instanceId, id), stored);
+  return { ContactId: id };
+};
+
+const StartOutboundChatContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact/${id}`;
+  const stored: StoredContact = {
+    ContactId: id,
+    ContactArn: arn,
+    InstanceId: instanceId,
+    TotalPauseCount: 0,
+  };
+  ctx.store.set(contactKey(instanceId, id), stored);
+  return { ContactId: id };
+};
+
+const StartOutboundEmailContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact/${id}`;
+  const stored: StoredContact = {
+    ContactId: id,
+    ContactArn: arn,
+    InstanceId: instanceId,
+    TotalPauseCount: 0,
+  };
+  ctx.store.set(contactKey(instanceId, id), stored);
+  return { ContactId: id };
+};
+
+const StartOutboundVoiceContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact/${id}`;
+  const stored: StoredContact = {
+    ContactId: id,
+    ContactArn: arn,
+    InstanceId: instanceId,
+    TotalPauseCount: 0,
+  };
+  ctx.store.set(contactKey(instanceId, id), stored);
+  return { ContactId: id };
+};
+
+const StartScreenSharing: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -4239,6 +4432,7 @@ const connect = {
             if (parts[2] === "security-key") return "AssociateSecurityKey";
             if (parts[2] === "integration-associations")
               return "CreateIntegrationAssociation";
+            if (parts[2] === "outbound-email") return "SendOutboundEmail";
           }
           if (req.method === "DELETE") {
             if (parts[2] === "approved-origin")
@@ -4636,6 +4830,8 @@ const connect = {
         return undefined;
 
       case "attached-files":
+        if (parts.length === 2 && req.method === "PUT")
+          return "StartAttachedFileUpload";
         if (parts.length === 2 && req.method === "POST")
           return "BatchGetAttachedFileMetadata";
         if (parts.length === 3 && req.method === "GET")
@@ -4680,6 +4876,27 @@ const connect = {
             return "ResumeContact";
           if (parts[1] === "resume-recording" && req.method === "POST")
             return "ResumeContactRecording";
+          if (parts[1] === "chat" && req.method === "PUT")
+            return "StartChatContact";
+          if (parts[1] === "email" && req.method === "PUT")
+            return "StartEmailContact";
+          if (parts[1] === "outbound-chat" && req.method === "PUT")
+            return "StartOutboundChatContact";
+          if (parts[1] === "outbound-email" && req.method === "PUT")
+            return "StartOutboundEmailContact";
+          if (parts[1] === "outbound-voice" && req.method === "PUT")
+            return "StartOutboundVoiceContact";
+          if (parts[1] === "screen-sharing" && req.method === "PUT")
+            return "StartScreenSharing";
+          if (
+            parts[1] === "start-contact-media-processing" &&
+            req.method === "POST"
+          )
+            return "StartContactMediaProcessing";
+          if (parts[1] === "start-recording" && req.method === "POST")
+            return "StartContactRecording";
+          if (parts[1] === "start-streaming" && req.method === "POST")
+            return "StartContactStreaming";
         }
         if (parts.length === 3 && parts[1] === "batch" && req.method === "PUT")
           return "BatchPutContact";
@@ -4942,6 +5159,8 @@ const connect = {
         return undefined;
 
       case "contact-evaluations":
+        if (parts.length === 2 && req.method === "PUT")
+          return "StartContactEvaluation";
         if (parts.length === 2 && req.method === "GET")
           return "ListContactEvaluations";
         if (parts.length === 3 && req.method === "GET")
@@ -5594,6 +5813,18 @@ const connect = {
     SearchWorkspaceAssociations,
     SearchWorkspaces,
     SendChatIntegrationEvent,
+    SendOutboundEmail,
+    StartAttachedFileUpload,
+    StartChatContact,
+    StartContactEvaluation,
+    StartContactMediaProcessing,
+    StartContactRecording,
+    StartContactStreaming,
+    StartEmailContact,
+    StartOutboundChatContact,
+    StartOutboundEmailContact,
+    StartOutboundVoiceContact,
+    StartScreenSharing,
   },
   model,
 } as const satisfies ServiceDefinition;

@@ -1361,8 +1361,12 @@ const StartExecution: OperationHandler = async (input, ctx) => {
   const executionName = stringOrUndefined(input["name"]) ?? crypto.randomUUID();
   const machineName = machineNameFromArn(machine.stateMachineArn);
   const arn = executionArnOf(ctx, machineName, executionName);
+  const inputData = stringOrUndefined(input["input"]) ?? "{}";
   const existing = ctx.store.get<StoredExecution>(executionKey(arn));
   if (existing !== undefined) {
+    if (existing.input === inputData) {
+      return { executionArn: arn, startDate: existing.startDate };
+    }
     throw awsError(
       "ExecutionAlreadyExists",
       `Execution Already Exists: '${arn}'`,
@@ -1370,7 +1374,6 @@ const StartExecution: OperationHandler = async (input, ctx) => {
     );
   }
   const startDate = nowSeconds();
-  const inputData = stringOrUndefined(input["input"]) ?? "{}";
   const result = await interpretAsl(machine.definition, inputData, ctx, arn);
   const execution: StoredExecution = {
     executionArn: arn,
@@ -1790,6 +1793,13 @@ const ListStateMachineAliases: OperationHandler = (input, ctx) => {
 const StartSyncExecution: OperationHandler = async (input, ctx) => {
   const machineArn = requireString(input, "stateMachineArn");
   const machine = requireStateMachine(ctx, machineArn);
+  if (machine.type !== "EXPRESS") {
+    throw awsError(
+      "StateMachineTypeNotSupported",
+      `This operation is not supported for ${machine.type} state machines.`,
+      400,
+    );
+  }
   const executionName = stringOrUndefined(input["name"]) ?? crypto.randomUUID();
   const machineName = machineNameFromArn(machine.stateMachineArn);
   const arn = executionArnOf(ctx, machineName, executionName);

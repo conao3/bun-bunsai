@@ -2,8 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
   CreateClusterCommand,
+  CreateServiceCommand,
   DeleteClusterCommand,
+  DeleteServiceCommand,
   DescribeClustersCommand,
+  DescribeServicesCommand,
   DescribeTaskDefinitionCommand,
   DescribeTasksCommand,
   ECSClient,
@@ -12,6 +15,7 @@ import {
   RegisterTaskDefinitionCommand,
   RunTaskCommand,
   StopTaskCommand,
+  UpdateServiceCommand,
 } from "@aws-sdk/client-ecs";
 
 const { endpoint, requestHandler } = startApp();
@@ -121,6 +125,83 @@ describe("ecs e2e", () => {
     expect(stopped.task?.lastStatus).toBe("STOPPED");
     expect(stopped.task?.desiredStatus).toBe("STOPPED");
     expect(stopped.task?.stoppedReason).toBe("test");
+
+    await client.send(new DeleteClusterCommand({ cluster: clusterName }));
+  });
+
+  test("service desiredCount reconciles running tasks", async () => {
+    const client = ecs();
+    const clusterName = "bunsai-e2e-svc-cluster";
+    const family = "bunsai-e2e-svc-family";
+    const serviceName = "bunsai-e2e-svc";
+
+    await client.send(new CreateClusterCommand({ clusterName }));
+    await client.send(
+      new RegisterTaskDefinitionCommand({
+        family,
+        containerDefinitions: [
+          { name: "app", image: "nginx:latest", memory: 128, essential: true },
+        ],
+      }),
+    );
+
+    const created = await client.send(
+      new CreateServiceCommand({
+        cluster: clusterName,
+        serviceName,
+        taskDefinition: family,
+        desiredCount: 2,
+      }),
+    );
+    expect(created.service?.serviceName).toBe(serviceName);
+    expect(created.service?.desiredCount).toBe(2);
+    expect(created.service?.runningCount).toBe(2);
+
+    const described = await client.send(
+      new DescribeServicesCommand({
+        cluster: clusterName,
+        services: [serviceName],
+      }),
+    );
+    const svc = (described.services ?? [])[0];
+    expect(svc?.runningCount).toBe(2);
+
+    const listed = await client.send(
+      new ListTasksCommand({ cluster: clusterName, serviceName }),
+    );
+    expect((listed.taskArns ?? []).length).toBe(2);
+
+    const updated = await client.send(
+      new UpdateServiceCommand({
+        cluster: clusterName,
+        service: serviceName,
+        desiredCount: 1,
+      }),
+    );
+    expect(updated.service?.desiredCount).toBe(1);
+    expect(updated.service?.runningCount).toBe(1);
+
+    const described2 = await client.send(
+      new DescribeServicesCommand({
+        cluster: clusterName,
+        services: [serviceName],
+      }),
+    );
+    expect((described2.services ?? [])[0]?.runningCount).toBe(1);
+
+    const listed2 = await client.send(
+      new ListTasksCommand({ cluster: clusterName, serviceName }),
+    );
+    expect((listed2.taskArns ?? []).length).toBe(1);
+
+    await client.send(
+      new DeleteServiceCommand({ cluster: clusterName, service: serviceName }),
+    );
+
+    const listed3 = await client.send(
+      new ListTasksCommand({ cluster: clusterName, serviceName }),
+    );
+    expect((listed3.taskArns ?? []).length).toBe(0);
 
     await client.send(new DeleteClusterCommand({ cluster: clusterName }));
   });

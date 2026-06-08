@@ -94,7 +94,7 @@ const md5OfMessageAttributes = (
         binaryValue instanceof Uint8Array
           ? binaryValue
           : typeof binaryValue === "string"
-            ? Uint8Array.from(atob(binaryValue), (c) => c.charCodeAt(0))
+            ? Uint8Array.from(binaryValue, (c) => c.charCodeAt(0))
             : new Uint8Array();
       updateLengthPrefixed(hasher, bytes);
     }
@@ -294,6 +294,32 @@ const systemAttributesRequest = (
     }
   }
   return names;
+};
+
+const messageAttributeNamesRequest = (
+  input: Record<string, unknown>,
+): Set<string> => {
+  const names = new Set<string>();
+  const raw = input["MessageAttributeNames"];
+  if (Array.isArray(raw)) {
+    for (const value of raw as unknown[]) names.add(String(value));
+  } else if (typeof raw === "string" && raw !== "") {
+    names.add(raw);
+  }
+  return names;
+};
+
+const filterMessageAttributes = (
+  attrs: Record<string, unknown> | undefined,
+  requested: Set<string>,
+): Record<string, unknown> | undefined => {
+  if (attrs === undefined || requested.size === 0) return undefined;
+  if (requested.has("All")) return attrs;
+  const filtered: Record<string, unknown> = {};
+  for (const name of requested) {
+    if (name in attrs) filtered[name] = attrs[name];
+  }
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
 };
 
 const buildSystemAttributes = (
@@ -593,6 +619,7 @@ const ReceiveMessage: OperationHandler = async (input, ctx) => {
       ? queueVisibilityDefault(queue)
       : toIntOr(input["VisibilityTimeout"], queueVisibilityDefault(queue));
   const systemRequest = systemAttributesRequest(input);
+  const messageAttrRequest = messageAttributeNamesRequest(input);
   const waitRaw =
     input["WaitTimeSeconds"] === undefined
       ? toIntOr(queue.Attributes["ReceiveMessageWaitTimeSeconds"], 0)
@@ -623,13 +650,20 @@ const ReceiveMessage: OperationHandler = async (input, ctx) => {
   return {
     Messages: selected.map((message) => {
       const attributes = buildSystemAttributes(message, systemRequest);
+      const filteredMsgAttrs = filterMessageAttributes(
+        message.MessageAttributes,
+        messageAttrRequest,
+      );
       return {
         MessageId: message.MessageId,
         ReceiptHandle: message.ReceiptHandle,
         MD5OfBody: message.MD5OfBody,
         Body: message.Body,
-        MessageAttributes: message.MessageAttributes,
-        ...(message.MD5OfMessageAttributes !== undefined
+        ...(filteredMsgAttrs !== undefined
+          ? { MessageAttributes: filteredMsgAttrs }
+          : {}),
+        ...(filteredMsgAttrs !== undefined &&
+        message.MD5OfMessageAttributes !== undefined
           ? { MD5OfMessageAttributes: message.MD5OfMessageAttributes }
           : {}),
         ...(attributes !== undefined ? { Attributes: attributes } : {}),

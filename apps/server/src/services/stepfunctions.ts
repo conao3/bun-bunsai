@@ -29,6 +29,7 @@ type HistoryEvent = {
   executionStartedEventDetails?: { input: string };
   executionSucceededEventDetails?: { output: string };
   executionFailedEventDetails?: { error?: string; cause?: string };
+  executionAbortedEventDetails?: { error?: string; cause?: string };
   stateEnteredEventDetails?: { name: string; input: string };
   stateExitedEventDetails?: { name: string; output: string };
   taskScheduledEventDetails?: {
@@ -1104,8 +1105,23 @@ const StopExecution: OperationHandler = (input, ctx) => {
     );
   }
   const stopDate = nowSeconds();
+  const error = stringOrUndefined(input["error"]);
+  const cause = stringOrUndefined(input["cause"]);
+  const prevId = (execution.events ?? []).length;
   execution.status = "ABORTED";
   execution.stopDate = stopDate;
+  execution.error = error;
+  execution.cause = cause;
+  execution.events = [
+    ...(execution.events ?? []),
+    {
+      timestamp: stopDate,
+      type: "ExecutionAborted",
+      id: prevId + 1,
+      previousEventId: prevId,
+      executionAbortedEventDetails: { error, cause },
+    },
+  ];
   ctx.store.set(executionKey(arn), execution);
   return { stopDate };
 };

@@ -151,6 +151,26 @@ describe("Lambda real Node.js execution", () => {
     );
     expect(res.StatusCode).toBe(204);
   });
+
+  test("Event invocation returns 202 immediately with no payload", async () => {
+    const client = lambda();
+    await createFn(client, "fn-event", {
+      "index.js": "exports.handler = async () => ({ ran: true });",
+    });
+    const res = await client.send(
+      new InvokeCommand({
+        FunctionName: "fn-event",
+        InvocationType: "Event",
+        Payload: new TextEncoder().encode(JSON.stringify({ key: "value" })),
+      }),
+    );
+    expect(res.StatusCode).toBe(202);
+    expect(res.FunctionError).toBeUndefined();
+    const body = res.Payload
+      ? new TextDecoder().decode(res.Payload).trim()
+      : "";
+    expect(body).toBe("");
+  });
 });
 
 describe("Lambda unsupported runtime", () => {

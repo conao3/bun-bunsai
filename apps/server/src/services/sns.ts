@@ -121,12 +121,13 @@ const requireTopic = (ctx: ServiceContext, arn: string): StoredTopic => {
   return topic;
 };
 
-const jsonDefaultMessage = (message: string): string => {
+const jsonMessageForProtocol = (message: string, protocol: string): string => {
   try {
     const parsed = JSON.parse(message) as Record<string, unknown>;
-    return typeof parsed["default"] === "string"
-      ? (parsed["default"] as string)
-      : message;
+    const specific = parsed[protocol];
+    if (typeof specific === "string") return specific;
+    const fallback = parsed["default"];
+    return typeof fallback === "string" ? fallback : message;
   } catch {
     return message;
   }
@@ -162,6 +163,7 @@ const envelopeMessageAttributes = (
 type DeliveryMessage = {
   messageId: string;
   message: string;
+  messageStructure: string | undefined;
   subject: string | undefined;
   messageAttributes: Record<string, unknown> | undefined;
 };
@@ -434,15 +436,23 @@ const fanout = async (
       continue;
     const raw = attributes["RawMessageDelivery"] === "true";
     const isSqs = subscription.Protocol === "sqs";
+    const selectedMessage =
+      delivery.messageStructure === "json"
+        ? jsonMessageForProtocol(delivery.message, subscription.Protocol)
+        : delivery.message;
+    const resolvedDelivery: DeliveryMessage =
+      selectedMessage === delivery.message
+        ? delivery
+        : { ...delivery, message: selectedMessage };
     await deliverToArn(ctx, subscription.Endpoint, {
       body:
         isSqs && !raw
-          ? buildEnvelope(subscription.TopicArn, delivery)
-          : delivery.message,
+          ? buildEnvelope(subscription.TopicArn, resolvedDelivery)
+          : selectedMessage,
       event: snsLambdaEvent(
         subscription.TopicArn,
         subscription.SubscriptionArn,
-        delivery,
+        resolvedDelivery,
       ),
       messageAttributes: raw ? delivery.messageAttributes : undefined,
     });
@@ -457,6 +467,7 @@ registerTarget("sns", async (store, resource, delivery, ctx) => {
     {
       messageId: crypto.randomUUID(),
       message: delivery.body,
+      messageStructure: undefined,
       subject: delivery.subject,
       messageAttributes: undefined,
     },
@@ -570,13 +581,13 @@ const Publish: OperationHandler = async (input, ctx) => {
   }
   const messageId = crypto.randomUUID();
   if (typeof topicArn === "string" && topicArn !== "") {
-    const deliveredMessage =
-      typeof messageStructure === "string" && messageStructure === "json"
-        ? jsonDefaultMessage(message)
-        : message;
     await fanout(ctx, ctx.store, (candidate) => candidate === topicArn, {
       messageId,
-      message: deliveredMessage,
+      message,
+      messageStructure:
+        typeof messageStructure === "string" && messageStructure === "json"
+          ? "json"
+          : undefined,
       subject:
         typeof input["Subject"] === "string"
           ? (input["Subject"] as string)

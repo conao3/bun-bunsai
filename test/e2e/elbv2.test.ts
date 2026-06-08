@@ -633,3 +633,219 @@ test("ELBv2 fidelity bar: LB + TG + listener → targets health round-trip + rul
   await client.send(new DeleteTargetGroupCommand({ TargetGroupArn: tgArn }));
   await client.send(new DeleteLoadBalancerCommand({ LoadBalancerArn: lbArn }));
 });
+
+test("ELBv2 target group attributes and health-check fidelity", async () => {
+  const client = elbv2();
+
+  const { TargetGroups: tgs } = await client.send(
+    new CreateTargetGroupCommand({
+      Name: "bunsai-e2e-hc-fidelity-tg",
+      Protocol: "HTTP",
+      Port: 80,
+      VpcId: "vpc-12345678",
+      TargetType: "instance",
+    }),
+  );
+  const tgArn = tgs?.[0]?.TargetGroupArn ?? "";
+
+  const { TargetGroups: modified } = await client.send(
+    new ModifyTargetGroupCommand({
+      TargetGroupArn: tgArn,
+      HealthCheckEnabled: true,
+      HealthCheckProtocol: "HTTPS",
+      HealthCheckPath: "/healthz",
+      HealthCheckPort: "8443",
+      HealthCheckIntervalSeconds: 15,
+      HealthCheckTimeoutSeconds: 5,
+      HealthyThresholdCount: 3,
+      UnhealthyThresholdCount: 2,
+    }),
+  );
+  expect(modified?.[0]?.HealthCheckProtocol).toBe("HTTPS");
+  expect(modified?.[0]?.HealthCheckPath).toBe("/healthz");
+  expect(modified?.[0]?.HealthCheckPort).toBe("8443");
+  expect(modified?.[0]?.HealthCheckIntervalSeconds).toBe(15);
+  expect(modified?.[0]?.HealthCheckTimeoutSeconds).toBe(5);
+  expect(modified?.[0]?.HealthyThresholdCount).toBe(3);
+  expect(modified?.[0]?.UnhealthyThresholdCount).toBe(2);
+
+  const { TargetGroups: described } = await client.send(
+    new DescribeTargetGroupsCommand({ TargetGroupArns: [tgArn] }),
+  );
+  expect(described?.[0]?.HealthCheckPath).toBe("/healthz");
+  expect(described?.[0]?.HealthCheckIntervalSeconds).toBe(15);
+
+  await client.send(
+    new ModifyTargetGroupAttributesCommand({
+      TargetGroupArn: tgArn,
+      Attributes: [
+        { Key: "stickiness.enabled", Value: "true" },
+        { Key: "deregistration_delay.timeout_seconds", Value: "120" },
+      ],
+    }),
+  );
+  const { Attributes } = await client.send(
+    new DescribeTargetGroupAttributesCommand({ TargetGroupArn: tgArn }),
+  );
+  expect(Attributes?.find((a) => a.Key === "stickiness.enabled")?.Value).toBe(
+    "true",
+  );
+  expect(
+    Attributes?.find((a) => a.Key === "deregistration_delay.timeout_seconds")
+      ?.Value,
+  ).toBe("120");
+
+  let tgNotFoundErr: unknown;
+  try {
+    await client.send(
+      new DescribeTargetGroupsCommand({
+        TargetGroupArns: [
+          "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/nonexistent/abcdef",
+        ],
+      }),
+    );
+  } catch (e) {
+    tgNotFoundErr = e;
+  }
+  expect((tgNotFoundErr as { name?: string })?.name).toBe(
+    "TargetGroupNotFoundException",
+  );
+
+  await client.send(new DeleteTargetGroupCommand({ TargetGroupArn: tgArn }));
+});
+
+test("ELBv2 listener rule conditions, priority, and errors", async () => {
+  const client = elbv2();
+
+  const { LoadBalancers: lbs } = await client.send(
+    new CreateLoadBalancerCommand({
+      Name: "bunsai-e2e-rule-fidelity-lb",
+      Subnets: ["subnet-aabbccdd"],
+    }),
+  );
+  const lbArn = lbs?.[0]?.LoadBalancerArn ?? "";
+
+  const { TargetGroups: tgs } = await client.send(
+    new CreateTargetGroupCommand({
+      Name: "bunsai-e2e-rule-fidelity-tg",
+      Protocol: "HTTP",
+      Port: 80,
+      VpcId: "vpc-12345678",
+      TargetType: "instance",
+    }),
+  );
+  const tgArn = tgs?.[0]?.TargetGroupArn ?? "";
+
+  const { Listeners } = await client.send(
+    new CreateListenerCommand({
+      LoadBalancerArn: lbArn,
+      Protocol: "HTTP",
+      Port: 80,
+      DefaultActions: [{ Type: "forward", TargetGroupArn: tgArn }],
+    }),
+  );
+  const listenerArn = Listeners?.[0]?.ListenerArn ?? "";
+
+  const { Rules: r30 } = await client.send(
+    new CreateRuleCommand({
+      ListenerArn: listenerArn,
+      Priority: 30,
+      Conditions: [{ Field: "path-pattern", Values: ["/api/*"] }],
+      Actions: [{ Type: "forward", TargetGroupArn: tgArn }],
+    }),
+  );
+  const rule30Arn = r30?.[0]?.RuleArn ?? "";
+  expect(r30?.[0]?.Priority).toBe("30");
+  expect(r30?.[0]?.Conditions?.[0]?.Field).toBe("path-pattern");
+
+  const { Rules: r10 } = await client.send(
+    new CreateRuleCommand({
+      ListenerArn: listenerArn,
+      Priority: 10,
+      Conditions: [
+        { Field: "host-header", Values: ["api.example.com"] },
+        { Field: "path-pattern", Values: ["/v2/*"] },
+      ],
+      Actions: [
+        {
+          Type: "fixed-response",
+          FixedResponseConfig: {
+            StatusCode: "200",
+            MessageBody: "ok",
+            ContentType: "text/plain",
+          },
+        },
+      ],
+    }),
+  );
+  const rule10Arn = r10?.[0]?.RuleArn ?? "";
+  expect(r10?.[0]?.Priority).toBe("10");
+  expect(r10?.[0]?.Conditions?.length).toBe(2);
+
+  const { Rules: byPriority } = await client.send(
+    new DescribeRulesCommand({ ListenerArn: listenerArn }),
+  );
+  const priorities = byPriority?.map((r) => r.Priority) ?? [];
+  expect(priorities.indexOf("10")).toBeLessThan(priorities.indexOf("30"));
+
+  await client.send(
+    new SetRulePrioritiesCommand({
+      RulePriorities: [
+        { RuleArn: rule10Arn, Priority: 50 },
+        { RuleArn: rule30Arn, Priority: 5 },
+      ],
+    }),
+  );
+  const { Rules: reordered } = await client.send(
+    new DescribeRulesCommand({ ListenerArn: listenerArn }),
+  );
+  const reorderedPriorities = reordered?.map((r) => r.Priority) ?? [];
+  expect(reorderedPriorities.indexOf("5")).toBeLessThan(
+    reorderedPriorities.indexOf("50"),
+  );
+
+  let priorityInUseErr: unknown;
+  try {
+    await client.send(
+      new CreateRuleCommand({
+        ListenerArn: listenerArn,
+        Priority: 5,
+        Conditions: [{ Field: "path-pattern", Values: ["/duplicate/*"] }],
+        Actions: [{ Type: "forward", TargetGroupArn: tgArn }],
+      }),
+    );
+  } catch (e) {
+    priorityInUseErr = e;
+  }
+  expect((priorityInUseErr as { name?: string })?.name).toBe(
+    "PriorityInUseException",
+  );
+
+  let ruleNotFoundErr: unknown;
+  try {
+    await client.send(
+      new DescribeRulesCommand({
+        RuleArns: [
+          "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener-rule/app/nonexistent/aabbccdd/11223344",
+        ],
+      }),
+    );
+  } catch (e) {
+    ruleNotFoundErr = e;
+  }
+  expect((ruleNotFoundErr as { name?: string })?.name).toBe(
+    "RuleNotFoundException",
+  );
+
+  await client.send(new DeleteRuleCommand({ RuleArn: rule10Arn }));
+  await client.send(new DeleteRuleCommand({ RuleArn: rule30Arn }));
+  const { Rules: afterDelete } = await client.send(
+    new DescribeRulesCommand({ ListenerArn: listenerArn }),
+  );
+  expect(afterDelete?.some((r) => r.RuleArn === rule10Arn)).toBe(false);
+  expect(afterDelete?.some((r) => r.RuleArn === rule30Arn)).toBe(false);
+
+  await client.send(new DeleteListenerCommand({ ListenerArn: listenerArn }));
+  await client.send(new DeleteTargetGroupCommand({ TargetGroupArn: tgArn }));
+  await client.send(new DeleteLoadBalancerCommand({ LoadBalancerArn: lbArn }));
+});

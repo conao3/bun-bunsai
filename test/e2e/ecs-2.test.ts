@@ -419,6 +419,7 @@ describe("ecs service and task definition e2e", () => {
     const family = "bunsai-e2e-start-td";
     const clusterName = "bunsai-e2e-start-cluster";
 
+    await client.send(new CreateClusterCommand({ clusterName }));
     await client.send(
       new RegisterTaskDefinitionCommand({
         family,

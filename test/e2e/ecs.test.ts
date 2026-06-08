@@ -5,6 +5,7 @@ import {
   CreateServiceCommand,
   DeleteClusterCommand,
   DeleteServiceCommand,
+  DeregisterTaskDefinitionCommand,
   DescribeClustersCommand,
   DescribeServicesCommand,
   DescribeTaskDefinitionCommand,
@@ -204,5 +205,109 @@ describe("ecs e2e", () => {
     expect((listed3.taskArns ?? []).length).toBe(0);
 
     await client.send(new DeleteClusterCommand({ cluster: clusterName }));
+  });
+
+  test("task definition revisions and RunTask/StopTask lifecycle", async () => {
+    const client = ecs();
+    const clusterName = "bunsai-e2e-rev-cluster";
+    const family = "bunsai-e2e-rev-family";
+
+    await client.send(new CreateClusterCommand({ clusterName }));
+
+    const rev1 = await client.send(
+      new RegisterTaskDefinitionCommand({
+        family,
+        containerDefinitions: [
+          { name: "app", image: "nginx:1.24", memory: 128, essential: true },
+        ],
+      }),
+    );
+    expect(rev1.taskDefinition?.revision).toBe(1);
+    expect(rev1.taskDefinition?.taskDefinitionArn).toContain(`${family}:1`);
+    expect(rev1.taskDefinition?.status).toBe("ACTIVE");
+
+    const rev2 = await client.send(
+      new RegisterTaskDefinitionCommand({
+        family,
+        containerDefinitions: [
+          { name: "app", image: "nginx:1.25", memory: 256, essential: true },
+        ],
+      }),
+    );
+    expect(rev2.taskDefinition?.revision).toBe(2);
+    expect(rev2.taskDefinition?.taskDefinitionArn).toContain(`${family}:2`);
+
+    const byFamily = await client.send(
+      new DescribeTaskDefinitionCommand({ taskDefinition: family }),
+    );
+    expect(byFamily.taskDefinition?.revision).toBe(2);
+    expect(byFamily.taskDefinition?.taskDefinitionArn).toContain(`${family}:2`);
+
+    const byRevision = await client.send(
+      new DescribeTaskDefinitionCommand({ taskDefinition: `${family}:1` }),
+    );
+    expect(byRevision.taskDefinition?.revision).toBe(1);
+
+    const run = await client.send(
+      new RunTaskCommand({ cluster: clusterName, taskDefinition: family }),
+    );
+    const task = (run.tasks ?? [])[0];
+    const runTaskArn = task?.taskArn ?? "";
+    expect(runTaskArn).toBeTruthy();
+    expect(task?.lastStatus).toBe("PENDING");
+    expect(task?.taskDefinitionArn).toContain(`${family}:2`);
+
+    const described = await client.send(
+      new DescribeTasksCommand({ cluster: clusterName, tasks: [runTaskArn] }),
+    );
+    expect((described.tasks ?? [])[0]?.lastStatus).toBe("RUNNING");
+
+    const stopped = await client.send(
+      new StopTaskCommand({
+        cluster: clusterName,
+        task: runTaskArn,
+        reason: "fidelity-test",
+      }),
+    );
+    expect(stopped.task?.lastStatus).toBe("STOPPED");
+    expect(stopped.task?.stoppedReason).toBe("fidelity-test");
+
+    const deregistered = await client.send(
+      new DeregisterTaskDefinitionCommand({
+        taskDefinition: `${family}:2`,
+      }),
+    );
+    expect(deregistered.taskDefinition?.status).toBe("INACTIVE");
+
+    await client.send(new DeleteClusterCommand({ cluster: clusterName }));
+  });
+
+  test("RunTask and DescribeTasks error cases", async () => {
+    const client = ecs();
+
+    await expect(
+      client.send(
+        new RunTaskCommand({
+          cluster: "nonexistent-cluster-xyz",
+          taskDefinition: "some-family",
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "ClusterNotFoundException" });
+
+    await client.send(
+      new CreateClusterCommand({ clusterName: "bunsai-e2e-err-cluster" }),
+    );
+    await expect(
+      client.send(
+        new RunTaskCommand({
+          cluster: "bunsai-e2e-err-cluster",
+          taskDefinition: "nonexistent-family-xyz",
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "ClientException" });
+
+    await client.send(
+      new DeleteClusterCommand({ cluster: "bunsai-e2e-err-cluster" }),
+    );
   });
 });

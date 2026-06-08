@@ -112,7 +112,7 @@ test("CloudFront distribution lifecycle and invalidation", async () => {
     }),
   );
   expect(invalidation.Invalidation?.Id).toBeDefined();
-  expect(invalidation.Invalidation?.Status).toBe("Completed");
+  expect(invalidation.Invalidation?.Status).toBe("InProgress");
 
   await client.send(new DeleteDistributionCommand({ Id: id }));
   const afterDelete = await client.send(new ListDistributionsCommand({}));

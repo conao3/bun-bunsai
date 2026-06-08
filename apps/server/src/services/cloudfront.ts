@@ -593,6 +593,15 @@ const cloudfront: ServiceDefinition = {
         throw awsError("InvalidArgument", "Id is required", 400);
       }
       const entry = getDistribution(ctx, id);
+      const ifMatch =
+        typeof input["IfMatch"] === "string" ? input["IfMatch"] : undefined;
+      if (ifMatch !== undefined && ifMatch !== entry.etag) {
+        throw awsError(
+          "PreconditionFailed",
+          "The If-Match version is not current for the resource. Please retrieve the latest version of the resource and try again.",
+          412,
+        );
+      }
       const config = asRecord(input["DistributionConfig"]);
       const updated: StoredDistribution = {
         ...entry,
@@ -781,7 +790,10 @@ const cloudfront: ServiceDefinition = {
       );
       return {
         Location: `https://cloudfront.amazonaws.com${apiPrefix}/${id}/invalidation/${invalidationId}`,
-        Invalidation: invalidationView(storedInval),
+        Invalidation: {
+          ...invalidationView(storedInval),
+          Status: "InProgress",
+        },
       };
     },
     GetInvalidation: (input, ctx) => {

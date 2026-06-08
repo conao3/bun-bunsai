@@ -1143,6 +1143,27 @@ type StoredCapacityManagerDataExport = {
   CapacityManagerDataExportId: string;
 };
 
+type StoredSpotInstanceRequest = {
+  SpotInstanceRequestId: string;
+  State: string;
+  SpotPrice: string;
+  Type: string;
+  CreateTime: string;
+  Tags: Tag[];
+};
+
+type StoredSpotFleetRequest = {
+  SpotFleetRequestId: string;
+  SpotFleetRequestState: string;
+  CreateTime: string;
+  SpotFleetRequestConfig: {
+    IamFleetRole: string;
+    TargetCapacity: number;
+    AllocationStrategy: string;
+  };
+  Tags: Tag[];
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -1283,6 +1304,8 @@ const ipamPoolCidrKey = (poolId: string, cidr: string): string =>
 const publicIpv4PoolCidrKey = (poolId: string, cidr: string): string =>
   `ipv4-pool-cidr/${poolId}/${cidr}`;
 const instanceEventNotificationKey = (): string => `ien/singleton`;
+const spotInstanceRequestKey = (id: string): string => `sir/${id}`;
+const spotFleetRequestKey = (id: string): string => `sfr/${id}`;
 const tgwMcastMemberKey = (
   domainId: string,
   groupIp: string,
@@ -11848,6 +11871,34 @@ const allSecondarySubnets = (ctx: ServiceContext): StoredSecondarySubnet[] =>
     .filter((entry) => entry.key.startsWith("ssub/"))
     .map((entry) => entry.value);
 
+const allSpotInstanceRequests = (
+  ctx: ServiceContext,
+): StoredSpotInstanceRequest[] =>
+  ctx.store
+    .list<StoredSpotInstanceRequest>()
+    .filter((entry) => entry.key.startsWith("sir/"))
+    .map((entry) => entry.value);
+
+const allSpotFleetRequests = (ctx: ServiceContext): StoredSpotFleetRequest[] =>
+  ctx.store
+    .list<StoredSpotFleetRequest>()
+    .filter((entry) => entry.key.startsWith("sfr/"))
+    .map((entry) => entry.value);
+
+const allStoreImageTasks = (ctx: ServiceContext): StoredStoreImageTask[] =>
+  ctx.store
+    .list<StoredStoreImageTask>()
+    .filter((entry) => entry.key.startsWith("store-image-task/"))
+    .map((entry) => entry.value);
+
+const allTrafficMirrorFilterRules = (
+  ctx: ServiceContext,
+): StoredTrafficMirrorFilterRule[] =>
+  ctx.store
+    .list<StoredTrafficMirrorFilterRule>()
+    .filter((entry) => entry.key.startsWith("tmfr/"))
+    .map((entry) => entry.value);
+
 const DescribeReservedInstancesOfferings: OperationHandler = (_input, _ctx) => {
   return {
     ReservedInstancesOfferings: [
@@ -12090,6 +12141,254 @@ const DescribeSecurityGroupVpcAssociations: OperationHandler = (
   _ctx,
 ) => {
   return { SecurityGroupVpcAssociations: [] };
+};
+
+const RequestSpotInstances: OperationHandler = (input, ctx) => {
+  const count = integerOf(input["InstanceCount"]) ?? 1;
+  const spotPrice =
+    typeof input["SpotPrice"] === "string" ? input["SpotPrice"] : "0.05";
+  const type = typeof input["Type"] === "string" ? input["Type"] : "one-time";
+  const requests: StoredSpotInstanceRequest[] = [];
+  for (let i = 0; i < count; i++) {
+    const id = hexId("sir");
+    const request: StoredSpotInstanceRequest = {
+      SpotInstanceRequestId: id,
+      State: "open",
+      SpotPrice: spotPrice,
+      Type: type,
+      CreateTime: new Date().toISOString(),
+      Tags: [],
+    };
+    ctx.store.set(spotInstanceRequestKey(id), request);
+    requests.push(request);
+  }
+  return {
+    SpotInstanceRequests: requests.map((r) => ({
+      SpotInstanceRequestId: r.SpotInstanceRequestId,
+      State: r.State,
+      SpotPrice: r.SpotPrice,
+      Type: r.Type,
+      CreateTime: r.CreateTime,
+      Tags: r.Tags,
+    })),
+  };
+};
+
+const RequestSpotFleet: OperationHandler = (input, ctx) => {
+  const configRaw =
+    typeof input["SpotFleetRequestConfig"] === "object" &&
+    input["SpotFleetRequestConfig"] !== null
+      ? (input["SpotFleetRequestConfig"] as Record<string, unknown>)
+      : {};
+  const iamFleetRole =
+    typeof configRaw["IamFleetRole"] === "string"
+      ? configRaw["IamFleetRole"]
+      : "";
+  const targetCapacity = integerOf(configRaw["TargetCapacity"]) ?? 1;
+  const allocationStrategy =
+    typeof configRaw["AllocationStrategy"] === "string"
+      ? configRaw["AllocationStrategy"]
+      : "lowestPrice";
+  const id = hexId("sfr");
+  const fleet: StoredSpotFleetRequest = {
+    SpotFleetRequestId: id,
+    SpotFleetRequestState: "active",
+    CreateTime: new Date().toISOString(),
+    SpotFleetRequestConfig: {
+      IamFleetRole: iamFleetRole,
+      TargetCapacity: targetCapacity,
+      AllocationStrategy: allocationStrategy,
+    },
+    Tags: [],
+  };
+  ctx.store.set(spotFleetRequestKey(id), fleet);
+  return { SpotFleetRequestId: id };
+};
+
+const DescribeServiceLinkVirtualInterfaces: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { ServiceLinkVirtualInterfaces: [] };
+};
+
+const DescribeSnapshotAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["SnapshotId"] === "string" ? input["SnapshotId"] : "";
+  const snapshot = ctx.store.get<StoredSnapshot>(snapshotKey(id));
+  if (snapshot === undefined) {
+    throw awsError(
+      "InvalidSnapshot.NotFound",
+      `The snapshot '${id}' does not exist.`,
+      400,
+    );
+  }
+  return {
+    SnapshotId: id,
+    CreateVolumePermissions: [],
+    ProductCodes: [],
+  };
+};
+
+const DescribeSnapshotTierStatus: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["SnapshotIds"]);
+  const snapshots = allSnapshots(ctx).filter((s) =>
+    ids.length === 0 ? true : ids.includes(s.SnapshotId),
+  );
+  return {
+    SnapshotTierStatuses: snapshots.map((s) => ({
+      SnapshotId: s.SnapshotId,
+      VolumeId: s.VolumeId,
+      Status: s.State,
+      OwnerId: s.OwnerId,
+      Tags: s.Tags,
+    })),
+  };
+};
+
+const DescribeSpotDatafeedSubscription: OperationHandler = (_input, ctx) => {
+  const sub = ctx.store.get<StoredSpotDatafeedSubscription>(spotDatafeedKey());
+  if (sub === undefined) {
+    throw awsError(
+      "InvalidSpotDatafeed.NotFound",
+      "There is no Spot Instance data feed subscription for account.",
+      400,
+    );
+  }
+  return {
+    SpotDatafeedSubscription: {
+      Bucket: sub.Bucket,
+      OwnerId: sub.OwnerId,
+      Prefix: sub.Prefix,
+      State: sub.State,
+    },
+  };
+};
+
+const DescribeSpotFleetInstances: OperationHandler = (input, _ctx) => {
+  const id =
+    typeof input["SpotFleetRequestId"] === "string"
+      ? input["SpotFleetRequestId"]
+      : "";
+  return {
+    SpotFleetRequestId: id,
+    ActiveInstances: [],
+  };
+};
+
+const DescribeSpotFleetRequestHistory: OperationHandler = (input, _ctx) => {
+  const id =
+    typeof input["SpotFleetRequestId"] === "string"
+      ? input["SpotFleetRequestId"]
+      : "";
+  return {
+    SpotFleetRequestId: id,
+    HistoryRecords: [],
+    LastEvaluatedTime: new Date().toISOString(),
+  };
+};
+
+const DescribeSpotFleetRequests: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["SpotFleetRequestIds"]);
+  const fleets = allSpotFleetRequests(ctx).filter((f) =>
+    ids.length === 0 ? true : ids.includes(f.SpotFleetRequestId),
+  );
+  return {
+    SpotFleetRequestConfigs: fleets.map((f) => ({
+      SpotFleetRequestId: f.SpotFleetRequestId,
+      SpotFleetRequestState: f.SpotFleetRequestState,
+      CreateTime: f.CreateTime,
+      SpotFleetRequestConfig: f.SpotFleetRequestConfig,
+      Tags: f.Tags,
+    })),
+  };
+};
+
+const DescribeSpotInstanceRequests: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["SpotInstanceRequestIds"]);
+  const requests = allSpotInstanceRequests(ctx).filter((r) =>
+    ids.length === 0 ? true : ids.includes(r.SpotInstanceRequestId),
+  );
+  return {
+    SpotInstanceRequests: requests.map((r) => ({
+      SpotInstanceRequestId: r.SpotInstanceRequestId,
+      State: r.State,
+      SpotPrice: r.SpotPrice,
+      Type: r.Type,
+      CreateTime: r.CreateTime,
+      Tags: r.Tags,
+    })),
+  };
+};
+
+const DescribeSpotPriceHistory: OperationHandler = (_input, _ctx) => {
+  return {
+    SpotPriceHistory: [
+      {
+        InstanceType: "t3.medium",
+        ProductDescription: "Linux/UNIX",
+        SpotPrice: "0.0139",
+        Timestamp: "2026-01-01T00:00:00Z",
+        AvailabilityZone: "us-east-1a",
+      },
+      {
+        InstanceType: "t3.large",
+        ProductDescription: "Linux/UNIX",
+        SpotPrice: "0.0278",
+        Timestamp: "2026-01-01T00:00:00Z",
+        AvailabilityZone: "us-east-1b",
+      },
+    ],
+  };
+};
+
+const DescribeStaleSecurityGroups: OperationHandler = (_input, _ctx) => {
+  return { StaleSecurityGroupSet: [] };
+};
+
+const DescribeStoreImageTasks: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["ImageIds"]);
+  const tasks = allStoreImageTasks(ctx).filter((t) =>
+    ids.length === 0 ? true : ids.includes(t.ImageId),
+  );
+  return {
+    StoreImageTaskResults: tasks.map((t) => ({
+      AmiId: t.ImageId,
+      S3objectKey: t.ObjectKey,
+      Bucket: t.Bucket,
+      TaskState: "Completed",
+      StoreTaskState: "Completed",
+    })),
+  };
+};
+
+const DescribeTrafficMirrorFilterRules: OperationHandler = (input, ctx) => {
+  const ruleIds = stringList(input["TrafficMirrorFilterRuleIds"]);
+  const filterId =
+    typeof input["TrafficMirrorFilterId"] === "string"
+      ? input["TrafficMirrorFilterId"]
+      : "";
+  const rules = allTrafficMirrorFilterRules(ctx).filter((r) => {
+    if (ruleIds.length > 0 && !ruleIds.includes(r.TrafficMirrorFilterRuleId))
+      return false;
+    if (filterId !== "" && r.TrafficMirrorFilterId !== filterId) return false;
+    return true;
+  });
+  return {
+    TrafficMirrorFilterRules: rules.map((r) => ({
+      TrafficMirrorFilterRuleId: r.TrafficMirrorFilterRuleId,
+      TrafficMirrorFilterId: r.TrafficMirrorFilterId,
+      TrafficDirection: r.TrafficDirection,
+      RuleNumber: r.RuleNumber,
+      RuleAction: r.RuleAction,
+      Protocol: r.Protocol,
+      DestinationPortRange: r.DestinationPortRange,
+      SourcePortRange: r.SourcePortRange,
+      DestinationCidrBlock: r.DestinationCidrBlock,
+      SourceCidrBlock: r.SourceCidrBlock,
+      Description: r.Description,
+      Tags: r.Tags,
+    })),
+  };
 };
 
 const DescribeNetworkInterfaceAttribute: OperationHandler = (input, ctx) => {
@@ -12533,6 +12832,20 @@ const ec2: ServiceDefinition = {
     DescribeSecurityGroupReferences,
     DescribeSecurityGroupRules,
     DescribeSecurityGroupVpcAssociations,
+    RequestSpotInstances,
+    RequestSpotFleet,
+    DescribeServiceLinkVirtualInterfaces,
+    DescribeSnapshotAttribute,
+    DescribeSnapshotTierStatus,
+    DescribeSpotDatafeedSubscription,
+    DescribeSpotFleetInstances,
+    DescribeSpotFleetRequestHistory,
+    DescribeSpotFleetRequests,
+    DescribeSpotInstanceRequests,
+    DescribeSpotPriceHistory,
+    DescribeStaleSecurityGroups,
+    DescribeStoreImageTasks,
+    DescribeTrafficMirrorFilterRules,
   },
   model,
 } as const;

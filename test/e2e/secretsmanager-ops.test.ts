@@ -6,6 +6,7 @@ import {
   CreateSecretCommand,
   DeleteResourcePolicyCommand,
   DeleteSecretCommand,
+  DescribeSecretCommand,
   GetRandomPasswordCommand,
   GetResourcePolicyCommand,
   ListSecretVersionIdsCommand,
@@ -303,6 +304,17 @@ test("Secrets Manager replication operations", async () => {
   const regions = replicated.ReplicationStatus?.map((r) => r.Region);
   expect(regions).toContain("us-west-2");
   expect(regions).toContain("eu-west-1");
+  expect(
+    replicated.ReplicationStatus?.every((r) => r.Status === "InSync"),
+  ).toBe(true);
+
+  const described = await client.send(
+    new DescribeSecretCommand({ SecretId: name }),
+  );
+  expect(described.ReplicationStatus?.length).toBe(2);
+  const describedRegions = described.ReplicationStatus?.map((r) => r.Region);
+  expect(describedRegions).toContain("us-west-2");
+  expect(describedRegions).toContain("eu-west-1");
 
   const removed = await client.send(
     new RemoveRegionsFromReplicationCommand({

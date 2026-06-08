@@ -246,6 +246,10 @@ const DescribeSecret: OperationHandler = (input, ctx) => {
     CreatedDate: secret.CreatedDate,
     LastChangedDate: secret.LastChangedDate,
     DeletedDate: secret.DeletedDate,
+    ReplicationStatus:
+      secret.ReplicationStatus.length > 0
+        ? secret.ReplicationStatus
+        : undefined,
   };
 };
 
@@ -561,7 +565,7 @@ const ReplicateSecretToRegions: OperationHandler = (input, ctx) => {
       secret.ReplicationStatus.push({
         Region: region,
         KmsKeyId: kmsKeyId,
-        Status: "InProgress",
+        Status: "InSync",
         StatusMessage: undefined,
         LastAccessedDate: undefined,
       });

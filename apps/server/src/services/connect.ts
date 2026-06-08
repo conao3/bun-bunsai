@@ -93,6 +93,7 @@ type StoredQueue = {
   QueueArn: string;
   Name: string;
   InstanceId: string;
+  Status?: string;
 };
 
 type StoredRoutingProfile = {
@@ -100,6 +101,8 @@ type StoredRoutingProfile = {
   RoutingProfileArn: string;
   Name: string;
   InstanceId: string;
+  MediaConcurrencies?: unknown;
+  AgentAvailabilityTimer?: string;
 };
 
 type StoredHoursOfOperation = {
@@ -114,6 +117,7 @@ type StoredSecurityProfile = {
   SecurityProfileArn: string;
   SecurityProfileName: string;
   InstanceId: string;
+  Description?: string;
 };
 
 type StoredQuickConnect = {
@@ -121,6 +125,7 @@ type StoredQuickConnect = {
   QuickConnectARN: string;
   Name: string;
   InstanceId: string;
+  QuickConnectConfig?: unknown;
 };
 
 type StoredEvaluationForm = {
@@ -244,6 +249,10 @@ type StoredRule = {
   RuleId: string;
   RuleArn: string;
   InstanceId: string;
+  Name?: string;
+  Function?: string;
+  Actions?: unknown;
+  PublishStatus?: string;
 };
 
 type StoredTestCase = {
@@ -3001,6 +3010,255 @@ const UpdateQueueOutboundEmailConfig: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const UpdateQueueStatus: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const queueId = requireString(input, "QueueId");
+  const stored = ctx.store.get<StoredQueue>(queueKey(instanceId, queueId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Queue ${queueId} not found.`,
+      404,
+    );
+  }
+  const status = requireString(input, "Status");
+  ctx.store.set(queueKey(instanceId, queueId), { ...stored, Status: status });
+  return {};
+};
+
+const UpdateQuickConnectConfig: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const quickConnectId = requireString(input, "QuickConnectId");
+  const stored = ctx.store.get<StoredQuickConnect>(
+    quickConnectKey(instanceId, quickConnectId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `QuickConnect ${quickConnectId} not found.`,
+      404,
+    );
+  }
+  const config = input["QuickConnectConfig"] ?? stored.QuickConnectConfig;
+  ctx.store.set(quickConnectKey(instanceId, quickConnectId), {
+    ...stored,
+    QuickConnectConfig: config,
+  });
+  return {};
+};
+
+const UpdateQuickConnectName: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const quickConnectId = requireString(input, "QuickConnectId");
+  const stored = ctx.store.get<StoredQuickConnect>(
+    quickConnectKey(instanceId, quickConnectId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `QuickConnect ${quickConnectId} not found.`,
+      404,
+    );
+  }
+  const name = stringOrUndefined(input["Name"]) ?? stored.Name;
+  ctx.store.set(quickConnectKey(instanceId, quickConnectId), {
+    ...stored,
+    Name: name,
+  });
+  return {};
+};
+
+const UpdateRoutingProfileAgentAvailabilityTimer: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const routingProfileId = requireString(input, "RoutingProfileId");
+  const stored = ctx.store.get<StoredRoutingProfile>(
+    routingProfileKey(instanceId, routingProfileId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `RoutingProfile ${routingProfileId} not found.`,
+      404,
+    );
+  }
+  const timer = requireString(input, "AgentAvailabilityTimer");
+  ctx.store.set(routingProfileKey(instanceId, routingProfileId), {
+    ...stored,
+    AgentAvailabilityTimer: timer,
+  });
+  return {};
+};
+
+const UpdateRoutingProfileConcurrency: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const routingProfileId = requireString(input, "RoutingProfileId");
+  const stored = ctx.store.get<StoredRoutingProfile>(
+    routingProfileKey(instanceId, routingProfileId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `RoutingProfile ${routingProfileId} not found.`,
+      404,
+    );
+  }
+  const concurrencies =
+    input["MediaConcurrencies"] ?? stored.MediaConcurrencies;
+  ctx.store.set(routingProfileKey(instanceId, routingProfileId), {
+    ...stored,
+    MediaConcurrencies: concurrencies,
+  });
+  return {};
+};
+
+const UpdateRoutingProfileDefaultOutboundQueue: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const routingProfileId = requireString(input, "RoutingProfileId");
+  const stored = ctx.store.get<StoredRoutingProfile>(
+    routingProfileKey(instanceId, routingProfileId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `RoutingProfile ${routingProfileId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateRoutingProfileName: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const routingProfileId = requireString(input, "RoutingProfileId");
+  const stored = ctx.store.get<StoredRoutingProfile>(
+    routingProfileKey(instanceId, routingProfileId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `RoutingProfile ${routingProfileId} not found.`,
+      404,
+    );
+  }
+  const name = stringOrUndefined(input["Name"]) ?? stored.Name;
+  ctx.store.set(routingProfileKey(instanceId, routingProfileId), {
+    ...stored,
+    Name: name,
+  });
+  return {};
+};
+
+const UpdateRoutingProfileQueues: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const routingProfileId = requireString(input, "RoutingProfileId");
+  const stored = ctx.store.get<StoredRoutingProfile>(
+    routingProfileKey(instanceId, routingProfileId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `RoutingProfile ${routingProfileId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateRule: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const ruleId = requireString(input, "RuleId");
+  const stored = ctx.store.get<StoredRule>(ruleKey(instanceId, ruleId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Rule ${ruleId} not found.`,
+      404,
+    );
+  }
+  const name = stringOrUndefined(input["Name"]) ?? stored.Name;
+  const fn = stringOrUndefined(input["Function"]) ?? stored.Function;
+  const actions = input["Actions"] ?? stored.Actions;
+  const publishStatus =
+    stringOrUndefined(input["PublishStatus"]) ?? stored.PublishStatus;
+  ctx.store.set(ruleKey(instanceId, ruleId), {
+    ...stored,
+    Name: name,
+    Function: fn,
+    Actions: actions,
+    PublishStatus: publishStatus,
+  });
+  return {};
+};
+
+const UpdateSecurityProfile: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const securityProfileId = requireString(input, "SecurityProfileId");
+  const stored = ctx.store.get<StoredSecurityProfile>(
+    securityProfileKey(instanceId, securityProfileId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `SecurityProfile ${securityProfileId} not found.`,
+      404,
+    );
+  }
+  const description =
+    stringOrUndefined(input["Description"]) ?? stored.Description;
+  ctx.store.set(securityProfileKey(instanceId, securityProfileId), {
+    ...stored,
+    Description: description,
+  });
+  return {};
+};
+
+const UpdateTaskTemplate: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const taskTemplateId = requireString(input, "TaskTemplateId");
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/task-template/${taskTemplateId}`;
+  return {
+    InstanceId: instanceId,
+    Id: taskTemplateId,
+    Arn: arn,
+    Name: stringOrUndefined(input["Name"]) ?? "task-template",
+    Status: stringOrUndefined(input["Status"]) ?? "ACTIVE",
+  };
+};
+
+const UpdateTestCase: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const testCaseId = requireString(input, "TestCaseId");
+  const stored = ctx.store.get<StoredTestCase>(
+    testCaseKey(instanceId, testCaseId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `TestCase ${testCaseId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
 const DeleteWorkspacePage: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
@@ -3110,6 +3368,7 @@ const DescribeQueue: OperationHandler = (input, ctx) => {
       QueueId: stored.QueueId,
       QueueArn: stored.QueueArn,
       Name: stored.Name,
+      Status: stored.Status,
     },
   };
 };
@@ -3133,6 +3392,7 @@ const DescribeQuickConnect: OperationHandler = (input, ctx) => {
       QuickConnectId: stored.QuickConnectId,
       QuickConnectARN: stored.QuickConnectARN,
       Name: stored.Name,
+      QuickConnectConfig: stored.QuickConnectConfig,
     },
   };
 };
@@ -3157,6 +3417,8 @@ const DescribeRoutingProfile: OperationHandler = (input, ctx) => {
       RoutingProfileArn: stored.RoutingProfileArn,
       Name: stored.Name,
       InstanceId: stored.InstanceId,
+      MediaConcurrencies: stored.MediaConcurrencies,
+      AgentAvailabilityTimer: stored.AgentAvailabilityTimer,
     },
   };
 };
@@ -3178,6 +3440,10 @@ const DescribeRule: OperationHandler = (input, ctx) => {
       RuleId: stored.RuleId,
       RuleArn: stored.RuleArn,
       InstanceId: stored.InstanceId,
+      Name: stored.Name,
+      Function: stored.Function,
+      Actions: stored.Actions,
+      PublishStatus: stored.PublishStatus,
     },
   };
 };
@@ -3201,6 +3467,7 @@ const DescribeSecurityProfile: OperationHandler = (input, ctx) => {
       Id: stored.SecurityProfileId,
       Arn: stored.SecurityProfileArn,
       SecurityProfileName: stored.SecurityProfileName,
+      Description: stored.Description,
     },
   };
 };
@@ -5180,6 +5447,12 @@ const connect = {
             parts[3] === "template"
           )
             return "GetTaskTemplate";
+          if (
+            req.method === "POST" &&
+            parts[2] === "task" &&
+            parts[3] === "template"
+          )
+            return "UpdateTaskTemplate";
         }
         if (parts.length === 6) {
           if (
@@ -5408,6 +5681,7 @@ const connect = {
             return "UpdateQueueOutboundCallerConfig";
           if (parts[3] === "outbound-email-config")
             return "UpdateQueueOutboundEmailConfig";
+          if (parts[3] === "status") return "UpdateQueueStatus";
         }
         return undefined;
 
@@ -5435,6 +5709,16 @@ const connect = {
           req.method === "POST"
         )
           return "DisassociateRoutingProfileQueues";
+        if (parts.length === 4 && req.method === "POST") {
+          if (parts[3] === "agent-availability-timer")
+            return "UpdateRoutingProfileAgentAvailabilityTimer";
+          if (parts[3] === "concurrency")
+            return "UpdateRoutingProfileConcurrency";
+          if (parts[3] === "default-outbound-queue")
+            return "UpdateRoutingProfileDefaultOutboundQueue";
+          if (parts[3] === "name") return "UpdateRoutingProfileName";
+          if (parts[3] === "queues") return "UpdateRoutingProfileQueues";
+        }
         return undefined;
 
       case "security-profiles":
@@ -5444,6 +5728,8 @@ const connect = {
           return "DescribeSecurityProfile";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteSecurityProfile";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdateSecurityProfile";
         return undefined;
 
       case "associate-security-profiles":
@@ -5848,6 +6134,10 @@ const connect = {
           return "DescribeQuickConnect";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteQuickConnect";
+        if (parts.length === 4 && req.method === "POST") {
+          if (parts[3] === "config") return "UpdateQuickConnectConfig";
+          if (parts[3] === "name") return "UpdateQuickConnectName";
+        }
         return undefined;
 
       case "rules":
@@ -5855,6 +6145,7 @@ const connect = {
         if (parts.length === 2 && req.method === "GET") return "ListRules";
         if (parts.length === 3 && req.method === "GET") return "DescribeRule";
         if (parts.length === 3 && req.method === "DELETE") return "DeleteRule";
+        if (parts.length === 3 && req.method === "PUT") return "UpdateRule";
         return undefined;
 
       case "test-cases":
@@ -5863,6 +6154,8 @@ const connect = {
           return "DescribeTestCase";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteTestCase";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdateTestCase";
         if (
           parts.length === 4 &&
           parts[3] === "start-execution" &&
@@ -6632,6 +6925,18 @@ const connect = {
     UpdateQueueName,
     UpdateQueueOutboundCallerConfig,
     UpdateQueueOutboundEmailConfig,
+    UpdateQueueStatus,
+    UpdateQuickConnectConfig,
+    UpdateQuickConnectName,
+    UpdateRoutingProfileAgentAvailabilityTimer,
+    UpdateRoutingProfileConcurrency,
+    UpdateRoutingProfileDefaultOutboundQueue,
+    UpdateRoutingProfileName,
+    UpdateRoutingProfileQueues,
+    UpdateRule,
+    UpdateSecurityProfile,
+    UpdateTaskTemplate,
+    UpdateTestCase,
   },
   model,
 } as const satisfies ServiceDefinition;

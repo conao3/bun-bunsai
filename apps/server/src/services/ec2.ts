@@ -14474,6 +14474,133 @@ const GetAllowedImagesSettings: OperationHandler = (_input, ctx) => {
   };
 };
 
+const GetAssociatedEnclaveCertificateIamRoles: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { AssociatedRoles: [] };
+};
+
+const GetAssociatedIpv6PoolCidrs: OperationHandler = (_input, _ctx) => {
+  return { Ipv6CidrAssociations: [] };
+};
+
+const GetAwsNetworkPerformanceData: OperationHandler = (_input, _ctx) => {
+  return { DataResponses: [] };
+};
+
+const GetCapacityManagerAttributes: OperationHandler = (_input, _ctx) => {
+  return {
+    CapacityManagerStatus: "enabled",
+    OrganizationsAccess: false,
+    DataExportCount: 0,
+    IngestionStatus: "active",
+    IngestionStatusMessage: "Data ingestion is active",
+  };
+};
+
+const GetCapacityManagerMetricData: OperationHandler = (_input, _ctx) => {
+  return { MetricDataResults: [] };
+};
+
+const GetCapacityManagerMetricDimensions: OperationHandler = (_input, _ctx) => {
+  return { MetricDimensionResults: [] };
+};
+
+const GetCapacityManagerMonitoredTagKeys: OperationHandler = (_input, _ctx) => {
+  return { CapacityManagerTagKeys: [] };
+};
+
+const GetCapacityReservationUsage: OperationHandler = (input, ctx) => {
+  const reservationId =
+    typeof input["CapacityReservationId"] === "string"
+      ? input["CapacityReservationId"]
+      : "";
+  const reservation = ctx.store.get<StoredCapacityReservation>(
+    capacityReservationKey(reservationId),
+  );
+  if (reservation === undefined) {
+    throw awsError(
+      "InvalidCapacityReservationId.NotFound",
+      `The capacity reservation '${reservationId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    CapacityReservationId: reservation.CapacityReservationId,
+    InstanceType: reservation.InstanceType,
+    TotalInstanceCount: reservation.TotalInstanceCount,
+    AvailableInstanceCount: reservation.AvailableInstanceCount,
+    State: reservation.State,
+    InstanceUsages: [],
+  };
+};
+
+const GetCoipPoolUsage: OperationHandler = (input, ctx) => {
+  const poolId = typeof input["PoolId"] === "string" ? input["PoolId"] : "";
+  const pool = ctx.store.get<StoredCoipPool>(coipPoolKey(poolId));
+  if (pool === undefined) {
+    throw awsError(
+      "InvalidCoipPoolId.NotFound",
+      `The COIP pool ID '${poolId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    CoipPoolId: pool.PoolId,
+    CoipAddressUsages: [],
+    LocalGatewayRouteTableId: pool.LocalGatewayRouteTableId,
+  };
+};
+
+const GetConsoleOutput: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(instanceId));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${instanceId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    InstanceId: instanceId,
+    Timestamp: new Date().toISOString(),
+    Output: btoa(
+      `Linux version 5.10.0-aws ${instanceId}\n[ OK ] Started Amazon EC2 Instance.\n`,
+    ),
+  };
+};
+
+const GetConsoleScreenshot: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(instanceId));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${instanceId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    InstanceId: instanceId,
+    ImageData:
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  };
+};
+
+const GetDeclarativePoliciesReportSummary: OperationHandler = (input, _ctx) => {
+  const reportId =
+    typeof input["ReportId"] === "string" ? input["ReportId"] : "";
+  throw awsError(
+    "InvalidDeclarativePoliciesReportId.NotFound",
+    `The declarative policies report '${reportId}' does not exist`,
+    400,
+  );
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -15018,6 +15145,18 @@ const ec2: ServiceDefinition = {
     ExportTransitGatewayRoutes,
     ExportVerifiedAccessInstanceClientConfiguration,
     GetActiveVpnTunnelStatus,
+    GetAssociatedEnclaveCertificateIamRoles,
+    GetAssociatedIpv6PoolCidrs,
+    GetAwsNetworkPerformanceData,
+    GetCapacityManagerAttributes,
+    GetCapacityManagerMetricData,
+    GetCapacityManagerMetricDimensions,
+    GetCapacityManagerMonitoredTagKeys,
+    GetCapacityReservationUsage,
+    GetCoipPoolUsage,
+    GetConsoleOutput,
+    GetConsoleScreenshot,
+    GetDeclarativePoliciesReportSummary,
   },
   model,
 } as const;

@@ -45,6 +45,13 @@ type StoredModel = {
   contentType: string;
 };
 
+type StoredStageCanarySettings = {
+  percentTraffic: number;
+  deploymentId: string | undefined;
+  stageVariableOverrides: Record<string, string> | undefined;
+  useStageCache: boolean;
+};
+
 type StoredStage = {
   stageName: string;
   deploymentId: string | undefined;
@@ -55,6 +62,7 @@ type StoredStage = {
   variables: Record<string, string> | undefined;
   documentationVersion: string | undefined;
   tracingEnabled: boolean;
+  canarySettings: StoredStageCanarySettings | undefined;
   createdDate: Date;
   lastUpdatedDate: Date;
 };
@@ -719,6 +727,7 @@ const stageView = (s: StoredStage): Record<string, unknown> => ({
   variables: s.variables,
   documentationVersion: s.documentationVersion,
   tracingEnabled: s.tracingEnabled,
+  canarySettings: s.canarySettings,
   createdDate: s.createdDate,
   lastUpdatedDate: s.lastUpdatedDate,
 });
@@ -811,9 +820,12 @@ const accountView = (a: StoredAccount): Record<string, unknown> => ({
   apiKeyVersion: a.apiKeyVersion,
 });
 
-const apiKeyView = (k: StoredApiKey): Record<string, unknown> => ({
+const apiKeyView = (
+  k: StoredApiKey,
+  includeValue = true,
+): Record<string, unknown> => ({
   id: k.id,
-  value: k.value,
+  ...(includeValue ? { value: k.value } : {}),
   name: k.name,
   customerId: k.customerId,
   description: k.description,
@@ -1932,6 +1944,7 @@ const CreateStage: OperationHandler = (input, ctx) => {
     );
   }
   const variables = input["variables"];
+  const canaryInput = input["canarySettings"];
   const now = new Date();
   const stage: StoredStage = {
     stageName,
@@ -1946,6 +1959,36 @@ const CreateStage: OperationHandler = (input, ctx) => {
         : undefined,
     documentationVersion: stringOrUndefined(input["documentationVersion"]),
     tracingEnabled: input["tracingEnabled"] === true,
+    canarySettings:
+      canaryInput !== null && typeof canaryInput === "object"
+        ? {
+            percentTraffic:
+              typeof (canaryInput as Record<string, unknown>)[
+                "percentTraffic"
+              ] === "number"
+                ? ((canaryInput as Record<string, unknown>)[
+                    "percentTraffic"
+                  ] as number)
+                : 0,
+            deploymentId: stringOrUndefined(
+              (canaryInput as Record<string, unknown>)["deploymentId"],
+            ),
+            stageVariableOverrides:
+              (canaryInput as Record<string, unknown>)[
+                "stageVariableOverrides"
+              ] !== null &&
+              typeof (canaryInput as Record<string, unknown>)[
+                "stageVariableOverrides"
+              ] === "object"
+                ? ((canaryInput as Record<string, unknown>)[
+                    "stageVariableOverrides"
+                  ] as Record<string, string>)
+                : undefined,
+            useStageCache:
+              (canaryInput as Record<string, unknown>)["useStageCache"] ===
+              true,
+          }
+        : undefined,
     createdDate: now,
     lastUpdatedDate: now,
   };
@@ -2012,6 +2055,40 @@ const UpdateStage: OperationHandler = (input, ctx) => {
     s as unknown as Record<string, unknown>,
     input["patchOperations"],
   );
+  const currentCanary = s.canarySettings;
+  const patchedCanaryPercent = patched["canarySettings/percentTraffic"];
+  const patchedCanaryDeployId = patched["canarySettings/deploymentId"];
+  const patchedCanaryUseCache = patched["canarySettings/useStageCache"];
+  const patchedCanaryOverrides =
+    patched["canarySettings/stageVariableOverrides"];
+  const hasCanaryPatch =
+    patchedCanaryPercent !== undefined ||
+    patchedCanaryDeployId !== undefined ||
+    patchedCanaryUseCache !== undefined ||
+    patchedCanaryOverrides !== undefined;
+  const updatedCanary: StoredStageCanarySettings | undefined = hasCanaryPatch
+    ? {
+        percentTraffic:
+          patchedCanaryPercent !== undefined
+            ? Number(patchedCanaryPercent)
+            : (currentCanary?.percentTraffic ?? 0),
+        deploymentId:
+          patchedCanaryDeployId !== undefined
+            ? stringOrUndefined(patchedCanaryDeployId)
+            : currentCanary?.deploymentId,
+        stageVariableOverrides:
+          patchedCanaryOverrides !== undefined
+            ? typeof patchedCanaryOverrides === "object" &&
+              patchedCanaryOverrides !== null
+              ? (patchedCanaryOverrides as Record<string, string>)
+              : undefined
+            : currentCanary?.stageVariableOverrides,
+        useStageCache:
+          patchedCanaryUseCache !== undefined
+            ? patchedCanaryUseCache === true || patchedCanaryUseCache === "true"
+            : (currentCanary?.useStageCache ?? false),
+      }
+    : currentCanary;
   const updated: StoredStage = {
     ...s,
     deploymentId: stringOrUndefined(patched["deploymentId"]),
@@ -2023,6 +2100,7 @@ const UpdateStage: OperationHandler = (input, ctx) => {
     tracingEnabled:
       patched["tracingEnabled"] === "true" ||
       patched["tracingEnabled"] === true,
+    canarySettings: updatedCanary,
     lastUpdatedDate: new Date(),
   };
   ctx.store.set(stageKey(restApiId, stageName), updated);
@@ -2597,14 +2675,18 @@ const CreateApiKey: OperationHandler = (input, ctx) => {
 const GetApiKey: OperationHandler = (input, ctx) => {
   const id = stringOrUndefined(input["apiKey"]);
   if (!id) throw awsError("BadRequestException", "apiKey is required.", 400);
-  return apiKeyView(requireApiKey(ctx, id));
+  const includeValue =
+    input["includeValue"] === true || input["includeValue"] === "true";
+  return apiKeyView(requireApiKey(ctx, id), includeValue);
 };
 
-const GetApiKeys: OperationHandler = (_input, ctx) => {
+const GetApiKeys: OperationHandler = (input, ctx) => {
+  const includeValues =
+    input["includeValues"] === true || input["includeValues"] === "true";
   const items = ctx.store
     .list<StoredApiKey>()
     .filter((e) => e.key.startsWith("apikey/"))
-    .map((e) => apiKeyView(e.value));
+    .map((e) => apiKeyView(e.value, includeValues));
   return { items };
 };
 
@@ -3942,6 +4024,308 @@ const missingAuthToken = (): Response =>
     headers: { "content-type": "application/json" },
   });
 
+type JsonSchemaNode = {
+  type?: string | string[];
+  required?: string[];
+  properties?: Record<string, JsonSchemaNode>;
+  items?: JsonSchemaNode;
+  $ref?: string;
+  definitions?: Record<string, JsonSchemaNode>;
+  allOf?: JsonSchemaNode[];
+  anyOf?: JsonSchemaNode[];
+  oneOf?: JsonSchemaNode[];
+};
+
+const validateJsonSchemaNode = (
+  value: unknown,
+  schema: JsonSchemaNode,
+  definitions: Record<string, JsonSchemaNode>,
+): boolean => {
+  if (schema.$ref) {
+    const refName = schema.$ref.replace("#/definitions/", "");
+    const refSchema = definitions[refName];
+    if (!refSchema) return true;
+    return validateJsonSchemaNode(value, refSchema, definitions);
+  }
+
+  if (schema.type !== undefined) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    const typeOk = types.some((t) => {
+      if (t === "string") return typeof value === "string";
+      if (t === "number") return typeof value === "number";
+      if (t === "integer")
+        return typeof value === "number" && Number.isInteger(value);
+      if (t === "boolean") return typeof value === "boolean";
+      if (t === "null") return value === null;
+      if (t === "array") return Array.isArray(value);
+      if (t === "object")
+        return (
+          typeof value === "object" && value !== null && !Array.isArray(value)
+        );
+      return true;
+    });
+    if (!typeOk) return false;
+  }
+
+  if (
+    schema.required !== undefined &&
+    typeof value === "object" &&
+    value !== null
+  ) {
+    for (const prop of schema.required) {
+      if (!(prop in (value as Record<string, unknown>))) return false;
+    }
+  }
+
+  if (
+    schema.properties !== undefined &&
+    typeof value === "object" &&
+    value !== null
+  ) {
+    for (const [key, propSchema] of Object.entries(schema.properties)) {
+      const propVal = (value as Record<string, unknown>)[key];
+      if (
+        propVal !== undefined &&
+        !validateJsonSchemaNode(propVal, propSchema, definitions)
+      )
+        return false;
+    }
+  }
+
+  if (schema.allOf !== undefined) {
+    for (const sub of schema.allOf) {
+      if (!validateJsonSchemaNode(value, sub, definitions)) return false;
+    }
+  }
+
+  return true;
+};
+
+const gatewayErrorResponse = (
+  ctx: ServiceContext,
+  restApiId: string,
+  responseType: string,
+  defaultStatus: number,
+  defaultMessage: string,
+): Response => {
+  const gr = ctx.store.get<StoredGatewayResponse>(
+    gatewayResponseKey(restApiId, responseType),
+  );
+  const fallbackType = defaultStatus < 500 ? "DEFAULT_4XX" : "DEFAULT_5XX";
+  const defaultGr = ctx.store.get<StoredGatewayResponse>(
+    gatewayResponseKey(restApiId, fallbackType),
+  );
+  const effective = gr ?? defaultGr;
+  const statusCode = effective?.statusCode
+    ? Number(effective.statusCode)
+    : defaultStatus;
+  const template = effective?.responseTemplates?.["application/json"];
+  const body = template
+    ? template.replace(
+        /\$context\.error\.messageString/g,
+        JSON.stringify(defaultMessage),
+      )
+    : JSON.stringify({ message: defaultMessage });
+  return new Response(body, {
+    status: statusCode,
+    headers: { "content-type": "application/json" },
+  });
+};
+
+const enforceRequestValidation = (
+  ctx: ServiceContext,
+  restApiId: string,
+  method: StoredMethod,
+  bodyText: string,
+  pathParams: Record<string, string>,
+  url: URL,
+  req: Request,
+): Response | undefined => {
+  if (!method.requestValidatorId) return undefined;
+  const validator = ctx.store.get<StoredRequestValidator>(
+    requestValidatorKey(restApiId, method.requestValidatorId),
+  );
+  if (!validator) return undefined;
+
+  if (validator.validateRequestParameters && method.requestParameters) {
+    const missing: string[] = [];
+    for (const [key, required] of Object.entries(method.requestParameters)) {
+      if (!required) continue;
+      const parts = key.split(".");
+      const location = parts[2];
+      const name = parts[3];
+      if (!location || !name) continue;
+      if (location === "querystring") {
+        if (!url.searchParams.has(name)) missing.push(name);
+      } else if (location === "header") {
+        if (!req.headers.has(name)) missing.push(name);
+      } else if (location === "path") {
+        if (!(name in pathParams)) missing.push(name);
+      }
+    }
+    if (missing.length > 0) {
+      return gatewayErrorResponse(
+        ctx,
+        restApiId,
+        "BAD_REQUEST_PARAMETERS",
+        400,
+        `Missing required request parameters: [${missing.join(", ")}]`,
+      );
+    }
+  }
+
+  if (validator.validateRequestBody && method.requestModels) {
+    const rawCt =
+      req.headers.get("content-type") ?? req.headers.get("Content-Type");
+    const contentType = rawCt ? rawCt.split(";")[0].trim() : "application/json";
+    const modelName =
+      method.requestModels[contentType] ??
+      method.requestModels["application/json"];
+    if (modelName) {
+      const model = ctx.store.get<StoredModel>(modelKey(restApiId, modelName));
+      if (model?.schema) {
+        try {
+          const body: unknown = bodyText ? JSON.parse(bodyText) : {};
+          const schemaObj = JSON.parse(model.schema) as JsonSchemaNode;
+          const defs = schemaObj.definitions ?? {};
+          if (!validateJsonSchemaNode(body, schemaObj, defs)) {
+            return gatewayErrorResponse(
+              ctx,
+              restApiId,
+              "BAD_REQUEST_BODY",
+              400,
+              "Invalid request body",
+            );
+          }
+        } catch {
+          return gatewayErrorResponse(
+            ctx,
+            restApiId,
+            "BAD_REQUEST_BODY",
+            400,
+            "Invalid request body",
+          );
+        }
+      }
+    }
+  }
+
+  return undefined;
+};
+
+const lambdaArnFromUri = (uri: string): string | undefined => {
+  const match = uri.match(
+    /arn:aws:apigateway:[^:]+:lambda:path\/[^/]+\/functions\/([^/]+)\/invocations/,
+  );
+  return match?.[1];
+};
+
+const extractIdentityToken = (
+  identitySource: string | undefined,
+  req: Request,
+  url: URL,
+): string | undefined => {
+  if (!identitySource) return undefined;
+  const parts = identitySource.split(".");
+  const location = parts[2];
+  const name = parts[3];
+  if (!location || !name) return undefined;
+  if (location === "header")
+    return (
+      req.headers.get(name) ?? req.headers.get(name.toLowerCase()) ?? undefined
+    );
+  if (location === "querystring")
+    return url.searchParams.get(name) ?? undefined;
+  return undefined;
+};
+
+const enforceAuthorizer = async (
+  ctx: ServiceContext,
+  restApiId: string,
+  authorizer: StoredAuthorizer,
+  req: Request,
+  url: URL,
+): Promise<Response | undefined> => {
+  if (authorizer.type === "COGNITO_USER_POOLS") {
+    const token =
+      req.headers.get("Authorization") ?? req.headers.get("authorization");
+    if (!token) {
+      return gatewayErrorResponse(
+        ctx,
+        restApiId,
+        "UNAUTHORIZED",
+        401,
+        "Unauthorized",
+      );
+    }
+    return undefined;
+  }
+
+  const token = extractIdentityToken(authorizer.identitySource, req, url);
+  if (!token) {
+    return gatewayErrorResponse(
+      ctx,
+      restApiId,
+      "UNAUTHORIZED",
+      401,
+      "Unauthorized",
+    );
+  }
+
+  if (authorizer.authorizerUri) {
+    const functionArn = lambdaArnFromUri(authorizer.authorizerUri);
+    if (functionArn) {
+      const headersMap: Record<string, string> = {};
+      req.headers.forEach((v, k) => {
+        headersMap[k] = v;
+      });
+      const queryMap: Record<string, string> = {};
+      url.searchParams.forEach((v, k) => {
+        queryMap[k] = v;
+      });
+      const event =
+        authorizer.type === "TOKEN"
+          ? {
+              authorizationToken: token,
+              methodArn: `arn:aws:execute-api:${ctx.region}:${ctx.account}:${restApiId}/*`,
+            }
+          : {
+              headers: headersMap,
+              queryStringParameters: queryMap,
+              pathParameters: {} as Record<string, string>,
+              requestContext: { stage: "" },
+            };
+      const result = await invokeTaskResource(ctx, functionArn, event);
+      if (!result.ok) {
+        return gatewayErrorResponse(
+          ctx,
+          restApiId,
+          "ACCESS_DENIED",
+          403,
+          "User is not authorized to access this resource with an explicit deny",
+        );
+      }
+      const policy = result.result as {
+        policyDocument?: { Statement?: Array<{ Effect?: string }> };
+      };
+      const hasAllow =
+        policy?.policyDocument?.Statement?.some((s) => s.Effect === "Allow") ??
+        false;
+      if (!hasAllow) {
+        return gatewayErrorResponse(
+          ctx,
+          restApiId,
+          "ACCESS_DENIED",
+          403,
+          "User is not authorized to access this resource with an explicit deny",
+        );
+      }
+    }
+  }
+
+  return undefined;
+};
+
 const matchResourcePath = (
   pattern: string,
   incoming: string,
@@ -4120,13 +4504,6 @@ const dispatchMockIntegration = (
   });
 };
 
-const lambdaArnFromUri = (uri: string): string | undefined => {
-  const match = uri.match(
-    /arn:aws:apigateway:[^:]+:lambda:path\/[^/]+\/functions\/([^/]+)\/invocations/,
-  );
-  return match?.[1];
-};
-
 const dispatchLambdaProxy = async (
   req: Request,
   url: URL,
@@ -4243,6 +4620,26 @@ export const handleExecuteApi = async (
   );
   if (method === undefined) return missingAuthToken();
 
+  if (
+    (method.authorizationType === "CUSTOM" ||
+      method.authorizationType === "COGNITO_USER_POOLS") &&
+    method.authorizerId
+  ) {
+    const authorizer = ctx.store.get<StoredAuthorizer>(
+      authorizerKey(restApiId, method.authorizerId),
+    );
+    if (authorizer) {
+      const authError = await enforceAuthorizer(
+        ctx,
+        restApiId,
+        authorizer,
+        req,
+        url,
+      );
+      if (authError !== undefined) return authError;
+    }
+  }
+
   const integration = ctx.store.get<StoredIntegration>(
     integrationKey(restApiId, match.resource.id, req.method),
   );
@@ -4250,6 +4647,19 @@ export const handleExecuteApi = async (
 
   const bodyBytes = new Uint8Array(await req.arrayBuffer());
   const bodyText = new TextDecoder().decode(bodyBytes);
+
+  if (method.requestValidatorId) {
+    const validationError = enforceRequestValidation(
+      ctx,
+      restApiId,
+      method,
+      bodyText,
+      match.params,
+      url,
+      req,
+    );
+    if (validationError !== undefined) return validationError;
+  }
 
   if (integration.type === "MOCK") {
     return dispatchMockIntegration(

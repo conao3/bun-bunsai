@@ -27,6 +27,16 @@ type StoredInstance = {
   Tags: Tag[];
 };
 
+type StoredVpcCidrAssoc = {
+  AssociationId: string;
+  CidrBlock: string;
+};
+
+type StoredVpcIpv6CidrAssoc = {
+  AssociationId: string;
+  Ipv6CidrBlock: string;
+};
+
 type StoredVpc = {
   VpcId: string;
   CidrBlock: string;
@@ -35,6 +45,8 @@ type StoredVpc = {
   IsDefault: boolean;
   DhcpOptionsId: string;
   Tags: Tag[];
+  CidrBlockAssociations: StoredVpcCidrAssoc[];
+  Ipv6CidrBlockAssociations: StoredVpcIpv6CidrAssoc[];
 };
 
 type StoredSecurityGroup = {
@@ -1703,6 +1715,10 @@ const CreateVpc: OperationHandler = (input, ctx) => {
     IsDefault: false,
     DhcpOptionsId: hexId("dopt"),
     Tags: [],
+    CidrBlockAssociations: [
+      { AssociationId: hexId("vpc-cidr-assoc"), CidrBlock: cidrBlock },
+    ],
+    Ipv6CidrBlockAssociations: [],
   };
   ctx.store.set(vpcKey(id), vpc);
   return {
@@ -1734,6 +1750,18 @@ const DescribeVpcs: OperationHandler = (input, ctx) => {
       DhcpOptionsId: vpc.DhcpOptionsId,
       OwnerId: ctx.account,
       Tags: vpc.Tags,
+      CidrBlockAssociationSet: (vpc.CidrBlockAssociations ?? []).map((a) => ({
+        AssociationId: a.AssociationId,
+        CidrBlock: a.CidrBlock,
+        CidrBlockState: { State: "associated", StatusMessage: "" },
+      })),
+      Ipv6CidrBlockAssociationSet: (vpc.Ipv6CidrBlockAssociations ?? []).map(
+        (a) => ({
+          AssociationId: a.AssociationId,
+          Ipv6CidrBlock: a.Ipv6CidrBlock,
+          Ipv6CidrBlockState: { State: "associated", StatusMessage: "" },
+        }),
+      ),
     })),
   };
 };
@@ -3789,6 +3817,10 @@ const CreateDefaultVpc: OperationHandler = (_input, ctx) => {
     IsDefault: true,
     DhcpOptionsId: hexId("dopt"),
     Tags: [],
+    CidrBlockAssociations: [
+      { AssociationId: hexId("vpc-cidr-assoc"), CidrBlock: "172.31.0.0/16" },
+    ],
+    Ipv6CidrBlockAssociations: [],
   };
   ctx.store.set(vpcKey(id), vpc);
   return {
@@ -4911,15 +4943,26 @@ const AssociateVpcCidrBlock: OperationHandler = (input, ctx) => {
   const assocId = hexId("vpc-cidr-assoc");
   const result: Record<string, unknown> = { VpcId: vpcId };
   if (cidrBlock !== undefined) {
+    (vpc.CidrBlockAssociations ??= []).push({
+      AssociationId: assocId,
+      CidrBlock: cidrBlock,
+    });
+    ctx.store.set(vpcKey(vpcId), vpc);
     result["CidrBlockAssociation"] = {
       AssociationId: assocId,
       CidrBlock: cidrBlock,
       CidrBlockState: { State: "associated", StatusMessage: "" },
     };
   } else {
+    const ipv6 = ipv6CidrBlock ?? "::/0";
+    (vpc.Ipv6CidrBlockAssociations ??= []).push({
+      AssociationId: assocId,
+      Ipv6CidrBlock: ipv6,
+    });
+    ctx.store.set(vpcKey(vpcId), vpc);
     result["Ipv6CidrBlockAssociation"] = {
       AssociationId: assocId,
-      Ipv6CidrBlock: ipv6CidrBlock ?? "::/0",
+      Ipv6CidrBlock: ipv6,
       Ipv6CidrBlockState: { State: "associated", StatusMessage: "" },
       NetworkBorderGroup: ctx.region,
     };
@@ -13852,6 +13895,208 @@ const DisassociateRouteTable: OperationHandler = (input, ctx) => {
   );
 };
 
+const DisassociateSecurityGroupVpc: OperationHandler = (_input, _ctx) => {
+  return { State: "disassociating" };
+};
+
+const DisassociateSubnetCidrBlock: OperationHandler = (input, _ctx) => {
+  const assocId =
+    typeof input["AssociationId"] === "string" ? input["AssociationId"] : "";
+  return {
+    SubnetId: hexId("subnet"),
+    Ipv6CidrBlockAssociation: {
+      AssociationId: assocId,
+      Ipv6CidrBlock: "::/0",
+      Ipv6CidrBlockState: { State: "disassociated", StatusMessage: "" },
+    },
+  };
+};
+
+const DisassociateTransitGatewayMulticastDomain: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const domainId =
+    typeof input["TransitGatewayMulticastDomainId"] === "string"
+      ? input["TransitGatewayMulticastDomainId"]
+      : hexId("tgw-mcast");
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : hexId("tgw-attach");
+  const subnetIds = stringList(input["SubnetIds"]);
+  return {
+    Associations: {
+      TransitGatewayMulticastDomainId: domainId,
+      TransitGatewayAttachmentId: attachmentId,
+      ResourceId: hexId("vpc"),
+      ResourceType: "vpc",
+      Subnets: subnetIds.map((id) => ({
+        SubnetId: id,
+        State: "disassociated",
+      })),
+    },
+  };
+};
+
+const DisassociateTransitGatewayPolicyTable: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const tableId =
+    typeof input["TransitGatewayPolicyTableId"] === "string"
+      ? input["TransitGatewayPolicyTableId"]
+      : hexId("tgw-policy-table");
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : hexId("tgw-attach");
+  return {
+    Association: {
+      TransitGatewayPolicyTableId: tableId,
+      TransitGatewayAttachmentId: attachmentId,
+      ResourceId: hexId("vpc"),
+      ResourceType: "vpc",
+      State: "disassociated",
+    },
+  };
+};
+
+const DisassociateTransitGatewayRouteTable: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : hexId("tgw-rtb");
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : hexId("tgw-attach");
+  return {
+    Association: {
+      TransitGatewayRouteTableId: routeTableId,
+      TransitGatewayAttachmentId: attachmentId,
+      ResourceId: hexId("vpc"),
+      ResourceType: "vpc",
+      State: "disassociated",
+    },
+  };
+};
+
+const DisassociateTrunkInterface: OperationHandler = (_input, _ctx) => {
+  return { Return: true, ClientToken: hexId("token") };
+};
+
+const DisassociateVpcCidrBlock: OperationHandler = (input, ctx) => {
+  const assocId =
+    typeof input["AssociationId"] === "string" ? input["AssociationId"] : "";
+  const vpcs = allVpcs(ctx);
+  for (const vpc of vpcs) {
+    const cidrIdx = (vpc.CidrBlockAssociations ?? []).findIndex(
+      (a) => a.AssociationId === assocId,
+    );
+    if (cidrIdx !== -1) {
+      const assoc = vpc.CidrBlockAssociations[cidrIdx];
+      vpc.CidrBlockAssociations.splice(cidrIdx, 1);
+      ctx.store.set(vpcKey(vpc.VpcId), vpc);
+      return {
+        VpcId: vpc.VpcId,
+        CidrBlockAssociation: {
+          AssociationId: assocId,
+          CidrBlock: assoc.CidrBlock,
+          CidrBlockState: { State: "disassociated", StatusMessage: "" },
+        },
+      };
+    }
+    const ipv6Idx = (vpc.Ipv6CidrBlockAssociations ?? []).findIndex(
+      (a) => a.AssociationId === assocId,
+    );
+    if (ipv6Idx !== -1) {
+      const assoc = vpc.Ipv6CidrBlockAssociations[ipv6Idx];
+      vpc.Ipv6CidrBlockAssociations.splice(ipv6Idx, 1);
+      ctx.store.set(vpcKey(vpc.VpcId), vpc);
+      return {
+        VpcId: vpc.VpcId,
+        Ipv6CidrBlockAssociation: {
+          AssociationId: assocId,
+          Ipv6CidrBlock: assoc.Ipv6CidrBlock,
+          Ipv6CidrBlockState: { State: "disassociated", StatusMessage: "" },
+        },
+      };
+    }
+  }
+  throw awsError(
+    "InvalidVpcID.NotFound",
+    `The association '${assocId}' does not exist`,
+    400,
+  );
+};
+
+const EnableAddressTransfer: OperationHandler = (input, ctx) => {
+  const allocationId =
+    typeof input["AllocationId"] === "string" ? input["AllocationId"] : "";
+  const transferAccountId =
+    typeof input["TransferAccountId"] === "string"
+      ? input["TransferAccountId"]
+      : "";
+  const address = ctx.store.get<StoredAddress>(addressKey(allocationId));
+  if (address === undefined) {
+    throw awsError(
+      "InvalidAllocationID.NotFound",
+      `The allocation ID '${allocationId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    AddressTransfer: {
+      AllocationId: address.AllocationId,
+      PublicIp: address.PublicIp,
+      TransferAccountId: transferAccountId,
+      AddressTransferStatus: "pending",
+    },
+  };
+};
+
+const EnableAllowedImagesSettings: OperationHandler = (input, _ctx) => {
+  const state =
+    typeof input["AllowedImagesSettingsState"] === "string"
+      ? input["AllowedImagesSettingsState"]
+      : "enabled";
+  return { AllowedImagesSettingsState: state };
+};
+
+const EnableAwsNetworkPerformanceMetricSubscription: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Output: true };
+};
+
+const EnableCapacityManager: OperationHandler = (input, _ctx) => {
+  const orgsAccess =
+    typeof input["OrganizationsAccess"] === "boolean"
+      ? input["OrganizationsAccess"]
+      : false;
+  return {
+    CapacityManagerStatus: "enabled",
+    OrganizationsAccess: orgsAccess,
+  };
+};
+
+const EnableEbsEncryptionByDefault: OperationHandler = (_input, ctx) => {
+  ctx.store.set(ebsEncryptionByDefaultKey(), { enabled: true });
+  return { EbsEncryptionByDefault: true };
+};
+
+const GetEbsEncryptionByDefault: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<{ enabled: boolean }>(
+    ebsEncryptionByDefaultKey(),
+  );
+  return { EbsEncryptionByDefault: stored?.enabled ?? false };
+};
+
 const EnableSerialConsoleAccess: OperationHandler = (_input, ctx) => {
   ctx.store.set(serialConsoleAccessKey(), { enabled: true });
   return { SerialConsoleAccessEnabled: true };
@@ -14365,6 +14610,19 @@ const ec2: ServiceDefinition = {
     DisassociateNatGatewayAddress,
     DisassociateRouteServer,
     DisassociateRouteTable,
+    DisassociateSecurityGroupVpc,
+    DisassociateSubnetCidrBlock,
+    DisassociateTransitGatewayMulticastDomain,
+    DisassociateTransitGatewayPolicyTable,
+    DisassociateTransitGatewayRouteTable,
+    DisassociateTrunkInterface,
+    DisassociateVpcCidrBlock,
+    EnableAddressTransfer,
+    EnableAllowedImagesSettings,
+    EnableAwsNetworkPerformanceMetricSubscription,
+    EnableCapacityManager,
+    EnableEbsEncryptionByDefault,
+    GetEbsEncryptionByDefault,
     EnableSerialConsoleAccess,
     GetSerialConsoleAccessStatus,
   },

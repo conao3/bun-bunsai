@@ -43,8 +43,11 @@ describe("S3 presigned URL e2e", () => {
       { expiresIn: 900 },
     );
     expect(putUrl).toContain("X-Amz-Credential");
+    expect(putUrl).toContain("X-Amz-Expires");
     const putRes = await gwFetch(putUrl, { method: "PUT", body: payload });
     expect(putRes.status).toBe(200);
+    const putEtag = putRes.headers.get("etag");
+    expect(putEtag).not.toBeNull();
 
     const getUrl = await getSignedUrl(
       client,
@@ -53,6 +56,8 @@ describe("S3 presigned URL e2e", () => {
     );
     const getRes = await gwFetch(getUrl, { method: "GET" });
     expect(getRes.status).toBe(200);
+    expect(getRes.headers.get("etag")).toBe(putEtag);
+    expect(getRes.headers.get("content-type")).not.toBeNull();
     const bytes = new Uint8Array(await getRes.arrayBuffer());
     expect(sameBytes(bytes, payload)).toBe(true);
   });

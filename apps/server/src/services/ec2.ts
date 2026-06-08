@@ -11816,6 +11816,282 @@ const DescribeReservedInstancesModifications: OperationHandler = (
   return { ReservedInstancesModifications: [] };
 };
 
+const allRouteServers = (ctx: ServiceContext): StoredRouteServer[] =>
+  ctx.store
+    .list<StoredRouteServer>()
+    .filter((entry) => entry.key.startsWith("rs/"))
+    .map((entry) => entry.value);
+
+const allRouteServerEndpoints = (
+  ctx: ServiceContext,
+): StoredRouteServerEndpoint[] =>
+  ctx.store
+    .list<StoredRouteServerEndpoint>()
+    .filter((entry) => entry.key.startsWith("rse/"))
+    .map((entry) => entry.value);
+
+const allRouteServerPeers = (ctx: ServiceContext): StoredRouteServerPeer[] =>
+  ctx.store
+    .list<StoredRouteServerPeer>()
+    .filter((entry) => entry.key.startsWith("rsp/"))
+    .map((entry) => entry.value);
+
+const allSecondaryNetworks = (ctx: ServiceContext): StoredSecondaryNetwork[] =>
+  ctx.store
+    .list<StoredSecondaryNetwork>()
+    .filter((entry) => entry.key.startsWith("snet/"))
+    .map((entry) => entry.value);
+
+const allSecondarySubnets = (ctx: ServiceContext): StoredSecondarySubnet[] =>
+  ctx.store
+    .list<StoredSecondarySubnet>()
+    .filter((entry) => entry.key.startsWith("ssub/"))
+    .map((entry) => entry.value);
+
+const DescribeReservedInstancesOfferings: OperationHandler = (_input, _ctx) => {
+  return {
+    ReservedInstancesOfferings: [
+      {
+        ReservedInstancesOfferingId: "a2d7c9e0-1234-5678-abcd-111111111111",
+        InstanceType: "t3.medium",
+        AvailabilityZone: "us-east-1a",
+        Duration: 31536000,
+        FixedPrice: 0,
+        UsagePrice: 0,
+        ProductDescription: "Linux/UNIX",
+        InstanceTenancy: "default",
+        Marketplace: false,
+        OfferingClass: "standard",
+        OfferingType: "No Upfront",
+        RecurringCharges: [{ Amount: 0.0278, Frequency: "Hourly" }],
+        Scope: "Region",
+      },
+    ],
+  };
+};
+
+const DescribeRouteServers: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["RouteServerIds"]);
+  const servers = allRouteServers(ctx).filter((s) => {
+    if (ids.length > 0 && !ids.includes(s.RouteServerId)) return false;
+    return true;
+  });
+  return {
+    RouteServers: servers.map((s) => ({
+      RouteServerId: s.RouteServerId,
+      AmazonSideAsn: s.AmazonSideAsn,
+      State: s.State,
+      PersistRoutesState: s.PersistRoutesState,
+      PersistRoutesDuration: s.PersistRoutesDuration,
+      SnsNotificationsEnabled: s.SnsNotificationsEnabled,
+      Tags: s.Tags,
+    })),
+  };
+};
+
+const DescribeRouteServerEndpoints: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["RouteServerEndpointIds"]);
+  const endpoints = allRouteServerEndpoints(ctx).filter((e) => {
+    if (ids.length > 0 && !ids.includes(e.RouteServerEndpointId)) return false;
+    return true;
+  });
+  return {
+    RouteServerEndpoints: endpoints.map((e) => ({
+      RouteServerEndpointId: e.RouteServerEndpointId,
+      RouteServerId: e.RouteServerId,
+      VpcId: e.VpcId,
+      SubnetId: e.SubnetId,
+      EniId: e.EniId,
+      EniAddress: e.EniAddress,
+      State: e.State,
+      Tags: e.Tags,
+    })),
+  };
+};
+
+const DescribeRouteServerPeers: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["RouteServerPeerIds"]);
+  const peers = allRouteServerPeers(ctx).filter((p) => {
+    if (ids.length > 0 && !ids.includes(p.RouteServerPeerId)) return false;
+    return true;
+  });
+  return {
+    RouteServerPeers: peers.map((p) => ({
+      RouteServerPeerId: p.RouteServerPeerId,
+      RouteServerEndpointId: p.RouteServerEndpointId,
+      RouteServerId: p.RouteServerId,
+      VpcId: p.VpcId,
+      SubnetId: p.SubnetId,
+      State: p.State,
+      PeerAddress: p.PeerAddress,
+      EndpointEniId: p.EndpointEniId,
+      EndpointEniAddress: p.EndpointEniAddress,
+      BgpOptions: {
+        PeerAsn: p.PeerAsn,
+        PeerLivenessDetection: p.PeerLivenessDetection,
+      },
+      Tags: p.Tags,
+    })),
+  };
+};
+
+const DescribeScheduledInstanceAvailability: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return {
+    ScheduledInstanceAvailabilitySet: [
+      {
+        InstanceType: "c4.large",
+        Platform: "Linux/UNIX",
+        NetworkPlatform: "EC2-VPC",
+        AvailabilityZone: "us-east-1a",
+        PurchaseToken: "synthetic-purchase-token-1",
+        SlotDurationInHours: 6,
+        TotalScheduledInstanceHours: 1200,
+        AvailableInstanceCount: 5,
+        MinTermDurationInDays: 365,
+        MaxTermDurationInDays: 365,
+        Recurrence: {
+          Frequency: "Daily",
+          Interval: 1,
+          OccurrenceDayOfWeek: [],
+          OccurrenceRelativeToEnd: false,
+          OccurrenceUnit: "",
+        },
+        FirstSlotStartTime: "2026-01-01T08:00:00Z",
+        HourlyPrice: "0.095",
+      },
+    ],
+  };
+};
+
+const DescribeScheduledInstances: OperationHandler = (_input, _ctx) => {
+  return { ScheduledInstanceSet: [] };
+};
+
+const DescribeSecondaryInterfaces: OperationHandler = (_input, _ctx) => {
+  return { SecondaryInterfaces: [] };
+};
+
+const DescribeSecondaryNetworks: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["SecondaryNetworkIds"]);
+  const networks = allSecondaryNetworks(ctx).filter((n) => {
+    if (ids.length > 0 && !ids.includes(n.SecondaryNetworkId)) return false;
+    return true;
+  });
+  return {
+    SecondaryNetworks: networks.map((n) => ({
+      SecondaryNetworkId: n.SecondaryNetworkId,
+      SecondaryNetworkArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:secondary-network/${n.SecondaryNetworkId}`,
+      OwnerId: ctx.account,
+      Type: n.NetworkType,
+      State: n.State,
+      Ipv4CidrBlockAssociations: [
+        {
+          AssociationId: `secondary-network-cidr-assoc-${n.SecondaryNetworkId}`,
+          Ipv4CidrBlock: n.Ipv4CidrBlock,
+          Ipv4CidrBlockState: { State: "associated" },
+        },
+      ],
+      Tags: n.Tags,
+    })),
+  };
+};
+
+const DescribeSecondarySubnets: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["SecondarySubnetIds"]);
+  const subnets = allSecondarySubnets(ctx).filter((s) => {
+    if (ids.length > 0 && !ids.includes(s.SecondarySubnetId)) return false;
+    return true;
+  });
+  const networkMap = new Map<string, StoredSecondaryNetwork>();
+  for (const n of allSecondaryNetworks(ctx)) {
+    networkMap.set(n.SecondaryNetworkId, n);
+  }
+  return {
+    SecondarySubnets: subnets.map((s) => ({
+      SecondarySubnetId: s.SecondarySubnetId,
+      SecondarySubnetArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:secondary-subnet/${s.SecondarySubnetId}`,
+      SecondaryNetworkId: s.SecondaryNetworkId,
+      SecondaryNetworkType: networkMap.get(s.SecondaryNetworkId)?.NetworkType,
+      OwnerId: ctx.account,
+      AvailabilityZone: s.AvailabilityZone,
+      State: s.State,
+      Ipv4CidrBlockAssociations: [
+        {
+          AssociationId: `secondary-subnet-cidr-assoc-${s.SecondarySubnetId}`,
+          Ipv4CidrBlock: s.Ipv4CidrBlock,
+          Ipv4CidrBlockState: { State: "associated" },
+        },
+      ],
+      Tags: s.Tags,
+    })),
+  };
+};
+
+const DescribeSecurityGroupReferences: OperationHandler = (input, _ctx) => {
+  const groupIds = stringList(input["GroupId"]);
+  return {
+    SecurityGroupReferenceSet: groupIds.map((id) => ({
+      GroupId: id,
+      ReferencingVpcId: "",
+      VpcPeeringConnectionId: "",
+    })),
+  };
+};
+
+const DescribeSecurityGroupRules: OperationHandler = (input, ctx) => {
+  const ruleIds = stringList(input["SecurityGroupRuleIds"]);
+  const filters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as unknown[])
+    : [];
+  const groupIdFilter = filters
+    .filter(
+      (f): f is Record<string, unknown> => typeof f === "object" && f !== null,
+    )
+    .filter(
+      (f) =>
+        (typeof f["Name"] === "string" && f["Name"] === "group-id") ||
+        (typeof f["name"] === "string" && f["name"] === "group-id"),
+    )
+    .flatMap((f) => {
+      const vals = f["Values"] ?? f["values"];
+      return Array.isArray(vals) ? (vals as string[]) : [];
+    });
+  const allRules: {
+    rule: StoredSecurityGroupRule;
+    group: StoredSecurityGroup;
+  }[] = [];
+  for (const group of allSecurityGroups(ctx)) {
+    for (const rule of group.IngressRules) {
+      allRules.push({ rule, group });
+    }
+    for (const rule of group.EgressRules) {
+      allRules.push({ rule, group });
+    }
+  }
+  const filtered = allRules.filter(({ rule, group }) => {
+    if (ruleIds.length > 0 && !ruleIds.includes(rule.SecurityGroupRuleId))
+      return false;
+    if (groupIdFilter.length > 0 && !groupIdFilter.includes(group.GroupId))
+      return false;
+    return true;
+  });
+  return {
+    SecurityGroupRules: filtered.map(({ rule, group }) =>
+      securityGroupRuleView(rule, group, ctx.account),
+    ),
+  };
+};
+
+const DescribeSecurityGroupVpcAssociations: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { SecurityGroupVpcAssociations: [] };
+};
+
 const DescribeNetworkInterfaceAttribute: OperationHandler = (input, ctx) => {
   const id =
     typeof input["NetworkInterfaceId"] === "string"
@@ -12245,6 +12521,18 @@ const ec2: ServiceDefinition = {
     DescribeReservedInstances,
     DescribeReservedInstancesListings,
     DescribeReservedInstancesModifications,
+    DescribeReservedInstancesOfferings,
+    DescribeRouteServerEndpoints,
+    DescribeRouteServerPeers,
+    DescribeRouteServers,
+    DescribeScheduledInstanceAvailability,
+    DescribeScheduledInstances,
+    DescribeSecondaryInterfaces,
+    DescribeSecondaryNetworks,
+    DescribeSecondarySubnets,
+    DescribeSecurityGroupReferences,
+    DescribeSecurityGroupRules,
+    DescribeSecurityGroupVpcAssociations,
   },
   model,
 } as const;

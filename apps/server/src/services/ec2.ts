@@ -1426,6 +1426,26 @@ const allFleets = (ctx: ServiceContext): StoredFleet[] =>
     .filter((entry) => entry.key.startsWith("fleet/"))
     .map((entry) => entry.value);
 
+const allFlowLogs = (ctx: ServiceContext): StoredFlowLog[] =>
+  ctx.store
+    .list<StoredFlowLog>()
+    .filter((entry) => entry.key.startsWith("fl/"))
+    .map((entry) => entry.value);
+
+const allFpgaImages = (ctx: ServiceContext): StoredFpgaImage[] =>
+  ctx.store
+    .list<StoredFpgaImage>()
+    .filter((entry) => entry.key.startsWith("fpga/"))
+    .map((entry) => entry.value);
+
+const allIamProfileAssociations = (
+  ctx: ServiceContext,
+): StoredIamInstanceProfileAssociation[] =>
+  ctx.store
+    .list<StoredIamInstanceProfileAssociation>()
+    .filter((entry) => entry.key.startsWith("iam-profile-assoc/"))
+    .map((entry) => entry.value);
+
 const integerOf = (value: unknown): number | undefined => {
   if (typeof value === "number") return value;
   if (typeof value === "string" && value !== "") {
@@ -10290,6 +10310,186 @@ const DescribeFleetInstances: OperationHandler = (input, ctx) => {
   };
 };
 
+const DescribeFleets: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["FleetIds"]);
+  const fleets = allFleets(ctx).filter(
+    (f) => ids.length === 0 || ids.includes(f.FleetId),
+  );
+  return {
+    Fleets: fleets.map((f) => ({
+      FleetId: f.FleetId,
+      FleetState: f.FleetState,
+      CreateTime: f.CreateTime,
+      Tags: f.Tags,
+    })),
+  };
+};
+
+const DescribeFlowLogs: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["FlowLogIds"]);
+  const logs = allFlowLogs(ctx).filter(
+    (l) => ids.length === 0 || ids.includes(l.FlowLogId),
+  );
+  return {
+    FlowLogs: logs.map((l) => ({
+      FlowLogId: l.FlowLogId,
+      ResourceId: l.ResourceId,
+      TrafficType: l.TrafficType,
+      LogGroupName: l.LogGroupName,
+      LogDestination: l.LogDestination,
+      FlowLogStatus: l.FlowLogStatus,
+      CreationTime: l.CreationTime,
+      Tags: l.Tags,
+    })),
+  };
+};
+
+const DescribeFpgaImageAttribute: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["FpgaImageId"] === "string" ? input["FpgaImageId"] : "";
+  const attribute =
+    typeof input["Attribute"] === "string" ? input["Attribute"] : "description";
+  const image = ctx.store.get<StoredFpgaImage>(fpgaImageKey(id));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidFpgaImageID.NotFound",
+      `The fpgaImageId '${id}' does not exist`,
+      400,
+    );
+  }
+  return {
+    FpgaImageAttribute: {
+      FpgaImageId: image.FpgaImageId,
+      Name: attribute,
+      Description: attribute === "description" ? image.Description : undefined,
+      LoadPermissions: [],
+      ProductCodes: [],
+    },
+  };
+};
+
+const DescribeFpgaImages: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["FpgaImageIds"]);
+  const images = allFpgaImages(ctx).filter(
+    (img) => ids.length === 0 || ids.includes(img.FpgaImageId),
+  );
+  return {
+    FpgaImages: images.map((img) => ({
+      FpgaImageId: img.FpgaImageId,
+      FpgaImageGlobalId: img.FpgaImageGlobalId,
+      Name: img.Name,
+      Description: img.Description,
+      State: { Code: img.State },
+      OwnerId: img.OwnerId,
+      CreateTime: img.CreateTime,
+      Tags: img.Tags,
+    })),
+  };
+};
+
+const DescribeHostReservationOfferings: OperationHandler = (_input, _ctx) => {
+  return {
+    OfferingSet: [
+      {
+        OfferingId: "hro-00000001",
+        InstanceFamily: "m5",
+        PaymentOption: "NoUpfront",
+        UpfrontPrice: "0.000",
+        HourlyPrice: "1.500",
+        CurrencyCode: "USD",
+        Duration: 31536000,
+      },
+      {
+        OfferingId: "hro-00000002",
+        InstanceFamily: "m5",
+        PaymentOption: "AllUpfront",
+        UpfrontPrice: "10000.000",
+        HourlyPrice: "0.000",
+        CurrencyCode: "USD",
+        Duration: 94608000,
+      },
+    ],
+  };
+};
+
+const DescribeHostReservations: OperationHandler = (_input, _ctx) => {
+  return { HostReservationSet: [] };
+};
+
+const DescribeHosts: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["HostIds"]);
+  const hosts = allHosts(ctx).filter(
+    (h) => ids.length === 0 || ids.includes(h.HostId),
+  );
+  return {
+    Hosts: hosts.map((h) => ({
+      HostId: h.HostId,
+      AutoPlacement: h.AutoPlacement,
+      HostRecovery: h.HostRecovery,
+      AvailabilityZone: h.AvailabilityZone,
+      State: h.State,
+      HostProperties: {
+        InstanceType: h.InstanceType,
+        InstanceFamily: h.InstanceFamily,
+      },
+      Tags: h.Tags,
+    })),
+  };
+};
+
+const DescribeIamInstanceProfileAssociations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["AssociationIds"]);
+  const associations = allIamProfileAssociations(ctx).filter(
+    (a) => ids.length === 0 || ids.includes(a.AssociationId),
+  );
+  return {
+    IamInstanceProfileAssociations: associations.map((a) => ({
+      AssociationId: a.AssociationId,
+      InstanceId: a.InstanceId,
+      IamInstanceProfile: a.IamInstanceProfile,
+      State: a.State,
+      Timestamp: a.Timestamp,
+    })),
+  };
+};
+
+const DescribeIdFormat: OperationHandler = (_input, _ctx) => {
+  return { Statuses: [] };
+};
+
+const DescribeIdentityIdFormat: OperationHandler = (_input, _ctx) => {
+  return { Statuses: [] };
+};
+
+const DescribeImageAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const attribute =
+    typeof input["Attribute"] === "string" ? input["Attribute"] : "description";
+  const image = ctx.store.get<StoredImage>(imageKey(id));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${id}]' does not exist`,
+      400,
+    );
+  }
+  return {
+    ImageId: image.ImageId,
+    Description:
+      attribute === "description" ? { Value: image.Description } : undefined,
+    LaunchPermissions: attribute === "launchPermission" ? [] : undefined,
+    ProductCodes: attribute === "productCodes" ? [] : undefined,
+    BlockDeviceMappings: attribute === "blockDeviceMapping" ? [] : undefined,
+  };
+};
+
+const DescribeImageReferences: OperationHandler = (_input, _ctx) => {
+  return { ImageReferences: [] };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -10623,6 +10823,18 @@ const ec2: ServiceDefinition = {
     DescribeFastSnapshotRestores,
     DescribeFleetHistory,
     DescribeFleetInstances,
+    DescribeFleets,
+    DescribeFlowLogs,
+    DescribeFpgaImageAttribute,
+    DescribeFpgaImages,
+    DescribeHostReservationOfferings,
+    DescribeHostReservations,
+    DescribeHosts,
+    DescribeIamInstanceProfileAssociations,
+    DescribeIdFormat,
+    DescribeIdentityIdFormat,
+    DescribeImageAttribute,
+    DescribeImageReferences,
   },
   model,
 } as const;

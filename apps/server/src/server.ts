@@ -8,6 +8,7 @@ import { handleManagement } from "./management/api.ts";
 import { findService } from "./services/index.ts";
 import { virtualHostBucket } from "./services/s3.ts";
 import { handleCognitoDiscovery } from "./services/cognito-idp.ts";
+import { handleExecuteApi } from "./services/apigateway.ts";
 
 const bodyTextForLog = (body: string | Uint8Array): string => {
   if (typeof body === "string") return body;
@@ -28,8 +29,18 @@ export function createBunsaiApp() {
     const url = new URL(req.url);
     const discovery = await handleCognitoDiscovery(req, url);
     if (discovery !== undefined) return discovery;
-    const bodyBytes = new Uint8Array(await req.arrayBuffer());
     const route = routeRequest(req, url);
+    if (route.service === "execute-api") {
+      const executeApiResp = await handleExecuteApi(
+        req,
+        url,
+        store,
+        route.account,
+        route.region,
+      );
+      if (executeApiResp !== undefined) return executeApiResp;
+    }
+    const bodyBytes = new Uint8Array(await req.arrayBuffer());
     const service =
       route.service === undefined ? undefined : findService(route.service);
 

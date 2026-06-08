@@ -429,6 +429,117 @@ describe("ssm e2e", () => {
     await client.send(new DeleteParameterCommand({ Name: name }));
   });
 
+  test("GetParametersByPath hierarchy recursive and pagination", async () => {
+    const client = ssm();
+    const prefix = `/bunsai/e2e/hier/${Date.now()}`;
+    const pathAbc = `${prefix}/a/b/c`;
+    const pathAd = `${prefix}/a/d`;
+
+    await client.send(
+      new PutParameterCommand({ Name: pathAbc, Value: "abc", Type: "String" }),
+    );
+    await client.send(
+      new PutParameterCommand({ Name: pathAd, Value: "ad", Type: "String" }),
+    );
+
+    const nonRecursive = await client.send(
+      new GetParametersByPathCommand({
+        Path: `${prefix}/a`,
+        Recursive: false,
+      }),
+    );
+    const nonRecNames = (nonRecursive.Parameters ?? []).map((p) => p.Name);
+    expect(nonRecNames).toContain(pathAd);
+    expect(nonRecNames).not.toContain(pathAbc);
+    expect(nonRecNames.length).toBe(1);
+
+    const recursive = await client.send(
+      new GetParametersByPathCommand({
+        Path: `${prefix}/a`,
+        Recursive: true,
+      }),
+    );
+    const recNames = (recursive.Parameters ?? []).map((p) => p.Name).sort();
+    expect(recNames).toEqual([pathAbc, pathAd].sort());
+
+    const page1 = await client.send(
+      new GetParametersByPathCommand({
+        Path: `${prefix}/a`,
+        Recursive: true,
+        MaxResults: 1,
+      }),
+    );
+    expect(page1.Parameters?.length).toBe(1);
+    expect(typeof page1.NextToken).toBe("string");
+
+    const page2 = await client.send(
+      new GetParametersByPathCommand({
+        Path: `${prefix}/a`,
+        Recursive: true,
+        MaxResults: 1,
+        NextToken: page1.NextToken,
+      }),
+    );
+    expect(page2.Parameters?.length).toBe(1);
+    expect(page2.NextToken).toBeUndefined();
+
+    const allNames = [
+      ...(page1.Parameters ?? []).map((p) => p.Name),
+      ...(page2.Parameters ?? []).map((p) => p.Name),
+    ].sort();
+    expect(allNames).toEqual([pathAbc, pathAd].sort());
+
+    await client.send(new DeleteParameterCommand({ Name: pathAbc }));
+    await client.send(new DeleteParameterCommand({ Name: pathAd }));
+  });
+
+  test("GetParametersByPath ParameterFilters by Type and Name", async () => {
+    const client = ssm();
+    const prefix = `/bunsai/e2e/filterhier/${Date.now()}`;
+    const pStr = `${prefix}/str`;
+    const pSec = `${prefix}/sec`;
+
+    await client.send(
+      new PutParameterCommand({ Name: pStr, Value: "v1", Type: "String" }),
+    );
+    await client.send(
+      new PutParameterCommand({
+        Name: pSec,
+        Value: "v2",
+        Type: "SecureString",
+      }),
+    );
+
+    const filterByType = await client.send(
+      new GetParametersByPathCommand({
+        Path: prefix,
+        Recursive: true,
+        ParameterFilters: [
+          { Key: "Type", Option: "Equals", Values: ["String"] },
+        ],
+      }),
+    );
+    const typeNames = (filterByType.Parameters ?? []).map((p) => p.Name);
+    expect(typeNames).toContain(pStr);
+    expect(typeNames).not.toContain(pSec);
+
+    const filterByName = await client.send(
+      new GetParametersByPathCommand({
+        Path: prefix,
+        Recursive: true,
+        ParameterFilters: [
+          { Key: "Name", Option: "BeginsWith", Values: [`${prefix}/sec`] },
+        ],
+      }),
+    );
+    const nameResults = (filterByName.Parameters ?? []).map((p) => p.Name);
+    expect(nameResults).toContain(pSec);
+    expect(nameResults).not.toContain(pStr);
+
+    await client.send(new DeleteParameterCommand({ Name: pStr }));
+    await client.send(new DeleteParameterCommand({ Name: pSec }));
+  });
+
   test("SendCommand and GetCommandInvocation lifecycle", async () => {
     const client = ssm();
     const instanceId = "i-0abcdef1234567890";

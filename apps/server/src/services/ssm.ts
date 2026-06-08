@@ -387,6 +387,46 @@ const toApiParameter = (
   ARN: stored.ARN,
 });
 
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const applyParameterFilters = (
+  parameters: StoredParameter[],
+  filters: unknown,
+): StoredParameter[] => {
+  if (!Array.isArray(filters) || filters.length === 0) return parameters;
+  return parameters.filter((p) =>
+    (filters as unknown[]).every((f) => {
+      if (typeof f !== "object" || f === null) return true;
+      const filter = f as Record<string, unknown>;
+      const key = filter["Key"];
+      const option =
+        typeof filter["Option"] === "string" ? filter["Option"] : "Equals";
+      const values = Array.isArray(filter["Values"])
+        ? (filter["Values"] as unknown[]).map((v) => String(v))
+        : [];
+      if (key === "Type") {
+        return option === "Equals"
+          ? values.includes(p.Type)
+          : values.some((v) => p.Type.startsWith(v));
+      }
+      if (key === "Name") {
+        return option === "Equals"
+          ? values.includes(p.Name)
+          : values.some((v) => p.Name.startsWith(v));
+      }
+      return true;
+    }),
+  );
+};
+
 const parseSelector = (
   name: string,
 ): { baseName: string; selector: string | undefined } => {
@@ -630,17 +670,32 @@ const GetParametersByPath: OperationHandler = (input, ctx) => {
   const recursive = input["Recursive"] === true;
   const withDecryption = input["WithDecryption"] === true;
   const normalized = path.endsWith("/") ? path : `${path}/`;
-  const parameters = ctx.store
-    .list<StoredParameter>()
-    .filter((entry) => {
-      if (entry.key.startsWith("__")) return false;
-      if (!entry.key.startsWith(normalized)) return false;
-      if (recursive) return true;
-      const rest = entry.key.slice(normalized.length);
-      return !rest.includes("/");
-    })
-    .map((entry) => toApiParameter(entry.value, withDecryption));
-  return { Parameters: parameters };
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = applyParameterFilters(
+    ctx.store
+      .list<StoredParameter>()
+      .filter((entry) => {
+        if (entry.key.startsWith("__")) return false;
+        if (!entry.key.startsWith(normalized)) return false;
+        if (recursive) return true;
+        const rest = entry.key.slice(normalized.length);
+        return !rest.includes("/");
+      })
+      .map((entry) => entry.value),
+    input["ParameterFilters"],
+  );
+  const pageSize = maxResults ?? all.length;
+  const page = all
+    .slice(offset, offset + pageSize)
+    .map((p) => toApiParameter(p, withDecryption));
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { Parameters: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { Parameters: page };
 };
 
 const DeleteParameter: OperationHandler = (input, ctx) => {

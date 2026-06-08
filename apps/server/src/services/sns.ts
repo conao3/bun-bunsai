@@ -516,6 +516,9 @@ const Publish: OperationHandler = async (input, ctx) => {
   if (typeof topicArn === "string" && topicArn !== "") {
     requireTopic(ctx, topicArn);
   }
+  if (typeof targetArn === "string" && targetArn !== "") {
+    requireEndpoint(ctx, targetArn);
+  }
   const messageStructure = input["MessageStructure"];
   if (typeof messageStructure === "string" && messageStructure === "json") {
     let parsed: unknown;

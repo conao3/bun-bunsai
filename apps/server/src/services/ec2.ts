@@ -1849,6 +1849,20 @@ const DeleteVpc: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const depMsg = `The vpc '${id}' has dependencies and cannot be deleted.`;
+  if (allSubnets(ctx).some((s) => s.VpcId === id)) {
+    throw awsError("DependencyViolation", depMsg, 400);
+  }
+  if (allRouteTables(ctx).some((t) => t.VpcId === id)) {
+    throw awsError("DependencyViolation", depMsg, 400);
+  }
+  if (
+    allInternetGateways(ctx).some((g) =>
+      g.Attachments.some((a) => a.VpcId === id),
+    )
+  ) {
+    throw awsError("DependencyViolation", depMsg, 400);
+  }
   ctx.store.delete(vpcKey(id));
   return {};
 };
@@ -2039,9 +2053,31 @@ const CreateSubnet: OperationHandler = (input, ctx) => {
 
 const DescribeSubnets: OperationHandler = (input, ctx) => {
   const ids = stringList(input["SubnetIds"]);
-  const subnets = allSubnets(ctx).filter((subnet) =>
-    ids.length === 0 ? true : ids.includes(subnet.SubnetId),
-  );
+  const rawFilters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as unknown[])
+    : [];
+  const filterVals = (name: string): string[] =>
+    rawFilters
+      .filter(
+        (f): f is Record<string, unknown> =>
+          typeof f === "object" && f !== null,
+      )
+      .filter(
+        (f) =>
+          (typeof f["Name"] === "string" && f["Name"] === name) ||
+          (typeof f["name"] === "string" && f["name"] === name),
+      )
+      .flatMap((f) => {
+        const vals = f["Values"] ?? f["values"];
+        return Array.isArray(vals) ? (vals as string[]) : [];
+      });
+  const vpcIdFilter = filterVals("vpc-id");
+  const subnets = allSubnets(ctx).filter((subnet) => {
+    if (ids.length > 0 && !ids.includes(subnet.SubnetId)) return false;
+    if (vpcIdFilter.length > 0 && !vpcIdFilter.includes(subnet.VpcId))
+      return false;
+    return true;
+  });
   return {
     Subnets: subnets.map((subnet) => subnetView(subnet, ctx.account)),
   };
@@ -2102,9 +2138,39 @@ const CreateRouteTable: OperationHandler = (input, ctx) => {
 
 const DescribeRouteTables: OperationHandler = (input, ctx) => {
   const ids = stringList(input["RouteTableIds"]);
-  const tables = allRouteTables(ctx).filter((table) =>
-    ids.length === 0 ? true : ids.includes(table.RouteTableId),
-  );
+  const rawFilters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as unknown[])
+    : [];
+  const filterVals = (name: string): string[] =>
+    rawFilters
+      .filter(
+        (f): f is Record<string, unknown> =>
+          typeof f === "object" && f !== null,
+      )
+      .filter(
+        (f) =>
+          (typeof f["Name"] === "string" && f["Name"] === name) ||
+          (typeof f["name"] === "string" && f["name"] === name),
+      )
+      .flatMap((f) => {
+        const vals = f["Values"] ?? f["values"];
+        return Array.isArray(vals) ? (vals as string[]) : [];
+      });
+  const vpcIdFilter = filterVals("vpc-id");
+  const assocSubnetFilter = filterVals("association.subnet-id");
+  const tables = allRouteTables(ctx).filter((table) => {
+    if (ids.length > 0 && !ids.includes(table.RouteTableId)) return false;
+    if (vpcIdFilter.length > 0 && !vpcIdFilter.includes(table.VpcId))
+      return false;
+    if (assocSubnetFilter.length > 0) {
+      const hasAssoc = (table.Associations ?? []).some(
+        (a) =>
+          a.SubnetId !== undefined && assocSubnetFilter.includes(a.SubnetId),
+      );
+      if (!hasAssoc) return false;
+    }
+    return true;
+  });
   return {
     RouteTables: tables.map((table) => routeTableView(table, ctx.account)),
   };
@@ -2159,9 +2225,33 @@ const AttachInternetGateway: OperationHandler = (input, ctx) => {
 
 const DescribeInternetGateways: OperationHandler = (input, ctx) => {
   const ids = stringList(input["InternetGatewayIds"]);
-  const gateways = allInternetGateways(ctx).filter((gateway) =>
-    ids.length === 0 ? true : ids.includes(gateway.InternetGatewayId),
-  );
+  const rawFilters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as unknown[])
+    : [];
+  const attachVpcFilter = rawFilters
+    .filter(
+      (f): f is Record<string, unknown> => typeof f === "object" && f !== null,
+    )
+    .filter(
+      (f) =>
+        (typeof f["Name"] === "string" && f["Name"] === "attachment.vpc-id") ||
+        (typeof f["name"] === "string" && f["name"] === "attachment.vpc-id"),
+    )
+    .flatMap((f) => {
+      const vals = f["Values"] ?? f["values"];
+      return Array.isArray(vals) ? (vals as string[]) : [];
+    });
+  const gateways = allInternetGateways(ctx).filter((gateway) => {
+    if (ids.length > 0 && !ids.includes(gateway.InternetGatewayId))
+      return false;
+    if (attachVpcFilter.length > 0) {
+      const hasAttach = gateway.Attachments.some((a) =>
+        attachVpcFilter.includes(a.VpcId),
+      );
+      if (!hasAttach) return false;
+    }
+    return true;
+  });
   return {
     InternetGateways: gateways.map((gateway) =>
       internetGatewayView(gateway, ctx.account),

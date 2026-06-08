@@ -409,6 +409,13 @@ describe("logs e2e", () => {
       }),
     );
 
+    const afterDelete = await client.send(
+      new DescribeSubscriptionFiltersCommand({ logGroupName: groupName }),
+    );
+    expect(
+      (afterDelete.subscriptionFilters ?? []).map((f) => f.filterName),
+    ).not.toContain(filterName);
+
     await client.send(new DeleteLogGroupCommand({ logGroupName: groupName }));
   });
 

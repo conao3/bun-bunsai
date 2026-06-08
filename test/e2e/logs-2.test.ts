@@ -11,6 +11,7 @@ import {
   ListTagsLogGroupCommand,
   PutMetricFilterCommand,
   PutRetentionPolicyCommand,
+  PutSubscriptionFilterCommand,
   TagLogGroupCommand,
   UntagLogGroupCommand,
 } from "@aws-sdk/client-cloudwatch-logs";
@@ -181,5 +182,39 @@ describe("logs e2e (retention, metric filters, tags)", () => {
       new DeleteMetricFilterCommand({ logGroupName: groupName, filterName }),
     );
     await client.send(new DeleteLogGroupCommand({ logGroupName: groupName }));
+  });
+
+  test("missing log group throws ResourceNotFoundException for filter ops", async () => {
+    const client = logs();
+    const missingGroup = "bunsai-e2e-nonexistent-group";
+
+    await expect(
+      client.send(
+        new PutMetricFilterCommand({
+          logGroupName: missingGroup,
+          filterName: "any-filter",
+          filterPattern: "ERROR",
+          metricTransformations: [
+            {
+              metricName: "ErrorCount",
+              metricNamespace: "Bunsai/Test",
+              metricValue: "1",
+            },
+          ],
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
+
+    await expect(
+      client.send(
+        new PutSubscriptionFilterCommand({
+          logGroupName: missingGroup,
+          filterName: "any-filter",
+          filterPattern: "ERROR",
+          destinationArn:
+            "arn:aws:kinesis:us-east-1:123456789012:stream/bunsai-stream",
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
   });
 });

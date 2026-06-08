@@ -43,6 +43,10 @@ type StoredService = {
   roleArn?: string;
   platformVersion?: string;
   createdAt: number;
+  loadBalancers: Record<string, unknown>[];
+  deploymentConfiguration?: Record<string, unknown>;
+  networkConfiguration?: Record<string, unknown>;
+  deployments: Record<string, unknown>[];
 };
 
 type StoredTask = {
@@ -371,11 +375,17 @@ const serviceView = (
   ...(service.platformVersion === undefined
     ? {}
     : { platformVersion: service.platformVersion }),
-  loadBalancers: [],
+  loadBalancers: service.loadBalancers,
   serviceRegistries: [],
   capacityProviderStrategy: [],
-  deployments: [],
+  deployments: service.deployments,
   events: [],
+  ...(service.deploymentConfiguration === undefined
+    ? {}
+    : { deploymentConfiguration: service.deploymentConfiguration }),
+  ...(service.networkConfiguration === undefined
+    ? {}
+    : { networkConfiguration: service.networkConfiguration }),
   placementConstraints: [],
   placementStrategy: [],
   tags: [],
@@ -800,6 +810,29 @@ const reconcileServiceTasks = (
   }
 };
 
+const makeDeployment = (
+  taskDefinitionArn: string,
+  desiredCount: number,
+  status: string,
+): Record<string, unknown> => {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    id: `ecs-svc/${randomId().slice(0, 16)}`,
+    status,
+    taskDefinition: taskDefinitionArn,
+    desiredCount,
+    pendingCount: 0,
+    runningCount: desiredCount,
+    createdAt: now,
+    updatedAt: now,
+    launchType: "EC2",
+    rolloutState: "COMPLETED",
+    rolloutStateReason: `ECS deployment ${status.toLowerCase()} completed.`,
+    networkConfiguration: {},
+    platformVersion: "1.0.0",
+  };
+};
+
 const CreateService: OperationHandler = (input, ctx) => {
   const serviceName = requireString(input, "serviceName");
   const clusterName = clusterNameFromInput(input);
@@ -812,6 +845,24 @@ const CreateService: OperationHandler = (input, ctx) => {
     typeof input["desiredCount"] === "number"
       ? (input["desiredCount"] as number)
       : 0;
+  const rawLbs = input["loadBalancers"];
+  const loadBalancers = Array.isArray(rawLbs)
+    ? (rawLbs as Record<string, unknown>[])
+    : [];
+  const rawDepConfig = input["deploymentConfiguration"];
+  const deploymentConfiguration =
+    rawDepConfig !== null && typeof rawDepConfig === "object"
+      ? (rawDepConfig as Record<string, unknown>)
+      : undefined;
+  const rawNetConfig = input["networkConfiguration"];
+  const networkConfiguration =
+    rawNetConfig !== null && typeof rawNetConfig === "object"
+      ? (rawNetConfig as Record<string, unknown>)
+      : undefined;
+  const primaryDeployment =
+    taskDefinitionArn !== ""
+      ? makeDeployment(taskDefinitionArn, desiredCount, "PRIMARY")
+      : undefined;
   const service: StoredService = {
     serviceName,
     serviceArn: serviceArn(ctx.region, ctx.account, clusterName, serviceName),
@@ -826,6 +877,10 @@ const CreateService: OperationHandler = (input, ctx) => {
     roleArn: optionalString(input, "role"),
     platformVersion: optionalString(input, "platformVersion"),
     createdAt: Math.floor(Date.now() / 1000),
+    loadBalancers,
+    deploymentConfiguration,
+    networkConfiguration,
+    deployments: primaryDeployment !== undefined ? [primaryDeployment] : [],
   };
   ctx.store.set(serviceKey(clusterName, serviceName), service);
   reconcileServiceTasks(ctx, service);
@@ -869,18 +924,49 @@ const UpdateService: OperationHandler = (input, ctx) => {
     );
   }
   const taskDefIdentifier = optionalString(input, "taskDefinition");
+  const newDesiredCount =
+    typeof input["desiredCount"] === "number"
+      ? (input["desiredCount"] as number)
+      : service.desiredCount;
+  const newTaskDefinitionArn =
+    taskDefIdentifier === undefined
+      ? service.taskDefinitionArn
+      : resolveTaskDefinition(ctx, taskDefIdentifier).taskDefinitionArn;
+  const rawLbs = input["loadBalancers"];
+  const newLoadBalancers = Array.isArray(rawLbs)
+    ? (rawLbs as Record<string, unknown>[])
+    : service.loadBalancers;
+  const rawDepConfig = input["deploymentConfiguration"];
+  const newDeploymentConfiguration =
+    rawDepConfig !== null && typeof rawDepConfig === "object"
+      ? (rawDepConfig as Record<string, unknown>)
+      : service.deploymentConfiguration;
+  const rawNetConfig = input["networkConfiguration"];
+  const newNetworkConfiguration =
+    rawNetConfig !== null && typeof rawNetConfig === "object"
+      ? (rawNetConfig as Record<string, unknown>)
+      : service.networkConfiguration;
+  const taskDefinitionChanged =
+    newTaskDefinitionArn !== service.taskDefinitionArn &&
+    newTaskDefinitionArn !== "";
+  const newDeployments = taskDefinitionChanged
+    ? [
+        makeDeployment(newTaskDefinitionArn, newDesiredCount, "PRIMARY"),
+        ...service.deployments.map((d) =>
+          d["status"] === "PRIMARY" ? { ...d, status: "ACTIVE" } : d,
+        ),
+      ]
+    : service.deployments;
   const updated: StoredService = {
     ...service,
-    desiredCount:
-      typeof input["desiredCount"] === "number"
-        ? (input["desiredCount"] as number)
-        : service.desiredCount,
-    taskDefinitionArn:
-      taskDefIdentifier === undefined
-        ? service.taskDefinitionArn
-        : resolveTaskDefinition(ctx, taskDefIdentifier).taskDefinitionArn,
+    desiredCount: newDesiredCount,
+    taskDefinitionArn: newTaskDefinitionArn,
     platformVersion:
       optionalString(input, "platformVersion") ?? service.platformVersion,
+    loadBalancers: newLoadBalancers,
+    deploymentConfiguration: newDeploymentConfiguration,
+    networkConfiguration: newNetworkConfiguration,
+    deployments: newDeployments,
   };
   ctx.store.set(serviceKey(clusterName, name), updated);
   reconcileServiceTasks(ctx, updated);

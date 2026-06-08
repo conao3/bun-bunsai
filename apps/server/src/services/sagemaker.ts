@@ -8964,6 +8964,209 @@ const StopAutoMLJob: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const StopProcessingJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ProcessingJobName");
+  const stored = requireProcessingJob(ctx, name);
+  ctx.store.set(processingJobKey(name), {
+    ...stored,
+    ProcessingJobStatus: "Stopping",
+    LastModifiedTime: nowSeconds(),
+  });
+  return {};
+};
+
+const StopTransformJob: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "TransformJobName");
+  const stored = ctx.store.get<StoredTransformJob>(transformJobKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `TransformJob ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(transformJobKey(name), {
+    ...stored,
+    TransformJobStatus: "Stopping",
+    LastModifiedTime: nowSeconds(),
+  });
+  return {};
+};
+
+const UpdateAction: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ActionName");
+  const stored = requireAction(ctx, name);
+  ctx.store.set(actionKey(name), {
+    ...stored,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : stored.Description,
+    Status:
+      typeof input["Status"] === "string"
+        ? (input["Status"] as string)
+        : stored.Status,
+    Properties:
+      input["Properties"] !== undefined
+        ? input["Properties"]
+        : stored.Properties,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { ActionArn: stored.ActionArn };
+};
+
+const UpdateAppImageConfig: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "AppImageConfigName");
+  const stored = requireAppImageConfig(ctx, name);
+  ctx.store.set(appImageConfigKey(name), {
+    ...stored,
+    KernelGatewayImageConfig:
+      input["KernelGatewayImageConfig"] !== undefined
+        ? input["KernelGatewayImageConfig"]
+        : stored.KernelGatewayImageConfig,
+    JupyterLabAppImageConfig:
+      input["JupyterLabAppImageConfig"] !== undefined
+        ? input["JupyterLabAppImageConfig"]
+        : stored.JupyterLabAppImageConfig,
+    CodeEditorAppImageConfig:
+      input["CodeEditorAppImageConfig"] !== undefined
+        ? input["CodeEditorAppImageConfig"]
+        : stored.CodeEditorAppImageConfig,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { AppImageConfigArn: stored.AppImageConfigArn };
+};
+
+const UpdateArtifact: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "ArtifactArn");
+  const stored = requireArtifact(ctx, arn);
+  ctx.store.set(artifactKey(arn), {
+    ...stored,
+    ArtifactName:
+      typeof input["ArtifactName"] === "string"
+        ? (input["ArtifactName"] as string)
+        : stored.ArtifactName,
+    Properties:
+      input["Properties"] !== undefined
+        ? input["Properties"]
+        : stored.Properties,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { ArtifactArn: arn };
+};
+
+const UpdateCluster: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ClusterName");
+  const stored = requireCluster(ctx, name);
+  ctx.store.set(clusterKey(name), {
+    ...stored,
+    InstanceGroups:
+      input["InstanceGroups"] !== undefined
+        ? input["InstanceGroups"]
+        : stored.InstanceGroups,
+  });
+  return { ClusterArn: stored.ClusterArn };
+};
+
+const UpdateClusterSchedulerConfig: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ClusterSchedulerConfigId");
+  const stored = requireClusterSchedulerConfig(ctx, id);
+  ctx.store.set(clusterSchedulerConfigKey(id), {
+    ...stored,
+    SchedulerConfig:
+      input["SchedulerConfig"] !== undefined
+        ? input["SchedulerConfig"]
+        : stored.SchedulerConfig,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : stored.Description,
+    LastModifiedTime: nowSeconds(),
+  });
+  return {
+    ClusterSchedulerConfigArn: stored.ClusterSchedulerConfigArn,
+    ClusterSchedulerConfigVersion: 1,
+  };
+};
+
+const UpdateClusterSoftware: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ClusterName");
+  const stored = requireCluster(ctx, name);
+  return { ClusterArn: stored.ClusterArn };
+};
+
+const UpdateCodeRepository: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "CodeRepositoryName");
+  const stored = requireCodeRepository(ctx, name);
+  ctx.store.set(codeRepositoryKey(name), {
+    ...stored,
+    GitConfig:
+      input["GitConfig"] !== undefined ? input["GitConfig"] : stored.GitConfig,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { CodeRepositoryArn: stored.CodeRepositoryArn };
+};
+
+const UpdateComputeQuota: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "ComputeQuotaId");
+  const stored = requireComputeQuota(ctx, id);
+  ctx.store.set(computeQuotaKey(id), {
+    ...stored,
+    ComputeQuotaConfig:
+      input["ComputeQuotaConfig"] !== undefined
+        ? input["ComputeQuotaConfig"]
+        : stored.ComputeQuotaConfig,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : stored.Description,
+    LastModifiedTime: nowSeconds(),
+  });
+  return {
+    ComputeQuotaArn: stored.ComputeQuotaArn,
+    ComputeQuotaVersion: 1,
+  };
+};
+
+const UpdateContext: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ContextName");
+  const stored = requireContext(ctx, name);
+  ctx.store.set(contextKey(name), {
+    ...stored,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : stored.Description,
+    Properties:
+      input["Properties"] !== undefined
+        ? input["Properties"]
+        : stored.Properties,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { ContextArn: stored.ContextArn };
+};
+
+const UpdateDeviceFleet: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "DeviceFleetName");
+  const stored = requireDeviceFleet(ctx, name);
+  ctx.store.set(deviceFleetKey(name), {
+    ...stored,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : stored.RoleArn,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : stored.Description,
+    OutputConfig:
+      input["OutputConfig"] !== undefined
+        ? input["OutputConfig"]
+        : stored.OutputConfig,
+  });
+  return {};
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -9317,6 +9520,18 @@ const sagemaker = {
     StopNotebookInstance,
     StopOptimizationJob,
     StopPipelineExecution,
+    StopProcessingJob,
+    StopTransformJob,
+    UpdateAction,
+    UpdateAppImageConfig,
+    UpdateArtifact,
+    UpdateCluster,
+    UpdateClusterSchedulerConfig,
+    UpdateClusterSoftware,
+    UpdateCodeRepository,
+    UpdateComputeQuota,
+    UpdateContext,
+    UpdateDeviceFleet,
   },
   model,
 } as const satisfies ServiceDefinition;

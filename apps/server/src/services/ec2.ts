@@ -590,6 +590,8 @@ type StoredNetworkInterface = {
   SourceDestCheck: boolean;
   Tags: Tag[];
   Groups: { GroupId: string; GroupName: string }[];
+  SecondaryPrivateIpAddresses: string[];
+  Ipv6Addresses: string[];
 };
 
 type StoredNetworkInterfacePermission = {
@@ -1361,6 +1363,7 @@ const vpnConnectionKey = (id: string): string => `vpn-conn/${id}`;
 const vpnConnectionRouteKey = (connId: string, cidr: string): string =>
   `vpn-route/${connId}/${cidr}`;
 const capacityManagerDataExportKey = (id: string): string => `cmde/${id}`;
+const declarativePoliciesReportKey = (id: string): string => `dp-report/${id}`;
 const byoipCidrKey = (cidr: string): string => `byoip-cidr/${cidr}`;
 const ipamPoolCidrKey = (poolId: string, cidr: string): string =>
   `ipam-pool-cidr/${poolId}/${cidr}`;
@@ -2877,21 +2880,38 @@ const AllocateIpamPoolCidr: OperationHandler = (input, ctx) => {
   };
 };
 
-const AssignIpv6Addresses: OperationHandler = (input, _ctx) => {
+const AssignIpv6Addresses: OperationHandler = (input, ctx) => {
   const networkInterfaceId =
     typeof input["NetworkInterfaceId"] === "string"
       ? input["NetworkInterfaceId"]
       : "";
-  const count = integerOf(input["Ipv6AddressCount"]) ?? 1;
-  const assigned: string[] = [];
-  for (let i = 0; i < count; i += 1) {
-    const bytes = crypto.getRandomValues(new Uint8Array(8));
-    const hex = Array.from(bytes)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-    assigned.push(
-      `2600:1f${hex.slice(0, 2)}:${hex.slice(2, 6)}:${hex.slice(6, 10)}::${i + 1}`,
-    );
+  const requestedAddresses = stringList(input["Ipv6Addresses"]);
+  const count =
+    requestedAddresses.length > 0
+      ? requestedAddresses.length
+      : (integerOf(input["Ipv6AddressCount"]) ?? 1);
+  const assigned: string[] =
+    requestedAddresses.length > 0
+      ? requestedAddresses
+      : (() => {
+          const result: string[] = [];
+          for (let i = 0; i < count; i += 1) {
+            const bytes = crypto.getRandomValues(new Uint8Array(8));
+            const hex = Array.from(bytes)
+              .map((b) => b.toString(16).padStart(2, "0"))
+              .join("");
+            result.push(
+              `2600:1f${hex.slice(0, 2)}:${hex.slice(2, 6)}:${hex.slice(6, 10)}::${i + 1}`,
+            );
+          }
+          return result;
+        })();
+  const ni = ctx.store.get<StoredNetworkInterface>(
+    networkInterfaceKey(networkInterfaceId),
+  );
+  if (ni !== undefined) {
+    for (const addr of assigned) ni.Ipv6Addresses.push(addr);
+    ctx.store.set(networkInterfaceKey(networkInterfaceId), ni);
   }
   return {
     NetworkInterfaceId: networkInterfaceId,
@@ -2900,7 +2920,7 @@ const AssignIpv6Addresses: OperationHandler = (input, _ctx) => {
   };
 };
 
-const AssignPrivateIpAddresses: OperationHandler = (input, _ctx) => {
+const AssignPrivateIpAddresses: OperationHandler = (input, ctx) => {
   const networkInterfaceId =
     typeof input["NetworkInterfaceId"] === "string"
       ? input["NetworkInterfaceId"]
@@ -2916,6 +2936,14 @@ const AssignPrivateIpAddresses: OperationHandler = (input, _ctx) => {
       : Array.from({ length: count }, (_, i) => ({
           PrivateIpAddress: `10.0.1.${100 + i}`,
         }));
+  const ni = ctx.store.get<StoredNetworkInterface>(
+    networkInterfaceKey(networkInterfaceId),
+  );
+  if (ni !== undefined) {
+    for (const a of assigned)
+      ni.SecondaryPrivateIpAddresses.push(a.PrivateIpAddress);
+    ctx.store.set(networkInterfaceKey(networkInterfaceId), ni);
+  }
   return {
     NetworkInterfaceId: networkInterfaceId,
     AssignedPrivateIpAddresses: assigned,
@@ -4786,6 +4814,8 @@ const CreateNetworkInterface: OperationHandler = (input, ctx) => {
     SourceDestCheck: true,
     Tags: [],
     Groups: [],
+    SecondaryPrivateIpAddresses: [],
+    Ipv6Addresses: [],
   };
   ctx.store.set(networkInterfaceKey(id), ni);
   return {
@@ -11825,6 +11855,16 @@ const DescribeNetworkInterfaces: OperationHandler = (input, ctx) => {
       SourceDestCheck: ni.SourceDestCheck,
       TagSet: ni.Tags,
       Groups: ni.Groups,
+      PrivateIpAddresses: [
+        { PrivateIpAddress: ni.PrivateIpAddress, Primary: true },
+        ...(ni.SecondaryPrivateIpAddresses ?? []).map((ip) => ({
+          PrivateIpAddress: ip,
+          Primary: false,
+        })),
+      ],
+      Ipv6Addresses: (ni.Ipv6Addresses ?? []).map((addr) => ({
+        Ipv6Address: addr,
+      })),
     })),
   };
 };
@@ -19441,6 +19481,250 @@ const ReplaceNetworkAclEntry: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const StartDeclarativePoliciesReport: OperationHandler = (input, ctx) => {
+  const s3Bucket =
+    typeof input["S3Bucket"] === "string" ? input["S3Bucket"] : "";
+  const targetId =
+    typeof input["TargetId"] === "string" ? input["TargetId"] : "";
+  const id = hexId("dp-report");
+  ctx.store.set(declarativePoliciesReportKey(id), {
+    ReportId: id,
+    S3Bucket: s3Bucket,
+    TargetId: targetId,
+  });
+  return { ReportId: id };
+};
+
+const StartNetworkInsightsAccessScopeAnalysis: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const scopeId =
+    typeof input["NetworkInsightsAccessScopeId"] === "string"
+      ? input["NetworkInsightsAccessScopeId"]
+      : "";
+  const scope = ctx.store.get<StoredNetworkInsightsAccessScope>(
+    niAccessScopeKey(scopeId),
+  );
+  if (scope === undefined) {
+    throw awsError(
+      "InvalidNetworkInsightsAccessScopeId.NotFound",
+      `The network insights access scope '${scopeId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("nisa");
+  const analysis: StoredNetworkInsightsAccessScopeAnalysis = {
+    NetworkInsightsAccessScopeAnalysisId: id,
+    NetworkInsightsAccessScopeId: scopeId,
+  };
+  ctx.store.set(niScopeAnalysisKey(id), analysis);
+  return {
+    NetworkInsightsAccessScopeAnalysis: {
+      NetworkInsightsAccessScopeAnalysisId:
+        analysis.NetworkInsightsAccessScopeAnalysisId,
+      NetworkInsightsAccessScopeId: analysis.NetworkInsightsAccessScopeId,
+    },
+  };
+};
+
+const StartNetworkInsightsAnalysis: OperationHandler = (input, ctx) => {
+  const pathId =
+    typeof input["NetworkInsightsPathId"] === "string"
+      ? input["NetworkInsightsPathId"]
+      : "";
+  const path = ctx.store.get<StoredNetworkInsightsPath>(niPathKey(pathId));
+  if (path === undefined) {
+    throw awsError(
+      "InvalidNetworkInsightsPathId.NotFound",
+      `The network insights path '${pathId}' does not exist`,
+      400,
+    );
+  }
+  const id = hexId("nia");
+  const analysis: StoredNetworkInsightsAnalysis = {
+    NetworkInsightsAnalysisId: id,
+    NetworkInsightsPathId: pathId,
+  };
+  ctx.store.set(niAnalysisKey(id), analysis);
+  return {
+    NetworkInsightsAnalysis: {
+      NetworkInsightsAnalysisId: analysis.NetworkInsightsAnalysisId,
+      NetworkInsightsPathId: analysis.NetworkInsightsPathId,
+    },
+  };
+};
+
+const StartVpcEndpointServicePrivateDnsVerification: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const serviceId =
+    typeof input["ServiceId"] === "string" ? input["ServiceId"] : "";
+  const stored = ctx.store.get<StoredVpcEndpointServiceConfiguration>(
+    vpcEndpointServiceConfigKey(serviceId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpcEndpointService.NotFound",
+      `The endpoint service '${serviceId}' does not exist`,
+      400,
+    );
+  }
+  return { ReturnValue: true };
+};
+
+const TerminateClientVpnConnections: OperationHandler = (input, ctx) => {
+  const endpointId =
+    typeof input["ClientVpnEndpointId"] === "string"
+      ? input["ClientVpnEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredClientVpnEndpoint>(
+    clientVpnEndpointKey(endpointId),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidClientVpnEndpointId.NotFound",
+      `The Client VPN endpoint '${endpointId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    ClientVpnEndpointId: endpointId,
+    Username:
+      typeof input["Username"] === "string" ? input["Username"] : undefined,
+    ConnectionStatuses: [],
+  };
+};
+
+const UnassignIpv6Addresses: OperationHandler = (input, ctx) => {
+  const networkInterfaceId =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const toRemove = stringList(input["Ipv6Addresses"]);
+  const ni = ctx.store.get<StoredNetworkInterface>(
+    networkInterfaceKey(networkInterfaceId),
+  );
+  if (ni === undefined) {
+    throw awsError(
+      "InvalidNetworkInterfaceID.NotFound",
+      `The network interface '${networkInterfaceId}' does not exist`,
+      400,
+    );
+  }
+  const removed = toRemove.filter((addr) => ni.Ipv6Addresses.includes(addr));
+  ni.Ipv6Addresses = ni.Ipv6Addresses.filter(
+    (addr) => !toRemove.includes(addr),
+  );
+  ctx.store.set(networkInterfaceKey(networkInterfaceId), ni);
+  return {
+    NetworkInterfaceId: networkInterfaceId,
+    UnassignedIpv6Addresses: removed,
+    UnassignedIpv6Prefixes: [],
+  };
+};
+
+const UnassignPrivateIpAddresses: OperationHandler = (input, ctx) => {
+  const networkInterfaceId =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const toRemove = stringList(input["PrivateIpAddresses"]);
+  const ni = ctx.store.get<StoredNetworkInterface>(
+    networkInterfaceKey(networkInterfaceId),
+  );
+  if (ni === undefined) {
+    throw awsError(
+      "InvalidNetworkInterfaceID.NotFound",
+      `The network interface '${networkInterfaceId}' does not exist`,
+      400,
+    );
+  }
+  ni.SecondaryPrivateIpAddresses = ni.SecondaryPrivateIpAddresses.filter(
+    (ip) => !toRemove.includes(ip),
+  );
+  ctx.store.set(networkInterfaceKey(networkInterfaceId), ni);
+  return {};
+};
+
+const UnassignPrivateNatGatewayAddress: OperationHandler = (input, ctx) => {
+  const natGatewayId =
+    typeof input["NatGatewayId"] === "string" ? input["NatGatewayId"] : "";
+  const toRemove = stringList(input["PrivateIpAddresses"]);
+  const gateway = ctx.store.get<StoredNatGateway>(natGatewayKey(natGatewayId));
+  if (gateway === undefined) {
+    throw awsError(
+      "NatGatewayNotFound",
+      `The Nat Gateway '${natGatewayId}' does not exist`,
+      400,
+    );
+  }
+  gateway.NatGatewayAddresses = gateway.NatGatewayAddresses.filter(
+    (addr) => !toRemove.includes(addr.PrivateIp),
+  );
+  ctx.store.set(natGatewayKey(natGatewayId), gateway);
+  return {
+    NatGatewayId: natGatewayId,
+    NatGatewayAddresses: gateway.NatGatewayAddresses,
+  };
+};
+
+const UnlockSnapshot: OperationHandler = (input, ctx) => {
+  const snapshotId =
+    typeof input["SnapshotId"] === "string" ? input["SnapshotId"] : "";
+  const snapshot = ctx.store.get<StoredSnapshot>(snapshotKey(snapshotId));
+  if (snapshot === undefined) {
+    throw awsError(
+      "InvalidSnapshot.NotFound",
+      `The snapshot '${snapshotId}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(snapshotLockKey(snapshotId));
+  return { SnapshotId: snapshotId };
+};
+
+const UnmonitorInstances: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["InstanceIds"]);
+  const result: { InstanceId: string; Monitoring: { State: string } }[] = [];
+  for (const id of ids) {
+    const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+    if (instance === undefined) {
+      throw awsError(
+        "InvalidInstanceID.NotFound",
+        `The instance ID '${id}' does not exist`,
+        400,
+      );
+    }
+    instance.Monitoring = { State: "disabled" };
+    ctx.store.set(instanceKey(id), instance);
+    result.push({ InstanceId: id, Monitoring: { State: "disabled" } });
+  }
+  return { InstanceMonitorings: result };
+};
+
+const UpdateCapacityManagerMonitoredTagKeys: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { CapacityManagerTagKeys: [] };
+};
+
+const UpdateCapacityManagerOrganizationsAccess: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const orgsAccess =
+    typeof input["OrganizationsAccess"] === "boolean"
+      ? input["OrganizationsAccess"]
+      : false;
+  return {
+    CapacityManagerStatus: "enabled",
+    OrganizationsAccess: orgsAccess,
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -20194,6 +20478,18 @@ const ec2: ServiceDefinition = {
     SearchTransitGatewayMulticastGroups,
     SearchTransitGatewayRoutes,
     SendDiagnosticInterrupt,
+    StartDeclarativePoliciesReport,
+    StartNetworkInsightsAccessScopeAnalysis,
+    StartNetworkInsightsAnalysis,
+    StartVpcEndpointServicePrivateDnsVerification,
+    TerminateClientVpnConnections,
+    UnassignIpv6Addresses,
+    UnassignPrivateIpAddresses,
+    UnassignPrivateNatGatewayAddress,
+    UnlockSnapshot,
+    UnmonitorInstances,
+    UpdateCapacityManagerMonitoredTagKeys,
+    UpdateCapacityManagerOrganizationsAccess,
     UpdateInterruptibleCapacityReservationAllocation,
     UpdateSecurityGroupRuleDescriptionsEgress,
     UpdateSecurityGroupRuleDescriptionsIngress,

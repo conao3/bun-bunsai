@@ -90,6 +90,7 @@ type StoredJobRun = {
   jobName: string;
   jobRunId: string;
   startedOn: number;
+  startedAtMs: number;
   completedOn: number | undefined;
   jobRunState: string;
   arguments: Record<string, unknown>;
@@ -797,16 +798,34 @@ const ListJobs: OperationHandler = (_input, ctx) => {
   return { JobNames: list };
 };
 
-const jobRunView = (run: StoredJobRun): Record<string, unknown> => ({
-  Id: run.jobRunId,
-  JobName: run.jobName,
-  StartedOn: run.startedOn,
-  ...(run.completedOn !== undefined ? { CompletedOn: run.completedOn } : {}),
-  JobRunState: run.jobRunState,
-  ...(Object.keys(run.arguments).length > 0
-    ? { Arguments: run.arguments }
-    : {}),
-});
+const resolveJobRunState = (
+  run: StoredJobRun,
+): { state: string; completedOn?: number } => {
+  if (run.jobRunState === "STOPPED") {
+    return { state: "STOPPED", completedOn: run.completedOn };
+  }
+  const elapsedMs = Date.now() - run.startedAtMs;
+  if (elapsedMs < 50) return { state: "STARTING" };
+  if (elapsedMs < 200) return { state: "RUNNING" };
+  return {
+    state: "SUCCEEDED",
+    completedOn: Math.floor((run.startedAtMs + 200) / 1000),
+  };
+};
+
+const jobRunView = (run: StoredJobRun): Record<string, unknown> => {
+  const { state, completedOn } = resolveJobRunState(run);
+  return {
+    Id: run.jobRunId,
+    JobName: run.jobName,
+    StartedOn: run.startedOn,
+    ...(completedOn !== undefined ? { CompletedOn: completedOn } : {}),
+    JobRunState: state,
+    ...(Object.keys(run.arguments).length > 0
+      ? { Arguments: run.arguments }
+      : {}),
+  };
+};
 
 const GetJobRun: OperationHandler = (input, ctx) => {
   const jobName = requireJobName(input);
@@ -856,7 +875,11 @@ const BatchStopJobRun: OperationHandler = (input, ctx) => {
         },
       });
     } else {
-      const updated: StoredJobRun = { ...run, jobRunState: "STOPPING" };
+      const updated: StoredJobRun = {
+        ...run,
+        jobRunState: "STOPPED",
+        completedOn: Math.floor(Date.now() / 1000),
+      };
       ctx.store.set(key, updated);
       successfulSubmissions.push({ JobName: jobName, JobRunId: jobRunId });
     }
@@ -5291,14 +5314,15 @@ const StartImportLabelsTaskRun: OperationHandler = (input, ctx) => {
 const StartJobRun: OperationHandler = (input, ctx) => {
   const jobName = requireJobName(input);
   requireJob(ctx, jobName);
-  const now = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
   const jobRunId = crypto.randomUUID();
   const run: StoredJobRun = {
     jobName,
     jobRunId,
-    startedOn: now,
-    completedOn: now,
-    jobRunState: "SUCCEEDED",
+    startedOn: Math.floor(nowMs / 1000),
+    startedAtMs: nowMs,
+    completedOn: undefined,
+    jobRunState: "STARTING",
     arguments:
       typeof input["Arguments"] === "object" &&
       input["Arguments"] !== null &&

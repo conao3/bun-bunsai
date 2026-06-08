@@ -101,6 +101,11 @@ type StoredAccountSending = {
   Enabled: boolean;
 };
 
+type StoredSendStats = {
+  SentLast24Hours: number;
+  DeliveryAttempts: number;
+};
+
 const identityKey = (identity: string): string => `identity/${identity}`;
 
 const identityTypeOf = (identity: string): string =>
@@ -128,6 +133,19 @@ const dkimAttrsKey = (identity: string): string => `dkim/${identity}`;
 const mailFromKey = (identity: string): string => `mailfrom/${identity}`;
 
 const accountSendingKey = (): string => "account_sending";
+
+const sendStatsKey = (): string => "send_stats";
+
+const incrementSendStats = (ctx: ServiceContext): void => {
+  const current = ctx.store.get<StoredSendStats>(sendStatsKey()) ?? {
+    SentLast24Hours: 0,
+    DeliveryAttempts: 0,
+  };
+  ctx.store.set(sendStatsKey(), {
+    SentLast24Hours: current.SentLast24Hours + 1,
+    DeliveryAttempts: current.DeliveryAttempts + 1,
+  });
+};
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -359,6 +377,7 @@ const SendEmail: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  incrementSendStats(ctx);
   return { MessageId: crypto.randomUUID() };
 };
 
@@ -386,6 +405,7 @@ const SendRawEmail: OperationHandler = (input, ctx) => {
       );
     }
   }
+  incrementSendStats(ctx);
   return { MessageId: crypto.randomUUID() };
 };
 
@@ -447,20 +467,28 @@ const SendCustomVerificationEmail: OperationHandler = (input, ctx) => {
   return { MessageId: `cvmail-${emailAddress}-${crypto.randomUUID()}` };
 };
 
-const GetSendQuota: OperationHandler = () => {
+const GetSendQuota: OperationHandler = (_, ctx) => {
+  const stats = ctx.store.get<StoredSendStats>(sendStatsKey()) ?? {
+    SentLast24Hours: 0,
+    DeliveryAttempts: 0,
+  };
   return {
     Max24HourSend: 200,
     MaxSendRate: 1,
-    SentLast24Hours: 0,
+    SentLast24Hours: stats.SentLast24Hours,
   };
 };
 
-const GetSendStatistics: OperationHandler = () => {
+const GetSendStatistics: OperationHandler = (_, ctx) => {
+  const stats = ctx.store.get<StoredSendStats>(sendStatsKey()) ?? {
+    SentLast24Hours: 0,
+    DeliveryAttempts: 0,
+  };
   return {
     SendDataPoints: [
       {
         Timestamp: new Date(0).toISOString(),
-        DeliveryAttempts: 0,
+        DeliveryAttempts: stats.DeliveryAttempts,
         Bounces: 0,
         Complaints: 0,
         Rejects: 0,

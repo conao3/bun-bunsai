@@ -114,13 +114,45 @@ test("Secrets Manager RestoreSecret cancels deletion", async () => {
     new CreateSecretCommand({ Name: name, SecretString: "restore-value" }),
   );
 
-  await client.send(new DeleteSecretCommand({ SecretId: name }));
+  const nowSec = Math.floor(Date.now() / 1000);
+  const deleted = await client.send(
+    new DeleteSecretCommand({ SecretId: name }),
+  );
+  expect(deleted.DeletionDate).toBeDefined();
+  expect(deleted.DeletionDate!.getTime() / 1000).toBeGreaterThan(
+    nowSec + 29 * 86400,
+  );
 
   const restored = await client.send(
     new RestoreSecretCommand({ SecretId: name }),
   );
   expect(restored.ARN).toBe(created.ARN);
   expect(restored.Name).toBe(name);
+
+  await client.send(
+    new DeleteSecretCommand({
+      SecretId: name,
+      ForceDeleteWithoutRecovery: true,
+    }),
+  );
+});
+
+test("Secrets Manager DeleteSecret respects RecoveryWindowInDays", async () => {
+  const client = sm();
+  const name = "bunsai-e2e-ops-recovery-window";
+
+  await client.send(
+    new CreateSecretCommand({ Name: name, SecretString: "window-value" }),
+  );
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const deleted = await client.send(
+    new DeleteSecretCommand({ SecretId: name, RecoveryWindowInDays: 7 }),
+  );
+  expect(deleted.DeletionDate).toBeDefined();
+  const deletionSec = deleted.DeletionDate!.getTime() / 1000;
+  expect(deletionSec).toBeGreaterThan(nowSec + 6 * 86400);
+  expect(deletionSec).toBeLessThan(nowSec + 8 * 86400);
 
   await client.send(
     new DeleteSecretCommand({

@@ -194,6 +194,11 @@ type StoredUser = {
   Username: string;
   InstanceId: string;
   AgentStatusId?: string;
+  PhoneConfig?: unknown;
+  IdentityInfo?: unknown;
+  RoutingProfileId?: string;
+  SecurityProfileIds?: string[];
+  HierarchyGroupId?: string;
 };
 
 type StoredUserHierarchyGroup = {
@@ -208,6 +213,7 @@ type StoredView = {
   Arn: string;
   Name: string;
   Status: string;
+  Content?: unknown;
   InstanceId: string;
 };
 
@@ -2084,6 +2090,11 @@ const DescribeUser: OperationHandler = (input, ctx) => {
       Id: stored.UserId,
       Arn: stored.UserArn,
       Username: stored.Username,
+      PhoneConfig: stored.PhoneConfig,
+      IdentityInfo: stored.IdentityInfo,
+      RoutingProfileId: stored.RoutingProfileId,
+      SecurityProfileIds: stored.SecurityProfileIds,
+      HierarchyGroupId: stored.HierarchyGroupId,
     },
   };
 };
@@ -2138,6 +2149,7 @@ const DescribeView: OperationHandler = (input, ctx) => {
       Name: stored.Name,
       Status: stored.Status,
       Version: 1,
+      Content: stored.Content,
     },
   };
 };
@@ -3257,6 +3269,226 @@ const UpdateTestCase: OperationHandler = (input, ctx) => {
     );
   }
   return {};
+};
+
+const UpdateTrafficDistribution: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "Id");
+  const stored = ctx.store.get<StoredTrafficDistributionGroup>(
+    trafficDistributionGroupKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `TrafficDistributionGroup ${id} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateUserConfig: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const userId = requireString(input, "UserId");
+  const stored = ctx.store.get<StoredUser>(userKey(instanceId, userId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `User ${userId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateUserHierarchy: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const userId = requireString(input, "UserId");
+  const stored = ctx.store.get<StoredUser>(userKey(instanceId, userId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `User ${userId} not found.`,
+      404,
+    );
+  }
+  const hierarchyGroupId = stringOrUndefined(input["HierarchyGroupId"]);
+  ctx.store.set(userKey(instanceId, userId), {
+    ...stored,
+    HierarchyGroupId: hierarchyGroupId,
+  });
+  return {};
+};
+
+const UpdateUserHierarchyGroupName: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hierarchyGroupId = requireString(input, "HierarchyGroupId");
+  const stored = ctx.store.get<StoredUserHierarchyGroup>(
+    userHierarchyGroupKey(instanceId, hierarchyGroupId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `UserHierarchyGroup ${hierarchyGroupId} not found.`,
+      404,
+    );
+  }
+  const name = requireString(input, "Name");
+  ctx.store.set(userHierarchyGroupKey(instanceId, hierarchyGroupId), {
+    ...stored,
+    Name: name,
+  });
+  return {};
+};
+
+const UpdateUserHierarchyStructure: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const UpdateUserIdentityInfo: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const userId = requireString(input, "UserId");
+  const stored = ctx.store.get<StoredUser>(userKey(instanceId, userId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `User ${userId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(userKey(instanceId, userId), {
+    ...stored,
+    IdentityInfo: input["IdentityInfo"],
+  });
+  return {};
+};
+
+const UpdateUserNotificationStatus: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const userId = requireString(input, "UserId");
+  const stored = ctx.store.get<StoredUser>(userKey(instanceId, userId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `User ${userId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateUserPhoneConfig: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const userId = requireString(input, "UserId");
+  const stored = ctx.store.get<StoredUser>(userKey(instanceId, userId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `User ${userId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(userKey(instanceId, userId), {
+    ...stored,
+    PhoneConfig: input["PhoneConfig"],
+  });
+  return {};
+};
+
+const UpdateUserProficiencies: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const userId = requireString(input, "UserId");
+  const stored = ctx.store.get<StoredUser>(userKey(instanceId, userId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `User ${userId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateUserRoutingProfile: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const userId = requireString(input, "UserId");
+  const stored = ctx.store.get<StoredUser>(userKey(instanceId, userId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `User ${userId} not found.`,
+      404,
+    );
+  }
+  const routingProfileId = requireString(input, "RoutingProfileId");
+  ctx.store.set(userKey(instanceId, userId), {
+    ...stored,
+    RoutingProfileId: routingProfileId,
+  });
+  return {};
+};
+
+const UpdateUserSecurityProfiles: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const userId = requireString(input, "UserId");
+  const stored = ctx.store.get<StoredUser>(userKey(instanceId, userId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `User ${userId} not found.`,
+      404,
+    );
+  }
+  const securityProfileIds = Array.isArray(input["SecurityProfileIds"])
+    ? (input["SecurityProfileIds"] as string[])
+    : [];
+  ctx.store.set(userKey(instanceId, userId), {
+    ...stored,
+    SecurityProfileIds: securityProfileIds,
+  });
+  return {};
+};
+
+const UpdateViewContent: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const viewId = requireString(input, "ViewId");
+  const stored = ctx.store.get<StoredView>(viewKey(instanceId, viewId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `View ${viewId} not found.`,
+      404,
+    );
+  }
+  const status =
+    typeof input["Status"] === "string" ? input["Status"] : stored.Status;
+  const content = input["Content"] ?? stored.Content;
+  ctx.store.set(viewKey(instanceId, viewId), {
+    ...stored,
+    Status: status,
+    Content: content,
+  });
+  return {
+    View: {
+      Id: stored.Id,
+      Arn: stored.Arn,
+      Name: stored.Name,
+      Status: status,
+      Version: 1,
+      Content: content,
+    },
+  };
 };
 
 const DeleteWorkspacePage: OperationHandler = (input, ctx) => {
@@ -5797,6 +6029,54 @@ const connect = {
           return "ListUserProficiencies";
         if (parts.length === 4 && parts[3] === "status" && req.method === "PUT")
           return "PutUserStatus";
+        if (
+          parts.length === 4 &&
+          parts[3] === "config" &&
+          req.method === "POST"
+        )
+          return "UpdateUserConfig";
+        if (
+          parts.length === 4 &&
+          parts[3] === "hierarchy" &&
+          req.method === "POST"
+        )
+          return "UpdateUserHierarchy";
+        if (
+          parts.length === 4 &&
+          parts[3] === "identity-info" &&
+          req.method === "POST"
+        )
+          return "UpdateUserIdentityInfo";
+        if (
+          parts.length === 4 &&
+          parts[3] === "phone-config" &&
+          req.method === "POST"
+        )
+          return "UpdateUserPhoneConfig";
+        if (
+          parts.length === 4 &&
+          parts[3] === "proficiencies" &&
+          req.method === "POST"
+        )
+          return "UpdateUserProficiencies";
+        if (
+          parts.length === 4 &&
+          parts[3] === "routing-profile" &&
+          req.method === "POST"
+        )
+          return "UpdateUserRoutingProfile";
+        if (
+          parts.length === 4 &&
+          parts[3] === "security-profiles" &&
+          req.method === "POST"
+        )
+          return "UpdateUserSecurityProfiles";
+        if (
+          parts.length === 5 &&
+          parts[3] === "notifications" &&
+          req.method === "POST"
+        )
+          return "UpdateUserNotificationStatus";
         return undefined;
 
       case "user-hierarchy-groups":
@@ -5806,11 +6086,15 @@ const connect = {
           return "DescribeUserHierarchyGroup";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteUserHierarchyGroup";
+        if (parts.length === 4 && parts[3] === "name" && req.method === "POST")
+          return "UpdateUserHierarchyGroupName";
         return undefined;
 
       case "user-hierarchy-structure":
         if (parts.length === 2 && req.method === "GET")
           return "DescribeUserHierarchyStructure";
+        if (parts.length === 2 && req.method === "POST")
+          return "UpdateUserHierarchyStructure";
         return undefined;
 
       case "attached-files":
@@ -6237,6 +6521,8 @@ const connect = {
         if (parts.length === 2 && req.method === "GET") return "ListViews";
         if (parts.length === 3 && req.method === "GET") return "DescribeView";
         if (parts.length === 3 && req.method === "DELETE") return "DeleteView";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdateViewContent";
         if (
           parts.length === 4 &&
           parts[3] === "versions" &&
@@ -6357,6 +6643,8 @@ const connect = {
       case "traffic-distribution":
         if (parts.length === 2 && req.method === "GET")
           return "GetTrafficDistribution";
+        if (parts.length === 2 && req.method === "PUT")
+          return "UpdateTrafficDistribution";
         return undefined;
 
       case "default-vocabulary-summary":
@@ -6937,6 +7225,18 @@ const connect = {
     UpdateSecurityProfile,
     UpdateTaskTemplate,
     UpdateTestCase,
+    UpdateTrafficDistribution,
+    UpdateUserConfig,
+    UpdateUserHierarchy,
+    UpdateUserHierarchyGroupName,
+    UpdateUserHierarchyStructure,
+    UpdateUserIdentityInfo,
+    UpdateUserNotificationStatus,
+    UpdateUserPhoneConfig,
+    UpdateUserProficiencies,
+    UpdateUserRoutingProfile,
+    UpdateUserSecurityProfiles,
+    UpdateViewContent,
   },
   model,
 } as const satisfies ServiceDefinition;

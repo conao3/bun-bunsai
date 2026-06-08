@@ -41,6 +41,7 @@ const rulePrefix = "rule:" as const;
 const testCasePrefix = "test-case:" as const;
 const trafficDistributionGroupPrefix = "traffic-distribution-group:" as const;
 const predefinedAttributePrefix = "predefined-attribute:" as const;
+const resourceTagsPrefix = "resource-tags:" as const;
 
 type StoredInstance = {
   Id: string;
@@ -135,7 +136,10 @@ type StoredContact = {
   LastPausedTimestamp?: string;
   LastResumedTimestamp?: string;
   RecordingEnabled?: boolean;
+  RecordingSuspended?: boolean;
   StreamingId?: string;
+  Stopped?: boolean;
+  Tags?: Record<string, string>;
 };
 
 type StoredEmailAddress = {
@@ -347,6 +351,7 @@ const trafficDistributionGroupKey = (id: string): string =>
   `${trafficDistributionGroupPrefix}${id}`;
 const predefinedAttributeKey = (instanceId: string, name: string): string =>
   `${predefinedAttributePrefix}${instanceId}:${name}`;
+const resourceTagsKey = (arn: string): string => `${resourceTagsPrefix}${arn}`;
 
 const requireInstance = (ctx: ServiceContext, id: string): StoredInstance => {
   const stored = ctx.store.get<StoredInstance>(instanceKey(id));
@@ -1787,6 +1792,7 @@ const DescribeContact: OperationHandler = (input, ctx) => {
       ...(stored.RecordingEnabled
         ? { Recordings: [{ StorageType: "S3", Type: "AUDIO" }] }
         : {}),
+      ...(stored.Tags !== undefined ? { Tags: stored.Tags } : {}),
     },
   };
 };
@@ -3498,8 +3504,10 @@ const ListSecurityProfiles: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListTagsForResource: OperationHandler = (_input, _ctx) => {
-  return { tags: {} };
+const ListTagsForResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "resourceArn");
+  const stored = ctx.store.get<Record<string, string>>(resourceTagsKey(arn));
+  return { tags: stored ?? {} };
 };
 
 const ListTaskTemplates: OperationHandler = (input, ctx) => {
@@ -4399,6 +4407,209 @@ const StartScreenSharing: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const StartTaskContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact/${id}`;
+  const stored: StoredContact = {
+    ContactId: id,
+    ContactArn: arn,
+    InstanceId: instanceId,
+    TotalPauseCount: 0,
+  };
+  ctx.store.set(contactKey(instanceId, id), stored);
+  return { ContactId: id };
+};
+
+const StartTestCaseExecution: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const testCaseId = requireString(input, "TestCaseId");
+  const stored = ctx.store.get<StoredTestCase>(
+    testCaseKey(instanceId, testCaseId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Test case ${testCaseId} not found.`,
+      404,
+    );
+  }
+  const executionId = crypto.randomUUID();
+  return {
+    TestCaseExecutionId: executionId,
+    TestCaseId: testCaseId,
+    Status: "IN_PROGRESS",
+  };
+};
+
+const StartWebRTCContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const id = crypto.randomUUID();
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact/${id}`;
+  const stored: StoredContact = {
+    ContactId: id,
+    ContactArn: arn,
+    InstanceId: instanceId,
+    TotalPauseCount: 0,
+  };
+  ctx.store.set(contactKey(instanceId, id), stored);
+  return {
+    ContactId: id,
+    ParticipantId: crypto.randomUUID(),
+    ParticipantToken: crypto.randomUUID(),
+  };
+};
+
+const StopContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(contactKey(instanceId, contactId), {
+    ...stored,
+    Stopped: true,
+  });
+  return {};
+};
+
+const StopContactMediaProcessing: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const StopContactRecording: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(contactKey(instanceId, contactId), {
+    ...stored,
+    RecordingEnabled: false,
+    RecordingSuspended: false,
+  });
+  return {};
+};
+
+const StopContactStreaming: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(contactKey(instanceId, contactId), {
+    ...stored,
+    StreamingId: undefined,
+  });
+  return {};
+};
+
+const StopTestCaseExecution: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const SubmitContactEvaluation: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const evaluationId = requireString(input, "EvaluationId");
+  const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/contact-evaluation/${evaluationId}`;
+  return { EvaluationId: evaluationId, EvaluationArn: arn };
+};
+
+const SuspendContactRecording: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(contactKey(instanceId, contactId), {
+    ...stored,
+    RecordingSuspended: true,
+  });
+  return {};
+};
+
+const TagContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  const tags = (input["Tags"] ?? {}) as Record<string, string>;
+  ctx.store.set(contactKey(instanceId, contactId), {
+    ...stored,
+    Tags: { ...(stored.Tags ?? {}), ...tags },
+  });
+  return {};
+};
+
+const TagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "resourceArn");
+  const tags = (input["tags"] ?? {}) as Record<string, string>;
+  const existing =
+    ctx.store.get<Record<string, string>>(resourceTagsKey(arn)) ?? {};
+  ctx.store.set(resourceTagsKey(arn), { ...existing, ...tags });
+  return {};
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");
 
@@ -4897,6 +5108,24 @@ const connect = {
             return "StartContactRecording";
           if (parts[1] === "start-streaming" && req.method === "POST")
             return "StartContactStreaming";
+          if (parts[1] === "task" && req.method === "PUT")
+            return "StartTaskContact";
+          if (parts[1] === "webrtc" && req.method === "PUT")
+            return "StartWebRTCContact";
+          if (parts[1] === "stop" && req.method === "POST")
+            return "StopContact";
+          if (
+            parts[1] === "stop-contact-media-processing" &&
+            req.method === "POST"
+          )
+            return "StopContactMediaProcessing";
+          if (parts[1] === "stop-recording" && req.method === "POST")
+            return "StopContactRecording";
+          if (parts[1] === "stop-streaming" && req.method === "POST")
+            return "StopContactStreaming";
+          if (parts[1] === "suspend-recording" && req.method === "POST")
+            return "SuspendContactRecording";
+          if (parts[1] === "tags" && req.method === "POST") return "TagContact";
         }
         if (parts.length === 3 && parts[1] === "batch" && req.method === "PUT")
           return "BatchPutContact";
@@ -5114,6 +5343,12 @@ const connect = {
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteTestCase";
         if (
+          parts.length === 4 &&
+          parts[3] === "start-execution" &&
+          req.method === "PUT"
+        )
+          return "StartTestCaseExecution";
+        if (
           parts.length === 5 &&
           parts[4] === "summary" &&
           req.method === "GET"
@@ -5125,6 +5360,12 @@ const connect = {
           req.method === "GET"
         )
           return "ListTestCaseExecutionRecords";
+        if (
+          parts.length === 5 &&
+          parts[4] === "stop-execution" &&
+          req.method === "POST"
+        )
+          return "StopTestCaseExecution";
         return undefined;
 
       case "attached-files-configurations":
@@ -5169,6 +5410,12 @@ const connect = {
           return "UpdateContactEvaluation";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteContactEvaluation";
+        if (
+          parts.length === 4 &&
+          parts[3] === "submit" &&
+          req.method === "POST"
+        )
+          return "SubmitContactEvaluation";
         return undefined;
 
       case "views":
@@ -5359,6 +5606,7 @@ const connect = {
       case "tags":
         if (parts.length === 2 && req.method === "GET")
           return "ListTagsForResource";
+        if (parts.length === 2 && req.method === "POST") return "TagResource";
         return undefined;
 
       case "test-case-executions":
@@ -5825,6 +6073,18 @@ const connect = {
     StartOutboundEmailContact,
     StartOutboundVoiceContact,
     StartScreenSharing,
+    StartTaskContact,
+    StartTestCaseExecution,
+    StartWebRTCContact,
+    StopContact,
+    StopContactMediaProcessing,
+    StopContactRecording,
+    StopContactStreaming,
+    StopTestCaseExecution,
+    SubmitContactEvaluation,
+    SuspendContactRecording,
+    TagContact,
+    TagResource,
   },
   model,
 } as const satisfies ServiceDefinition;

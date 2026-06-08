@@ -540,3 +540,96 @@ test("ELBv2 SSL policies and account limits", async () => {
   expect(Limits?.[0]?.Name).toBeTruthy();
   expect(Limits?.[0]?.Max).toBeTruthy();
 });
+
+test("ELBv2 fidelity bar: LB + TG + listener → targets health round-trip + rule CRUD", async () => {
+  const client = elbv2();
+
+  const { LoadBalancers: lbs } = await client.send(
+    new CreateLoadBalancerCommand({
+      Name: "bunsai-fidelity-lb",
+      Subnets: ["subnet-aaaa1111"],
+      Type: "application",
+    }),
+  );
+  const lbArn = lbs?.[0]?.LoadBalancerArn ?? "";
+  expect(lbArn).toContain("loadbalancer/app/");
+
+  const { TargetGroups: tgs } = await client.send(
+    new CreateTargetGroupCommand({
+      Name: "bunsai-fidelity-tg",
+      Protocol: "HTTP",
+      Port: 80,
+      VpcId: "vpc-12345678",
+      TargetType: "instance",
+    }),
+  );
+  const tgArn = tgs?.[0]?.TargetGroupArn ?? "";
+  expect(tgArn).toContain("targetgroup/");
+
+  const { Listeners: listeners } = await client.send(
+    new CreateListenerCommand({
+      LoadBalancerArn: lbArn,
+      Protocol: "HTTP",
+      Port: 80,
+      DefaultActions: [{ Type: "forward", TargetGroupArn: tgArn }],
+    }),
+  );
+  const listenerArn = listeners?.[0]?.ListenerArn ?? "";
+  expect(listenerArn).toContain("listener/");
+
+  await client.send(
+    new RegisterTargetsCommand({
+      TargetGroupArn: tgArn,
+      Targets: [
+        { Id: "i-aaa111", Port: 80 },
+        { Id: "i-bbb222", Port: 80 },
+      ],
+    }),
+  );
+
+  const { TargetHealthDescriptions: health } = await client.send(
+    new DescribeTargetHealthCommand({ TargetGroupArn: tgArn }),
+  );
+  expect(health?.length).toBe(2);
+  expect(health?.every((h) => h.TargetHealth?.State === "healthy")).toBe(true);
+
+  await client.send(
+    new DeregisterTargetsCommand({
+      TargetGroupArn: tgArn,
+      Targets: [{ Id: "i-aaa111", Port: 80 }],
+    }),
+  );
+
+  const { TargetHealthDescriptions: afterDeregister } = await client.send(
+    new DescribeTargetHealthCommand({ TargetGroupArn: tgArn }),
+  );
+  expect(afterDeregister?.length).toBe(1);
+  expect(afterDeregister?.[0]?.Target?.Id).toBe("i-bbb222");
+
+  const { Rules: createdRules } = await client.send(
+    new CreateRuleCommand({
+      ListenerArn: listenerArn,
+      Priority: 5,
+      Conditions: [{ Field: "host-header", Values: ["api.example.com"] }],
+      Actions: [{ Type: "forward", TargetGroupArn: tgArn }],
+    }),
+  );
+  const ruleArn = createdRules?.[0]?.RuleArn ?? "";
+  expect(ruleArn).toContain("listener-rule");
+  expect(createdRules?.[0]?.Priority).toBe("5");
+
+  const { Rules: listedRules } = await client.send(
+    new DescribeRulesCommand({ ListenerArn: listenerArn }),
+  );
+  expect(listedRules?.some((r) => r.RuleArn === ruleArn)).toBe(true);
+
+  await client.send(new DeleteRuleCommand({ RuleArn: ruleArn }));
+  const { Rules: afterRuleDelete } = await client.send(
+    new DescribeRulesCommand({ ListenerArn: listenerArn }),
+  );
+  expect(afterRuleDelete?.some((r) => r.RuleArn === ruleArn)).toBe(false);
+
+  await client.send(new DeleteListenerCommand({ ListenerArn: listenerArn }));
+  await client.send(new DeleteTargetGroupCommand({ TargetGroupArn: tgArn }));
+  await client.send(new DeleteLoadBalancerCommand({ LoadBalancerArn: lbArn }));
+});

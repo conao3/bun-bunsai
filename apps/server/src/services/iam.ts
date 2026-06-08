@@ -1764,6 +1764,12 @@ const GetAccountSummary: OperationHandler = (input, ctx) => {
   const instanceProfiles = ctx.store
     .list<StoredInstanceProfile>()
     .filter((e) => e.key.startsWith("instanceprofile/")).length;
+  const policyVersionsInUse = ctx.store
+    .list<StoredPolicyVersion>()
+    .filter((e) => e.key.startsWith("policyversion/")).length;
+  const providers = ctx.store
+    .list<StoredSAMLProvider>()
+    .filter((e) => e.key.startsWith("samlprovider/")).length;
   return {
     SummaryMap: {
       Users: users,
@@ -1795,12 +1801,12 @@ const GetAccountSummary: OperationHandler = (input, ctx) => {
       GroupPolicySizeQuota: 5120,
       RolePolicySizeQuota: 10240,
       PolicySizeQuota: 6144,
-      PolicyVersionsInUse: 0,
+      PolicyVersionsInUse: policyVersionsInUse,
       PolicyVersionsInUseQuota: 10000,
       VersionsPerPolicyQuota: 5,
       GlobalEndpointTokenVersion: 1,
       AssumeRolePolicySizeQuota: 2048,
-      Providers: 0,
+      Providers: providers,
     },
   };
 };
@@ -3752,6 +3758,34 @@ const GetAccountAuthorizationDetails: OperationHandler = (_input, ctx) => {
     .list<StoredPolicy>()
     .filter((e) => e.key.startsWith("policy/"))
     .map((e) => e.value);
+  const allUserPolicies = ctx.store
+    .list<StoredUserPolicy>()
+    .filter((e) => e.key.startsWith("userpolicy/"))
+    .map((e) => e.value);
+  const allUserAttachments = ctx.store
+    .list<StoredUserAttachment>()
+    .filter((e) => e.key.startsWith("userattachment/"))
+    .map((e) => e.value);
+  const allGroupPolicies = ctx.store
+    .list<StoredGroupPolicy>()
+    .filter((e) => e.key.startsWith("grouppolicy/"))
+    .map((e) => e.value);
+  const allGroupAttachments = ctx.store
+    .list<StoredGroupAttachment>()
+    .filter((e) => e.key.startsWith("groupattachment/"))
+    .map((e) => e.value);
+  const allRolePolicies = ctx.store
+    .list<StoredRolePolicy>()
+    .filter((e) => e.key.startsWith("rolepolicy/"))
+    .map((e) => e.value);
+  const allRoleAttachments = ctx.store
+    .list<StoredAttachment>()
+    .filter((e) => e.key.startsWith("attachment/"))
+    .map((e) => e.value);
+  const allPolicyVersions = ctx.store
+    .list<StoredPolicyVersion>()
+    .filter((e) => e.key.startsWith("policyversion/"))
+    .map((e) => e.value);
   return {
     UserDetailList: users.map((u) => ({
       Path: u.Path,
@@ -3759,9 +3793,16 @@ const GetAccountAuthorizationDetails: OperationHandler = (_input, ctx) => {
       UserId: u.UserId,
       Arn: u.Arn,
       CreateDate: u.CreateDate,
-      UserPolicyList: [],
+      UserPolicyList: allUserPolicies
+        .filter((p) => p.UserName === u.UserName)
+        .map((p) => ({
+          PolicyName: p.PolicyName,
+          PolicyDocument: p.PolicyDocument,
+        })),
       GroupList: [],
-      AttachedManagedPolicies: [],
+      AttachedManagedPolicies: allUserAttachments
+        .filter((a) => a.UserName === u.UserName)
+        .map((a) => ({ PolicyName: a.PolicyName, PolicyArn: a.PolicyArn })),
     })),
     GroupDetailList: groups.map((g) => ({
       Path: g.Path,
@@ -3769,8 +3810,15 @@ const GetAccountAuthorizationDetails: OperationHandler = (_input, ctx) => {
       GroupId: g.GroupId,
       Arn: g.Arn,
       CreateDate: g.CreateDate,
-      GroupPolicyList: [],
-      AttachedManagedPolicies: [],
+      GroupPolicyList: allGroupPolicies
+        .filter((p) => p.GroupName === g.GroupName)
+        .map((p) => ({
+          PolicyName: p.PolicyName,
+          PolicyDocument: p.PolicyDocument,
+        })),
+      AttachedManagedPolicies: allGroupAttachments
+        .filter((a) => a.GroupName === g.GroupName)
+        .map((a) => ({ PolicyName: a.PolicyName, PolicyArn: a.PolicyArn })),
     })),
     RoleDetailList: roles.map((r) => ({
       Path: r.Path,
@@ -3779,8 +3827,15 @@ const GetAccountAuthorizationDetails: OperationHandler = (_input, ctx) => {
       Arn: r.Arn,
       CreateDate: r.CreateDate,
       AssumeRolePolicyDocument: r.AssumeRolePolicyDocument,
-      RolePolicyList: [],
-      AttachedManagedPolicies: [],
+      RolePolicyList: allRolePolicies
+        .filter((p) => p.RoleName === r.RoleName)
+        .map((p) => ({
+          PolicyName: p.PolicyName,
+          PolicyDocument: p.PolicyDocument,
+        })),
+      AttachedManagedPolicies: allRoleAttachments
+        .filter((a) => a.RoleName === r.RoleName)
+        .map((a) => ({ PolicyName: a.PolicyName, PolicyArn: a.PolicyArn })),
     })),
     Policies: policies.map((p) => ({
       PolicyName: p.PolicyName,
@@ -3793,7 +3848,14 @@ const GetAccountAuthorizationDetails: OperationHandler = (_input, ctx) => {
       Description: p.Description,
       CreateDate: p.CreateDate,
       UpdateDate: p.UpdateDate,
-      PolicyVersionList: [],
+      PolicyVersionList: allPolicyVersions
+        .filter((v) => v.PolicyArn === p.Arn)
+        .map((v) => ({
+          VersionId: v.VersionId,
+          Document: v.Document,
+          IsDefaultVersion: v.IsDefaultVersion,
+          CreateDate: v.CreateDate,
+        })),
     })),
     IsTruncated: false,
   };

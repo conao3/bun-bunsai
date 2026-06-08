@@ -18945,6 +18945,256 @@ const WithdrawByoipCidr: OperationHandler = (input, ctx) => {
   };
 };
 
+const RejectTransitGatewayClientVpnAttachment: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const stored = ctx.store.get<StoredTgwAttachment>(
+    tgwAttachmentKey(attachmentId),
+  );
+  const tgwId = stored?.TransitGatewayId ?? hexId("tgw");
+  if (stored !== undefined) {
+    stored.State = "rejected";
+    ctx.store.set(tgwAttachmentKey(attachmentId), stored);
+  }
+  return {
+    TransitGatewayClientVpnAttachment: {
+      TransitGatewayAttachmentId: attachmentId,
+      TransitGatewayId: tgwId,
+      ClientVpnEndpointId: stored?.ResourceId ?? hexId("cvpn"),
+      Region: ctx.region,
+      Status: { Code: "rejected", Message: "" },
+      State: "rejected",
+      CreationTime: new Date().toISOString(),
+      Tags: stored?.Tags ?? [],
+    },
+  };
+};
+
+const RejectTransitGatewayMulticastDomainAssociations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : hexId("tgw-attach");
+  const domainId =
+    typeof input["TransitGatewayMulticastDomainId"] === "string"
+      ? input["TransitGatewayMulticastDomainId"]
+      : hexId("tgw-mcast");
+  return {
+    Associations: {
+      TransitGatewayMulticastDomainId: domainId,
+      TransitGatewayAttachmentId: attachmentId,
+      ResourceId: hexId("vpc"),
+      ResourceType: "vpc",
+      ResourceOwnerId: ctx.account,
+      Subnets: [],
+    },
+  };
+};
+
+const RejectTransitGatewayPeeringAttachment: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const stored = ctx.store.get<StoredTgwAttachment>(
+    tgwAttachmentKey(attachmentId),
+  );
+  const tgwId = stored?.TransitGatewayId ?? hexId("tgw");
+  if (stored !== undefined) {
+    stored.State = "rejected";
+    ctx.store.set(tgwAttachmentKey(attachmentId), stored);
+  }
+  return {
+    TransitGatewayPeeringAttachment: {
+      TransitGatewayAttachmentId: attachmentId,
+      AccepterTransitGatewayAttachmentId: hexId("tgw-attach"),
+      RequesterTgwInfo: {
+        TransitGatewayId: tgwId,
+        OwnerId: ctx.account,
+        Region: ctx.region,
+      },
+      AccepterTgwInfo: {
+        TransitGatewayId: hexId("tgw"),
+        OwnerId: ctx.account,
+        Region: ctx.region,
+      },
+      Status: { Code: "200", Message: "OK" },
+      State: "rejected",
+      CreationTime: new Date().toISOString(),
+      Tags: stored?.Tags ?? [],
+    },
+  };
+};
+
+const RejectTransitGatewayVpcAttachment: OperationHandler = (input, ctx) => {
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const stored = ctx.store.get<StoredTgwAttachment>(
+    tgwAttachmentKey(attachmentId),
+  );
+  const tgwId = stored?.TransitGatewayId ?? hexId("tgw");
+  const vpcId = stored?.ResourceId ?? hexId("vpc");
+  if (stored !== undefined) {
+    stored.State = "rejected";
+    ctx.store.set(tgwAttachmentKey(attachmentId), stored);
+  }
+  return {
+    TransitGatewayVpcAttachment: {
+      TransitGatewayAttachmentId: attachmentId,
+      TransitGatewayId: tgwId,
+      VpcId: vpcId,
+      VpcOwnerId: ctx.account,
+      State: "rejected",
+      SubnetIds: [],
+      CreationTime: new Date().toISOString(),
+      Tags: stored?.Tags ?? [],
+    },
+  };
+};
+
+const RejectVpcEndpointConnections: OperationHandler = (_input, _ctx) => {
+  return { Unsuccessful: [] };
+};
+
+const RejectVpcPeeringConnection: OperationHandler = (input, ctx) => {
+  const peeringId =
+    typeof input["VpcPeeringConnectionId"] === "string"
+      ? input["VpcPeeringConnectionId"]
+      : "";
+  const stored = ctx.store.get<StoredVpcPeeringConnection>(
+    vpcPeeringKey(peeringId),
+  );
+  if (stored !== undefined) {
+    stored.Status = { Code: "rejected", Message: "Rejected" };
+    ctx.store.set(vpcPeeringKey(peeringId), stored);
+  }
+  return { Return: true };
+};
+
+const ReleaseHosts: OperationHandler = (input, ctx) => {
+  const hostIds = stringList(input["HostIds"]);
+  const successful: string[] = [];
+  const unsuccessful: unknown[] = [];
+  for (const id of hostIds) {
+    const host = ctx.store.get<StoredHost>(hostKey(id));
+    if (host === undefined) {
+      unsuccessful.push({
+        ResourceId: id,
+        Error: {
+          Code: "InvalidHostID.NotFound",
+          Message: `The host ID '${id}' does not exist`,
+        },
+      });
+    } else {
+      ctx.store.delete(hostKey(id));
+      successful.push(id);
+    }
+  }
+  return { Successful: successful, Unsuccessful: unsuccessful };
+};
+
+const ReleaseIpamPoolAllocation: OperationHandler = (_input, _ctx) => {
+  return { Success: true };
+};
+
+const ReplaceIamInstanceProfileAssociation: OperationHandler = (input, ctx) => {
+  const associationId =
+    typeof input["AssociationId"] === "string" ? input["AssociationId"] : "";
+  const profile = input["IamInstanceProfile"];
+  const profileArn =
+    typeof profile === "object" &&
+    profile !== null &&
+    typeof (profile as Record<string, unknown>)["Arn"] === "string"
+      ? ((profile as Record<string, unknown>)["Arn"] as string)
+      : `arn:aws:iam::${ctx.account}:instance-profile/default`;
+  const profileId = hexId("AIPA");
+  const association = ctx.store.get<StoredIamInstanceProfileAssociation>(
+    iamProfileAssocKey(associationId),
+  );
+  if (association === undefined) {
+    throw awsError(
+      "InvalidAssociationID.NotFound",
+      `The association ID '${associationId}' does not exist`,
+      400,
+    );
+  }
+  association.IamInstanceProfile = { Arn: profileArn, Id: profileId };
+  ctx.store.set(iamProfileAssocKey(associationId), association);
+  return {
+    IamInstanceProfileAssociation: {
+      AssociationId: association.AssociationId,
+      InstanceId: association.InstanceId,
+      IamInstanceProfile: association.IamInstanceProfile,
+      State: association.State,
+      Timestamp: association.Timestamp,
+    },
+  };
+};
+
+const ReplaceImageCriteriaInAllowedImagesSettings: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { ReturnValue: true };
+};
+
+const ReplaceNetworkAclAssociation: OperationHandler = (_input, _ctx) => {
+  return { NewAssociationId: hexId("aclassoc") };
+};
+
+const ReplaceNetworkAclEntry: OperationHandler = (input, ctx) => {
+  const networkAclId =
+    typeof input["NetworkAclId"] === "string" ? input["NetworkAclId"] : "";
+  const ruleNumber =
+    typeof input["RuleNumber"] === "number" ? input["RuleNumber"] : 100;
+  const protocol =
+    typeof input["Protocol"] === "string" ? input["Protocol"] : "-1";
+  const ruleAction =
+    typeof input["RuleAction"] === "string" ? input["RuleAction"] : "allow";
+  const egress = typeof input["Egress"] === "boolean" ? input["Egress"] : false;
+  const cidrBlock =
+    typeof input["CidrBlock"] === "string" ? input["CidrBlock"] : undefined;
+  const ipv6CidrBlock =
+    typeof input["Ipv6CidrBlock"] === "string"
+      ? input["Ipv6CidrBlock"]
+      : undefined;
+  const acl = ctx.store.get<StoredNetworkAcl>(networkAclKey(networkAclId));
+  if (acl === undefined) {
+    throw awsError(
+      "InvalidNetworkAclID.NotFound",
+      `The network ACL '${networkAclId}' does not exist`,
+      400,
+    );
+  }
+  acl.Entries = acl.Entries.filter(
+    (e) => !(e.RuleNumber === ruleNumber && e.Egress === egress),
+  );
+  const entry: StoredNetworkAclEntry = {
+    RuleNumber: ruleNumber,
+    Protocol: protocol,
+    RuleAction: ruleAction,
+    Egress: egress,
+    CidrBlock: cidrBlock,
+    Ipv6CidrBlock: ipv6CidrBlock,
+  };
+  acl.Entries.push(entry);
+  ctx.store.set(networkAclKey(networkAclId), acl);
+  return {};
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -19662,6 +19912,18 @@ const ec2: ServiceDefinition = {
     RegisterTransitGatewayMulticastGroupMembers,
     RegisterTransitGatewayMulticastGroupSources,
     RejectCapacityReservationBillingOwnership,
+    RejectTransitGatewayClientVpnAttachment,
+    RejectTransitGatewayMulticastDomainAssociations,
+    RejectTransitGatewayPeeringAttachment,
+    RejectTransitGatewayVpcAttachment,
+    RejectVpcEndpointConnections,
+    RejectVpcPeeringConnection,
+    ReleaseHosts,
+    ReleaseIpamPoolAllocation,
+    ReplaceIamInstanceProfileAssociation,
+    ReplaceImageCriteriaInAllowedImagesSettings,
+    ReplaceNetworkAclAssociation,
+    ReplaceNetworkAclEntry,
     ReplaceRoute,
     ReplaceRouteTableAssociation,
     ReplaceTransitGatewayRoute,

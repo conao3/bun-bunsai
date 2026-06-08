@@ -124,6 +124,12 @@ test("SES identity verification and send lifecycle", async () => {
   const quota = await client.send(new GetSendQuotaCommand({}));
   expect(quota.Max24HourSend).toBe(200);
   expect(quota.MaxSendRate).toBe(1);
+  expect(quota.SentLast24Hours).toBeGreaterThan(0);
+
+  const stats = await client.send(new GetSendStatisticsCommand({}));
+  const dp = (stats.SendDataPoints ?? [])[0];
+  expect(dp).toBeDefined();
+  expect(dp?.DeliveryAttempts ?? 0).toBeGreaterThan(0);
 
   await client.send(new DeleteIdentityCommand({ Identity: address }));
   const afterDelete = await client.send(new ListIdentitiesCommand({}));

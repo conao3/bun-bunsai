@@ -440,6 +440,18 @@ const GetShardIterator: OperationHandler = (input, ctx) => {
       typeof startingSequence === "string" ? Number(startingSequence) : 0;
     const base = Number.isNaN(parsed) ? 0 : parsed;
     position = iteratorType === "AFTER_SEQUENCE_NUMBER" ? base + 1 : base;
+  } else if (iteratorType === "AT_TIMESTAMP") {
+    const ts = input["Timestamp"];
+    const timestampValue = typeof ts === "number" ? ts : 0;
+    const matching = stream.records.filter(
+      (r) =>
+        r.ShardId === inputShardId &&
+        r.ApproximateArrivalTimestamp >= timestampValue,
+    );
+    position =
+      matching.length > 0
+        ? Number(matching[0].SequenceNumber)
+        : stream.nextSequence;
   }
   return {
     ShardIterator: iteratorOf(stream.StreamName, inputShardId, position),

@@ -582,20 +582,31 @@ const GetLogEvents: OperationHandler = (input, ctx) => {
   const stream = requireStream(group, streamName);
   const startTime = optionalNumber(input, "startTime");
   const endTime = optionalNumber(input, "endTime");
-  const events = stream.events.filter((event) => {
+  const limit = optionalNumber(input, "limit") ?? 10000;
+  const startFromHead = input["startFromHead"] === true;
+  const filtered = stream.events.filter((event) => {
     if (startTime !== undefined && event.timestamp < startTime) return false;
     if (endTime !== undefined && event.timestamp >= endTime) return false;
     return true;
   });
-  const token = `t/${stream.events.length}`;
+  let pageStartIdx: number;
+  let page: StoredEvent[];
+  if (startFromHead) {
+    pageStartIdx = 0;
+    page = filtered.slice(0, limit);
+  } else {
+    pageStartIdx = Math.max(0, filtered.length - limit);
+    page = filtered.slice(pageStartIdx);
+  }
+  const pageEndIdx = pageStartIdx + page.length;
   return {
-    events: events.map((event) => ({
+    events: page.map((event) => ({
       timestamp: event.timestamp,
       message: event.message,
       ingestionTime: event.ingestionTime,
     })),
-    nextForwardToken: token,
-    nextBackwardToken: token,
+    nextForwardToken: `f/${pageEndIdx}`,
+    nextBackwardToken: `b/${pageStartIdx}`,
   };
 };
 
@@ -627,12 +638,10 @@ const FilterLogEvents: OperationHandler = (input, ctx) => {
     for (const event of stream.events) {
       if (startTime !== undefined && event.timestamp < startTime) continue;
       if (endTime !== undefined && event.timestamp >= endTime) continue;
-      if (
-        pattern !== undefined &&
-        pattern !== "" &&
-        !event.message.includes(pattern)
-      )
-        continue;
+      if (pattern !== undefined && pattern !== "") {
+        const terms = pattern.trim().split(/\s+/).filter(Boolean);
+        if (!terms.every((term) => event.message.includes(term))) continue;
+      }
       collected.push({
         logStreamName: stream.logStreamName,
         timestamp: event.timestamp,

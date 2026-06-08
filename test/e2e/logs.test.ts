@@ -177,6 +177,132 @@ describe("logs e2e", () => {
     await client.send(new DeleteLogGroupCommand({ logGroupName: groupName }));
   });
 
+  test("GetLogEvents limit and startFromHead paging", async () => {
+    const client = logs();
+    const groupName = "bunsai-e2e-group-paging";
+    const streamName = "bunsai-e2e-stream-paging";
+
+    await client.send(new CreateLogGroupCommand({ logGroupName: groupName }));
+    await client.send(
+      new CreateLogStreamCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+      }),
+    );
+
+    const baseTime = 1700000000000;
+    await client.send(
+      new PutLogEventsCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+        logEvents: [
+          { timestamp: baseTime, message: "msg-1" },
+          { timestamp: baseTime + 1000, message: "msg-2" },
+          { timestamp: baseTime + 2000, message: "msg-3" },
+          { timestamp: baseTime + 3000, message: "msg-4" },
+          { timestamp: baseTime + 4000, message: "msg-5" },
+        ],
+      }),
+    );
+
+    const fromHead = await client.send(
+      new GetLogEventsCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+        limit: 2,
+        startFromHead: true,
+      }),
+    );
+    const headMessages = (fromHead.events ?? []).map((e) => e.message);
+    expect(headMessages).toEqual(["msg-1", "msg-2"]);
+    expect(fromHead.nextForwardToken).toBeDefined();
+    expect(fromHead.nextBackwardToken).toBeDefined();
+    expect(fromHead.nextForwardToken).not.toBe(fromHead.nextBackwardToken);
+
+    const fromTail = await client.send(
+      new GetLogEventsCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+        limit: 2,
+        startFromHead: false,
+      }),
+    );
+    const tailMessages = (fromTail.events ?? []).map((e) => e.message);
+    expect(tailMessages).toEqual(["msg-4", "msg-5"]);
+
+    const withTimeRange = await client.send(
+      new GetLogEventsCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+        startTime: baseTime + 1000,
+        endTime: baseTime + 3000,
+        startFromHead: true,
+      }),
+    );
+    const rangeMessages = (withTimeRange.events ?? []).map((e) => e.message);
+    expect(rangeMessages).toEqual(["msg-2", "msg-3"]);
+
+    await client.send(new DeleteLogGroupCommand({ logGroupName: groupName }));
+  });
+
+  test("FilterLogEvents multi-term AND pattern matching", async () => {
+    const client = logs();
+    const groupName = "bunsai-e2e-group-andfilter";
+
+    await client.send(new CreateLogGroupCommand({ logGroupName: groupName }));
+    await client.send(
+      new CreateLogStreamCommand({
+        logGroupName: groupName,
+        logStreamName: "stream-x",
+      }),
+    );
+
+    const baseTime = 1700000000000;
+    await client.send(
+      new PutLogEventsCommand({
+        logGroupName: groupName,
+        logStreamName: "stream-x",
+        logEvents: [
+          { timestamp: baseTime, message: "ERROR user login failed" },
+          { timestamp: baseTime + 1000, message: "ERROR disk full" },
+          { timestamp: baseTime + 2000, message: "INFO user login success" },
+          { timestamp: baseTime + 3000, message: "WARN network timeout" },
+        ],
+      }),
+    );
+
+    const andResult = await client.send(
+      new FilterLogEventsCommand({
+        logGroupName: groupName,
+        filterPattern: "ERROR user",
+      }),
+    );
+    const andMessages = (andResult.events ?? []).map((e) => e.message);
+    expect(andMessages).toEqual(["ERROR user login failed"]);
+
+    const singleTerm = await client.send(
+      new FilterLogEventsCommand({
+        logGroupName: groupName,
+        filterPattern: "login",
+      }),
+    );
+    const singleMessages = (singleTerm.events ?? []).map((e) => e.message);
+    expect(singleMessages).toEqual([
+      "ERROR user login failed",
+      "INFO user login success",
+    ]);
+
+    const noMatch = await client.send(
+      new FilterLogEventsCommand({
+        logGroupName: groupName,
+        filterPattern: "ERROR timeout",
+      }),
+    );
+    expect(noMatch.events ?? []).toHaveLength(0);
+
+    await client.send(new DeleteLogGroupCommand({ logGroupName: groupName }));
+  });
+
   test("delete log stream", async () => {
     const client = logs();
     const groupName = "bunsai-e2e-group-delstream";

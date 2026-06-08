@@ -81,5 +81,15 @@ test("ACM RequestCertificate lifecycle: PENDING_VALIDATION → ISSUED with Domai
   const importedDesc = await client.send(
     new DescribeCertificateCommand({ CertificateArn: importedArn }),
   );
+  expect(importedDesc.Certificate?.Type).toBe("IMPORTED");
   expect(importedDesc.Certificate?.Status).toBe("ISSUED");
+});
+
+test("ACM DescribeCertificate missing certificate throws ResourceNotFoundException", async () => {
+  const client = acm();
+  const fakeArn =
+    "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000";
+  await expect(
+    client.send(new DescribeCertificateCommand({ CertificateArn: fakeArn })),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
 });

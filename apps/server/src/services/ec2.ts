@@ -499,6 +499,7 @@ type StoredManagedPrefixList = {
   Version: number;
   Tags: Tag[];
   OwnerId: string;
+  Entries: { Cidr: string; Description?: string }[];
 };
 
 type StoredNetworkAclEntry = {
@@ -4512,6 +4513,23 @@ const CreateManagedPrefixList: OperationHandler = (input, ctx) => {
       : "IPv4";
   const maxEntries =
     typeof input["MaxEntries"] === "number" ? input["MaxEntries"] : 10;
+  const rawEntries = input["Entries"];
+  const entries: { Cidr: string; Description?: string }[] = Array.isArray(
+    rawEntries,
+  )
+    ? rawEntries
+        .filter((e) => typeof e === "object" && e !== null)
+        .map((e) => {
+          const entry = e as Record<string, unknown>;
+          return {
+            Cidr: typeof entry["Cidr"] === "string" ? entry["Cidr"] : "",
+            ...(typeof entry["Description"] === "string"
+              ? { Description: entry["Description"] }
+              : {}),
+          };
+        })
+        .filter((e) => e.Cidr !== "")
+    : [];
   const id = hexId("pl");
   const pl: StoredManagedPrefixList = {
     PrefixListId: id,
@@ -4523,6 +4541,7 @@ const CreateManagedPrefixList: OperationHandler = (input, ctx) => {
     Version: 1,
     Tags: [],
     OwnerId: ctx.account,
+    Entries: entries,
   };
   ctx.store.set(managedPrefixListKey(id), pl);
   return {
@@ -14976,6 +14995,190 @@ const GetLaunchTemplateData: OperationHandler = (input, ctx) => {
   };
 };
 
+const GetManagedPrefixListAssociations: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["PrefixListId"] === "string" ? input["PrefixListId"] : "";
+  const pl = ctx.store.get<StoredManagedPrefixList>(managedPrefixListKey(id));
+  if (pl === undefined) {
+    throw awsError(
+      "InvalidPrefixListID.NotFound",
+      `The prefix list '${id}' does not exist`,
+      400,
+    );
+  }
+  return { PrefixListAssociations: [] };
+};
+
+const GetManagedPrefixListEntries: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["PrefixListId"] === "string" ? input["PrefixListId"] : "";
+  const pl = ctx.store.get<StoredManagedPrefixList>(managedPrefixListKey(id));
+  if (pl === undefined) {
+    throw awsError(
+      "InvalidPrefixListID.NotFound",
+      `The prefix list '${id}' does not exist`,
+      400,
+    );
+  }
+  return { Entries: pl.Entries };
+};
+
+const GetManagedResourceVisibility: OperationHandler = (_input, _ctx) => {
+  return { Visibility: { DefaultVisibility: "visible" } };
+};
+
+const GetNetworkInsightsAccessScopeAnalysisFindings: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id =
+    typeof input["NetworkInsightsAccessScopeAnalysisId"] === "string"
+      ? input["NetworkInsightsAccessScopeAnalysisId"]
+      : "";
+  const analysis = ctx.store.get<StoredNetworkInsightsAccessScopeAnalysis>(
+    niScopeAnalysisKey(id),
+  );
+  if (analysis === undefined) {
+    throw awsError(
+      "InvalidNetworkInsightsAccessScopeAnalysisId.NotFound",
+      `The network insights access scope analysis '${id}' does not exist`,
+      400,
+    );
+  }
+  return {
+    NetworkInsightsAccessScopeAnalysisId:
+      analysis.NetworkInsightsAccessScopeAnalysisId,
+    AnalysisStatus: "running",
+    AnalysisFindings: [],
+  };
+};
+
+const GetNetworkInsightsAccessScopeContent: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["NetworkInsightsAccessScopeId"] === "string"
+      ? input["NetworkInsightsAccessScopeId"]
+      : "";
+  const scope = ctx.store.get<StoredNetworkInsightsAccessScope>(
+    niAccessScopeKey(id),
+  );
+  if (scope === undefined) {
+    throw awsError(
+      "InvalidNetworkInsightsAccessScopeId.NotFound",
+      `The network insights access scope '${id}' does not exist`,
+      400,
+    );
+  }
+  return {
+    NetworkInsightsAccessScopeContent: {
+      NetworkInsightsAccessScopeId: scope.NetworkInsightsAccessScopeId,
+      MatchPaths: [],
+      ExcludePaths: [],
+    },
+  };
+};
+
+const GetPasswordData: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(instanceId));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${instanceId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    InstanceId: instanceId,
+    Timestamp: new Date().toISOString(),
+    PasswordData: btoa(`EncryptedPassword:${instanceId}:synthetic`),
+  };
+};
+
+const GetReservedInstancesExchangeQuote: OperationHandler = (_input, _ctx) => {
+  return {
+    CurrencyCode: "USD",
+    IsValidExchange: true,
+    PaymentDue: "0.00",
+    ReservedInstanceValueRollup: {
+      HourlyPrice: "0.00",
+      RemainingTotalValue: "0.00",
+    },
+    TargetConfigurationValueRollup: {
+      HourlyPrice: "0.00",
+      RemainingTotalValue: "0.00",
+    },
+    ReservedInstanceValueSet: [],
+    TargetConfigurationValueSet: [],
+  };
+};
+
+const GetRouteServerAssociations: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["RouteServerId"] === "string" ? input["RouteServerId"] : "";
+  const server = ctx.store.get<StoredRouteServer>(routeServerKey(id));
+  if (server === undefined) {
+    throw awsError(
+      "InvalidRouteServerId.NotFound",
+      `The route server ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { RouteServerAssociations: [] };
+};
+
+const GetRouteServerPropagations: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["RouteServerId"] === "string" ? input["RouteServerId"] : "";
+  const server = ctx.store.get<StoredRouteServer>(routeServerKey(id));
+  if (server === undefined) {
+    throw awsError(
+      "InvalidRouteServerId.NotFound",
+      `The route server ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { RouteServerPropagations: [] };
+};
+
+const GetRouteServerRoutingDatabase: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["RouteServerId"] === "string" ? input["RouteServerId"] : "";
+  const server = ctx.store.get<StoredRouteServer>(routeServerKey(id));
+  if (server === undefined) {
+    throw awsError(
+      "InvalidRouteServerId.NotFound",
+      `The route server ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { AreRoutesPersisted: false, Routes: [] };
+};
+
+const GetSecurityGroupsForVpc: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const groups = allSecurityGroups(ctx).filter((g) => g.VpcId === vpcId);
+  return {
+    SecurityGroupForVpcs: groups.map((g) => ({
+      Description: g.Description,
+      GroupName: g.GroupName,
+      OwnerId: ctx.account,
+      GroupId: g.GroupId,
+      Tags: g.Tags,
+      PrimaryVpcId: g.VpcId,
+    })),
+  };
+};
+
+const GetSpotPlacementScores: OperationHandler = (_input, _ctx) => {
+  return {
+    SpotPlacementScores: [
+      { Region: "us-east-1", Score: 8 },
+      { Region: "us-west-2", Score: 7 },
+    ],
+  };
+};
+
 const ProvisionIpamPoolCidr: OperationHandler = (input, ctx) => {
   const poolId =
     typeof input["IpamPoolId"] === "string" ? input["IpamPoolId"] : "";
@@ -15569,6 +15772,18 @@ const ec2: ServiceDefinition = {
     GetIpamPrefixListResolverVersions,
     GetIpamResourceCidrs,
     GetLaunchTemplateData,
+    GetManagedPrefixListAssociations,
+    GetManagedPrefixListEntries,
+    GetManagedResourceVisibility,
+    GetNetworkInsightsAccessScopeAnalysisFindings,
+    GetNetworkInsightsAccessScopeContent,
+    GetPasswordData,
+    GetReservedInstancesExchangeQuote,
+    GetRouteServerAssociations,
+    GetRouteServerPropagations,
+    GetRouteServerRoutingDatabase,
+    GetSecurityGroupsForVpc,
+    GetSpotPlacementScores,
     ProvisionIpamPoolCidr,
   },
   model,

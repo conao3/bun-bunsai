@@ -1,5 +1,8 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
+import { invokeTaskResource } from "../core/events.ts";
+import { scopedStore } from "../core/state.ts";
+import type { StateStore } from "../core/state.ts";
 import apigatewayModel from "../../../../test/vendor/aws-models/apigateway.json" with { type: "json" };
 import type {
   OperationHandler,
@@ -3919,5 +3922,255 @@ const apigateway = {
   },
   model,
 } as const satisfies ServiceDefinition;
+
+const missingAuthToken = (): Response =>
+  new Response(JSON.stringify({ message: "Missing Authentication Token" }), {
+    status: 403,
+    headers: { "content-type": "application/json" },
+  });
+
+const matchResourcePath = (
+  pattern: string,
+  incoming: string,
+): Record<string, string> | undefined => {
+  const patternParts = pattern.split("/").filter(Boolean);
+  const incomingParts = incoming.split("/").filter(Boolean);
+
+  const params: Record<string, string> = {};
+
+  for (let i = 0; i < patternParts.length; i++) {
+    const seg = patternParts[i];
+    if (seg === undefined) return undefined;
+
+    if (seg.endsWith("+}") && seg.startsWith("{")) {
+      const name = seg.slice(1, -2);
+      params[name] = incomingParts.slice(i).join("/");
+      return params;
+    }
+
+    if (i >= incomingParts.length) return undefined;
+    const inc = incomingParts[i];
+    if (inc === undefined) return undefined;
+
+    if (seg.startsWith("{") && seg.endsWith("}")) {
+      params[seg.slice(1, -1)] = inc;
+    } else if (seg !== inc) {
+      return undefined;
+    }
+  }
+
+  if (incomingParts.length !== patternParts.length) return undefined;
+  return params;
+};
+
+const findResourceMatch = (
+  resources: { key: string; value: StoredResource }[],
+  resourcePath: string,
+): { resource: StoredResource; params: Record<string, string> } | undefined => {
+  let greedy:
+    | { resource: StoredResource; params: Record<string, string> }
+    | undefined;
+  for (const entry of resources) {
+    const pattern = entry.value.path;
+    const params = matchResourcePath(pattern, resourcePath);
+    if (params === undefined) continue;
+    const isGreedy = pattern.includes("{") && pattern.endsWith("+}");
+    if (isGreedy) {
+      greedy = { resource: entry.value, params };
+    } else {
+      return { resource: entry.value, params };
+    }
+  }
+  return greedy;
+};
+
+const dispatchMockIntegration = (
+  ctx: ServiceContext,
+  restApiId: string,
+  resourceId: string,
+  httpMethod: string,
+): Response => {
+  const responses = ctx.store
+    .list<StoredIntegrationResponse>()
+    .filter((e) =>
+      e.key.startsWith(
+        `integrationresponse/${restApiId}/${resourceId}/${httpMethod}/`,
+      ),
+    );
+
+  const defaultResponse =
+    responses.find((e) => e.value.statusCode === "200") ?? responses[0];
+
+  if (defaultResponse === undefined) {
+    return new Response("{}", {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const ir = defaultResponse.value;
+  const statusCode = Number(ir.statusCode) || 200;
+  const bodyTemplate = ir.responseTemplates?.["application/json"] ?? "{}";
+
+  return new Response(bodyTemplate, {
+    status: statusCode,
+    headers: { "content-type": "application/json" },
+  });
+};
+
+const lambdaArnFromUri = (uri: string): string | undefined => {
+  const match = uri.match(
+    /arn:aws:apigateway:[^:]+:lambda:path\/[^/]+\/functions\/([^/]+)\/invocations/,
+  );
+  return match?.[1];
+};
+
+const dispatchLambdaProxy = async (
+  req: Request,
+  url: URL,
+  bodyText: string,
+  stageName: string,
+  stage: StoredStage,
+  integration: StoredIntegration,
+  ctx: ServiceContext,
+): Promise<Response> => {
+  const functionArn = integration.uri
+    ? lambdaArnFromUri(integration.uri)
+    : undefined;
+  if (functionArn === undefined) return missingAuthToken();
+
+  const headers: Record<string, string> = {};
+  req.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+
+  const queryParams: Record<string, string> = {};
+  url.searchParams.forEach((value, key) => {
+    queryParams[key] = value;
+  });
+
+  const event = {
+    version: "1.0",
+    resource: url.pathname,
+    path: url.pathname,
+    httpMethod: req.method,
+    headers,
+    queryStringParameters:
+      Object.keys(queryParams).length > 0 ? queryParams : null,
+    pathParameters: null,
+    stageVariables: stage.variables ?? null,
+    requestContext: {
+      stage: stageName,
+      resourcePath: url.pathname,
+      httpMethod: req.method,
+    },
+    body: bodyText || null,
+    isBase64Encoded: false,
+  };
+
+  const result = await invokeTaskResource(ctx, functionArn, event);
+
+  if (!result.ok) {
+    return new Response(JSON.stringify({ message: "Internal server error" }), {
+      status: 502,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const lambdaResult = result.result as {
+    statusCode?: number;
+    headers?: Record<string, string>;
+    body?: string;
+    isBase64Encoded?: boolean;
+  };
+
+  const status = lambdaResult.statusCode ?? 200;
+  const responseBody = lambdaResult.body ?? "";
+  const responseHeaders = new Headers({
+    "content-type": "application/json",
+    ...((lambdaResult.headers as Record<string, string>) ?? {}),
+  });
+
+  return new Response(responseBody, { status, headers: responseHeaders });
+};
+
+export const handleExecuteApi = async (
+  req: Request,
+  url: URL,
+  store: StateStore,
+  account: string,
+  region: string,
+): Promise<Response | undefined> => {
+  const rawHost = req.headers.get("host") ?? url.hostname;
+  const hostname = rawHost.split(":")[0];
+  const hostParts = hostname.split(".");
+  if (hostParts[1] !== "execute-api") return undefined;
+
+  const restApiId = hostParts[0];
+  if (!restApiId) return undefined;
+
+  const ctx: ServiceContext = {
+    store: scopedStore(store, { account, region, service: "apigateway" }),
+    account,
+    region,
+    storeFor: (svc: string) =>
+      scopedStore(store, { account, region, service: svc }),
+  };
+
+  const pathParts = url.pathname.split("/").filter(Boolean);
+  if (pathParts.length === 0) return missingAuthToken();
+
+  const stageName = pathParts[0];
+  const resourcePath = "/" + pathParts.slice(1).join("/");
+
+  const api = ctx.store.get<StoredRestApi>(restApiKey(restApiId));
+  if (api === undefined) return missingAuthToken();
+
+  const stage = ctx.store.get<StoredStage>(stageKey(restApiId, stageName));
+  if (stage === undefined) return missingAuthToken();
+
+  const allResources = ctx.store
+    .list<StoredResource>()
+    .filter((e) => e.key.startsWith(`resource/${restApiId}/`));
+
+  const match = findResourceMatch(allResources, resourcePath);
+  if (match === undefined) return missingAuthToken();
+
+  const method = ctx.store.get<StoredMethod>(
+    methodKey(restApiId, match.resource.id, req.method),
+  );
+  if (method === undefined) return missingAuthToken();
+
+  const integration = ctx.store.get<StoredIntegration>(
+    integrationKey(restApiId, match.resource.id, req.method),
+  );
+  if (integration === undefined) return missingAuthToken();
+
+  const bodyBytes = new Uint8Array(await req.arrayBuffer());
+  const bodyText = new TextDecoder().decode(bodyBytes);
+
+  if (integration.type === "MOCK") {
+    return dispatchMockIntegration(
+      ctx,
+      restApiId,
+      match.resource.id,
+      req.method,
+    );
+  }
+
+  if (integration.type === "AWS_PROXY") {
+    return dispatchLambdaProxy(
+      req,
+      url,
+      bodyText,
+      stageName,
+      stage,
+      integration,
+      ctx,
+    );
+  }
+
+  return missingAuthToken();
+};
 
 export default apigateway;

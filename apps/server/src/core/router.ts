@@ -76,6 +76,7 @@ const serviceFromHost = (host: string | null): string | undefined => {
   const first = labels[0];
   if (first === undefined || first === "") return undefined;
   if (first === "localhost" || /^\d+$/.test(first)) return undefined;
+  if (labels[1] === "execute-api") return "execute-api";
   if (first === "s3" || first.startsWith("s3-")) return "s3";
   return first.toLowerCase();
 };
@@ -91,6 +92,7 @@ export const routeRequest = (req: Request, url: URL): RouteResult => {
   let service = credential?.service;
   if (service === undefined) service = serviceFromTarget(target);
   if (service === undefined) service = serviceFromHost(headers.get("host"));
+  if (service === undefined) service = serviceFromHost(url.hostname);
 
   return {
     service,

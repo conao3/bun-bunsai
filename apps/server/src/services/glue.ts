@@ -1186,6 +1186,29 @@ const GetPartition: OperationHandler = (input, ctx) => {
   return { Partition: partitionView(partition, catalogId) };
 };
 
+const parseExpressionFilter = (
+  expression: string,
+  partitionKeyNames: string[],
+): ((values: string[]) => boolean) => {
+  const keyIndex = new Map<string, number>();
+  for (let i = 0; i < partitionKeyNames.length; i++) {
+    keyIndex.set(partitionKeyNames[i], i);
+  }
+  const conditions = expression.split(/\s+AND\s+/i);
+  const predicates: ((values: string[]) => boolean)[] = [];
+  for (const condition of conditions) {
+    const match =
+      condition.trim().match(/^(\w+)\s*=\s*'([^']*)'$/) ??
+      condition.trim().match(/^(\w+)\s*=\s*"([^"]*)"$/);
+    if (!match) continue;
+    const [, key, value] = match;
+    const idx = keyIndex.get(key);
+    if (idx === undefined) continue;
+    predicates.push((values) => values[idx] === value);
+  }
+  return (values) => predicates.every((p) => p(values));
+};
+
 const GetPartitions: OperationHandler = (input, ctx) => {
   const databaseName =
     typeof input["DatabaseName"] === "string"
@@ -1195,17 +1218,31 @@ const GetPartitions: OperationHandler = (input, ctx) => {
     typeof input["TableName"] === "string"
       ? (input["TableName"] as string)
       : "";
-  requireTable(ctx, databaseName, tableName);
+  const table = requireTable(ctx, databaseName, tableName);
   const prefix = `${partitionPrefix}${databaseName}:${tableName}:`;
   const catalogId =
     typeof input["CatalogId"] === "string"
       ? (input["CatalogId"] as string)
       : ctx.account;
-  const list = ctx.store
+  const expression =
+    typeof input["Expression"] === "string"
+      ? (input["Expression"] as string)
+      : "";
+  let entries = ctx.store
     .list<StoredPartition>()
-    .filter((entry) => entry.key.startsWith(prefix))
-    .map((entry) => partitionView(entry.value, catalogId));
-  return { Partitions: list };
+    .filter((entry) => entry.key.startsWith(prefix));
+  if (expression !== "") {
+    const partitionKeyNames = Array.isArray(table.input["PartitionKeys"])
+      ? (table.input["PartitionKeys"] as Record<string, unknown>[]).map((k) =>
+          typeof k["Name"] === "string" ? (k["Name"] as string) : "",
+        )
+      : [];
+    const exprFilter = parseExpressionFilter(expression, partitionKeyNames);
+    entries = entries.filter((entry) => exprFilter(entry.value.values));
+  }
+  return {
+    Partitions: entries.map((entry) => partitionView(entry.value, catalogId)),
+  };
 };
 
 const DeletePartition: OperationHandler = (input, ctx) => {

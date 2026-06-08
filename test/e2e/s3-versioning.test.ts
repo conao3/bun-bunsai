@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
   CreateBucketCommand,
+  DeleteBucketLifecycleCommand,
   DeleteObjectCommand,
+  GetBucketLifecycleConfigurationCommand,
   GetObjectCommand,
   ListObjectVersionsCommand,
+  PutBucketLifecycleConfigurationCommand,
   PutBucketVersioningCommand,
   PutObjectCommand,
   S3Client,
@@ -114,5 +117,47 @@ describe("S3 versioning e2e", () => {
       restored.Body as ReadableStream,
     ).text();
     expect(restoredBody).toBe("version-2");
+  });
+
+  test("lifecycle configuration round-trip", async () => {
+    const client = s3();
+    const bucket = "bunsai-e2e-s3-lifecycle";
+
+    await client.send(new CreateBucketCommand({ Bucket: bucket }));
+
+    const rules = [
+      {
+        ID: "expire-old",
+        Status: "Enabled" as const,
+        Filter: { Prefix: "logs/" },
+        Expiration: { Days: 30 },
+      },
+    ];
+    await client.send(
+      new PutBucketLifecycleConfigurationCommand({
+        Bucket: bucket,
+        LifecycleConfiguration: { Rules: rules },
+      }),
+    );
+
+    const got = await client.send(
+      new GetBucketLifecycleConfigurationCommand({ Bucket: bucket }),
+    );
+    expect(got.Rules?.length).toBe(1);
+    expect(got.Rules![0].ID).toBe("expire-old");
+    expect(got.Rules![0].Status).toBe("Enabled");
+
+    await client.send(new DeleteBucketLifecycleCommand({ Bucket: bucket }));
+
+    try {
+      await client.send(
+        new GetBucketLifecycleConfigurationCommand({ Bucket: bucket }),
+      );
+      throw new Error("should have thrown");
+    } catch (err: unknown) {
+      expect((err as { name: string }).name).toBe(
+        "NoSuchLifecycleConfiguration",
+      );
+    }
   });
 });

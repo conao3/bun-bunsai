@@ -459,6 +459,7 @@ type TokenContext = {
   username: string;
   clientId: string;
   user?: StoredUser;
+  ctx?: ServiceContext;
 };
 
 const issueTokens = async (
@@ -472,8 +473,23 @@ const issueTokens = async (
     typeof extra["sub"] === "string"
       ? (extra["sub"] as string)
       : token.username;
+  const groupEntries = token.ctx?.store.list<StoredGroup>() ?? [];
+  const userGroups = groupEntries
+    .filter(
+      (e) =>
+        e.key.startsWith(`group#${token.poolId}#`) &&
+        Array.isArray(e.value.members) &&
+        (e.value.members as string[]).includes(token.username),
+    )
+    .sort(
+      (a, b) =>
+        (a.value.Precedence ?? Number.MAX_SAFE_INTEGER) -
+        (b.value.Precedence ?? Number.MAX_SAFE_INTEGER),
+    )
+    .map((e) => e.value.GroupName);
   const idClaims = {
     ...extra,
+    ...(userGroups.length > 0 ? { "cognito:groups": userGroups } : {}),
     sub,
     iss,
     aud: token.clientId,
@@ -496,6 +512,7 @@ const issueTokens = async (
     exp,
     version: 2,
     username: token.username,
+    ...(userGroups.length > 0 ? { "cognito:groups": userGroups } : {}),
     jti: crypto.randomUUID(),
   };
   const refreshClaims = {
@@ -2163,6 +2180,13 @@ const AdminInitiateAuth: OperationHandler = async (input, ctx) => {
         400,
       );
     }
+    if (user.UserStatus === "UNCONFIRMED") {
+      throw awsError(
+        "UserNotConfirmedException",
+        "User is not confirmed.",
+        400,
+      );
+    }
     const mfaSettings = user.mfaPreferences["SoftwareTokenMfaSettings"] as
       | Record<string, unknown>
       | undefined;
@@ -2186,6 +2210,7 @@ const AdminInitiateAuth: OperationHandler = async (input, ctx) => {
         username,
         clientId,
         user,
+        ctx,
       }),
     };
   }
@@ -2197,6 +2222,7 @@ const AdminInitiateAuth: OperationHandler = async (input, ctx) => {
       username,
       clientId,
       user: pool.users[username],
+      ctx,
     });
     const { RefreshToken: _rt, ...withoutRefresh } = tokens;
     return { AuthenticationResult: withoutRefresh };
@@ -2243,6 +2269,7 @@ const AdminRespondToAuthChallenge: OperationHandler = async (input, ctx) => {
         username,
         clientId,
         user: pool.users[username],
+        ctx,
       }),
     };
   }
@@ -2252,6 +2279,7 @@ const AdminRespondToAuthChallenge: OperationHandler = async (input, ctx) => {
       username,
       clientId,
       user: pool.users[username],
+      ctx,
     }),
   };
 };
@@ -2313,6 +2341,13 @@ const InitiateAuth: OperationHandler = async (input, ctx) => {
         400,
       );
     }
+    if (user.UserStatus === "UNCONFIRMED") {
+      throw awsError(
+        "UserNotConfirmedException",
+        "User is not confirmed.",
+        400,
+      );
+    }
     const mfaSettings = user.mfaPreferences["SoftwareTokenMfaSettings"] as
       | Record<string, unknown>
       | undefined;
@@ -2336,6 +2371,7 @@ const InitiateAuth: OperationHandler = async (input, ctx) => {
         username,
         clientId,
         user,
+        ctx,
       }),
     };
   }
@@ -2347,6 +2383,7 @@ const InitiateAuth: OperationHandler = async (input, ctx) => {
       username,
       clientId,
       user: pool.users[username],
+      ctx,
     });
     const { RefreshToken: _rt, ...withoutRefresh } = tokens;
     return { AuthenticationResult: withoutRefresh };
@@ -2451,6 +2488,7 @@ const RespondToAuthChallenge: OperationHandler = async (input, ctx) => {
         username: pending.username,
         clientId: pending.clientId,
         user: mfaPool?.users[pending.username],
+        ctx,
       }),
     };
   }
@@ -2501,6 +2539,7 @@ const RespondToAuthChallenge: OperationHandler = async (input, ctx) => {
           username,
           clientId,
           user: pool.users[username],
+          ctx,
         }),
       };
     }
@@ -2511,6 +2550,7 @@ const RespondToAuthChallenge: OperationHandler = async (input, ctx) => {
       username,
       clientId,
       user: pool?.users[username],
+      ctx,
     }),
   };
 };
@@ -2541,6 +2581,7 @@ const GetTokensFromRefreshToken: OperationHandler = async (input, ctx) => {
       username,
       clientId,
       user: pool?.users[username],
+      ctx,
     }),
   };
 };
@@ -2804,7 +2845,22 @@ const VerifyUserAttribute: OperationHandler = (_input, _ctx) => {
   return {};
 };
 
-const UpdateUserAttributes: OperationHandler = (_input, _ctx) => {
+const UpdateUserAttributes: OperationHandler = async (input, ctx) => {
+  const accessToken =
+    typeof input["AccessToken"] === "string" ? input["AccessToken"] : "";
+  const { pool, user, username } = await validateAccessToken(accessToken, ctx);
+  const newAttrs = toAttributes(input["UserAttributes"]);
+  for (const attr of newAttrs) {
+    const idx = user.Attributes.findIndex((a) => a.Name === attr.Name);
+    if (idx >= 0) {
+      user.Attributes[idx] = attr;
+    } else {
+      user.Attributes.push(attr);
+    }
+  }
+  user.UserLastModifiedDate = Math.floor(Date.now() / 1000);
+  pool.users[username] = user;
+  ctx.store.set(pool.Id, pool);
   return { CodeDeliveryDetailsList: [] };
 };
 
@@ -3233,8 +3289,64 @@ const GetUserPoolMfaConfig: OperationHandler = (input, ctx) => {
 const ListUsers: OperationHandler = (input, ctx) => {
   const poolId = requireString(input, "UserPoolId");
   const pool = requirePool(ctx, poolId);
+  const limit =
+    typeof input["Limit"] === "number" ? (input["Limit"] as number) : 60;
+  const paginationToken =
+    typeof input["PaginationToken"] === "string"
+      ? (input["PaginationToken"] as string)
+      : undefined;
+  const filterStr =
+    typeof input["Filter"] === "string"
+      ? (input["Filter"] as string)
+      : undefined;
+
+  let users = Object.values(pool.users);
+
+  if (filterStr !== undefined && filterStr !== "") {
+    const filterMatch = filterStr.match(/^(\S+)\s*(=|\^=|!=)\s*"([^"]*)"$/);
+    if (filterMatch !== null) {
+      const attrName = filterMatch[1] as string;
+      const operator = filterMatch[2] as string;
+      const value = filterMatch[3] as string;
+      users = users.filter((user) => {
+        let userValue: string | undefined;
+        if (attrName === "username") {
+          userValue = user.Username;
+        } else if (attrName === "cognito:user_status") {
+          userValue = user.UserStatus;
+        } else if (attrName === "status") {
+          userValue = user.Enabled ? "Enabled" : "Disabled";
+        } else {
+          userValue = user.Attributes.find((a) => a.Name === attrName)?.Value;
+        }
+        if (userValue === undefined) return false;
+        if (operator === "=") return userValue === value;
+        if (operator === "^=") return userValue.startsWith(value);
+        if (operator === "!=") return userValue !== value;
+        return true;
+      });
+    }
+  }
+
+  let startIdx = 0;
+  if (paginationToken !== undefined) {
+    const startUsername = Buffer.from(paginationToken, "base64").toString(
+      "utf8",
+    );
+    const found = users.findIndex((u) => u.Username === startUsername);
+    if (found >= 0) startIdx = found;
+  }
+
+  const pageUsers = users.slice(startIdx, startIdx + limit);
+  const nextUser = users[startIdx + limit];
+  const nextToken =
+    nextUser !== undefined
+      ? Buffer.from(nextUser.Username, "utf8").toString("base64")
+      : undefined;
+
   return {
-    Users: Object.values(pool.users).map((user) => userType(user)),
+    Users: pageUsers.map((user) => userType(user)),
+    ...(nextToken !== undefined ? { PaginationToken: nextToken } : {}),
   };
 };
 

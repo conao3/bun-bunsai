@@ -2265,6 +2265,8 @@ const addressView = (address: StoredAddress): unknown => ({
   Domain: address.Domain,
   PublicIpv4Pool: address.PublicIpv4Pool,
   NetworkBorderGroup: address.NetworkBorderGroup,
+  AssociationId: address.AssociationId,
+  InstanceId: address.InstanceId,
   Tags: address.Tags,
 });
 
@@ -13679,9 +13681,30 @@ const DescribeVpcEndpointServices: OperationHandler = (input, ctx) => {
 
 const DescribeVpcEndpoints: OperationHandler = (input, ctx) => {
   const ids = stringList(input["VpcEndpointIds"]);
-  const endpoints = allVpcEndpoints(ctx).filter((e) =>
-    ids.length === 0 ? true : ids.includes(e.VpcEndpointId),
-  );
+  const rawFilters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as unknown[])
+    : [];
+  const filterVals = (name: string): string[] =>
+    rawFilters
+      .filter(
+        (f): f is Record<string, unknown> =>
+          typeof f === "object" && f !== null,
+      )
+      .filter(
+        (f) =>
+          (typeof f["Name"] === "string" && f["Name"] === name) ||
+          (typeof f["name"] === "string" && f["name"] === name),
+      )
+      .flatMap((f) => {
+        const vals = f["Values"] ?? f["values"];
+        return Array.isArray(vals) ? (vals as string[]) : [];
+      });
+  const vpcIdFilter = filterVals("vpc-id");
+  const endpoints = allVpcEndpoints(ctx).filter((e) => {
+    if (ids.length > 0 && !ids.includes(e.VpcEndpointId)) return false;
+    if (vpcIdFilter.length > 0 && !vpcIdFilter.includes(e.VpcId)) return false;
+    return true;
+  });
   return {
     VpcEndpoints: endpoints.map((e) => ({
       VpcEndpointId: e.VpcEndpointId,

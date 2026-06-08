@@ -42,6 +42,7 @@ const testCasePrefix = "test-case:" as const;
 const trafficDistributionGroupPrefix = "traffic-distribution-group:" as const;
 const predefinedAttributePrefix = "predefined-attribute:" as const;
 const resourceTagsPrefix = "resource-tags:" as const;
+const instanceAttributePrefix = "instance-attribute:" as const;
 
 type StoredInstance = {
   Id: string;
@@ -126,6 +127,7 @@ type StoredEvaluationForm = {
   EvaluationFormId: string;
   EvaluationFormArn: string;
   InstanceId: string;
+  Title?: string;
 };
 
 type StoredContact = {
@@ -352,6 +354,10 @@ const trafficDistributionGroupKey = (id: string): string =>
 const predefinedAttributeKey = (instanceId: string, name: string): string =>
   `${predefinedAttributePrefix}${instanceId}:${name}`;
 const resourceTagsKey = (arn: string): string => `${resourceTagsPrefix}${arn}`;
+const instanceAttributeKey = (
+  instanceId: string,
+  attributeType: string,
+): string => `${instanceAttributePrefix}${instanceId}:${attributeType}`;
 
 const requireInstance = (ctx: ServiceContext, id: string): StoredInstance => {
   const stored = ctx.store.get<StoredInstance>(instanceKey(id));
@@ -1261,6 +1267,7 @@ const CreateEvaluationForm: OperationHandler = (input, ctx) => {
     EvaluationFormId: id,
     EvaluationFormArn: arn,
     InstanceId: instanceId,
+    Title: stringOrUndefined(input["Title"]),
   };
   ctx.store.set(evaluationFormKey(instanceId, id), stored);
   return { EvaluationFormId: id, EvaluationFormArn: arn };
@@ -1986,7 +1993,7 @@ const DescribeEvaluationForm: OperationHandler = (input, ctx) => {
       EvaluationFormVersion: 1,
       Locked: false,
       Status: "DRAFT",
-      Title: "default",
+      Title: stored.Title ?? "default",
       Items: [],
       CreatedTime: new Date().toISOString(),
       LastModifiedTime: new Date().toISOString(),
@@ -2304,10 +2311,13 @@ const DescribeInstanceAttribute: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
   const attributeType = requireString(input, "AttributeType");
+  const storedValue = ctx.store.get<string>(
+    instanceAttributeKey(instanceId, attributeType),
+  );
   return {
     Attribute: {
       AttributeType: attributeType,
-      Value: "true",
+      Value: storedValue ?? "true",
     },
   };
 };
@@ -2543,6 +2553,258 @@ const UpdateContactRoutingData: OperationHandler = (input, ctx) => {
 const UpdateContactSchedule: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  return {};
+};
+
+const TransferContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(contactKey(instanceId, contactId), {
+    ...stored,
+  });
+  return {
+    ContactId: contactId,
+    ContactArn: stored.ContactArn,
+  };
+};
+
+const UntagContact: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  const tagKeys = Array.isArray(input["TagKeys"])
+    ? (input["TagKeys"] as string[])
+    : [];
+  const existingTags = stored.Tags ?? {};
+  const updatedTags = Object.fromEntries(
+    Object.entries(existingTags).filter(([k]) => !tagKeys.includes(k)),
+  );
+  ctx.store.set(contactKey(instanceId, contactId), {
+    ...stored,
+    Tags: updatedTags,
+  });
+  return {};
+};
+
+const UntagResource: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "resourceArn");
+  const tagKeys = Array.isArray(input["tagKeys"])
+    ? (input["tagKeys"] as string[])
+    : [];
+  const existing =
+    ctx.store.get<Record<string, string>>(resourceTagsKey(arn)) ?? {};
+  const updated = Object.fromEntries(
+    Object.entries(existing).filter(([k]) => !tagKeys.includes(k)),
+  );
+  ctx.store.set(resourceTagsKey(arn), updated);
+  return {};
+};
+
+const UpdateDataTableAttribute: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
+  const attributeName = requireString(input, "AttributeName");
+  const stored = ctx.store.get<StoredDataTableAttribute>(
+    dataTableAttributeKey(instanceId, dataTableId, attributeName),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `DataTableAttribute ${attributeName} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(dataTableAttributeKey(instanceId, dataTableId, attributeName), {
+    ...stored,
+  });
+  return {};
+};
+
+const UpdateDataTableMetadata: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
+  const stored = ctx.store.get<StoredDataTable>(
+    dataTableKey(instanceId, dataTableId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `DataTable ${dataTableId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(dataTableKey(instanceId, dataTableId), { ...stored });
+  return {};
+};
+
+const UpdateDataTablePrimaryValues: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const dataTableId = requireString(input, "DataTableId");
+  const stored = ctx.store.get<StoredDataTable>(
+    dataTableKey(instanceId, dataTableId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `DataTable ${dataTableId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateEmailAddressMetadata: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const emailAddressId = requireString(input, "EmailAddressId");
+  const stored = ctx.store.get<StoredEmailAddress>(
+    emailAddressKey(instanceId, emailAddressId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `EmailAddress ${emailAddressId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(emailAddressKey(instanceId, emailAddressId), { ...stored });
+  return {
+    EmailAddressId: stored.EmailAddressId,
+    EmailAddressArn: stored.EmailAddressArn,
+  };
+};
+
+const UpdateEvaluationForm: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const evaluationFormId = requireString(input, "EvaluationFormId");
+  const stored = ctx.store.get<StoredEvaluationForm>(
+    evaluationFormKey(instanceId, evaluationFormId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `EvaluationForm ${evaluationFormId} not found.`,
+      404,
+    );
+  }
+  const title = stringOrUndefined(input["Title"]) ?? stored.Title;
+  ctx.store.set(evaluationFormKey(instanceId, evaluationFormId), {
+    ...stored,
+    Title: title,
+  });
+  return {
+    EvaluationFormId: stored.EvaluationFormId,
+    EvaluationFormArn: stored.EvaluationFormArn,
+    EvaluationFormVersion: 1,
+  };
+};
+
+const UpdateHoursOfOperation: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hoursOfOperationId = requireString(input, "HoursOfOperationId");
+  const stored = ctx.store.get<StoredHoursOfOperation>(
+    hoursOfOperationKey(instanceId, hoursOfOperationId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `HoursOfOperation ${hoursOfOperationId} not found.`,
+      404,
+    );
+  }
+  const name = stringOrUndefined(input["Name"]) ?? stored.Name;
+  ctx.store.set(hoursOfOperationKey(instanceId, hoursOfOperationId), {
+    ...stored,
+    Name: name,
+  });
+  return {};
+};
+
+const UpdateHoursOfOperationOverride: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const hoursOfOperationId = requireString(input, "HoursOfOperationId");
+  const hoursOfOperationOverrideId = requireString(
+    input,
+    "HoursOfOperationOverrideId",
+  );
+  const stored = ctx.store.get<StoredHoursOfOperationOverride>(
+    hoursOfOperationOverrideKey(
+      instanceId,
+      hoursOfOperationId,
+      hoursOfOperationOverrideId,
+    ),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `HoursOfOperationOverride ${hoursOfOperationOverrideId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(
+    hoursOfOperationOverrideKey(
+      instanceId,
+      hoursOfOperationId,
+      hoursOfOperationOverrideId,
+    ),
+    { ...stored },
+  );
+  return {};
+};
+
+const UpdateInstanceAttribute: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const attributeType = requireString(input, "AttributeType");
+  const value = requireString(input, "Value");
+  ctx.store.set(instanceAttributeKey(instanceId, attributeType), value);
+  return {};
+};
+
+const UpdateInstanceStorageConfig: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const associationId = requireString(input, "AssociationId");
+  const stored = ctx.store.get<StoredInstanceStorageConfig>(
+    instanceStorageConfigKey(instanceId, associationId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `InstanceStorageConfig ${associationId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(instanceStorageConfigKey(instanceId, associationId), {
+    ...stored,
+  });
   return {};
 };
 
@@ -4684,8 +4946,12 @@ const connect = {
             return "ListTaskTemplates";
           if (req.method === "GET" && parts[2] === "attribute")
             return "DescribeInstanceAttribute";
+          if (req.method === "POST" && parts[2] === "attribute")
+            return "UpdateInstanceAttribute";
           if (req.method === "GET" && parts[2] === "storage-config")
             return "DescribeInstanceStorageConfig";
+          if (req.method === "POST" && parts[2] === "storage-config")
+            return "UpdateInstanceStorageConfig";
           if (req.method === "DELETE" && parts[2] === "storage-config")
             return "DisassociateInstanceStorageConfig";
           if (req.method === "DELETE" && parts[2] === "security-key")
@@ -4741,6 +5007,8 @@ const connect = {
           return "DescribeEvaluationForm";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteEvaluationForm";
+        if (parts.length === 3 && req.method === "PUT")
+          return "UpdateEvaluationForm";
         if (
           parts.length === 4 &&
           parts[3] === "versions" &&
@@ -4800,6 +5068,8 @@ const connect = {
           return "DescribeEmailAddress";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteEmailAddress";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdateEmailAddressMetadata";
         if (
           parts.length === 4 &&
           parts[3] === "associate-alias" &&
@@ -4829,6 +5099,8 @@ const connect = {
           return "DescribeHoursOfOperation";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteHoursOfOperation";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdateHoursOfOperation";
         if (parts.length === 4 && parts[3] === "hours" && req.method === "GET")
           return "ListChildHoursOfOperations";
         if (
@@ -4867,6 +5139,12 @@ const connect = {
           req.method === "DELETE"
         )
           return "DeleteHoursOfOperationOverride";
+        if (
+          parts.length === 5 &&
+          parts[3] === "overrides" &&
+          req.method === "POST"
+        )
+          return "UpdateHoursOfOperationOverride";
         return undefined;
 
       case "phone-number":
@@ -5126,6 +5404,8 @@ const connect = {
           if (parts[1] === "suspend-recording" && req.method === "POST")
             return "SuspendContactRecording";
           if (parts[1] === "tags" && req.method === "POST") return "TagContact";
+          if (parts[1] === "transfer" && req.method === "POST")
+            return "TransferContact";
         }
         if (parts.length === 3 && parts[1] === "batch" && req.method === "PUT")
           return "BatchPutContact";
@@ -5159,6 +5439,12 @@ const connect = {
           req.method === "POST"
         )
           return "ListRealtimeContactAnalysisSegmentsV2";
+        if (
+          parts.length === 4 &&
+          parts[1] === "tags" &&
+          req.method === "DELETE"
+        )
+          return "UntagContact";
         return undefined;
 
       case "contact-flows":
@@ -5233,6 +5519,8 @@ const connect = {
           return "DescribeDataTable";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteDataTable";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdateDataTableMetadata";
         if (
           parts.length === 4 &&
           parts[3] === "attributes" &&
@@ -5259,6 +5547,12 @@ const connect = {
           return "DeleteDataTableAttribute";
         if (
           parts.length === 5 &&
+          parts[3] === "attributes" &&
+          req.method === "POST"
+        )
+          return "UpdateDataTableAttribute";
+        if (
+          parts.length === 5 &&
           parts[3] === "values" &&
           req.method === "POST"
         ) {
@@ -5269,6 +5563,8 @@ const connect = {
           if (parts[4] === "evaluate") return "EvaluateDataTableValues";
           if (parts[4] === "list-primary") return "ListDataTablePrimaryValues";
           if (parts[4] === "list") return "ListDataTableValues";
+          if (parts[4] === "update-primary")
+            return "UpdateDataTablePrimaryValues";
         }
         return undefined;
 
@@ -5607,6 +5903,8 @@ const connect = {
         if (parts.length === 2 && req.method === "GET")
           return "ListTagsForResource";
         if (parts.length === 2 && req.method === "POST") return "TagResource";
+        if (parts.length === 2 && req.method === "DELETE")
+          return "UntagResource";
         return undefined;
 
       case "test-case-executions":
@@ -6085,6 +6383,18 @@ const connect = {
     SuspendContactRecording,
     TagContact,
     TagResource,
+    TransferContact,
+    UntagContact,
+    UntagResource,
+    UpdateDataTableAttribute,
+    UpdateDataTableMetadata,
+    UpdateDataTablePrimaryValues,
+    UpdateEmailAddressMetadata,
+    UpdateEvaluationForm,
+    UpdateHoursOfOperation,
+    UpdateHoursOfOperationOverride,
+    UpdateInstanceAttribute,
+    UpdateInstanceStorageConfig,
   },
   model,
 } as const satisfies ServiceDefinition;

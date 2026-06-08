@@ -11899,6 +11899,102 @@ const allTrafficMirrorFilterRules = (
     .filter((entry) => entry.key.startsWith("tmfr/"))
     .map((entry) => entry.value);
 
+const allTrafficMirrorFilters = (
+  ctx: ServiceContext,
+): StoredTrafficMirrorFilter[] =>
+  ctx.store
+    .list<StoredTrafficMirrorFilter>()
+    .filter((entry) => entry.key.startsWith("tmf/"))
+    .map((entry) => entry.value);
+
+const allTrafficMirrorSessions = (
+  ctx: ServiceContext,
+): StoredTrafficMirrorSession[] =>
+  ctx.store
+    .list<StoredTrafficMirrorSession>()
+    .filter((entry) => entry.key.startsWith("tms/"))
+    .map((entry) => entry.value);
+
+const allTrafficMirrorTargets = (
+  ctx: ServiceContext,
+): StoredTrafficMirrorTarget[] =>
+  ctx.store
+    .list<StoredTrafficMirrorTarget>()
+    .filter((entry) => entry.key.startsWith("tmt/"))
+    .map((entry) => entry.value);
+
+const allTransitGatewayConnects = (
+  ctx: ServiceContext,
+): StoredTransitGatewayConnect[] =>
+  ctx.store
+    .list<StoredTransitGatewayConnect>()
+    .filter((entry) => entry.key.startsWith("tgw-connect/"))
+    .map((entry) => entry.value);
+
+const allTransitGatewayConnectPeers = (
+  ctx: ServiceContext,
+): StoredTransitGatewayConnectPeer[] =>
+  ctx.store
+    .list<StoredTransitGatewayConnectPeer>()
+    .filter((entry) => entry.key.startsWith("tgw-connect-peer/"))
+    .map((entry) => entry.value);
+
+const allTransitGatewayMeteringPolicies = (
+  ctx: ServiceContext,
+): StoredTransitGatewayMeteringPolicy[] =>
+  ctx.store
+    .list<StoredTransitGatewayMeteringPolicy>()
+    .filter((entry) => entry.key.startsWith("tgw-metering-policy/"))
+    .map((entry) => entry.value);
+
+const allTransitGatewayMulticastDomains = (
+  ctx: ServiceContext,
+): StoredTransitGatewayMulticastDomain[] =>
+  ctx.store
+    .list<StoredTransitGatewayMulticastDomain>()
+    .filter((entry) => entry.key.startsWith("tgw-mcast/"))
+    .map((entry) => entry.value);
+
+const allTransitGatewayPeeringAttachments = (
+  ctx: ServiceContext,
+): StoredTransitGatewayPeeringAttachment[] =>
+  ctx.store
+    .list<StoredTransitGatewayPeeringAttachment>()
+    .filter((entry) => entry.key.startsWith("tgw-peering/"))
+    .map((entry) => entry.value);
+
+const allTransitGatewayPolicyTables = (
+  ctx: ServiceContext,
+): StoredTransitGatewayPolicyTable[] =>
+  ctx.store
+    .list<StoredTransitGatewayPolicyTable>()
+    .filter((entry) => entry.key.startsWith("tgw-pt/"))
+    .map((entry) => entry.value);
+
+const allTransitGatewayRouteTableAnnouncements = (
+  ctx: ServiceContext,
+): StoredTransitGatewayRouteTableAnnouncement[] =>
+  ctx.store
+    .list<StoredTransitGatewayRouteTableAnnouncement>()
+    .filter((entry) => entry.key.startsWith("tgw-rtb-ann/"))
+    .map((entry) => entry.value);
+
+const allTransitGatewayRouteTables = (
+  ctx: ServiceContext,
+): StoredTransitGatewayRouteTable[] =>
+  ctx.store
+    .list<StoredTransitGatewayRouteTable>()
+    .filter((entry) => entry.key.startsWith("tgw-rtb/"))
+    .map((entry) => entry.value);
+
+const allTransitGatewayVpcAttachments = (
+  ctx: ServiceContext,
+): StoredTransitGatewayVpcAttachment[] =>
+  ctx.store
+    .list<StoredTransitGatewayVpcAttachment>()
+    .filter((entry) => entry.key.startsWith("tgw-vpc-attach/"))
+    .map((entry) => entry.value);
+
 const DescribeReservedInstancesOfferings: OperationHandler = (_input, _ctx) => {
   return {
     ReservedInstancesOfferings: [
@@ -12391,6 +12487,303 @@ const DescribeTrafficMirrorFilterRules: OperationHandler = (input, ctx) => {
   };
 };
 
+const DescribeTrafficMirrorFilters: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["TrafficMirrorFilterIds"]);
+  const filters = allTrafficMirrorFilters(ctx).filter((f) => {
+    if (ids.length > 0 && !ids.includes(f.TrafficMirrorFilterId)) return false;
+    return true;
+  });
+  return {
+    TrafficMirrorFilters: filters.map((f) => ({
+      TrafficMirrorFilterId: f.TrafficMirrorFilterId,
+      IngressFilterRules: f.IngressFilterRules,
+      EgressFilterRules: f.EgressFilterRules,
+      NetworkServices: f.NetworkServices,
+      Description: f.Description,
+      Tags: f.Tags,
+    })),
+  };
+};
+
+const DescribeTrafficMirrorSessions: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["TrafficMirrorSessionIds"]);
+  const sessions = allTrafficMirrorSessions(ctx).filter((s) => {
+    if (ids.length > 0 && !ids.includes(s.TrafficMirrorSessionId)) return false;
+    return true;
+  });
+  return {
+    TrafficMirrorSessions: sessions.map((s) => ({
+      TrafficMirrorSessionId: s.TrafficMirrorSessionId,
+      TrafficMirrorTargetId: s.TrafficMirrorTargetId,
+      TrafficMirrorFilterId: s.TrafficMirrorFilterId,
+      NetworkInterfaceId: s.NetworkInterfaceId,
+      OwnerId: s.OwnerId,
+      PacketLength: s.PacketLength,
+      SessionNumber: s.SessionNumber,
+      VirtualNetworkId: s.VirtualNetworkId,
+      Description: s.Description,
+      Tags: s.Tags,
+    })),
+  };
+};
+
+const DescribeTrafficMirrorTargets: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["TrafficMirrorTargetIds"]);
+  const targets = allTrafficMirrorTargets(ctx).filter((t) => {
+    if (ids.length > 0 && !ids.includes(t.TrafficMirrorTargetId)) return false;
+    return true;
+  });
+  return {
+    TrafficMirrorTargets: targets.map((t) => ({
+      TrafficMirrorTargetId: t.TrafficMirrorTargetId,
+      NetworkInterfaceId: t.NetworkInterfaceId,
+      NetworkLoadBalancerArn: t.NetworkLoadBalancerArn,
+      Type: t.Type,
+      Description: t.Description,
+      OwnerId: t.OwnerId,
+      GatewayLoadBalancerEndpointId: t.GatewayLoadBalancerEndpointId,
+      Tags: t.Tags,
+    })),
+  };
+};
+
+const DescribeTransitGatewayAttachments: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["TransitGatewayAttachmentIds"]);
+  type AttachmentItem = {
+    TransitGatewayAttachmentId: string;
+    TransitGatewayId: string;
+    TransitGatewayOwnerId: string;
+    ResourceOwnerId: string;
+    ResourceType: string;
+    ResourceId: string;
+    State: string;
+    Tags: Tag[];
+  };
+  const items: AttachmentItem[] = [];
+  for (const a of allTransitGatewayVpcAttachments(ctx)) {
+    items.push({
+      TransitGatewayAttachmentId: a.TransitGatewayAttachmentId,
+      TransitGatewayId: a.TransitGatewayId,
+      TransitGatewayOwnerId: ctx.account,
+      ResourceOwnerId: a.VpcOwnerId,
+      ResourceType: "vpc",
+      ResourceId: a.VpcId,
+      State: a.State,
+      Tags: a.Tags,
+    });
+  }
+  for (const c of allTransitGatewayConnects(ctx)) {
+    items.push({
+      TransitGatewayAttachmentId: c.TransitGatewayAttachmentId,
+      TransitGatewayId: c.TransitGatewayId,
+      TransitGatewayOwnerId: ctx.account,
+      ResourceOwnerId: ctx.account,
+      ResourceType: "connect",
+      ResourceId: c.TransportTransitGatewayAttachmentId,
+      State: c.State,
+      Tags: c.Tags,
+    });
+  }
+  for (const p of allTransitGatewayPeeringAttachments(ctx)) {
+    items.push({
+      TransitGatewayAttachmentId: p.TransitGatewayAttachmentId,
+      TransitGatewayId: p.RequesterTgwInfo.TransitGatewayId,
+      TransitGatewayOwnerId: p.RequesterTgwInfo.OwnerId,
+      ResourceOwnerId: p.AccepterTgwInfo.OwnerId,
+      ResourceType: "peering",
+      ResourceId: p.AccepterTgwInfo.TransitGatewayId,
+      State: p.State,
+      Tags: p.Tags,
+    });
+  }
+  const filtered = items.filter((a) => {
+    if (ids.length > 0 && !ids.includes(a.TransitGatewayAttachmentId))
+      return false;
+    return true;
+  });
+  return { TransitGatewayAttachments: filtered };
+};
+
+const DescribeTransitGatewayConnectPeers: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["TransitGatewayConnectPeerIds"]);
+  const peers = allTransitGatewayConnectPeers(ctx).filter((p) => {
+    if (ids.length > 0 && !ids.includes(p.TransitGatewayConnectPeerId))
+      return false;
+    return true;
+  });
+  return {
+    TransitGatewayConnectPeers: peers.map((p) => ({
+      TransitGatewayAttachmentId: p.TransitGatewayAttachmentId,
+      TransitGatewayConnectPeerId: p.TransitGatewayConnectPeerId,
+      State: p.State,
+      CreationTime: p.CreationTime,
+      ConnectPeerConfiguration: p.ConnectPeerConfiguration,
+      Tags: p.Tags,
+    })),
+  };
+};
+
+const DescribeTransitGatewayConnects: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["TransitGatewayConnectIds"]);
+  const connects = allTransitGatewayConnects(ctx).filter((c) => {
+    if (ids.length > 0 && !ids.includes(c.TransitGatewayAttachmentId))
+      return false;
+    return true;
+  });
+  return {
+    TransitGatewayConnects: connects.map((c) => ({
+      TransitGatewayAttachmentId: c.TransitGatewayAttachmentId,
+      TransportTransitGatewayAttachmentId:
+        c.TransportTransitGatewayAttachmentId,
+      TransitGatewayId: c.TransitGatewayId,
+      State: c.State,
+      CreationTime: c.CreationTime,
+      Options: c.Options,
+      Tags: c.Tags,
+    })),
+  };
+};
+
+const DescribeTransitGatewayMeteringPolicies: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["TransitGatewayMeteringPolicyIds"]);
+  const policies = allTransitGatewayMeteringPolicies(ctx).filter((p) => {
+    if (ids.length > 0 && !ids.includes(p.TransitGatewayMeteringPolicyId))
+      return false;
+    return true;
+  });
+  return {
+    TransitGatewayMeteringPolicies: policies.map((p) => ({
+      TransitGatewayMeteringPolicyId: p.TransitGatewayMeteringPolicyId,
+      TransitGatewayId: p.TransitGatewayId,
+      MiddleboxAttachmentIds: p.MiddleboxAttachmentIds,
+      State: p.State,
+      UpdateEffectiveAt: p.UpdateEffectiveAt,
+      Tags: p.Tags,
+    })),
+  };
+};
+
+const DescribeTransitGatewayMulticastDomains: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["TransitGatewayMulticastDomainIds"]);
+  const domains = allTransitGatewayMulticastDomains(ctx).filter((d) => {
+    if (ids.length > 0 && !ids.includes(d.TransitGatewayMulticastDomainId))
+      return false;
+    return true;
+  });
+  return {
+    TransitGatewayMulticastDomains: domains.map((d) => ({
+      TransitGatewayMulticastDomainId: d.TransitGatewayMulticastDomainId,
+      TransitGatewayId: d.TransitGatewayId,
+      TransitGatewayMulticastDomainArn: d.TransitGatewayMulticastDomainArn,
+      OwnerId: d.OwnerId,
+      Options: d.Options,
+      State: d.State,
+      CreationTime: d.CreationTime,
+      Tags: d.Tags,
+    })),
+  };
+};
+
+const DescribeTransitGatewayPeeringAttachments: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["TransitGatewayAttachmentIds"]);
+  const attachments = allTransitGatewayPeeringAttachments(ctx).filter((a) => {
+    if (ids.length > 0 && !ids.includes(a.TransitGatewayAttachmentId))
+      return false;
+    return true;
+  });
+  return {
+    TransitGatewayPeeringAttachments: attachments.map((a) => ({
+      TransitGatewayAttachmentId: a.TransitGatewayAttachmentId,
+      AccepterTransitGatewayAttachmentId: a.AccepterTransitGatewayAttachmentId,
+      RequesterTgwInfo: a.RequesterTgwInfo,
+      AccepterTgwInfo: a.AccepterTgwInfo,
+      Options: a.Options,
+      Status: a.Status,
+      State: a.State,
+      CreationTime: a.CreationTime,
+      Tags: a.Tags,
+    })),
+  };
+};
+
+const DescribeTransitGatewayPolicyTables: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["TransitGatewayPolicyTableIds"]);
+  const tables = allTransitGatewayPolicyTables(ctx).filter((t) => {
+    if (ids.length > 0 && !ids.includes(t.TransitGatewayPolicyTableId))
+      return false;
+    return true;
+  });
+  return {
+    TransitGatewayPolicyTables: tables.map((t) => ({
+      TransitGatewayPolicyTableId: t.TransitGatewayPolicyTableId,
+      TransitGatewayId: t.TransitGatewayId,
+      State: t.State,
+      CreationTime: t.CreationTime,
+      Tags: t.Tags,
+    })),
+  };
+};
+
+const DescribeTransitGatewayRouteTableAnnouncements: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["TransitGatewayRouteTableAnnouncementIds"]);
+  const announcements = allTransitGatewayRouteTableAnnouncements(ctx).filter(
+    (a) => {
+      if (
+        ids.length > 0 &&
+        !ids.includes(a.TransitGatewayRouteTableAnnouncementId)
+      )
+        return false;
+      return true;
+    },
+  );
+  return {
+    TransitGatewayRouteTableAnnouncements: announcements.map((a) => ({
+      TransitGatewayRouteTableAnnouncementId:
+        a.TransitGatewayRouteTableAnnouncementId,
+      TransitGatewayId: a.TransitGatewayId,
+      PeerTransitGatewayId: a.PeerTransitGatewayId,
+      PeeringAttachmentId: a.PeeringAttachmentId,
+      AnnouncementDirection: a.AnnouncementDirection,
+      TransitGatewayRouteTableId: a.TransitGatewayRouteTableId,
+      State: a.State,
+      CreationTime: a.CreationTime,
+      Tags: a.Tags,
+    })),
+  };
+};
+
+const DescribeTransitGatewayRouteTables: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["TransitGatewayRouteTableIds"]);
+  const tables = allTransitGatewayRouteTables(ctx).filter((t) => {
+    if (ids.length > 0 && !ids.includes(t.TransitGatewayRouteTableId))
+      return false;
+    return true;
+  });
+  return {
+    TransitGatewayRouteTables: tables.map((t) => ({
+      TransitGatewayRouteTableId: t.TransitGatewayRouteTableId,
+      TransitGatewayId: t.TransitGatewayId,
+      State: t.State,
+      DefaultAssociationRouteTable: t.DefaultAssociationRouteTable,
+      DefaultPropagationRouteTable: t.DefaultPropagationRouteTable,
+      CreationTime: t.CreationTime,
+      Tags: t.Tags,
+    })),
+  };
+};
+
 const DescribeNetworkInterfaceAttribute: OperationHandler = (input, ctx) => {
   const id =
     typeof input["NetworkInterfaceId"] === "string"
@@ -12846,6 +13239,18 @@ const ec2: ServiceDefinition = {
     DescribeStaleSecurityGroups,
     DescribeStoreImageTasks,
     DescribeTrafficMirrorFilterRules,
+    DescribeTrafficMirrorFilters,
+    DescribeTrafficMirrorSessions,
+    DescribeTrafficMirrorTargets,
+    DescribeTransitGatewayAttachments,
+    DescribeTransitGatewayConnectPeers,
+    DescribeTransitGatewayConnects,
+    DescribeTransitGatewayMeteringPolicies,
+    DescribeTransitGatewayMulticastDomains,
+    DescribeTransitGatewayPeeringAttachments,
+    DescribeTransitGatewayPolicyTables,
+    DescribeTransitGatewayRouteTableAnnouncements,
+    DescribeTransitGatewayRouteTables,
   },
   model,
 } as const;

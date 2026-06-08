@@ -14107,6 +14107,160 @@ const GetSerialConsoleAccessStatus: OperationHandler = (_input, ctx) => {
   return { SerialConsoleAccessEnabled: stored?.enabled ?? true };
 };
 
+const EnableFastLaunch: OperationHandler = (input, ctx) => {
+  const imageId = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(imageId));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${imageId}]' does not exist`,
+      400,
+    );
+  }
+  return {
+    ImageId: imageId,
+    OwnerId: image.OwnerId,
+    State: "enabling",
+    StateTransitionReason: "Client.UserInitiated",
+  };
+};
+
+const EnableFastSnapshotRestores: OperationHandler = (input, ctx) => {
+  const snapshotIds = stringList(input["SourceSnapshotIds"]);
+  const azs = stringList(input["AvailabilityZones"]);
+  const effectiveAzs = azs.length > 0 ? azs : [`${ctx.region}a`];
+  const successful = snapshotIds.flatMap((snapId) =>
+    effectiveAzs.map((az) => ({
+      SnapshotId: snapId,
+      AvailabilityZone: az,
+      State: "enabling",
+      StateTransitionReason: "Client.UserInitiated",
+      OwnerId: ctx.account,
+    })),
+  );
+  return { Successful: successful, Unsuccessful: [] };
+};
+
+const EnableImage: OperationHandler = (input, ctx) => {
+  const imageId = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(imageId));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${imageId}]' does not exist`,
+      400,
+    );
+  }
+  ctx.store.set(imageKey(imageId), { ...image, State: "available" });
+  return { Return: true };
+};
+
+const EnableImageBlockPublicAccess: OperationHandler = (input, ctx) => {
+  const state =
+    typeof input["ImageBlockPublicAccessState"] === "string"
+      ? input["ImageBlockPublicAccessState"]
+      : "block-new-sharing";
+  ctx.store.set(imageBlockPublicAccessKey(), { state });
+  return { ImageBlockPublicAccessState: state };
+};
+
+const GetImageBlockPublicAccessState: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<{ state: string }>(imageBlockPublicAccessKey());
+  return { ImageBlockPublicAccessState: stored?.state ?? "unblocked" };
+};
+
+const EnableImageDeprecation: OperationHandler = (input, ctx) => {
+  const imageId = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const deprecateAt =
+    typeof input["DeprecateAt"] === "string" ? input["DeprecateAt"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(imageId));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${imageId}]' does not exist`,
+      400,
+    );
+  }
+  ctx.store.set(imageKey(imageId), { ...image, DeprecationTime: deprecateAt });
+  return { Return: true };
+};
+
+const EnableImageDeregistrationProtection: OperationHandler = (input, ctx) => {
+  const imageId = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(imageId));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${imageId}]' does not exist`,
+      400,
+    );
+  }
+  return { Return: "successful" };
+};
+
+const EnableInstanceSqlHaStandbyDetections: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const instanceIds = stringList(input["InstanceIds"]);
+  return {
+    Instances: instanceIds.map((id) => ({ InstanceId: id })),
+  };
+};
+
+const EnableIpamOrganizationAdminAccount: OperationHandler = (_input, _ctx) => {
+  return { Success: true };
+};
+
+const EnableIpamPolicy: OperationHandler = (input, ctx) => {
+  const policyId =
+    typeof input["IpamPolicyId"] === "string" ? input["IpamPolicyId"] : "";
+  const policy = ctx.store.get<StoredIpamPolicy>(ipamPolicyKey(policyId));
+  if (policy === undefined) {
+    throw awsError(
+      "InvalidIpamPolicyId.NotFound",
+      `The IPAM policy ID '${policyId}' does not exist`,
+      400,
+    );
+  }
+  return { IpamPolicyId: policyId };
+};
+
+const EnableReachabilityAnalyzerOrganizationSharing: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { ReturnValue: true };
+};
+
+const EnableRouteServerPropagation: OperationHandler = (input, _ctx) => {
+  const routeServerId =
+    typeof input["RouteServerId"] === "string" ? input["RouteServerId"] : "";
+  const routeTableId =
+    typeof input["RouteTableId"] === "string" ? input["RouteTableId"] : "";
+  return {
+    RouteServerPropagation: {
+      RouteServerId: routeServerId,
+      RouteTableId: routeTableId,
+      State: "pending",
+    },
+  };
+};
+
+const EnableSnapshotBlockPublicAccess: OperationHandler = (input, ctx) => {
+  const state =
+    typeof input["State"] === "string" ? input["State"] : "block-new-sharing";
+  ctx.store.set(snapshotBlockPublicAccessKey(), { state });
+  return { State: state };
+};
+
+const GetSnapshotBlockPublicAccessState: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<{ state: string }>(
+    snapshotBlockPublicAccessKey(),
+  );
+  return { State: stored?.state ?? "unblocked" };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -14623,8 +14777,22 @@ const ec2: ServiceDefinition = {
     EnableCapacityManager,
     EnableEbsEncryptionByDefault,
     GetEbsEncryptionByDefault,
+    EnableFastLaunch,
+    EnableFastSnapshotRestores,
+    EnableImage,
+    EnableImageBlockPublicAccess,
+    GetImageBlockPublicAccessState,
+    EnableImageDeprecation,
+    EnableImageDeregistrationProtection,
+    EnableInstanceSqlHaStandbyDetections,
+    EnableIpamOrganizationAdminAccount,
+    EnableIpamPolicy,
+    EnableReachabilityAnalyzerOrganizationSharing,
+    EnableRouteServerPropagation,
     EnableSerialConsoleAccess,
     GetSerialConsoleAccessStatus,
+    EnableSnapshotBlockPublicAccess,
+    GetSnapshotBlockPublicAccessState,
   },
   model,
 } as const;

@@ -18570,6 +18570,110 @@ const RejectCapacityReservationBillingOwnership: OperationHandler = (
   return { Return: true };
 };
 
+const UpdateInterruptibleCapacityReservationAllocation: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const sourceId =
+    typeof input["CapacityReservationId"] === "string"
+      ? input["CapacityReservationId"]
+      : "";
+  const targetInstanceCount =
+    typeof input["TargetInstanceCount"] === "number"
+      ? input["TargetInstanceCount"]
+      : 1;
+  const source = ctx.store.get<StoredCapacityReservation>(
+    capacityReservationKey(sourceId),
+  );
+  if (source === undefined) {
+    throw awsError(
+      "InvalidCapacityReservationId.NotFound",
+      `The capacity reservation ID '${sourceId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    InterruptibleCapacityReservationId: hexId("cr"),
+    SourceCapacityReservationId: sourceId,
+    InstanceCount: targetInstanceCount,
+    TargetInstanceCount: targetInstanceCount,
+    Status: "active",
+    InterruptionType: "none",
+  };
+};
+
+const UpdateSecurityGroupRuleDescriptionsEgress: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const group = findSecurityGroup(ctx, input);
+  const ruleDescriptions = Array.isArray(input["SecurityGroupRuleDescriptions"])
+    ? (input["SecurityGroupRuleDescriptions"] as unknown[])
+    : [];
+  for (const item of ruleDescriptions) {
+    if (typeof item !== "object" || item === null) continue;
+    const desc = item as Record<string, unknown>;
+    const ruleId =
+      typeof desc["SecurityGroupRuleId"] === "string"
+        ? desc["SecurityGroupRuleId"]
+        : "";
+    const description =
+      typeof desc["Description"] === "string" ? desc["Description"] : "";
+    const rule = group.EgressRules.find(
+      (r) => r.SecurityGroupRuleId === ruleId,
+    );
+    if (rule !== undefined) rule.Description = description;
+  }
+  ctx.store.set(sgKey(group.GroupId), group);
+  return { Return: true };
+};
+
+const UpdateSecurityGroupRuleDescriptionsIngress: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const group = findSecurityGroup(ctx, input);
+  const ruleDescriptions = Array.isArray(input["SecurityGroupRuleDescriptions"])
+    ? (input["SecurityGroupRuleDescriptions"] as unknown[])
+    : [];
+  for (const item of ruleDescriptions) {
+    if (typeof item !== "object" || item === null) continue;
+    const desc = item as Record<string, unknown>;
+    const ruleId =
+      typeof desc["SecurityGroupRuleId"] === "string"
+        ? desc["SecurityGroupRuleId"]
+        : "";
+    const description =
+      typeof desc["Description"] === "string" ? desc["Description"] : "";
+    const rule = group.IngressRules.find(
+      (r) => r.SecurityGroupRuleId === ruleId,
+    );
+    if (rule !== undefined) rule.Description = description;
+  }
+  ctx.store.set(sgKey(group.GroupId), group);
+  return { Return: true };
+};
+
+const WithdrawByoipCidr: OperationHandler = (input, ctx) => {
+  const cidr = typeof input["Cidr"] === "string" ? input["Cidr"] : "";
+  const stored = ctx.store.get<{ Cidr: string; State: string }>(
+    byoipCidrKey(cidr),
+  );
+  if (stored === undefined) {
+    throw awsError("InvalidInput", `The CIDR '${cidr}' does not exist`, 400);
+  }
+  stored.State = "pending-withdrawal";
+  ctx.store.set(byoipCidrKey(cidr), stored);
+  return {
+    ByoipCidr: {
+      Cidr: stored.Cidr,
+      State: stored.State,
+      StatusMessage: "",
+      AsnAssociations: [],
+    },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -19287,6 +19391,10 @@ const ec2: ServiceDefinition = {
     RegisterTransitGatewayMulticastGroupMembers,
     RegisterTransitGatewayMulticastGroupSources,
     RejectCapacityReservationBillingOwnership,
+    UpdateInterruptibleCapacityReservationAllocation,
+    UpdateSecurityGroupRuleDescriptionsEgress,
+    UpdateSecurityGroupRuleDescriptionsIngress,
+    WithdrawByoipCidr,
   },
   model,
 } as const;

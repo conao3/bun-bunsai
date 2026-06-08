@@ -138,10 +138,7 @@ test("Secrets Manager RotateSecret and CancelRotateSecret", async () => {
   );
 
   const rotated = await client.send(
-    new RotateSecretCommand({
-      SecretId: name,
-      RotationLambdaARN: "arn:aws:lambda:us-east-1:123456789012:function:test",
-    }),
+    new RotateSecretCommand({ SecretId: name }),
   );
   expect(rotated.ARN).toBe(created.ARN);
   expect(rotated.Name).toBe(name);

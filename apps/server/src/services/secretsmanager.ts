@@ -1,4 +1,5 @@
 import { awsError } from "../core/framework.ts";
+import { invokeTaskResource } from "../core/events.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import secretsManagerModel from "../../../../test/vendor/aws-models/secretsmanager.json" with { type: "json" };
 import type {
@@ -38,6 +39,7 @@ type StoredSecret = {
   versions: Record<string, StoredVersion>;
   RotationEnabled: boolean;
   RotationLambdaARN: string | undefined;
+  LastRotatedDate: number | undefined;
   ResourcePolicy: string | undefined;
   ReplicationStatus: ReplicationStatusEntry[];
 } & { Type?: string };
@@ -135,6 +137,7 @@ const CreateSecret: OperationHandler = (input, ctx) => {
     versions: { [versionId]: version },
     RotationEnabled: false,
     RotationLambdaARN: undefined,
+    LastRotatedDate: undefined,
     ResourcePolicy: undefined,
     ReplicationStatus: [],
   };
@@ -235,7 +238,9 @@ const DescribeSecret: OperationHandler = (input, ctx) => {
     Name: secret.Name,
     Description: secret.Description,
     KmsKeyId: secret.KmsKeyId,
-    RotationEnabled: false,
+    RotationEnabled: secret.RotationEnabled,
+    RotationLambdaARN: secret.RotationLambdaARN,
+    LastRotatedDate: secret.LastRotatedDate,
     Tags: secret.Tags,
     VersionIdsToStages: versionIdsToStages,
     CreatedDate: secret.CreatedDate,
@@ -350,22 +355,75 @@ const UntagResource: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const RotateSecret: OperationHandler = (input, ctx) => {
+const RotateSecret: OperationHandler = async (input, ctx) => {
   const secret = requireSecret(ctx, secretIdFromInput(input));
   const lambdaArn = stringOrUndefined(input["RotationLambdaARN"]);
   if (lambdaArn !== undefined) secret.RotationLambdaARN = lambdaArn;
   secret.RotationEnabled = true;
-  ctx.store.set(secret.Name, secret);
-  return {
-    ARN: secret.ARN,
-    Name: secret.Name,
-    VersionId: secret.currentVersionId,
+
+  const newVersionId =
+    stringOrUndefined(input["ClientRequestToken"]) ?? crypto.randomUUID();
+  const currentVersion = secret.versions[secret.currentVersionId];
+
+  for (const v of Object.values(secret.versions))
+    v.VersionStages = v.VersionStages.filter((s) => s !== "AWSPENDING");
+
+  secret.versions[newVersionId] = {
+    VersionId: newVersionId,
+    SecretString: currentVersion?.SecretString,
+    SecretBinary: currentVersion?.SecretBinary,
+    VersionStages: ["AWSPENDING"],
+    CreatedDate: nowSeconds(),
   };
+  ctx.store.set(secret.Name, secret);
+
+  const effectiveLambdaArn = secret.RotationLambdaARN;
+  if (effectiveLambdaArn !== undefined) {
+    const steps = [
+      "createSecret",
+      "setSecret",
+      "testSecret",
+      "finishSecret",
+    ] as const;
+    for (const step of steps) {
+      const result = await invokeTaskResource(ctx, effectiveLambdaArn, {
+        Step: step,
+        SecretId: secret.ARN,
+        ClientRequestToken: newVersionId,
+      });
+      if (!result.ok) {
+        throw awsError(
+          "InternalServiceError",
+          `Rotation lambda failed at ${step}: ${result.cause}`,
+          500,
+        );
+      }
+    }
+  }
+
+  const oldVersionId = secret.currentVersionId;
+  promoteToCurrent(secret, oldVersionId, newVersionId);
+  const pendingVersion = secret.versions[newVersionId];
+  if (pendingVersion !== undefined) {
+    pendingVersion.VersionStages = pendingVersion.VersionStages.filter(
+      (s) => s !== "AWSPENDING",
+    );
+    if (!pendingVersion.VersionStages.includes("AWSCURRENT"))
+      pendingVersion.VersionStages.push("AWSCURRENT");
+  }
+  const now = nowSeconds();
+  secret.LastRotatedDate = now;
+  secret.LastChangedDate = now;
+  ctx.store.set(secret.Name, secret);
+
+  return { ARN: secret.ARN, Name: secret.Name, VersionId: newVersionId };
 };
 
 const CancelRotateSecret: OperationHandler = (input, ctx) => {
   const secret = requireSecret(ctx, secretIdFromInput(input));
   secret.RotationEnabled = false;
+  for (const v of Object.values(secret.versions))
+    v.VersionStages = v.VersionStages.filter((s) => s !== "AWSPENDING");
   ctx.store.set(secret.Name, secret);
   return {
     ARN: secret.ARN,

@@ -15843,6 +15843,277 @@ const ProvisionIpamPoolCidr: OperationHandler = (input, ctx) => {
   return { IpamPoolCidr: { Cidr: cidr, State: "provisioned" } };
 };
 
+const ReplaceRoute: OperationHandler = (input, ctx) => {
+  const routeTableId =
+    typeof input["RouteTableId"] === "string" ? input["RouteTableId"] : "";
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : undefined;
+  const destinationIpv6CidrBlock =
+    typeof input["DestinationIpv6CidrBlock"] === "string"
+      ? input["DestinationIpv6CidrBlock"]
+      : undefined;
+  const gatewayId =
+    typeof input["GatewayId"] === "string" ? input["GatewayId"] : undefined;
+  const transitGatewayId =
+    typeof input["TransitGatewayId"] === "string"
+      ? input["TransitGatewayId"]
+      : undefined;
+  const table = ctx.store.get<StoredRouteTable>(routeTableKey(routeTableId));
+  if (table === undefined) {
+    throw awsError(
+      "InvalidRouteTableID.NotFound",
+      `The route table '${routeTableId}' does not exist`,
+      400,
+    );
+  }
+  const dest = destinationCidrBlock ?? destinationIpv6CidrBlock ?? "";
+  const route = table.Routes.find((r) => r.DestinationCidrBlock === dest);
+  if (route === undefined) {
+    throw awsError(
+      "InvalidRoute.NotFound",
+      `The route with destination CIDR '${dest}' does not exist`,
+      400,
+    );
+  }
+  route.GatewayId = gatewayId ?? transitGatewayId ?? route.GatewayId;
+  ctx.store.set(routeTableKey(routeTableId), table);
+  return {};
+};
+
+const ReplaceRouteTableAssociation: OperationHandler = (input, ctx) => {
+  const associationId =
+    typeof input["AssociationId"] === "string" ? input["AssociationId"] : "";
+  const newRouteTableId =
+    typeof input["RouteTableId"] === "string" ? input["RouteTableId"] : "";
+  const newTable = ctx.store.get<StoredRouteTable>(
+    routeTableKey(newRouteTableId),
+  );
+  if (newTable === undefined) {
+    throw awsError(
+      "InvalidRouteTableID.NotFound",
+      `The route table '${newRouteTableId}' does not exist`,
+      400,
+    );
+  }
+  const tables = allRouteTables(ctx);
+  let found: StoredRouteTableAssociation | undefined;
+  for (const table of tables) {
+    const idx = table.Associations.findIndex(
+      (a) => a.RouteTableAssociationId === associationId,
+    );
+    if (idx !== -1) {
+      found = { ...table.Associations[idx] };
+      table.Associations.splice(idx, 1);
+      ctx.store.set(routeTableKey(table.RouteTableId), table);
+      break;
+    }
+  }
+  if (found === undefined) {
+    throw awsError(
+      "InvalidAssociationID.NotFound",
+      `The association ID '${associationId}' does not exist`,
+      400,
+    );
+  }
+  const newAssocId = hexId("rtbassoc");
+  const newAssoc: StoredRouteTableAssociation = {
+    RouteTableAssociationId: newAssocId,
+    RouteTableId: newRouteTableId,
+    SubnetId: found.SubnetId,
+    GatewayId: found.GatewayId,
+    Main: found.Main,
+    AssociationState: { State: "associated" },
+  };
+  newTable.Associations = [...(newTable.Associations ?? []), newAssoc];
+  ctx.store.set(routeTableKey(newRouteTableId), newTable);
+  return {
+    NewAssociationId: newAssocId,
+    AssociationState: { State: "associated" },
+  };
+};
+
+const ReplaceTransitGatewayRoute: OperationHandler = (input, ctx) => {
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "";
+  const routeTableId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : "";
+  const blackhole =
+    typeof input["Blackhole"] === "boolean" ? input["Blackhole"] : false;
+  const rtb = ctx.store.get<StoredTransitGatewayRouteTable>(
+    transitGatewayRouteTableKey(routeTableId),
+  );
+  if (rtb === undefined) {
+    throw awsError(
+      "InvalidTransitGatewayRouteTableId.NotFound",
+      `The transit gateway route table '${routeTableId}' does not exist`,
+      400,
+    );
+  }
+  const route: StoredTransitGatewayRoute = {
+    DestinationCidrBlock: destinationCidrBlock,
+    TransitGatewayRouteTableId: routeTableId,
+    TransitGatewayAttachmentId: attachmentId,
+    Blackhole: blackhole,
+    Type: blackhole ? "blackhole" : "static",
+    State: "active",
+  };
+  ctx.store.set(
+    transitGatewayRouteKey(routeTableId, destinationCidrBlock),
+    route,
+  );
+  return {
+    Route: {
+      DestinationCidrBlock: route.DestinationCidrBlock,
+      TransitGatewayAttachments: attachmentId
+        ? [{ TransitGatewayAttachmentId: attachmentId, ResourceType: "vpc" }]
+        : [],
+      Type: route.Type,
+      State: route.State,
+    },
+  };
+};
+
+const ReplaceVpnTunnel: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpnConnectionId"] === "string"
+      ? input["VpnConnectionId"]
+      : "";
+  const stored = ctx.store.get<StoredVpnConnection>(vpnConnectionKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpnConnectionID.NotFound",
+      `The vpn connection ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { Return: true };
+};
+
+const ReportInstanceStatus: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
+const ResetAddressAttribute: OperationHandler = (input, ctx) => {
+  const allocationId =
+    typeof input["AllocationId"] === "string" ? input["AllocationId"] : "";
+  const address = ctx.store.get<StoredAddress>(addressKey(allocationId));
+  if (address === undefined) {
+    throw awsError(
+      "InvalidAllocationID.NotFound",
+      `The allocation ID '${allocationId}' does not exist`,
+      400,
+    );
+  }
+  address.DomainName = undefined;
+  ctx.store.set(addressKey(allocationId), address);
+  return {
+    Address: {
+      AllocationId: address.AllocationId,
+      PublicIp: address.PublicIp,
+      PtrRecord: address.DomainName,
+    },
+  };
+};
+
+const ResetFpgaImageAttribute: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["FpgaImageId"] === "string" ? input["FpgaImageId"] : "";
+  const image = ctx.store.get<StoredFpgaImage>(fpgaImageKey(id));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidFpgaImageID.NotFound",
+      `The FPGA image ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { Return: true };
+};
+
+const ResetImageAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(id));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${id}]' does not exist`,
+      400,
+    );
+  }
+  return {};
+};
+
+const ResetInstanceAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return {};
+};
+
+const ResetNetworkInterfaceAttribute: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const ni = ctx.store.get<StoredNetworkInterface>(networkInterfaceKey(id));
+  if (ni === undefined) {
+    throw awsError(
+      "InvalidNetworkInterfaceID.NotFound",
+      `The network interface '${id}' does not exist`,
+      400,
+    );
+  }
+  ni.SourceDestCheck = true;
+  ctx.store.set(networkInterfaceKey(id), ni);
+  return {};
+};
+
+const ResetSnapshotAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["SnapshotId"] === "string" ? input["SnapshotId"] : "";
+  const snapshot = ctx.store.get<StoredSnapshot>(snapshotKey(id));
+  if (snapshot === undefined) {
+    throw awsError(
+      "InvalidSnapshot.NotFound",
+      `The snapshot '${id}' does not exist.`,
+      400,
+    );
+  }
+  snapshot.CreateVolumePermissions = [];
+  ctx.store.set(snapshotKey(id), snapshot);
+  return {};
+};
+
+const RestoreAddressToClassic: OperationHandler = (input, ctx) => {
+  const publicIp =
+    typeof input["PublicIp"] === "string" ? input["PublicIp"] : "";
+  const address = allAddresses(ctx).find((a) => a.PublicIp === publicIp);
+  if (address === undefined) {
+    throw awsError(
+      "InvalidIPAddress.InUse",
+      `The address '${publicIp}' does not exist`,
+      400,
+    );
+  }
+  address.Domain = "standard";
+  ctx.store.set(addressKey(address.AllocationId), address);
+  return { Status: "restoring", PublicIp: address.PublicIp };
+};
+
 const GetVpcResourcesBlockingEncryptionEnforcement: OperationHandler = (
   input,
   ctx,
@@ -19391,6 +19662,18 @@ const ec2: ServiceDefinition = {
     RegisterTransitGatewayMulticastGroupMembers,
     RegisterTransitGatewayMulticastGroupSources,
     RejectCapacityReservationBillingOwnership,
+    ReplaceRoute,
+    ReplaceRouteTableAssociation,
+    ReplaceTransitGatewayRoute,
+    ReplaceVpnTunnel,
+    ReportInstanceStatus,
+    ResetAddressAttribute,
+    ResetFpgaImageAttribute,
+    ResetImageAttribute,
+    ResetInstanceAttribute,
+    ResetNetworkInterfaceAttribute,
+    ResetSnapshotAttribute,
+    RestoreAddressToClassic,
     UpdateInterruptibleCapacityReservationAllocation,
     UpdateSecurityGroupRuleDescriptionsEgress,
     UpdateSecurityGroupRuleDescriptionsIngress,

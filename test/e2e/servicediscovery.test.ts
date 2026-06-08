@@ -454,6 +454,89 @@ test("ServiceDiscovery operation tracking", async () => {
   expect((listOps.Operations ?? []).map((o) => o.Id)).toContain(opId);
 });
 
+test("ServiceDiscovery fidelity round-trip", async () => {
+  const client = servicediscovery();
+  const nsName = "bunsai-fidelity.local";
+  const svcName = "bunsai-fidelity-svc";
+  const instId = "fidelity-inst-1";
+  const attrs = { AWS_INSTANCE_IPV4: "192.168.1.100", port: "8080" };
+
+  const createdNs = await client.send(
+    new CreatePrivateDnsNamespaceCommand({
+      Name: nsName,
+      Vpc: "vpc-fidelity",
+    }),
+  );
+  expect(typeof createdNs.OperationId).toBe("string");
+
+  const nsList = await client.send(new ListNamespacesCommand({}));
+  const nsEntry = (nsList.Namespaces ?? []).find((n) => n.Name === nsName);
+  expect(nsEntry?.Id).toBeDefined();
+  expect(nsEntry?.Type).toBe("DNS_PRIVATE");
+  const nsId = nsEntry?.Id ?? "";
+
+  const gotNs = await client.send(new GetNamespaceCommand({ Id: nsId }));
+  expect(gotNs.Namespace?.Name).toBe(nsName);
+
+  const createdSvc = await client.send(
+    new CreateServiceCommand({ Name: svcName, NamespaceId: nsId }),
+  );
+  expect(createdSvc.Service?.Id).toBeDefined();
+  const svcId = createdSvc.Service?.Id ?? "";
+
+  const svcList = await client.send(new ListServicesCommand({}));
+  expect((svcList.Services ?? []).map((s) => s.Name)).toContain(svcName);
+
+  const gotSvc = await client.send(new GetServiceCommand({ Id: svcId }));
+  expect(gotSvc.Service?.NamespaceId).toBe(nsId);
+
+  await client.send(
+    new RegisterInstanceCommand({
+      ServiceId: svcId,
+      InstanceId: instId,
+      Attributes: attrs,
+    }),
+  );
+
+  const discovered = await client.send(
+    new DiscoverInstancesCommand({
+      NamespaceName: nsName,
+      ServiceName: svcName,
+    }),
+  );
+  const foundInst = (discovered.Instances ?? []).find(
+    (i) => i.InstanceId === instId,
+  );
+  expect(foundInst).toBeDefined();
+  expect(
+    (foundInst?.Attributes as Record<string, string> | undefined)
+      ?.AWS_INSTANCE_IPV4,
+  ).toBe("192.168.1.100");
+
+  const gotInst = await client.send(
+    new GetInstanceCommand({ ServiceId: svcId, InstanceId: instId }),
+  );
+  expect(gotInst.Instance?.Id).toBe(instId);
+  expect(
+    (gotInst.Instance?.Attributes as Record<string, string> | undefined)
+      ?.AWS_INSTANCE_IPV4,
+  ).toBe("192.168.1.100");
+
+  await client.send(
+    new DeregisterInstanceCommand({ ServiceId: svcId, InstanceId: instId }),
+  );
+
+  const afterDereg = await client.send(
+    new DiscoverInstancesCommand({
+      NamespaceName: nsName,
+      ServiceName: svcName,
+    }),
+  );
+  expect((afterDereg.Instances ?? []).map((i) => i.InstanceId)).not.toContain(
+    instId,
+  );
+});
+
 test("ServiceDiscovery tag operations", async () => {
   const client = servicediscovery();
 

@@ -204,6 +204,9 @@ type StoredQuery = {
   status: string;
   createTime: number;
   logGroupName?: string;
+  logGroupNames?: string[];
+  startTime?: number;
+  endTime?: number;
   statistics?: Record<string, unknown>;
   results?: unknown[][];
 };
@@ -1952,13 +1955,26 @@ const DeleteQueryDefinition: OperationHandler = (input, ctx) => {
 
 const StartQuery: OperationHandler = (input, ctx) => {
   const queryString = requireString(input, "queryString");
+  const singleName = optionalString(input, "logGroupName");
+  const namesInput = input["logGroupNames"];
+  const groupNames: string[] = singleName
+    ? [singleName]
+    : Array.isArray(namesInput)
+      ? (namesInput as string[])
+      : [];
+  for (const name of groupNames) {
+    requireGroup(ctx, name);
+  }
   const queryId = crypto.randomUUID();
   const query: StoredQuery = {
     queryId,
     queryString,
-    status: "Complete",
+    status: "Running",
     createTime: Date.now(),
-    logGroupName: optionalString(input, "logGroupName"),
+    logGroupName: groupNames[0],
+    logGroupNames: groupNames,
+    startTime: optionalNumber(input, "startTime"),
+    endTime: optionalNumber(input, "endTime"),
     statistics: { recordsMatched: 0, recordsScanned: 0, bytesScanned: 0 },
     results: [],
   };
@@ -1979,13 +1995,46 @@ const StopQuery: OperationHandler = (input, ctx) => {
 
 const GetQueryResults: OperationHandler = (input, ctx) => {
   const queryId = requireString(input, "queryId");
-  const query = ctx.store.get<StoredQuery>(`${queryPrefix}${queryId}`);
+  const key = `${queryPrefix}${queryId}`;
+  const query = ctx.store.get<StoredQuery>(key);
   if (query === undefined) {
     throw awsError(
       "ResourceNotFoundException",
       "The specified query does not exist.",
       400,
     );
+  }
+  if (query.status === "Running") {
+    const startMs =
+      query.startTime !== undefined ? query.startTime * 1000 : undefined;
+    const endMs =
+      query.endTime !== undefined ? query.endTime * 1000 : undefined;
+    const groupNames = query.logGroupNames ?? [];
+    const results: { field: string; value: string }[][] = [];
+    let scanned = 0;
+    for (const groupName of groupNames) {
+      const group = ctx.store.get<StoredGroup>(groupName);
+      if (group === undefined) continue;
+      for (const stream of Object.values(group.streams)) {
+        for (const event of stream.events) {
+          scanned++;
+          if (startMs !== undefined && event.timestamp < startMs) continue;
+          if (endMs !== undefined && event.timestamp > endMs) continue;
+          results.push([
+            { field: "@timestamp", value: String(event.timestamp) },
+            { field: "@message", value: event.message },
+          ]);
+        }
+      }
+    }
+    query.results = results;
+    query.statistics = {
+      recordsMatched: results.length,
+      recordsScanned: scanned,
+      bytesScanned: 0,
+    };
+    query.status = "Complete";
+    ctx.store.set(key, query);
   }
   return {
     results: query.results ?? [],

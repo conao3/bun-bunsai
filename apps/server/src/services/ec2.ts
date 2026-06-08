@@ -1446,6 +1446,28 @@ const allIamProfileAssociations = (
     .filter((entry) => entry.key.startsWith("iam-profile-assoc/"))
     .map((entry) => entry.value);
 
+const allImages = (ctx: ServiceContext): StoredImage[] =>
+  ctx.store
+    .list<StoredImage>()
+    .filter((entry) => entry.key.startsWith("ami/"))
+    .map((entry) => entry.value);
+
+const allInstanceConnectEndpoints = (
+  ctx: ServiceContext,
+): StoredInstanceConnectEndpoint[] =>
+  ctx.store
+    .list<StoredInstanceConnectEndpoint>()
+    .filter((entry) => entry.key.startsWith("ice/"))
+    .map((entry) => entry.value);
+
+const allInstanceEventWindows = (
+  ctx: ServiceContext,
+): StoredInstanceEventWindow[] =>
+  ctx.store
+    .list<StoredInstanceEventWindow>()
+    .filter((entry) => entry.key.startsWith("iew/"))
+    .map((entry) => entry.value);
+
 const integerOf = (value: unknown): number | undefined => {
   if (typeof value === "number") return value;
   if (typeof value === "string" && value !== "") {
@@ -10490,6 +10512,157 @@ const DescribeImageReferences: OperationHandler = (_input, _ctx) => {
   return { ImageReferences: [] };
 };
 
+const DescribeImageUsageReportEntries: OperationHandler = (_input, _ctx) => {
+  return { ImageUsageReportEntries: [] };
+};
+
+const DescribeImageUsageReports: OperationHandler = (_input, _ctx) => {
+  return { ImageUsageReports: [] };
+};
+
+const DescribeImages: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["ImageIds"]);
+  const images = allImages(ctx).filter((image) =>
+    ids.length === 0 ? true : ids.includes(image.ImageId),
+  );
+  return {
+    Images: images.map((image) => ({
+      ImageId: image.ImageId,
+      Name: image.Name,
+      Description: image.Description,
+      State: image.State,
+      OwnerId: image.OwnerId,
+      CreationDate: image.CreationDate,
+      Tags: image.Tags,
+    })),
+  };
+};
+
+const DescribeImportImageTasks: OperationHandler = (_input, _ctx) => {
+  return { ImportImageTasks: [] };
+};
+
+const DescribeImportSnapshotTasks: OperationHandler = (_input, _ctx) => {
+  return { ImportSnapshotTasks: [] };
+};
+
+const DescribeInstanceAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const attribute =
+    typeof input["Attribute"] === "string" ? input["Attribute"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return {
+    InstanceId: instance.InstanceId,
+    InstanceType:
+      attribute === "instanceType"
+        ? { Value: instance.InstanceType }
+        : undefined,
+    UserData: attribute === "userData" ? { Value: "" } : undefined,
+    DisableApiTermination:
+      attribute === "disableApiTermination" ? { Value: false } : undefined,
+    InstanceInitiatedShutdownBehavior:
+      attribute === "instanceInitiatedShutdownBehavior"
+        ? { Value: "stop" }
+        : undefined,
+    EbsOptimized: attribute === "ebsOptimized" ? { Value: false } : undefined,
+    EnaSupport: attribute === "enaSupport" ? { Value: true } : undefined,
+    SriovNetSupport:
+      attribute === "sriovNetSupport" ? { Value: "simple" } : undefined,
+    SourceDestCheck:
+      attribute === "sourceDestCheck" ? { Value: true } : undefined,
+    BlockDeviceMappings: attribute === "blockDeviceMapping" ? [] : undefined,
+    ProductCodes: attribute === "productCodes" ? [] : undefined,
+    Groups: attribute === "groupSet" ? [] : undefined,
+  };
+};
+
+const DescribeInstanceConnectEndpoints: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["InstanceConnectEndpointIds"]);
+  const endpoints = allInstanceConnectEndpoints(ctx).filter((ep) =>
+    ids.length === 0 ? true : ids.includes(ep.InstanceConnectEndpointId),
+  );
+  return {
+    InstanceConnectEndpoints: endpoints.map((ep) => ({
+      InstanceConnectEndpointId: ep.InstanceConnectEndpointId,
+      InstanceConnectEndpointArn: ep.InstanceConnectEndpointArn,
+      OwnerId: ep.OwnerId,
+      State: ep.State,
+      SubnetId: ep.SubnetId,
+      VpcId: ep.VpcId,
+      PreserveClientIp: ep.PreserveClientIp,
+      SecurityGroupIds: ep.SecurityGroupIds,
+      CreatedAt: ep.CreatedAt,
+      Tags: ep.Tags,
+    })),
+  };
+};
+
+const DescribeInstanceCreditSpecifications: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["InstanceIds"]);
+  const instances = allInstances(ctx).filter((instance) =>
+    ids.length === 0 ? true : ids.includes(instance.InstanceId),
+  );
+  return {
+    InstanceCreditSpecifications: instances.map((instance) => ({
+      InstanceId: instance.InstanceId,
+      CpuCredits: "standard",
+    })),
+  };
+};
+
+const DescribeInstanceEventNotificationAttributes: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { InstanceTagAttribute: undefined };
+};
+
+const DescribeInstanceEventWindows: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["InstanceEventWindowIds"]);
+  const windows = allInstanceEventWindows(ctx).filter((w) =>
+    ids.length === 0 ? true : ids.includes(w.InstanceEventWindowId),
+  );
+  return {
+    InstanceEventWindows: windows.map((w) => ({
+      InstanceEventWindowId: w.InstanceEventWindowId,
+      Name: w.Name,
+      CronExpression: w.CronExpression,
+      TimeRanges: w.TimeRanges,
+      State: w.State,
+      Tags: w.Tags,
+    })),
+  };
+};
+
+const DescribeInstanceImageMetadata: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["InstanceIds"]);
+  const instances = allInstances(ctx).filter((instance) =>
+    ids.length === 0 ? true : ids.includes(instance.InstanceId),
+  );
+  return {
+    InstanceImageMetadata: instances.map((instance) => ({
+      InstanceId: instance.InstanceId,
+      InstanceType: instance.InstanceType,
+      LaunchTime: undefined,
+      AvailabilityZone: "us-east-1a",
+      State: instance.State,
+      ImageMetadata: { ImageId: instance.ImageId },
+      Tags: instance.Tags,
+    })),
+  };
+};
+
+const DescribeInstanceSqlHaHistoryStates: OperationHandler = (_input, _ctx) => {
+  return { Instances: [] };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -10835,6 +11008,18 @@ const ec2: ServiceDefinition = {
     DescribeIdentityIdFormat,
     DescribeImageAttribute,
     DescribeImageReferences,
+    DescribeImageUsageReportEntries,
+    DescribeImageUsageReports,
+    DescribeImages,
+    DescribeImportImageTasks,
+    DescribeImportSnapshotTasks,
+    DescribeInstanceAttribute,
+    DescribeInstanceConnectEndpoints,
+    DescribeInstanceCreditSpecifications,
+    DescribeInstanceEventNotificationAttributes,
+    DescribeInstanceEventWindows,
+    DescribeInstanceImageMetadata,
+    DescribeInstanceSqlHaHistoryStates,
   },
   model,
 } as const;

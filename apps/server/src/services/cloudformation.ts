@@ -289,6 +289,9 @@ const getAtt = (
     if (attribute === "WebsiteURL")
       return `http://${physicalId}.s3-website-${ctx.region}.amazonaws.com`;
   }
+  if (resourceType === "AWS::Lambda::Function") {
+    if (attribute === "Arn") return physicalId;
+  }
   return physicalId;
 };
 
@@ -342,6 +345,15 @@ const resolveValue = (
       }
       return expr;
     });
+  }
+  if ("Fn::ImportValue" in obj) {
+    const exportName = String(obj["Fn::ImportValue"]);
+    for (const stack of listStacks(ctx)) {
+      for (const output of stack.StackOutputs ?? []) {
+        if (output.ExportName === exportName) return output.OutputValue;
+      }
+    }
+    return exportName;
   }
   return "";
 };
@@ -490,6 +502,63 @@ const provisionS3Bucket = (
   return name;
 };
 
+const provisionLambdaFunction = (
+  ctx: ServiceContext,
+  stackName: string,
+  logicalId: string,
+  props: Record<string, unknown>,
+): string => {
+  const name = physicalNameOf(stackName, logicalId, props, "FunctionName");
+  const arn = `arn:aws:lambda:${ctx.region}:${ctx.account}:function:${name}`;
+  const lambda = ctx.storeFor("lambda");
+  if (lambda.get(name) !== undefined) return arn;
+  lambda.set(name, {
+    FunctionName: name,
+    FunctionArn: arn,
+    Runtime:
+      typeof props["Runtime"] === "string" ? props["Runtime"] : "nodejs18.x",
+    Role: typeof props["Role"] === "string" ? props["Role"] : "",
+    Handler:
+      typeof props["Handler"] === "string" ? props["Handler"] : "index.handler",
+    Description:
+      typeof props["Description"] === "string"
+        ? props["Description"]
+        : undefined,
+    Timeout: typeof props["Timeout"] === "number" ? props["Timeout"] : 3,
+    MemorySize:
+      typeof props["MemorySize"] === "number" ? props["MemorySize"] : 128,
+    PackageType: "Zip",
+    CodeSize: 0,
+    CodeSha256: "",
+    Version: "$LATEST",
+    RevisionId: crypto.randomUUID(),
+    LastModified: new Date().toISOString(),
+    State: "Active",
+  });
+  return arn;
+};
+
+const provisionSsmParameter = (
+  ctx: ServiceContext,
+  stackName: string,
+  logicalId: string,
+  props: Record<string, unknown>,
+): string => {
+  const name = physicalNameOf(stackName, logicalId, props, "Name");
+  const ssm = ctx.storeFor("ssm");
+  if (ssm.get(name) !== undefined) return name;
+  const prefix = name.startsWith("/") ? "" : "/";
+  ssm.set(name, {
+    Name: name,
+    Type: typeof props["Type"] === "string" ? props["Type"] : "String",
+    Value: typeof props["Value"] === "string" ? props["Value"] : "",
+    Version: 1,
+    LastModifiedDate: new Date().toISOString(),
+    ARN: `arn:aws:ssm:${ctx.region}:${ctx.account}:parameter${prefix}${name}`,
+  });
+  return name;
+};
+
 const provisionResource = (
   ctx: ServiceContext,
   stackName: string,
@@ -505,6 +574,10 @@ const provisionResource = (
     return provisionSnsTopic(ctx, stackName, logicalId, props);
   if (resourceType === "AWS::S3::Bucket")
     return provisionS3Bucket(ctx, stackName, logicalId, props);
+  if (resourceType === "AWS::Lambda::Function")
+    return provisionLambdaFunction(ctx, stackName, logicalId, props);
+  if (resourceType === "AWS::SSM::Parameter")
+    return provisionSsmParameter(ctx, stackName, logicalId, props);
   return `${stackName}-${logicalId}`;
 };
 
@@ -531,6 +604,22 @@ const deprovisionS3Bucket = (ctx: ServiceContext, physicalId: string): void => {
   ctx.storeFor("s3").delete(physicalId);
 };
 
+const deprovisionLambdaFunction = (
+  ctx: ServiceContext,
+  physicalId: string,
+): void => {
+  const parts = physicalId.split(":");
+  const name = parts[parts.length - 1] ?? physicalId;
+  ctx.storeFor("lambda").delete(name);
+};
+
+const deprovisionSsmParameter = (
+  ctx: ServiceContext,
+  physicalId: string,
+): void => {
+  ctx.storeFor("ssm").delete(physicalId);
+};
+
 const deprovisionResource = (
   ctx: ServiceContext,
   resourceType: string,
@@ -550,6 +639,14 @@ const deprovisionResource = (
   }
   if (resourceType === "AWS::S3::Bucket") {
     deprovisionS3Bucket(ctx, physicalId);
+    return;
+  }
+  if (resourceType === "AWS::Lambda::Function") {
+    deprovisionLambdaFunction(ctx, physicalId);
+    return;
+  }
+  if (resourceType === "AWS::SSM::Parameter") {
+    deprovisionSsmParameter(ctx, physicalId);
   }
 };
 
@@ -1192,7 +1289,38 @@ const ExecuteChangeSet: OperationHandler = (input, ctx) => {
     ctx.store.set(cs.StackName, newStack);
   } else {
     const csBody = cs.TemplateBody || stack.TemplateBody;
-    const csResources = stack.StackResources ?? [];
+    const oldResources = stack.StackResources ?? [];
+    const newResourceDefs = resourcesOf(csBody);
+    for (const oldRes of oldResources) {
+      if (
+        !newResourceDefs.some(
+          (r) => r.LogicalResourceId === oldRes.LogicalResourceId,
+        )
+      ) {
+        deprovisionResource(
+          ctx,
+          oldRes.ResourceType,
+          oldRes.PhysicalResourceId,
+        );
+      }
+    }
+    const csResources: StackResource[] = newResourceDefs.map((resource) => {
+      const existing = oldResources.find(
+        (r) => r.LogicalResourceId === resource.LogicalResourceId,
+      );
+      if (existing !== undefined) return existing;
+      return {
+        LogicalResourceId: resource.LogicalResourceId,
+        ResourceType: resource.ResourceType,
+        PhysicalResourceId: provisionResource(
+          ctx,
+          cs.StackName,
+          resource.LogicalResourceId,
+          resource.ResourceType,
+          resource.Properties,
+        ),
+      };
+    });
     const updated: StoredStack = {
       ...stack,
       TemplateBody: csBody,
@@ -1202,6 +1330,7 @@ const ExecuteChangeSet: OperationHandler = (input, ctx) => {
       Tags: cs.Tags.length > 0 ? cs.Tags : stack.Tags,
       StackStatus: "UPDATE_COMPLETE",
       LastUpdatedTime: now,
+      StackResources: csResources,
       StackOutputs: resolveOutputs(ctx, csBody, csResources),
     };
     ctx.store.set(stack.StackName, updated);
@@ -1229,12 +1358,33 @@ const DescribeStackEvents: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const base = { StackId: stack.StackId, StackName: stack.StackName };
+  const resourceEvents = (stack.StackResources ?? []).flatMap((resource) => [
+    {
+      ...base,
+      EventId: crypto.randomUUID(),
+      Timestamp: stack.CreationTime,
+      ResourceStatus: "CREATE_IN_PROGRESS",
+      ResourceType: resource.ResourceType,
+      LogicalResourceId: resource.LogicalResourceId,
+      PhysicalResourceId: resource.PhysicalResourceId,
+    },
+    {
+      ...base,
+      EventId: crypto.randomUUID(),
+      Timestamp: stack.CreationTime,
+      ResourceStatus: "CREATE_COMPLETE",
+      ResourceType: resource.ResourceType,
+      LogicalResourceId: resource.LogicalResourceId,
+      PhysicalResourceId: resource.PhysicalResourceId,
+    },
+  ]);
   return {
     StackEvents: [
+      ...resourceEvents,
       {
-        StackId: stack.StackId,
+        ...base,
         EventId: crypto.randomUUID(),
-        StackName: stack.StackName,
         Timestamp: stack.CreationTime,
         ResourceStatus: stack.StackStatus,
         ResourceType: "AWS::CloudFormation::Stack",
@@ -1259,10 +1409,10 @@ const DescribeStackResource: OperationHandler = (input, ctx) => {
   }
   const logicalId = String(input["LogicalResourceId"] ?? "");
   const timestamp = stack.LastUpdatedTime ?? stack.CreationTime;
-  const resource = resourcesOf(stack.TemplateBody).find(
+  const stored = (stack.StackResources ?? []).find(
     (r) => r.LogicalResourceId === logicalId,
   );
-  if (resource === undefined) {
+  if (stored === undefined) {
     throw awsError(
       "ValidationError",
       `Resource ${logicalId} does not exist for stack ${name}`,
@@ -1273,9 +1423,9 @@ const DescribeStackResource: OperationHandler = (input, ctx) => {
     StackResourceDetail: {
       StackName: stack.StackName,
       StackId: stack.StackId,
-      LogicalResourceId: resource.LogicalResourceId,
-      PhysicalResourceId: `${stack.StackName}-${resource.LogicalResourceId}`,
-      ResourceType: resource.ResourceType,
+      LogicalResourceId: stored.LogicalResourceId,
+      PhysicalResourceId: stored.PhysicalResourceId,
+      ResourceType: stored.ResourceType,
       LastUpdatedTimestamp: timestamp,
       ResourceStatus: "CREATE_COMPLETE",
       DriftInformation: { StackResourceDriftStatus: "NOT_CHECKED" },
@@ -1320,10 +1470,10 @@ const DetectStackResourceDrift: OperationHandler = (input, ctx) => {
     );
   }
   const logicalId = String(input["LogicalResourceId"] ?? "");
-  const resource = resourcesOf(stack.TemplateBody).find(
+  const stored = (stack.StackResources ?? []).find(
     (r) => r.LogicalResourceId === logicalId,
   );
-  if (resource === undefined) {
+  if (stored === undefined) {
     throw awsError(
       "ValidationError",
       `Resource ${logicalId} does not exist for stack ${name}`,
@@ -1333,9 +1483,9 @@ const DetectStackResourceDrift: OperationHandler = (input, ctx) => {
   return {
     StackResourceDrift: {
       StackId: stack.StackId,
-      LogicalResourceId: resource.LogicalResourceId,
-      PhysicalResourceId: `${stack.StackName}-${resource.LogicalResourceId}`,
-      ResourceType: resource.ResourceType,
+      LogicalResourceId: stored.LogicalResourceId,
+      PhysicalResourceId: stored.PhysicalResourceId,
+      ResourceType: stored.ResourceType,
       StackResourceDriftStatus: "IN_SYNC",
       Timestamp: new Date().toISOString(),
     },
@@ -1445,7 +1595,18 @@ const DescribeChangeSetHooks: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListExports: OperationHandler = () => ({ Exports: [] });
+const ListExports: OperationHandler = (_, ctx) => {
+  const exports = listStacks(ctx).flatMap((stack) =>
+    (stack.StackOutputs ?? [])
+      .filter((output) => output.ExportName !== undefined)
+      .map((output) => ({
+        Name: output.ExportName as string,
+        Value: output.OutputValue,
+        ExportingStackId: stack.StackId,
+      })),
+  );
+  return { Exports: exports };
+};
 
 const ListImports: OperationHandler = () => ({ Imports: [] });
 

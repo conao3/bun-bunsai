@@ -1406,6 +1406,26 @@ const allCustomerGateways = (ctx: ServiceContext): StoredCustomerGateway[] =>
     .filter((entry) => entry.key.startsWith("cgw/"))
     .map((entry) => entry.value);
 
+const allDhcpOptions = (ctx: ServiceContext): StoredDhcpOptions[] =>
+  ctx.store
+    .list<StoredDhcpOptions>()
+    .filter((entry) => entry.key.startsWith("dhcp/"))
+    .map((entry) => entry.value);
+
+const allEgressOnlyInternetGateways = (
+  ctx: ServiceContext,
+): StoredEgressOnlyInternetGateway[] =>
+  ctx.store
+    .list<StoredEgressOnlyInternetGateway>()
+    .filter((entry) => entry.key.startsWith("eigw/"))
+    .map((entry) => entry.value);
+
+const allFleets = (ctx: ServiceContext): StoredFleet[] =>
+  ctx.store
+    .list<StoredFleet>()
+    .filter((entry) => entry.key.startsWith("fleet/"))
+    .map((entry) => entry.value);
+
 const integerOf = (value: unknown): number | undefined => {
   if (typeof value === "number") return value;
   if (typeof value === "string" && value !== "") {
@@ -10148,6 +10168,128 @@ const DescribeCoipPools: OperationHandler = (input, ctx) => {
   };
 };
 
+const DescribeConversionTasks: OperationHandler = (input, _ctx) => {
+  const ids = stringList(input["ConversionTaskIds"]);
+  void ids;
+  return { ConversionTasks: [] };
+};
+
+const DescribeCustomerGateways: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["CustomerGatewayIds"]);
+  const gateways = allCustomerGateways(ctx).filter(
+    (g) => ids.length === 0 || ids.includes(g.CustomerGatewayId),
+  );
+  return {
+    CustomerGateways: gateways.map((g) => ({
+      CustomerGatewayId: g.CustomerGatewayId,
+      State: g.State,
+      Type: g.Type,
+      IpAddress: g.IpAddress,
+      BgpAsn: g.BgpAsn,
+      CertificateArn: g.CertificateArn,
+      DeviceName: g.DeviceName,
+      Tags: g.Tags,
+    })),
+  };
+};
+
+const DescribeDeclarativePoliciesReports: OperationHandler = (_input, _ctx) => {
+  return { Reports: [] };
+};
+
+const DescribeDhcpOptions: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["DhcpOptionsIds"]);
+  const options = allDhcpOptions(ctx).filter(
+    (o) => ids.length === 0 || ids.includes(o.DhcpOptionsId),
+  );
+  return {
+    DhcpOptions: options.map((o) => ({
+      DhcpOptionsId: o.DhcpOptionsId,
+      OwnerId: o.OwnerId,
+      DhcpConfigurations: o.DhcpConfigurations.map((c) => ({
+        Key: c.Key,
+        Values: c.Values.map((v) => ({ Value: v })),
+      })),
+      Tags: o.Tags,
+    })),
+  };
+};
+
+const DescribeEgressOnlyInternetGateways: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["EgressOnlyInternetGatewayIds"]);
+  const gateways = allEgressOnlyInternetGateways(ctx).filter(
+    (g) => ids.length === 0 || ids.includes(g.EgressOnlyInternetGatewayId),
+  );
+  return {
+    EgressOnlyInternetGateways: gateways.map((g) => ({
+      EgressOnlyInternetGatewayId: g.EgressOnlyInternetGatewayId,
+      Attachments: g.Attachments,
+      Tags: g.Tags,
+    })),
+  };
+};
+
+const DescribeElasticGpus: OperationHandler = (_input, _ctx) => {
+  return { ElasticGpuSet: [] };
+};
+
+const DescribeExportImageTasks: OperationHandler = (_input, _ctx) => {
+  return { ExportImageTasks: [] };
+};
+
+const DescribeExportTasks: OperationHandler = (_input, _ctx) => {
+  return { ExportTasks: [] };
+};
+
+const DescribeFastLaunchImages: OperationHandler = (_input, _ctx) => {
+  return { FastLaunchImages: [] };
+};
+
+const DescribeFastSnapshotRestores: OperationHandler = (_input, _ctx) => {
+  return { FastSnapshotRestores: [] };
+};
+
+const DescribeFleetHistory: OperationHandler = (input, ctx) => {
+  const fleetId = typeof input["FleetId"] === "string" ? input["FleetId"] : "";
+  const rawStartTime = input["StartTime"];
+  const startTime =
+    typeof rawStartTime === "number"
+      ? new Date(rawStartTime * 1000).toISOString()
+      : typeof rawStartTime === "string" && rawStartTime !== ""
+        ? rawStartTime
+        : new Date(0).toISOString();
+  const fleet = ctx.store.get<StoredFleet>(fleetKey(fleetId));
+  if (fleet === undefined) {
+    throw awsError(
+      "InvalidFleetId.NotFound",
+      `Fleet '${fleetId}' not found`,
+      400,
+    );
+  }
+  return {
+    HistoryRecords: [],
+    FleetId: fleet.FleetId,
+    StartTime: startTime,
+    LastEvaluatedTime: fleet.CreateTime,
+  };
+};
+
+const DescribeFleetInstances: OperationHandler = (input, ctx) => {
+  const fleetId = typeof input["FleetId"] === "string" ? input["FleetId"] : "";
+  const fleet = ctx.store.get<StoredFleet>(fleetKey(fleetId));
+  if (fleet === undefined) {
+    throw awsError(
+      "InvalidFleetId.NotFound",
+      `Fleet '${fleetId}' not found`,
+      400,
+    );
+  }
+  return {
+    ActiveInstances: [],
+    FleetId: fleet.FleetId,
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -10469,6 +10611,18 @@ const ec2: ServiceDefinition = {
     DescribeClientVpnRoutes,
     DescribeClientVpnTargetNetworks,
     DescribeCoipPools,
+    DescribeConversionTasks,
+    DescribeCustomerGateways,
+    DescribeDeclarativePoliciesReports,
+    DescribeDhcpOptions,
+    DescribeEgressOnlyInternetGateways,
+    DescribeElasticGpus,
+    DescribeExportImageTasks,
+    DescribeExportTasks,
+    DescribeFastLaunchImages,
+    DescribeFastSnapshotRestores,
+    DescribeFleetHistory,
+    DescribeFleetInstances,
   },
   model,
 } as const;

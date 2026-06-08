@@ -99,15 +99,15 @@ Branch name convention: `issue-{{ issue.identifier | downcase }}`.
 
 ## Status map and routing
 
-| State | Action |
-|---|---|
-| `Backlog` | Out of scope; do not modify. |
-| `Todo` | Move to `In Progress`, create/find `## Agent Workpad` comment, then execute. If a PR is already attached, treat as PR feedback / rework loop. |
-| `In Progress` | Continue execution from the existing workpad. |
-| `Merging` | Run `gh pr merge <pr> --merge --delete-branch`, confirm `MERGED`, then move to `Done`. |
-| `Human Review` | Blocked-access escape state. Do nothing and shut down. |
-| `Rework` | Full reset (see rework flow). |
-| `Done` | Terminal. Do nothing. |
+| State          | Action                                                                                                                                        |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Backlog`      | Out of scope; do not modify.                                                                                                                  |
+| `Todo`         | Move to `In Progress`, create/find `## Agent Workpad` comment, then execute. If a PR is already attached, treat as PR feedback / rework loop. |
+| `In Progress`  | Continue execution from the existing workpad.                                                                                                 |
+| `Merging`      | Run `gh pr merge <pr> --merge --delete-branch`, confirm `MERGED`, then move to `Done`.                                                        |
+| `Human Review` | Blocked-access escape state. Do nothing and shut down.                                                                                        |
+| `Rework`       | Full reset (see rework flow).                                                                                                                 |
+| `Done`         | Terminal. Do nothing.                                                                                                                         |
 
 Initial routing:
 

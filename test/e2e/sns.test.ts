@@ -36,8 +36,8 @@ test("SNS topic, subscription and publish lifecycle", async () => {
   const subscribed = await client.send(
     new SubscribeCommand({
       TopicArn: topicArn,
-      Protocol: "email",
-      Endpoint: "e2e@example.com",
+      Protocol: "sqs",
+      Endpoint: "arn:aws:sqs:us-east-1:000000000000:e2e-topic-queue",
     }),
   );
   const subscriptionArn = subscribed.SubscriptionArn;

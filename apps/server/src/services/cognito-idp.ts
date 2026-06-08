@@ -519,6 +519,7 @@ const issueTokens = async (
 const validateRefreshToken = async (
   refreshToken: string,
   clientId: string,
+  ctx: ServiceContext,
 ): Promise<string> => {
   let payload: Record<string, unknown>;
   try {
@@ -529,7 +530,27 @@ const validateRefreshToken = async (
   if (payload["token_use"] !== "refresh" || payload["client_id"] !== clientId) {
     throw awsError("NotAuthorizedException", "Invalid Refresh Token.", 400);
   }
-  return typeof payload["sub"] === "string" ? payload["sub"] : "";
+  const jti = typeof payload["jti"] === "string" ? payload["jti"] : "";
+  if (jti !== "" && ctx.store.get(revokedTokenKey(jti)) !== undefined) {
+    throw awsError(
+      "NotAuthorizedException",
+      "Refresh token has been revoked.",
+      400,
+    );
+  }
+  const iss = typeof payload["iss"] === "string" ? payload["iss"] : "";
+  const poolId = iss.split("/").pop() ?? "";
+  const username = typeof payload["sub"] === "string" ? payload["sub"] : "";
+  const iat = typeof payload["iat"] === "number" ? payload["iat"] : 0;
+  const signoutTs = ctx.store.get<number>(signoutKey(poolId, username));
+  if (signoutTs !== undefined && iat <= signoutTs) {
+    throw awsError(
+      "NotAuthorizedException",
+      "Refresh token has been revoked.",
+      400,
+    );
+  }
+  return username;
 };
 
 const validateAccessToken = async (
@@ -620,6 +641,11 @@ const uiCustomKey = (poolId: string, clientId?: string): string =>
   clientId ? `uicustom#${poolId}#${clientId}` : `uicustom#${poolId}`;
 
 const mfaConfigKey = (poolId: string): string => `mfaconfig#${poolId}`;
+
+const revokedTokenKey = (jti: string): string => `revoked#${jti}`;
+
+const signoutKey = (poolId: string, username: string): string =>
+  `signout#${poolId}#${username}`;
 
 const deviceKey = (
   poolId: string,
@@ -2165,7 +2191,7 @@ const AdminInitiateAuth: OperationHandler = async (input, ctx) => {
   }
   if (authFlow === "REFRESH_TOKEN_AUTH" || authFlow === "REFRESH_TOKEN") {
     const refreshToken = authParams["REFRESH_TOKEN"] ?? "";
-    const username = await validateRefreshToken(refreshToken, clientId);
+    const username = await validateRefreshToken(refreshToken, clientId, ctx);
     const tokens = await issueTokens({
       poolId,
       username,
@@ -2315,7 +2341,7 @@ const InitiateAuth: OperationHandler = async (input, ctx) => {
   }
   if (authFlow === "REFRESH_TOKEN_AUTH" || authFlow === "REFRESH_TOKEN") {
     const refreshToken = authParams["REFRESH_TOKEN"] ?? "";
-    const username = await validateRefreshToken(refreshToken, clientId);
+    const username = await validateRefreshToken(refreshToken, clientId, ctx);
     const tokens = await issueTokens({
       poolId: pool.Id,
       username,
@@ -2814,11 +2840,26 @@ const SetUserMFAPreference: OperationHandler = async (input, ctx) => {
   return {};
 };
 
-const GlobalSignOut: OperationHandler = (_input, _ctx) => {
+const GlobalSignOut: OperationHandler = async (input, ctx) => {
+  const accessToken = requireString(input, "AccessToken");
+  const { pool, username } = await validateAccessToken(accessToken, ctx);
+  const now = Math.floor(Date.now() / 1000);
+  ctx.store.set(signoutKey(pool.Id, username), now);
   return {};
 };
 
-const RevokeToken: OperationHandler = (_input, _ctx) => {
+const RevokeToken: OperationHandler = async (input, ctx) => {
+  const token = requireString(input, "Token");
+  let payload: Record<string, unknown>;
+  try {
+    payload = await verifyJwt(token);
+  } catch {
+    return {};
+  }
+  const jti = typeof payload["jti"] === "string" ? payload["jti"] : "";
+  if (jti !== "") {
+    ctx.store.set(revokedTokenKey(jti), true);
+  }
   return {};
 };
 

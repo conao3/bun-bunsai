@@ -74,6 +74,7 @@ type StoredSecurityGroupRule = {
   FromPort: number | undefined;
   ToPort: number | undefined;
   CidrIpv4: string | undefined;
+  Description?: string;
 };
 
 type StoredSubnet = {
@@ -199,6 +200,7 @@ type StoredSnapshot = {
   Encrypted: boolean;
   OwnerId: string;
   Tags: Tag[];
+  CreateVolumePermissions?: { UserId: string }[];
 };
 
 type StoredNatGateway = {
@@ -2322,6 +2324,7 @@ const securityGroupRuleView = (
   FromPort: rule.FromPort,
   ToPort: rule.ToPort,
   CidrIpv4: rule.CidrIpv4,
+  Description: rule.Description,
 });
 
 const AuthorizeSecurityGroupIngress: OperationHandler = (input, ctx) => {
@@ -12515,7 +12518,9 @@ const DescribeSnapshotAttribute: OperationHandler = (input, ctx) => {
   }
   return {
     SnapshotId: id,
-    CreateVolumePermissions: [],
+    CreateVolumePermissions: (snapshot.CreateVolumePermissions ?? []).map(
+      (p) => ({ UserId: p.UserId }),
+    ),
     ProductCodes: [],
   };
 };
@@ -16721,6 +16726,325 @@ const ModifyManagedPrefixList: OperationHandler = (input, ctx) => {
   };
 };
 
+const ModifyManagedResourceVisibility: OperationHandler = (input, _ctx) => {
+  const defaultVisibility =
+    typeof input["DefaultVisibility"] === "string"
+      ? input["DefaultVisibility"]
+      : "visible";
+  return {
+    Visibility: {
+      DefaultVisibility: defaultVisibility,
+    },
+  };
+};
+
+const ModifyNetworkInterfaceAttribute: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const ni = ctx.store.get<StoredNetworkInterface>(networkInterfaceKey(id));
+  if (ni === undefined) {
+    throw awsError(
+      "InvalidNetworkInterfaceID.NotFound",
+      `The network interface '${id}' does not exist`,
+      400,
+    );
+  }
+  const descAttr = input["Description"];
+  if (
+    typeof descAttr === "object" &&
+    descAttr !== null &&
+    typeof (descAttr as Record<string, unknown>)["Value"] === "string"
+  ) {
+    ni.Description = (descAttr as Record<string, unknown>)["Value"] as string;
+  }
+  const sdcAttr = input["SourceDestCheck"];
+  if (
+    typeof sdcAttr === "object" &&
+    sdcAttr !== null &&
+    typeof (sdcAttr as Record<string, unknown>)["Value"] === "boolean"
+  ) {
+    ni.SourceDestCheck = (sdcAttr as Record<string, unknown>)[
+      "Value"
+    ] as boolean;
+  }
+  const groups = input["Groups"];
+  if (Array.isArray(groups)) {
+    ni.Groups = groups
+      .filter((g): g is string => typeof g === "string")
+      .map((gId) => ({ GroupId: gId, GroupName: "" }));
+  }
+  ctx.store.set(networkInterfaceKey(id), ni);
+  return {};
+};
+
+const ModifyPrivateDnsNameOptions: OperationHandler = (input, ctx) => {
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : "";
+  const instance = ctx.store.get<StoredInstance>(instanceKey(instanceId));
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidInstanceID.NotFound",
+      `The instance ID '${instanceId}' does not exist`,
+      400,
+    );
+  }
+  return { Return: true };
+};
+
+const ModifyPublicIpDnsNameOptions: OperationHandler = (input, ctx) => {
+  const niId =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const ni = ctx.store.get<StoredNetworkInterface>(networkInterfaceKey(niId));
+  if (ni === undefined) {
+    throw awsError(
+      "InvalidNetworkInterfaceID.NotFound",
+      `The network interface '${niId}' does not exist`,
+      400,
+    );
+  }
+  return { Successful: true };
+};
+
+const ModifyReservedInstances: OperationHandler = (_input, _ctx) => {
+  const modificationId = hexId("rimod");
+  return { ReservedInstancesModificationId: modificationId };
+};
+
+const ModifyRouteServer: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["RouteServerId"] === "string" ? input["RouteServerId"] : "";
+  const server = ctx.store.get<StoredRouteServer>(routeServerKey(id));
+  if (server === undefined) {
+    throw awsError(
+      "InvalidRouteServerId.NotFound",
+      `The route server '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["PersistRoutes"] === "string") {
+    server.PersistRoutesState = input["PersistRoutes"];
+  }
+  if (typeof input["PersistRoutesDuration"] === "number") {
+    server.PersistRoutesDuration = input["PersistRoutesDuration"];
+  }
+  if (typeof input["SnsNotificationsEnabled"] === "boolean") {
+    server.SnsNotificationsEnabled = input["SnsNotificationsEnabled"];
+  }
+  ctx.store.set(routeServerKey(id), server);
+  return {
+    RouteServer: {
+      RouteServerId: server.RouteServerId,
+      AmazonSideAsn: server.AmazonSideAsn,
+      State: server.State,
+      PersistRoutesState: server.PersistRoutesState,
+      PersistRoutesDuration: server.PersistRoutesDuration,
+      SnsNotificationsEnabled: server.SnsNotificationsEnabled,
+      Tags: server.Tags,
+    },
+  };
+};
+
+const ModifySecurityGroupRules: OperationHandler = (input, ctx) => {
+  const groupId = typeof input["GroupId"] === "string" ? input["GroupId"] : "";
+  const group = ctx.store.get<StoredSecurityGroup>(sgKey(groupId));
+  if (group === undefined) {
+    throw awsError(
+      "InvalidGroup.NotFound",
+      `The security group '${groupId}' does not exist`,
+      400,
+    );
+  }
+  const updates = Array.isArray(input["SecurityGroupRules"])
+    ? (input["SecurityGroupRules"] as unknown[])
+    : [];
+  for (const u of updates) {
+    if (typeof u !== "object" || u === null) continue;
+    const update = u as Record<string, unknown>;
+    const ruleId =
+      typeof update["SecurityGroupRuleId"] === "string"
+        ? update["SecurityGroupRuleId"]
+        : "";
+    const ruleReq =
+      typeof update["SecurityGroupRule"] === "object" &&
+      update["SecurityGroupRule"] !== null
+        ? (update["SecurityGroupRule"] as Record<string, unknown>)
+        : null;
+    if (ruleId === "" || ruleReq === null) continue;
+    const allRules = [...group.IngressRules, ...group.EgressRules];
+    const rule = allRules.find((r) => r.SecurityGroupRuleId === ruleId);
+    if (rule === undefined) continue;
+    if (typeof ruleReq["IpProtocol"] === "string") {
+      rule.IpProtocol = ruleReq["IpProtocol"];
+    }
+    if (typeof ruleReq["FromPort"] === "number") {
+      rule.FromPort = ruleReq["FromPort"];
+    }
+    if (typeof ruleReq["ToPort"] === "number") {
+      rule.ToPort = ruleReq["ToPort"];
+    }
+    if (typeof ruleReq["CidrIpv4"] === "string") {
+      rule.CidrIpv4 = ruleReq["CidrIpv4"];
+    }
+    if (typeof ruleReq["Description"] === "string") {
+      rule.Description = ruleReq["Description"];
+    }
+  }
+  ctx.store.set(sgKey(groupId), group);
+  return { Return: true };
+};
+
+const ModifySnapshotAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["SnapshotId"] === "string" ? input["SnapshotId"] : "";
+  const snapshot = ctx.store.get<StoredSnapshot>(snapshotKey(id));
+  if (snapshot === undefined) {
+    throw awsError(
+      "InvalidSnapshot.NotFound",
+      `The snapshot '${id}' does not exist.`,
+      400,
+    );
+  }
+  const operationType =
+    typeof input["OperationType"] === "string" ? input["OperationType"] : "";
+  const userIds = Array.isArray(input["UserIds"])
+    ? (input["UserIds"] as unknown[]).filter(
+        (u): u is string => typeof u === "string",
+      )
+    : [];
+  if (!snapshot.CreateVolumePermissions) {
+    snapshot.CreateVolumePermissions = [];
+  }
+  if (operationType === "add") {
+    for (const userId of userIds) {
+      if (!snapshot.CreateVolumePermissions.some((p) => p.UserId === userId)) {
+        snapshot.CreateVolumePermissions.push({ UserId: userId });
+      }
+    }
+  } else if (operationType === "remove") {
+    snapshot.CreateVolumePermissions = snapshot.CreateVolumePermissions.filter(
+      (p) => !userIds.includes(p.UserId),
+    );
+  }
+  ctx.store.set(snapshotKey(id), snapshot);
+  return {};
+};
+
+const ModifySnapshotTier: OperationHandler = (input, ctx) => {
+  const id = typeof input["SnapshotId"] === "string" ? input["SnapshotId"] : "";
+  const snapshot = ctx.store.get<StoredSnapshot>(snapshotKey(id));
+  if (snapshot === undefined) {
+    throw awsError(
+      "InvalidSnapshot.NotFound",
+      `The snapshot '${id}' does not exist.`,
+      400,
+    );
+  }
+  return {
+    SnapshotId: id,
+    TieringStartTime: new Date().toISOString(),
+  };
+};
+
+const ModifySpotFleetRequest: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["SpotFleetRequestId"] === "string"
+      ? input["SpotFleetRequestId"]
+      : "";
+  const fleet = ctx.store.get<StoredSpotFleetRequest>(spotFleetRequestKey(id));
+  if (fleet === undefined) {
+    throw awsError(
+      "InvalidSpotFleetRequestId.NotFound",
+      `The spot fleet request ID '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["TargetCapacity"] === "number") {
+    fleet.SpotFleetRequestConfig.TargetCapacity = input["TargetCapacity"];
+  }
+  if (typeof input["OnDemandTargetCapacity"] === "number") {
+    fleet.SpotFleetRequestConfig.TargetCapacity =
+      input["OnDemandTargetCapacity"];
+  }
+  ctx.store.set(spotFleetRequestKey(id), fleet);
+  return { Return: true };
+};
+
+const ModifySubnetAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["SubnetId"] === "string" ? input["SubnetId"] : "";
+  const subnet = ctx.store.get<StoredSubnet>(subnetKey(id));
+  if (subnet === undefined) {
+    throw awsError(
+      "InvalidSubnetID.NotFound",
+      `The subnet ID '${id}' does not exist`,
+      400,
+    );
+  }
+  const mapPublicAttr = input["MapPublicIpOnLaunch"];
+  if (
+    typeof mapPublicAttr === "object" &&
+    mapPublicAttr !== null &&
+    typeof (mapPublicAttr as Record<string, unknown>)["Value"] === "boolean"
+  ) {
+    subnet.MapPublicIpOnLaunch = (mapPublicAttr as Record<string, unknown>)[
+      "Value"
+    ] as boolean;
+  }
+  ctx.store.set(subnetKey(id), subnet);
+  return {};
+};
+
+const ModifyTrafficMirrorFilterNetworkServices: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const filterId =
+    typeof input["TrafficMirrorFilterId"] === "string"
+      ? input["TrafficMirrorFilterId"]
+      : "";
+  const filter = ctx.store.get<StoredTrafficMirrorFilter>(
+    trafficMirrorFilterKey(filterId),
+  );
+  if (filter === undefined) {
+    throw awsError(
+      "InvalidTrafficMirrorFilterId.NotFound",
+      `The Traffic Mirror filter ID '${filterId}' does not exist`,
+      400,
+    );
+  }
+  const addServices = Array.isArray(input["AddNetworkServices"])
+    ? (input["AddNetworkServices"] as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : [];
+  const removeServices = Array.isArray(input["RemoveNetworkServices"])
+    ? (input["RemoveNetworkServices"] as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : [];
+  for (const svc of addServices) {
+    if (!filter.NetworkServices.includes(svc)) {
+      filter.NetworkServices.push(svc);
+    }
+  }
+  filter.NetworkServices = filter.NetworkServices.filter(
+    (s) => !removeServices.includes(s),
+  );
+  ctx.store.set(trafficMirrorFilterKey(filterId), filter);
+  return {
+    TrafficMirrorFilter: {
+      TrafficMirrorFilterId: filter.TrafficMirrorFilterId,
+      IngressFilterRules: filter.IngressFilterRules,
+      EgressFilterRules: filter.EgressFilterRules,
+      NetworkServices: filter.NetworkServices,
+      Description: filter.Description,
+      Tags: filter.Tags,
+    },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -17377,6 +17701,18 @@ const ec2: ServiceDefinition = {
     ModifyLaunchTemplate,
     ModifyLocalGatewayRoute,
     ModifyManagedPrefixList,
+    ModifyManagedResourceVisibility,
+    ModifyNetworkInterfaceAttribute,
+    ModifyPrivateDnsNameOptions,
+    ModifyPublicIpDnsNameOptions,
+    ModifyReservedInstances,
+    ModifyRouteServer,
+    ModifySecurityGroupRules,
+    ModifySnapshotAttribute,
+    ModifySnapshotTier,
+    ModifySpotFleetRequest,
+    ModifySubnetAttribute,
+    ModifyTrafficMirrorFilterNetworkServices,
     ProvisionIpamPoolCidr,
   },
   model,

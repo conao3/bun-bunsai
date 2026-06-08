@@ -42,7 +42,16 @@ type StoredAlarm = {
   ComparisonOperator: string;
   Dimensions: Dimension[];
   StateValue: string;
+  StateReason: string;
   ConfigurationUpdated: number;
+};
+
+type StoredAlarmHistoryItem = {
+  AlarmName: string;
+  AlarmType: string;
+  HistoryItemType: string;
+  HistorySummary: string;
+  Timestamp: number;
 };
 
 type StoredCompositeAlarm = {
@@ -159,6 +168,9 @@ type StoredDashboard = {
 const alarmKey = (name: string): string => `alarm/${name}`;
 
 const compositeAlarmKey = (name: string): string => `composite-alarm/${name}`;
+
+const alarmHistoryKeyOf = (name: string, ts: number): string =>
+  `alarm-history/${name}/${ts}`;
 
 const dashboardKey = (name: string): string => `dashboard/${name}`;
 
@@ -377,6 +389,7 @@ const PutMetricAlarm: OperationHandler = (input, ctx) => {
         : "",
     Dimensions: dimensions,
     StateValue: "INSUFFICIENT_DATA",
+    StateReason: "",
     ConfigurationUpdated: Math.floor(Date.now() / 1000),
   };
   ctx.store.set(alarmKey(alarmName), alarm);
@@ -390,6 +403,7 @@ const toMetricAlarm = (alarm: StoredAlarm): Record<string, unknown> => ({
   AlarmConfigurationUpdatedTimestamp: alarm.ConfigurationUpdated,
   ActionsEnabled: alarm.ActionsEnabled,
   StateValue: alarm.StateValue,
+  StateReason: alarm.StateReason,
   StateUpdatedTimestamp: alarm.ConfigurationUpdated,
   MetricName: alarm.MetricName,
   Namespace: alarm.Namespace,
@@ -549,13 +563,25 @@ const SetAlarmState: OperationHandler = (input, ctx) => {
   requireString(input, "StateValue");
   requireString(input, "StateReason");
   const stateValue = input["StateValue"] as string;
+  const stateReason = input["StateReason"] as string;
   const alarm = ctx.store.get<StoredAlarm>(alarmKey(name));
   if (alarm === undefined) {
     throw awsError("ResourceNotFound", `Alarm ${name} does not exist.`, 404);
   }
+  const prevState = alarm.StateValue;
+  const ts = Math.floor(Date.now() / 1000);
   alarm.StateValue = stateValue;
-  alarm.ConfigurationUpdated = Math.floor(Date.now() / 1000);
+  alarm.StateReason = stateReason;
+  alarm.ConfigurationUpdated = ts;
   ctx.store.set(alarmKey(name), alarm);
+  const historyItem: StoredAlarmHistoryItem = {
+    AlarmName: name,
+    AlarmType: "MetricAlarm",
+    HistoryItemType: "StateUpdate",
+    HistorySummary: `Alarm updated from ${prevState} to ${stateValue}`,
+    Timestamp: ts,
+  };
+  ctx.store.set(alarmHistoryKeyOf(name, ts), historyItem);
   return {};
 };
 
@@ -743,8 +769,25 @@ const DisableAlarmActions: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const DescribeAlarmHistory: OperationHandler = (_input, _ctx) => {
-  return { AlarmHistoryItems: [] };
+const DescribeAlarmHistory: OperationHandler = (input, ctx) => {
+  const alarmName =
+    typeof input["AlarmName"] === "string"
+      ? (input["AlarmName"] as string)
+      : undefined;
+  const items = ctx.store
+    .list<StoredAlarmHistoryItem>()
+    .filter((entry) => entry.key.startsWith("alarm-history/"))
+    .filter(
+      (entry) => alarmName === undefined || entry.value.AlarmName === alarmName,
+    )
+    .map((entry) => ({
+      AlarmName: entry.value.AlarmName,
+      AlarmType: entry.value.AlarmType,
+      HistoryItemType: entry.value.HistoryItemType,
+      HistorySummary: entry.value.HistorySummary,
+      Timestamp: entry.value.Timestamp,
+    }));
+  return { AlarmHistoryItems: items };
 };
 
 const DescribeAlarmContributors: OperationHandler = (input, ctx) => {

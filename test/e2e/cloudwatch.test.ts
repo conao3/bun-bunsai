@@ -35,6 +35,7 @@ import {
   PutMetricAlarmCommand,
   PutMetricDataCommand,
   PutMetricStreamCommand,
+  SetAlarmStateCommand,
   StartMetricStreamsCommand,
   StartOTelEnrichmentCommand,
   StopMetricStreamsCommand,
@@ -530,4 +531,71 @@ test("CloudWatch managed insight rules lifecycle", async () => {
   const found = rules.find((r) => r.TemplateName === "LambdaInsightRule");
   expect(found).toBeDefined();
   expect(found?.ResourceARN).toBe(resourceArn);
+});
+
+test("CloudWatch SetAlarmState and DescribeAlarmHistory round-trip", async () => {
+  const client = cw();
+  const alarmName = "bunsai-e2e-alarm-state";
+
+  await client.send(
+    new PutMetricAlarmCommand({
+      AlarmName: alarmName,
+      MetricName: "ErrorRate",
+      Namespace: "bunsai/e2e",
+      Statistic: "Average",
+      Period: 60,
+      EvaluationPeriods: 1,
+      Threshold: 5,
+      ComparisonOperator: "GreaterThanThreshold",
+    }),
+  );
+
+  const initial = await client.send(
+    new DescribeAlarmsCommand({ AlarmNames: [alarmName] }),
+  );
+  const initialAlarms = initial.MetricAlarms ?? [];
+  expect(initialAlarms.length).toBe(1);
+  expect(initialAlarms[0]?.StateValue).toBe("INSUFFICIENT_DATA");
+
+  await client.send(
+    new SetAlarmStateCommand({
+      AlarmName: alarmName,
+      StateValue: "ALARM",
+      StateReason: "e2e test triggered alarm",
+    }),
+  );
+
+  const afterAlarm = await client.send(
+    new DescribeAlarmsCommand({ AlarmNames: [alarmName] }),
+  );
+  const alarmAlarms = afterAlarm.MetricAlarms ?? [];
+  expect(alarmAlarms.length).toBe(1);
+  expect(alarmAlarms[0]?.StateValue).toBe("ALARM");
+  expect(alarmAlarms[0]?.StateReason).toBe("e2e test triggered alarm");
+
+  const history = await client.send(
+    new DescribeAlarmHistoryCommand({ AlarmName: alarmName }),
+  );
+  const items = history.AlarmHistoryItems ?? [];
+  expect(items.length).toBeGreaterThan(0);
+  const transition = items.find((i) => i.HistoryItemType === "StateUpdate");
+  expect(transition).toBeDefined();
+  expect(transition?.AlarmName).toBe(alarmName);
+  expect(transition?.HistorySummary).toContain("ALARM");
+
+  let caught: unknown;
+  try {
+    await client.send(
+      new SetAlarmStateCommand({
+        AlarmName: "nonexistent-alarm-xyz",
+        StateValue: "OK",
+        StateReason: "no such alarm",
+      }),
+    );
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).toBeDefined();
+
+  await client.send(new DeleteAlarmsCommand({ AlarmNames: [alarmName] }));
 });

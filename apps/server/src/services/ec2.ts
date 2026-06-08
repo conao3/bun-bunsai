@@ -10663,6 +10663,348 @@ const DescribeInstanceSqlHaHistoryStates: OperationHandler = (_input, _ctx) => {
   return { Instances: [] };
 };
 
+const DescribeInstanceSqlHaStates: OperationHandler = (_input, _ctx) => {
+  return { Instances: [] };
+};
+
+const DescribeInstanceStatus: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["InstanceIds"]);
+  const instances = allInstances(ctx).filter((instance) =>
+    ids.length === 0 ? true : ids.includes(instance.InstanceId),
+  );
+  return {
+    InstanceStatuses: instances.map((instance) => ({
+      InstanceId: instance.InstanceId,
+      AvailabilityZone: `${ctx.region}a`,
+      InstanceState: instance.State,
+      InstanceStatus: {
+        Status: "ok",
+        Details: [{ Name: "reachability", Status: "passed" }],
+      },
+      SystemStatus: {
+        Status: "ok",
+        Details: [{ Name: "reachability", Status: "passed" }],
+      },
+    })),
+  };
+};
+
+const DescribeInstanceTopology: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["InstanceIds"]);
+  const instances = allInstances(ctx).filter((instance) =>
+    ids.length === 0 ? true : ids.includes(instance.InstanceId),
+  );
+  return {
+    Instances: instances.map((instance) => ({
+      InstanceId: instance.InstanceId,
+      InstanceType: instance.InstanceType,
+      GroupName: undefined,
+      NetworkNodes: [],
+      AvailabilityZone: `${ctx.region}a`,
+      ZoneId: `${ctx.region.replace(/-/g, "")}1`,
+    })),
+  };
+};
+
+const STATIC_INSTANCE_TYPES = [
+  "t2.micro",
+  "t2.small",
+  "t2.medium",
+  "t3.micro",
+  "t3.small",
+  "t3.medium",
+  "t3.large",
+  "m5.large",
+  "m5.xlarge",
+  "c5.large",
+  "c5.xlarge",
+  "r5.large",
+] as const;
+
+const DescribeInstanceTypeOfferings: OperationHandler = (_input, ctx) => {
+  return {
+    InstanceTypeOfferings: STATIC_INSTANCE_TYPES.map((instanceType) => ({
+      InstanceType: instanceType,
+      LocationType: "region",
+      Location: ctx.region,
+    })),
+  };
+};
+
+const DescribeInstanceTypes: OperationHandler = (_input, _ctx) => {
+  return {
+    InstanceTypes: [
+      {
+        InstanceType: "t2.micro",
+        CurrentGeneration: false,
+        FreeTierEligible: true,
+        SupportedUsageClasses: ["on-demand", "spot"],
+        SupportedRootDeviceTypes: ["ebs"],
+        SupportedVirtualizationTypes: ["hvm"],
+        BareMetal: false,
+        Hypervisor: "xen",
+        ProcessorInfo: {
+          SupportedArchitectures: ["x86_64"],
+          SustainedClockSpeedInGhz: 2.5,
+        },
+        VCpuInfo: {
+          DefaultVCpus: 1,
+          DefaultCores: 1,
+          DefaultThreadsPerCore: 1,
+        },
+        MemoryInfo: { SizeInMiB: 1024 },
+        InstanceStorageSupported: false,
+        EbsInfo: {
+          EbsOptimizedSupport: "unsupported",
+          EncryptionSupport: "supported",
+        },
+        NetworkInfo: {
+          NetworkPerformance: "Low to Moderate",
+          MaximumNetworkInterfaces: 2,
+          Ipv4AddressesPerInterface: 2,
+          Ipv6AddressesPerInterface: 0,
+          Ipv6Supported: false,
+          EnaSupport: "unsupported",
+        },
+      },
+      {
+        InstanceType: "t3.micro",
+        CurrentGeneration: true,
+        FreeTierEligible: true,
+        SupportedUsageClasses: ["on-demand", "spot"],
+        SupportedRootDeviceTypes: ["ebs"],
+        SupportedVirtualizationTypes: ["hvm"],
+        BareMetal: false,
+        Hypervisor: "nitro",
+        ProcessorInfo: {
+          SupportedArchitectures: ["x86_64"],
+          SustainedClockSpeedInGhz: 3.1,
+        },
+        VCpuInfo: {
+          DefaultVCpus: 2,
+          DefaultCores: 1,
+          DefaultThreadsPerCore: 2,
+        },
+        MemoryInfo: { SizeInMiB: 1024 },
+        InstanceStorageSupported: false,
+        EbsInfo: {
+          EbsOptimizedSupport: "default",
+          EncryptionSupport: "supported",
+        },
+        NetworkInfo: {
+          NetworkPerformance: "Up to 5 Gigabit",
+          MaximumNetworkInterfaces: 2,
+          Ipv4AddressesPerInterface: 2,
+          Ipv6AddressesPerInterface: 2,
+          Ipv6Supported: true,
+          EnaSupport: "required",
+        },
+      },
+      {
+        InstanceType: "m5.large",
+        CurrentGeneration: true,
+        FreeTierEligible: false,
+        SupportedUsageClasses: ["on-demand", "spot"],
+        SupportedRootDeviceTypes: ["ebs"],
+        SupportedVirtualizationTypes: ["hvm"],
+        BareMetal: false,
+        Hypervisor: "nitro",
+        ProcessorInfo: {
+          SupportedArchitectures: ["x86_64"],
+          SustainedClockSpeedInGhz: 3.1,
+        },
+        VCpuInfo: {
+          DefaultVCpus: 2,
+          DefaultCores: 1,
+          DefaultThreadsPerCore: 2,
+        },
+        MemoryInfo: { SizeInMiB: 8192 },
+        InstanceStorageSupported: false,
+        EbsInfo: {
+          EbsOptimizedSupport: "default",
+          EncryptionSupport: "supported",
+        },
+        NetworkInfo: {
+          NetworkPerformance: "Up to 10 Gigabit",
+          MaximumNetworkInterfaces: 3,
+          Ipv4AddressesPerInterface: 10,
+          Ipv6AddressesPerInterface: 10,
+          Ipv6Supported: true,
+          EnaSupport: "required",
+        },
+      },
+    ],
+  };
+};
+
+const allIpamByoasnAssociations = (
+  ctx: ServiceContext,
+): StoredIpamByoasnAssociation[] =>
+  ctx.store
+    .list<StoredIpamByoasnAssociation>()
+    .filter((entry) => entry.key.startsWith("ipam-byoasn/"))
+    .map((entry) => entry.value);
+
+const DescribeIpamByoasn: OperationHandler = (_input, ctx) => {
+  const associations = allIpamByoasnAssociations(ctx);
+  return {
+    Byoasns: associations.map((a) => ({
+      Asn: a.Asn,
+      IpamId: a.IpamId,
+      IpamArn: a.IpamArn,
+      StatusMessage: a.StatusMessage,
+      State: a.State,
+    })),
+  };
+};
+
+const allIpamExternalTokens = (
+  ctx: ServiceContext,
+): StoredIpamExternalResourceVerificationToken[] =>
+  ctx.store
+    .list<StoredIpamExternalResourceVerificationToken>()
+    .filter((entry) => entry.key.startsWith("ipam-token/"))
+    .map((entry) => entry.value);
+
+const DescribeIpamExternalResourceVerificationTokens: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["IpamExternalResourceVerificationTokenIds"]);
+  const tokens = allIpamExternalTokens(ctx).filter((t) =>
+    ids.length === 0
+      ? true
+      : ids.includes(t.IpamExternalResourceVerificationTokenId),
+  );
+  return {
+    IpamExternalResourceVerificationTokens: tokens.map((t) => ({
+      IpamExternalResourceVerificationTokenId:
+        t.IpamExternalResourceVerificationTokenId,
+      IpamArn: t.IpamArn,
+      IpamId: t.IpamId,
+      TokenValue: t.TokenValue,
+      TokenName: t.TokenName,
+      NotAfter: t.NotAfter,
+      Status: t.Status,
+      State: t.State,
+      Tags: t.Tags,
+    })),
+  };
+};
+
+const allIpamPolicies = (ctx: ServiceContext): StoredIpamPolicy[] =>
+  ctx.store
+    .list<StoredIpamPolicy>()
+    .filter((entry) => entry.key.startsWith("ipam-policy/"))
+    .map((entry) => entry.value);
+
+const DescribeIpamPolicies: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["IpamPolicyIds"]);
+  const policies = allIpamPolicies(ctx).filter((p) =>
+    ids.length === 0 ? true : ids.includes(p.IpamPolicyId),
+  );
+  return {
+    IpamPolicies: policies.map((p) => ({
+      IpamPolicyId: p.IpamPolicyId,
+      IpamArn: p.IpamArn,
+      Description: p.Description,
+      Policy: p.Policy,
+      Tags: p.Tags,
+    })),
+  };
+};
+
+const DescribeIpamPoolAllocations: OperationHandler = (_input, _ctx) => {
+  return { IpamPoolAllocations: [] };
+};
+
+const allIpamPools = (ctx: ServiceContext): StoredIpamPool[] =>
+  ctx.store
+    .list<StoredIpamPool>()
+    .filter((entry) => entry.key.startsWith("ipam-pool/"))
+    .map((entry) => entry.value);
+
+const DescribeIpamPools: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["IpamPoolIds"]);
+  const pools = allIpamPools(ctx).filter((p) =>
+    ids.length === 0 ? true : ids.includes(p.IpamPoolId),
+  );
+  return {
+    IpamPools: pools.map((p) => ({
+      IpamPoolId: p.IpamPoolId,
+      IpamScopeId: p.IpamScopeId,
+      IpamId: p.IpamId,
+      IpamArn: p.IpamArn,
+      IpamScopeArn: p.IpamScopeArn,
+      IpamPoolArn: p.IpamPoolArn,
+      Locale: p.Locale,
+      AddressFamily: p.AddressFamily,
+      State: p.State,
+      Description: p.Description,
+      Tags: p.Tags,
+    })),
+  };
+};
+
+const allIpamPrefixListResolverTargets = (
+  ctx: ServiceContext,
+): StoredIpamPrefixListResolverTarget[] =>
+  ctx.store
+    .list<StoredIpamPrefixListResolverTarget>()
+    .filter((entry) => entry.key.startsWith("ipam-plrt/"))
+    .map((entry) => entry.value);
+
+const DescribeIpamPrefixListResolverTargets: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["IpamPrefixListResolverTargetIds"]);
+  const resolverId =
+    typeof input["IpamPrefixListResolverId"] === "string"
+      ? input["IpamPrefixListResolverId"]
+      : undefined;
+  const targets = allIpamPrefixListResolverTargets(ctx).filter((t) => {
+    if (resolverId !== undefined && t.IpamPrefixListResolverId !== resolverId)
+      return false;
+    return ids.length === 0
+      ? true
+      : ids.includes(t.IpamPrefixListResolverTargetId);
+  });
+  return {
+    IpamPrefixListResolverTargets: targets.map((t) => ({
+      IpamPrefixListResolverId: t.IpamPrefixListResolverId,
+      IpamPrefixListResolverTargetId: t.IpamPrefixListResolverTargetId,
+      PrefixListId: t.PrefixListId,
+      OwnerId: t.OwnerId,
+      Tags: t.Tags,
+    })),
+  };
+};
+
+const allIpamPrefixListResolvers = (
+  ctx: ServiceContext,
+): StoredIpamPrefixListResolver[] =>
+  ctx.store
+    .list<StoredIpamPrefixListResolver>()
+    .filter((entry) => entry.key.startsWith("ipam-plr/"))
+    .map((entry) => entry.value);
+
+const DescribeIpamPrefixListResolvers: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["IpamPrefixListResolverIds"]);
+  const resolvers = allIpamPrefixListResolvers(ctx).filter((r) =>
+    ids.length === 0 ? true : ids.includes(r.IpamPrefixListResolverId),
+  );
+  return {
+    IpamPrefixListResolvers: resolvers.map((r) => ({
+      IpamPrefixListResolverId: r.IpamPrefixListResolverId,
+      IpamId: r.IpamId,
+      IpamArn: r.IpamArn,
+      OwnerId: r.OwnerId,
+      Tags: r.Tags,
+    })),
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -11020,6 +11362,18 @@ const ec2: ServiceDefinition = {
     DescribeInstanceEventWindows,
     DescribeInstanceImageMetadata,
     DescribeInstanceSqlHaHistoryStates,
+    DescribeInstanceSqlHaStates,
+    DescribeInstanceStatus,
+    DescribeInstanceTopology,
+    DescribeInstanceTypeOfferings,
+    DescribeInstanceTypes,
+    DescribeIpamByoasn,
+    DescribeIpamExternalResourceVerificationTokens,
+    DescribeIpamPolicies,
+    DescribeIpamPoolAllocations,
+    DescribeIpamPools,
+    DescribeIpamPrefixListResolverTargets,
+    DescribeIpamPrefixListResolvers,
   },
   model,
 } as const;

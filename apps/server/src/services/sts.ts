@@ -18,17 +18,22 @@ const accountFromRoleArn = (roleArn: string, fallback: string): string => {
 
 type RoleInfo = { roleName: string; sessionName: string };
 
+const roleTokenPrefix = "FQoGZXIvYXdzEXAMPLEtokenbunsai" as const;
+const fedTokenPrefix = "FQoGZXIvYXdzEXAMPLEtokenfedbunsai" as const;
+
 const sessionTokenFor = (account: string, role?: RoleInfo): string =>
   role
-    ? `FQoGZXIvYXdzEXAMPLEtokenbunsai${account}/${role.roleName}/${role.sessionName}`
-    : `FQoGZXIvYXdzEXAMPLEtokenbunsai${account}`;
+    ? `${roleTokenPrefix}${account}/${role.roleName}/${role.sessionName}`
+    : `${roleTokenPrefix}${account}`;
+
+const fedTokenFor = (account: string, name: string): string =>
+  `${fedTokenPrefix}${account}/${name}`;
 
 const assumedRoleFromToken = (
   token: string,
 ): { account: string; roleName: string; sessionName: string } | undefined => {
-  const prefix = "FQoGZXIvYXdzEXAMPLEtokenbunsai";
-  if (!token.startsWith(prefix)) return undefined;
-  const rest = token.slice(prefix.length);
+  if (!token.startsWith(roleTokenPrefix)) return undefined;
+  const rest = token.slice(roleTokenPrefix.length);
   const s1 = rest.indexOf("/");
   if (s1 === -1) return undefined;
   const account = rest.slice(0, s1);
@@ -39,6 +44,19 @@ const assumedRoleFromToken = (
   const sessionName = tail.slice(s2 + 1);
   if (!account || !roleName || !sessionName) return undefined;
   return { account, roleName, sessionName };
+};
+
+const federatedUserFromToken = (
+  token: string,
+): { account: string; name: string } | undefined => {
+  if (!token.startsWith(fedTokenPrefix)) return undefined;
+  const rest = token.slice(fedTokenPrefix.length);
+  const s = rest.indexOf("/");
+  if (s === -1) return undefined;
+  const account = rest.slice(0, s);
+  const name = rest.slice(s + 1);
+  if (!account || !name) return undefined;
+  return { account, name };
 };
 
 const issueCredentials = (
@@ -65,6 +83,14 @@ const sts = {
           Account: assumed.account,
           Arn: `arn:aws:sts::${assumed.account}:assumed-role/${assumed.roleName}/${assumed.sessionName}`,
           UserId: `AROABUNSAIEXAMPLEID:${assumed.sessionName}`,
+        };
+      }
+      const federated = token ? federatedUserFromToken(token) : undefined;
+      if (federated) {
+        return {
+          Account: federated.account,
+          Arn: `arn:aws:sts::${federated.account}:federated-user/${federated.name}`,
+          UserId: `${federated.account}:${federated.name}`,
         };
       }
       return {
@@ -110,8 +136,14 @@ const sts = {
       const acct = accountOf(ctx);
       const params = input as { Name?: string; DurationSeconds?: number };
       const name = params.Name ?? "bunsai-federated";
+      const duration = params.DurationSeconds ?? 43200;
       return {
-        Credentials: issueCredentials(acct, params.DurationSeconds ?? 43200),
+        Credentials: {
+          AccessKeyId: `ASIA${acct}BNSI`,
+          SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+          SessionToken: fedTokenFor(acct, name),
+          Expiration: Math.floor(Date.now() / 1000) + duration,
+        },
         FederatedUser: {
           FederatedUserId: `${acct}:${name}`,
           Arn: `arn:aws:sts::${acct}:federated-user/${name}`,
@@ -154,6 +186,17 @@ const sts = {
         Provider: params.ProviderId ?? "sts.amazonaws.com",
         Audience: "bunsai",
       };
+    },
+    DecodeAuthorizationMessage: (input) => {
+      const params = input as { EncodedMessage?: string };
+      const encoded = params.EncodedMessage ?? "";
+      let decoded: string;
+      try {
+        decoded = atob(encoded);
+      } catch {
+        decoded = encoded;
+      }
+      return { DecodedMessage: decoded };
     },
     AssumeRoleWithSAML: (input, ctx) => {
       const acct = accountOf(ctx);

@@ -4,6 +4,7 @@ import {
   AssumeRoleCommand,
   AssumeRoleWithSAMLCommand,
   AssumeRoleWithWebIdentityCommand,
+  DecodeAuthorizationMessageCommand,
   GetCallerIdentityCommand,
   GetFederationTokenCommand,
   GetSessionTokenCommand,
@@ -221,6 +222,69 @@ test("AssumeRole into another account flows through to later calls", async () =>
 
   const defaultIdentity = await caller.send(new GetCallerIdentityCommand({}));
   expect(defaultIdentity.Account).toBe("000000000000");
+});
+
+test("GetSessionToken credentials work with GetCallerIdentity", async () => {
+  const client = sts();
+  const out = await client.send(
+    new GetSessionTokenCommand({ DurationSeconds: 3600 }),
+  );
+  const sessionClient = new STSClient({
+    endpoint,
+    region,
+    requestHandler,
+    credentials: {
+      accessKeyId: out.Credentials?.AccessKeyId ?? "",
+      secretAccessKey: out.Credentials?.SecretAccessKey ?? "",
+      sessionToken: out.Credentials?.SessionToken ?? "",
+    },
+  });
+  const identity = await sessionClient.send(new GetCallerIdentityCommand({}));
+  expect(identity.Account).toBe("000000000000");
+  expect(identity.Arn).toBeDefined();
+  expect(identity.UserId).toBeDefined();
+});
+
+test("GetFederationToken credentials reflect federated-user identity in GetCallerIdentity", async () => {
+  const client = sts();
+  const out = await client.send(
+    new GetFederationTokenCommand({ Name: "fed-e2e-user" }),
+  );
+  const fedClient = new STSClient({
+    endpoint,
+    region,
+    requestHandler,
+    credentials: {
+      accessKeyId: out.Credentials?.AccessKeyId ?? "",
+      secretAccessKey: out.Credentials?.SecretAccessKey ?? "",
+      sessionToken: out.Credentials?.SessionToken ?? "",
+    },
+  });
+  const identity = await fedClient.send(new GetCallerIdentityCommand({}));
+  expect(identity.Account).toBe("000000000000");
+  expect(identity.Arn).toContain("federated-user/fed-e2e-user");
+  expect(identity.UserId).toContain("fed-e2e-user");
+});
+
+test("DecodeAuthorizationMessage returns DecodedMessage for base64 input", async () => {
+  const client = sts();
+  const encoded = btoa(
+    JSON.stringify({ allowed: false, action: "s3:PutObject" }),
+  );
+  const out = await client.send(
+    new DecodeAuthorizationMessageCommand({ EncodedMessage: encoded }),
+  );
+  expect(out.DecodedMessage).toBeDefined();
+  expect(out.DecodedMessage).toContain("s3:PutObject");
+});
+
+test("DecodeAuthorizationMessage returns raw message for non-base64 input", async () => {
+  const client = sts();
+  const raw = "raw-auth-message-for-testing";
+  const out = await client.send(
+    new DecodeAuthorizationMessageCommand({ EncodedMessage: raw }),
+  );
+  expect(out.DecodedMessage).toBeDefined();
 });
 
 test("AssumeRole GetCallerIdentity fidelity: session creds reflect assumed role", async () => {

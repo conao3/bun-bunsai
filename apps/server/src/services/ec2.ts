@@ -55,6 +55,9 @@ type StoredVpc = {
   Tags: Tag[];
   CidrBlockAssociations: StoredVpcCidrAssoc[];
   Ipv6CidrBlockAssociations: StoredVpcIpv6CidrAssoc[];
+  EnableDnsHostnames?: boolean;
+  EnableDnsSupport?: boolean;
+  EnableNetworkAddressUsageMetrics?: boolean;
 };
 
 type StoredSecurityGroup = {
@@ -256,6 +259,7 @@ type StoredVerifiedAccessTrustProvider = {
   PolicyReferenceName: string;
   CreationTime: string;
   LastUpdatedTime: string;
+  Description?: string;
 };
 
 type StoredCapacityReservation = {
@@ -1140,6 +1144,8 @@ type StoredVpcEndpointServiceConfiguration = {
   GatewayLoadBalancerArns: string[];
   PrivateDnsName: string | undefined;
   Tags: Tag[];
+  PayerResponsibility?: string;
+  AllowedPrincipals?: string[];
 };
 
 type StoredVpcBlockPublicAccessExclusion = {
@@ -13230,11 +13236,13 @@ const DescribeVpcAttribute: OperationHandler = (input, ctx) => {
   }
   const result: Record<string, unknown> = { VpcId: id };
   if (attribute === "enableDnsHostnames") {
-    result["EnableDnsHostnames"] = { Value: true };
+    result["EnableDnsHostnames"] = { Value: vpc.EnableDnsHostnames ?? true };
   } else if (attribute === "enableDnsSupport") {
-    result["EnableDnsSupport"] = { Value: true };
+    result["EnableDnsSupport"] = { Value: vpc.EnableDnsSupport ?? true };
   } else if (attribute === "enableNetworkAddressUsageMetrics") {
-    result["EnableNetworkAddressUsageMetrics"] = { Value: false };
+    result["EnableNetworkAddressUsageMetrics"] = {
+      Value: vpc.EnableNetworkAddressUsageMetrics ?? false,
+    };
   }
   return result;
 };
@@ -17632,6 +17640,378 @@ const ModifyTrafficMirrorFilterNetworkServices: OperationHandler = (
   };
 };
 
+const ModifyVerifiedAccessTrustProvider: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VerifiedAccessTrustProviderId"] === "string"
+      ? input["VerifiedAccessTrustProviderId"]
+      : "";
+  const stored = ctx.store.get<StoredVerifiedAccessTrustProvider>(
+    vaTrustProviderKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessTrustProviderId.NotFound",
+      `The verified access trust provider '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Description"] === "string")
+    stored.Description = input["Description"];
+  stored.LastUpdatedTime = new Date().toISOString();
+  ctx.store.set(vaTrustProviderKey(id), stored);
+  return {
+    VerifiedAccessTrustProvider: {
+      VerifiedAccessTrustProviderId: stored.VerifiedAccessTrustProviderId,
+      TrustProviderType: stored.TrustProviderType,
+      PolicyReferenceName: stored.PolicyReferenceName,
+      Description: stored.Description,
+      CreationTime: stored.CreationTime,
+      LastUpdatedTime: stored.LastUpdatedTime,
+      Tags: [],
+    },
+  };
+};
+
+const ModifyVolume: OperationHandler = (input, ctx) => {
+  const id = typeof input["VolumeId"] === "string" ? input["VolumeId"] : "";
+  const volume = ctx.store.get<StoredVolume>(volumeKey(id));
+  if (volume === undefined) {
+    throw awsError(
+      "InvalidVolume.NotFound",
+      `The volume '${id}' does not exist.`,
+      400,
+    );
+  }
+  const origSize = volume.Size;
+  const origType = volume.VolumeType;
+  const origIops = volume.Iops;
+  if (typeof input["Size"] === "number") volume.Size = input["Size"];
+  if (typeof input["VolumeType"] === "string")
+    volume.VolumeType = input["VolumeType"];
+  if (typeof input["Iops"] === "number") volume.Iops = input["Iops"];
+  ctx.store.set(volumeKey(id), volume);
+  return {
+    VolumeModification: {
+      VolumeId: volume.VolumeId,
+      ModificationState: "completed",
+      TargetSize: volume.Size,
+      TargetVolumeType: volume.VolumeType,
+      TargetIops: volume.Iops,
+      OriginalSize: origSize,
+      OriginalVolumeType: origType,
+      OriginalIops: origIops,
+      Progress: 100,
+      StartTime: new Date().toISOString(),
+      EndTime: new Date().toISOString(),
+    },
+  };
+};
+
+const ModifyVolumeAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["VolumeId"] === "string" ? input["VolumeId"] : "";
+  const volume = ctx.store.get<StoredVolume>(volumeKey(id));
+  if (volume === undefined) {
+    throw awsError(
+      "InvalidVolume.NotFound",
+      `The volume '${id}' does not exist.`,
+      400,
+    );
+  }
+  return {};
+};
+
+const ModifyVpcAttribute: OperationHandler = (input, ctx) => {
+  const id = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const vpc = ctx.store.get<StoredVpc>(vpcKey(id));
+  if (vpc === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${id}' does not exist`,
+      400,
+    );
+  }
+  const enableDnsHostnames =
+    typeof input["EnableDnsHostnames"] === "object" &&
+    input["EnableDnsHostnames"] !== null
+      ? (input["EnableDnsHostnames"] as Record<string, unknown>)
+      : undefined;
+  const enableDnsSupport =
+    typeof input["EnableDnsSupport"] === "object" &&
+    input["EnableDnsSupport"] !== null
+      ? (input["EnableDnsSupport"] as Record<string, unknown>)
+      : undefined;
+  const enableNaum =
+    typeof input["EnableNetworkAddressUsageMetrics"] === "object" &&
+    input["EnableNetworkAddressUsageMetrics"] !== null
+      ? (input["EnableNetworkAddressUsageMetrics"] as Record<string, unknown>)
+      : undefined;
+  if (enableDnsHostnames !== undefined)
+    vpc.EnableDnsHostnames = enableDnsHostnames["Value"] === true;
+  if (enableDnsSupport !== undefined)
+    vpc.EnableDnsSupport = enableDnsSupport["Value"] === true;
+  if (enableNaum !== undefined)
+    vpc.EnableNetworkAddressUsageMetrics = enableNaum["Value"] === true;
+  ctx.store.set(vpcKey(id), vpc);
+  return {};
+};
+
+const ModifyVpcBlockPublicAccessExclusion: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["ExclusionId"] === "string" ? input["ExclusionId"] : "";
+  const stored = ctx.store.get<StoredVpcBlockPublicAccessExclusion>(
+    vpcBlockPublicAccessExclusionKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpcBlockPublicAccessExclusionId.NotFound",
+      `The VPC block public access exclusion '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["InternetGatewayExclusionMode"] === "string")
+    stored.InternetGatewayExclusionMode = input["InternetGatewayExclusionMode"];
+  stored.LastUpdateTimestamp = new Date().toISOString();
+  ctx.store.set(vpcBlockPublicAccessExclusionKey(id), stored);
+  return {
+    VpcBlockPublicAccessExclusion: {
+      ExclusionId: stored.ExclusionId,
+      InternetGatewayExclusionMode: stored.InternetGatewayExclusionMode,
+      ResourceArn: stored.ResourceArn,
+      State: stored.State,
+      CreationTimestamp: stored.CreationTimestamp,
+      LastUpdateTimestamp: stored.LastUpdateTimestamp,
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const vpcBpaOptionsKey = () => `vpc-bpa-options/global`;
+
+const ModifyVpcBlockPublicAccessOptions: OperationHandler = (input, ctx) => {
+  const mode =
+    typeof input["InternetGatewayBlockMode"] === "string"
+      ? input["InternetGatewayBlockMode"]
+      : "off";
+  const existing = ctx.store.get<{ mode: string }>(vpcBpaOptionsKey()) ?? {
+    mode: "off",
+  };
+  existing.mode = mode;
+  ctx.store.set(vpcBpaOptionsKey(), existing);
+  return {
+    VpcBlockPublicAccessOptions: {
+      AwsAccountId: ctx.account,
+      AwsRegion: ctx.region,
+      State: "update-complete",
+      InternetGatewayBlockMode: existing.mode,
+      LastUpdateTimestamp: new Date().toISOString(),
+    },
+  };
+};
+
+const ModifyVpcEncryptionControl: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpcEncryptionControlId"] === "string"
+      ? input["VpcEncryptionControlId"]
+      : "";
+  const stored = ctx.store.get<StoredVpcEncryptionControl>(
+    vpcEncryptionControlKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpcEncryptionControlId.NotFound",
+      `The VPC encryption control '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Mode"] === "string") stored.Mode = input["Mode"];
+  ctx.store.set(vpcEncryptionControlKey(id), stored);
+  return {
+    VpcEncryptionControl: {
+      VpcEncryptionControlId: stored.VpcEncryptionControlId,
+      VpcId: stored.VpcId,
+      Mode: stored.Mode,
+      State: stored.State,
+      Tags: stored.Tags,
+    },
+  };
+};
+
+const ModifyVpcEndpoint: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpcEndpointId"] === "string" ? input["VpcEndpointId"] : "";
+  const stored = ctx.store.get<StoredVpcEndpoint>(vpcEndpointKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpcEndpointId.NotFound",
+      `The vpc endpoint ID '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["PrivateDnsEnabled"] === "boolean")
+    stored.PrivateDnsEnabled = input["PrivateDnsEnabled"];
+  const addRouteTableIds = Array.isArray(input["AddRouteTableIds"])
+    ? (input["AddRouteTableIds"] as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : [];
+  const removeRouteTableIds = Array.isArray(input["RemoveRouteTableIds"])
+    ? (input["RemoveRouteTableIds"] as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : [];
+  const addSubnetIds = Array.isArray(input["AddSubnetIds"])
+    ? (input["AddSubnetIds"] as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : [];
+  const removeSubnetIds = Array.isArray(input["RemoveSubnetIds"])
+    ? (input["RemoveSubnetIds"] as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : [];
+  for (const rtId of addRouteTableIds) {
+    if (!stored.RouteTableIds.includes(rtId)) stored.RouteTableIds.push(rtId);
+  }
+  stored.RouteTableIds = stored.RouteTableIds.filter(
+    (rtId) => !removeRouteTableIds.includes(rtId),
+  );
+  for (const sId of addSubnetIds) {
+    if (!stored.SubnetIds.includes(sId)) stored.SubnetIds.push(sId);
+  }
+  stored.SubnetIds = stored.SubnetIds.filter(
+    (sId) => !removeSubnetIds.includes(sId),
+  );
+  ctx.store.set(vpcEndpointKey(id), stored);
+  return { Return: true };
+};
+
+const ModifyVpcEndpointConnectionNotification: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id =
+    typeof input["ConnectionNotificationId"] === "string"
+      ? input["ConnectionNotificationId"]
+      : "";
+  const stored = ctx.store.get<StoredVpcEndpointConnectionNotification>(
+    vpcEndpointConnectionNotificationKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidConnectionNotification.NotFound",
+      `The connection notification '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["ConnectionNotificationArn"] === "string")
+    stored.ConnectionNotificationArn = input["ConnectionNotificationArn"];
+  if (Array.isArray(input["ConnectionEvents"])) {
+    stored.ConnectionEvents = (input["ConnectionEvents"] as unknown[]).filter(
+      (e): e is string => typeof e === "string",
+    );
+  }
+  ctx.store.set(vpcEndpointConnectionNotificationKey(id), stored);
+  return { ReturnValue: true };
+};
+
+const ModifyVpcEndpointServiceConfiguration: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id = typeof input["ServiceId"] === "string" ? input["ServiceId"] : "";
+  const stored = ctx.store.get<StoredVpcEndpointServiceConfiguration>(
+    vpcEndpointServiceConfigKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpcEndpointServiceId.NotFound",
+      `The vpc endpoint service ID '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["AcceptanceRequired"] === "boolean")
+    stored.AcceptanceRequired = input["AcceptanceRequired"];
+  if (typeof input["PrivateDnsName"] === "string")
+    stored.PrivateDnsName = input["PrivateDnsName"];
+  if (input["RemovePrivateDnsName"] === true) stored.PrivateDnsName = undefined;
+  const addNlbArns = Array.isArray(input["AddNetworkLoadBalancerArns"])
+    ? (input["AddNetworkLoadBalancerArns"] as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : [];
+  const removeNlbArns = Array.isArray(input["RemoveNetworkLoadBalancerArns"])
+    ? (input["RemoveNetworkLoadBalancerArns"] as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : [];
+  for (const arn of addNlbArns) {
+    if (!stored.NetworkLoadBalancerArns.includes(arn))
+      stored.NetworkLoadBalancerArns.push(arn);
+  }
+  stored.NetworkLoadBalancerArns = stored.NetworkLoadBalancerArns.filter(
+    (a) => !removeNlbArns.includes(a),
+  );
+  ctx.store.set(vpcEndpointServiceConfigKey(id), stored);
+  return { Return: true };
+};
+
+const ModifyVpcEndpointServicePayerResponsibility: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const id = typeof input["ServiceId"] === "string" ? input["ServiceId"] : "";
+  const stored = ctx.store.get<StoredVpcEndpointServiceConfiguration>(
+    vpcEndpointServiceConfigKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpcEndpointServiceId.NotFound",
+      `The vpc endpoint service ID '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["PayerResponsibility"] === "string")
+    stored.PayerResponsibility = input["PayerResponsibility"];
+  ctx.store.set(vpcEndpointServiceConfigKey(id), stored);
+  return { ReturnValue: true };
+};
+
+const ModifyVpcEndpointServicePermissions: OperationHandler = (input, ctx) => {
+  const id = typeof input["ServiceId"] === "string" ? input["ServiceId"] : "";
+  const stored = ctx.store.get<StoredVpcEndpointServiceConfiguration>(
+    vpcEndpointServiceConfigKey(id),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpcEndpointServiceId.NotFound",
+      `The vpc endpoint service ID '${id}' does not exist`,
+      400,
+    );
+  }
+  const addPrincipals = Array.isArray(input["AddAllowedPrincipals"])
+    ? (input["AddAllowedPrincipals"] as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : [];
+  const removePrincipals = Array.isArray(input["RemoveAllowedPrincipals"])
+    ? (input["RemoveAllowedPrincipals"] as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : [];
+  stored.AllowedPrincipals = stored.AllowedPrincipals ?? [];
+  for (const p of addPrincipals) {
+    if (!stored.AllowedPrincipals.includes(p)) stored.AllowedPrincipals.push(p);
+  }
+  stored.AllowedPrincipals = stored.AllowedPrincipals.filter(
+    (p) => !removePrincipals.includes(p),
+  );
+  ctx.store.set(vpcEndpointServiceConfigKey(id), stored);
+  return {
+    AddedPrincipals: addPrincipals.map((p) => ({ Principal: p })),
+    ReturnValue: true,
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -18312,6 +18692,18 @@ const ec2: ServiceDefinition = {
     ModifyVerifiedAccessGroupPolicy,
     ModifyVerifiedAccessInstance,
     ModifyVerifiedAccessInstanceLoggingConfiguration,
+    ModifyVerifiedAccessTrustProvider,
+    ModifyVolume,
+    ModifyVolumeAttribute,
+    ModifyVpcAttribute,
+    ModifyVpcBlockPublicAccessExclusion,
+    ModifyVpcBlockPublicAccessOptions,
+    ModifyVpcEncryptionControl,
+    ModifyVpcEndpoint,
+    ModifyVpcEndpointConnectionNotification,
+    ModifyVpcEndpointServiceConfiguration,
+    ModifyVpcEndpointServicePayerResponsibility,
+    ModifyVpcEndpointServicePermissions,
     ProvisionIpamPoolCidr,
   },
   model,

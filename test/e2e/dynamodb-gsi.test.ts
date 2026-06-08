@@ -201,4 +201,189 @@ describe("DynamoDB GSI/filter/paging e2e", () => {
       await client.send(new DeleteTableCommand({ TableName: name }));
     }
   });
+
+  test("KEYS_ONLY GSI projection and index membership", async () => {
+    const client = ddb();
+    const table = "bunsai-e2e-gsi-proj";
+
+    await client.send(
+      new CreateTableCommand({
+        TableName: table,
+        AttributeDefinitions: [
+          { AttributeName: "pk", AttributeType: "S" },
+          { AttributeName: "sk", AttributeType: "S" },
+          { AttributeName: "gsiPk", AttributeType: "S" },
+          { AttributeName: "gsiSk", AttributeType: "S" },
+        ],
+        KeySchema: [
+          { AttributeName: "pk", KeyType: "HASH" },
+          { AttributeName: "sk", KeyType: "RANGE" },
+        ],
+        GlobalSecondaryIndexes: [
+          {
+            IndexName: "gsi-keys-only",
+            KeySchema: [
+              { AttributeName: "gsiPk", KeyType: "HASH" },
+              { AttributeName: "gsiSk", KeyType: "RANGE" },
+            ],
+            Projection: { ProjectionType: "KEYS_ONLY" },
+            ProvisionedThroughput: {
+              ReadCapacityUnits: 5,
+              WriteCapacityUnits: 5,
+            },
+          },
+        ],
+        ProvisionedThroughput: { ReadCapacityUnits: 5, WriteCapacityUnits: 5 },
+      }),
+    );
+
+    await client.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: {
+          pk: { S: "A" },
+          sk: { S: "1" },
+          gsiPk: { S: "X" },
+          gsiSk: { S: "1" },
+          extra: { S: "hello" },
+        },
+      }),
+    );
+    await client.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: {
+          pk: { S: "B" },
+          sk: { S: "1" },
+          gsiPk: { S: "X" },
+          gsiSk: { S: "2" },
+          extra: { S: "world" },
+        },
+      }),
+    );
+    await client.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: { pk: { S: "C" }, sk: { S: "1" }, extra: { S: "no-gsi-key" } },
+      }),
+    );
+
+    const result = await client.send(
+      new QueryCommand({
+        TableName: table,
+        IndexName: "gsi-keys-only",
+        KeyConditionExpression: "gsiPk = :v",
+        ExpressionAttributeValues: { ":v": { S: "X" } },
+      }),
+    );
+
+    expect(result.Count).toBe(2);
+    expect(result.ScannedCount).toBe(2);
+
+    const items = result.Items ?? [];
+    expect(items.length).toBe(2);
+
+    for (const item of items) {
+      expect(item["pk"]).toBeDefined();
+      expect(item["sk"]).toBeDefined();
+      expect(item["gsiPk"]).toBeDefined();
+      expect(item["gsiSk"]).toBeDefined();
+      expect(item["extra"]).toBeUndefined();
+    }
+
+    const allProjected = await client.send(
+      new QueryCommand({
+        TableName: table,
+        IndexName: "gsi-keys-only",
+        KeyConditionExpression: "gsiPk = :v",
+        ExpressionAttributeValues: { ":v": { S: "X" } },
+        Select: "ALL_PROJECTED_ATTRIBUTES",
+      }),
+    );
+    expect(allProjected.Count).toBe(2);
+    expect((allProjected.Items ?? [])[0]?.["extra"]).toBeUndefined();
+
+    await expect(
+      client.send(
+        new QueryCommand({
+          TableName: table,
+          IndexName: "gsi-keys-only",
+          KeyConditionExpression: "gsiPk = :v",
+          ExpressionAttributeValues: { ":v": { S: "X" } },
+          Select: "ALL_ATTRIBUTES",
+        }),
+      ),
+    ).rejects.toThrow();
+
+    const scanResult = await client.send(
+      new ScanCommand({ TableName: table, IndexName: "gsi-keys-only" }),
+    );
+    expect(scanResult.Count).toBe(2);
+    const scanItems = scanResult.Items ?? [];
+    for (const item of scanItems) {
+      expect(item["extra"]).toBeUndefined();
+    }
+
+    await client.send(new DeleteTableCommand({ TableName: table }));
+  });
+
+  test("INCLUDE GSI projection returns keys plus NonKeyAttributes", async () => {
+    const client = ddb();
+    const table = "bunsai-e2e-gsi-include";
+
+    await client.send(
+      new CreateTableCommand({
+        TableName: table,
+        AttributeDefinitions: [
+          { AttributeName: "pk", AttributeType: "S" },
+          { AttributeName: "gsiPk", AttributeType: "S" },
+        ],
+        KeySchema: [{ AttributeName: "pk", KeyType: "HASH" }],
+        GlobalSecondaryIndexes: [
+          {
+            IndexName: "gsi-include",
+            KeySchema: [{ AttributeName: "gsiPk", KeyType: "HASH" }],
+            Projection: {
+              ProjectionType: "INCLUDE",
+              NonKeyAttributes: ["allowed"],
+            },
+            ProvisionedThroughput: {
+              ReadCapacityUnits: 5,
+              WriteCapacityUnits: 5,
+            },
+          },
+        ],
+        ProvisionedThroughput: { ReadCapacityUnits: 5, WriteCapacityUnits: 5 },
+      }),
+    );
+
+    await client.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: {
+          pk: { S: "A" },
+          gsiPk: { S: "Y" },
+          allowed: { S: "yes" },
+          secret: { S: "no" },
+        },
+      }),
+    );
+
+    const result = await client.send(
+      new QueryCommand({
+        TableName: table,
+        IndexName: "gsi-include",
+        KeyConditionExpression: "gsiPk = :v",
+        ExpressionAttributeValues: { ":v": { S: "Y" } },
+      }),
+    );
+    expect(result.Count).toBe(1);
+    const item = (result.Items ?? [])[0] ?? {};
+    expect(item["pk"]).toBeDefined();
+    expect(item["gsiPk"]).toBeDefined();
+    expect(item["allowed"]).toBeDefined();
+    expect(item["secret"]).toBeUndefined();
+
+    await client.send(new DeleteTableCommand({ TableName: table }));
+  });
 });

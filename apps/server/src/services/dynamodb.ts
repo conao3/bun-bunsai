@@ -917,20 +917,83 @@ const keysEqual = (
   return equalsAV(aRange, bRange);
 };
 
+const getIndex = (
+  table: StoredTable,
+  indexName: string,
+): SecondaryIndex | undefined => {
+  const candidates = [
+    ...(table.globalSecondaryIndexes ?? []),
+    ...(table.localSecondaryIndexes ?? []),
+  ];
+  return candidates.find((entry) => entry.IndexName === indexName);
+};
+
+const applyIndexProjection = (
+  item: Item,
+  index: SecondaryIndex,
+  baseSchema: { hash: string; range?: string },
+): Item => {
+  const projType = index.Projection["ProjectionType"] as string | undefined;
+  if (projType === "ALL" || projType === undefined) return item;
+  const out: Item = {};
+  const include = (attr: string): void => {
+    const v = item[attr];
+    if (v !== undefined) out[attr] = v;
+  };
+  include(baseSchema.hash);
+  if (baseSchema.range !== undefined) include(baseSchema.range);
+  const indexSchema = keySchemaShape(index.KeySchema);
+  include(indexSchema.hash);
+  if (indexSchema.range !== undefined) include(indexSchema.range);
+  if (projType === "INCLUDE") {
+    const nonKeyAttrs = index.Projection["NonKeyAttributes"];
+    if (Array.isArray(nonKeyAttrs)) {
+      for (const attr of nonKeyAttrs as string[]) {
+        include(attr);
+      }
+    }
+  }
+  return out;
+};
+
+const validateSelectForIndex = (
+  select: unknown,
+  index: SecondaryIndex | undefined,
+  indexName: string | undefined,
+): void => {
+  if (select === "ALL_ATTRIBUTES" && index !== undefined) {
+    const projType = index.Projection["ProjectionType"];
+    if (projType !== "ALL") {
+      throw awsError(
+        "ValidationException",
+        `One or more parameter values were invalid: Select type ALL_ATTRIBUTES is not supported for global secondary index ${indexName ?? ""} unless the index's projection includes all attributes.`,
+        400,
+      );
+    }
+  }
+};
+
 const Query: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
   const indexName =
     typeof input["IndexName"] === "string" ? input["IndexName"] : undefined;
   if (indexName !== undefined) requireIndex(table, indexName);
+  const index =
+    indexName !== undefined ? getIndex(table, indexName) : undefined;
+  const select = input["Select"];
+  validateSelectForIndex(select, index, indexName);
   const schema = indexKeySchema(table, indexName);
   const baseSchema = keySchemaShape(table.KeySchema);
   const expression = input["KeyConditionExpression"];
   let candidates = liveItems(table);
-  if (indexName !== undefined && schema.range !== undefined) {
-    candidates = candidates.filter(
-      (item) => item[schema.range as string] !== undefined,
-    );
+  if (indexName !== undefined) {
+    candidates = candidates.filter((item) => item[schema.hash] !== undefined);
+    if (schema.range !== undefined) {
+      candidates = candidates.filter(
+        (item) => item[schema.range as string] !== undefined,
+      );
+    }
   }
   let matched: Item[];
   if (typeof expression === "string" && expression !== "") {
@@ -1008,9 +1071,16 @@ const Query: OperationHandler = (input, ctx) => {
       : remainder.length;
   const window = remainder.slice(0, limit);
   const filtered = filterByExpression(window, input);
-  const projection = buildProjection(input);
+  const userProjection = buildProjection(input);
+  const applyProjections = (item: Item): Item => {
+    const projected =
+      index !== undefined
+        ? applyIndexProjection(item, index, baseSchema)
+        : item;
+    return applyProjection(userProjection, projected);
+  };
   const result: Record<string, unknown> = {
-    Items: filtered.map((item) => applyProjection(projection, item)),
+    Items: filtered.map(applyProjections),
     Count: filtered.length,
     ScannedCount: window.length,
   };
@@ -1066,9 +1136,13 @@ const Scan: OperationHandler = (input, ctx) => {
       : {};
   const indexName =
     typeof input["IndexName"] === "string" ? input["IndexName"] : undefined;
+  const index =
+    indexName !== undefined ? getIndex(table, indexName) : undefined;
+  const select = input["Select"];
+  validateSelectForIndex(select, index, indexName);
   const schema = indexKeySchema(table, indexName);
   const baseSchema = keySchemaShape(table.KeySchema);
-  const ordered = liveItems(table).sort((a, b) => {
+  const allItems = liveItems(table).sort((a, b) => {
     const hashCmp = compareAV(
       a[baseSchema.hash] ?? {},
       b[baseSchema.hash] ?? {},
@@ -1077,6 +1151,15 @@ const Scan: OperationHandler = (input, ctx) => {
     if (baseSchema.range === undefined) return 0;
     return compareAV(a[baseSchema.range] ?? {}, b[baseSchema.range] ?? {}) ?? 0;
   });
+  const ordered =
+    indexName !== undefined
+      ? allItems.filter((item) => {
+          if (item[schema.hash] === undefined) return false;
+          if (schema.range !== undefined && item[schema.range] === undefined)
+            return false;
+          return true;
+        })
+      : allItems;
   let startIndex = 0;
   const startKey = input["ExclusiveStartKey"];
   if (typeof startKey === "object" && startKey !== null) {
@@ -1094,9 +1177,16 @@ const Scan: OperationHandler = (input, ctx) => {
   const scanned = remainder.slice(0, limit);
   const matched = scanned.filter((item) => matchesKeyConditions(item, filter));
   const items = filterByExpression(matched, input);
-  const projection = buildProjection(input);
+  const userProjection = buildProjection(input);
+  const applyProjections = (item: Item): Item => {
+    const projected =
+      index !== undefined
+        ? applyIndexProjection(item, index, baseSchema)
+        : item;
+    return applyProjection(userProjection, projected);
+  };
   const result: Record<string, unknown> = {
-    Items: items.map((item) => applyProjection(projection, item)),
+    Items: items.map(applyProjections),
     Count: items.length,
     ScannedCount: scanned.length,
   };

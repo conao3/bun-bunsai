@@ -864,12 +864,35 @@ const route53: ServiceDefinition = {
       ) as Record<string, unknown>;
       const rawChanges = batchRecord["Changes"];
       const changes = Array.isArray(rawChanges) ? rawChanges : [];
+      const parsedChanges = changes
+        .filter((c) => typeof c === "object" && c !== null)
+        .map((c) => {
+          const record = c as Record<string, unknown>;
+          return {
+            action: record["Action"],
+            set: toRecordSet(record["ResourceRecordSet"]),
+          };
+        });
+      const existingKeys = new Set(zone.recordSets.map(recordSetKey));
+      for (const { action, set } of parsedChanges) {
+        const key = recordSetKey(set);
+        if (action === "CREATE" && existingKeys.has(key)) {
+          throw awsError(
+            "InvalidChangeBatch",
+            `[RRSet of type ${set.Type} with DNS name ${set.Name} is not permitted because a conflicting resource record set already exists]`,
+            400,
+          );
+        }
+        if (action === "DELETE" && !existingKeys.has(key)) {
+          throw awsError(
+            "InvalidChangeBatch",
+            `[Tried to delete resource record set ${set.Name} but it was not found]`,
+            400,
+          );
+        }
+      }
       let recordSets = zone.recordSets;
-      for (const change of changes) {
-        if (typeof change !== "object" || change === null) continue;
-        const record = change as Record<string, unknown>;
-        const action = record["Action"];
-        const set = toRecordSet(record["ResourceRecordSet"]);
+      for (const { action, set } of parsedChanges) {
         const key = recordSetKey(set);
         const without = recordSets.filter((s) => recordSetKey(s) !== key);
         if (action === "DELETE") {

@@ -213,23 +213,128 @@ const ruleMatches = (
     );
   }
   if (typeof rule !== "object" || rule === null) return false;
-  const operator = rule as Record<string, unknown>;
-  if ("exists" in operator) {
-    return (operator["exists"] === true) === (actual !== undefined);
+  const op = rule as Record<string, unknown>;
+  if ("exists" in op) {
+    return (op["exists"] === true) === (actual !== undefined);
   }
-  if ("anything-but" in operator) {
-    const raw = operator["anything-but"];
+  if ("anything-but" in op) {
+    const raw = op["anything-but"];
     const excluded = Array.isArray(raw) ? raw.map(String) : [String(raw)];
     return actual !== undefined && !excluded.includes(actual.value);
   }
-  if (typeof operator["prefix"] === "string") {
-    return actual !== undefined && actual.value.startsWith(operator["prefix"]);
+  if ("prefix" in op && typeof op["prefix"] === "string") {
+    return actual !== undefined && actual.value.startsWith(op["prefix"]);
+  }
+  if ("suffix" in op && typeof op["suffix"] === "string") {
+    return actual !== undefined && actual.value.endsWith(op["suffix"]);
+  }
+  if (
+    "equals-ignore-case" in op &&
+    typeof op["equals-ignore-case"] === "string"
+  ) {
+    return (
+      actual !== undefined &&
+      actual.value.toLowerCase() ===
+        (op["equals-ignore-case"] as string).toLowerCase()
+    );
+  }
+  if ("numeric" in op) {
+    if (actual === undefined || !actual.isNumber) return false;
+    const numVal = Number(actual.value);
+    const ops = op["numeric"] as unknown[];
+    const chk = (o: string, n: number): boolean => {
+      if (o === "=") return numVal === n;
+      if (o === "!=") return numVal !== n;
+      if (o === "<") return numVal < n;
+      if (o === "<=") return numVal <= n;
+      if (o === ">") return numVal > n;
+      if (o === ">=") return numVal >= n;
+      return false;
+    };
+    if (ops.length === 2) return chk(ops[0] as string, ops[1] as number);
+    if (ops.length === 4)
+      return (
+        chk(ops[0] as string, ops[1] as number) &&
+        chk(ops[2] as string, ops[3] as number)
+      );
+    return false;
+  }
+  if ("cidr" in op && typeof op["cidr"] === "string") {
+    if (actual === undefined) return false;
+    const [network, prefixLen] = op["cidr"].split("/");
+    const mask = ~((1 << (32 - Number(prefixLen))) - 1) >>> 0;
+    const toInt = (ip: string): number =>
+      ip
+        .split(".")
+        .reduce((acc: number, p: string) => (acc << 8) | Number(p), 0) >>> 0;
+    return (toInt(actual.value) & mask) === (toInt(network) & mask);
+  }
+  return false;
+};
+
+const bodyValueRuleMatches = (rule: unknown, value: unknown): boolean => {
+  if (typeof rule === "string") return value === rule;
+  if (typeof rule === "number") return value === rule;
+  if (typeof rule !== "object" || rule === null) return false;
+  const op = rule as Record<string, unknown>;
+  if ("exists" in op) {
+    return (value !== undefined && value !== null) === Boolean(op["exists"]);
+  }
+  if ("anything-but" in op) {
+    const excl = op["anything-but"];
+    return Array.isArray(excl) ? !excl.includes(value) : value !== excl;
+  }
+  if ("prefix" in op && typeof op["prefix"] === "string") {
+    return typeof value === "string" && value.startsWith(op["prefix"]);
+  }
+  if ("suffix" in op && typeof op["suffix"] === "string") {
+    return typeof value === "string" && value.endsWith(op["suffix"]);
+  }
+  if (
+    "equals-ignore-case" in op &&
+    typeof op["equals-ignore-case"] === "string"
+  ) {
+    return (
+      typeof value === "string" &&
+      value.toLowerCase() === (op["equals-ignore-case"] as string).toLowerCase()
+    );
+  }
+  if ("numeric" in op) {
+    if (typeof value !== "number") return false;
+    const ops = op["numeric"] as unknown[];
+    const chk = (o: string, n: number): boolean => {
+      if (o === "=") return value === n;
+      if (o === "!=") return value !== n;
+      if (o === "<") return value < n;
+      if (o === "<=") return value <= n;
+      if (o === ">") return value > n;
+      if (o === ">=") return value >= n;
+      return false;
+    };
+    if (ops.length === 2) return chk(ops[0] as string, ops[1] as number);
+    if (ops.length === 4)
+      return (
+        chk(ops[0] as string, ops[1] as number) &&
+        chk(ops[2] as string, ops[3] as number)
+      );
+    return false;
+  }
+  if ("cidr" in op && typeof op["cidr"] === "string") {
+    if (typeof value !== "string") return false;
+    const [network, prefixLen] = op["cidr"].split("/");
+    const mask = ~((1 << (32 - Number(prefixLen))) - 1) >>> 0;
+    const toInt = (ip: string): number =>
+      ip
+        .split(".")
+        .reduce((acc: number, p: string) => (acc << 8) | Number(p), 0) >>> 0;
+    return (toInt(value) & mask) === (toInt(network) & mask);
   }
   return false;
 };
 
 const matchesFilterPolicy = (
   policyRaw: string | undefined,
+  policyScope: string | undefined,
   delivery: DeliveryMessage,
 ): boolean => {
   if (typeof policyRaw !== "string" || policyRaw === "") return true;
@@ -240,6 +345,25 @@ const matchesFilterPolicy = (
     return true;
   }
   if (typeof policy !== "object" || policy === null) return true;
+  if (policyScope === "MessageBody") {
+    let body: unknown;
+    try {
+      body = JSON.parse(delivery.message);
+    } catch {
+      return false;
+    }
+    if (typeof body !== "object" || body === null) return false;
+    const bodyObj = body as Record<string, unknown>;
+    for (const [key, rules] of Object.entries(
+      policy as Record<string, unknown>,
+    )) {
+      if (!Array.isArray(rules)) continue;
+      const value = bodyObj[key];
+      if (!rules.some((rule) => bodyValueRuleMatches(rule, value)))
+        return false;
+    }
+    return true;
+  }
   for (const [key, rules] of Object.entries(
     policy as Record<string, unknown>,
   )) {
@@ -290,7 +414,14 @@ const fanout = async (
       snsStore.get<StoredSubscriptionAttributes>(
         subscriptionAttributesKey(subscription.SubscriptionArn),
       )?.Attributes ?? {};
-    if (!matchesFilterPolicy(attributes["FilterPolicy"], delivery)) continue;
+    if (
+      !matchesFilterPolicy(
+        attributes["FilterPolicy"],
+        attributes["FilterPolicyScope"],
+        delivery,
+      )
+    )
+      continue;
     const raw = attributes["RawMessageDelivery"] === "true";
     const isSqs = subscription.Protocol === "sqs";
     await deliverToArn(ctx, subscription.Endpoint, {

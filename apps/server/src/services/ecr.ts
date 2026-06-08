@@ -633,6 +633,14 @@ const GetDownloadUrlForLayer: OperationHandler = (input, ctx) => {
   const name = requireString(input, "repositoryName");
   requireRepository(ctx, name);
   const layerDigest = requireString(input, "layerDigest");
+  const layer = ctx.store.get<StoredLayer>(`_layer:${name}:${layerDigest}`);
+  if (layer === undefined) {
+    throw awsError(
+      "LayerInaccessibleException",
+      `Layer ${layerDigest} is not accessible in the repository with name '${name}'.`,
+      400,
+    );
+  }
   return {
     downloadUrl: `https://prod-${ctx.account}-${ctx.region}-starport-layer-bucket.s3.amazonaws.com/repos/${name}/${layerDigest}`,
     layerDigest,

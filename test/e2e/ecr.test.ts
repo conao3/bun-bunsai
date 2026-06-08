@@ -711,4 +711,86 @@ describe("ecr e2e", () => {
       new DeleteRepositoryCommand({ repositoryName: name, force: true }),
     );
   });
+
+  test("image push/pull round-trip: PutImage, BatchGetImage, DescribeImages, ListImages", async () => {
+    const client = ecr();
+    const name = "bunsai-e2e-roundtrip";
+    await client.send(new CreateRepositoryCommand({ repositoryName: name }));
+
+    const manifest =
+      '{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","layers":[]}';
+    const putResult = await client.send(
+      new PutImageCommand({
+        repositoryName: name,
+        imageManifest: manifest,
+        imageTag: "latest",
+      }),
+    );
+    expect(putResult.image?.imageId?.imageTag).toBe("latest");
+    const digest = putResult.image?.imageId?.imageDigest as string;
+    expect(digest).toMatch(/^sha256:/);
+
+    const batchResult = await client.send(
+      new BatchGetImageCommand({
+        repositoryName: name,
+        imageIds: [{ imageTag: "latest" }],
+      }),
+    );
+    expect(batchResult.images).toHaveLength(1);
+    expect(batchResult.images?.[0]?.imageId?.imageTag).toBe("latest");
+    expect(batchResult.images?.[0]?.imageId?.imageDigest).toBe(digest);
+    expect(batchResult.images?.[0]?.imageManifest).toBe(manifest);
+    expect(batchResult.failures ?? []).toHaveLength(0);
+
+    const descResult = await client.send(
+      new DescribeImagesCommand({ repositoryName: name }),
+    );
+    expect(descResult.imageDetails).toHaveLength(1);
+    expect(descResult.imageDetails?.[0]?.imageTags).toContain("latest");
+    expect(descResult.imageDetails?.[0]?.imageDigest).toBe(digest);
+
+    const listResult = await client.send(
+      new ListImagesCommand({ repositoryName: name }),
+    );
+    const tags = (listResult.imageIds ?? [])
+      .map((id) => id.imageTag)
+      .filter(Boolean);
+    expect(tags).toContain("latest");
+
+    await client.send(
+      new DeleteRepositoryCommand({ repositoryName: name, force: true }),
+    );
+  });
+
+  test("PutImage on missing repository throws RepositoryNotFoundException", async () => {
+    const client = ecr();
+    const manifest = '{"schemaVersion":2}';
+    await expect(
+      client.send(
+        new PutImageCommand({
+          repositoryName: "nonexistent-repo-con-1805",
+          imageManifest: manifest,
+          imageTag: "latest",
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "RepositoryNotFoundException" });
+  });
+
+  test("GetDownloadUrlForLayer throws LayerInaccessibleException for unavailable layer", async () => {
+    const client = ecr();
+    const name = "bunsai-e2e-layercheck";
+    await client.send(new CreateRepositoryCommand({ repositoryName: name }));
+
+    const unavailableDigest = "sha256:" + "f".repeat(64);
+    await expect(
+      client.send(
+        new GetDownloadUrlForLayerCommand({
+          repositoryName: name,
+          layerDigest: unavailableDigest,
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "LayerInaccessibleException" });
+
+    await client.send(new DeleteRepositoryCommand({ repositoryName: name }));
+  });
 });

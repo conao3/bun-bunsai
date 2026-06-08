@@ -4,12 +4,17 @@ import {
   CreateEndpointCommand,
   CreateEndpointConfigCommand,
   CreateModelCommand,
+  DeleteEndpointCommand,
+  DeleteEndpointConfigCommand,
   DeleteModelCommand,
   DescribeEndpointCommand,
+  DescribeEndpointConfigCommand,
   DescribeModelCommand,
+  ListEndpointConfigsCommand,
   ListEndpointsCommand,
   ListModelsCommand,
   SageMakerClient,
+  UpdateEndpointCommand,
 } from "@aws-sdk/client-sagemaker";
 
 const { endpoint, requestHandler } = startApp();
@@ -28,6 +33,7 @@ test("SageMaker model and endpoint lifecycle", async () => {
   const client = sagemaker();
   const modelName = "bunsai-e2e-model";
   const configName = "bunsai-e2e-config";
+  const config2Name = "bunsai-e2e-config2";
   const endpointName = "bunsai-e2e-endpoint";
 
   const createdModel = await client.send(
@@ -46,6 +52,9 @@ test("SageMaker model and endpoint lifecycle", async () => {
   );
   expect(describedModel.ModelName).toBe(modelName);
   expect(describedModel.ModelArn).toBe(createdModel.ModelArn);
+  expect(describedModel.ExecutionRoleArn).toBe(
+    "arn:aws:iam::000000000000:role/bunsai",
+  );
   expect(describedModel.PrimaryContainer?.Image).toBeDefined();
 
   const listedModels = await client.send(new ListModelsCommand({}));
@@ -70,6 +79,17 @@ test("SageMaker model and endpoint lifecycle", async () => {
     `endpoint-config/${configName}`,
   );
 
+  const describedConfig = await client.send(
+    new DescribeEndpointConfigCommand({ EndpointConfigName: configName }),
+  );
+  expect(describedConfig.EndpointConfigName).toBe(configName);
+  expect(describedConfig.ProductionVariants?.[0]?.ModelName).toBe(modelName);
+
+  const listedConfigs = await client.send(new ListEndpointConfigsCommand({}));
+  expect(
+    (listedConfigs.EndpointConfigs ?? []).map((c) => c.EndpointConfigName),
+  ).toContain(configName);
+
   const createdEndpoint = await client.send(
     new CreateEndpointCommand({
       EndpointName: endpointName,
@@ -78,21 +98,99 @@ test("SageMaker model and endpoint lifecycle", async () => {
   );
   expect(createdEndpoint.EndpointArn).toContain(`endpoint/${endpointName}`);
 
-  const describedEndpoint = await client.send(
+  const describedCreating = await client.send(
     new DescribeEndpointCommand({ EndpointName: endpointName }),
   );
-  expect(describedEndpoint.EndpointName).toBe(endpointName);
-  expect(describedEndpoint.EndpointStatus).toBe("InService");
-  expect(describedEndpoint.EndpointConfigName).toBe(configName);
+  expect(describedCreating.EndpointStatus).toBe("Creating");
+
+  await Bun.sleep(2500);
+
+  const describedInService = await client.send(
+    new DescribeEndpointCommand({ EndpointName: endpointName }),
+  );
+  expect(describedInService.EndpointName).toBe(endpointName);
+  expect(describedInService.EndpointStatus).toBe("InService");
+  expect(describedInService.EndpointConfigName).toBe(configName);
 
   const listedEndpoints = await client.send(new ListEndpointsCommand({}));
   expect(
     (listedEndpoints.Endpoints ?? []).map((e) => e.EndpointName),
   ).toContain(endpointName);
 
+  await client.send(
+    new CreateEndpointConfigCommand({
+      EndpointConfigName: config2Name,
+      ProductionVariants: [
+        {
+          VariantName: "AllTraffic",
+          ModelName: modelName,
+          InstanceType: "ml.m5.xlarge",
+          InitialInstanceCount: 2,
+        },
+      ],
+    }),
+  );
+
+  const updated = await client.send(
+    new UpdateEndpointCommand({
+      EndpointName: endpointName,
+      EndpointConfigName: config2Name,
+    }),
+  );
+  expect(updated.EndpointArn).toContain(`endpoint/${endpointName}`);
+
+  const describedUpdated = await client.send(
+    new DescribeEndpointCommand({ EndpointName: endpointName }),
+  );
+  expect(describedUpdated.EndpointConfigName).toBe(config2Name);
+
+  await client.send(new DeleteEndpointCommand({ EndpointName: endpointName }));
+  const afterEndpointDelete = await client.send(new ListEndpointsCommand({}));
+  expect(
+    (afterEndpointDelete.Endpoints ?? []).map((e) => e.EndpointName),
+  ).not.toContain(endpointName);
+
+  await client.send(
+    new DeleteEndpointConfigCommand({ EndpointConfigName: configName }),
+  );
+  await client.send(
+    new DeleteEndpointConfigCommand({ EndpointConfigName: config2Name }),
+  );
+
   await client.send(new DeleteModelCommand({ ModelName: modelName }));
-  const afterDelete = await client.send(new ListModelsCommand({}));
-  expect((afterDelete.Models ?? []).map((m) => m.ModelName)).not.toContain(
+  const afterModelDelete = await client.send(new ListModelsCommand({}));
+  expect((afterModelDelete.Models ?? []).map((m) => m.ModelName)).not.toContain(
     modelName,
   );
+});
+
+test("SageMaker ValidationException for missing resources", async () => {
+  const client = sagemaker();
+
+  await expect(
+    client.send(new DescribeModelCommand({ ModelName: "nonexistent-model" })),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new DescribeEndpointConfigCommand({
+        EndpointConfigName: "nonexistent-config",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new DescribeEndpointCommand({ EndpointName: "nonexistent-endpoint" }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new CreateEndpointCommand({
+        EndpointName: "test-ep",
+        EndpointConfigName: "nonexistent-config",
+      }),
+    ),
+  ).rejects.toThrow();
 });

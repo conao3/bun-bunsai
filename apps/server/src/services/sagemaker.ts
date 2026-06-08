@@ -1300,6 +1300,8 @@ const workteamArnOf = (region: string, account: string, name: string): string =>
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
+const ENDPOINT_INSERVICE_DELAY_SECS = 2 as const;
+
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
   if (typeof value !== "string" || value === "") {
@@ -1484,7 +1486,7 @@ const CreateEndpoint: OperationHandler = (input, ctx) => {
     EndpointName: name,
     EndpointArn: arn,
     EndpointConfigName: configName,
-    EndpointStatus: "InService",
+    EndpointStatus: "Creating",
     ProductionVariants: config.ProductionVariants,
     CreationTime: at,
     LastModifiedTime: at,
@@ -1508,10 +1510,20 @@ const DescribeEndpoint: OperationHandler = (input, ctx) => {
     EndpointArn: stored.EndpointArn,
     EndpointConfigName: stored.EndpointConfigName,
     ProductionVariants: stored.ProductionVariants,
-    EndpointStatus: stored.EndpointStatus,
+    EndpointStatus: endpointEffectiveStatus(stored),
     CreationTime: stored.CreationTime,
     LastModifiedTime: stored.LastModifiedTime,
   };
+};
+
+const endpointEffectiveStatus = (stored: StoredEndpoint): string => {
+  if (
+    stored.EndpointStatus === "Creating" &&
+    nowSeconds() - stored.CreationTime >= ENDPOINT_INSERVICE_DELAY_SECS
+  ) {
+    return "InService";
+  }
+  return stored.EndpointStatus;
 };
 
 const DeleteEndpoint: OperationHandler = (input, ctx) => {
@@ -1540,7 +1552,7 @@ const ListEndpoints: OperationHandler = (_input, ctx) => {
       EndpointArn: stored.EndpointArn,
       CreationTime: stored.CreationTime,
       LastModifiedTime: stored.LastModifiedTime,
-      EndpointStatus: stored.EndpointStatus,
+      EndpointStatus: endpointEffectiveStatus(stored),
     })),
   };
 };

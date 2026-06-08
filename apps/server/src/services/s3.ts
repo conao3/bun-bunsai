@@ -409,6 +409,7 @@ const s3: ServiceDefinition = {
       if (req.method === "DELETE") {
         if (hasTagging) return "DeleteBucketTagging";
         if (hasPolicy) return "DeleteBucketPolicy";
+        if (hasLifecycle) return "DeleteBucketLifecycle";
         if (hasCors) return "DeleteBucketCors";
         if (hasWebsite) return "DeleteBucketWebsite";
         if (hasPublicAccessBlock) return "DeletePublicAccessBlock";
@@ -1877,6 +1878,15 @@ const s3: ServiceDefinition = {
         );
       }
       return { Rules: target.lifecycleRules };
+    },
+    DeleteBucketLifecycle: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      ctx.store.set<S3Bucket>(bucket, { ...target, lifecycleRules: [] });
+      return {};
     },
     PutBucketCors: (input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);

@@ -2883,23 +2883,208 @@ const GetContextKeysForPrincipalPolicy: OperationHandler = (input, _ctx) => {
   return { ContextKeyNames: [] };
 };
 
+type PolicyStatementShape = {
+  Effect?: string;
+  Action?: string | string[];
+  NotAction?: string | string[];
+  Resource?: string | string[];
+};
+
+type PolicyDocumentShape = {
+  Statement?: PolicyStatementShape | PolicyStatementShape[];
+};
+
+type EvalDecision = "allowed" | "explicitDeny" | "implicitDeny";
+
+const toStringArray = (v: string | string[] | undefined): string[] => {
+  if (v === undefined) return [];
+  return Array.isArray(v) ? v : [v];
+};
+
+const matchesWildcard = (pattern: string, value: string): boolean => {
+  const p = pattern.toLowerCase();
+  const v = value.toLowerCase();
+  if (p === "*" || p === v) return true;
+  const escaped = p
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".");
+  return new RegExp(`^${escaped}$`).test(v);
+};
+
+const statementMatchesAction = (
+  stmt: PolicyStatementShape,
+  action: string,
+): boolean => {
+  if (stmt.NotAction !== undefined) {
+    return !toStringArray(stmt.NotAction).some((p) =>
+      matchesWildcard(p, action),
+    );
+  }
+  return toStringArray(stmt.Action).some((p) => matchesWildcard(p, action));
+};
+
+const statementMatchesResource = (
+  stmt: PolicyStatementShape,
+  resource: string,
+): boolean => {
+  const resources = toStringArray(stmt.Resource);
+  if (resources.length === 0) return true;
+  return resources.some((p) => matchesWildcard(p, resource));
+};
+
+const evaluatePolicies = (
+  documents: string[],
+  action: string,
+  resource: string,
+): EvalDecision => {
+  let hasAllow = false;
+  let hasDeny = false;
+  for (const docStr of documents) {
+    let doc: PolicyDocumentShape;
+    try {
+      doc = JSON.parse(docStr) as PolicyDocumentShape;
+    } catch {
+      continue;
+    }
+    const raw = doc.Statement;
+    const stmts: PolicyStatementShape[] = Array.isArray(raw)
+      ? raw
+      : raw !== undefined
+        ? [raw]
+        : [];
+    for (const stmt of stmts) {
+      if (!statementMatchesAction(stmt, action)) continue;
+      if (!statementMatchesResource(stmt, resource)) continue;
+      if (stmt.Effect === "Deny") hasDeny = true;
+      else if (stmt.Effect === "Allow") hasAllow = true;
+    }
+  }
+  if (hasDeny) return "explicitDeny";
+  if (hasAllow) return "allowed";
+  return "implicitDeny";
+};
+
+const collectPrincipalPolicies = (
+  ctx: ServiceContext,
+  arn: string,
+): string[] => {
+  const docs: string[] = [];
+  const userMatch = arn.match(/arn:aws:iam::[^:]+:user\/(.+)/);
+  const roleMatch = arn.match(/arn:aws:iam::[^:]+:role\/(.+)/);
+  const groupMatch = arn.match(/arn:aws:iam::[^:]+:group\/(.+)/);
+  if (userMatch) {
+    const userName = userMatch[1];
+    for (const e of ctx.store.list<StoredUserPolicy>()) {
+      if (e.key.startsWith("userpolicy/") && e.value.UserName === userName)
+        docs.push(e.value.PolicyDocument);
+    }
+    for (const e of ctx.store.list<StoredUserAttachment>()) {
+      if (
+        e.key.startsWith("userattachment/") &&
+        e.value.UserName === userName
+      ) {
+        const p = ctx.store.get<StoredPolicy>(policyKey(e.value.PolicyArn));
+        if (p?.PolicyDocument) docs.push(p.PolicyDocument);
+      }
+    }
+    for (const e of ctx.store.list<StoredGroupMember>()) {
+      if (e.key.startsWith("groupmember/") && e.value.UserName === userName) {
+        const gn = e.value.GroupName;
+        for (const ge of ctx.store.list<StoredGroupPolicy>()) {
+          if (ge.key.startsWith("grouppolicy/") && ge.value.GroupName === gn)
+            docs.push(ge.value.PolicyDocument);
+        }
+        for (const ge of ctx.store.list<StoredGroupAttachment>()) {
+          if (
+            ge.key.startsWith("groupattachment/") &&
+            ge.value.GroupName === gn
+          ) {
+            const p = ctx.store.get<StoredPolicy>(
+              policyKey(ge.value.PolicyArn),
+            );
+            if (p?.PolicyDocument) docs.push(p.PolicyDocument);
+          }
+        }
+      }
+    }
+  } else if (roleMatch) {
+    const roleName = roleMatch[1];
+    for (const e of ctx.store.list<StoredRolePolicy>()) {
+      if (e.key.startsWith("rolepolicy/") && e.value.RoleName === roleName)
+        docs.push(e.value.PolicyDocument);
+    }
+    for (const e of ctx.store.list<StoredAttachment>()) {
+      if (e.key.startsWith("attachment/") && e.value.RoleName === roleName) {
+        const p = ctx.store.get<StoredPolicy>(policyKey(e.value.PolicyArn));
+        if (p?.PolicyDocument) docs.push(p.PolicyDocument);
+      }
+    }
+  } else if (groupMatch) {
+    const groupName = groupMatch[1];
+    for (const e of ctx.store.list<StoredGroupPolicy>()) {
+      if (e.key.startsWith("grouppolicy/") && e.value.GroupName === groupName)
+        docs.push(e.value.PolicyDocument);
+    }
+    for (const e of ctx.store.list<StoredGroupAttachment>()) {
+      if (
+        e.key.startsWith("groupattachment/") &&
+        e.value.GroupName === groupName
+      ) {
+        const p = ctx.store.get<StoredPolicy>(policyKey(e.value.PolicyArn));
+        if (p?.PolicyDocument) docs.push(p.PolicyDocument);
+      }
+    }
+  }
+  return docs;
+};
+
 const SimulateCustomPolicy: OperationHandler = (input, _ctx) => {
+  const policyInputList = input["PolicyInputList"];
+  const policies = Array.isArray(policyInputList)
+    ? (policyInputList as string[])
+    : [];
   const actionNames = input["ActionNames"];
   const actions = Array.isArray(actionNames) ? (actionNames as string[]) : [];
-  const results = actions.map((action) => ({
-    EvalActionName: action,
-    EvalDecision: "allowed",
-  }));
+  const resourceArnsInput = input["ResourceArns"];
+  const resources =
+    Array.isArray(resourceArnsInput) && resourceArnsInput.length > 0
+      ? (resourceArnsInput as string[])
+      : ["*"];
+  const results = actions.flatMap((action) =>
+    resources.map((resource) => ({
+      EvalActionName: action,
+      EvalResourceName: resource,
+      EvalDecision: evaluatePolicies(policies, action, resource),
+      MatchedStatements: [] as unknown[],
+    })),
+  );
   return { EvaluationResults: results, IsTruncated: false };
 };
 
-const SimulatePrincipalPolicy: OperationHandler = (input, _ctx) => {
+const SimulatePrincipalPolicy: OperationHandler = (input, ctx) => {
+  const sourceArn = requireString(input, "PolicySourceArn");
   const actionNames = input["ActionNames"];
   const actions = Array.isArray(actionNames) ? (actionNames as string[]) : [];
-  const results = actions.map((action) => ({
-    EvalActionName: action,
-    EvalDecision: "allowed",
-  }));
+  const resourceArnsInput = input["ResourceArns"];
+  const resources =
+    Array.isArray(resourceArnsInput) && resourceArnsInput.length > 0
+      ? (resourceArnsInput as string[])
+      : ["*"];
+  const policyInputList = input["PolicyInputList"];
+  const additionalPolicies = Array.isArray(policyInputList)
+    ? (policyInputList as string[])
+    : [];
+  const principalDocs = collectPrincipalPolicies(ctx, sourceArn);
+  const allPolicies = [...principalDocs, ...additionalPolicies];
+  const results = actions.flatMap((action) =>
+    resources.map((resource) => ({
+      EvalActionName: action,
+      EvalResourceName: resource,
+      EvalDecision: evaluatePolicies(allPolicies, action, resource),
+      MatchedStatements: [] as unknown[],
+    })),
+  );
   return { EvaluationResults: results, IsTruncated: false };
 };
 

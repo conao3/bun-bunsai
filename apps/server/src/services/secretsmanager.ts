@@ -256,7 +256,23 @@ const DescribeSecret: OperationHandler = (input, ctx) => {
 const DeleteSecret: OperationHandler = (input, ctx) => {
   const secret = requireSecret(ctx, secretIdFromInput(input));
   const force = input["ForceDeleteWithoutRecovery"] === true;
-  const deletionDate = nowSeconds();
+  if (!force && secret.DeletedDate !== undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      "You tried to perform the operation on a secret that isn't in a valid state for the operation.",
+      400,
+    );
+  }
+  const recoveryDays =
+    typeof input["RecoveryWindowInDays"] === "number"
+      ? Math.min(
+          30,
+          Math.max(7, Math.floor(input["RecoveryWindowInDays"] as number)),
+        )
+      : 30;
+  const deletionDate = force
+    ? nowSeconds()
+    : nowSeconds() + recoveryDays * 86400;
   if (force) {
     ctx.store.delete(secret.Name);
   } else {
@@ -606,6 +622,13 @@ const ListSecretVersionIds: OperationHandler = (input, ctx) => {
 
 const RestoreSecret: OperationHandler = (input, ctx) => {
   const secret = requireSecret(ctx, secretIdFromInput(input));
+  if (secret.DeletedDate === undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      "You tried to perform the operation on a secret that isn't in a valid state for the operation.",
+      400,
+    );
+  }
   secret.DeletedDate = undefined;
   secret.LastChangedDate = nowSeconds();
   ctx.store.set(secret.Name, secret);

@@ -627,4 +627,108 @@ describe("kms ops e2e", () => {
     expect(usage.KeyId).toBe(keyId);
     expect(usage.KeyLastUsage).toBeDefined();
   });
+
+  test("encryption context: matching context decrypts successfully", async () => {
+    const client = kms();
+    const created = await client.send(new CreateKeyCommand({}));
+    const keyId = created.KeyMetadata?.KeyId;
+    const context = { env: "prod", service: "kms" };
+
+    const encrypted = await client.send(
+      new EncryptCommand({
+        KeyId: keyId,
+        Plaintext: new TextEncoder().encode("hello-ctx"),
+        EncryptionContext: context,
+      }),
+    );
+    expect(encrypted.CiphertextBlob).toBeDefined();
+
+    const decrypted = await client.send(
+      new DecryptCommand({
+        CiphertextBlob: encrypted.CiphertextBlob,
+        EncryptionContext: context,
+      }),
+    );
+    expect(new TextDecoder().decode(decrypted.Plaintext)).toBe("hello-ctx");
+    expect(decrypted.KeyId).toContain(keyId!);
+  });
+
+  test("encryption context: wrong context rejected", async () => {
+    const client = kms();
+    const created = await client.send(new CreateKeyCommand({}));
+    const keyId = created.KeyMetadata?.KeyId;
+
+    const encrypted = await client.send(
+      new EncryptCommand({
+        KeyId: keyId,
+        Plaintext: new TextEncoder().encode("secret"),
+        EncryptionContext: { purpose: "signing" },
+      }),
+    );
+
+    await expect(
+      client.send(
+        new DecryptCommand({
+          CiphertextBlob: encrypted.CiphertextBlob,
+          EncryptionContext: { purpose: "wrong" },
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "InvalidCiphertextException" });
+  });
+
+  test("encryption context: absent context rejected when ciphertext was bound", async () => {
+    const client = kms();
+    const created = await client.send(new CreateKeyCommand({}));
+    const keyId = created.KeyMetadata?.KeyId;
+
+    const encrypted = await client.send(
+      new EncryptCommand({
+        KeyId: keyId,
+        Plaintext: new TextEncoder().encode("bound"),
+        EncryptionContext: { key: "value" },
+      }),
+    );
+
+    await expect(
+      client.send(
+        new DecryptCommand({ CiphertextBlob: encrypted.CiphertextBlob }),
+      ),
+    ).rejects.toMatchObject({ name: "InvalidCiphertextException" });
+  });
+
+  test("grant with constraints round-trips", async () => {
+    const client = kms();
+    const created = await client.send(new CreateKeyCommand({}));
+    const keyId = created.KeyMetadata?.KeyId;
+    const constraints = {
+      EncryptionContextEquals: { env: "prod" },
+    };
+
+    const grant = await client.send(
+      new CreateGrantCommand({
+        KeyId: keyId,
+        GranteePrincipal: "arn:aws:iam::123456789012:user/test",
+        Operations: ["Encrypt", "Decrypt"],
+        Constraints: constraints,
+      }),
+    );
+    expect(grant.GrantId).toBeDefined();
+
+    const listed = await client.send(new ListGrantsCommand({ KeyId: keyId }));
+    const found = (listed.Grants ?? []).find(
+      (g) => g.GrantId === grant.GrantId,
+    );
+    expect(found).toBeDefined();
+    expect(found?.Constraints?.EncryptionContextEquals).toEqual(
+      constraints.EncryptionContextEquals,
+    );
+
+    await client.send(
+      new RevokeGrantCommand({ KeyId: keyId, GrantId: grant.GrantId }),
+    );
+    const after = await client.send(new ListGrantsCommand({ KeyId: keyId }));
+    expect(
+      (after.Grants ?? []).find((g) => g.GrantId === grant.GrantId),
+    ).toBeUndefined();
+  });
 });

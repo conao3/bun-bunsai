@@ -45,6 +45,11 @@ type StoredAlias = {
   LastUpdatedDate: number;
 };
 
+type GrantConstraints = {
+  EncryptionContextEquals?: Record<string, string>;
+  EncryptionContextSubset?: Record<string, string>;
+};
+
 type StoredGrant = {
   GrantId: string;
   GrantToken: string;
@@ -55,6 +60,7 @@ type StoredGrant = {
   IssuingAccount: string;
   Operations: string[];
   CreationDate: number;
+  Constraints?: GrantConstraints;
   Retired?: boolean;
 };
 
@@ -378,6 +384,15 @@ const ListKeys: OperationHandler = (input, ctx) => {
   };
 };
 
+const contextSeparator = "\x00" as const;
+
+const canonicalContext = (ec: Record<string, string>): string =>
+  JSON.stringify(
+    Object.fromEntries(
+      Object.entries(ec).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    ),
+  );
+
 const Encrypt: OperationHandler = (input, ctx) => {
   const keyId = requireString(input, "KeyId");
   const key = requireKey(ctx, keyId);
@@ -385,7 +400,18 @@ const Encrypt: OperationHandler = (input, ctx) => {
   if (typeof plaintext !== "string") {
     throw awsError("ValidationException", "Plaintext is required.", 400);
   }
-  const ciphertext = `${key.KeyId}${envelopeSeparator}${plaintext}`;
+  const rawEc = input["EncryptionContext"];
+  const ec =
+    rawEc !== null &&
+    typeof rawEc === "object" &&
+    !Array.isArray(rawEc) &&
+    Object.values(rawEc as object).every((v) => typeof v === "string")
+      ? (rawEc as Record<string, string>)
+      : undefined;
+  const ciphertext =
+    ec !== undefined
+      ? `${key.KeyId}${contextSeparator}${canonicalContext(ec)}${contextSeparator}${plaintext}`
+      : `${key.KeyId}${envelopeSeparator}${plaintext}`;
   return {
     CiphertextBlob: ciphertext,
     KeyId: key.Arn,
@@ -396,7 +422,29 @@ const Encrypt: OperationHandler = (input, ctx) => {
 const decryptEnvelope = (
   ctx: ServiceContext,
   ciphertext: string,
-): { key: StoredKey; plaintext: string } => {
+): {
+  key: StoredKey;
+  plaintext: string;
+  storedContext: Record<string, string> | undefined;
+} => {
+  const nullIndex = ciphertext.indexOf(contextSeparator);
+  if (nullIndex >= 0) {
+    const keyId = ciphertext.slice(0, nullIndex);
+    const rest = ciphertext.slice(nullIndex + 1);
+    const nullIndex2 = rest.indexOf(contextSeparator);
+    if (nullIndex2 < 0) {
+      throw awsError(
+        "InvalidCiphertextException",
+        "The ciphertext is malformed.",
+        400,
+      );
+    }
+    const contextJson = rest.slice(0, nullIndex2);
+    const plaintext = rest.slice(nullIndex2 + 1);
+    const key = requireKey(ctx, keyId);
+    const storedContext = JSON.parse(contextJson) as Record<string, string>;
+    return { key, plaintext, storedContext };
+  }
   const index = ciphertext.indexOf(envelopeSeparator);
   if (index < 0) {
     throw awsError(
@@ -408,7 +456,7 @@ const decryptEnvelope = (
   const keyId = ciphertext.slice(0, index);
   const plaintext = ciphertext.slice(index + 1);
   const key = requireKey(ctx, keyId);
-  return { key, plaintext };
+  return { key, plaintext, storedContext: undefined };
 };
 
 const Decrypt: OperationHandler = (input, ctx) => {
@@ -416,7 +464,27 @@ const Decrypt: OperationHandler = (input, ctx) => {
   if (typeof ciphertext !== "string") {
     throw awsError("ValidationException", "CiphertextBlob is required.", 400);
   }
-  const { key, plaintext } = decryptEnvelope(ctx, ciphertext);
+  const { key, plaintext, storedContext } = decryptEnvelope(ctx, ciphertext);
+  if (storedContext !== undefined) {
+    const rawEc = input["EncryptionContext"];
+    const providedEc =
+      rawEc !== null &&
+      typeof rawEc === "object" &&
+      !Array.isArray(rawEc) &&
+      Object.values(rawEc as object).every((v) => typeof v === "string")
+        ? (rawEc as Record<string, string>)
+        : undefined;
+    if (
+      providedEc === undefined ||
+      canonicalContext(providedEc) !== canonicalContext(storedContext)
+    ) {
+      throw awsError(
+        "InvalidCiphertextException",
+        "The ciphertext refers to a customer master key that does not exist, does not exist in this region, does not have a key policy that permits this action, or the ciphertext is corrupted, missing, or otherwise invalid.",
+        400,
+      );
+    }
+  }
   return {
     KeyId: key.Arn,
     Plaintext: plaintext,
@@ -676,6 +744,13 @@ const CreateGrant: OperationHandler = (input, ctx) => {
   }
   const grantId = crypto.randomUUID();
   const grantToken = crypto.randomUUID();
+  const rawConstraints = input["Constraints"];
+  const constraints: GrantConstraints | undefined =
+    rawConstraints !== null &&
+    typeof rawConstraints === "object" &&
+    !Array.isArray(rawConstraints)
+      ? (rawConstraints as GrantConstraints)
+      : undefined;
   const grant: StoredGrant = {
     GrantId: grantId,
     GrantToken: grantToken,
@@ -693,6 +768,7 @@ const CreateGrant: OperationHandler = (input, ctx) => {
     IssuingAccount: ctx.account,
     Operations: rawOps.filter((op) => typeof op === "string") as string[],
     CreationDate: Math.floor(Date.now() / 1000),
+    Constraints: constraints,
   };
   ctx.store.set(`${grantStorePrefix}${grantId}`, grant);
   return { GrantToken: grantToken, GrantId: grantId };
@@ -707,6 +783,7 @@ const grantEntryOf = (grant: StoredGrant): Record<string, unknown> => ({
   RetiringPrincipal: grant.RetiringPrincipal,
   IssuingAccount: grant.IssuingAccount,
   Operations: grant.Operations,
+  Constraints: grant.Constraints,
 });
 
 const ListGrants: OperationHandler = (input, ctx) => {

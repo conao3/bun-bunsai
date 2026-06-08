@@ -1689,9 +1689,60 @@ const RunInstances: OperationHandler = (input, ctx) => {
 
 const DescribeInstances: OperationHandler = (input, ctx) => {
   const ids = stringList(input["InstanceIds"]);
-  const instances = allInstances(ctx).filter((instance) =>
-    ids.length === 0 ? true : ids.includes(instance.InstanceId),
-  );
+  const rawFilters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as unknown[])
+    : [];
+  const filterVals = (name: string): string[] =>
+    rawFilters
+      .filter(
+        (f): f is Record<string, unknown> =>
+          typeof f === "object" && f !== null,
+      )
+      .filter(
+        (f) =>
+          (typeof f["Name"] === "string" && f["Name"] === name) ||
+          (typeof f["name"] === "string" && f["name"] === name),
+      )
+      .flatMap((f) => {
+        const vals = f["Values"] ?? f["values"];
+        return Array.isArray(vals) ? (vals as string[]) : [];
+      });
+  const stateFilter = filterVals("instance-state-name");
+  const instanceIdFilter = filterVals("instance-id");
+  const tagFilters: { key: string; values: string[] }[] = rawFilters
+    .filter(
+      (f): f is Record<string, unknown> => typeof f === "object" && f !== null,
+    )
+    .flatMap((f) => {
+      const name = (f["Name"] ?? f["name"]) as string | undefined;
+      if (typeof name !== "string" || !name.startsWith("tag:")) return [];
+      const vals = f["Values"] ?? f["values"];
+      return [
+        {
+          key: name.slice(4),
+          values: Array.isArray(vals) ? (vals as string[]) : [],
+        },
+      ] as const;
+    });
+  const instances = allInstances(ctx).filter((instance) => {
+    if (ids.length > 0 && !ids.includes(instance.InstanceId)) return false;
+    if (
+      instanceIdFilter.length > 0 &&
+      !instanceIdFilter.includes(instance.InstanceId)
+    )
+      return false;
+    if (stateFilter.length > 0) {
+      if (!stateFilter.includes(instance.State.Name)) return false;
+    } else if (instance.State.Name === "terminated") {
+      return false;
+    }
+    for (const tf of tagFilters) {
+      const tag = instance.Tags.find((t) => t.Key === tf.key);
+      if (tag === undefined) return false;
+      if (tf.values.length > 0 && !tf.values.includes(tag.Value)) return false;
+    }
+    return true;
+  });
   const byReservation = new Map<string, StoredInstance[]>();
   for (const instance of instances) {
     const list = byReservation.get(instance.ReservationId) ?? [];
@@ -1756,7 +1807,6 @@ const TerminateInstances: OperationHandler = (input, ctx) => {
     Code: 48,
     Name: "terminated",
   });
-  for (const id of ids) ctx.store.delete(instanceKey(id));
   return { TerminatingInstances: changes };
 };
 

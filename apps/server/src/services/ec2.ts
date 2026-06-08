@@ -1300,6 +1300,7 @@ const fpgaImageKey = (id: string): string => `fpga/${id}`;
 const imageKey = (id: string): string => `ami/${id}`;
 const imageBinKey = (id: string): string => `ami-bin/${id}`;
 const snapshotBinKey = (id: string): string => `snapshot-bin/${id}`;
+const volumeBinKey = (id: string): string => `volume-bin/${id}`;
 const snapshotLockKey = (id: string): string => `snapshot-lock/${id}`;
 const instanceConnectEndpointKey = (id: string): string => `ice/${id}`;
 const instanceEventWindowKey = (id: string): string => `iew/${id}`;
@@ -18820,6 +18821,251 @@ const RegisterTransitGatewayMulticastGroupSources: OperationHandler = (
   };
 };
 
+const RestoreImageFromRecycleBin: OperationHandler = (input, ctx) => {
+  const id = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageBinKey(id));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image ID '${id}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(imageBinKey(id));
+  ctx.store.set(imageKey(id), image);
+  return { Return: true };
+};
+
+const RestoreManagedPrefixListVersion: OperationHandler = (input, ctx) => {
+  const plId =
+    typeof input["PrefixListId"] === "string" ? input["PrefixListId"] : "";
+  const pl = ctx.store.get<StoredManagedPrefixList>(managedPrefixListKey(plId));
+  if (pl === undefined) {
+    throw awsError(
+      "InvalidPrefixListID.NotFound",
+      `The prefix list ID '${plId}' does not exist`,
+      400,
+    );
+  }
+  const previousVersion =
+    typeof input["PreviousVersion"] === "number"
+      ? input["PreviousVersion"]
+      : pl.Version;
+  pl.Version = previousVersion;
+  pl.State = "restore-complete";
+  ctx.store.set(managedPrefixListKey(plId), pl);
+  return {
+    PrefixList: {
+      PrefixListId: pl.PrefixListId,
+      AddressFamily: pl.AddressFamily,
+      State: pl.State,
+      PrefixListArn: pl.PrefixListArn,
+      PrefixListName: pl.PrefixListName,
+      MaxEntries: pl.MaxEntries,
+      Version: pl.Version,
+      Tags: pl.Tags,
+      OwnerId: pl.OwnerId,
+    },
+  };
+};
+
+const RestoreSnapshotFromRecycleBin: OperationHandler = (input, ctx) => {
+  const id = typeof input["SnapshotId"] === "string" ? input["SnapshotId"] : "";
+  const snapshot = ctx.store.get<StoredSnapshot>(snapshotBinKey(id));
+  if (snapshot === undefined) {
+    throw awsError(
+      "InvalidSnapshot.NotFound",
+      `The snapshot '${id}' does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(snapshotBinKey(id));
+  ctx.store.set(snapshotKey(id), snapshot);
+  return {
+    SnapshotId: snapshot.SnapshotId,
+    Description: snapshot.Description,
+    Encrypted: false,
+    OwnerId: ctx.account,
+    Progress: snapshot.Progress,
+    StartTime: snapshot.StartTime,
+    State: snapshot.State,
+    VolumeId: snapshot.VolumeId,
+    VolumeSize: snapshot.VolumeSize,
+  };
+};
+
+const RestoreSnapshotTier: OperationHandler = (input, ctx) => {
+  const id = typeof input["SnapshotId"] === "string" ? input["SnapshotId"] : "";
+  const snapshot = ctx.store.get<StoredSnapshot>(snapshotKey(id));
+  if (snapshot === undefined) {
+    throw awsError(
+      "InvalidSnapshot.NotFound",
+      `The snapshot '${id}' does not exist.`,
+      400,
+    );
+  }
+  const isPermanent =
+    typeof input["PermanentRestore"] === "boolean"
+      ? input["PermanentRestore"]
+      : false;
+  const restoreDays =
+    typeof input["TemporaryRestoreDays"] === "number"
+      ? input["TemporaryRestoreDays"]
+      : undefined;
+  return {
+    SnapshotId: snapshot.SnapshotId,
+    RestoreStartTime: new Date().toISOString(),
+    RestoreDuration: restoreDays,
+    IsPermanentRestore: isPermanent,
+  };
+};
+
+const RestoreVolumeFromRecycleBin: OperationHandler = (input, ctx) => {
+  const id = typeof input["VolumeId"] === "string" ? input["VolumeId"] : "";
+  const volume = ctx.store.get<StoredVolume>(volumeBinKey(id));
+  if (volume === undefined) {
+    throw awsError(
+      "InvalidVolume.NotFound",
+      `The volume '${id}' does not exist.`,
+      400,
+    );
+  }
+  ctx.store.delete(volumeBinKey(id));
+  ctx.store.set(volumeKey(id), volume);
+  return { Return: true };
+};
+
+const RevokeClientVpnIngress: OperationHandler = (_input, _ctx) => {
+  return { Status: { Code: "revoked", Message: "" } };
+};
+
+const RevokeSecurityGroupEgress: OperationHandler = (input, ctx) => {
+  const group = findSecurityGroup(ctx, input);
+  const ruleIds = stringList(input["SecurityGroupRuleIds"]);
+  const permissions = ipPermissionList(input["IpPermissions"]);
+  const matchesPermission = (rule: StoredSecurityGroupRule): boolean => {
+    if (permissions.length === 0) {
+      const cidrIp =
+        typeof input["CidrIp"] === "string" ? input["CidrIp"] : undefined;
+      const ipProtocol =
+        typeof input["IpProtocol"] === "string"
+          ? input["IpProtocol"]
+          : undefined;
+      if (ipProtocol !== undefined && rule.IpProtocol !== ipProtocol)
+        return false;
+      if (cidrIp !== undefined && rule.CidrIpv4 !== cidrIp) return false;
+      return true;
+    }
+    for (const permission of permissions) {
+      const ipProtocol =
+        typeof permission["IpProtocol"] === "string"
+          ? permission["IpProtocol"]
+          : undefined;
+      if (ipProtocol !== undefined && rule.IpProtocol !== ipProtocol) continue;
+      const cidrs = cidrsOfPermission(permission);
+      if (cidrs.length === 0 || cidrs.includes(rule.CidrIpv4 ?? ""))
+        return true;
+    }
+    return false;
+  };
+  group.EgressRules = group.EgressRules.filter((rule) => {
+    if (ruleIds.length > 0) return !ruleIds.includes(rule.SecurityGroupRuleId);
+    return !matchesPermission(rule);
+  });
+  ctx.store.set(sgKey(group.GroupId), group);
+  return { Return: true };
+};
+
+const RunScheduledInstances: OperationHandler = (_input, _ctx) => {
+  return { InstanceIdSet: [hexId("i")] };
+};
+
+const SearchLocalGatewayRoutes: OperationHandler = (input, ctx) => {
+  const rtbId =
+    typeof input["LocalGatewayRouteTableId"] === "string"
+      ? input["LocalGatewayRouteTableId"]
+      : "";
+  const routes = ctx.store
+    .list<StoredLocalGatewayRoute>()
+    .filter((entry) => entry.key.startsWith(`lgw-route/${rtbId}/`))
+    .map((entry) => entry.value);
+  return {
+    Routes: routes.map((route) => ({
+      DestinationCidrBlock: route.DestinationCidrBlock,
+      LocalGatewayVirtualInterfaceGroupId:
+        route.LocalGatewayVirtualInterfaceGroupId,
+      Type: route.Type,
+      State: route.State,
+      LocalGatewayRouteTableId: route.LocalGatewayRouteTableId,
+    })),
+  };
+};
+
+const SearchTransitGatewayMulticastGroups: OperationHandler = (input, ctx) => {
+  const domainId =
+    typeof input["TransitGatewayMulticastDomainId"] === "string"
+      ? input["TransitGatewayMulticastDomainId"]
+      : "";
+  const members = ctx.store
+    .list<{
+      NetworkInterfaceId: string;
+      TransitGatewayMulticastDomainId: string;
+      GroupIpAddress: string;
+    }>()
+    .filter((entry) => entry.key.startsWith(`tgw-mcast-member/${domainId}/`))
+    .map((entry) => ({
+      ...entry.value,
+      GroupMember: true,
+      GroupSource: false,
+    }));
+  const sources = ctx.store
+    .list<{
+      NetworkInterfaceId: string;
+      TransitGatewayMulticastDomainId: string;
+      GroupIpAddress: string;
+    }>()
+    .filter((entry) => entry.key.startsWith(`tgw-mcast-source/${domainId}/`))
+    .map((entry) => ({
+      ...entry.value,
+      GroupMember: false,
+      GroupSource: true,
+    }));
+  return {
+    MulticastGroups: [...members, ...sources],
+  };
+};
+
+const SearchTransitGatewayRoutes: OperationHandler = (input, ctx) => {
+  const rtbId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const routes = ctx.store
+    .list<StoredTransitGatewayRoute>()
+    .filter((entry) => entry.key.startsWith(`tgw-route/${rtbId}/`))
+    .map((entry) => entry.value);
+  return {
+    Routes: routes.map((route) => ({
+      DestinationCidrBlock: route.DestinationCidrBlock,
+      TransitGatewayAttachments: route.TransitGatewayAttachmentId
+        ? [
+            {
+              TransitGatewayAttachmentId: route.TransitGatewayAttachmentId,
+              ResourceType: "vpc",
+            },
+          ]
+        : [],
+      Type: route.Type,
+      State: route.State,
+    })),
+    AdditionalRoutesAvailable: false,
+  };
+};
+
+const SendDiagnosticInterrupt: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
 const RejectCapacityReservationBillingOwnership: OperationHandler = (
   input,
   ctx,
@@ -19674,6 +19920,18 @@ const ec2: ServiceDefinition = {
     ResetNetworkInterfaceAttribute,
     ResetSnapshotAttribute,
     RestoreAddressToClassic,
+    RestoreImageFromRecycleBin,
+    RestoreManagedPrefixListVersion,
+    RestoreSnapshotFromRecycleBin,
+    RestoreSnapshotTier,
+    RestoreVolumeFromRecycleBin,
+    RevokeClientVpnIngress,
+    RevokeSecurityGroupEgress,
+    RunScheduledInstances,
+    SearchLocalGatewayRoutes,
+    SearchTransitGatewayMulticastGroups,
+    SearchTransitGatewayRoutes,
+    SendDiagnosticInterrupt,
     UpdateInterruptibleCapacityReservationAllocation,
     UpdateSecurityGroupRuleDescriptionsEgress,
     UpdateSecurityGroupRuleDescriptionsIngress,

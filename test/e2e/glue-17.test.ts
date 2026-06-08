@@ -44,6 +44,8 @@ test("CreateJob -> StartJobRun -> GetJobRun round-trip", async () => {
 
   const runId = startResp.JobRunId!;
 
+  await Bun.sleep(300);
+
   const getResp = await client.send(
     new GetJobRunCommand({ JobName: jobName, RunId: runId }),
   );

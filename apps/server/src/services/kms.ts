@@ -434,6 +434,8 @@ const Encrypt: OperationHandler = (input, ctx) => {
   };
 };
 
+const UUID_LEN = 36 as const;
+
 const decryptEnvelope = (
   ctx: ServiceContext,
   ciphertext: string,
@@ -442,10 +444,10 @@ const decryptEnvelope = (
   plaintext: string;
   storedContext: Record<string, string> | undefined;
 } => {
-  const nullIndex = ciphertext.indexOf(contextSeparator);
-  if (nullIndex >= 0) {
-    const keyId = ciphertext.slice(0, nullIndex);
-    const rest = ciphertext.slice(nullIndex + 1);
+  const sep = ciphertext[UUID_LEN];
+  if (sep === contextSeparator) {
+    const keyId = ciphertext.slice(0, UUID_LEN);
+    const rest = ciphertext.slice(UUID_LEN + 1);
     const nullIndex2 = rest.indexOf(contextSeparator);
     if (nullIndex2 < 0) {
       throw awsError(
@@ -460,18 +462,17 @@ const decryptEnvelope = (
     const storedContext = JSON.parse(contextJson) as Record<string, string>;
     return { key, plaintext, storedContext };
   }
-  const index = ciphertext.indexOf(envelopeSeparator);
-  if (index < 0) {
-    throw awsError(
-      "InvalidCiphertextException",
-      "The ciphertext refers to a customer master key that does not exist.",
-      400,
-    );
+  if (sep === envelopeSeparator) {
+    const keyId = ciphertext.slice(0, UUID_LEN);
+    const plaintext = ciphertext.slice(UUID_LEN + 1);
+    const key = requireEnabledKey(ctx, keyId);
+    return { key, plaintext, storedContext: undefined };
   }
-  const keyId = ciphertext.slice(0, index);
-  const plaintext = ciphertext.slice(index + 1);
-  const key = requireEnabledKey(ctx, keyId);
-  return { key, plaintext, storedContext: undefined };
+  throw awsError(
+    "InvalidCiphertextException",
+    "The ciphertext refers to a customer master key that does not exist.",
+    400,
+  );
 };
 
 const Decrypt: OperationHandler = (input, ctx) => {

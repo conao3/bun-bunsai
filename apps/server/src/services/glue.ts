@@ -66,6 +66,12 @@ type StoredCrawler = {
   creationTime: number;
   lastUpdated: number;
   state?: string;
+  lastCrawl?: {
+    startedOn: number;
+    endedOn: number;
+    status: string;
+    tablesCreated: number;
+  };
 };
 
 type StoredJob = {
@@ -597,7 +603,24 @@ const crawlerView = (
   State: crawler.state ?? "READY",
   CreationTime: crawler.creationTime,
   LastUpdated: crawler.lastUpdated,
+  ...(crawler.lastCrawl !== undefined
+    ? {
+        LastCrawl: {
+          Status: crawler.lastCrawl.status,
+          StartTime: crawler.lastCrawl.startedOn,
+        },
+      }
+    : {}),
 });
+
+const s3PathToTableName = (path: string): string => {
+  const segments = path
+    .replace(/^s3:\/\//, "")
+    .split("/")
+    .filter(Boolean);
+  const last = segments[segments.length - 1] ?? "crawled_table";
+  return last.replace(/[^a-zA-Z0-9]/g, "_");
+};
 
 const requireCrawler = (ctx: ServiceContext, name: string): StoredCrawler => {
   const crawler = ctx.store.get<StoredCrawler>(`${crawlerPrefix}${name}`);
@@ -1038,7 +1061,7 @@ const GetCrawlerMetrics: OperationHandler = (input, ctx) => {
     StillEstimating: false,
     LastRuntimeSeconds: 0,
     MedianRuntimeSeconds: 0,
-    TablesCreated: 0,
+    TablesCreated: e.value.lastCrawl?.tablesCreated ?? 0,
     TablesUpdated: 0,
     TablesDeleted: 0,
   }));
@@ -5112,10 +5135,57 @@ const StartCrawler: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const now = Math.floor(Date.now() / 1000);
+  const databaseName =
+    typeof crawler.input["DatabaseName"] === "string"
+      ? crawler.input["DatabaseName"]
+      : "";
+  const targets = asRecord(crawler.input["Targets"]);
+  const s3Targets = Array.isArray(targets["S3Targets"])
+    ? (targets["S3Targets"] as unknown[])
+    : [];
+  const tablePrefix =
+    typeof crawler.input["TablePrefix"] === "string"
+      ? crawler.input["TablePrefix"]
+      : "";
+  let tablesCreated = 0;
+  if (databaseName !== "" && s3Targets.length > 0) {
+    const database = ctx.store.get<StoredDatabase>(databaseName);
+    if (database !== undefined) {
+      for (const target of s3Targets) {
+        const t = asRecord(target);
+        const path = typeof t["Path"] === "string" ? t["Path"] : "";
+        if (path === "") continue;
+        const tableName = tablePrefix + s3PathToTableName(path);
+        if (database.tables[tableName] === undefined) {
+          tablesCreated += 1;
+        }
+        database.tables[tableName] = {
+          input: {
+            Name: tableName,
+            TableType: "EXTERNAL_TABLE",
+            StorageDescriptor: { Location: path, Columns: [] },
+            Parameters: { classification: "UNKNOWN" },
+          },
+          databaseName,
+          createTime: now,
+          updateTime: now,
+          partitionIndexes: {},
+        };
+      }
+      ctx.store.set(databaseName, database);
+    }
+  }
   const updated: StoredCrawler = {
     ...crawler,
     state: "READY",
-    lastUpdated: Math.floor(Date.now() / 1000),
+    lastUpdated: now,
+    lastCrawl: {
+      startedOn: now,
+      endedOn: now,
+      status: "SUCCEEDED",
+      tablesCreated,
+    },
   };
   ctx.store.set(`${crawlerPrefix}${name}`, updated);
   return {};

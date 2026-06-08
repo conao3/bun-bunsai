@@ -28,6 +28,13 @@ type StoredTargetGroup = {
   VpcId: string | undefined;
   TargetType: string;
   HealthCheckEnabled: boolean;
+  HealthCheckProtocol: string | undefined;
+  HealthCheckPath: string | undefined;
+  HealthCheckPort: string | undefined;
+  HealthCheckIntervalSeconds: number | undefined;
+  HealthCheckTimeoutSeconds: number | undefined;
+  HealthyThresholdCount: number | undefined;
+  UnhealthyThresholdCount: number | undefined;
   LoadBalancerArns: string[];
   IpAddressType: string;
 };
@@ -171,6 +178,27 @@ const targetGroupView = (tg: StoredTargetGroup): Record<string, unknown> => ({
   ...(tg.VpcId === undefined ? {} : { VpcId: tg.VpcId }),
   TargetType: tg.TargetType,
   HealthCheckEnabled: tg.HealthCheckEnabled,
+  ...(tg.HealthCheckProtocol === undefined
+    ? {}
+    : { HealthCheckProtocol: tg.HealthCheckProtocol }),
+  ...(tg.HealthCheckPath === undefined
+    ? {}
+    : { HealthCheckPath: tg.HealthCheckPath }),
+  ...(tg.HealthCheckPort === undefined
+    ? {}
+    : { HealthCheckPort: tg.HealthCheckPort }),
+  ...(tg.HealthCheckIntervalSeconds === undefined
+    ? {}
+    : { HealthCheckIntervalSeconds: tg.HealthCheckIntervalSeconds }),
+  ...(tg.HealthCheckTimeoutSeconds === undefined
+    ? {}
+    : { HealthCheckTimeoutSeconds: tg.HealthCheckTimeoutSeconds }),
+  ...(tg.HealthyThresholdCount === undefined
+    ? {}
+    : { HealthyThresholdCount: tg.HealthyThresholdCount }),
+  ...(tg.UnhealthyThresholdCount === undefined
+    ? {}
+    : { UnhealthyThresholdCount: tg.UnhealthyThresholdCount }),
   LoadBalancerArns: tg.LoadBalancerArns,
   IpAddressType: tg.IpAddressType,
 });
@@ -423,6 +451,19 @@ const CreateTargetGroup: OperationHandler = (input, ctx) => {
       typeof input["HealthCheckEnabled"] === "boolean"
         ? (input["HealthCheckEnabled"] as boolean)
         : true,
+    HealthCheckProtocol: optionalString(input, "HealthCheckProtocol"),
+    HealthCheckPath: optionalString(input, "HealthCheckPath"),
+    HealthCheckPort: optionalString(input, "HealthCheckPort"),
+    HealthCheckIntervalSeconds: optionalNumber(
+      input,
+      "HealthCheckIntervalSeconds",
+    ),
+    HealthCheckTimeoutSeconds: optionalNumber(
+      input,
+      "HealthCheckTimeoutSeconds",
+    ),
+    HealthyThresholdCount: optionalNumber(input, "HealthyThresholdCount"),
+    UnhealthyThresholdCount: optionalNumber(input, "UnhealthyThresholdCount"),
     LoadBalancerArns: [],
     IpAddressType: optionalString(input, "IpAddressType") ?? "ipv4",
   };
@@ -487,10 +528,23 @@ const DeleteTargetGroup: OperationHandler = (input, ctx) => {
 const ModifyTargetGroup: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "TargetGroupArn");
   const tg = requireTargetGroup(ctx, arn);
-  const healthCheckEnabled = input["HealthCheckEnabled"];
-  if (typeof healthCheckEnabled === "boolean") {
-    tg.HealthCheckEnabled = healthCheckEnabled;
+  if (typeof input["HealthCheckEnabled"] === "boolean") {
+    tg.HealthCheckEnabled = input["HealthCheckEnabled"] as boolean;
   }
+  const hcProtocol = optionalString(input, "HealthCheckProtocol");
+  if (hcProtocol !== undefined) tg.HealthCheckProtocol = hcProtocol;
+  const hcPath = optionalString(input, "HealthCheckPath");
+  if (hcPath !== undefined) tg.HealthCheckPath = hcPath;
+  const hcPort = optionalString(input, "HealthCheckPort");
+  if (hcPort !== undefined) tg.HealthCheckPort = hcPort;
+  const hcInterval = optionalNumber(input, "HealthCheckIntervalSeconds");
+  if (hcInterval !== undefined) tg.HealthCheckIntervalSeconds = hcInterval;
+  const hcTimeout = optionalNumber(input, "HealthCheckTimeoutSeconds");
+  if (hcTimeout !== undefined) tg.HealthCheckTimeoutSeconds = hcTimeout;
+  const healthyCount = optionalNumber(input, "HealthyThresholdCount");
+  if (healthyCount !== undefined) tg.HealthyThresholdCount = healthyCount;
+  const unhealthyCount = optionalNumber(input, "UnhealthyThresholdCount");
+  if (unhealthyCount !== undefined) tg.UnhealthyThresholdCount = unhealthyCount;
   ctx.store.set(targetGroupKey(arn), tg);
   return { TargetGroups: [targetGroupView(tg)] };
 };
@@ -734,22 +788,44 @@ const CreateRule: OperationHandler = (input, ctx) => {
   const listenerArn = requireString(input, "ListenerArn");
   requireListener(ctx, listenerArn);
   const priority = input["Priority"];
+  const priorityStr =
+    typeof priority === "number"
+      ? String(priority)
+      : typeof priority === "string"
+        ? priority
+        : "1";
+  const existingRules = ctx.store
+    .list<StoredRule>()
+    .filter((entry) => entry.key.startsWith("rule/"))
+    .map((entry) => entry.value)
+    .filter((r) => r.ListenerArn === listenerArn && !r.IsDefault);
+  if (
+    priorityStr !== "default" &&
+    existingRules.some((r) => r.Priority === priorityStr)
+  ) {
+    throw awsError(
+      "PriorityInUse",
+      `The priority '${priorityStr}' is already in use for this listener`,
+      400,
+    );
+  }
   const arnId = randomHex(8);
   const rule: StoredRule = {
     RuleArn: `arn:aws:elasticloadbalancing:${ctx.region}:${ctx.account}:listener-rule/app/${arnId}/${randomHex(8)}/${randomHex(8)}`,
     ListenerArn: listenerArn,
-    Priority:
-      typeof priority === "number"
-        ? String(priority)
-        : typeof priority === "string"
-          ? priority
-          : "1",
+    Priority: priorityStr,
     Conditions: objectList(input["Conditions"]),
     Actions: objectList(input["Actions"]),
     IsDefault: false,
   };
   ctx.store.set(ruleKey(rule.RuleArn), rule);
   return { Rules: [ruleView(rule)] };
+};
+
+const rulePriorityOrder = (priority: string): number => {
+  if (priority === "default") return Number.MAX_SAFE_INTEGER;
+  const n = Number(priority);
+  return isNaN(n) ? Number.MAX_SAFE_INTEGER - 1 : n;
 };
 
 const DescribeRules: OperationHandler = (input, ctx) => {
@@ -771,7 +847,10 @@ const DescribeRules: OperationHandler = (input, ctx) => {
   } else if (listenerArn !== undefined) {
     selected = all.filter((r) => r.ListenerArn === listenerArn);
   }
-  return { Rules: selected.map(ruleView) };
+  const sorted = [...selected].sort(
+    (a, b) => rulePriorityOrder(a.Priority) - rulePriorityOrder(b.Priority),
+  );
+  return { Rules: sorted.map(ruleView) };
 };
 
 const ModifyRule: OperationHandler = (input, ctx) => {
@@ -796,6 +875,57 @@ const DeleteRule: OperationHandler = (input, ctx) => {
 
 const SetRulePriorities: OperationHandler = (input, ctx) => {
   const rulePriorities = objectList(input["RulePriorities"]);
+  const priorityMap = new Map<string, string>();
+  for (const rp of rulePriorities) {
+    const arn = rp["RuleArn"] as string | undefined;
+    if (arn === undefined) continue;
+    const p = rp["Priority"];
+    const priorityStr =
+      typeof p === "number" ? String(p) : typeof p === "string" ? p : undefined;
+    if (priorityStr === undefined) continue;
+    if (priorityStr !== "default" && priorityMap.has(priorityStr)) {
+      throw awsError(
+        "PriorityInUse",
+        `The priority '${priorityStr}' is already in use`,
+        400,
+      );
+    }
+    priorityMap.set(priorityStr, arn);
+  }
+  const updatedArns = new Set(
+    rulePriorities
+      .map((rp) => rp["RuleArn"] as string | undefined)
+      .filter((a): a is string => a !== undefined),
+  );
+  const listenerArns = new Set<string>();
+  for (const arn of updatedArns) {
+    const rule = ctx.store.get<StoredRule>(ruleKey(arn));
+    if (rule !== undefined) listenerArns.add(rule.ListenerArn);
+  }
+  for (const listenerArn of listenerArns) {
+    const existingRules = ctx.store
+      .list<StoredRule>()
+      .filter((entry) => entry.key.startsWith("rule/"))
+      .map((entry) => entry.value)
+      .filter(
+        (r) =>
+          r.ListenerArn === listenerArn &&
+          !r.IsDefault &&
+          !updatedArns.has(r.RuleArn),
+      );
+    for (const [priority] of priorityMap) {
+      if (
+        priority !== "default" &&
+        existingRules.some((r) => r.Priority === priority)
+      ) {
+        throw awsError(
+          "PriorityInUse",
+          `The priority '${priority}' is already in use for this listener`,
+          400,
+        );
+      }
+    }
+  }
   const updated: StoredRule[] = [];
   for (const rp of rulePriorities) {
     const arn = rp["RuleArn"] as string | undefined;

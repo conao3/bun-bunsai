@@ -9167,6 +9167,284 @@ const UpdateDeviceFleet: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const UpdateDevices: OperationHandler = (input, ctx) => {
+  const fleetName = requireString(input, "DeviceFleetName");
+  const devices = Array.isArray(input["Devices"])
+    ? (input["Devices"] as Array<{
+        DeviceName: string;
+        IotThingName?: string;
+        Description?: string;
+      }>)
+    : [];
+  for (const device of devices) {
+    const key = deviceKey(fleetName, device.DeviceName);
+    const stored = ctx.store.get<StoredDevice>(key);
+    if (stored !== undefined) {
+      ctx.store.set(key, {
+        ...stored,
+        IotThingName:
+          typeof device.IotThingName === "string"
+            ? device.IotThingName
+            : stored.IotThingName,
+        Description:
+          typeof device.Description === "string"
+            ? device.Description
+            : stored.Description,
+      });
+    }
+  }
+  return {};
+};
+
+const UpdateDomain: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "DomainId");
+  const stored = requireDomain(ctx, id);
+  ctx.store.set(domainKey(id), {
+    ...stored,
+    DefaultUserSettings:
+      input["DefaultUserSettings"] !== undefined
+        ? input["DefaultUserSettings"]
+        : stored.DefaultUserSettings,
+    DomainSettings:
+      input["DomainSettingsForUpdate"] !== undefined
+        ? input["DomainSettingsForUpdate"]
+        : stored.DomainSettings,
+    DefaultSpaceSettings:
+      input["DefaultSpaceSettings"] !== undefined
+        ? input["DefaultSpaceSettings"]
+        : stored.DefaultSpaceSettings,
+    SubnetIds:
+      input["SubnetIds"] !== undefined ? input["SubnetIds"] : stored.SubnetIds,
+    AppNetworkAccessType:
+      typeof input["AppNetworkAccessType"] === "string"
+        ? (input["AppNetworkAccessType"] as string)
+        : stored.AppNetworkAccessType,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { DomainArn: stored.DomainArn };
+};
+
+const UpdateEndpoint: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "EndpointName");
+  const stored = ctx.store.get<StoredEndpoint>(endpointKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Could not find endpoint "${name}".`,
+      400,
+    );
+  }
+  const newConfigName = requireString(input, "EndpointConfigName");
+  const newConfig = ctx.store.get<StoredEndpointConfig>(
+    configKey(newConfigName),
+  );
+  ctx.store.set(endpointKey(name), {
+    ...stored,
+    EndpointConfigName: newConfigName,
+    ProductionVariants:
+      newConfig !== undefined
+        ? newConfig.ProductionVariants
+        : stored.ProductionVariants,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { EndpointArn: stored.EndpointArn };
+};
+
+const UpdateEndpointWeightsAndCapacities: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "EndpointName");
+  const stored = ctx.store.get<StoredEndpoint>(endpointKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Could not find endpoint "${name}".`,
+      400,
+    );
+  }
+  const updates = Array.isArray(input["DesiredWeightsAndCapacities"])
+    ? (input["DesiredWeightsAndCapacities"] as Array<{
+        VariantName: string;
+        DesiredWeight?: number;
+        DesiredInstanceCount?: number;
+      }>)
+    : [];
+  const variants = Array.isArray(stored.ProductionVariants)
+    ? (stored.ProductionVariants as Array<Record<string, unknown>>).map(
+        (variant) => {
+          const update = updates.find(
+            (u) => u.VariantName === variant["VariantName"],
+          );
+          if (update === undefined) return variant;
+          return {
+            ...variant,
+            CurrentWeight:
+              update.DesiredWeight !== undefined
+                ? update.DesiredWeight
+                : variant["CurrentWeight"],
+            CurrentInstanceCount:
+              update.DesiredInstanceCount !== undefined
+                ? update.DesiredInstanceCount
+                : variant["CurrentInstanceCount"],
+          };
+        },
+      )
+    : stored.ProductionVariants;
+  ctx.store.set(endpointKey(name), {
+    ...stored,
+    ProductionVariants: variants,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { EndpointArn: stored.EndpointArn };
+};
+
+const UpdateExperiment: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ExperimentName");
+  const stored = ctx.store.get<StoredExperiment>(experimentKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `Experiment ${name} does not exist.`,
+      400,
+    );
+  }
+  ctx.store.set(experimentKey(name), {
+    ...stored,
+    DisplayName:
+      typeof input["DisplayName"] === "string"
+        ? (input["DisplayName"] as string)
+        : stored.DisplayName,
+    Description:
+      typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : stored.Description,
+    LastModifiedTime: nowSeconds(),
+  });
+  return { ExperimentArn: stored.ExperimentArn };
+};
+
+const UpdateFeatureGroup: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "FeatureGroupName");
+  const stored = requireFeatureGroup(ctx, name);
+  ctx.store.set(featureGroupKey(name), {
+    ...stored,
+    OnlineStoreConfig:
+      input["OnlineStoreConfig"] !== undefined
+        ? input["OnlineStoreConfig"]
+        : stored.OnlineStoreConfig,
+    ThroughputConfig:
+      input["ThroughputConfig"] !== undefined
+        ? input["ThroughputConfig"]
+        : stored.ThroughputConfig,
+  });
+  return { FeatureGroupArn: stored.FeatureGroupArn };
+};
+
+const UpdateFeatureMetadata: OperationHandler = (input, ctx) => {
+  const groupName = requireString(input, "FeatureGroupName");
+  requireFeatureGroup(ctx, groupName);
+  return {};
+};
+
+const UpdateHub: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "HubName");
+  const stored = requireHub(ctx, name);
+  ctx.store.set(hubKey(name), {
+    ...stored,
+    HubDescription:
+      typeof input["HubDescription"] === "string"
+        ? (input["HubDescription"] as string)
+        : stored.HubDescription,
+    HubDisplayName:
+      typeof input["HubDisplayName"] === "string"
+        ? (input["HubDisplayName"] as string)
+        : stored.HubDisplayName,
+    HubSearchKeywords:
+      input["HubSearchKeywords"] !== undefined
+        ? input["HubSearchKeywords"]
+        : stored.HubSearchKeywords,
+  });
+  return { HubArn: stored.HubArn };
+};
+
+const UpdateHubContent: OperationHandler = (input, ctx) => {
+  const hubName = requireString(input, "HubName");
+  const contentName = requireString(input, "HubContentName");
+  const contentType = requireString(input, "HubContentType");
+  const contentVersion = requireString(input, "HubContentVersion");
+  const hub = requireHub(ctx, hubName);
+  const contentArn = hubContentArnOf(
+    ctx.region,
+    ctx.account,
+    hubName,
+    contentType,
+    contentName,
+    contentVersion,
+  );
+  return { HubArn: hub.HubArn, HubContentArn: contentArn };
+};
+
+const UpdateHubContentReference: OperationHandler = (input, ctx) => {
+  const hubName = requireString(input, "HubName");
+  const contentName = requireString(input, "HubContentName");
+  const contentType = requireString(input, "HubContentType");
+  const minVersion =
+    typeof input["MinVersion"] === "string"
+      ? (input["MinVersion"] as string)
+      : "1.0.0";
+  const hub = requireHub(ctx, hubName);
+  const contentArn = hubContentArnOf(
+    ctx.region,
+    ctx.account,
+    hubName,
+    contentType,
+    contentName,
+    minVersion,
+  );
+  return { HubArn: hub.HubArn, HubContentArn: contentArn };
+};
+
+const UpdateImage: OperationHandler = (input, ctx) => {
+  const name = requireString(input, "ImageName");
+  const stored = requireImage(ctx, name);
+  const deleteProps = Array.isArray(input["DeleteProperties"])
+    ? (input["DeleteProperties"] as string[])
+    : [];
+  ctx.store.set(imageKey(name), {
+    ...stored,
+    Description: deleteProps.includes("Description")
+      ? undefined
+      : typeof input["Description"] === "string"
+        ? (input["Description"] as string)
+        : stored.Description,
+    DisplayName: deleteProps.includes("DisplayName")
+      ? undefined
+      : typeof input["DisplayName"] === "string"
+        ? (input["DisplayName"] as string)
+        : stored.DisplayName,
+    RoleArn:
+      typeof input["RoleArn"] === "string"
+        ? (input["RoleArn"] as string)
+        : stored.RoleArn,
+  });
+  return { ImageArn: stored.ImageArn };
+};
+
+const UpdateImageVersion: OperationHandler = (input, ctx) => {
+  const imageName = requireString(input, "ImageName");
+  const version =
+    typeof input["Version"] === "number" ? (input["Version"] as number) : 1;
+  const stored = ctx.store.get<StoredImageVersion>(
+    imageVersionKey(imageName, version),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFound",
+      `ImageVersion ${imageName}/${version} does not exist.`,
+      400,
+    );
+  }
+  return { ImageVersionArn: stored.ImageVersionArn };
+};
+
 const sagemaker = {
   name: "sagemaker",
   protocol: "json",
@@ -9532,6 +9810,18 @@ const sagemaker = {
     UpdateComputeQuota,
     UpdateContext,
     UpdateDeviceFleet,
+    UpdateDevices,
+    UpdateDomain,
+    UpdateEndpoint,
+    UpdateEndpointWeightsAndCapacities,
+    UpdateExperiment,
+    UpdateFeatureGroup,
+    UpdateFeatureMetadata,
+    UpdateHub,
+    UpdateHubContent,
+    UpdateHubContentReference,
+    UpdateImage,
+    UpdateImageVersion,
   },
   model,
 } as const satisfies ServiceDefinition;

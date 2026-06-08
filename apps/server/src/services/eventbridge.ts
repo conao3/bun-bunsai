@@ -545,6 +545,34 @@ const deliverEvent = async (
       }
     }
   }
+  const busArn = busArnOf(ctx, busName);
+  for (const { key, value: archive } of ctx.store.list<StoredArchive>()) {
+    if (!key.startsWith(archivePrefix)) continue;
+    if (archive.EventSourceArn !== busArn) continue;
+    const busEvent: BusEvent = {
+      source: event.source,
+      "detail-type": event["detail-type"],
+      account: event.account,
+      region: event.region,
+      resources: event.resources,
+      detail: event.detail,
+    };
+    const captured =
+      archive.EventPattern === undefined ||
+      patternMatches(archive.EventPattern, busEvent);
+    if (!captured) continue;
+    const evKey = archivedEventsKey(archive.ArchiveName);
+    const stored = ctx.store.get<StoredArchivedEvent[]>(evKey) ?? [];
+    stored.push({
+      event: event as Record<string, unknown>,
+      time: Math.floor(Date.now() / 1000),
+    });
+    ctx.store.set(evKey, stored);
+    ctx.store.set(archiveStoreKey(archive.ArchiveName), {
+      ...archive,
+      EventCount: archive.EventCount + 1,
+    });
+  }
 };
 
 const PutEvents: OperationHandler = async (input, ctx) => {
@@ -581,11 +609,19 @@ type StoredArchive = {
   CreationTime: number;
 };
 
+type StoredArchivedEvent = {
+  event: Record<string, unknown>;
+  time: number;
+};
+
 const busPrefix = "eventbus#";
 const archivePrefix = "archive#";
+const archivedEventsPrefix = "archive-events#";
 
 const busStoreKey = (name: string): string => `${busPrefix}${name}`;
 const archiveStoreKey = (name: string): string => `${archivePrefix}${name}`;
+const archivedEventsKey = (archiveName: string): string =>
+  `${archivedEventsPrefix}${archiveName}`;
 
 const busArnOf = (ctx: ServiceContext, name: string): string =>
   `arn:aws:events:${ctx.region}:${ctx.account}:event-bus/${name}`;
@@ -780,7 +816,9 @@ const ListArchives: OperationHandler = (input, ctx) => {
 
 const DeleteArchive: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ArchiveName");
+  requireArchive(ctx, name);
   ctx.store.delete(archiveStoreKey(name));
+  ctx.store.delete(archivedEventsKey(name));
   return {};
 };
 
@@ -1766,7 +1804,37 @@ const requireReplay = (ctx: ServiceContext, name: string): StoredReplay => {
   return replay;
 };
 
-const StartReplay: OperationHandler = (input, ctx) => {
+const deliverEventToBus = async (
+  ctx: ServiceContext,
+  busName: string,
+  event: Record<string, unknown>,
+): Promise<void> => {
+  const busEvent: BusEvent = {
+    source: typeof event["source"] === "string" ? event["source"] : "",
+    "detail-type":
+      typeof event["detail-type"] === "string" ? event["detail-type"] : "",
+    account: typeof event["account"] === "string" ? event["account"] : "",
+    region: typeof event["region"] === "string" ? event["region"] : "",
+    resources: stringList(event["resources"]),
+    detail: event["detail"] ?? {},
+  };
+  const prefix = `${busName}/`;
+  for (const { key, value: rule } of ctx.store.list<StoredRule>()) {
+    if (!key.startsWith(prefix)) continue;
+    if (rule.State === "DISABLED") continue;
+    if (!patternMatches(rule.EventPattern, busEvent)) continue;
+    for (const target of Object.values(rule.targets)) {
+      const arn = target["Arn"];
+      if (typeof arn === "string") {
+        const body = applyTargetTransform(event, target);
+        if (body === undefined) continue;
+        await deliverToArn(ctx, arn, { body, event });
+      }
+    }
+  }
+};
+
+const StartReplay: OperationHandler = async (input, ctx) => {
   const name = requireString(input, "ReplayName");
   const key = replayStoreKey(name);
   if (ctx.store.get<StoredReplay>(key) !== undefined) {
@@ -1777,27 +1845,56 @@ const StartReplay: OperationHandler = (input, ctx) => {
     );
   }
   const arn = replayArnOf(ctx, name);
-  const now = Date.now();
+  const nowSec = Math.floor(Date.now() / 1000);
   const eventStartTime = input["EventStartTime"];
   const eventEndTime = input["EventEndTime"];
+  const eventSourceArn = requireString(input, "EventSourceArn");
+  const destination = input["Destination"];
   const replay: StoredReplay = {
     ReplayName: name,
     ReplayArn: arn,
     Description: stringOrUndefined(input["Description"]),
     State: "STARTING",
     StateReason: undefined,
-    EventSourceArn: requireString(input, "EventSourceArn"),
-    Destination: input["Destination"],
-    EventStartTime: typeof eventStartTime === "number" ? eventStartTime : now,
-    EventEndTime: typeof eventEndTime === "number" ? eventEndTime : now,
+    EventSourceArn: eventSourceArn,
+    Destination: destination,
+    EventStartTime:
+      typeof eventStartTime === "number" ? eventStartTime : nowSec,
+    EventEndTime: typeof eventEndTime === "number" ? eventEndTime : nowSec,
     EventLastReplayedTime: undefined,
-    ReplayStartTime: now,
+    ReplayStartTime: nowSec,
     ReplayEndTime: undefined,
   };
   ctx.store.set(key, replay);
+
+  const archiveName = busNameFromArn(eventSourceArn);
+  const archivedEvents =
+    ctx.store.get<StoredArchivedEvent[]>(archivedEventsKey(archiveName)) ?? [];
+  const destArn =
+    destination !== null && typeof destination === "object"
+      ? (destination as Record<string, unknown>)["Arn"]
+      : undefined;
+  const destBusName =
+    typeof destArn === "string" ? busNameFromArn(destArn) : "default";
+
+  ctx.store.set(key, { ...replay, State: "RUNNING" });
+  let lastReplayed: number | undefined;
+  for (const { event, time } of archivedEvents) {
+    if (time < replay.EventStartTime || time > replay.EventEndTime) continue;
+    await deliverEventToBus(ctx, destBusName, event);
+    lastReplayed = time;
+  }
+  const finishedSec = Math.floor(Date.now() / 1000);
+  ctx.store.set(key, {
+    ...replay,
+    State: "COMPLETED",
+    EventLastReplayedTime: lastReplayed,
+    ReplayEndTime: finishedSec,
+  });
+
   return {
     ReplayArn: arn,
-    State: replay.State,
+    State: "STARTING",
     StateReason: replay.StateReason,
     ReplayStartTime: replay.ReplayStartTime,
   };

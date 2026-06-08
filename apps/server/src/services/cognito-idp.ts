@@ -28,6 +28,7 @@ type StoredUser = {
   webAuthnCredentials: Record<string, StoredWebAuthnCredential>;
   mfaPreferences: Record<string, unknown>;
   userSettings: Record<string, unknown>;
+  softwareTokenVerified?: boolean;
 };
 
 type StoredDevice = {
@@ -284,6 +285,16 @@ type SrpSession = {
 const srpSessionKey = (poolId: string, username: string): string =>
   `srp#${poolId}#${username}`;
 
+type MfaChallengeSession = {
+  poolId: string;
+  clientId: string;
+  username: string;
+};
+
+const mfaChallengeKey = (session: string): string => `mfachallenge#${session}`;
+
+const MFA_VALID_CODE = "123456" as const;
+
 const poolArn = (region: string, account: string, poolId: string): string =>
   `arn:aws:cognito-idp:${region}:${account}:userpool/${poolId}`;
 
@@ -519,6 +530,38 @@ const validateRefreshToken = async (
     throw awsError("NotAuthorizedException", "Invalid Refresh Token.", 400);
   }
   return typeof payload["sub"] === "string" ? payload["sub"] : "";
+};
+
+const validateAccessToken = async (
+  accessToken: string,
+  ctx: ServiceContext,
+): Promise<{ pool: StoredPool; user: StoredUser; username: string }> => {
+  let payload: Record<string, unknown>;
+  try {
+    payload = await verifyJwt(accessToken);
+  } catch {
+    throw awsError("NotAuthorizedException", "Invalid Access Token.", 400);
+  }
+  if (payload["token_use"] !== "access") {
+    throw awsError("NotAuthorizedException", "Invalid Access Token.", 400);
+  }
+  const iss = typeof payload["iss"] === "string" ? payload["iss"] : "";
+  const poolId = iss.split("/").pop() ?? "";
+  const username =
+    typeof payload["username"] === "string" ? payload["username"] : "";
+  const pool = ctx.store.get<StoredPool>(poolId);
+  if (pool === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      "User pool does not exist.",
+      400,
+    );
+  }
+  const user = pool.users[username];
+  if (user === undefined) {
+    throw awsError("UserNotFoundException", "User does not exist.", 400);
+  }
+  return { pool, user, username };
 };
 
 export const handleCognitoDiscovery = async (
@@ -2094,6 +2137,23 @@ const AdminInitiateAuth: OperationHandler = async (input, ctx) => {
         400,
       );
     }
+    const mfaSettings = user.mfaPreferences["SoftwareTokenMfaSettings"] as
+      | Record<string, unknown>
+      | undefined;
+    if (mfaSettings?.["Enabled"] === true) {
+      const sessionToken = randomBytes(32).toString("hex");
+      const challengeSession: MfaChallengeSession = {
+        poolId,
+        clientId,
+        username,
+      };
+      ctx.store.set(mfaChallengeKey(sessionToken), challengeSession);
+      return {
+        ChallengeName: "SOFTWARE_TOKEN_MFA",
+        Session: sessionToken,
+        ChallengeParameters: { USERNAME: username },
+      };
+    }
     return {
       AuthenticationResult: await issueTokens({
         poolId,
@@ -2123,12 +2183,43 @@ const AdminRespondToAuthChallenge: OperationHandler = async (input, ctx) => {
   const pool = requirePool(ctx, poolId);
   const clientId =
     typeof input["ClientId"] === "string" ? (input["ClientId"] as string) : "";
+  const challengeName =
+    typeof input["ChallengeName"] === "string"
+      ? (input["ChallengeName"] as string)
+      : "";
   const challengeResponses =
     typeof input["ChallengeResponses"] === "object" &&
     input["ChallengeResponses"] !== null
       ? (input["ChallengeResponses"] as Record<string, string>)
       : {};
   const username = challengeResponses["USERNAME"] ?? "unknown";
+  if (challengeName === "SOFTWARE_TOKEN_MFA") {
+    const sessionToken =
+      typeof input["Session"] === "string" ? input["Session"] : "";
+    const pending = ctx.store.get<MfaChallengeSession>(
+      mfaChallengeKey(sessionToken),
+    );
+    if (pending === undefined) {
+      throw awsError("NotAuthorizedException", "Invalid session.", 400);
+    }
+    ctx.store.delete(mfaChallengeKey(sessionToken));
+    const code = challengeResponses["SOFTWARE_TOKEN_MFA_CODE"] ?? "";
+    if (code !== MFA_VALID_CODE) {
+      throw awsError(
+        "CodeMismatchException",
+        "The provided code does not match what the server was expecting.",
+        400,
+      );
+    }
+    return {
+      AuthenticationResult: await issueTokens({
+        poolId,
+        username,
+        clientId,
+        user: pool.users[username],
+      }),
+    };
+  }
   return {
     AuthenticationResult: await issueTokens({
       poolId,
@@ -2195,6 +2286,23 @@ const InitiateAuth: OperationHandler = async (input, ctx) => {
         "Incorrect username or password.",
         400,
       );
+    }
+    const mfaSettings = user.mfaPreferences["SoftwareTokenMfaSettings"] as
+      | Record<string, unknown>
+      | undefined;
+    if (mfaSettings?.["Enabled"] === true) {
+      const sessionToken = randomBytes(32).toString("hex");
+      const challengeSession: MfaChallengeSession = {
+        poolId: pool.Id,
+        clientId,
+        username,
+      };
+      ctx.store.set(mfaChallengeKey(sessionToken), challengeSession);
+      return {
+        ChallengeName: "SOFTWARE_TOKEN_MFA",
+        Session: sessionToken,
+        ChallengeParameters: { USERNAME: username },
+      };
     }
     return {
       AuthenticationResult: await issueTokens({
@@ -2291,6 +2399,34 @@ const RespondToAuthChallenge: OperationHandler = async (input, ctx) => {
       pool = entry.value;
       break;
     }
+  }
+  if (challengeName === "SOFTWARE_TOKEN_MFA") {
+    const sessionToken =
+      typeof input["Session"] === "string" ? input["Session"] : "";
+    const pending = ctx.store.get<MfaChallengeSession>(
+      mfaChallengeKey(sessionToken),
+    );
+    if (pending === undefined) {
+      throw awsError("NotAuthorizedException", "Invalid session.", 400);
+    }
+    ctx.store.delete(mfaChallengeKey(sessionToken));
+    const code = challengeResponses["SOFTWARE_TOKEN_MFA_CODE"] ?? "";
+    if (code !== MFA_VALID_CODE) {
+      throw awsError(
+        "CodeMismatchException",
+        "The provided code does not match what the server was expecting.",
+        400,
+      );
+    }
+    const mfaPool = ctx.store.get<StoredPool>(pending.poolId);
+    return {
+      AuthenticationResult: await issueTokens({
+        poolId: pending.poolId,
+        username: pending.username,
+        clientId: pending.clientId,
+        user: mfaPool?.users[pending.username],
+      }),
+    };
   }
   if (pool !== undefined && challengeName === "PASSWORD_VERIFIER") {
     const session = ctx.store.get<SrpSession>(srpSessionKey(pool.Id, username));
@@ -2600,11 +2736,20 @@ const ResendConfirmationCode: OperationHandler = (input, ctx) => {
   };
 };
 
-const GetUser: OperationHandler = (_input, _ctx) => {
+const GetUser: OperationHandler = async (input, ctx) => {
+  const accessToken =
+    typeof input["AccessToken"] === "string" ? input["AccessToken"] : "";
+  const { user, username } = await validateAccessToken(accessToken, ctx);
+  const mfaSettings = user.mfaPreferences["SoftwareTokenMfaSettings"] as
+    | Record<string, unknown>
+    | undefined;
+  const softwareEnabled = mfaSettings?.["Enabled"] === true;
   return {
-    Username: "unknown",
-    UserAttributes: [],
+    Username: username,
+    UserAttributes: user.Attributes,
     MFAOptions: [],
+    PreferredMfaSetting: softwareEnabled ? "SOFTWARE_TOKEN_MFA" : undefined,
+    UserMFASettingList: softwareEnabled ? ["SOFTWARE_TOKEN_MFA"] : [],
   };
 };
 
@@ -2649,7 +2794,23 @@ const SetUserSettings: OperationHandler = (_input, _ctx) => {
   return {};
 };
 
-const SetUserMFAPreference: OperationHandler = (_input, _ctx) => {
+const SetUserMFAPreference: OperationHandler = async (input, ctx) => {
+  const accessToken =
+    typeof input["AccessToken"] === "string" ? input["AccessToken"] : "";
+  const { user } = await validateAccessToken(accessToken, ctx);
+  if (
+    typeof input["SoftwareTokenMfaSettings"] === "object" &&
+    input["SoftwareTokenMfaSettings"] !== null
+  ) {
+    user.mfaPreferences["SoftwareTokenMfaSettings"] =
+      input["SoftwareTokenMfaSettings"];
+  }
+  if (
+    typeof input["SMSMfaSettings"] === "object" &&
+    input["SMSMfaSettings"] !== null
+  ) {
+    user.mfaPreferences["SMSMfaSettings"] = input["SMSMfaSettings"];
+  }
   return {};
 };
 
@@ -2694,11 +2855,70 @@ const UpdateDeviceStatus: OperationHandler = (_input, _ctx) => {
   return {};
 };
 
-const AssociateSoftwareToken: OperationHandler = (_input, _ctx) => {
-  return { SecretCode: "FAKE_TOTP_SECRET_BASE32" };
+const AssociateSoftwareToken: OperationHandler = async (input, ctx) => {
+  const accessToken =
+    typeof input["AccessToken"] === "string" ? input["AccessToken"] : undefined;
+  const session =
+    typeof input["Session"] === "string" ? input["Session"] : undefined;
+  if (accessToken !== undefined && accessToken !== "") {
+    await validateAccessToken(accessToken, ctx);
+  } else if (session !== undefined && session !== "") {
+    const pending = ctx.store.get<MfaChallengeSession>(
+      mfaChallengeKey(session),
+    );
+    if (pending === undefined) {
+      throw awsError("NotAuthorizedException", "Invalid session.", 400);
+    }
+  } else {
+    throw awsError(
+      "InvalidParameterException",
+      "Either AccessToken or Session is required.",
+      400,
+    );
+  }
+  return { SecretCode: "BUNSAISIMTOTP000000000000000000" };
 };
 
-const VerifySoftwareToken: OperationHandler = (_input, _ctx) => {
+const VerifySoftwareToken: OperationHandler = async (input, ctx) => {
+  const accessToken =
+    typeof input["AccessToken"] === "string" ? input["AccessToken"] : undefined;
+  const session =
+    typeof input["Session"] === "string" ? input["Session"] : undefined;
+  let pool: StoredPool;
+  let user: StoredUser;
+  if (accessToken !== undefined && accessToken !== "") {
+    const result = await validateAccessToken(accessToken, ctx);
+    pool = result.pool;
+    user = result.user;
+  } else if (session !== undefined && session !== "") {
+    const pending = ctx.store.get<MfaChallengeSession>(
+      mfaChallengeKey(session),
+    );
+    if (pending === undefined) {
+      throw awsError("NotAuthorizedException", "Invalid session.", 400);
+    }
+    const p = ctx.store.get<StoredPool>(pending.poolId);
+    if (p === undefined) {
+      throw awsError(
+        "ResourceNotFoundException",
+        "User pool does not exist.",
+        400,
+      );
+    }
+    pool = p;
+    user = pool.users[pending.username];
+    if (user === undefined) {
+      throw awsError("UserNotFoundException", "User does not exist.", 400);
+    }
+  } else {
+    throw awsError(
+      "InvalidParameterException",
+      "Either AccessToken or Session is required.",
+      400,
+    );
+  }
+  void pool;
+  user.softwareTokenVerified = true;
   return { Status: "SUCCESS" };
 };
 

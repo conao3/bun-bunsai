@@ -252,12 +252,12 @@ describe("ecr e2e", () => {
     const previewResult = await client.send(
       new StartLifecyclePolicyPreviewCommand({ repositoryName: name }),
     );
-    expect(previewResult.status).toBeDefined();
+    expect(previewResult.status).toBe("COMPLETE");
 
     const previewGetResult = await client.send(
       new GetLifecyclePolicyPreviewCommand({ repositoryName: name }),
     );
-    expect(previewGetResult.status).toBeDefined();
+    expect(previewGetResult.status).toBe("COMPLETE");
 
     const deleteResult = await client.send(
       new DeleteLifecyclePolicyCommand({ repositoryName: name }),
@@ -503,12 +503,12 @@ describe("ecr e2e", () => {
     const scanResult = await client.send(
       new StartImageScanCommand({ repositoryName: name, imageId }),
     );
-    expect(scanResult.imageScanStatus).toBeDefined();
+    expect(scanResult.imageScanStatus?.status).toBe("IN_PROGRESS");
 
     const findingsResult = await client.send(
       new DescribeImageScanFindingsCommand({ repositoryName: name, imageId }),
     );
-    expect(findingsResult.imageScanStatus?.status).toBeDefined();
+    expect(findingsResult.imageScanStatus?.status).toBe("COMPLETE");
 
     const batchResult = await client.send(
       new BatchGetRepositoryScanningConfigurationCommand({

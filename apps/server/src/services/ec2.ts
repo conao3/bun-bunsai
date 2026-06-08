@@ -11389,6 +11389,204 @@ const DescribeLocalGatewayVirtualInterfaces: OperationHandler = (
   };
 };
 
+const DescribeLocalGateways: OperationHandler = (_input, _ctx) => {
+  return { LocalGateways: [] };
+};
+
+const DescribeLockedSnapshots: OperationHandler = (_input, _ctx) => {
+  return { Snapshots: [] };
+};
+
+const DescribeMacHosts: OperationHandler = (_input, _ctx) => {
+  return { MacHosts: [] };
+};
+
+const DescribeMacModificationTasks: OperationHandler = (_input, _ctx) => {
+  return { MacModificationTasks: [] };
+};
+
+const allManagedPrefixLists = (
+  ctx: ServiceContext,
+): StoredManagedPrefixList[] =>
+  ctx.store
+    .list<StoredManagedPrefixList>()
+    .filter((entry) => entry.key.startsWith("pl/"))
+    .map((entry) => entry.value);
+
+const DescribeManagedPrefixLists: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["PrefixListIds"]);
+  const lists = allManagedPrefixLists(ctx).filter((pl) =>
+    ids.length === 0 ? true : ids.includes(pl.PrefixListId),
+  );
+  return {
+    PrefixLists: lists.map((pl) => ({
+      PrefixListId: pl.PrefixListId,
+      AddressFamily: pl.AddressFamily,
+      State: pl.State,
+      PrefixListArn: pl.PrefixListArn,
+      PrefixListName: pl.PrefixListName,
+      MaxEntries: pl.MaxEntries,
+      Version: pl.Version,
+      Tags: pl.Tags,
+      OwnerId: pl.OwnerId,
+    })),
+  };
+};
+
+const DescribeMovingAddresses: OperationHandler = (_input, _ctx) => {
+  return { MovingAddressStatuses: [] };
+};
+
+const allNetworkAcls = (ctx: ServiceContext): StoredNetworkAcl[] =>
+  ctx.store
+    .list<StoredNetworkAcl>()
+    .filter((entry) => entry.key.startsWith("acl/"))
+    .map((entry) => entry.value);
+
+const DescribeNetworkAcls: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["NetworkAclIds"]);
+  const acls = allNetworkAcls(ctx).filter((acl) =>
+    ids.length === 0 ? true : ids.includes(acl.NetworkAclId),
+  );
+  return {
+    NetworkAcls: acls.map((acl) => ({
+      NetworkAclId: acl.NetworkAclId,
+      VpcId: acl.VpcId,
+      IsDefault: acl.IsDefault,
+      OwnerId: acl.OwnerId,
+      Entries: acl.Entries.map((e) => ({
+        RuleNumber: e.RuleNumber,
+        Protocol: e.Protocol,
+        RuleAction: e.RuleAction,
+        Egress: e.Egress,
+        CidrBlock: e.CidrBlock,
+        Ipv6CidrBlock: e.Ipv6CidrBlock,
+      })),
+      Associations: [],
+      Tags: acl.Tags,
+    })),
+  };
+};
+
+const allNiScopeAnalyses = (
+  ctx: ServiceContext,
+): StoredNetworkInsightsAccessScopeAnalysis[] =>
+  ctx.store
+    .list<StoredNetworkInsightsAccessScopeAnalysis>()
+    .filter((entry) => entry.key.startsWith("ni-scope-analysis/"))
+    .map((entry) => entry.value);
+
+const DescribeNetworkInsightsAccessScopeAnalyses: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["NetworkInsightsAccessScopeAnalysisIds"]);
+  const analyses = allNiScopeAnalyses(ctx).filter((a) =>
+    ids.length === 0
+      ? true
+      : ids.includes(a.NetworkInsightsAccessScopeAnalysisId),
+  );
+  return {
+    NetworkInsightsAccessScopeAnalyses: analyses.map((a) => ({
+      NetworkInsightsAccessScopeAnalysisId:
+        a.NetworkInsightsAccessScopeAnalysisId,
+      NetworkInsightsAccessScopeId: a.NetworkInsightsAccessScopeId,
+    })),
+  };
+};
+
+const allNiAccessScopes = (
+  ctx: ServiceContext,
+): StoredNetworkInsightsAccessScope[] =>
+  ctx.store
+    .list<StoredNetworkInsightsAccessScope>()
+    .filter((entry) => entry.key.startsWith("ni-scope/"))
+    .map((entry) => entry.value);
+
+const DescribeNetworkInsightsAccessScopes: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["NetworkInsightsAccessScopeIds"]);
+  const scopes = allNiAccessScopes(ctx).filter((s) =>
+    ids.length === 0 ? true : ids.includes(s.NetworkInsightsAccessScopeId),
+  );
+  return {
+    NetworkInsightsAccessScopes: scopes.map((s) => ({
+      NetworkInsightsAccessScopeId: s.NetworkInsightsAccessScopeId,
+      NetworkInsightsAccessScopeArn: s.NetworkInsightsAccessScopeArn,
+      CreatedDate: s.CreatedDate,
+      UpdatedDate: s.UpdatedDate,
+      Tags: s.Tags,
+    })),
+  };
+};
+
+const allNiAnalyses = (ctx: ServiceContext): StoredNetworkInsightsAnalysis[] =>
+  ctx.store
+    .list<StoredNetworkInsightsAnalysis>()
+    .filter((entry) => entry.key.startsWith("ni-analysis/"))
+    .map((entry) => entry.value);
+
+const DescribeNetworkInsightsAnalyses: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["NetworkInsightsAnalysisIds"]);
+  const analyses = allNiAnalyses(ctx).filter((a) =>
+    ids.length === 0 ? true : ids.includes(a.NetworkInsightsAnalysisId),
+  );
+  return {
+    NetworkInsightsAnalyses: analyses.map((a) => ({
+      NetworkInsightsAnalysisId: a.NetworkInsightsAnalysisId,
+      NetworkInsightsPathId: a.NetworkInsightsPathId,
+    })),
+  };
+};
+
+const allNiPaths = (ctx: ServiceContext): StoredNetworkInsightsPath[] =>
+  ctx.store
+    .list<StoredNetworkInsightsPath>()
+    .filter((entry) => entry.key.startsWith("ni-path/"))
+    .map((entry) => entry.value);
+
+const DescribeNetworkInsightsPaths: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["NetworkInsightsPathIds"]);
+  const paths = allNiPaths(ctx).filter((p) =>
+    ids.length === 0 ? true : ids.includes(p.NetworkInsightsPathId),
+  );
+  return {
+    NetworkInsightsPaths: paths.map((p) => ({
+      NetworkInsightsPathId: p.NetworkInsightsPathId,
+      NetworkInsightsPathArn: p.NetworkInsightsPathArn,
+      CreatedDate: p.CreatedDate,
+      Source: p.Source,
+      Destination: p.Destination,
+      Protocol: p.Protocol,
+      DestinationPort: p.DestinationPort,
+      Tags: p.Tags,
+    })),
+  };
+};
+
+const DescribeNetworkInterfaceAttribute: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["NetworkInterfaceId"] === "string"
+      ? input["NetworkInterfaceId"]
+      : "";
+  const ni = ctx.store.get<StoredNetworkInterface>(networkInterfaceKey(id));
+  if (ni === undefined) {
+    throw awsError(
+      "InvalidNetworkInterfaceID.NotFound",
+      `The network interface '${id}' does not exist`,
+      400,
+    );
+  }
+  return {
+    NetworkInterfaceId: ni.NetworkInterfaceId,
+    Description: { Value: ni.Description },
+    Groups: ni.Groups.map((g) => ({
+      GroupId: g.GroupId,
+      GroupName: g.GroupName,
+    })),
+    SourceDestCheck: { Value: ni.SourceDestCheck },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -11770,6 +11968,18 @@ const ec2: ServiceDefinition = {
     DescribeLocalGatewayRouteTables,
     DescribeLocalGatewayVirtualInterfaceGroups,
     DescribeLocalGatewayVirtualInterfaces,
+    DescribeLocalGateways,
+    DescribeLockedSnapshots,
+    DescribeMacHosts,
+    DescribeMacModificationTasks,
+    DescribeManagedPrefixLists,
+    DescribeMovingAddresses,
+    DescribeNetworkAcls,
+    DescribeNetworkInsightsAccessScopeAnalyses,
+    DescribeNetworkInsightsAccessScopes,
+    DescribeNetworkInsightsAnalyses,
+    DescribeNetworkInsightsPaths,
+    DescribeNetworkInterfaceAttribute,
   },
   model,
 } as const;

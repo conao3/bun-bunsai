@@ -30,12 +30,18 @@ describe("athena e2e", () => {
     const id = started.QueryExecutionId;
     expect(id).toBeDefined();
 
+    const firstGet = await client.send(
+      new GetQueryExecutionCommand({ QueryExecutionId: id }),
+    );
+    expect(firstGet.QueryExecution?.Status?.State).toBe("RUNNING");
+
     const got = await client.send(
       new GetQueryExecutionCommand({ QueryExecutionId: id }),
     );
     expect(got.QueryExecution?.QueryExecutionId).toBe(id ?? "");
     expect(got.QueryExecution?.Query).toBe("SELECT 1");
     expect(got.QueryExecution?.Status?.State).toBe("SUCCEEDED");
+    expect(got.QueryExecution?.Statistics).toBeDefined();
 
     const listed = await client.send(
       new ListQueryExecutionsCommand({ WorkGroup: "primary" }),
@@ -46,7 +52,10 @@ describe("athena e2e", () => {
       new GetQueryResultsCommand({ QueryExecutionId: id }),
     );
     expect(results.ResultSet).toBeDefined();
-    expect(results.ResultSet?.Rows ?? []).toEqual([]);
+    expect(
+      results.ResultSet?.ResultSetMetadata?.ColumnInfo?.length ?? 0,
+    ).toBeGreaterThan(0);
+    expect(results.ResultSet?.Rows).toBeDefined();
 
     const stopped = await client.send(
       new StopQueryExecutionCommand({ QueryExecutionId: id }),

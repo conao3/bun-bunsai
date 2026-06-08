@@ -558,6 +558,148 @@ const DeleteDashboards: OperationHandler = (input, ctx) => {
   return {};
 };
 
+type RuleToken =
+  | { t: "state"; st: string; name: string }
+  | { t: "kw"; word: string }
+  | { t: "paren"; ch: string };
+
+const tokenizeAlarmRule = (rule: string): RuleToken[] => {
+  const tokens: RuleToken[] = [];
+  let i = 0;
+  while (i < rule.length) {
+    if (/\s/.test(rule[i]!)) {
+      i++;
+      continue;
+    }
+    const sm = rule
+      .slice(i)
+      .match(/^(ALARM|OK|INSUFFICIENT_DATA)\("([^"]*)"\)/);
+    if (sm) {
+      tokens.push({ t: "state" as const, st: sm[1]!, name: sm[2]! });
+      i += sm[0]!.length;
+      continue;
+    }
+    const km = rule.slice(i).match(/^(AND|OR|NOT|TRUE|FALSE)(?!\w)/);
+    if (km) {
+      tokens.push({ t: "kw" as const, word: km[1]! });
+      i += km[1]!.length;
+      continue;
+    }
+    tokens.push({ t: "paren" as const, ch: rule[i]! });
+    i++;
+  }
+  return tokens;
+};
+
+const evalAlarmRule = (rule: string, ctx: ServiceContext): string => {
+  const tokens = tokenizeAlarmRule(rule);
+  const pos = { i: 0 };
+
+  const peek = (): RuleToken | null =>
+    pos.i < tokens.length ? tokens[pos.i]! : null;
+  const consume = (): RuleToken => tokens[pos.i++]!;
+
+  const getState = (name: string): string => {
+    const ma = ctx.store.get<StoredAlarm>(alarmKey(name));
+    if (ma !== undefined) return ma.StateValue;
+    const ca = ctx.store.get<StoredCompositeAlarm>(compositeAlarmKey(name));
+    return ca !== undefined ? ca.StateValue : "INSUFFICIENT_DATA";
+  };
+
+  const evalAtom = (): string => {
+    const tok = peek();
+    if (tok === null) return "INSUFFICIENT_DATA";
+    if (tok.t === "paren" && tok.ch === "(") {
+      consume();
+      const result = evalOr();
+      consume();
+      return result;
+    }
+    if (tok.t === "kw") {
+      if (tok.word === "TRUE") {
+        consume();
+        return "ALARM";
+      }
+      if (tok.word === "FALSE") {
+        consume();
+        return "OK";
+      }
+    }
+    if (tok.t === "state") {
+      consume();
+      const cur = getState(tok.name);
+      if (cur === "INSUFFICIENT_DATA") return "INSUFFICIENT_DATA";
+      return cur === tok.st ? "ALARM" : "OK";
+    }
+    consume();
+    return "INSUFFICIENT_DATA";
+  };
+
+  const evalNot = (): string => {
+    const tok = peek();
+    if (tok !== null && tok.t === "kw" && tok.word === "NOT") {
+      consume();
+      const val = evalNot();
+      if (val === "ALARM") return "OK";
+      if (val === "OK") return "ALARM";
+      return "INSUFFICIENT_DATA";
+    }
+    return evalAtom();
+  };
+
+  const evalAnd = (): string => {
+    let left = evalNot();
+    while (true) {
+      const tok = peek();
+      if (tok === null || tok.t !== "kw" || tok.word !== "AND") break;
+      consume();
+      const right = evalNot();
+      if (left === "OK" || right === "OK") {
+        left = "OK";
+      } else if (left === "ALARM" && right === "ALARM") {
+        left = "ALARM";
+      } else {
+        left = "INSUFFICIENT_DATA";
+      }
+    }
+    return left;
+  };
+
+  const evalOr = (): string => {
+    let left = evalAnd();
+    while (true) {
+      const tok = peek();
+      if (tok === null || tok.t !== "kw" || tok.word !== "OR") break;
+      consume();
+      const right = evalAnd();
+      if (left === "ALARM" || right === "ALARM") {
+        left = "ALARM";
+      } else if (left === "OK" && right === "OK") {
+        left = "OK";
+      } else {
+        left = "INSUFFICIENT_DATA";
+      }
+    }
+    return left;
+  };
+
+  return evalOr();
+};
+
+const updateCompositeAlarms = (ctx: ServiceContext): void => {
+  const entries = ctx.store
+    .list<StoredCompositeAlarm>()
+    .filter((e) => e.key.startsWith("composite-alarm/"));
+  for (const entry of entries) {
+    const ca = entry.value;
+    const newState = evalAlarmRule(ca.AlarmRule, ctx);
+    if (ca.StateValue !== newState) {
+      ca.StateValue = newState;
+      ctx.store.set(entry.key, ca);
+    }
+  }
+};
+
 const SetAlarmState: OperationHandler = (input, ctx) => {
   const name = requireString(input, "AlarmName");
   requireString(input, "StateValue");
@@ -582,6 +724,7 @@ const SetAlarmState: OperationHandler = (input, ctx) => {
     Timestamp: ts,
   };
   ctx.store.set(alarmHistoryKeyOf(name, ts), historyItem);
+  updateCompositeAlarms(ctx);
   return {};
 };
 
@@ -612,6 +755,188 @@ const statFromQuery = (metricStat: Record<string, unknown>): string =>
     ? (metricStat["Stat"] as string)
     : "Average";
 
+type TimeSeries = { Timestamps: number[]; Values: number[] };
+
+const combineSeries = (
+  a: TimeSeries,
+  b: TimeSeries,
+  op: (av: number, bv: number) => number,
+): TimeSeries => {
+  const aMap = new Map(a.Timestamps.map((ts, i) => [ts, a.Values[i]!]));
+  const bMap = new Map(b.Timestamps.map((ts, i) => [ts, b.Values[i]!]));
+  const tsSet = new Set([...a.Timestamps, ...b.Timestamps]);
+  const sortedTs = [...tsSet].sort((x, y) => x - y);
+  const Timestamps: number[] = [];
+  const Values: number[] = [];
+  for (const ts of sortedTs) {
+    const av = aMap.get(ts);
+    const bv = bMap.get(ts);
+    if (av !== undefined && bv !== undefined) {
+      Timestamps.push(ts);
+      Values.push(op(av, bv));
+    }
+  }
+  return { Timestamps, Values };
+};
+
+const evalMetricMath = (
+  expr: string,
+  resolved: Map<string, TimeSeries>,
+): TimeSeries => {
+  type MathToken =
+    | { k: "id"; v: string }
+    | { k: "num"; v: number }
+    | { k: "op"; v: string }
+    | { k: "paren"; v: string };
+
+  const tokens: MathToken[] = [];
+  let i = 0;
+  while (i < expr.length) {
+    if (/\s/.test(expr[i]!)) {
+      i++;
+      continue;
+    }
+    const idm = expr.slice(i).match(/^[a-zA-Z_][a-zA-Z0-9_]*/);
+    if (idm) {
+      tokens.push({ k: "id" as const, v: idm[0]! });
+      i += idm[0]!.length;
+      continue;
+    }
+    const nm = expr.slice(i).match(/^[\d.]+/);
+    if (nm) {
+      tokens.push({ k: "num" as const, v: Number(nm[0]) });
+      i += nm[0]!.length;
+      continue;
+    }
+    if ("+-*/".includes(expr[i]!)) {
+      tokens.push({ k: "op" as const, v: expr[i]! });
+    } else {
+      tokens.push({ k: "paren" as const, v: expr[i]! });
+    }
+    i++;
+  }
+
+  const pos = { i: 0 };
+  const peek = (): MathToken | null =>
+    pos.i < tokens.length ? tokens[pos.i]! : null;
+  const consume = (): MathToken => tokens[pos.i++]!;
+
+  const toScalar = (n: number, refTs: number[]): TimeSeries => ({
+    Timestamps: refTs,
+    Values: refTs.map(() => n),
+  });
+
+  const parseFactor = (): TimeSeries => {
+    const tok = peek();
+    if (tok === null) return { Timestamps: [], Values: [] };
+    if (tok.k === "paren" && tok.v === "(") {
+      consume();
+      const result = parseExpr();
+      consume();
+      return result;
+    }
+    if (tok.k === "op" && tok.v === "-") {
+      consume();
+      const f = parseFactor();
+      return { Timestamps: f.Timestamps, Values: f.Values.map((v) => -v) };
+    }
+    consume();
+    if (tok.k === "num") {
+      return toScalar(tok.v, []);
+    }
+    if (tok.k === "id") {
+      return resolved.get(tok.v) ?? { Timestamps: [], Values: [] };
+    }
+    return { Timestamps: [], Values: [] };
+  };
+
+  const parseTerm = (): TimeSeries => {
+    let left = parseFactor();
+    while (true) {
+      const tok = peek();
+      if (tok === null || tok.k !== "op" || (tok.v !== "*" && tok.v !== "/"))
+        break;
+      const op = consume().v;
+      const right = parseFactor();
+      left = combineSeries(
+        left,
+        right,
+        op === "*" ? (a, b) => a * b : (a, b) => a / b,
+      );
+    }
+    return left;
+  };
+
+  const parseExpr = (): TimeSeries => {
+    let left = parseTerm();
+    while (true) {
+      const tok = peek();
+      if (tok === null || tok.k !== "op" || (tok.v !== "+" && tok.v !== "-"))
+        break;
+      const op = consume().v;
+      const right = parseTerm();
+      left = combineSeries(
+        left,
+        right,
+        op === "+" ? (a, b) => a + b : (a, b) => a - b,
+      );
+    }
+    return left;
+  };
+
+  return parseExpr();
+};
+
+const resolveMetricStatQuery = (
+  query: Record<string, unknown>,
+  startTime: number,
+  endTime: number,
+  ctx: ServiceContext,
+): TimeSeries => {
+  const metricStat = query["MetricStat"] as Record<string, unknown>;
+  const metric =
+    typeof metricStat["Metric"] === "object" && metricStat["Metric"] !== null
+      ? (metricStat["Metric"] as Record<string, unknown>)
+      : {};
+  const namespace =
+    typeof metric["Namespace"] === "string"
+      ? (metric["Namespace"] as string)
+      : "";
+  const metricName =
+    typeof metric["MetricName"] === "string"
+      ? (metric["MetricName"] as string)
+      : "";
+  const dimensions = toDimensions(metric["Dimensions"]);
+  const period =
+    typeof metricStat["Period"] === "number"
+      ? (metricStat["Period"] as number)
+      : 60;
+  const stat = statFromQuery(metricStat);
+  const series = ctx.store.get<StoredSeries>(
+    seriesKey(namespace, metricName, dimensions),
+  );
+  const points = (series?.Points ?? []).filter(
+    (point) => point.Timestamp >= startTime && point.Timestamp < endTime,
+  );
+  const buckets = new Map<number, number[]>();
+  for (const point of points) {
+    const bucketStart =
+      startTime + Math.floor((point.Timestamp - startTime) / period) * period;
+    const existing = buckets.get(bucketStart) ?? [];
+    existing.push(point.Value);
+    buckets.set(bucketStart, existing);
+  }
+  const Timestamps: number[] = [];
+  const Values: number[] = [];
+  for (const [bucketStart, bucketValues] of [...buckets.entries()].sort(
+    (a, b) => a[0] - b[0],
+  )) {
+    Timestamps.push(bucketStart);
+    Values.push(computeStatistic(stat, bucketValues));
+  }
+  return { Timestamps, Values };
+};
+
 const GetMetricData: OperationHandler = (input, ctx) => {
   const queries = input["MetricDataQueries"];
   if (!Array.isArray(queries)) {
@@ -621,7 +946,15 @@ const GetMetricData: OperationHandler = (input, ctx) => {
   requireNumber(input, "EndTime");
   const startTime = input["StartTime"] as number;
   const endTime = input["EndTime"] as number;
-  const results: Record<string, unknown>[] = [];
+
+  type QueryEntry = {
+    id: string;
+    label: string;
+    query: Record<string, unknown>;
+  };
+  const metricStatQueries: QueryEntry[] = [];
+  const expressionQueries: QueryEntry[] = [];
+
   for (const entry of queries) {
     if (typeof entry !== "object" || entry === null) continue;
     const query = entry as Record<string, unknown>;
@@ -631,62 +964,46 @@ const GetMetricData: OperationHandler = (input, ctx) => {
     }
     const label =
       typeof query["Label"] === "string" ? (query["Label"] as string) : id;
-    const metricStat =
-      typeof query["MetricStat"] === "object" && query["MetricStat"] !== null
-        ? (query["MetricStat"] as Record<string, unknown>)
-        : undefined;
-    const timestamps: number[] = [];
-    const values: number[] = [];
-    if (metricStat !== undefined) {
-      const metric =
-        typeof metricStat["Metric"] === "object" &&
-        metricStat["Metric"] !== null
-          ? (metricStat["Metric"] as Record<string, unknown>)
-          : {};
-      const namespace =
-        typeof metric["Namespace"] === "string"
-          ? (metric["Namespace"] as string)
-          : "";
-      const metricName =
-        typeof metric["MetricName"] === "string"
-          ? (metric["MetricName"] as string)
-          : "";
-      const dimensions = toDimensions(metric["Dimensions"]);
-      const period =
-        typeof metricStat["Period"] === "number"
-          ? (metricStat["Period"] as number)
-          : 60;
-      const stat = statFromQuery(metricStat);
-      const series = ctx.store.get<StoredSeries>(
-        seriesKey(namespace, metricName, dimensions),
-      );
-      const points = (series?.Points ?? []).filter(
-        (point) => point.Timestamp >= startTime && point.Timestamp < endTime,
-      );
-      const buckets = new Map<number, number[]>();
-      for (const point of points) {
-        const bucketStart =
-          startTime +
-          Math.floor((point.Timestamp - startTime) / period) * period;
-        const existing = buckets.get(bucketStart) ?? [];
-        existing.push(point.Value);
-        buckets.set(bucketStart, existing);
-      }
-      for (const [bucketStart, bucketValues] of [...buckets.entries()].sort(
-        (a, b) => a[0] - b[0],
-      )) {
-        timestamps.push(bucketStart);
-        values.push(computeStatistic(stat, bucketValues));
-      }
+    if (
+      typeof query["MetricStat"] === "object" &&
+      query["MetricStat"] !== null
+    ) {
+      metricStatQueries.push({ id, label, query });
+    } else if (typeof query["Expression"] === "string") {
+      expressionQueries.push({ id, label, query });
     }
-    results.push({
-      Id: id,
-      Label: label,
-      Timestamps: timestamps,
-      Values: values,
-      StatusCode: "Complete",
-    });
   }
+
+  const resolved = new Map<string, TimeSeries>();
+  for (const { id, query } of metricStatQueries) {
+    resolved.set(id, resolveMetricStatQuery(query, startTime, endTime, ctx));
+  }
+
+  for (const { id, query } of expressionQueries) {
+    const expr = query["Expression"] as string;
+    resolved.set(id, evalMetricMath(expr, resolved));
+  }
+
+  const allIds = [
+    ...metricStatQueries.map((q) => q.id),
+    ...expressionQueries.map((q) => q.id),
+  ];
+  const labelMap = new Map<string, string>();
+  for (const { id, label } of [...metricStatQueries, ...expressionQueries]) {
+    labelMap.set(id, label);
+  }
+
+  const results: Record<string, unknown>[] = allIds.map((id) => {
+    const ts = resolved.get(id) ?? { Timestamps: [], Values: [] };
+    return {
+      Id: id,
+      Label: labelMap.get(id) ?? id,
+      Timestamps: ts.Timestamps,
+      Values: ts.Values,
+      StatusCode: "Complete",
+    };
+  });
+
   return { MetricDataResults: results, Messages: [] };
 };
 

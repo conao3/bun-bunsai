@@ -1304,6 +1304,7 @@ const ipamPoolCidrKey = (poolId: string, cidr: string): string =>
 const publicIpv4PoolCidrKey = (poolId: string, cidr: string): string =>
   `ipv4-pool-cidr/${poolId}/${cidr}`;
 const instanceEventNotificationKey = (): string => `ien/singleton`;
+const ebsEncryptionByDefaultKey = (): string => `ebs-enc-by-default/singleton`;
 const spotInstanceRequestKey = (id: string): string => `sir/${id}`;
 const spotFleetRequestKey = (id: string): string => `sfr/${id}`;
 const tgwMcastMemberKey = (
@@ -1395,6 +1396,24 @@ const allVpcPeeringConnections = (
   ctx.store
     .list<StoredVpcPeeringConnection>()
     .filter((entry) => entry.key.startsWith("pcx/"))
+    .map((entry) => entry.value);
+
+const allVpnConcentrators = (ctx: ServiceContext): StoredVpnConcentrator[] =>
+  ctx.store
+    .list<StoredVpnConcentrator>()
+    .filter((entry) => entry.key.startsWith("vpn-conc/"))
+    .map((entry) => entry.value);
+
+const allVpnConnections = (ctx: ServiceContext): StoredVpnConnection[] =>
+  ctx.store
+    .list<StoredVpnConnection>()
+    .filter((entry) => entry.key.startsWith("vpn-conn/"))
+    .map((entry) => entry.value);
+
+const allVpnGateways = (ctx: ServiceContext): StoredVpnGateway[] =>
+  ctx.store
+    .list<StoredVpnGateway>()
+    .filter((entry) => entry.key.startsWith("vpngw/"))
     .map((entry) => entry.value);
 
 const allTgwAttachments = (ctx: ServiceContext): StoredTgwAttachment[] =>
@@ -13334,6 +13353,163 @@ const DescribeVpcEndpoints: OperationHandler = (input, ctx) => {
   };
 };
 
+const DescribeVpcPeeringConnections: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VpcPeeringConnectionIds"]);
+  const connections = allVpcPeeringConnections(ctx).filter((c) =>
+    ids.length === 0 ? true : ids.includes(c.VpcPeeringConnectionId),
+  );
+  return {
+    VpcPeeringConnections: connections.map((c) => ({
+      VpcPeeringConnectionId: c.VpcPeeringConnectionId,
+      AccepterVpcInfo: { VpcId: c.AccepterVpcId, OwnerId: ctx.account },
+      RequesterVpcInfo: { VpcId: c.RequesterVpcId, OwnerId: ctx.account },
+      Status: c.Status,
+      Tags: c.Tags,
+    })),
+  };
+};
+
+const DescribeVpnConcentrators: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VpnConcentratorIds"]);
+  const concentrators = allVpnConcentrators(ctx).filter((c) =>
+    ids.length === 0 ? true : ids.includes(c.VpnConcentratorId),
+  );
+  return {
+    VpnConcentrators: concentrators.map((c) => ({
+      VpnConcentratorId: c.VpnConcentratorId,
+      State: c.State,
+      TransitGatewayId: c.TransitGatewayId,
+      Type: c.Type,
+      Tags: c.Tags,
+    })),
+  };
+};
+
+const DescribeVpnConnections: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VpnConnectionIds"]);
+  const connections = allVpnConnections(ctx).filter((c) =>
+    ids.length === 0 ? true : ids.includes(c.VpnConnectionId),
+  );
+  return {
+    VpnConnections: connections.map((c) => ({
+      VpnConnectionId: c.VpnConnectionId,
+      State: c.State,
+      CustomerGatewayId: c.CustomerGatewayId,
+      VpnGatewayId: c.VpnGatewayId,
+      TransitGatewayId: c.TransitGatewayId,
+      Type: c.Type,
+      Tags: c.Tags,
+      Routes: [],
+      VgwTelemetry: [],
+    })),
+  };
+};
+
+const DescribeVpnGateways: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VpnGatewayIds"]);
+  const gateways = allVpnGateways(ctx).filter((g) =>
+    ids.length === 0 ? true : ids.includes(g.VpnGatewayId),
+  );
+  return {
+    VpnGateways: gateways.map((g) => ({
+      VpnGatewayId: g.VpnGatewayId,
+      State: g.State,
+      VpcAttachments: g.VpcAttachments,
+    })),
+  };
+};
+
+const DisableAddressTransfer: OperationHandler = (input, ctx) => {
+  const allocationId =
+    typeof input["AllocationId"] === "string" ? input["AllocationId"] : "";
+  const address = ctx.store.get<StoredAddress>(addressKey(allocationId));
+  if (address === undefined) {
+    throw awsError(
+      "InvalidAllocationID.NotFound",
+      `The allocation ID '${allocationId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    AddressTransfer: {
+      AllocationId: address.AllocationId,
+      PublicIp: address.PublicIp,
+      AddressTransferStatus: "disabled",
+    },
+  };
+};
+
+const DisableAllowedImagesSettings: OperationHandler = (_input, _ctx) => {
+  return { AllowedImagesSettingsState: "disabled" };
+};
+
+const DisableAwsNetworkPerformanceMetricSubscription: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Output: true };
+};
+
+const DisableCapacityManager: OperationHandler = (_input, _ctx) => {
+  return {
+    CapacityManagerStatus: "disabled",
+    OrganizationsAccess: false,
+  };
+};
+
+const DisableEbsEncryptionByDefault: OperationHandler = (_input, ctx) => {
+  ctx.store.set(ebsEncryptionByDefaultKey(), { enabled: false });
+  return { EbsEncryptionByDefault: false };
+};
+
+const DisableFastLaunch: OperationHandler = (input, ctx) => {
+  const imageId = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(imageId));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${imageId}]' does not exist`,
+      400,
+    );
+  }
+  return {
+    ImageId: imageId,
+    OwnerId: image.OwnerId,
+    State: "disabling",
+    StateTransitionReason: "Client.UserInitiated",
+  };
+};
+
+const DisableFastSnapshotRestores: OperationHandler = (input, ctx) => {
+  const snapshotIds = stringList(input["SourceSnapshotIds"]);
+  const azs = stringList(input["AvailabilityZones"]);
+  const effectiveAzs = azs.length > 0 ? azs : [`${ctx.region}a`];
+  const successful = snapshotIds.flatMap((snapId) =>
+    effectiveAzs.map((az) => ({
+      SnapshotId: snapId,
+      AvailabilityZone: az,
+      State: "disabling",
+      StateTransitionReason: "Client.UserInitiated",
+      OwnerId: ctx.account,
+    })),
+  );
+  return { Successful: successful, Unsuccessful: [] };
+};
+
+const DisableImage: OperationHandler = (input, ctx) => {
+  const imageId = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(imageId));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${imageId}]' does not exist`,
+      400,
+    );
+  }
+  ctx.store.set(imageKey(imageId), { ...image, State: "disabled" });
+  return { Return: true };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -13801,6 +13977,18 @@ const ec2: ServiceDefinition = {
     DescribeVpcEndpointServicePermissions,
     DescribeVpcEndpointServices,
     DescribeVpcEndpoints,
+    DescribeVpcPeeringConnections,
+    DescribeVpnConcentrators,
+    DescribeVpnConnections,
+    DescribeVpnGateways,
+    DisableAddressTransfer,
+    DisableAllowedImagesSettings,
+    DisableAwsNetworkPerformanceMetricSubscription,
+    DisableCapacityManager,
+    DisableEbsEncryptionByDefault,
+    DisableFastLaunch,
+    DisableFastSnapshotRestores,
+    DisableImage,
   },
   model,
 } as const;

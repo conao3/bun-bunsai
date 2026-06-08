@@ -509,7 +509,9 @@ const resolveTaskDefinition = (
     .map((entry) => entry.value)
     .filter(
       (value) =>
-        value.family === family && value.taskDefinitionArn !== undefined,
+        value.family === family &&
+        value.taskDefinitionArn !== undefined &&
+        value.status === "ACTIVE",
     )
     .sort((left, right) => right.revision - left.revision);
   if (revisions.length === 0) {
@@ -620,9 +622,17 @@ const DescribeTaskDefinition: OperationHandler = (input, ctx) => {
 };
 
 const RunTask: OperationHandler = (input, ctx) => {
+  const clusterName = clusterNameFromInput(input);
+  const cluster = ctx.store.get<StoredCluster>(clusterKey(clusterName));
+  if (cluster === undefined) {
+    throw awsError(
+      "ClusterNotFoundException",
+      `Cluster not found: ${clusterName}`,
+      400,
+    );
+  }
   const identifier = requireString(input, "taskDefinition");
   const taskDef = resolveTaskDefinition(ctx, identifier);
-  const clusterName = clusterNameFromInput(input);
   const count =
     typeof input["count"] === "number" && input["count"] > 0
       ? (input["count"] as number)

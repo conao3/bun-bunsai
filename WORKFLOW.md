@@ -14,7 +14,7 @@ tracker:
     - Duplicate
     - Done
 polling:
-  interval_ms: 15000
+  interval_ms: 60000
 workspace:
   root: ~/code/symphony-workspaces
 hooks:
@@ -25,14 +25,14 @@ agent:
   max_turns: 10
   max_attempts_per_issue: 3
 codex:
-  command: source /run/secrets/rendered/helios-env && CLAUDE_CONFIG_DIR=$HOME/.agents/.claude.worker ANTHROPIC_BASE_URL=$ANTHROPIC_WORKER_URL ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_WORKER_API_TOKEN ANTHROPIC_MODEL=claude-sonnet-4-6 exec claude-app-server
+  command: source /run/secrets/rendered/helios-env && CLAUDE_CONFIG_DIR=$HOME/.agents/.claude.worker ANTHROPIC_BASE_URL=$ANTHROPIC_WORKER_URL ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_WORKER_API_TOKEN ANTHROPIC_MODEL=claude-sonnet-4-6 ENABLE_PROMPT_CACHING_1H=1 exec claude-app-server
   approval_policy: never
   thread_sandbox: workspace-write
   turn_sandbox_policy:
     type: workspaceWrite
 ---
 
-You are working on a Linear ticket `{{ issue.identifier }}`
+You are working on a Linear ticket `{{ issue.identifier }}`.
 
 {% if attempt %}
 Continuation context:
@@ -40,7 +40,7 @@ Continuation context:
 - This is retry attempt #{{ attempt }} because the ticket is still in an active state.
 - Resume from the current workspace state instead of restarting from scratch.
 - Do not repeat already-completed investigation or validation unless needed for new code changes.
-- Do not end the turn while the issue remains in an active state unless you are blocked by missing required permissions/secrets.
+- Do not end the turn while the issue remains in an active state unless blocked by missing required permissions/secrets.
   {% endif %}
 
 {% if final_attempt %}
@@ -49,12 +49,9 @@ Final-attempt context (scope-violation cap reached):
 - This issue exceeded the per-issue attempt cap. You are the recording agent, **not** an implementer.
 - **Do not modify code, do not run typecheck/lint/tests, do not push.**
 - Read the workspace state (`git status`, `git log --oneline -10`, any open PR via `gh pr view`) and the existing `## Agent Workpad` comment to understand what was completed and where the work stalled.
-- Append a `### Final-attempt summary` section to the workpad with:
-  - What is complete (files changed, gates passed).
-  - What is not complete (failing validation, blockers, gate not satisfied).
-  - Why the scope was too large (which subtasks should be split off — propose 3-5 concrete sub-issues with one-line scope each).
-- Move the Linear state to `Cancelled` via `mcp__linear__save_issue` (`state="Cancelled"`). The operator will read your summary, split the work, and reinject.
-- Then end the turn. Do not attempt to keep working.
+- Append a `### Final-attempt summary` section to the workpad with: what is complete, what is not, why scope was too large (propose 3-5 concrete sub-issues with one-line scope each).
+- Move the Linear state to `Cancelled` via `mcp__linear__save_issue` (`state="Cancelled"`). Operator will split and reinject.
+- End the turn. Do not attempt to keep working.
   {% endif %}
 
 Issue context:
@@ -73,253 +70,130 @@ No description provided.
 
 Instructions:
 
-1. This is an unattended orchestration session. Never ask a human to perform follow-up actions.
-2. Only stop early for a true blocker (missing required auth/permissions/secrets). If blocked, record it in the workpad and move the issue according to workflow.
-3. Final message must report completed actions and blockers only. Do not include "next steps for user".
-
-Work only in the provided repository copy. Do not touch any other path.
+1. Unattended orchestration session. Never ask a human to perform follow-up actions.
+2. Only stop early for a true blocker (missing required auth/permissions/secrets). If blocked, record it in the workpad and route per the blocked-access escape hatch.
+3. Final message reports completed actions and blockers only. No "next steps for user".
+4. Work only in the provided repository copy.
 
 ## Prerequisite: Linear MCP
 
-The agent talks to Linear via the configured Linear MCP server (`mcp__linear__*` tools). If the Linear MCP is not present, stop and ask the user to configure it.
+All tracker operations go through `mcp__linear__*` (OAuth-authenticated). If absent, stop and ask the user to configure it.
 
-## Default posture
+## Bunsai-specific posture
 
-- Start by determining the ticket's current status, then follow the matching flow for that status.
-- Start every task by opening the tracking workpad comment and bringing it up to date before doing new implementation work.
-- Spend extra effort up front on planning and verification design before implementation.
-- Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.
-- Keep ticket metadata current (state, checklist, acceptance criteria, links).
-- Treat a single persistent Linear comment as the source of truth for progress.
-- Use that single workpad comment for all progress and handoff notes; do not post separate "done"/summary comments.
-- Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.
-- When meaningful out-of-scope improvements are discovered during execution, file a separate Linear issue instead of expanding scope. The follow-up issue must include a clear title, description, and acceptance criteria, be placed in `Backlog`, be assigned to the same project as the current issue, link the current issue as `related`, and use `blockedBy` when the follow-up depends on the current issue.
-- Move status only when the matching quality bar is met.
-- Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
-- **Edit-Read efficiency**: after editing a file, do not Re-Read it just to confirm the result. Batch multiple Edits and rely on Edit's atomic semantics. Re-Read only when you need new context the prior Read did not capture. If you find yourself reading the same file 5+ times in one session, stop and rethink the approach.
-- **Large vendored files**: never `Read` the whole of `test/vendor/aws-models/<service>.json` (each file is 100KB–several MB). Use `bun scripts/aws-model-op.ts <service> [<operation>] [--with-shapes]` to extract just the operation's input/output/errors shapes, or list every operation name when the operation argument is omitted. Same idea for any single source file over 1MB: locate the symbol with `grep -n` first, then `Read offset N limit 30`.
-- **Trim Bash output**: pipe long-running commands through `| tail -<N>` / `grep -E '<pattern>'` so only the relevant lines reach the tool_result. `bun test` raw stdout in particular is large and useless to keep in the trajectory.
-- **No sub-agents**: do not invoke the `Agent` / `Task` tool. This worker is a single-thread implementer; spinning up a sub-agent multiplies context cost without adding throughput here.
-- Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.
-- **Write all GitHub communication in English**: PR title, PR description (Summary / Test plan / etc.), commit messages, PR review replies, and any inline `gh pr comment` posts must be in English regardless of the language used in the Linear issue body or workpad. The Linear workpad itself may stay in the issue's language, but anything that surfaces on GitHub is English.
+Generic posture (Edit-Read efficiency / large vendored files / trim Bash output / no sub-agents / GitHub English-only / output economy) is defined in AGENTS-worker.md and is in effect. Bunsai-specific rules below override or extend it.
+
+- **AWS model JSON**: never `Read` the whole of `test/vendor/aws-models/<service>.json` (each is 100KB-several MB). Use `bun scripts/aws-model-op.ts <service> [<operation>] [--with-shapes]` to extract just the operation's input/output/errors shapes (omit operation arg to list every op name).
+- **Long self-service files**: `apps/server/src/services/<svc>.ts` for big services (ec2 / sagemaker / connect / dynamodb / glue …) routinely exceed 1000 lines. Locate the symbol with `grep -n` first, then `Read offset N limit 30`. Do not re-`Read` whole-file repeatedly within a session.
+- **Shared-host e2e harness**: e2e tests run fully in-process — `test/e2e/harness.ts` `startApp()` plugs an AWS SDK `requestHandler` directly into the gateway fetch handler, no HTTP server, no TCP port. Sibling agents and a running dev server on 4566/5666 do not conflict. New e2e files must use `startApp()` and pass its `requestHandler` to every SDK client; do not spawn a server subprocess, call `Bun.serve`, or hardcode ports.
+- **E2E scope for large services (40+ ops)**: do NOT write a per-op round-trip test. Writing exhaustive e2e overruns `max_turns` and forces task abandonment even when implementation is complete. Extend the service's e2e file with ONE representative lifecycle per resource category (create → get → list → update → delete), ~20-30 assertions total. Priorities, in order: (1) full implementation of every listed op, (2) focused e2e, (3) PR with green CI.
+- **`bun test` output**: pipe through `| tail -<N>` / `grep -E '<pattern>'`. Raw stdout is large and useless to keep in the trajectory.
 
 ## Tools
 
-- **Linear MCP** (`mcp__linear__*`, OAuth-authenticated): use for all Linear operations — read issues (`mcp__linear__get_issue` / `mcp__linear__list_issues`), update state via `mcp__linear__save_issue` (pass `state` by name: `"In Progress"`, `"Human Review"`, `"Rework"`, `"Done"`), attach PR URLs via `links: [{ url, title }]`, save comments via `mcp__linear__save_comment`, list comments via `mcp__linear__list_comments`, delete comments via `mcp__linear__delete_comment`.
-- **`gh` CLI**: available and authenticated. Use for all GitHub operations (PR create / view / merge, repo API).
-- **`git`**: standard git CLI for branch / commit / push operations.
+- **Linear MCP** (`mcp__linear__*`, OAuth): read (`get_issue` / `list_issues`), state (`save_issue` with `state` by name), PR links (`save_issue` with `links: [{ url, title }]`), comments (`save_comment` / `list_comments` / `delete_comment`).
+- **`gh` CLI**: all GitHub ops (PR create / view / merge, repo API).
+- **`git`**: branch / commit / push.
 
 Branch name convention: `issue-{{ issue.identifier | downcase }}`.
 
-## Status map
+## Status map and routing
 
-- `Backlog` -> out of scope for this workflow; do not modify.
-- `Todo` -> queued; immediately transition to `In Progress` before active work.
-  - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, return to `Merging`).
-- `In Progress` -> implementation actively underway; on completion, transition directly to `Merging`.
-- `Merging` -> agent runs `gh pr merge <pr> --merge --delete-branch`, confirms merged, then moves the issue to `Done`.
-- `Human Review` -> escape hatch state for blockers per `Blocked-access escape hatch`; the normal flow does not pass through this state.
-- `Rework` -> reviewer requested changes; planning + implementation required.
-- `Done` -> terminal state; no further action required.
+| State | Action |
+|---|---|
+| `Backlog` | Out of scope; do not modify. |
+| `Todo` | Move to `In Progress`, create/find `## Agent Workpad` comment, then execute. If a PR is already attached, treat as PR feedback / rework loop. |
+| `In Progress` | Continue execution from the existing workpad. |
+| `Merging` | Run `gh pr merge <pr> --merge --delete-branch`, confirm `MERGED`, then move to `Done`. |
+| `Human Review` | Blocked-access escape state. Do nothing and shut down. |
+| `Rework` | Full reset (see rework flow). |
+| `Done` | Terminal. Do nothing. |
 
-## Step 0: Determine current ticket state and route
+Initial routing:
 
-1. Fetch the issue by explicit ticket ID via `mcp__linear__get_issue`.
-2. Read the current state.
-3. Route to the matching flow:
-   - `Backlog` -> do not modify issue content/state; stop and wait for human to move it to `Todo`.
-   - `Todo` -> immediately move to `In Progress`, then ensure bootstrap workpad comment exists (create if missing), then start execution flow.
-     - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
-   - `In Progress` -> continue execution flow from current scratchpad comment.
-   - `Merging` -> run `gh pr merge <pr> --merge --delete-branch`, confirm `MERGED`, then move the issue to `Done`.
-   - `Human Review` -> blocker escape state; do nothing and shut down. A human resolves the blocker and re-routes the issue.
-   - `Rework` -> run rework flow.
-   - `Done` -> do nothing and shut down.
-4. Check whether a PR already exists for the current branch and whether it is closed.
-   - If a branch PR exists and is `CLOSED` or `MERGED`, treat prior branch work as non-reusable for this run.
-   - Create a fresh branch from `origin/master` and restart execution flow as a new attempt.
-5. For `Todo` tickets, do startup sequencing in this exact order:
-   - `mcp__linear__save_issue` with `id="{{ issue.identifier }}"`, `state="In Progress"`.
-   - Find or create `## Agent Workpad` bootstrap comment via `mcp__linear__list_comments` + `mcp__linear__save_comment`.
-   - Only then begin analysis / planning / implementation work.
-6. Add a short comment if state and issue content are inconsistent, then proceed with the safest flow.
+1. `mcp__linear__get_issue` by `{{ issue.identifier }}` to read current state.
+2. Route per the table.
+3. If a branch PR exists and is `CLOSED` or `MERGED`, prior branch work is non-reusable; create fresh branch from `origin/master` and restart.
 
-## Step 1: Start/continue execution (Todo or In Progress)
+## Execution flow (Todo / In Progress)
 
-1. Find or create a single persistent scratchpad comment for the issue:
-   - Search existing comments via `mcp__linear__list_comments` for a marker header: `## Agent Workpad`.
-   - Ignore resolved comments while searching; only active/unresolved comments are eligible to be reused as the live workpad.
-   - If found, reuse that comment; do not create a new workpad comment.
-   - If not found, create one workpad comment via `mcp__linear__save_comment` and use it for all updates.
-   - Persist the workpad comment ID and only write progress updates to that ID.
-2. If arriving from `Todo`, do not delay on additional status transitions: the issue should already be `In Progress` before this step begins.
-3. Immediately reconcile the workpad before new edits:
-   - Check off items that are already done.
-   - Expand/fix the plan so it is comprehensive for current scope.
-   - Ensure `Acceptance Criteria` and `Validation` are current and still make sense for the task.
-4. Start work by writing/updating a hierarchical plan in the workpad comment.
-5. Ensure the workpad includes a compact environment stamp at the top as a code fence line:
-   - Format: `<host>:<abs-workdir>@<short-sha>`
-   - Example: `devbox-01:/home/dev-user/code/symphony-workspaces/CON-32@7bdde33bc`
-   - Do not include metadata already inferable from Linear issue fields (`issue ID`, `status`, `branch`, `PR link`).
-6. Add explicit acceptance criteria and TODOs in checklist form in the same comment.
-   - If changes are user-facing, include a UI walkthrough acceptance criterion that describes the end-to-end user path to validate.
-   - If changes touch app files or app behavior, add explicit app-specific flow checks to `Acceptance Criteria` in the workpad (for example: launch path, changed interaction path, and expected result path).
-   - If the ticket description/comment context includes `Validation`, `Test Plan`, or `Testing` sections, copy those requirements into the workpad `Acceptance Criteria` and `Validation` sections as required checkboxes (no optional downgrade).
-7. Run a principal-style self-review of the plan and refine it in the comment.
-8. Before implementing, capture a concrete reproduction signal and record it in the workpad `Notes` section (command/output, screenshot, or deterministic UI behavior).
-9. Sync the branch with latest `origin/master` before any code edits:
-   - `git fetch origin master && git pull --rebase origin master` (or merge if more appropriate).
-   - Record sync result in the workpad `Notes`:
-     - merge source(s),
-     - result (`clean` or `conflicts resolved`),
-     - resulting `HEAD` short SHA.
-10. Compact context and proceed to execution.
+1. Find or create the single `## Agent Workpad` comment (search via `mcp__linear__list_comments`; ignore resolved). Persist its ID and write all progress to it. Do not create additional `done`/summary comments.
+2. Reconcile workpad before new edits: check off done items, fix the plan for current scope, ensure `Acceptance Criteria` and `Validation` reflect the task. Copy any ticket-provided `Validation` / `Test Plan` / `Testing` requirements into the workpad as required checkboxes (no optional downgrade).
+3. Workpad must start with one fenced env-stamp line: `<host>:<abs-workdir>@<short-sha>`. Do not duplicate fields already in Linear (issue ID, status, branch, PR link).
+4. Plan + acceptance criteria + TODOs in checklist form. UI-facing changes need an explicit UI walkthrough acceptance criterion.
+5. Capture a concrete reproduction signal before changing code; record it in workpad `Notes`.
+6. Sync branch with `origin/master` (`git fetch origin master && git pull --rebase origin master`) before any code edits. Record sync result (source, `clean`/`conflicts resolved`, resulting HEAD short SHA) in workpad `Notes`.
+7. Implement against TODOs. Update workpad after each meaningful milestone. Never leave completed work unchecked.
+8. Run scope-required validation/tests. Temporary local proof edits are allowed but must be reverted before commit. Document temp steps in workpad `Validation`/`Notes`.
+9. Before every `git push`, the required validation for your scope must pass.
+10. Attach PR URL to issue via `mcp__linear__save_issue` `links=[{url, title:"PR"}]`. Ensure GitHub PR has label `symphony` (`gh pr edit <pr> --add-label symphony` if missing).
+11. Merge latest `origin/master` into branch, resolve conflicts, rerun checks.
+12. Run PR feedback sweep and CI green confirmation (see below). Repeat check-address-verify until no outstanding comments and all checks pass.
+13. Refresh workpad so `Plan` / `Acceptance Criteria` / `Validation` exactly match completed work. Add `### Confusions` (1-3 bullets) only if execution was unclear. No additional completion summary comment.
+14. Move issue to `Merging` via `mcp__linear__save_issue`. Exception: blocked → `Human Review` per escape hatch.
 
-## PR feedback sweep protocol (required)
+## PR feedback sweep
 
-When a ticket has an attached PR, run this protocol before moving to `Merging`:
+Required before `Merging`. Repeat until empty.
 
-1. Identify the PR number from issue links/attachments.
-2. Gather feedback from all channels:
-   - Top-level PR comments (`gh pr view <pr> --comments`).
-   - Inline review comments (`gh api repos/conao3/bun-bunsai/pulls/<pr>/comments`).
-   - Review summaries/states (`gh pr view <pr> --json reviews`).
-3. Treat every actionable reviewer comment (human or bot), including inline review comments, as blocking until one of these is true:
-   - code/test/docs updated to address it, or
-   - explicit, justified pushback reply is posted on that thread (`gh api ... -X POST ... /comments/<id>/replies`).
-4. Update the workpad plan/checklist to include each feedback item and its resolution status.
-5. Re-run validation after feedback-driven changes and push updates.
-6. Repeat this sweep until there are no outstanding actionable comments.
+1. Gather all channels: `gh pr view <pr> --comments`, `gh api repos/conao3/bun-bunsai/pulls/<pr>/comments`, `gh pr view <pr> --json reviews`.
+2. Every actionable reviewer comment (human or bot, inline included) is blocking until either (a) code/test/docs updated, or (b) explicit justified pushback reply is posted on that thread (`gh api ... -X POST ... /comments/<id>/replies`).
+3. Mirror each item and its resolution in the workpad plan/checklist.
+4. Re-validate after feedback-driven changes and push updates.
 
-## CI green confirmation protocol (required)
+## CI green confirmation
 
-Shared-host test note: e2e tests run fully in-process with no HTTP server and no TCP port (`test/e2e/harness.ts` `startApp()` plugs an AWS SDK `requestHandler` directly into the gateway fetch handler), so `bun test` never conflicts with sibling agents' test runs or a dev server occupying 4566/5666. New e2e files must use `startApp()` from the harness and pass its `requestHandler` to every SDK client — do not spawn a server subprocess, call `Bun.serve`, or hardcode ports. Validate your own change by running your service's e2e file, then rely on GitHub CI as the authoritative signal. Once your own test passes and CI is green, move straight to `Merging`.
+Required before `Merging`.
 
-E2E test scope (important for large services): when a task asks you to implement many operations (40+), do NOT write a separate round-trip test for every operation — writing exhaustive per-op e2e overruns `max_turns` and forces the task to be abandoned even when the implementation itself is complete. Instead extend the service's e2e file with ONE representative lifecycle per resource category (e.g. create → get → list → update → delete for each major resource group), ~20-30 assertions total. Exercising each distinct output shape once is sufficient to validate the AWS SDK v3 deserializer (the main thing e2e catches here). Always prioritize, in order: (1) full implementation of every listed operation, (2) a focused e2e file, (3) a committed PR with green CI. Exhaustive per-operation e2e is explicitly NOT required and should never be the reason a task fails to produce a PR.
+1. `gh pr checks <pr-number>`. If any check is `pending`/`in_progress`/`queued`, wait (`gh pr checks <pr-number> --watch` blocks until done).
+2. If any check is `failure`/`cancelled`/`timed_out`, fix with a new commit, push, restart from 1.
+3. Inspect full rollup: `gh pr view <pr-number> --json statusCheckRollup --jq '.statusCheckRollup[] | {name, status, conclusion}'`. Every entry must be `status:"COMPLETED"` and `conclusion:"SUCCESS"`. Justify any `SKIPPED`/`NEUTRAL` with a one-line workpad note.
 
-Before transitioning to `Merging`, confirm CI on the latest pushed commit:
+## Merging step
 
-1. List checks with `gh pr checks <pr-number>`.
-2. If any check reports `pending` / `in_progress` / `queued`, wait. `gh pr checks <pr-number> --watch` blocks until every check finishes.
-3. If any check reports `failure` / `cancelled` / `timed_out`, fix the cause with a new commit, push, and restart from step 1.
-4. Inspect the full rollup once everything finishes:
+1. `gh pr merge <pr> --merge --delete-branch`. Confirm with `gh pr view <pr> --json state --jq '.state'` returns `MERGED`.
+2. Move issue to `Done` via `mcp__linear__save_issue`.
+3. If a human reroutes to `Rework`, run the rework flow.
 
-   ```bash
-   gh pr view <pr-number> --json statusCheckRollup \
-     --jq '.statusCheckRollup[] | {name, status, conclusion}'
-   ```
+## Rework flow
 
-   Every entry must have `status: "COMPLETED"` and `conclusion: "SUCCESS"`. Record any `SKIPPED` / `NEUTRAL` results explicitly in the workpad with a one-line justification before proceeding.
+1. Full approach reset, not incremental patching.
+2. Re-read the full issue body and all human comments; identify what will differ this attempt.
+3. Close existing PR (`gh pr close <pr>`).
+4. Delete existing `## Agent Workpad` comment via `mcp__linear__delete_comment` (or tombstone the body).
+5. Create fresh branch from `origin/master`.
+6. Restart from the normal Todo kickoff.
 
-5. Only when every check on the latest pushed commit is green may the issue transition to `Merging`.
+## Blocked-access escape hatch
 
-## Blocked-access escape hatch (required behavior)
+Use only when completion is blocked by missing required tools or auth that cannot be resolved in-session.
 
-Use this only when completion is blocked by missing required tools or missing auth/permissions that cannot be resolved in-session.
-
-- GitHub is **not** a valid blocker by default. Always try fallback strategies first (alternate remote/auth mode, then continue publish/review flow).
-- Do not move to `Human Review` for GitHub access/auth until all fallback strategies have been attempted and documented in the workpad.
-- If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, move the ticket to `Human Review` with a short blocker brief in the workpad that includes:
-  - what is missing,
-  - why it blocks required acceptance/validation,
-  - exact human action needed to unblock.
-- Keep the brief concise and action-oriented; do not add extra top-level comments outside the workpad.
-
-## Step 2: Execution phase (Todo -> In Progress -> Merging)
-
-1. Determine current repo state (`branch`, `git status`, `HEAD`) and verify the kickoff sync result is already recorded in the workpad before implementation continues.
-2. If current issue state is `Todo`, move it to `In Progress` via `mcp__linear__save_issue`; otherwise leave the current state unchanged.
-3. Load the existing workpad comment and treat it as the active execution checklist.
-   - Edit it liberally whenever reality changes (scope, risks, validation approach, discovered tasks).
-4. Implement against the hierarchical TODOs and keep the comment current:
-   - Check off completed items.
-   - Add newly discovered items in the appropriate section.
-   - Keep parent/child structure intact as scope evolves.
-   - Update the workpad immediately after each meaningful milestone (for example: reproduction complete, code change landed, validation run, review feedback addressed).
-   - Never leave completed work unchecked in the plan.
-   - For tickets that started as `Todo` with an attached PR, run the full PR feedback sweep protocol immediately after kickoff and before new feature work.
-5. Run validation/tests required for the scope.
-   - Mandatory gate: execute all ticket-provided `Validation`/`Test Plan`/`Testing` requirements when present; treat unmet items as incomplete work.
-   - Prefer a targeted proof that directly demonstrates the behavior you changed.
-   - You may make temporary local proof edits to validate assumptions when this increases confidence.
-   - Revert every temporary proof edit before commit/push.
-   - Document these temporary proof steps and outcomes in the workpad `Validation`/`Notes` sections so reviewers can follow the evidence.
-6. Re-check all acceptance criteria and close any gaps.
-7. Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
-8. Attach the PR URL to the issue via `mcp__linear__save_issue` with `links=[{ url: "<pr_url>", title: "PR" }]`.
-   - Ensure the GitHub PR has label `symphony` (add it if missing via `gh pr edit <pr> --add-label symphony`).
-9. Merge latest `origin/master` into branch, resolve conflicts, and rerun checks.
-10. Update the workpad comment with final checklist status and validation notes.
-    - Mark completed plan/acceptance/validation checklist items as checked.
-    - Add final handoff notes (commit + validation summary) in the same workpad comment.
-    - Do not include PR URL in the workpad comment; keep PR linkage on the issue via attachment/link fields.
-    - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
-    - Do not post any additional completion summary comment.
-11. Before moving to `Merging`, poll PR feedback and checks:
-    - Read any PR `Manual QA Plan` comment (when present) and use it to sharpen UI/runtime test coverage for the current change.
-    - Run the full PR feedback sweep protocol.
-    - Run the CI green confirmation protocol.
-    - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
-    - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
-    - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-12. Only then move the issue to `Merging` via `mcp__linear__save_issue`.
-    - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
-13. For `Todo` tickets that already had a PR attached at kickoff:
-    - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
-    - Ensure branch was pushed with any required updates.
-    - Then move to `Merging`.
-
-## Step 3: Merging
-
-1. When the issue is in `Merging`, run `gh pr merge <pr> --merge --delete-branch`. Confirm with `gh pr view <pr> --json state --jq '.state'` returns `MERGED`.
-2. After merge is complete, move the issue to `Done` via `mcp__linear__save_issue`.
-3. If a human reroutes the issue to `Rework` (for example after observing the merged result or after rejecting a self-merged change), follow the rework flow.
-
-## Step 4: Rework handling
-
-1. Treat `Rework` as a full approach reset, not incremental patching.
-2. Re-read the full issue body and all human comments; explicitly identify what will be done differently this attempt.
-3. Close the existing PR tied to the issue with `gh pr close <pr>`.
-4. Remove the existing `## Agent Workpad` comment from the issue via `mcp__linear__delete_comment` (or replace its body with a tombstone if deletion is unavailable).
-5. Create a fresh branch from `origin/master`.
-6. Start over from the normal kickoff flow:
-   - If current issue state is `Todo`, move it to `In Progress`; otherwise keep the current state.
-   - Create a new bootstrap `## Agent Workpad` comment.
-   - Build a fresh plan/checklist and execute end-to-end.
+- GitHub is **not** a valid blocker by default. Exhaust fallback strategies first.
+- For non-GitHub blockers, move issue to `Human Review` with a workpad brief: what is missing, why it blocks, exact human action to unblock.
 
 ## Completion bar before Merging
 
-- Step 1/2 checklist is fully complete and accurately reflected in the single workpad comment.
-- Acceptance criteria and required ticket-provided validation items are complete.
-- Validation/tests are green for the latest commit.
-- PR feedback sweep is complete and no actionable comments remain.
-- PR checks on the latest pushed commit are all green per the `CI green confirmation protocol`.
-- Branch is pushed and PR is linked on the issue.
-- Required PR metadata is present (`symphony` label).
+- Plan / Acceptance Criteria / Validation in the workpad are fully checked and reflect completed work.
+- All ticket-provided `Validation` / `Test Plan` / `Testing` items are explicitly complete.
+- PR feedback sweep clean.
+- CI green per CI confirmation protocol.
+- Branch pushed and PR linked on the issue with `symphony` label.
 
 ## Guardrails
 
-- If the branch PR is already closed/merged, do not reuse that branch or prior implementation state for continuation.
-- For closed/merged branch PRs, create a new branch from `origin/master` and restart from reproduction/planning as if starting fresh.
-- If issue state is `Backlog`, do not modify it; wait for human to move to `Todo`.
-- Do not edit the issue body/description for planning or progress tracking.
-- Use exactly one persistent workpad comment (`## Agent Workpad`) per issue.
-- Temporary proof edits are allowed only for local verification and must be reverted before commit.
-- If out-of-scope improvements are found, create a separate `Backlog` issue via `mcp__linear__save_issue` (with `state="Backlog"`, same `project`, `relatedTo=["{{ issue.identifier }}"]`, plus `blockedBy=["{{ issue.identifier }}"]` when applicable) rather than expanding current scope.
+- Closed/merged branch PRs: do not reuse the branch or prior state. Fresh branch + fresh reproduction/planning.
 - Never call `gh pr merge` outside the `Merging` flow.
-- Never amend or force-push history that is already on `origin`. Make a new commit for fixes.
-- Never write Japanese (or any non-English language) in PR titles, PR descriptions, commit messages, or PR review comments. All GitHub-visible text is English-only.
-- Do not move to `Merging` unless the `Completion bar before Merging` is satisfied.
+- Never amend or force-push history already on `origin`. New commit for fixes.
+- Do not edit the issue body/description for planning or progress tracking. Use the single workpad comment.
+- Temp proof edits must be reverted before commit.
+- Out-of-scope improvements → file a separate `Backlog` issue (`save_issue` with `state="Backlog"`, same project, `relatedTo=[{{ issue.identifier }}]`, `blockedBy=[{{ issue.identifier }}]` when applicable). Do not expand current scope.
+- Do not move to `Merging` unless the completion bar is satisfied.
 - Do not transition to `Merging` while PR checks are pending, failing, or absent on the latest pushed commit.
-- `Human Review` is reserved for the blocked-access escape hatch; do not route there from the normal completion flow.
-- If state is terminal (`Done`), do nothing and shut down.
-- Keep issue text concise, specific, and reviewer-oriented.
-- If blocked and no workpad exists yet, add one blocker comment via `mcp__linear__save_comment` describing blocker, impact, and next unblock action.
+- `Human Review` is reserved for the escape hatch; not a normal completion route.
 
 ## Workpad template
 
-Use this exact structure for the persistent workpad comment and keep it updated in place throughout execution:
+Use this exact structure and keep it updated in place:
 
 ````md
 ## Agent Workpad

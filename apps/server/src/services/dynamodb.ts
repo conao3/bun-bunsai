@@ -1606,11 +1606,31 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
   for (const plan of plans) {
     if (plan.kind === "Skip") continue;
     if (plan.kind === "Put") {
+      const previous = plan.table.items[plan.key];
       plan.table.items[plan.key] = plan.value;
+      appendStreamRecord(
+        ctx,
+        plan.table,
+        previous === undefined ? "INSERT" : "MODIFY",
+        plan.value,
+        previous,
+      );
     } else if (plan.kind === "Update") {
+      const previous = plan.table.items[plan.key];
       plan.table.items[plan.key] = plan.value;
+      appendStreamRecord(
+        ctx,
+        plan.table,
+        previous === undefined ? "INSERT" : "MODIFY",
+        plan.value,
+        previous,
+      );
     } else {
+      const previous = plan.table.items[plan.key];
       delete plan.table.items[plan.key];
+      if (previous !== undefined) {
+        appendStreamRecord(ctx, plan.table, "REMOVE", undefined, previous);
+      }
     }
   }
   for (const [name, table] of snapshots) {

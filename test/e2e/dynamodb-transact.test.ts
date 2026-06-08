@@ -7,6 +7,7 @@ import {
   GetItemCommand,
   PutItemCommand,
   TransactionCanceledException,
+  TransactGetItemsCommand,
   TransactWriteItemsCommand,
 } from "@aws-sdk/client-dynamodb";
 
@@ -193,6 +194,44 @@ describe("DynamoDB TransactWriteItems rollback semantics", () => {
       }),
     );
     expect(after3.Item).toBeUndefined();
+
+    await client.send(new DeleteTableCommand({ TableName: table }));
+  });
+});
+
+describe("DynamoDB TransactGetItems", () => {
+  test("returns consistent snapshot including missing items as empty", async () => {
+    const client = ddb();
+    const table = "bunsai-e2e-ddb-transact-get";
+    await createTable(client, table);
+
+    await client.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: { pk: { S: "x1" }, score: { N: "42" } },
+      }),
+    );
+    await client.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: { pk: { S: "x2" }, score: { N: "99" } },
+      }),
+    );
+
+    const result = await client.send(
+      new TransactGetItemsCommand({
+        TransactItems: [
+          { Get: { TableName: table, Key: { pk: { S: "x1" } } } },
+          { Get: { TableName: table, Key: { pk: { S: "x2" } } } },
+          { Get: { TableName: table, Key: { pk: { S: "missing" } } } },
+        ],
+      }),
+    );
+
+    expect(result.Responses?.length).toBe(3);
+    expect(result.Responses?.[0]?.Item?.score?.N).toBe("42");
+    expect(result.Responses?.[1]?.Item?.score?.N).toBe("99");
+    expect(result.Responses?.[2]?.Item).toBeUndefined();
 
     await client.send(new DeleteTableCommand({ TableName: table }));
   });

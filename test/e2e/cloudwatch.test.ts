@@ -17,6 +17,7 @@ import {
   EnableInsightRulesCommand,
   GetAlarmMuteRuleCommand,
   GetInsightRuleReportCommand,
+  GetMetricDataCommand,
   GetMetricStatisticsCommand,
   GetMetricStreamCommand,
   GetMetricWidgetImageCommand,
@@ -104,6 +105,33 @@ test("CloudWatch metric data and statistics round-trip", async () => {
   expect(point?.Maximum).toBe(30);
   expect(point?.Minimum).toBe(10);
   expect(point?.SampleCount).toBe(2);
+
+  const metricData = await client.send(
+    new GetMetricDataCommand({
+      MetricDataQueries: [
+        {
+          Id: "m1",
+          MetricStat: {
+            Metric: {
+              Namespace: namespace,
+              MetricName: metricName,
+              Dimensions: dimensions,
+            },
+            Period: 300,
+            Stat: "Sum",
+          },
+        },
+      ],
+      StartTime: new Date(base - 60000),
+      EndTime: new Date(base + 60000),
+    }),
+  );
+  const metricDataResults = metricData.MetricDataResults ?? [];
+  expect(metricDataResults.length).toBe(1);
+  const dataResult = metricDataResults[0];
+  expect(dataResult?.Id).toBe("m1");
+  expect(dataResult?.StatusCode).toBe("Complete");
+  expect(dataResult?.Values?.[0]).toBe(40);
 });
 
 test("CloudWatch alarm lifecycle round-trip", async () => {

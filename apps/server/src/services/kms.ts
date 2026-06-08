@@ -161,6 +161,21 @@ const requireKey = (ctx: ServiceContext, keyId: string): StoredKey => {
   throw awsError("NotFoundException", `Key '${keyId}' does not exist`, 400);
 };
 
+const requireEnabledKey = (ctx: ServiceContext, keyId: string): StoredKey => {
+  const key = requireKey(ctx, keyId);
+  if (key.KeyState === "Disabled") {
+    throw awsError("DisabledException", `${key.Arn} is disabled.`, 400);
+  }
+  if (key.KeyState === "PendingDeletion") {
+    throw awsError(
+      "KMSInvalidStateException",
+      `${key.Arn} is pending deletion.`,
+      400,
+    );
+  }
+  return key;
+};
+
 const requireString = (
   input: Record<string, unknown>,
   field: string,
@@ -395,7 +410,7 @@ const canonicalContext = (ec: Record<string, string>): string =>
 
 const Encrypt: OperationHandler = (input, ctx) => {
   const keyId = requireString(input, "KeyId");
-  const key = requireKey(ctx, keyId);
+  const key = requireEnabledKey(ctx, keyId);
   const plaintext = input["Plaintext"];
   if (typeof plaintext !== "string") {
     throw awsError("ValidationException", "Plaintext is required.", 400);
@@ -441,7 +456,7 @@ const decryptEnvelope = (
     }
     const contextJson = rest.slice(0, nullIndex2);
     const plaintext = rest.slice(nullIndex2 + 1);
-    const key = requireKey(ctx, keyId);
+    const key = requireEnabledKey(ctx, keyId);
     const storedContext = JSON.parse(contextJson) as Record<string, string>;
     return { key, plaintext, storedContext };
   }
@@ -455,7 +470,7 @@ const decryptEnvelope = (
   }
   const keyId = ciphertext.slice(0, index);
   const plaintext = ciphertext.slice(index + 1);
-  const key = requireKey(ctx, keyId);
+  const key = requireEnabledKey(ctx, keyId);
   return { key, plaintext, storedContext: undefined };
 };
 
@@ -494,7 +509,7 @@ const Decrypt: OperationHandler = (input, ctx) => {
 
 const GenerateDataKey: OperationHandler = (input, ctx) => {
   const keyId = requireString(input, "KeyId");
-  const key = requireKey(ctx, keyId);
+  const key = requireEnabledKey(ctx, keyId);
   const keySpec =
     typeof input["KeySpec"] === "string"
       ? (input["KeySpec"] as string)
@@ -663,7 +678,7 @@ const CancelKeyDeletion: OperationHandler = (input, ctx) => {
 };
 
 const GenerateDataKeyWithoutPlaintext: OperationHandler = (input, ctx) => {
-  const key = requireKey(ctx, requireString(input, "KeyId"));
+  const key = requireEnabledKey(ctx, requireString(input, "KeyId"));
   const keySpec =
     typeof input["KeySpec"] === "string"
       ? (input["KeySpec"] as string)
@@ -959,7 +974,7 @@ const ReEncrypt: OperationHandler = (input, ctx) => {
   }
   const { key: sourceKey, plaintext } = decryptEnvelope(ctx, ciphertext);
   const destKeyId = requireString(input, "DestinationKeyId");
-  const destKey = requireKey(ctx, destKeyId);
+  const destKey = requireEnabledKey(ctx, destKeyId);
   const newCiphertext = `${destKey.KeyId}${envelopeSeparator}${plaintext}`;
   return {
     CiphertextBlob: newCiphertext,

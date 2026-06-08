@@ -16,10 +16,39 @@ const accountFromRoleArn = (roleArn: string, fallback: string): string => {
   return /^\d{12}$/.test(account) ? account : fallback;
 };
 
-const issueCredentials = (account: string, durationSeconds: number) => ({
+type RoleInfo = { roleName: string; sessionName: string };
+
+const sessionTokenFor = (account: string, role?: RoleInfo): string =>
+  role
+    ? `FQoGZXIvYXdzEXAMPLEtokenbunsai${account}/${role.roleName}/${role.sessionName}`
+    : `FQoGZXIvYXdzEXAMPLEtokenbunsai${account}`;
+
+const assumedRoleFromToken = (
+  token: string,
+): { account: string; roleName: string; sessionName: string } | undefined => {
+  const prefix = "FQoGZXIvYXdzEXAMPLEtokenbunsai";
+  if (!token.startsWith(prefix)) return undefined;
+  const rest = token.slice(prefix.length);
+  const s1 = rest.indexOf("/");
+  if (s1 === -1) return undefined;
+  const account = rest.slice(0, s1);
+  const tail = rest.slice(s1 + 1);
+  const s2 = tail.indexOf("/");
+  if (s2 === -1) return undefined;
+  const roleName = tail.slice(0, s2);
+  const sessionName = tail.slice(s2 + 1);
+  if (!account || !roleName || !sessionName) return undefined;
+  return { account, roleName, sessionName };
+};
+
+const issueCredentials = (
+  account: string,
+  durationSeconds: number,
+  role?: RoleInfo,
+) => ({
   AccessKeyId: `ASIA${account}BNSI`,
   SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-  SessionToken: `FQoGZXIvYXdzEXAMPLEtokenbunsai${account}`,
+  SessionToken: sessionTokenFor(account, role),
   Expiration: Math.floor(Date.now() / 1000) + durationSeconds,
 });
 
@@ -27,8 +56,17 @@ const sts = {
   name: "sts",
   protocol: "query",
   operations: {
-    GetCallerIdentity: (_input, ctx) => {
+    GetCallerIdentity: (_input, ctx, req) => {
       const acct = accountOf(ctx);
+      const token = req.headers.get("x-amz-security-token");
+      const assumed = token ? assumedRoleFromToken(token) : undefined;
+      if (assumed) {
+        return {
+          Account: assumed.account,
+          Arn: `arn:aws:sts::${assumed.account}:assumed-role/${assumed.roleName}/${assumed.sessionName}`,
+          UserId: `AROABUNSAIEXAMPLEID:${assumed.sessionName}`,
+        };
+      }
       return {
         Account: acct,
         Arn: callerArn(acct),
@@ -48,7 +86,10 @@ const sts = {
       const duration = params.DurationSeconds ?? 3600;
       const assumedAccount = accountFromRoleArn(roleArn, acct);
       return {
-        Credentials: issueCredentials(assumedAccount, duration),
+        Credentials: issueCredentials(assumedAccount, duration, {
+          roleName,
+          sessionName,
+        }),
         AssumedRoleUser: {
           AssumedRoleId: `AROABUNSAIEXAMPLEID:${sessionName}`,
           Arn: `arn:aws:sts::${assumedAccount}:assumed-role/${roleName}/${sessionName}`,
@@ -100,7 +141,10 @@ const sts = {
       const duration = params.DurationSeconds ?? 3600;
       const assumedAccount = accountFromRoleArn(roleArn, acct);
       return {
-        Credentials: issueCredentials(assumedAccount, duration),
+        Credentials: issueCredentials(assumedAccount, duration, {
+          roleName,
+          sessionName,
+        }),
         SubjectFromWebIdentityToken: "bunsai-web-identity-subject",
         AssumedRoleUser: {
           AssumedRoleId: `AROABUNSAIEXAMPLEID:${sessionName}`,
@@ -133,7 +177,10 @@ const sts = {
       const assumedAccount = accountFromRoleArn(roleArn, acct);
       const issuer = "https://bunsai.example.com/saml";
       return {
-        Credentials: issueCredentials(assumedAccount, duration),
+        Credentials: issueCredentials(assumedAccount, duration, {
+          roleName,
+          sessionName,
+        }),
         AssumedRoleUser: {
           AssumedRoleId: `AROABUNSAIEXAMPLEID:${sessionName}`,
           Arn: `arn:aws:sts::${assumedAccount}:assumed-role/${roleName}/${sessionName}`,

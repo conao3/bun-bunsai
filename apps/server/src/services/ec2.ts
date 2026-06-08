@@ -33,6 +33,7 @@ type StoredInstance = {
     InstanceMetadataTags?: string;
   };
   CpuCredits?: string;
+  Monitoring?: { State: string };
 };
 
 type StoredVpcCidrAssoc = {
@@ -1700,6 +1701,7 @@ const DescribeInstances: OperationHandler = (input, ctx) => {
           SubnetId: instance.SubnetId,
           VpcId: instance.VpcId,
           Tags: instance.Tags,
+          Monitoring: instance.Monitoring ?? { State: "disabled" },
         })),
       }),
     ),
@@ -15525,6 +15527,287 @@ const GetVerifiedAccessGroupPolicy: OperationHandler = (input, ctx) => {
   };
 };
 
+const ModifyVpcPeeringConnectionOptions: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpcPeeringConnectionId"] === "string"
+      ? input["VpcPeeringConnectionId"]
+      : "";
+  const stored = ctx.store.get<StoredVpcPeeringConnection>(vpcPeeringKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpcPeeringConnectionID.NotFound",
+      `The VPC peering connection '${id}' does not exist`,
+      400,
+    );
+  }
+  return {
+    AccepterPeeringConnectionOptions: {
+      AllowDnsResolutionFromRemoteVpc: false,
+      AllowEgressFromLocalClassicLinkToRemoteVpc: false,
+      AllowEgressFromLocalVpcToRemoteClassicLink: false,
+    },
+    RequesterPeeringConnectionOptions: {
+      AllowDnsResolutionFromRemoteVpc: false,
+      AllowEgressFromLocalClassicLinkToRemoteVpc: false,
+      AllowEgressFromLocalVpcToRemoteClassicLink: false,
+    },
+  };
+};
+
+const ModifyVpcTenancy: OperationHandler = (input, ctx) => {
+  const id = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const vpc = ctx.store.get<StoredVpc>(vpcKey(id));
+  if (vpc === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["InstanceTenancy"] === "string")
+    vpc.InstanceTenancy = input["InstanceTenancy"];
+  ctx.store.set(vpcKey(id), vpc);
+  return { ReturnValue: true };
+};
+
+const vpnConnectionView = (c: StoredVpnConnection): unknown => ({
+  VpnConnectionId: c.VpnConnectionId,
+  State: c.State,
+  CustomerGatewayId: c.CustomerGatewayId,
+  VpnGatewayId: c.VpnGatewayId,
+  TransitGatewayId: c.TransitGatewayId,
+  Type: c.Type,
+  Tags: c.Tags,
+  Routes: [],
+  VgwTelemetry: [],
+});
+
+const ModifyVpnConnection: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpnConnectionId"] === "string"
+      ? input["VpnConnectionId"]
+      : "";
+  const stored = ctx.store.get<StoredVpnConnection>(vpnConnectionKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpnConnectionID.NotFound",
+      `The vpn connection ID '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["CustomerGatewayId"] === "string")
+    stored.CustomerGatewayId = input["CustomerGatewayId"];
+  if (typeof input["VpnGatewayId"] === "string")
+    stored.VpnGatewayId = input["VpnGatewayId"];
+  if (typeof input["TransitGatewayId"] === "string")
+    stored.TransitGatewayId = input["TransitGatewayId"];
+  ctx.store.set(vpnConnectionKey(id), stored);
+  return { VpnConnection: vpnConnectionView(stored) };
+};
+
+const ModifyVpnConnectionOptions: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpnConnectionId"] === "string"
+      ? input["VpnConnectionId"]
+      : "";
+  const stored = ctx.store.get<StoredVpnConnection>(vpnConnectionKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpnConnectionID.NotFound",
+      `The vpn connection ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { VpnConnection: vpnConnectionView(stored) };
+};
+
+const ModifyVpnTunnelCertificate: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpnConnectionId"] === "string"
+      ? input["VpnConnectionId"]
+      : "";
+  const stored = ctx.store.get<StoredVpnConnection>(vpnConnectionKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpnConnectionID.NotFound",
+      `The vpn connection ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { VpnConnection: vpnConnectionView(stored) };
+};
+
+const ModifyVpnTunnelOptions: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["VpnConnectionId"] === "string"
+      ? input["VpnConnectionId"]
+      : "";
+  const stored = ctx.store.get<StoredVpnConnection>(vpnConnectionKey(id));
+  if (stored === undefined) {
+    throw awsError(
+      "InvalidVpnConnectionID.NotFound",
+      `The vpn connection ID '${id}' does not exist`,
+      400,
+    );
+  }
+  return { VpnConnection: vpnConnectionView(stored) };
+};
+
+const MonitorInstances: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["InstanceIds"]);
+  const result: { InstanceId: string; Monitoring: { State: string } }[] = [];
+  for (const id of ids) {
+    const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+    if (instance === undefined) {
+      throw awsError(
+        "InvalidInstanceID.NotFound",
+        `The instance ID '${id}' does not exist`,
+        400,
+      );
+    }
+    instance.Monitoring = { State: "enabled" };
+    ctx.store.set(instanceKey(id), instance);
+    result.push({ InstanceId: id, Monitoring: { State: "enabled" } });
+  }
+  return { InstanceMonitorings: result };
+};
+
+const MoveAddressToVpc: OperationHandler = (input, ctx) => {
+  const publicIp =
+    typeof input["PublicIp"] === "string" ? input["PublicIp"] : "";
+  const address = allAddresses(ctx).find((a) => a.PublicIp === publicIp);
+  if (address === undefined) {
+    throw awsError(
+      "InvalidIPAddress.InUse",
+      `The address '${publicIp}' does not exist`,
+      400,
+    );
+  }
+  address.Domain = "vpc";
+  ctx.store.set(addressKey(address.AllocationId), address);
+  return { AllocationId: address.AllocationId, Status: "MoveInProgress" };
+};
+
+const MoveByoipCidrToIpam: OperationHandler = (input, ctx) => {
+  const cidr = typeof input["Cidr"] === "string" ? input["Cidr"] : "";
+  const stored = ctx.store.get<{ Cidr: string; State: string }>(
+    byoipCidrKey(cidr),
+  );
+  if (stored === undefined) {
+    throw awsError("InvalidInput", `The CIDR '${cidr}' does not exist`, 400);
+  }
+  stored.State = "pending-provision";
+  ctx.store.set(byoipCidrKey(cidr), stored);
+  return {
+    ByoipCidr: {
+      Cidr: stored.Cidr,
+      State: stored.State,
+      StatusMessage: "",
+      AsnAssociations: [],
+    },
+  };
+};
+
+const MoveCapacityReservationInstances: OperationHandler = (input, ctx) => {
+  const sourceId =
+    typeof input["SourceCapacityReservationId"] === "string"
+      ? input["SourceCapacityReservationId"]
+      : "";
+  const destId =
+    typeof input["DestinationCapacityReservationId"] === "string"
+      ? input["DestinationCapacityReservationId"]
+      : "";
+  const count =
+    typeof input["InstanceCount"] === "number" ? input["InstanceCount"] : 1;
+  const source = ctx.store.get<StoredCapacityReservation>(
+    capacityReservationKey(sourceId),
+  );
+  if (source === undefined) {
+    throw awsError(
+      "InvalidCapacityReservationId.NotFound",
+      `The capacity reservation ID '${sourceId}' does not exist`,
+      400,
+    );
+  }
+  const dest = ctx.store.get<StoredCapacityReservation>(
+    capacityReservationKey(destId),
+  );
+  if (dest === undefined) {
+    throw awsError(
+      "InvalidCapacityReservationId.NotFound",
+      `The capacity reservation ID '${destId}' does not exist`,
+      400,
+    );
+  }
+  source.TotalInstanceCount -= count;
+  source.AvailableInstanceCount -= count;
+  dest.TotalInstanceCount += count;
+  dest.AvailableInstanceCount += count;
+  ctx.store.set(capacityReservationKey(sourceId), source);
+  ctx.store.set(capacityReservationKey(destId), dest);
+  const toView = (r: StoredCapacityReservation) => ({
+    CapacityReservationId: r.CapacityReservationId,
+    OwnerId: ctx.account,
+    CapacityReservationArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:capacity-reservation/${r.CapacityReservationId}`,
+    InstanceType: r.InstanceType,
+    InstancePlatform: r.InstancePlatform,
+    AvailabilityZone: r.AvailabilityZone,
+    Tenancy: r.Tenancy,
+    TotalInstanceCount: r.TotalInstanceCount,
+    AvailableInstanceCount: r.AvailableInstanceCount,
+    State: r.State,
+    EndDateType: r.EndDateType,
+    InstanceMatchCriteria: r.InstanceMatchCriteria,
+    CreateDate: r.CreateDate,
+    Tags: r.Tags,
+  });
+  return {
+    SourceCapacityReservation: toView(source),
+    DestinationCapacityReservation: toView(dest),
+    InstanceCount: count,
+  };
+};
+
+const ProvisionByoipCidr: OperationHandler = (input, ctx) => {
+  const cidr = typeof input["Cidr"] === "string" ? input["Cidr"] : "";
+  const stored = { Cidr: cidr, State: "pending-provision" };
+  ctx.store.set(byoipCidrKey(cidr), stored);
+  return {
+    ByoipCidr: {
+      Cidr: stored.Cidr,
+      State: stored.State,
+      StatusMessage: "",
+      AsnAssociations: [],
+    },
+  };
+};
+
+const ProvisionIpamByoasn: OperationHandler = (input, ctx) => {
+  const ipamId =
+    typeof input["IpamId"] === "string" ? input["IpamId"] : hexId("ipam");
+  const asn = typeof input["Asn"] === "string" ? input["Asn"] : "65000";
+  const ipam = ctx.store.get<StoredIpam>(ipamKey(ipamId));
+  const ipamArn =
+    ipam?.IpamArn ?? `arn:aws:ec2:${ctx.region}:${ctx.account}:ipam/${ipamId}`;
+  const association: StoredIpamByoasnAssociation = {
+    Asn: asn,
+    IpamId: ipamId,
+    IpamArn: ipamArn,
+    StatusMessage: "BYOASN provisioned",
+    State: "provisioned",
+  };
+  ctx.store.set(ipamByoasnKey(ipamId, asn), association);
+  return {
+    Byoasn: {
+      Asn: association.Asn,
+      IpamId: association.IpamId,
+      IpamArn: association.IpamArn,
+      StatusMessage: association.StatusMessage,
+      State: association.State,
+    },
+  };
+};
+
 const ProvisionIpamPoolCidr: OperationHandler = (input, ctx) => {
   const poolId =
     typeof input["IpamPoolId"] === "string" ? input["IpamPoolId"] : "";
@@ -18704,6 +18987,18 @@ const ec2: ServiceDefinition = {
     ModifyVpcEndpointServiceConfiguration,
     ModifyVpcEndpointServicePayerResponsibility,
     ModifyVpcEndpointServicePermissions,
+    ModifyVpcPeeringConnectionOptions,
+    ModifyVpcTenancy,
+    ModifyVpnConnection,
+    ModifyVpnConnectionOptions,
+    ModifyVpnTunnelCertificate,
+    ModifyVpnTunnelOptions,
+    MonitorInstances,
+    MoveAddressToVpc,
+    MoveByoipCidrToIpam,
+    MoveCapacityReservationInstances,
+    ProvisionByoipCidr,
+    ProvisionIpamByoasn,
     ProvisionIpamPoolCidr,
   },
   model,

@@ -1884,6 +1884,16 @@ const CreateSecurityGroup: OperationHandler = (input, ctx) => {
   };
 };
 
+const ruleToIpPermission = (rule: StoredSecurityGroupRule): unknown => ({
+  IpProtocol: rule.IpProtocol,
+  FromPort: rule.FromPort,
+  ToPort: rule.ToPort,
+  IpRanges:
+    rule.CidrIpv4 !== undefined
+      ? [{ CidrIp: rule.CidrIpv4, Description: rule.Description }]
+      : [],
+});
+
 const DescribeSecurityGroups: OperationHandler = (input, ctx) => {
   const ids = stringList(input["GroupIds"]);
   const names = stringList(input["GroupNames"]);
@@ -1900,6 +1910,8 @@ const DescribeSecurityGroups: OperationHandler = (input, ctx) => {
       OwnerId: ctx.account,
       SecurityGroupArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:security-group/${group.GroupId}`,
       Tags: group.Tags,
+      IpPermissions: group.IngressRules.map(ruleToIpPermission),
+      IpPermissionsEgress: group.EgressRules.map(ruleToIpPermission),
     })),
   };
 };

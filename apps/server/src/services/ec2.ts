@@ -188,6 +188,7 @@ type StoredNatGateway = {
   CreateTime: string;
   NatGatewayAddresses: {
     AllocationId: string | undefined;
+    AssociationId?: string;
     PublicIp: string;
     PrivateIp: string;
     NetworkInterfaceId: string;
@@ -13658,6 +13659,199 @@ const DisableVpcClassicLink: OperationHandler = (input, ctx) => {
   return { Return: true };
 };
 
+const DisableVpcClassicLinkDnsSupport: OperationHandler = (_input, _ctx) => {
+  return { Return: true };
+};
+
+const DisassociateAddress: OperationHandler = (input, ctx) => {
+  const associationId =
+    typeof input["AssociationId"] === "string"
+      ? input["AssociationId"]
+      : undefined;
+  if (associationId !== undefined) {
+    const address = allAddresses(ctx).find(
+      (a) => a.AssociationId === associationId,
+    );
+    if (address !== undefined) {
+      address.AssociationId = undefined;
+      address.InstanceId = undefined;
+      ctx.store.set(addressKey(address.AllocationId), address);
+    }
+  }
+  return {};
+};
+
+const DisassociateCapacityReservationBillingOwner: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Return: true };
+};
+
+const DisassociateClientVpnTargetNetwork: OperationHandler = (input, _ctx) => {
+  const associationId =
+    typeof input["AssociationId"] === "string" ? input["AssociationId"] : "";
+  return {
+    AssociationId: associationId,
+    Status: { Code: "disassociating", Message: "" },
+  };
+};
+
+const DisassociateEnclaveCertificateIamRole: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { Return: true };
+};
+
+const DisassociateIamInstanceProfile: OperationHandler = (input, ctx) => {
+  const associationId =
+    typeof input["AssociationId"] === "string" ? input["AssociationId"] : "";
+  const association = ctx.store.get<StoredIamInstanceProfileAssociation>(
+    iamProfileAssocKey(associationId),
+  );
+  if (association === undefined) {
+    throw awsError(
+      "InvalidAssociationID.NotFound",
+      `The association ID '${associationId}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.delete(iamProfileAssocKey(associationId));
+  return {
+    IamInstanceProfileAssociation: {
+      AssociationId: association.AssociationId,
+      InstanceId: association.InstanceId,
+      IamInstanceProfile: association.IamInstanceProfile,
+      State: "disassociated",
+      Timestamp: association.Timestamp,
+    },
+  };
+};
+
+const DisassociateInstanceEventWindow: OperationHandler = (input, _ctx) => {
+  const eventWindowId =
+    typeof input["InstanceEventWindowId"] === "string"
+      ? input["InstanceEventWindowId"]
+      : hexId("iew");
+  return {
+    InstanceEventWindow: {
+      InstanceEventWindowId: eventWindowId,
+      AssociationTarget: {
+        InstanceIds: [],
+        Tags: [],
+        DedicatedHostIds: [],
+      },
+      State: "active",
+    },
+  };
+};
+
+const DisassociateIpamByoasn: OperationHandler = (input, ctx) => {
+  const asn = typeof input["Asn"] === "string" ? input["Asn"] : "";
+  const association = allIpamByoasnAssociations(ctx).find((a) => a.Asn === asn);
+  if (association !== undefined) {
+    ctx.store.delete(ipamByoasnKey(association.IpamId, association.Asn));
+  }
+  return {
+    AsnAssociation: {
+      Asn: association?.Asn ?? asn,
+      IpamId: association?.IpamId ?? "",
+      IpamArn: association?.IpamArn ?? "",
+      StatusMessage: "BYOASN disassociated",
+      State: "disassociate-complete",
+    },
+  };
+};
+
+const DisassociateIpamResourceDiscovery: OperationHandler = (input, ctx) => {
+  const assocId =
+    typeof input["IpamResourceDiscoveryAssociationId"] === "string"
+      ? input["IpamResourceDiscoveryAssociationId"]
+      : "";
+  const association = ctx.store.get<StoredIpamResourceDiscoveryAssociation>(
+    ipamRdAssocKey(assocId),
+  );
+  if (association !== undefined) {
+    ctx.store.delete(ipamRdAssocKey(assocId));
+  }
+  return {
+    IpamResourceDiscoveryAssociation:
+      association !== undefined
+        ? { ...association, State: "disassociate-complete" }
+        : {
+            IpamResourceDiscoveryAssociationId: assocId,
+            IpamResourceDiscoveryAssociationArn: "",
+            IpamResourceDiscoveryId: "",
+            IpamId: "",
+            IpamArn: "",
+            OwnerId: ctx.account,
+            IsDefault: false,
+            ResourceDiscoveryStatus: "active",
+            State: "disassociate-complete",
+            Tags: [],
+          },
+  };
+};
+
+const DisassociateNatGatewayAddress: OperationHandler = (input, ctx) => {
+  const natGatewayId =
+    typeof input["NatGatewayId"] === "string" ? input["NatGatewayId"] : "";
+  const associationIds = stringList(input["AssociationIds"]);
+  const gateway = ctx.store.get<StoredNatGateway>(natGatewayKey(natGatewayId));
+  if (gateway === undefined) {
+    throw awsError(
+      "NatGatewayNotFound",
+      `The Nat Gateway '${natGatewayId}' does not exist`,
+      400,
+    );
+  }
+  const removed = gateway.NatGatewayAddresses.filter((a) =>
+    associationIds.includes(a.AssociationId ?? ""),
+  );
+  gateway.NatGatewayAddresses = gateway.NatGatewayAddresses.filter(
+    (a) => !associationIds.includes(a.AssociationId ?? ""),
+  );
+  ctx.store.set(natGatewayKey(natGatewayId), gateway);
+  return { NatGatewayId: natGatewayId, NatGatewayAddresses: removed };
+};
+
+const DisassociateRouteServer: OperationHandler = (input, _ctx) => {
+  const routeServerId =
+    typeof input["RouteServerId"] === "string"
+      ? input["RouteServerId"]
+      : hexId("rs");
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  return {
+    RouteServerAssociation: {
+      RouteServerId: routeServerId,
+      VpcId: vpcId,
+      State: "disassociating",
+    },
+  };
+};
+
+const DisassociateRouteTable: OperationHandler = (input, ctx) => {
+  const associationId =
+    typeof input["AssociationId"] === "string" ? input["AssociationId"] : "";
+  const tables = allRouteTables(ctx);
+  for (const table of tables) {
+    const idx = table.Associations.findIndex(
+      (a) => a.RouteTableAssociationId === associationId,
+    );
+    if (idx !== -1) {
+      table.Associations.splice(idx, 1);
+      ctx.store.set(routeTableKey(table.RouteTableId), table);
+      return {};
+    }
+  }
+  throw awsError(
+    "InvalidAssociationID.NotFound",
+    `The association ID '${associationId}' does not exist`,
+    400,
+  );
+};
+
 const EnableSerialConsoleAccess: OperationHandler = (_input, ctx) => {
   ctx.store.set(serialConsoleAccessKey(), { enabled: true });
   return { SerialConsoleAccessEnabled: true };
@@ -14159,6 +14353,18 @@ const ec2: ServiceDefinition = {
     DisableTransitGatewayRouteTablePropagation,
     DisableVgwRoutePropagation,
     DisableVpcClassicLink,
+    DisableVpcClassicLinkDnsSupport,
+    DisassociateAddress,
+    DisassociateCapacityReservationBillingOwner,
+    DisassociateClientVpnTargetNetwork,
+    DisassociateEnclaveCertificateIamRole,
+    DisassociateIamInstanceProfile,
+    DisassociateInstanceEventWindow,
+    DisassociateIpamByoasn,
+    DisassociateIpamResourceDiscovery,
+    DisassociateNatGatewayAddress,
+    DisassociateRouteServer,
+    DisassociateRouteTable,
     EnableSerialConsoleAccess,
     GetSerialConsoleAccessStatus,
   },

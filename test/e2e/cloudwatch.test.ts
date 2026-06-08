@@ -599,3 +599,166 @@ test("CloudWatch SetAlarmState and DescribeAlarmHistory round-trip", async () =>
 
   await client.send(new DeleteAlarmsCommand({ AlarmNames: [alarmName] }));
 });
+
+test("CloudWatch composite alarm rule evaluation on child state change", async () => {
+  const client = cw();
+  const childA = "bunsai-e2e-child-a";
+  const childB = "bunsai-e2e-child-b";
+  const composite = "bunsai-e2e-composite-eval";
+
+  for (const name of [childA, childB]) {
+    await client.send(
+      new PutMetricAlarmCommand({
+        AlarmName: name,
+        Namespace: "bunsai/e2e",
+        MetricName: "EvalMetric",
+        Statistic: "Sum",
+        Period: 300,
+        EvaluationPeriods: 1,
+        Threshold: 100,
+        ComparisonOperator: "GreaterThanThreshold",
+      }),
+    );
+  }
+
+  await client.send(
+    new PutCompositeAlarmCommand({
+      AlarmName: composite,
+      AlarmRule: `ALARM("${childA}") AND ALARM("${childB}")`,
+    }),
+  );
+
+  const before = await client.send(
+    new DescribeAlarmsCommand({
+      AlarmNames: [composite],
+      AlarmTypes: ["CompositeAlarm"],
+    }),
+  );
+  expect(before.CompositeAlarms?.[0]?.StateValue).toBe("INSUFFICIENT_DATA");
+
+  await client.send(
+    new SetAlarmStateCommand({
+      AlarmName: childA,
+      StateValue: "ALARM",
+      StateReason: "e2e test",
+    }),
+  );
+
+  const afterOne = await client.send(
+    new DescribeAlarmsCommand({
+      AlarmNames: [composite],
+      AlarmTypes: ["CompositeAlarm"],
+    }),
+  );
+  expect(afterOne.CompositeAlarms?.[0]?.StateValue).toBe("INSUFFICIENT_DATA");
+
+  await client.send(
+    new SetAlarmStateCommand({
+      AlarmName: childB,
+      StateValue: "ALARM",
+      StateReason: "e2e test",
+    }),
+  );
+
+  const afterBoth = await client.send(
+    new DescribeAlarmsCommand({
+      AlarmNames: [composite],
+      AlarmTypes: ["CompositeAlarm"],
+    }),
+  );
+  expect(afterBoth.CompositeAlarms?.[0]?.StateValue).toBe("ALARM");
+
+  await client.send(
+    new SetAlarmStateCommand({
+      AlarmName: childA,
+      StateValue: "OK",
+      StateReason: "e2e test",
+    }),
+  );
+
+  const afterOk = await client.send(
+    new DescribeAlarmsCommand({
+      AlarmNames: [composite],
+      AlarmTypes: ["CompositeAlarm"],
+    }),
+  );
+  expect(afterOk.CompositeAlarms?.[0]?.StateValue).toBe("OK");
+
+  await client.send(
+    new DeleteAlarmsCommand({ AlarmNames: [childA, childB, composite] }),
+  );
+});
+
+test("CloudWatch GetMetricData with Expression metric math", async () => {
+  const client = cw();
+  const namespace = "bunsai/e2e/math";
+  const base = Math.floor(Date.now() / 1000);
+
+  await client.send(
+    new PutMetricDataCommand({
+      Namespace: namespace,
+      MetricData: [
+        {
+          MetricName: "MetricA",
+          Timestamp: new Date(base * 1000),
+          Value: 10,
+          Unit: "Count",
+        },
+      ],
+    }),
+  );
+  await client.send(
+    new PutMetricDataCommand({
+      Namespace: namespace,
+      MetricData: [
+        {
+          MetricName: "MetricB",
+          Timestamp: new Date(base * 1000),
+          Value: 30,
+          Unit: "Count",
+        },
+      ],
+    }),
+  );
+
+  const result = await client.send(
+    new GetMetricDataCommand({
+      MetricDataQueries: [
+        {
+          Id: "m1",
+          MetricStat: {
+            Metric: { Namespace: namespace, MetricName: "MetricA" },
+            Period: 300,
+            Stat: "Sum",
+          },
+          ReturnData: false,
+        },
+        {
+          Id: "m2",
+          MetricStat: {
+            Metric: { Namespace: namespace, MetricName: "MetricB" },
+            Period: 300,
+            Stat: "Sum",
+          },
+          ReturnData: false,
+        },
+        {
+          Id: "expr",
+          Expression: "m1+m2",
+          Label: "SumAB",
+        },
+      ],
+      StartTime: new Date((base - 60) * 1000),
+      EndTime: new Date((base + 60) * 1000),
+    }),
+  );
+
+  const results = result.MetricDataResults ?? [];
+  expect(results.length).toBe(3);
+
+  const exprResult = results.find((r) => r.Id === "expr");
+  expect(exprResult).toBeDefined();
+  expect(exprResult?.Label).toBe("SumAB");
+  expect(exprResult?.StatusCode).toBe("Complete");
+  expect(exprResult?.Values?.[0]).toBe(40);
+});

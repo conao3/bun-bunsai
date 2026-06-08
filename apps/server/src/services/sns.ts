@@ -73,6 +73,15 @@ const optedOutKey = (phone: string): string => `opted_out/${phone}`;
 
 const sandboxPhoneKey = (phone: string): string => `sandbox/${phone}`;
 
+const pendingTokenKey = (token: string): string => `pendingtoken/${token}`;
+
+const PROTOCOLS_NEEDING_CONFIRMATION = new Set([
+  "http",
+  "https",
+  "email",
+  "email-json",
+]);
+
 const subscriptionListPageSize = 100;
 
 const encodePageToken = (offset: number): string =>
@@ -414,6 +423,7 @@ const fanout = async (
       snsStore.get<StoredSubscriptionAttributes>(
         subscriptionAttributesKey(subscription.SubscriptionArn),
       )?.Attributes ?? {};
+    if (attributes["PendingConfirmation"] === "true") continue;
     if (
       !matchesFilterPolicy(
         attributes["FilterPolicy"],
@@ -587,6 +597,7 @@ const Subscribe: OperationHandler = (input, ctx) => {
   const endpoint =
     typeof input["Endpoint"] === "string" ? (input["Endpoint"] as string) : "";
   const subscriptionArn = `${topicArn}:${crypto.randomUUID()}`;
+  const needsConfirmation = PROTOCOLS_NEEDING_CONFIRMATION.has(protocol);
   const subscription: StoredSubscription = {
     SubscriptionArn: subscriptionArn,
     TopicArn: topicArn,
@@ -604,11 +615,16 @@ const Subscribe: OperationHandler = (input, ctx) => {
       Endpoint: endpoint,
       Owner: ctx.account,
       ConfirmationWasAuthenticated: "false",
-      PendingConfirmation: "false",
+      PendingConfirmation: needsConfirmation ? "true" : "false",
       RawMessageDelivery: "false",
     },
   };
   ctx.store.set(subscriptionAttributesKey(subscriptionArn), attributes);
+  if (needsConfirmation) {
+    const token = crypto.randomUUID();
+    ctx.store.set(pendingTokenKey(token), { subscriptionArn });
+    return { SubscriptionArn: "pending confirmation" };
+  }
   return { SubscriptionArn: subscriptionArn };
 };
 
@@ -672,12 +688,24 @@ const GetTopicAttributes: OperationHandler = (input, ctx) => {
         entry.key.startsWith("subscription/") &&
         entry.value.TopicArn === topicArn,
     );
+  let confirmedCount = 0;
+  let pendingCount = 0;
+  for (const entry of subscriptions) {
+    const attrs = ctx.store.get<StoredSubscriptionAttributes>(
+      subscriptionAttributesKey(entry.value.SubscriptionArn),
+    );
+    if (attrs?.Attributes?.["PendingConfirmation"] === "true") {
+      pendingCount += 1;
+    } else {
+      confirmedCount += 1;
+    }
+  }
   const attributes: Record<string, string> = {
     ...topic.Attributes,
     TopicArn: topicArn,
     Owner: ctx.account,
-    SubscriptionsConfirmed: String(subscriptions.length),
-    SubscriptionsPending: "0",
+    SubscriptionsConfirmed: String(confirmedCount),
+    SubscriptionsPending: String(pendingCount),
     SubscriptionsDeleted: "0",
   };
   return { Attributes: attributes };
@@ -812,6 +840,26 @@ const ConfirmSubscription: OperationHandler = (input, ctx) => {
   const topicArn = requireString(input, "TopicArn");
   const token = requireString(input, "Token");
   requireTopic(ctx, topicArn);
+  const pending = ctx.store.get<{ subscriptionArn: string }>(
+    pendingTokenKey(token),
+  );
+  if (pending !== undefined) {
+    const { subscriptionArn } = pending;
+    const stored = ctx.store.get<StoredSubscriptionAttributes>(
+      subscriptionAttributesKey(subscriptionArn),
+    );
+    const updated: StoredSubscriptionAttributes = {
+      SubscriptionArn: subscriptionArn,
+      Attributes: {
+        ...(stored?.Attributes ?? {}),
+        PendingConfirmation: "false",
+        ConfirmationWasAuthenticated: "true",
+      },
+    };
+    ctx.store.set(subscriptionAttributesKey(subscriptionArn), updated);
+    ctx.store.delete(pendingTokenKey(token));
+    return { SubscriptionArn: subscriptionArn };
+  }
   const subscriptionArn = `${topicArn}:${token}`;
   const endpoint = `confirmed/${token}`;
   const subscription: StoredSubscription = {

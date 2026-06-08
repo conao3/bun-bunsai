@@ -16332,6 +16332,395 @@ const ModifyInstancePlacement: OperationHandler = (input, ctx) => {
   return { Return: true };
 };
 
+const ModifyIpam: OperationHandler = (input, ctx) => {
+  const ipamId = typeof input["IpamId"] === "string" ? input["IpamId"] : "";
+  const ipam = ctx.store.get<StoredIpam>(ipamKey(ipamId));
+  if (ipam === undefined) {
+    throw awsError(
+      "InvalidIpamId.NotFound",
+      `The IPAM ID '${ipamId}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Description"] === "string") {
+    ipam.Description = input["Description"];
+  }
+  ctx.store.set(ipamKey(ipamId), ipam);
+  return {
+    Ipam: {
+      IpamId: ipam.IpamId,
+      OwnerId: ipam.OwnerId,
+      IpamArn: ipam.IpamArn,
+      State: ipam.State,
+      Description: ipam.Description,
+      PublicDefaultScopeId: ipam.PublicDefaultScopeId,
+      PrivateDefaultScopeId: ipam.PrivateDefaultScopeId,
+      ScopeCount: ipam.ScopeCount,
+      Tags: ipam.Tags,
+    },
+  };
+};
+
+const ModifyIpamPolicyAllocationRules: OperationHandler = (input, ctx) => {
+  const policyId =
+    typeof input["IpamPolicyId"] === "string" ? input["IpamPolicyId"] : "";
+  const policy = ctx.store.get<StoredIpamPolicy>(ipamPolicyKey(policyId));
+  if (policy === undefined) {
+    throw awsError(
+      "InvalidIpamPolicyId.NotFound",
+      `The IPAM policy ID '${policyId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    IpamPolicyDocument: {
+      IpamPolicyId: policyId,
+    },
+  };
+};
+
+const ModifyIpamPool: OperationHandler = (input, ctx) => {
+  const poolId =
+    typeof input["IpamPoolId"] === "string" ? input["IpamPoolId"] : "";
+  const pool = ctx.store.get<StoredIpamPool>(ipamPoolKey(poolId));
+  if (pool === undefined) {
+    throw awsError(
+      "InvalidIpamPoolId.NotFound",
+      `The IPAM pool ID '${poolId}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Description"] === "string") {
+    pool.Description = input["Description"];
+  }
+  ctx.store.set(ipamPoolKey(poolId), pool);
+  return {
+    IpamPool: {
+      IpamPoolId: pool.IpamPoolId,
+      IpamScopeId: pool.IpamScopeId,
+      IpamId: pool.IpamId,
+      IpamArn: pool.IpamArn,
+      IpamScopeArn: pool.IpamScopeArn,
+      IpamPoolArn: pool.IpamPoolArn,
+      Locale: pool.Locale,
+      AddressFamily: pool.AddressFamily,
+      State: pool.State,
+      Description: pool.Description,
+      Tags: pool.Tags,
+    },
+  };
+};
+
+const ModifyIpamPoolAllocation: OperationHandler = (input, _ctx) => {
+  const allocationId =
+    typeof input["IpamPoolAllocationId"] === "string"
+      ? input["IpamPoolAllocationId"]
+      : "";
+  const description =
+    typeof input["Description"] === "string" ? input["Description"] : undefined;
+  return {
+    IpamPoolAllocation: {
+      IpamPoolAllocationId: allocationId,
+      Description: description,
+    },
+  };
+};
+
+const ModifyIpamPrefixListResolver: OperationHandler = (input, ctx) => {
+  const resolverId =
+    typeof input["IpamPrefixListResolverId"] === "string"
+      ? input["IpamPrefixListResolverId"]
+      : "";
+  const resolver = ctx.store.get<StoredIpamPrefixListResolver>(
+    ipamPrefixListResolverKey(resolverId),
+  );
+  if (resolver === undefined) {
+    throw awsError(
+      "InvalidIpamPrefixListResolverId.NotFound",
+      `The IPAM prefix list resolver ID '${resolverId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    IpamPrefixListResolver: {
+      IpamPrefixListResolverId: resolver.IpamPrefixListResolverId,
+      IpamId: resolver.IpamId,
+      IpamArn: resolver.IpamArn,
+      OwnerId: resolver.OwnerId,
+      Tags: resolver.Tags,
+    },
+  };
+};
+
+const ModifyIpamPrefixListResolverTarget: OperationHandler = (input, ctx) => {
+  const targetId =
+    typeof input["IpamPrefixListResolverTargetId"] === "string"
+      ? input["IpamPrefixListResolverTargetId"]
+      : "";
+  const target = ctx.store
+    .list<StoredIpamPrefixListResolverTarget>()
+    .map((entry) => entry.value)
+    .find((t) => t.IpamPrefixListResolverTargetId === targetId);
+  if (target === undefined) {
+    throw awsError(
+      "InvalidIpamPrefixListResolverTargetId.NotFound",
+      `The IPAM prefix list resolver target ID '${targetId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    IpamPrefixListResolverTarget: {
+      IpamPrefixListResolverId: target.IpamPrefixListResolverId,
+      IpamPrefixListResolverTargetId: target.IpamPrefixListResolverTargetId,
+      PrefixListId: target.PrefixListId,
+      OwnerId: target.OwnerId,
+      Tags: target.Tags,
+    },
+  };
+};
+
+const ModifyIpamResourceCidr: OperationHandler = (input, _ctx) => {
+  const resourceId =
+    typeof input["ResourceId"] === "string" ? input["ResourceId"] : "";
+  const resourceCidr =
+    typeof input["ResourceCidr"] === "string" ? input["ResourceCidr"] : "";
+  const resourceRegion =
+    typeof input["ResourceRegion"] === "string"
+      ? input["ResourceRegion"]
+      : "us-east-1";
+  const monitored =
+    typeof input["Monitored"] === "boolean" ? input["Monitored"] : false;
+  return {
+    IpamResourceCidr: {
+      ResourceId: resourceId,
+      ResourceCidr: resourceCidr,
+      ResourceRegion: resourceRegion,
+      IpUsage: 0,
+      ComplianceStatus: "noncompliant",
+      ManagementState: monitored ? "managed" : "unmanaged",
+    },
+  };
+};
+
+const ModifyIpamResourceDiscovery: OperationHandler = (input, ctx) => {
+  const id =
+    typeof input["IpamResourceDiscoveryId"] === "string"
+      ? input["IpamResourceDiscoveryId"]
+      : "";
+  const rd = ctx.store.get<StoredIpamResourceDiscovery>(
+    ipamResourceDiscoveryKey(id),
+  );
+  if (rd === undefined) {
+    throw awsError(
+      "InvalidIpamResourceDiscoveryId.NotFound",
+      `The IPAM resource discovery ID '${id}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Description"] === "string") {
+    rd.Description = input["Description"];
+  }
+  ctx.store.set(ipamResourceDiscoveryKey(id), rd);
+  return {
+    IpamResourceDiscovery: {
+      IpamResourceDiscoveryId: rd.IpamResourceDiscoveryId,
+      OwnerId: rd.OwnerId,
+      IpamResourceDiscoveryArn: rd.IpamResourceDiscoveryArn,
+      State: rd.State,
+      Description: rd.Description,
+      IsDefault: rd.IsDefault,
+      Tags: rd.Tags,
+    },
+  };
+};
+
+const ModifyIpamScope: OperationHandler = (input, ctx) => {
+  const scopeId =
+    typeof input["IpamScopeId"] === "string" ? input["IpamScopeId"] : "";
+  const scope = ctx.store.get<StoredIpamScope>(ipamScopeKey(scopeId));
+  if (scope === undefined) {
+    throw awsError(
+      "InvalidIpamScopeId.NotFound",
+      `The IPAM scope ID '${scopeId}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Description"] === "string") {
+    scope.Description = input["Description"];
+  }
+  ctx.store.set(ipamScopeKey(scopeId), scope);
+  return {
+    IpamScope: {
+      IpamScopeId: scope.IpamScopeId,
+      IpamId: scope.IpamId,
+      IpamScopeArn: scope.IpamScopeArn,
+      IpamArn: scope.IpamArn,
+      IpamScopeType: scope.IpamScopeType,
+      IsDefault: scope.IsDefault,
+      Description: scope.Description,
+      PoolCount: scope.PoolCount,
+      State: scope.State,
+      Tags: scope.Tags,
+    },
+  };
+};
+
+const ModifyLaunchTemplate: OperationHandler = (input, ctx) => {
+  const launchTemplateId =
+    typeof input["LaunchTemplateId"] === "string"
+      ? input["LaunchTemplateId"]
+      : typeof input["LaunchTemplateName"] === "string"
+        ? undefined
+        : "";
+  const launchTemplateName =
+    typeof input["LaunchTemplateName"] === "string"
+      ? input["LaunchTemplateName"]
+      : undefined;
+  let lt: StoredLaunchTemplate | undefined;
+  if (launchTemplateId !== undefined && launchTemplateId !== "") {
+    lt = ctx.store.get<StoredLaunchTemplate>(
+      launchTemplateKey(launchTemplateId),
+    );
+  } else if (launchTemplateName !== undefined) {
+    lt = ctx.store
+      .list<StoredLaunchTemplate>()
+      .map((entry) => entry.value)
+      .find((t) => t.LaunchTemplateName === launchTemplateName);
+  }
+  if (lt === undefined) {
+    throw awsError(
+      "InvalidLaunchTemplateId.NotFound",
+      `The launch template ID does not exist`,
+      400,
+    );
+  }
+  const defaultVersion =
+    typeof input["DefaultVersion"] === "string"
+      ? parseInt(input["DefaultVersion"], 10)
+      : undefined;
+  if (defaultVersion !== undefined && !isNaN(defaultVersion)) {
+    lt.DefaultVersionNumber = defaultVersion;
+  }
+  ctx.store.set(launchTemplateKey(lt.LaunchTemplateId), lt);
+  return {
+    LaunchTemplate: {
+      LaunchTemplateId: lt.LaunchTemplateId,
+      LaunchTemplateName: lt.LaunchTemplateName,
+      DefaultVersionNumber: lt.DefaultVersionNumber,
+      LatestVersionNumber: lt.LatestVersionNumber,
+      CreateTime: lt.CreateTime,
+      CreatedBy: lt.CreatedBy,
+      Tags: lt.Tags,
+    },
+  };
+};
+
+const ModifyLocalGatewayRoute: OperationHandler = (input, ctx) => {
+  const rtbId =
+    typeof input["LocalGatewayRouteTableId"] === "string"
+      ? input["LocalGatewayRouteTableId"]
+      : "";
+  const destinationCidrBlock =
+    typeof input["DestinationCidrBlock"] === "string"
+      ? input["DestinationCidrBlock"]
+      : "";
+  const route = ctx.store.get<StoredLocalGatewayRoute>(
+    localGatewayRouteKey(rtbId, destinationCidrBlock),
+  );
+  if (route === undefined) {
+    throw awsError(
+      "InvalidRoute.NotFound",
+      `The route '${destinationCidrBlock}' in route table '${rtbId}' does not exist`,
+      400,
+    );
+  }
+  const vifGroupId =
+    typeof input["LocalGatewayVirtualInterfaceGroupId"] === "string"
+      ? input["LocalGatewayVirtualInterfaceGroupId"]
+      : undefined;
+  if (vifGroupId !== undefined) {
+    route.LocalGatewayVirtualInterfaceGroupId = vifGroupId;
+  }
+  ctx.store.set(localGatewayRouteKey(rtbId, destinationCidrBlock), route);
+  return {
+    Route: {
+      DestinationCidrBlock: route.DestinationCidrBlock,
+      LocalGatewayVirtualInterfaceGroupId:
+        route.LocalGatewayVirtualInterfaceGroupId,
+      Type: route.Type,
+      State: route.State,
+      LocalGatewayRouteTableId: route.LocalGatewayRouteTableId,
+    },
+  };
+};
+
+const ModifyManagedPrefixList: OperationHandler = (input, ctx) => {
+  const plId =
+    typeof input["PrefixListId"] === "string" ? input["PrefixListId"] : "";
+  const pl = ctx.store.get<StoredManagedPrefixList>(managedPrefixListKey(plId));
+  if (pl === undefined) {
+    throw awsError(
+      "InvalidPrefixListID.NotFound",
+      `The prefix list ID '${plId}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["PrefixListName"] === "string") {
+    pl.PrefixListName = input["PrefixListName"];
+  }
+  if (typeof input["MaxEntries"] === "number") {
+    pl.MaxEntries = input["MaxEntries"];
+  }
+  const addEntries = input["AddEntries"];
+  if (Array.isArray(addEntries)) {
+    for (const e of addEntries) {
+      if (typeof e !== "object" || e === null) continue;
+      const entry = e as Record<string, unknown>;
+      const cidr = typeof entry["Cidr"] === "string" ? entry["Cidr"] : "";
+      if (cidr === "") continue;
+      const existing = pl.Entries.findIndex((x) => x.Cidr === cidr);
+      if (existing === -1) {
+        pl.Entries.push({
+          Cidr: cidr,
+          ...(typeof entry["Description"] === "string"
+            ? { Description: entry["Description"] }
+            : {}),
+        });
+      } else {
+        if (typeof entry["Description"] === "string") {
+          pl.Entries[existing].Description = entry["Description"];
+        }
+      }
+    }
+  }
+  const removeEntries = input["RemoveEntries"];
+  if (Array.isArray(removeEntries)) {
+    for (const e of removeEntries) {
+      if (typeof e !== "object" || e === null) continue;
+      const entry = e as Record<string, unknown>;
+      const cidr = typeof entry["Cidr"] === "string" ? entry["Cidr"] : "";
+      if (cidr === "") continue;
+      pl.Entries = pl.Entries.filter((x) => x.Cidr !== cidr);
+    }
+  }
+  pl.Version += 1;
+  pl.State = "modify-complete";
+  ctx.store.set(managedPrefixListKey(plId), pl);
+  return {
+    PrefixList: {
+      PrefixListId: pl.PrefixListId,
+      AddressFamily: pl.AddressFamily,
+      State: pl.State,
+      PrefixListArn: pl.PrefixListArn,
+      PrefixListName: pl.PrefixListName,
+      MaxEntries: pl.MaxEntries,
+      Version: pl.Version,
+      Tags: pl.Tags,
+      OwnerId: pl.OwnerId,
+    },
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -16976,6 +17365,18 @@ const ec2: ServiceDefinition = {
     ModifyInstanceMetadataOptions,
     ModifyInstanceNetworkPerformanceOptions,
     ModifyInstancePlacement,
+    ModifyIpam,
+    ModifyIpamPolicyAllocationRules,
+    ModifyIpamPool,
+    ModifyIpamPoolAllocation,
+    ModifyIpamPrefixListResolver,
+    ModifyIpamPrefixListResolverTarget,
+    ModifyIpamResourceCidr,
+    ModifyIpamResourceDiscovery,
+    ModifyIpamScope,
+    ModifyLaunchTemplate,
+    ModifyLocalGatewayRoute,
+    ModifyManagedPrefixList,
     ProvisionIpamPoolCidr,
   },
   model,

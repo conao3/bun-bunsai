@@ -49,6 +49,9 @@ type HistoryEvent = {
     error?: string;
     cause?: string;
   };
+  mapIterationStartedEventDetails?: { name: string; index: number };
+  mapIterationSucceededEventDetails?: { name: string; index: number };
+  mapIterationFailedEventDetails?: { name: string; index: number };
 };
 
 type StoredExecution = {
@@ -93,6 +96,18 @@ type AslChoiceCondition = {
 
 type AslChoiceRule = AslChoiceCondition & { Next: string };
 
+type AslRetryConfig = {
+  ErrorEquals: string[];
+  MaxAttempts?: number;
+  IntervalSeconds?: number;
+};
+
+type AslCatchConfig = {
+  ErrorEquals: string[];
+  Next: string;
+  ResultPath?: string | null;
+};
+
 type AslState = {
   Type: string;
   Next?: string;
@@ -108,6 +123,13 @@ type AslState = {
   Cause?: string;
   Seconds?: number;
   Resource?: string;
+  Retry?: AslRetryConfig[];
+  Catch?: AslCatchConfig[];
+  ItemsPath?: string;
+  Iterator?: AslDefinition;
+  ItemProcessor?: AslDefinition;
+  MaxConcurrency?: number;
+  Branches?: AslDefinition[];
 };
 
 type AslDefinition = {
@@ -262,6 +284,14 @@ const evaluateCondition = (
   return false;
 };
 
+const matchesError = (
+  errorEquals: string[],
+  error: string | undefined,
+): boolean => {
+  if (errorEquals.includes("States.ALL")) return true;
+  return error !== undefined && errorEquals.includes(error);
+};
+
 const runAslStates = async (
   definition: AslDefinition,
   initialInput: unknown,
@@ -292,7 +322,7 @@ const runAslStates = async (
   let currentStateName = startStateName;
   const maxDepth = 100;
 
-  for (let depth = 0; depth < maxDepth; depth++) {
+  stateLoop: for (let depth = 0; depth < maxDepth; depth++) {
     const state = definition.States[currentStateName];
     if (state === undefined) {
       addEvent("ExecutionFailed", {
@@ -612,6 +642,10 @@ const runAslStates = async (
           events,
         };
       }
+      const retries = state.Retry ?? [];
+      const catches = state.Catch ?? [];
+      const retryCount: number[] = retries.map(() => 0);
+
       addEvent("TaskScheduled", {
         taskScheduledEventDetails: {
           resourceType: "lambda",
@@ -620,37 +654,89 @@ const runAslStates = async (
           parameters: JSON.stringify(lambdaPayload),
         },
       });
-      const taskResult = await invokeTaskResource(
-        ctx,
-        functionArn,
-        lambdaPayload,
-      );
-      if (!taskResult.ok) {
+
+      let taskOk = false;
+      let taskError: string | undefined;
+      let taskCause: string | undefined;
+      let taskRawResult: unknown;
+
+      taskRetry: while (true) {
+        const result = await invokeTaskResource(
+          ctx,
+          functionArn,
+          lambdaPayload,
+        );
+        if (result.ok) {
+          taskOk = true;
+          taskRawResult = isOptimistic
+            ? { StatusCode: 200, Payload: result.result }
+            : result.result;
+          break;
+        }
+        taskError = result.error;
+        taskCause = result.cause;
+        let shouldRetry = false;
+        for (let ri = 0; ri < retries.length; ri++) {
+          if (matchesError(retries[ri].ErrorEquals, result.error)) {
+            const max = retries[ri].MaxAttempts ?? 3;
+            if (retryCount[ri] < max) {
+              retryCount[ri]++;
+              shouldRetry = true;
+              break;
+            }
+          }
+        }
+        if (shouldRetry) continue taskRetry;
+        break;
+      }
+
+      if (!taskOk) {
         addEvent("TaskFailed", {
           taskFailedEventDetails: {
             resourceType: "lambda",
             resource: "invoke",
-            error: taskResult.error,
-            cause: taskResult.cause,
+            error: taskError,
+            cause: taskCause,
           },
         });
+        for (const catcher of catches) {
+          if (matchesError(catcher.ErrorEquals, taskError)) {
+            const errorInfo = { Error: taskError, Cause: taskCause };
+            let catchInput: unknown;
+            if (catcher.ResultPath === null) {
+              catchInput = rawInput;
+            } else if (catcher.ResultPath !== undefined) {
+              catchInput = jsonPathSet(rawInput, catcher.ResultPath, errorInfo);
+            } else {
+              catchInput = errorInfo;
+            }
+            addEvent("TaskStateExited", {
+              stateExitedEventDetails: {
+                name: stateName,
+                output: JSON.stringify(catchInput),
+              },
+            });
+            currentInput = catchInput;
+            currentStateName = catcher.Next;
+            continue stateLoop;
+          }
+        }
         addEvent("ExecutionFailed", {
           executionFailedEventDetails: {
-            error: taskResult.error,
-            cause: taskResult.cause,
+            error: taskError,
+            cause: taskCause,
           },
         });
         return {
           status: "FAILED",
           output: "{}",
-          error: taskResult.error,
-          cause: taskResult.cause,
+          error: taskError,
+          cause: taskCause,
           events,
         };
       }
-      const rawResult = isOptimistic
-        ? { StatusCode: 200, Payload: taskResult.result }
-        : taskResult.result;
+
+      const rawResult = taskRawResult;
       addEvent("TaskSucceeded", {
         taskSucceededEventDetails: {
           resourceType: "lambda",
@@ -691,6 +777,268 @@ const runAslStates = async (
         return { status: "SUCCEEDED", output: JSON.stringify(output), events };
       }
       currentInput = output;
+      currentStateName = state.Next!;
+    } else if (state.Type === "Map") {
+      addEvent("MapStateEntered", {
+        stateEnteredEventDetails: { name: stateName, input: stateInput },
+      });
+      const rawInput = currentInput;
+      const effectiveInput =
+        state.Parameters !== undefined
+          ? applyParameters(state.Parameters, rawInput)
+          : rawInput;
+      const itemsPath = state.ItemsPath ?? "$";
+      const items = jsonPathGet(effectiveInput, itemsPath);
+      if (!Array.isArray(items)) {
+        addEvent("ExecutionFailed", {
+          executionFailedEventDetails: {
+            error: "States.Runtime",
+            cause: "ItemsPath does not reference an array",
+          },
+        });
+        return {
+          status: "FAILED",
+          output: "{}",
+          error: "States.Runtime",
+          cause: "ItemsPath does not reference an array",
+          events,
+        };
+      }
+      const iterDef = state.Iterator ?? state.ItemProcessor;
+      if (iterDef === undefined) {
+        addEvent("ExecutionFailed", {
+          executionFailedEventDetails: {
+            error: "States.Runtime",
+            cause: "Map state requires Iterator or ItemProcessor",
+          },
+        });
+        return {
+          status: "FAILED",
+          output: "{}",
+          error: "States.Runtime",
+          cause: "Map state requires Iterator or ItemProcessor",
+          events,
+        };
+      }
+      const mapResults: unknown[] = [];
+      let mapError: string | undefined;
+      let mapCause: string | undefined;
+      for (let i = 0; i < items.length; i++) {
+        addEvent("MapIterationStarted", {
+          mapIterationStartedEventDetails: { name: stateName, index: i },
+        });
+        const subIdRef = { n: 1 };
+        const iterResult = await runAslStates(
+          iterDef,
+          items[i],
+          iterDef.StartAt,
+          [],
+          subIdRef,
+          ctx,
+          executionArn,
+        );
+        if (iterResult.status !== "SUCCEEDED") {
+          mapError = iterResult.error;
+          mapCause = iterResult.cause;
+          addEvent("MapIterationFailed", {
+            mapIterationFailedEventDetails: { name: stateName, index: i },
+          });
+          break;
+        }
+        addEvent("MapIterationSucceeded", {
+          mapIterationSucceededEventDetails: { name: stateName, index: i },
+        });
+        mapResults.push(JSON.parse(iterResult.output));
+      }
+      if (mapError !== undefined) {
+        const catches = state.Catch ?? [];
+        for (const catcher of catches) {
+          if (matchesError(catcher.ErrorEquals, mapError)) {
+            const errorInfo = { Error: mapError, Cause: mapCause };
+            let catchInput: unknown;
+            if (catcher.ResultPath === null) {
+              catchInput = rawInput;
+            } else if (catcher.ResultPath !== undefined) {
+              catchInput = jsonPathSet(rawInput, catcher.ResultPath, errorInfo);
+            } else {
+              catchInput = errorInfo;
+            }
+            addEvent("MapStateExited", {
+              stateExitedEventDetails: {
+                name: stateName,
+                output: JSON.stringify(catchInput),
+              },
+            });
+            currentInput = catchInput;
+            currentStateName = catcher.Next;
+            continue stateLoop;
+          }
+        }
+        addEvent("ExecutionFailed", {
+          executionFailedEventDetails: { error: mapError, cause: mapCause },
+        });
+        return {
+          status: "FAILED",
+          output: "{}",
+          error: mapError,
+          cause: mapCause,
+          events,
+        };
+      }
+      const mapSelectedResult =
+        state.ResultSelector !== undefined
+          ? applyParameters(state.ResultSelector, mapResults)
+          : mapResults;
+      let mapStateOutput: unknown;
+      if (state.ResultPath === null) {
+        mapStateOutput = rawInput;
+      } else if (state.ResultPath !== undefined) {
+        mapStateOutput = jsonPathSet(
+          rawInput,
+          state.ResultPath,
+          mapSelectedResult,
+        );
+      } else {
+        mapStateOutput = mapSelectedResult;
+      }
+      let mapOutput: unknown;
+      if (state.OutputPath === null) {
+        mapOutput = {};
+      } else if (state.OutputPath !== undefined) {
+        mapOutput = jsonPathGet(mapStateOutput, state.OutputPath);
+      } else {
+        mapOutput = mapStateOutput;
+      }
+      addEvent("MapStateExited", {
+        stateExitedEventDetails: {
+          name: stateName,
+          output: JSON.stringify(mapOutput),
+        },
+      });
+      if (state.End === true) {
+        addEvent("ExecutionSucceeded", {
+          executionSucceededEventDetails: { output: JSON.stringify(mapOutput) },
+        });
+        return {
+          status: "SUCCEEDED",
+          output: JSON.stringify(mapOutput),
+          events,
+        };
+      }
+      currentInput = mapOutput;
+      currentStateName = state.Next!;
+    } else if (state.Type === "Parallel") {
+      addEvent("ParallelStateEntered", {
+        stateEnteredEventDetails: { name: stateName, input: stateInput },
+      });
+      const rawInput = currentInput;
+      const effectiveInput =
+        state.Parameters !== undefined
+          ? applyParameters(state.Parameters, rawInput)
+          : rawInput;
+      const branches = state.Branches ?? [];
+      const parallelResults: unknown[] = [];
+      let parallelError: string | undefined;
+      let parallelCause: string | undefined;
+      for (const branchDef of branches) {
+        const subIdRef = { n: 1 };
+        const branchResult = await runAslStates(
+          branchDef,
+          effectiveInput,
+          branchDef.StartAt,
+          [],
+          subIdRef,
+          ctx,
+          executionArn,
+        );
+        if (branchResult.status !== "SUCCEEDED") {
+          parallelError = branchResult.error;
+          parallelCause = branchResult.cause;
+          break;
+        }
+        parallelResults.push(JSON.parse(branchResult.output));
+      }
+      if (parallelError !== undefined) {
+        const catches = state.Catch ?? [];
+        for (const catcher of catches) {
+          if (matchesError(catcher.ErrorEquals, parallelError)) {
+            const errorInfo = { Error: parallelError, Cause: parallelCause };
+            let catchInput: unknown;
+            if (catcher.ResultPath === null) {
+              catchInput = rawInput;
+            } else if (catcher.ResultPath !== undefined) {
+              catchInput = jsonPathSet(rawInput, catcher.ResultPath, errorInfo);
+            } else {
+              catchInput = errorInfo;
+            }
+            addEvent("ParallelStateExited", {
+              stateExitedEventDetails: {
+                name: stateName,
+                output: JSON.stringify(catchInput),
+              },
+            });
+            currentInput = catchInput;
+            currentStateName = catcher.Next;
+            continue stateLoop;
+          }
+        }
+        addEvent("ExecutionFailed", {
+          executionFailedEventDetails: {
+            error: parallelError,
+            cause: parallelCause,
+          },
+        });
+        return {
+          status: "FAILED",
+          output: "{}",
+          error: parallelError,
+          cause: parallelCause,
+          events,
+        };
+      }
+      const parallelSelectedResult =
+        state.ResultSelector !== undefined
+          ? applyParameters(state.ResultSelector, parallelResults)
+          : parallelResults;
+      let parallelStateOutput: unknown;
+      if (state.ResultPath === null) {
+        parallelStateOutput = rawInput;
+      } else if (state.ResultPath !== undefined) {
+        parallelStateOutput = jsonPathSet(
+          rawInput,
+          state.ResultPath,
+          parallelSelectedResult,
+        );
+      } else {
+        parallelStateOutput = parallelSelectedResult;
+      }
+      let parallelOutput: unknown;
+      if (state.OutputPath === null) {
+        parallelOutput = {};
+      } else if (state.OutputPath !== undefined) {
+        parallelOutput = jsonPathGet(parallelStateOutput, state.OutputPath);
+      } else {
+        parallelOutput = parallelStateOutput;
+      }
+      addEvent("ParallelStateExited", {
+        stateExitedEventDetails: {
+          name: stateName,
+          output: JSON.stringify(parallelOutput),
+        },
+      });
+      if (state.End === true) {
+        addEvent("ExecutionSucceeded", {
+          executionSucceededEventDetails: {
+            output: JSON.stringify(parallelOutput),
+          },
+        });
+        return {
+          status: "SUCCEEDED",
+          output: JSON.stringify(parallelOutput),
+          events,
+        };
+      }
+      currentInput = parallelOutput;
       currentStateName = state.Next!;
     } else {
       if (state.End === true) {

@@ -11005,6 +11005,390 @@ const DescribeIpamPrefixListResolvers: OperationHandler = (input, ctx) => {
   };
 };
 
+const allIpamResourceDiscoveries = (
+  ctx: ServiceContext,
+): StoredIpamResourceDiscovery[] =>
+  ctx.store
+    .list<StoredIpamResourceDiscovery>()
+    .filter((entry) => entry.key.startsWith("ipam-rd/"))
+    .map((entry) => entry.value);
+
+const DescribeIpamResourceDiscoveries: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["IpamResourceDiscoveryIds"]);
+  const discoveries = allIpamResourceDiscoveries(ctx).filter((d) =>
+    ids.length === 0 ? true : ids.includes(d.IpamResourceDiscoveryId),
+  );
+  return {
+    IpamResourceDiscoveries: discoveries.map((d) => ({
+      IpamResourceDiscoveryId: d.IpamResourceDiscoveryId,
+      OwnerId: d.OwnerId,
+      IpamResourceDiscoveryArn: d.IpamResourceDiscoveryArn,
+      State: d.State,
+      Description: d.Description,
+      IsDefault: d.IsDefault,
+      Tags: d.Tags,
+    })),
+  };
+};
+
+const allIpamResourceDiscoveryAssociations = (
+  ctx: ServiceContext,
+): StoredIpamResourceDiscoveryAssociation[] =>
+  ctx.store
+    .list<StoredIpamResourceDiscoveryAssociation>()
+    .filter((entry) => entry.key.startsWith("ipam-rd-assoc/"))
+    .map((entry) => entry.value);
+
+const DescribeIpamResourceDiscoveryAssociations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["IpamResourceDiscoveryAssociationIds"]);
+  const associations = allIpamResourceDiscoveryAssociations(ctx).filter((a) =>
+    ids.length === 0
+      ? true
+      : ids.includes(a.IpamResourceDiscoveryAssociationId),
+  );
+  return {
+    IpamResourceDiscoveryAssociations: associations.map((a) => ({
+      IpamResourceDiscoveryAssociationId: a.IpamResourceDiscoveryAssociationId,
+      IpamResourceDiscoveryAssociationArn:
+        a.IpamResourceDiscoveryAssociationArn,
+      IpamResourceDiscoveryId: a.IpamResourceDiscoveryId,
+      IpamId: a.IpamId,
+      IpamArn: a.IpamArn,
+      OwnerId: a.OwnerId,
+      IsDefault: a.IsDefault,
+      ResourceDiscoveryStatus: a.ResourceDiscoveryStatus,
+      State: a.State,
+      Tags: a.Tags,
+    })),
+  };
+};
+
+const allIpamScopes = (ctx: ServiceContext): StoredIpamScope[] =>
+  ctx.store
+    .list<StoredIpamScope>()
+    .filter((entry) => entry.key.startsWith("ipam-scope/"))
+    .map((entry) => entry.value);
+
+const DescribeIpamScopes: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["IpamScopeIds"]);
+  const scopes = allIpamScopes(ctx).filter((s) =>
+    ids.length === 0 ? true : ids.includes(s.IpamScopeId),
+  );
+  return {
+    IpamScopes: scopes.map((s) => ({
+      IpamScopeId: s.IpamScopeId,
+      IpamId: s.IpamId,
+      IpamScopeArn: s.IpamScopeArn,
+      IpamArn: s.IpamArn,
+      IpamScopeType: s.IpamScopeType,
+      IsDefault: s.IsDefault,
+      Description: s.Description,
+      PoolCount: s.PoolCount,
+      State: s.State,
+      Tags: s.Tags,
+    })),
+  };
+};
+
+const allIpams = (ctx: ServiceContext): StoredIpam[] =>
+  ctx.store
+    .list<StoredIpam>()
+    .filter((entry) => entry.key.startsWith("ipam/"))
+    .map((entry) => entry.value);
+
+const DescribeIpams: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["IpamIds"]);
+  const ipams = allIpams(ctx).filter((i) =>
+    ids.length === 0 ? true : ids.includes(i.IpamId),
+  );
+  return {
+    Ipams: ipams.map((i) => ({
+      IpamId: i.IpamId,
+      OwnerId: i.OwnerId,
+      IpamArn: i.IpamArn,
+      State: i.State,
+      Description: i.Description,
+      PublicDefaultScopeId: i.PublicDefaultScopeId,
+      PrivateDefaultScopeId: i.PrivateDefaultScopeId,
+      ScopeCount: i.ScopeCount,
+      Tags: i.Tags,
+    })),
+  };
+};
+
+const DescribeIpv6Pools: OperationHandler = (_input, _ctx) => {
+  return { Ipv6Pools: [] };
+};
+
+const allLaunchTemplates = (ctx: ServiceContext): StoredLaunchTemplate[] =>
+  ctx.store
+    .list<StoredLaunchTemplate>()
+    .filter((entry) => entry.key.startsWith("lt/"))
+    .map((entry) => entry.value);
+
+const DescribeLaunchTemplates: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["LaunchTemplateIds"]);
+  const names = stringList(input["LaunchTemplateNames"]);
+  const templates = allLaunchTemplates(ctx).filter((t) => {
+    if (ids.length > 0 && !ids.includes(t.LaunchTemplateId)) return false;
+    if (names.length > 0 && !names.includes(t.LaunchTemplateName)) return false;
+    return true;
+  });
+  return {
+    LaunchTemplates: templates.map((t) => ({
+      LaunchTemplateId: t.LaunchTemplateId,
+      LaunchTemplateName: t.LaunchTemplateName,
+      DefaultVersionNumber: t.DefaultVersionNumber,
+      LatestVersionNumber: t.LatestVersionNumber,
+      CreateTime: t.CreateTime,
+      CreatedBy: t.CreatedBy,
+      Tags: t.Tags,
+    })),
+  };
+};
+
+const DescribeLaunchTemplateVersions: OperationHandler = (input, ctx) => {
+  const ltId =
+    typeof input["LaunchTemplateId"] === "string"
+      ? input["LaunchTemplateId"]
+      : undefined;
+  const ltName =
+    typeof input["LaunchTemplateName"] === "string"
+      ? input["LaunchTemplateName"]
+      : undefined;
+  const versions = stringList(input["Versions"]);
+  const minVersion =
+    typeof input["MinVersion"] === "string"
+      ? parseInt(input["MinVersion"], 10)
+      : undefined;
+  const maxVersion =
+    typeof input["MaxVersion"] === "string"
+      ? parseInt(input["MaxVersion"], 10)
+      : undefined;
+
+  let lt: StoredLaunchTemplate | undefined;
+  if (ltId !== undefined) {
+    lt = ctx.store.get<StoredLaunchTemplate>(launchTemplateKey(ltId));
+  } else if (ltName !== undefined) {
+    lt = allLaunchTemplates(ctx).find((t) => t.LaunchTemplateName === ltName);
+  }
+
+  let allVersions: StoredLaunchTemplateVersion[];
+  if (lt !== undefined) {
+    allVersions = ctx.store
+      .list<StoredLaunchTemplateVersion>()
+      .filter((entry) =>
+        entry.key.startsWith(`lt-version/${lt!.LaunchTemplateId}/`),
+      )
+      .map((entry) => entry.value);
+  } else {
+    allVersions = ctx.store
+      .list<StoredLaunchTemplateVersion>()
+      .filter((entry) => entry.key.startsWith("lt-version/"))
+      .map((entry) => entry.value);
+  }
+
+  const filtered = allVersions.filter((v) => {
+    if (versions.length > 0) {
+      const matchesVersion = versions.some((ver) => {
+        if (ver === "$Latest" && lt !== undefined) {
+          return v.VersionNumber === lt.LatestVersionNumber;
+        }
+        if (ver === "$Default" && lt !== undefined) {
+          return v.VersionNumber === lt.DefaultVersionNumber;
+        }
+        return v.VersionNumber === parseInt(ver, 10);
+      });
+      if (!matchesVersion) return false;
+    }
+    if (minVersion !== undefined && v.VersionNumber < minVersion) return false;
+    if (maxVersion !== undefined && v.VersionNumber > maxVersion) return false;
+    return true;
+  });
+
+  return {
+    LaunchTemplateVersions: filtered.map((v) => ({
+      LaunchTemplateId: v.LaunchTemplateId,
+      LaunchTemplateName: v.LaunchTemplateName,
+      VersionNumber: v.VersionNumber,
+      VersionDescription: v.VersionDescription,
+      CreateTime: v.CreateTime,
+      CreatedBy: v.CreatedBy,
+      DefaultVersion: v.DefaultVersion,
+      LaunchTemplateData: v.LaunchTemplateData,
+    })),
+  };
+};
+
+const allLocalGatewayRouteTableVifgAssociations = (
+  ctx: ServiceContext,
+): StoredLocalGatewayRouteTableVirtualInterfaceGroupAssociation[] =>
+  ctx.store
+    .list<StoredLocalGatewayRouteTableVirtualInterfaceGroupAssociation>()
+    .filter((entry) => entry.key.startsWith("lgw-vif-grp-assoc/"))
+    .map((entry) => entry.value);
+
+const DescribeLocalGatewayRouteTableVirtualInterfaceGroupAssociations: OperationHandler =
+  (input, ctx) => {
+    const ids = stringList(
+      input["LocalGatewayRouteTableVirtualInterfaceGroupAssociationIds"],
+    );
+    const associations = allLocalGatewayRouteTableVifgAssociations(ctx).filter(
+      (a) =>
+        ids.length === 0
+          ? true
+          : ids.includes(
+              a.LocalGatewayRouteTableVirtualInterfaceGroupAssociationId,
+            ),
+    );
+    return {
+      LocalGatewayRouteTableVirtualInterfaceGroupAssociations: associations.map(
+        (a) => ({
+          LocalGatewayRouteTableVirtualInterfaceGroupAssociationId:
+            a.LocalGatewayRouteTableVirtualInterfaceGroupAssociationId,
+          LocalGatewayVirtualInterfaceGroupId:
+            a.LocalGatewayVirtualInterfaceGroupId,
+          LocalGatewayId: a.LocalGatewayId,
+          LocalGatewayRouteTableId: a.LocalGatewayRouteTableId,
+          LocalGatewayRouteTableArn: a.LocalGatewayRouteTableArn,
+          OwnerId: a.OwnerId,
+          State: a.State,
+          Tags: a.Tags,
+        }),
+      ),
+    };
+  };
+
+const allLocalGatewayRouteTableVpcAssociations = (
+  ctx: ServiceContext,
+): StoredLocalGatewayRouteTableVpcAssociation[] =>
+  ctx.store
+    .list<StoredLocalGatewayRouteTableVpcAssociation>()
+    .filter((entry) => entry.key.startsWith("lgw-vpc-assoc/"))
+    .map((entry) => entry.value);
+
+const DescribeLocalGatewayRouteTableVpcAssociations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["LocalGatewayRouteTableVpcAssociationIds"]);
+  const associations = allLocalGatewayRouteTableVpcAssociations(ctx).filter(
+    (a) =>
+      ids.length === 0
+        ? true
+        : ids.includes(a.LocalGatewayRouteTableVpcAssociationId),
+  );
+  return {
+    LocalGatewayRouteTableVpcAssociations: associations.map((a) => ({
+      LocalGatewayRouteTableVpcAssociationId:
+        a.LocalGatewayRouteTableVpcAssociationId,
+      LocalGatewayRouteTableId: a.LocalGatewayRouteTableId,
+      LocalGatewayRouteTableArn: a.LocalGatewayRouteTableArn,
+      LocalGatewayId: a.LocalGatewayId,
+      VpcId: a.VpcId,
+      OwnerId: a.OwnerId,
+      State: a.State,
+      Tags: a.Tags,
+    })),
+  };
+};
+
+const allLocalGatewayRouteTables = (
+  ctx: ServiceContext,
+): StoredLocalGatewayRouteTable[] =>
+  ctx.store
+    .list<StoredLocalGatewayRouteTable>()
+    .filter((entry) => entry.key.startsWith("lgw-rtb/"))
+    .map((entry) => entry.value);
+
+const DescribeLocalGatewayRouteTables: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["LocalGatewayRouteTableIds"]);
+  const tables = allLocalGatewayRouteTables(ctx).filter((t) =>
+    ids.length === 0 ? true : ids.includes(t.LocalGatewayRouteTableId),
+  );
+  return {
+    LocalGatewayRouteTables: tables.map((t) => ({
+      LocalGatewayRouteTableId: t.LocalGatewayRouteTableId,
+      LocalGatewayRouteTableArn: t.LocalGatewayRouteTableArn,
+      LocalGatewayId: t.LocalGatewayId,
+      State: t.State,
+      OwnerId: t.OwnerId,
+      Tags: t.Tags,
+    })),
+  };
+};
+
+const allLocalGatewayVirtualInterfaceGroups = (
+  ctx: ServiceContext,
+): StoredLocalGatewayVirtualInterfaceGroup[] =>
+  ctx.store
+    .list<StoredLocalGatewayVirtualInterfaceGroup>()
+    .filter((entry) => entry.key.startsWith("lgw-vif-grp/"))
+    .map((entry) => entry.value);
+
+const DescribeLocalGatewayVirtualInterfaceGroups: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["LocalGatewayVirtualInterfaceGroupIds"]);
+  const groups = allLocalGatewayVirtualInterfaceGroups(ctx).filter((g) =>
+    ids.length === 0
+      ? true
+      : ids.includes(g.LocalGatewayVirtualInterfaceGroupId),
+  );
+  return {
+    LocalGatewayVirtualInterfaceGroups: groups.map((g) => ({
+      LocalGatewayVirtualInterfaceGroupId:
+        g.LocalGatewayVirtualInterfaceGroupId,
+      LocalGatewayVirtualInterfaceIds: g.LocalGatewayVirtualInterfaceIds,
+      LocalGatewayId: g.LocalGatewayId,
+      OwnerId: g.OwnerId,
+      LocalBgpAsn: g.LocalBgpAsn,
+      LocalGatewayVirtualInterfaceGroupArn:
+        g.LocalGatewayVirtualInterfaceGroupArn,
+      Tags: g.Tags,
+    })),
+  };
+};
+
+const allLocalGatewayVirtualInterfaces = (
+  ctx: ServiceContext,
+): StoredLocalGatewayVirtualInterface[] =>
+  ctx.store
+    .list<StoredLocalGatewayVirtualInterface>()
+    .filter((entry) => entry.key.startsWith("lgw-vif/"))
+    .map((entry) => entry.value);
+
+const DescribeLocalGatewayVirtualInterfaces: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["LocalGatewayVirtualInterfaceIds"]);
+  const interfaces = allLocalGatewayVirtualInterfaces(ctx).filter((i) =>
+    ids.length === 0 ? true : ids.includes(i.LocalGatewayVirtualInterfaceId),
+  );
+  return {
+    LocalGatewayVirtualInterfaces: interfaces.map((i) => ({
+      LocalGatewayVirtualInterfaceId: i.LocalGatewayVirtualInterfaceId,
+      LocalGatewayId: i.LocalGatewayId,
+      LocalGatewayVirtualInterfaceGroupId:
+        i.LocalGatewayVirtualInterfaceGroupId,
+      LocalGatewayVirtualInterfaceArn: i.LocalGatewayVirtualInterfaceArn,
+      OutpostLagId: i.OutpostLagId,
+      Vlan: i.Vlan,
+      LocalAddress: i.LocalAddress,
+      PeerAddress: i.PeerAddress,
+      LocalBgpAsn: i.LocalBgpAsn,
+      PeerBgpAsn: i.PeerBgpAsn,
+      OwnerId: i.OwnerId,
+      Tags: i.Tags,
+    })),
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -11374,6 +11758,18 @@ const ec2: ServiceDefinition = {
     DescribeIpamPools,
     DescribeIpamPrefixListResolverTargets,
     DescribeIpamPrefixListResolvers,
+    DescribeIpamResourceDiscoveries,
+    DescribeIpamResourceDiscoveryAssociations,
+    DescribeIpamScopes,
+    DescribeIpams,
+    DescribeIpv6Pools,
+    DescribeLaunchTemplates,
+    DescribeLaunchTemplateVersions,
+    DescribeLocalGatewayRouteTableVirtualInterfaceGroupAssociations,
+    DescribeLocalGatewayRouteTableVpcAssociations,
+    DescribeLocalGatewayRouteTables,
+    DescribeLocalGatewayVirtualInterfaceGroups,
+    DescribeLocalGatewayVirtualInterfaces,
   },
   model,
 } as const;

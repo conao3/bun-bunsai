@@ -11563,6 +11563,259 @@ const DescribeNetworkInsightsPaths: OperationHandler = (input, ctx) => {
   };
 };
 
+const allNetworkInterfacePermissions = (
+  ctx: ServiceContext,
+): StoredNetworkInterfacePermission[] =>
+  ctx.store
+    .list<StoredNetworkInterfacePermission>()
+    .filter((entry) => entry.key.startsWith("ni-perm/"))
+    .map((entry) => entry.value);
+
+const DescribeNetworkInterfacePermissions: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["NetworkInterfacePermissionIds"]);
+  const perms = allNetworkInterfacePermissions(ctx).filter((p) =>
+    ids.length === 0 ? true : ids.includes(p.NetworkInterfacePermissionId),
+  );
+  return {
+    NetworkInterfacePermissions: perms.map((p) => ({
+      NetworkInterfacePermissionId: p.NetworkInterfacePermissionId,
+      NetworkInterfaceId: p.NetworkInterfaceId,
+      AwsAccountId: p.AwsAccountId,
+      AwsService: p.AwsService,
+      Permission: p.Permission,
+      PermissionState: { State: p.PermissionState },
+    })),
+  };
+};
+
+const allNetworkInterfaces = (ctx: ServiceContext): StoredNetworkInterface[] =>
+  ctx.store
+    .list<StoredNetworkInterface>()
+    .filter((entry) => entry.key.startsWith("eni/"))
+    .map((entry) => entry.value);
+
+const DescribeNetworkInterfaces: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["NetworkInterfaceIds"]);
+  const nis = allNetworkInterfaces(ctx).filter((ni) =>
+    ids.length === 0 ? true : ids.includes(ni.NetworkInterfaceId),
+  );
+  return {
+    NetworkInterfaces: nis.map((ni) => ({
+      NetworkInterfaceId: ni.NetworkInterfaceId,
+      SubnetId: ni.SubnetId,
+      VpcId: ni.VpcId,
+      AvailabilityZone: ni.AvailabilityZone,
+      Description: ni.Description,
+      OwnerId: ni.OwnerId,
+      PrivateIpAddress: ni.PrivateIpAddress,
+      PrivateDnsName: ni.PrivateDnsName,
+      MacAddress: ni.MacAddress,
+      Status: ni.Status,
+      InterfaceType: ni.InterfaceType,
+      SourceDestCheck: ni.SourceDestCheck,
+      TagSet: ni.Tags,
+      Groups: ni.Groups,
+    })),
+  };
+};
+
+const DescribeOutpostLags: OperationHandler = (_input, _ctx) => {
+  return { OutpostLags: [] };
+};
+
+const allPlacementGroups = (ctx: ServiceContext): StoredPlacementGroup[] =>
+  ctx.store
+    .list<StoredPlacementGroup>()
+    .filter((entry) => entry.key.startsWith("pg/"))
+    .map((entry) => entry.value);
+
+const DescribePlacementGroups: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["GroupIds"]);
+  const names = stringList(input["GroupNames"]);
+  const groups = allPlacementGroups(ctx).filter((g) => {
+    if (ids.length === 0 && names.length === 0) return true;
+    return ids.includes(g.GroupId) || names.includes(g.GroupName);
+  });
+  return {
+    PlacementGroups: groups.map((g) => ({
+      GroupId: g.GroupId,
+      GroupName: g.GroupName,
+      State: g.State,
+      Strategy: g.Strategy,
+      PartitionCount: g.PartitionCount,
+      SpreadLevel: g.SpreadLevel,
+      GroupArn: `arn:aws:ec2:${ctx.region}:${ctx.account}:placement-group/${g.GroupName}`,
+      Tags: g.Tags,
+    })),
+  };
+};
+
+const DescribePrefixLists: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["PrefixListIds"]);
+  const lists = allManagedPrefixLists(ctx).filter((pl) =>
+    ids.length === 0 ? true : ids.includes(pl.PrefixListId),
+  );
+  return {
+    PrefixLists: lists.map((pl) => ({
+      PrefixListId: pl.PrefixListId,
+      PrefixListName: pl.PrefixListName,
+      Cidrs: [],
+    })),
+  };
+};
+
+const DescribePrincipalIdFormat: OperationHandler = (_input, _ctx) => {
+  return { Principals: [] };
+};
+
+const allPublicIpv4Pools = (ctx: ServiceContext): StoredPublicIpv4Pool[] =>
+  ctx.store
+    .list<StoredPublicIpv4Pool>()
+    .filter((entry) => entry.key.startsWith("ipv4-pool/"))
+    .map((entry) => entry.value);
+
+const DescribePublicIpv4Pools: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["PoolIds"]);
+  const pools = allPublicIpv4Pools(ctx).filter((p) =>
+    ids.length === 0 ? true : ids.includes(p.PoolId),
+  );
+  return {
+    PublicIpv4Pools: pools.map((p) => ({
+      PoolId: p.PoolId,
+      NetworkBorderGroup: p.NetworkBorderGroup,
+      Tags: p.Tags,
+      PoolAddressRanges: [],
+      TotalAddressCount: 0,
+      TotalAvailableAddressCount: 0,
+    })),
+  };
+};
+
+const AWS_REGIONS = [
+  "af-south-1",
+  "ap-east-1",
+  "ap-northeast-1",
+  "ap-northeast-2",
+  "ap-northeast-3",
+  "ap-south-1",
+  "ap-south-2",
+  "ap-southeast-1",
+  "ap-southeast-2",
+  "ap-southeast-3",
+  "ap-southeast-4",
+  "ap-southeast-5",
+  "ca-central-1",
+  "ca-west-1",
+  "eu-central-1",
+  "eu-central-2",
+  "eu-north-1",
+  "eu-south-1",
+  "eu-south-2",
+  "eu-west-1",
+  "eu-west-2",
+  "eu-west-3",
+  "il-central-1",
+  "me-central-1",
+  "me-south-1",
+  "mx-central-1",
+  "sa-east-1",
+  "us-east-1",
+  "us-east-2",
+  "us-west-1",
+  "us-west-2",
+] as const;
+
+const DescribeRegions: OperationHandler = (_input, _ctx) => {
+  return {
+    Regions: AWS_REGIONS.map((name) => ({
+      RegionName: name,
+      Endpoint: `ec2.${name}.amazonaws.com`,
+      OptInStatus: "opt-in-not-required",
+    })),
+  };
+};
+
+const allReplaceRootVolumeTasks = (
+  ctx: ServiceContext,
+): StoredReplaceRootVolumeTask[] =>
+  ctx.store
+    .list<StoredReplaceRootVolumeTask>()
+    .filter((entry) => entry.key.startsWith("rrvt/"))
+    .map((entry) => entry.value);
+
+const DescribeReplaceRootVolumeTasks: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["ReplaceRootVolumeTaskIds"]);
+  const tasks = allReplaceRootVolumeTasks(ctx).filter((t) =>
+    ids.length === 0 ? true : ids.includes(t.ReplaceRootVolumeTaskId),
+  );
+  return {
+    ReplaceRootVolumeTasks: tasks.map((t) => ({
+      ReplaceRootVolumeTaskId: t.ReplaceRootVolumeTaskId,
+      InstanceId: t.InstanceId,
+      TaskState: t.TaskState,
+      StartTime: t.StartTime,
+      Tags: t.Tags,
+      ImageId: t.ImageId,
+      SnapshotId: t.SnapshotId,
+      DeleteReplacedRootVolume: t.DeleteReplacedRootVolume,
+    })),
+  };
+};
+
+const DescribeReservedInstances: OperationHandler = (_input, _ctx) => {
+  return { ReservedInstances: [] };
+};
+
+const allReservedInstancesListings = (
+  ctx: ServiceContext,
+): StoredReservedInstancesListing[] =>
+  ctx.store
+    .list<StoredReservedInstancesListing>()
+    .filter((entry) => entry.key.startsWith("ril/"))
+    .map((entry) => entry.value);
+
+const DescribeReservedInstancesListings: OperationHandler = (input, ctx) => {
+  const listingId =
+    typeof input["ReservedInstancesListingId"] === "string"
+      ? input["ReservedInstancesListingId"]
+      : undefined;
+  const reservedInstancesId =
+    typeof input["ReservedInstancesId"] === "string"
+      ? input["ReservedInstancesId"]
+      : undefined;
+  const listings = allReservedInstancesListings(ctx).filter((l) => {
+    if (listingId !== undefined && l.ReservedInstancesListingId !== listingId)
+      return false;
+    if (
+      reservedInstancesId !== undefined &&
+      l.ReservedInstancesId !== reservedInstancesId
+    )
+      return false;
+    return true;
+  });
+  return {
+    ReservedInstancesListings: listings.map((l) => ({
+      ReservedInstancesListingId: l.ReservedInstancesListingId,
+      ReservedInstancesId: l.ReservedInstancesId,
+      ClientToken: l.ClientToken,
+      CreateDate: l.CreateDate,
+      UpdateDate: l.UpdateDate,
+      Status: l.Status,
+      StatusMessage: l.StatusMessage,
+      InstanceCounts: [],
+      PriceSchedules: [],
+      Tags: l.Tags,
+    })),
+  };
+};
+
+const DescribeReservedInstancesModifications: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { ReservedInstancesModifications: [] };
+};
+
 const DescribeNetworkInterfaceAttribute: OperationHandler = (input, ctx) => {
   const id =
     typeof input["NetworkInterfaceId"] === "string"
@@ -11980,6 +12233,18 @@ const ec2: ServiceDefinition = {
     DescribeNetworkInsightsAnalyses,
     DescribeNetworkInsightsPaths,
     DescribeNetworkInterfaceAttribute,
+    DescribeNetworkInterfacePermissions,
+    DescribeNetworkInterfaces,
+    DescribeOutpostLags,
+    DescribePlacementGroups,
+    DescribePrefixLists,
+    DescribePrincipalIdFormat,
+    DescribePublicIpv4Pools,
+    DescribeRegions,
+    DescribeReplaceRootVolumeTasks,
+    DescribeReservedInstances,
+    DescribeReservedInstancesListings,
+    DescribeReservedInstancesModifications,
   },
   model,
 } as const;

@@ -257,6 +257,15 @@ const queryExecutionView = (
     SubmissionDateTime: execution.SubmissionDateTime,
     CompletionDateTime: execution.CompletionDateTime,
   },
+  Statistics: {
+    EngineExecutionTimeInMillis: 0,
+    DataScannedInBytes: 0,
+    TotalExecutionTimeInMillis: 0,
+    QueryQueueTimeInMillis: 0,
+    ServicePreProcessingTimeInMillis: 0,
+    QueryPlanningTimeInMillis: 0,
+    ServiceProcessingTimeInMillis: 0,
+  },
 });
 
 const namedQueryView = (query: StoredNamedQuery): Record<string, unknown> => ({
@@ -353,9 +362,9 @@ const StartQueryExecution: OperationHandler = (input, ctx) => {
     QueryExecutionContext: asRecord(input["QueryExecutionContext"]),
     ResultConfiguration: asRecord(input["ResultConfiguration"]),
     WorkGroup: workGroup,
-    State: "SUCCEEDED",
+    State: "QUEUED",
     SubmissionDateTime: now,
-    CompletionDateTime: now,
+    CompletionDateTime: 0,
   };
   ctx.store.set(`${executionPrefix}${id}`, execution);
   return { QueryExecutionId: id };
@@ -364,6 +373,20 @@ const StartQueryExecution: OperationHandler = (input, ctx) => {
 const GetQueryExecution: OperationHandler = (input, ctx) => {
   const id = requireString(input, "QueryExecutionId");
   const execution = requireExecution(ctx, id);
+  if (execution.State === "QUEUED") {
+    const updated: StoredQueryExecution = { ...execution, State: "RUNNING" };
+    ctx.store.set(`${executionPrefix}${id}`, updated);
+    return { QueryExecution: queryExecutionView(updated) };
+  }
+  if (execution.State === "RUNNING") {
+    const updated: StoredQueryExecution = {
+      ...execution,
+      State: "SUCCEEDED",
+      CompletionDateTime: Math.floor(Date.now() / 1000),
+    };
+    ctx.store.set(`${executionPrefix}${id}`, updated);
+    return { QueryExecution: queryExecutionView(updated) };
+  }
   return { QueryExecution: queryExecutionView(execution) };
 };
 
@@ -402,7 +425,16 @@ const GetQueryResults: OperationHandler = (input, ctx) => {
     UpdateCount: 0,
     ResultSet: {
       Rows: [],
-      ResultSetMetadata: { ColumnInfo: [] },
+      ResultSetMetadata: {
+        ColumnInfo: [
+          {
+            Name: "_col0",
+            Type: "varchar",
+            Nullable: "UNKNOWN",
+            CaseSensitive: false,
+          },
+        ],
+      },
     },
   };
 };

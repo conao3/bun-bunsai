@@ -2446,6 +2446,13 @@ const RestoreDBClusterFromSnapshot: OperationHandler = (input, ctx) => {
   const snapshot = ctx.store.get<StoredDBClusterSnapshot>(
     clusterSnapshotKey(snapshotId),
   );
+  if (snapshot === undefined) {
+    throw awsError(
+      "DBClusterSnapshotNotFoundFault",
+      `DBClusterSnapshot ${snapshotId} not found.`,
+      404,
+    );
+  }
   const cluster: StoredDBCluster = {
     DBClusterIdentifier: id,
     Engine: engine,
@@ -2517,8 +2524,15 @@ const RestoreDBInstanceFromDBSnapshot: OperationHandler = (input, ctx) => {
       400,
     );
   }
-  const snapshotId = optionalString(input, "DBSnapshotIdentifier") ?? "";
+  const snapshotId = requireString(input, "DBSnapshotIdentifier");
   const snapshot = ctx.store.get<StoredDBSnapshot>(snapshotKey(snapshotId));
+  if (snapshot === undefined) {
+    throw awsError(
+      "DBSnapshotNotFound",
+      `DBSnapshot ${snapshotId} not found.`,
+      404,
+    );
+  }
   const availabilityZone =
     optionalString(input, "AvailabilityZone") ??
     snapshot?.AvailabilityZone ??

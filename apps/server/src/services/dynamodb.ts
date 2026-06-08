@@ -1367,15 +1367,26 @@ const applyWriteRequest = (
   const del = request["DeleteRequest"];
   if (put !== undefined) {
     const item = asItem(asRecord(put)["Item"]);
-    table.items[keyOf(table, item)] = item;
+    const key = keyOf(table, item);
+    const previous = table.items[key];
+    table.items[key] = item;
     ctx.store.set(name, table);
+    appendStreamRecord(
+      ctx,
+      table,
+      previous === undefined ? "INSERT" : "MODIFY",
+      item,
+      previous,
+    );
     return;
   }
   if (del !== undefined) {
     const key = keyFromKeyInput(table, asItem(asRecord(del)["Key"]));
-    if (table.items[key] !== undefined) {
+    const previous = table.items[key];
+    if (previous !== undefined) {
       delete table.items[key];
       ctx.store.set(name, table);
+      appendStreamRecord(ctx, table, "REMOVE", undefined, previous);
     }
   }
 };
@@ -1406,7 +1417,8 @@ const BatchGetItem: OperationHandler = (input, ctx) => {
     const found: Item[] = [];
     for (const key of keys) {
       const item = table.items[keyFromKeyInput(table, asItem(key))];
-      if (item !== undefined) found.push(applyProjection(projection, item));
+      if (item !== undefined && !isExpired(table, item))
+        found.push(applyProjection(projection, item));
     }
     responses[name] = found;
   }
@@ -1648,7 +1660,9 @@ const TransactGetItems: OperationHandler = (input, ctx) => {
     const get = asRecord(asRecord(entry)["Get"]);
     const table = requireTable(ctx, requireString(get, "TableName"));
     const item = table.items[keyFromKeyInput(table, asItem(get["Key"]))];
-    responses.push(item === undefined ? {} : { Item: item });
+    responses.push(
+      item === undefined || isExpired(table, item) ? {} : { Item: item },
+    );
   }
   return { Responses: responses };
 };
@@ -2241,6 +2255,7 @@ const executePartiQL = (
       }
       table.items[key] = item;
       ctx.store.set(tableName, table);
+      appendStreamRecord(ctx, table, "INSERT", item, undefined);
     }
     return [];
   }
@@ -2270,6 +2285,7 @@ const executePartiQL = (
       const key = keyFromKeyInput(table, item);
       const next = applyUpdate(ast, item);
       table.items[key] = next;
+      appendStreamRecord(ctx, table, "MODIFY", next, item);
       return next;
     });
     if (matched.length > 0) ctx.store.set(tableName, table);
@@ -2291,6 +2307,7 @@ const executePartiQL = (
         : allItems;
     for (const item of matched) {
       delete table.items[keyFromKeyInput(table, item)];
+      appendStreamRecord(ctx, table, "REMOVE", undefined, item);
     }
     if (matched.length > 0) ctx.store.set(tableName, table);
     return [];

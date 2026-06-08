@@ -351,23 +351,31 @@ const Invoke: OperationHandler = async (input, ctx) => {
   if (invocationType === "DryRun") {
     return { StatusCode: 204, ExecutedVersion: fn.Version };
   }
+  if (invocationType === "Event") {
+    runFunction(
+      fn,
+      decodePayload(input["Payload"]),
+      ctx.region,
+      ctx.store,
+    ).catch(() => {});
+    return { StatusCode: 202, ExecutedVersion: fn.Version };
+  }
   const execution = await runFunction(
     fn,
     decodePayload(input["Payload"]),
     ctx.region,
     ctx.store,
   );
-  const statusCode = invocationType === "Event" ? 202 : 200;
   if (execution.kind === "unsupported") {
     return {
-      StatusCode: statusCode,
+      StatusCode: 200,
       Payload: echoPayload(input["Payload"]),
       ExecutedVersion: fn.Version,
     };
   }
   if (execution.kind === "unsupported_runtime") {
     return {
-      StatusCode: statusCode,
+      StatusCode: 200,
       FunctionError: "Unhandled",
       Payload: jsonPayload({
         errorType: "Runtime.Unsupported",
@@ -383,7 +391,7 @@ const Invoke: OperationHandler = async (input, ctx) => {
       : undefined;
   if (execution.kind === "result") {
     return {
-      StatusCode: statusCode,
+      StatusCode: 200,
       Payload: jsonPayload(execution.payload),
       ExecutedVersion: fn.Version,
       ...(logResult !== undefined ? { LogResult: logResult } : {}),
@@ -402,7 +410,7 @@ const Invoke: OperationHandler = async (input, ctx) => {
           trace: execution.trace,
         };
   return {
-    StatusCode: statusCode,
+    StatusCode: 200,
     FunctionError: "Unhandled",
     Payload: jsonPayload(errorBody),
     ExecutedVersion: fn.Version,
@@ -1783,19 +1791,25 @@ const PutRuntimeManagementConfig: OperationHandler = (input, ctx) => {
   };
 };
 
-const GetAccountSettings: OperationHandler = () => ({
-  AccountLimit: {
-    TotalCodeSize: 80530636800,
-    CodeSizeUnzipped: 262144000,
-    CodeSizeZipped: 52428800,
-    ConcurrentExecutions: 1000,
-    UnreservedConcurrentExecutions: 1000,
-  },
-  AccountUsage: {
-    TotalCodeSize: 0,
-    FunctionCount: 0,
-  },
-});
+const GetAccountSettings: OperationHandler = (_input, ctx) => {
+  const totalReserved = ctx.store
+    .list<{ value: number }>()
+    .filter((e) => e.key.startsWith("concurrency:"))
+    .reduce((sum, e) => sum + e.value.value, 0);
+  return {
+    AccountLimit: {
+      TotalCodeSize: 80530636800,
+      CodeSizeUnzipped: 262144000,
+      CodeSizeZipped: 52428800,
+      ConcurrentExecutions: 1000,
+      UnreservedConcurrentExecutions: Math.max(0, 1000 - totalReserved),
+    },
+    AccountUsage: {
+      TotalCodeSize: 0,
+      FunctionCount: 0,
+    },
+  };
+};
 
 const ListVersionsByFunction: OperationHandler = (input, ctx) => {
   const fn = requireFunction(ctx, functionNameFromInput(input));

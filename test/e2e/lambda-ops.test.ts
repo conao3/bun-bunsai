@@ -10,6 +10,7 @@ import {
   DeleteAliasCommand,
   DeleteCodeSigningConfigCommand,
   DeleteEventSourceMappingCommand,
+  DeleteFunctionConcurrencyCommand,
   DeleteFunctionEventInvokeConfigCommand,
   DeleteLayerVersionCommand,
   DeleteProvisionedConcurrencyConfigCommand,
@@ -18,6 +19,7 @@ import {
   GetCodeSigningConfigCommand,
   GetEventSourceMappingCommand,
   GetFunctionCodeSigningConfigCommand,
+  GetFunctionConcurrencyCommand,
   GetFunctionConfigurationCommand,
   GetFunctionEventInvokeConfigCommand,
   GetFunctionRecursionConfigCommand,
@@ -40,6 +42,7 @@ import {
   PublishLayerVersionCommand,
   PublishVersionCommand,
   PutFunctionCodeSigningConfigCommand,
+  PutFunctionConcurrencyCommand,
   PutFunctionEventInvokeConfigCommand,
   PutFunctionRecursionConfigCommand,
   PutProvisionedConcurrencyConfigCommand,
@@ -547,6 +550,43 @@ test("Lambda GetAccountSettings", async () => {
   const settings = await client.send(new GetAccountSettingsCommand({}));
   expect(settings.AccountLimit?.ConcurrentExecutions).toBeGreaterThan(0);
   expect(settings.AccountUsage).toBeDefined();
+});
+
+test("Lambda FunctionConcurrency round-trip and account settings", async () => {
+  const client = lambda();
+  const name = "bunsai-ops-concurrency";
+  await createFn(client, name);
+
+  const before = await client.send(new GetAccountSettingsCommand({}));
+  const unreservedBefore =
+    before.AccountLimit?.UnreservedConcurrentExecutions ?? 1000;
+
+  const putRes = await client.send(
+    new PutFunctionConcurrencyCommand({
+      FunctionName: name,
+      ReservedConcurrentExecutions: 50,
+    }),
+  );
+  expect(putRes.ReservedConcurrentExecutions).toBe(50);
+
+  const getRes = await client.send(
+    new GetFunctionConcurrencyCommand({ FunctionName: name }),
+  );
+  expect(getRes.ReservedConcurrentExecutions).toBe(50);
+
+  const after = await client.send(new GetAccountSettingsCommand({}));
+  expect(after.AccountLimit?.UnreservedConcurrentExecutions).toBe(
+    unreservedBefore - 50,
+  );
+
+  await client.send(
+    new DeleteFunctionConcurrencyCommand({ FunctionName: name }),
+  );
+
+  const restored = await client.send(new GetAccountSettingsCommand({}));
+  expect(restored.AccountLimit?.UnreservedConcurrentExecutions).toBe(
+    unreservedBefore,
+  );
 });
 
 test("Lambda ListVersionsByFunction", async () => {

@@ -355,12 +355,25 @@ const StartQueryExecution: OperationHandler = (input, ctx) => {
     typeof input["WorkGroup"] === "string"
       ? (input["WorkGroup"] as string)
       : "primary";
+  const wg = ctx.store.get<StoredWorkGroup>(`${workGroupPrefix}${workGroup}`);
+  if (wg !== undefined && wg.State === "DISABLED") {
+    throw awsError(
+      "InvalidRequestException",
+      `WorkGroup ${workGroup} is disabled`,
+      400,
+    );
+  }
+  const wgConfig = wg !== undefined ? wg.Configuration : {};
+  const resultConfig =
+    wgConfig["EnforceWorkGroupConfiguration"] === true
+      ? asRecord(wgConfig["ResultConfiguration"])
+      : asRecord(input["ResultConfiguration"]);
   const execution: StoredQueryExecution = {
     QueryExecutionId: id,
     Query: query,
     StatementType: "DML",
     QueryExecutionContext: asRecord(input["QueryExecutionContext"]),
-    ResultConfiguration: asRecord(input["ResultConfiguration"]),
+    ResultConfiguration: resultConfig,
     WorkGroup: workGroup,
     State: "QUEUED",
     SubmissionDateTime: now,
@@ -557,6 +570,37 @@ const UpdateWorkGroup: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const configUpdates = asRecord(input["ConfigurationUpdates"]);
+  const existingResultConfig = asRecord(
+    asRecord(wg.Configuration)["ResultConfiguration"],
+  );
+  const resultConfigUpdates = asRecord(
+    configUpdates["ResultConfigurationUpdates"],
+  );
+  const removeOutputLocation =
+    resultConfigUpdates["RemoveOutputLocation"] === true;
+  const newOutputLocation =
+    typeof resultConfigUpdates["OutputLocation"] === "string"
+      ? (resultConfigUpdates["OutputLocation"] as string)
+      : undefined;
+  const updatedResultConfig = removeOutputLocation
+    ? { ...existingResultConfig, OutputLocation: undefined }
+    : newOutputLocation !== undefined
+      ? { ...existingResultConfig, OutputLocation: newOutputLocation }
+      : existingResultConfig;
+  const updatedConfig: Record<string, unknown> =
+    Object.keys(configUpdates).length > 0
+      ? {
+          ...wg.Configuration,
+          ...(configUpdates["EnforceWorkGroupConfiguration"] !== undefined
+            ? {
+                EnforceWorkGroupConfiguration:
+                  configUpdates["EnforceWorkGroupConfiguration"],
+              }
+            : {}),
+          ResultConfiguration: updatedResultConfig,
+        }
+      : wg.Configuration;
   const updated: StoredWorkGroup = {
     ...wg,
     Description:
@@ -567,6 +611,7 @@ const UpdateWorkGroup: OperationHandler = (input, ctx) => {
       typeof input["State"] === "string"
         ? (input["State"] as string)
         : wg.State,
+    Configuration: updatedConfig,
   };
   ctx.store.set(`${workGroupPrefix}${name}`, updated);
   return {};
@@ -738,14 +783,14 @@ const DeleteNamedQuery: OperationHandler = (input, ctx) => {
 const BatchGetNamedQuery: OperationHandler = (input, ctx) => {
   const ids = asArray(input["NamedQueryIds"]);
   const NamedQueries: Record<string, unknown>[] = [];
-  const UnprocessedNamedQueryIds: string[] = [];
+  const UnprocessedNamedQueryIds: Record<string, unknown>[] = [];
   for (const rawId of ids) {
     const id = typeof rawId === "string" ? rawId : "";
     const query = ctx.store.get<StoredNamedQuery>(`${namedQueryPrefix}${id}`);
     if (query !== undefined) {
       NamedQueries.push(namedQueryView(query));
     } else {
-      UnprocessedNamedQueryIds.push(id);
+      UnprocessedNamedQueryIds.push({ NamedQueryId: id });
     }
   }
   return { NamedQueries, UnprocessedNamedQueryIds };

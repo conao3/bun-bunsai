@@ -257,7 +257,7 @@ const distributionSummaryView = (entry: StoredDistribution) => {
     Aliases: asRecord(config["Aliases"]) ?? { Quantity: 0 },
     Origins: config["Origins"] ?? { Quantity: 0, Items: [] },
     DefaultCacheBehavior: config["DefaultCacheBehavior"] ?? {},
-    CacheBehaviors: { Quantity: 0 },
+    CacheBehaviors: config["CacheBehaviors"] ?? { Quantity: 0, Items: [] },
     CustomErrorResponses: { Quantity: 0 },
     Comment: config["Comment"] ?? "",
     PriceClass: config["PriceClass"] ?? "PriceClass_All",

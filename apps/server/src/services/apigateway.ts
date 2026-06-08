@@ -3984,12 +3984,84 @@ const findResourceMatch = (
   return greedy;
 };
 
+const applyVtl = (
+  template: string,
+  body: string,
+  pathParams: Record<string, string>,
+  queryParams: Record<string, string>,
+  headerParams: Record<string, string>,
+  stageVars: Record<string, string>,
+): string => {
+  let result = template;
+  result = result.replace(
+    /\$\{stageVariables\.([a-zA-Z0-9_]+)\}/g,
+    (_, k: string) => stageVars[k] ?? "",
+  );
+  result = result.replace(
+    /\$stageVariables\.([a-zA-Z0-9_]+)/g,
+    (_, k: string) => stageVars[k] ?? "",
+  );
+  result = result.replace(
+    /\$input\.json\(['"]?\$['"]?\)/g,
+    () => body || "null",
+  );
+  result = result.replace(
+    /\$input\.params\(['"]([^'"]+)['"]\)/g,
+    (_, k: string) => pathParams[k] ?? queryParams[k] ?? headerParams[k] ?? "",
+  );
+  return result;
+};
+
+const mockStatusFromTemplate = (
+  integration: StoredIntegration,
+  contentType: string,
+): number => {
+  const tpl =
+    integration.requestTemplates?.[contentType] ??
+    integration.requestTemplates?.["application/json"];
+  if (!tpl) return 200;
+  try {
+    const parsed = JSON.parse(tpl) as { statusCode?: number };
+    return typeof parsed.statusCode === "number" ? parsed.statusCode : 200;
+  } catch {
+    return 200;
+  }
+};
+
+const pickIntegrationResponse = (
+  responses: { key: string; value: StoredIntegrationResponse }[],
+  outputStr: string,
+): StoredIntegrationResponse | undefined => {
+  for (const { value } of responses) {
+    const pattern = value.selectionPattern;
+    if (!pattern) continue;
+    try {
+      if (new RegExp(pattern).test(outputStr)) return value;
+    } catch {
+      /* ignore invalid regex */
+    }
+  }
+  return responses.find(({ value }) => !value.selectionPattern)?.value;
+};
+
 const dispatchMockIntegration = (
   ctx: ServiceContext,
   restApiId: string,
   resourceId: string,
   httpMethod: string,
+  integration: StoredIntegration,
+  stage: StoredStage,
+  body: string,
+  pathParams: Record<string, string>,
+  url: URL,
+  req: Request,
 ): Response => {
+  const contentType = req.headers.get("content-type") ?? "application/json";
+  const stageVars = stage.variables ?? {};
+
+  const mockStatus = mockStatusFromTemplate(integration, contentType);
+  const mockStatusStr = String(mockStatus);
+
   const responses = ctx.store
     .list<StoredIntegrationResponse>()
     .filter((e) =>
@@ -3998,21 +4070,38 @@ const dispatchMockIntegration = (
       ),
     );
 
-  const defaultResponse =
-    responses.find((e) => e.value.statusCode === "200") ?? responses[0];
+  const ir = pickIntegrationResponse(responses, mockStatusStr);
 
-  if (defaultResponse === undefined) {
+  if (ir === undefined) {
     return new Response("{}", {
       status: 200,
       headers: { "content-type": "application/json" },
     });
   }
 
-  const ir = defaultResponse.value;
   const statusCode = Number(ir.statusCode) || 200;
-  const bodyTemplate = ir.responseTemplates?.["application/json"] ?? "{}";
+  const rawTemplate = ir.responseTemplates?.["application/json"] ?? "{}";
 
-  return new Response(bodyTemplate, {
+  const queryParams: Record<string, string> = {};
+  url.searchParams.forEach((value, key) => {
+    queryParams[key] = value;
+  });
+
+  const headerParams: Record<string, string> = {};
+  req.headers.forEach((value, key) => {
+    headerParams[key] = value;
+  });
+
+  const responseBody = applyVtl(
+    rawTemplate,
+    body,
+    pathParams,
+    queryParams,
+    headerParams,
+    stageVars,
+  );
+
+  return new Response(responseBody, {
     status: statusCode,
     headers: { "content-type": "application/json" },
   });
@@ -4155,6 +4244,12 @@ export const handleExecuteApi = async (
       restApiId,
       match.resource.id,
       req.method,
+      integration,
+      stage,
+      bodyText,
+      match.params,
+      url,
+      req,
     );
   }
 

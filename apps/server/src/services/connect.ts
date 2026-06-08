@@ -2808,6 +2808,199 @@ const UpdateInstanceStorageConfig: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const UpdateNotificationContent: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const notificationId = requireString(input, "NotificationId");
+  const stored = ctx.store.get<StoredNotification>(
+    notificationKey(instanceId, notificationId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Notification ${notificationId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateParticipantAuthentication: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  return {};
+};
+
+const UpdateParticipantRoleConfig: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const contactId = requireString(input, "ContactId");
+  const stored = ctx.store.get<StoredContact>(
+    contactKey(instanceId, contactId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Contact ${contactId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdatePhoneNumber: OperationHandler = (input, ctx) => {
+  const phoneNumberId = requireString(input, "PhoneNumberId");
+  const stored = ctx.store.get<StoredPhoneNumber>(
+    phoneNumberKey(phoneNumberId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `PhoneNumber ${phoneNumberId} not found.`,
+      404,
+    );
+  }
+  const instanceId =
+    stringOrUndefined(input["InstanceId"]) ?? stored.InstanceId;
+  ctx.store.set(phoneNumberKey(phoneNumberId), {
+    ...stored,
+    InstanceId: instanceId,
+  });
+  return {
+    PhoneNumberId: stored.PhoneNumberId,
+    PhoneNumberArn: stored.PhoneNumberArn,
+  };
+};
+
+const UpdatePhoneNumberMetadata: OperationHandler = (input, ctx) => {
+  const phoneNumberId = requireString(input, "PhoneNumberId");
+  const stored = ctx.store.get<StoredPhoneNumber>(
+    phoneNumberKey(phoneNumberId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `PhoneNumber ${phoneNumberId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdatePredefinedAttribute: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const name = requireString(input, "Name");
+  const stored = ctx.store.get<StoredPredefinedAttribute>(
+    predefinedAttributeKey(instanceId, name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `PredefinedAttribute ${name} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdatePrompt: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const promptId = requireString(input, "PromptId");
+  const stored = ctx.store.get<StoredPrompt>(promptKey(instanceId, promptId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Prompt ${promptId} not found.`,
+      404,
+    );
+  }
+  const name = stringOrUndefined(input["Name"]) ?? stored.Name;
+  ctx.store.set(promptKey(instanceId, promptId), { ...stored, Name: name });
+  return {
+    PromptARN: stored.PromptArn,
+    PromptId: stored.PromptId,
+  };
+};
+
+const UpdateQueueHoursOfOperation: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const queueId = requireString(input, "QueueId");
+  const stored = ctx.store.get<StoredQueue>(queueKey(instanceId, queueId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Queue ${queueId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateQueueMaxContacts: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const queueId = requireString(input, "QueueId");
+  const stored = ctx.store.get<StoredQueue>(queueKey(instanceId, queueId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Queue ${queueId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateQueueName: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const queueId = requireString(input, "QueueId");
+  const stored = ctx.store.get<StoredQueue>(queueKey(instanceId, queueId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Queue ${queueId} not found.`,
+      404,
+    );
+  }
+  const name = stringOrUndefined(input["Name"]) ?? stored.Name;
+  ctx.store.set(queueKey(instanceId, queueId), { ...stored, Name: name });
+  return {};
+};
+
+const UpdateQueueOutboundCallerConfig: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const queueId = requireString(input, "QueueId");
+  const stored = ctx.store.get<StoredQueue>(queueKey(instanceId, queueId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Queue ${queueId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
+const UpdateQueueOutboundEmailConfig: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  requireInstance(ctx, instanceId);
+  const queueId = requireString(input, "QueueId");
+  const stored = ctx.store.get<StoredQueue>(queueKey(instanceId, queueId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Queue ${queueId} not found.`,
+      404,
+    );
+  }
+  return {};
+};
+
 const DeleteWorkspacePage: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
@@ -5168,6 +5361,14 @@ const connect = {
           return "DescribePhoneNumber";
         if (parts.length === 2 && req.method === "DELETE")
           return "ReleasePhoneNumber";
+        if (parts.length === 2 && req.method === "PUT")
+          return "UpdatePhoneNumber";
+        if (
+          parts.length === 3 &&
+          parts[2] === "metadata" &&
+          req.method === "PUT"
+        )
+          return "UpdatePhoneNumberMetadata";
         if (
           parts.length === 3 &&
           parts[2] === "contact-flow" &&
@@ -5199,6 +5400,14 @@ const connect = {
             return "DisassociateQueueEmailAddresses";
           if (parts[3] === "disassociate-quick-connects")
             return "DisassociateQueueQuickConnects";
+          if (parts[3] === "hours-of-operation")
+            return "UpdateQueueHoursOfOperation";
+          if (parts[3] === "max-contacts") return "UpdateQueueMaxContacts";
+          if (parts[3] === "name") return "UpdateQueueName";
+          if (parts[3] === "outbound-caller-config")
+            return "UpdateQueueOutboundCallerConfig";
+          if (parts[3] === "outbound-email-config")
+            return "UpdateQueueOutboundEmailConfig";
         }
         return undefined;
 
@@ -5406,7 +5615,18 @@ const connect = {
           if (parts[1] === "tags" && req.method === "POST") return "TagContact";
           if (parts[1] === "transfer" && req.method === "POST")
             return "TransferContact";
+          if (
+            parts[1] === "update-participant-authentication" &&
+            req.method === "POST"
+          )
+            return "UpdateParticipantAuthentication";
         }
+        if (
+          parts.length === 4 &&
+          parts[1] === "participant-role-config" &&
+          req.method === "PUT"
+        )
+          return "UpdateParticipantRoleConfig";
         if (parts.length === 3 && parts[1] === "batch" && req.method === "PUT")
           return "BatchPutContact";
         if (
@@ -5577,6 +5797,8 @@ const connect = {
           return "DescribeNotification";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeleteNotification";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdateNotificationContent";
         return undefined;
 
       case "predefined-attributes":
@@ -5588,6 +5810,8 @@ const connect = {
           return "DescribePredefinedAttribute";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeletePredefinedAttribute";
+        if (parts.length === 3 && req.method === "POST")
+          return "UpdatePredefinedAttribute";
         return undefined;
 
       case "prompts":
@@ -5595,6 +5819,7 @@ const connect = {
         if (parts.length === 3 && req.method === "GET") return "DescribePrompt";
         if (parts.length === 3 && req.method === "DELETE")
           return "DeletePrompt";
+        if (parts.length === 3 && req.method === "POST") return "UpdatePrompt";
         if (parts.length === 4 && parts[3] === "file" && req.method === "GET")
           return "GetPromptFile";
         return undefined;
@@ -6395,6 +6620,18 @@ const connect = {
     UpdateHoursOfOperationOverride,
     UpdateInstanceAttribute,
     UpdateInstanceStorageConfig,
+    UpdateNotificationContent,
+    UpdateParticipantAuthentication,
+    UpdateParticipantRoleConfig,
+    UpdatePhoneNumber,
+    UpdatePhoneNumberMetadata,
+    UpdatePredefinedAttribute,
+    UpdatePrompt,
+    UpdateQueueHoursOfOperation,
+    UpdateQueueMaxContacts,
+    UpdateQueueName,
+    UpdateQueueOutboundCallerConfig,
+    UpdateQueueOutboundEmailConfig,
   },
   model,
 } as const satisfies ServiceDefinition;

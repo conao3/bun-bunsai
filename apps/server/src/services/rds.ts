@@ -15,6 +15,15 @@ type StoredEndpoint = {
   HostedZoneId: string;
 };
 
+type StoredDBParameter = {
+  ParameterName: string;
+  ParameterValue: string;
+  ApplyType: string;
+  DataType: string;
+  IsModifiable: boolean;
+  ApplyMethod: string;
+};
+
 type StoredDBInstance = {
   DBInstanceIdentifier: string;
   DBInstanceClass: string;
@@ -32,6 +41,10 @@ type StoredDBInstance = {
   AvailabilityZone: string;
   DBInstanceArn: string;
   DbiResourceId: string;
+  BackupRetentionPeriod: number;
+  PreferredBackupWindow: string | undefined;
+  PreferredMaintenanceWindow: string | undefined;
+  VpcSecurityGroups: { VpcSecurityGroupId: string; Status: string }[];
 };
 
 type StoredDBSnapshot = {
@@ -58,6 +71,7 @@ type StoredDBParameterGroup = {
   DBParameterGroupFamily: string;
   Description: string;
   DBParameterGroupArn: string;
+  Parameters: StoredDBParameter[];
 };
 
 type StoredDBSubnetGroup = {
@@ -618,6 +632,10 @@ const presentInstance = (instance: StoredDBInstance) => ({
   AvailabilityZone: instance.AvailabilityZone,
   DBInstanceArn: instance.DBInstanceArn,
   DbiResourceId: instance.DbiResourceId,
+  BackupRetentionPeriod: instance.BackupRetentionPeriod,
+  PreferredBackupWindow: instance.PreferredBackupWindow,
+  PreferredMaintenanceWindow: instance.PreferredMaintenanceWindow,
+  VpcSecurityGroups: instance.VpcSecurityGroups,
 });
 
 const presentSnapshot = (snapshot: StoredDBSnapshot) => ({
@@ -1096,6 +1114,13 @@ const newInstanceFromParams = (
     AvailabilityZone: availabilityZone,
     DBInstanceArn: instanceArnOf(ctx.region, ctx.account, id),
     DbiResourceId: `db-${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`,
+    BackupRetentionPeriod: numberOr(input, "BackupRetentionPeriod", 0),
+    PreferredBackupWindow: optionalString(input, "PreferredBackupWindow"),
+    PreferredMaintenanceWindow: optionalString(
+      input,
+      "PreferredMaintenanceWindow",
+    ),
+    VpcSecurityGroups: [],
   };
 };
 
@@ -1252,6 +1277,7 @@ const CreateDBParameterGroup: OperationHandler = (input, ctx) => {
     DBParameterGroupFamily: requireString(input, "DBParameterGroupFamily"),
     Description: requireString(input, "Description"),
     DBParameterGroupArn: parameterGroupArnOf(ctx.region, ctx.account, name),
+    Parameters: [],
   };
   ctx.store.set(parameterGroupKey(name), group);
   return { DBParameterGroup: presentParameterGroup(group) };
@@ -1509,6 +1535,7 @@ const CopyDBParameterGroup: OperationHandler = (input, ctx) => {
     DBParameterGroupFamily: src.DBParameterGroupFamily,
     Description: tgtDesc,
     DBParameterGroupArn: parameterGroupArnOf(ctx.region, ctx.account, tgtId),
+    Parameters: [...src.Parameters],
   };
   ctx.store.set(parameterGroupKey(tgtId), group);
   return { DBParameterGroup: presentParameterGroup(group) };
@@ -1970,6 +1997,10 @@ const CreateDBInstanceReadReplica: OperationHandler = (input, ctx) => {
     AvailabilityZone: availabilityZone,
     DBInstanceArn: instanceArnOf(ctx.region, ctx.account, id),
     DbiResourceId: `db-${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`,
+    BackupRetentionPeriod: 0,
+    PreferredBackupWindow: undefined,
+    PreferredMaintenanceWindow: undefined,
+    VpcSecurityGroups: [],
   };
   ctx.store.set(instanceKey(id), instance);
   return { DBInstance: presentInstance(instance) };
@@ -2050,7 +2081,7 @@ const DescribeDBParameters: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  return { Parameters: [] };
+  return { Parameters: group.Parameters };
 };
 
 const DescribeDBProxies: OperationHandler = (_input, ctx) => {
@@ -2156,6 +2187,34 @@ const ModifyDBInstance: OperationHandler = (input, ctx) => {
   if (newStorage > 0) {
     instance.AllocatedStorage = newStorage;
   }
+  if (input["BackupRetentionPeriod"] !== undefined) {
+    instance.BackupRetentionPeriod = numberOr(
+      input,
+      "BackupRetentionPeriod",
+      instance.BackupRetentionPeriod,
+    );
+  }
+  if (input["MultiAZ"] !== undefined) {
+    instance.MultiAZ = booleanOr(input, "MultiAZ", instance.MultiAZ);
+  }
+  const newBackupWindow = optionalString(input, "PreferredBackupWindow");
+  if (newBackupWindow !== undefined) {
+    instance.PreferredBackupWindow = newBackupWindow;
+  }
+  const newMaintenanceWindow = optionalString(
+    input,
+    "PreferredMaintenanceWindow",
+  );
+  if (newMaintenanceWindow !== undefined) {
+    instance.PreferredMaintenanceWindow = newMaintenanceWindow;
+  }
+  const vpcGroups = stringList(input, "VpcSecurityGroupIds");
+  if (vpcGroups.length > 0) {
+    instance.VpcSecurityGroups = vpcGroups.map((sgId) => ({
+      VpcSecurityGroupId: sgId,
+      Status: "active",
+    }));
+  }
   ctx.store.set(instanceKey(id), instance);
   return { DBInstance: presentInstance(instance) };
 };
@@ -2170,6 +2229,34 @@ const ModifyDBParameterGroup: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const rawParams = input["Parameters"];
+  if (Array.isArray(rawParams)) {
+    for (const raw of rawParams) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const p = raw as Record<string, unknown>;
+      const pName = optionalString(p, "ParameterName");
+      if (pName === undefined) continue;
+      const pValue = optionalString(p, "ParameterValue");
+      const applyMethod = optionalString(p, "ApplyMethod") ?? "pending-reboot";
+      const idx = group.Parameters.findIndex(
+        (ep) => ep.ParameterName === pName,
+      );
+      if (idx >= 0) {
+        if (pValue !== undefined) group.Parameters[idx].ParameterValue = pValue;
+        group.Parameters[idx].ApplyMethod = applyMethod;
+      } else {
+        group.Parameters.push({
+          ParameterName: pName,
+          ParameterValue: pValue ?? "",
+          ApplyType: optionalString(p, "ApplyType") ?? "dynamic",
+          DataType: optionalString(p, "DataType") ?? "string",
+          IsModifiable: true,
+          ApplyMethod: applyMethod,
+        });
+      }
+    }
+  }
+  ctx.store.set(parameterGroupKey(name), group);
   return { DBParameterGroupName: name };
 };
 
@@ -2285,6 +2372,27 @@ const ResetDBParameterGroup: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const resetAll = booleanOr(input, "ResetAllParameters", false);
+  if (resetAll) {
+    group.Parameters = [];
+  } else {
+    const rawParams = input["Parameters"];
+    if (Array.isArray(rawParams)) {
+      const namesToReset = new Set(
+        rawParams
+          .filter(
+            (p): p is Record<string, unknown> =>
+              typeof p === "object" && p !== null,
+          )
+          .map((p) => optionalString(p, "ParameterName"))
+          .filter((n): n is string => n !== undefined),
+      );
+      group.Parameters = group.Parameters.filter(
+        (p) => !namesToReset.has(p.ParameterName),
+      );
+    }
+  }
+  ctx.store.set(parameterGroupKey(name), group);
   return { DBParameterGroupName: name };
 };
 
@@ -2439,6 +2547,10 @@ const RestoreDBInstanceFromDBSnapshot: OperationHandler = (input, ctx) => {
     AvailabilityZone: availabilityZone,
     DBInstanceArn: instanceArnOf(ctx.region, ctx.account, id),
     DbiResourceId: `db-${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`,
+    BackupRetentionPeriod: 0,
+    PreferredBackupWindow: undefined,
+    PreferredMaintenanceWindow: undefined,
+    VpcSecurityGroups: [],
   };
   ctx.store.set(instanceKey(id), instance);
   return { DBInstance: presentInstance(instance) };
@@ -2504,6 +2616,10 @@ const RestoreDBInstanceToPointInTime: OperationHandler = (input, ctx) => {
     AvailabilityZone: availabilityZone,
     DBInstanceArn: instanceArnOf(ctx.region, ctx.account, id),
     DbiResourceId: `db-${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`,
+    BackupRetentionPeriod: 0,
+    PreferredBackupWindow: undefined,
+    PreferredMaintenanceWindow: undefined,
+    VpcSecurityGroups: [],
   };
   ctx.store.set(instanceKey(id), instance);
   return { DBInstance: presentInstance(instance) };

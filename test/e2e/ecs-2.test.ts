@@ -724,4 +724,129 @@ describe("ecs service and task definition e2e", () => {
     );
     expect(deleted.service?.status?.statusCode).toBe("INACTIVE");
   });
+
+  test("service load-balancer + deployment config lifecycle", async () => {
+    const client = ecs();
+    const clusterName = "bunsai-e2e-lb-cluster";
+    const serviceName = "bunsai-e2e-lb-service";
+    const family = "bunsai-e2e-lb-td";
+
+    await client.send(new CreateClusterCommand({ clusterName }));
+
+    const td1 = await client.send(
+      new RegisterTaskDefinitionCommand({
+        family,
+        containerDefinitions: [
+          { name: "app", image: "nginx:1.0", memory: 128 },
+        ],
+      }),
+    );
+    const td1Arn = td1.taskDefinition?.taskDefinitionArn!;
+
+    const td2 = await client.send(
+      new RegisterTaskDefinitionCommand({
+        family,
+        containerDefinitions: [
+          { name: "app", image: "nginx:2.0", memory: 128 },
+        ],
+      }),
+    );
+    const td2Arn = td2.taskDefinition?.taskDefinitionArn!;
+
+    const created = await client.send(
+      new CreateServiceCommand({
+        cluster: clusterName,
+        serviceName,
+        taskDefinition: td1Arn,
+        desiredCount: 2,
+        loadBalancers: [
+          {
+            targetGroupArn:
+              "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/my-tg/abc123",
+            containerName: "app",
+            containerPort: 80,
+          },
+        ],
+        deploymentConfiguration: {
+          minimumHealthyPercent: 50,
+          maximumPercent: 200,
+        },
+        networkConfiguration: {
+          awsvpcConfiguration: {
+            subnets: ["subnet-abc123"],
+            securityGroups: ["sg-abc123"],
+            assignPublicIp: "DISABLED",
+          },
+        },
+      }),
+    );
+    expect(created.service?.serviceName).toBe(serviceName);
+    expect(created.service?.status).toBe("ACTIVE");
+    expect((created.service?.loadBalancers ?? []).length).toBe(1);
+    expect(created.service?.loadBalancers?.[0]?.containerName).toBe("app");
+    expect(
+      created.service?.deploymentConfiguration?.minimumHealthyPercent,
+    ).toBe(50);
+    expect(
+      created.service?.networkConfiguration?.awsvpcConfiguration,
+    ).toBeDefined();
+
+    const described = await client.send(
+      new DescribeServicesCommand({
+        cluster: clusterName,
+        services: [serviceName],
+      }),
+    );
+    const svc = described.services?.[0];
+    expect(svc?.loadBalancers?.[0]?.containerPort).toBe(80);
+    const primaryDeployments = (svc?.deployments ?? []).filter(
+      (d) => d.status === "PRIMARY",
+    );
+    expect(primaryDeployments.length).toBe(1);
+    expect(primaryDeployments[0]?.taskDefinition).toBe(td1Arn);
+
+    const updated = await client.send(
+      new UpdateServiceCommand({
+        cluster: clusterName,
+        service: serviceName,
+        taskDefinition: td2Arn,
+      }),
+    );
+    expect(updated.service?.taskDefinition).toBe(td2Arn);
+    const updatedDeployments = updated.service?.deployments ?? [];
+    const newPrimary = updatedDeployments.filter((d) => d.status === "PRIMARY");
+    const active = updatedDeployments.filter((d) => d.status === "ACTIVE");
+    expect(newPrimary.length).toBe(1);
+    expect(newPrimary[0]?.taskDefinition).toBe(td2Arn);
+    expect(active.length).toBeGreaterThanOrEqual(1);
+
+    const listed = await client.send(
+      new ListServicesCommand({ cluster: clusterName }),
+    );
+    expect(
+      (listed.serviceArns ?? []).some((arn) => arn.includes(serviceName)),
+    ).toBe(true);
+
+    const deletedSvc = await client.send(
+      new DeleteServiceCommand({
+        cluster: clusterName,
+        service: serviceName,
+        force: true,
+      }),
+    );
+    expect(deletedSvc.service?.status).toBe("DRAINING");
+
+    const afterDelete = await client.send(
+      new DescribeServicesCommand({
+        cluster: clusterName,
+        services: [serviceName],
+      }),
+    );
+    expect(afterDelete.services ?? []).toHaveLength(0);
+    expect((afterDelete.failures ?? []).map((f) => f.reason)).toContain(
+      "MISSING",
+    );
+
+    await client.send(new DeleteClusterCommand({ cluster: clusterName }));
+  });
 });

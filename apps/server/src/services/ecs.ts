@@ -59,6 +59,7 @@ type StoredTask = {
   createdAt: number;
   stoppedReason?: string;
   containers: Record<string, unknown>[];
+  serviceName?: string;
 };
 
 type StoredCapacityProvider = {
@@ -349,13 +350,16 @@ const taskView = (task: StoredTask): Record<string, unknown> => ({
   attributes: [],
 });
 
-const serviceView = (service: StoredService): Record<string, unknown> => ({
+const serviceView = (
+  service: StoredService,
+  runningCount = 0,
+): Record<string, unknown> => ({
   serviceArn: service.serviceArn,
   serviceName: service.serviceName,
   clusterArn: service.clusterArn,
   status: service.status,
   desiredCount: service.desiredCount,
-  runningCount: 0,
+  runningCount,
   pendingCount: 0,
   taskDefinition: service.taskDefinitionArn,
   schedulingStrategy: service.schedulingStrategy,
@@ -662,6 +666,7 @@ const ListTasks: OperationHandler = (input, ctx) => {
   const filterCluster = optionalString(input, "cluster");
   const filterStatus = optionalString(input, "desiredStatus");
   const filterStartedBy = optionalString(input, "startedBy");
+  const filterService = optionalString(input, "serviceName");
   const taskArns = ctx.store
     .list<StoredTask>()
     .filter((entry) => entry.key.startsWith("task#"))
@@ -677,6 +682,9 @@ const ListTasks: OperationHandler = (input, ctx) => {
         return false;
       }
       if (filterStartedBy !== undefined && task.startedBy !== filterStartedBy) {
+        return false;
+      }
+      if (filterService !== undefined && task.serviceName !== filterService) {
         return false;
       }
       return true;
@@ -710,6 +718,78 @@ const StopTask: OperationHandler = (input, ctx) => {
 const serviceNameFromIdentifier = (identifier: string): string =>
   lastSegment(identifier);
 
+const countServiceTasks = (
+  ctx: ServiceContext,
+  clusterName: string,
+  serviceName: string,
+): number =>
+  ctx.store
+    .list<StoredTask>()
+    .filter(
+      (e) =>
+        e.key.startsWith("task#") &&
+        e.value.clusterName === clusterName &&
+        e.value.serviceName === serviceName,
+    ).length;
+
+const reconcileServiceTasks = (
+  ctx: ServiceContext,
+  service: StoredService,
+): void => {
+  if (service.taskDefinitionArn === "") return;
+  const taskDef = ctx.store
+    .list<StoredTaskDefinition>()
+    .find(
+      (e) => e.value.taskDefinitionArn === service.taskDefinitionArn,
+    )?.value;
+  if (taskDef === undefined) return;
+  const existing = ctx.store
+    .list<StoredTask>()
+    .filter(
+      (e) =>
+        e.key.startsWith("task#") &&
+        e.value.clusterName === service.clusterName &&
+        e.value.serviceName === service.serviceName,
+    );
+  const current = existing.length;
+  const desired = service.desiredCount;
+  if (current < desired) {
+    const containers = (
+      taskDef.containerDefinitions as Record<string, unknown>[]
+    ).map((definition) => ({
+      name:
+        typeof definition["name"] === "string"
+          ? definition["name"]
+          : "container",
+      lastStatus: "RUNNING",
+      ...(typeof definition["image"] === "string"
+        ? { image: definition["image"] }
+        : {}),
+    }));
+    for (let i = current; i < desired; i += 1) {
+      const id = randomId();
+      const task: StoredTask = {
+        taskId: id,
+        taskArn: taskArn(ctx.region, ctx.account, id),
+        clusterArn: service.clusterArn,
+        clusterName: service.clusterName,
+        taskDefinitionArn: service.taskDefinitionArn,
+        lastStatus: "RUNNING",
+        desiredStatus: "RUNNING",
+        group: `service:${service.serviceName}`,
+        createdAt: Math.floor(Date.now() / 1000),
+        containers,
+        serviceName: service.serviceName,
+      };
+      ctx.store.set(taskKey(id), task);
+    }
+  } else if (current > desired) {
+    for (const e of existing.slice(desired)) {
+      ctx.store.delete(e.key);
+    }
+  }
+};
+
 const CreateService: OperationHandler = (input, ctx) => {
   const serviceName = requireString(input, "serviceName");
   const clusterName = clusterNameFromInput(input);
@@ -738,7 +818,9 @@ const CreateService: OperationHandler = (input, ctx) => {
     createdAt: Math.floor(Date.now() / 1000),
   };
   ctx.store.set(serviceKey(clusterName, serviceName), service);
-  return { service: serviceView(service) };
+  reconcileServiceTasks(ctx, service);
+  const runningCount = countServiceTasks(ctx, clusterName, serviceName);
+  return { service: serviceView(service, runningCount) };
 };
 
 const DescribeServices: OperationHandler = (input, ctx) => {
@@ -758,7 +840,8 @@ const DescribeServices: OperationHandler = (input, ctx) => {
       });
       continue;
     }
-    services.push(serviceView(service));
+    const runningCount = countServiceTasks(ctx, clusterName, name);
+    services.push(serviceView(service, runningCount));
   }
   return { services, failures };
 };
@@ -790,7 +873,9 @@ const UpdateService: OperationHandler = (input, ctx) => {
       optionalString(input, "platformVersion") ?? service.platformVersion,
   };
   ctx.store.set(serviceKey(clusterName, name), updated);
-  return { service: serviceView(updated) };
+  reconcileServiceTasks(ctx, updated);
+  const runningCount = countServiceTasks(ctx, clusterName, name);
+  return { service: serviceView(updated, runningCount) };
 };
 
 const DeleteService: OperationHandler = (input, ctx) => {
@@ -805,9 +890,18 @@ const DeleteService: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  ctx.store
+    .list<StoredTask>()
+    .filter(
+      (e) =>
+        e.key.startsWith("task#") &&
+        e.value.clusterName === clusterName &&
+        e.value.serviceName === name,
+    )
+    .forEach((e) => ctx.store.delete(e.key));
   ctx.store.delete(serviceKey(clusterName, name));
   return {
-    service: { ...serviceView(service), status: "DRAINING" },
+    service: { ...serviceView(service, 0), status: "DRAINING" },
   };
 };
 

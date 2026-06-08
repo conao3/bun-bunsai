@@ -116,6 +116,7 @@ type StoredAddress = {
   NetworkBorderGroup: string;
   AssociationId: string | undefined;
   InstanceId: string | undefined;
+  DomainName: string | undefined;
   Tags: Tag[];
 };
 
@@ -126,6 +127,7 @@ type StoredHost = {
   InstanceFamily: string | undefined;
   AutoPlacement: string;
   HostRecovery: string;
+  HostMaintenance: string;
   State: string;
   Tags: Tag[];
 };
@@ -269,6 +271,8 @@ type StoredClientVpnEndpoint = {
   ServerCertificateArn: string;
   DnsName: string;
   State: string;
+  Description: string | undefined;
+  VpnPort: number | undefined;
   Tags: Tag[];
 };
 
@@ -1261,6 +1265,7 @@ const fpgaImageKey = (id: string): string => `fpga/${id}`;
 const imageKey = (id: string): string => `ami/${id}`;
 const imageBinKey = (id: string): string => `ami-bin/${id}`;
 const snapshotBinKey = (id: string): string => `snapshot-bin/${id}`;
+const snapshotLockKey = (id: string): string => `snapshot-lock/${id}`;
 const instanceConnectEndpointKey = (id: string): string => `ice/${id}`;
 const instanceEventWindowKey = (id: string): string => `iew/${id}`;
 const exportTaskKey = (id: string): string => `export/${id}`;
@@ -2132,6 +2137,7 @@ const AllocateAddress: OperationHandler = (input, ctx) => {
     NetworkBorderGroup: ctx.region,
     AssociationId: undefined,
     InstanceId: undefined,
+    DomainName: undefined,
     Tags: [],
   };
   ctx.store.set(addressKey(id), address);
@@ -2802,6 +2808,7 @@ const AllocateHosts: OperationHandler = (input, ctx) => {
       InstanceFamily: instanceFamily,
       AutoPlacement: autoPlacement,
       HostRecovery: hostRecovery,
+      HostMaintenance: "on",
       State: "available",
       Tags: [],
     };
@@ -3650,6 +3657,8 @@ const CreateClientVpnEndpoint: OperationHandler = (input, ctx) => {
     ServerCertificateArn: serverCertificateArn,
     DnsName: `${id}.prod.clientvpn.${ctx.region}.amazonaws.com`,
     State: "available",
+    Description: undefined,
+    VpnPort: undefined,
     Tags: [],
   };
   ctx.store.set(clientVpnEndpointKey(id), endpoint);
@@ -11534,8 +11543,30 @@ const DescribeLocalGateways: OperationHandler = (_input, _ctx) => {
   return { LocalGateways: [] };
 };
 
-const DescribeLockedSnapshots: OperationHandler = (_input, _ctx) => {
-  return { Snapshots: [] };
+const DescribeLockedSnapshots: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["SnapshotIds"]);
+  const locks = ctx.store
+    .list<{
+      SnapshotId: string;
+      LockState: string;
+      LockMode: string;
+      LockDuration: number | undefined;
+      LockCreatedOn: string;
+      LockExpiresOn: string | undefined;
+    }>()
+    .filter((entry) => entry.key.startsWith("snapshot-lock/"))
+    .map((entry) => entry.value)
+    .filter((l) => ids.length === 0 || ids.includes(l.SnapshotId));
+  return {
+    Snapshots: locks.map((l) => ({
+      SnapshotId: l.SnapshotId,
+      LockState: l.LockState,
+      LockMode: l.LockMode,
+      LockDuration: l.LockDuration,
+      LockCreatedOn: l.LockCreatedOn,
+      LockExpiresOn: l.LockExpiresOn,
+    })),
+  };
 };
 
 const DescribeMacHosts: OperationHandler = (_input, _ctx) => {
@@ -15765,6 +15796,247 @@ const ListSnapshotsInRecycleBin: OperationHandler = (input, ctx) => {
   };
 };
 
+const ListVolumesInRecycleBin: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VolumeIds"]);
+  const volumes = ctx.store
+    .list<StoredVolume>()
+    .filter((entry) => entry.key.startsWith("volume-bin/"))
+    .map((entry) => entry.value)
+    .filter((v) => ids.length === 0 || ids.includes(v.VolumeId));
+  return {
+    Volumes: volumes.map((v) => ({
+      VolumeId: v.VolumeId,
+      VolumeType: v.VolumeType,
+      State: v.State,
+      Size: v.Size,
+      Iops: v.Iops,
+      AvailabilityZone: v.AvailabilityZone,
+      RecycleBinEnterTime: v.CreateTime,
+      RecycleBinExitTime: v.CreateTime,
+    })),
+  };
+};
+
+const LockSnapshot: OperationHandler = (input, ctx) => {
+  const snapshotId =
+    typeof input["SnapshotId"] === "string" ? input["SnapshotId"] : "";
+  const lockMode =
+    typeof input["LockMode"] === "string" ? input["LockMode"] : "governance";
+  const snapshot = ctx.store.get<StoredSnapshot>(snapshotKey(snapshotId));
+  if (snapshot === undefined) {
+    throw awsError(
+      "InvalidSnapshot.NotFound",
+      `The snapshot '${snapshotId}' does not exist`,
+      400,
+    );
+  }
+  const lockDuration =
+    typeof input["LockDuration"] === "number"
+      ? input["LockDuration"]
+      : undefined;
+  const now = new Date().toISOString();
+  const lockExpiresOn = lockDuration
+    ? new Date(Date.now() + lockDuration * 86400000).toISOString()
+    : undefined;
+  const lockState = lockMode === "compliance" ? "compliance-cooloff" : lockMode;
+  ctx.store.set(snapshotLockKey(snapshotId), {
+    SnapshotId: snapshotId,
+    LockState: lockState,
+    LockMode: lockMode,
+    LockDuration: lockDuration,
+    LockCreatedOn: now,
+    LockExpiresOn: lockExpiresOn,
+  });
+  return {
+    SnapshotId: snapshotId,
+    LockState: lockState,
+    LockDuration: lockDuration,
+    LockCreatedOn: now,
+    LockExpiresOn: lockExpiresOn,
+  };
+};
+
+const ModifyAddressAttribute: OperationHandler = (input, ctx) => {
+  const allocationId =
+    typeof input["AllocationId"] === "string" ? input["AllocationId"] : "";
+  const address = ctx.store.get<StoredAddress>(addressKey(allocationId));
+  if (address === undefined) {
+    throw awsError(
+      "InvalidAllocationID.NotFound",
+      `The allocation ID '${allocationId}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["DomainName"] === "string") {
+    address.DomainName = input["DomainName"];
+  }
+  ctx.store.set(addressKey(allocationId), address);
+  return {
+    Address: {
+      AllocationId: address.AllocationId,
+      PublicIp: address.PublicIp,
+      PtrRecord: address.DomainName,
+    },
+  };
+};
+
+const ModifyAvailabilityZoneGroup: OperationHandler = (_input, _ctx) => {
+  return { Return: true };
+};
+
+const ModifyCapacityReservation: OperationHandler = (input, ctx) => {
+  const reservationId =
+    typeof input["CapacityReservationId"] === "string"
+      ? input["CapacityReservationId"]
+      : "";
+  const reservation = ctx.store.get<StoredCapacityReservation>(
+    capacityReservationKey(reservationId),
+  );
+  if (reservation === undefined) {
+    throw awsError(
+      "InvalidCapacityReservationId.NotFound",
+      `The capacity reservation '${reservationId}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["InstanceCount"] === "number") {
+    reservation.TotalInstanceCount = input["InstanceCount"];
+    reservation.AvailableInstanceCount = input["InstanceCount"];
+  }
+  if (typeof input["EndDateType"] === "string") {
+    reservation.EndDateType = input["EndDateType"];
+  }
+  if (typeof input["InstanceMatchCriteria"] === "string") {
+    reservation.InstanceMatchCriteria = input["InstanceMatchCriteria"];
+  }
+  ctx.store.set(capacityReservationKey(reservationId), reservation);
+  return { Return: true };
+};
+
+const ModifyCapacityReservationFleet: OperationHandler = (_input, _ctx) => {
+  return { Return: true };
+};
+
+const ModifyClientVpnEndpoint: OperationHandler = (input, ctx) => {
+  const endpointId =
+    typeof input["ClientVpnEndpointId"] === "string"
+      ? input["ClientVpnEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredClientVpnEndpoint>(
+    clientVpnEndpointKey(endpointId),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidClientVpnEndpointId.NotFound",
+      `The Client VPN endpoint ID '${endpointId}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["ServerCertificateArn"] === "string") {
+    endpoint.ServerCertificateArn = input["ServerCertificateArn"];
+  }
+  if (typeof input["Description"] === "string") {
+    endpoint.Description = input["Description"];
+  }
+  if (typeof input["VpnPort"] === "number") {
+    endpoint.VpnPort = input["VpnPort"];
+  }
+  ctx.store.set(clientVpnEndpointKey(endpointId), endpoint);
+  return { Return: true };
+};
+
+const ModifyFleet: OperationHandler = (input, ctx) => {
+  const fleetId = typeof input["FleetId"] === "string" ? input["FleetId"] : "";
+  const fleet = ctx.store.get<StoredFleet>(fleetKey(fleetId));
+  if (fleet === undefined) {
+    throw awsError(
+      "InvalidFleetId.NotFound",
+      `The fleet '${fleetId}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["ExcessCapacityTerminationPolicy"] === "string") {
+    (
+      fleet as StoredFleet & { ExcessCapacityTerminationPolicy?: string }
+    ).ExcessCapacityTerminationPolicy =
+      input["ExcessCapacityTerminationPolicy"];
+  }
+  ctx.store.set(fleetKey(fleetId), fleet);
+  return { Return: true };
+};
+
+const ModifyFpgaImageAttribute: OperationHandler = (input, ctx) => {
+  const fpgaImageId =
+    typeof input["FpgaImageId"] === "string" ? input["FpgaImageId"] : "";
+  const image = ctx.store.get<StoredFpgaImage>(fpgaImageKey(fpgaImageId));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidFpgaImageID.NotFound",
+      `The FPGA image ID '${fpgaImageId}' does not exist`,
+      400,
+    );
+  }
+  if (typeof input["Name"] === "string") {
+    image.Name = input["Name"];
+  }
+  if (typeof input["Description"] === "string") {
+    image.Description = input["Description"];
+  }
+  ctx.store.set(fpgaImageKey(fpgaImageId), image);
+  return {
+    FpgaImageAttribute: {
+      FpgaImageId: image.FpgaImageId,
+      Name: image.Name,
+      Description: image.Description,
+    },
+  };
+};
+
+const ModifyHosts: OperationHandler = (input, ctx) => {
+  const hostIds = stringList(input["HostIds"]);
+  const successful: string[] = [];
+  const unsuccessful: unknown[] = [];
+  for (const hostId of hostIds) {
+    const host = ctx.store.get<StoredHost>(hostKey(hostId));
+    if (host === undefined) {
+      unsuccessful.push({
+        ResourceId: hostId,
+        Error: {
+          Code: "InvalidHostID.NotFound",
+          Message: `The host '${hostId}' does not exist`,
+        },
+      });
+      continue;
+    }
+    if (typeof input["AutoPlacement"] === "string") {
+      host.AutoPlacement = input["AutoPlacement"];
+    }
+    if (typeof input["HostRecovery"] === "string") {
+      host.HostRecovery = input["HostRecovery"];
+    }
+    if (typeof input["HostMaintenance"] === "string") {
+      host.HostMaintenance = input["HostMaintenance"];
+    }
+    if (typeof input["InstanceType"] === "string") {
+      host.InstanceType = input["InstanceType"];
+    }
+    if (typeof input["InstanceFamily"] === "string") {
+      host.InstanceFamily = input["InstanceFamily"];
+    }
+    ctx.store.set(hostKey(hostId), host);
+    successful.push(hostId);
+  }
+  return { Successful: successful, Unsuccessful: unsuccessful };
+};
+
+const ModifyIdFormat: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
+const ModifyIdentityIdFormat: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -16385,6 +16657,18 @@ const ec2: ServiceDefinition = {
     ImportVolume,
     ListImagesInRecycleBin,
     ListSnapshotsInRecycleBin,
+    ListVolumesInRecycleBin,
+    LockSnapshot,
+    ModifyAddressAttribute,
+    ModifyAvailabilityZoneGroup,
+    ModifyCapacityReservation,
+    ModifyCapacityReservationFleet,
+    ModifyClientVpnEndpoint,
+    ModifyFleet,
+    ModifyFpgaImageAttribute,
+    ModifyHosts,
+    ModifyIdFormat,
+    ModifyIdentityIdFormat,
     ProvisionIpamPoolCidr,
   },
   model,

@@ -13090,6 +13090,250 @@ const DescribeNetworkInterfaceAttribute: OperationHandler = (input, ctx) => {
   };
 };
 
+const allVpcEndpoints = (ctx: ServiceContext): StoredVpcEndpoint[] =>
+  ctx.store
+    .list<StoredVpcEndpoint>()
+    .filter((entry) => entry.key.startsWith("vpce/"))
+    .map((entry) => entry.value);
+
+const allVpcEndpointConnectionNotifications = (
+  ctx: ServiceContext,
+): StoredVpcEndpointConnectionNotification[] =>
+  ctx.store
+    .list<StoredVpcEndpointConnectionNotification>()
+    .filter((entry) => entry.key.startsWith("vpce-cn/"))
+    .map((entry) => entry.value);
+
+const allVpcEndpointServiceConfigurations = (
+  ctx: ServiceContext,
+): StoredVpcEndpointServiceConfiguration[] =>
+  ctx.store
+    .list<StoredVpcEndpointServiceConfiguration>()
+    .filter((entry) => entry.key.startsWith("vpce-svc/"))
+    .map((entry) => entry.value);
+
+const allVpcBlockPublicAccessExclusions = (
+  ctx: ServiceContext,
+): StoredVpcBlockPublicAccessExclusion[] =>
+  ctx.store
+    .list<StoredVpcBlockPublicAccessExclusion>()
+    .filter((entry) => entry.key.startsWith("vpce-bpa/"))
+    .map((entry) => entry.value);
+
+const allVpcEncryptionControls = (
+  ctx: ServiceContext,
+): StoredVpcEncryptionControl[] =>
+  ctx.store
+    .list<StoredVpcEncryptionControl>()
+    .filter((entry) => entry.key.startsWith("vpce-enc/"))
+    .map((entry) => entry.value);
+
+const DescribeVpcBlockPublicAccessExclusions: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["ExclusionIds"]);
+  const exclusions = allVpcBlockPublicAccessExclusions(ctx).filter((e) =>
+    ids.length === 0 ? true : ids.includes(e.ExclusionId),
+  );
+  return {
+    VpcBlockPublicAccessExclusions: exclusions.map((e) => ({
+      ExclusionId: e.ExclusionId,
+      InternetGatewayExclusionMode: e.InternetGatewayExclusionMode,
+      ResourceArn: e.ResourceArn,
+      State: e.State,
+      CreationTimestamp: e.CreationTimestamp,
+      LastUpdateTimestamp: e.LastUpdateTimestamp,
+      Tags: e.Tags,
+    })),
+  };
+};
+
+const DescribeVpcBlockPublicAccessOptions: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return {
+    VpcBlockPublicAccessOptions: {
+      AwsAccountId: _ctx.account,
+      AwsRegion: _ctx.region,
+      State: "default-enabled",
+      InternetGatewayBlockMode: "off",
+      LastUpdateTimestamp: new Date().toISOString(),
+    },
+  };
+};
+
+const DescribeVpcClassicLink: OperationHandler = (_input, _ctx) => {
+  return { Vpcs: [] };
+};
+
+const DescribeVpcClassicLinkDnsSupport: OperationHandler = (_input, _ctx) => {
+  return { Vpcs: [] };
+};
+
+const DescribeVpcEncryptionControls: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VpcEncryptionControlIds"]);
+  const vpcIds = stringList(input["VpcIds"]);
+  const controls = allVpcEncryptionControls(ctx).filter((c) => {
+    if (ids.length > 0 && !ids.includes(c.VpcEncryptionControlId)) return false;
+    if (vpcIds.length > 0 && !vpcIds.includes(c.VpcId)) return false;
+    return true;
+  });
+  return {
+    VpcEncryptionControls: controls.map((c) => ({
+      VpcEncryptionControlId: c.VpcEncryptionControlId,
+      VpcId: c.VpcId,
+      Mode: c.Mode,
+      State: c.State,
+      Tags: c.Tags,
+    })),
+  };
+};
+
+const DescribeVpcEndpointAssociations: OperationHandler = (_input, _ctx) => {
+  return { VpcEndpointAssociations: [] };
+};
+
+const DescribeVpcEndpointConnectionNotifications: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const filterId =
+    typeof input["ConnectionNotificationId"] === "string"
+      ? input["ConnectionNotificationId"]
+      : undefined;
+  const notifications = allVpcEndpointConnectionNotifications(ctx).filter(
+    (n) =>
+      filterId === undefined ? true : n.ConnectionNotificationId === filterId,
+  );
+  return {
+    ConnectionNotificationSet: notifications.map((n) => ({
+      ConnectionNotificationId: n.ConnectionNotificationId,
+      ServiceId: n.ServiceId,
+      VpcEndpointId: n.VpcEndpointId,
+      ConnectionNotificationType: n.ConnectionNotificationType,
+      ConnectionNotificationArn: n.ConnectionNotificationArn,
+      ConnectionEvents: n.ConnectionEvents,
+      ConnectionNotificationState: n.ConnectionNotificationState,
+    })),
+  };
+};
+
+const DescribeVpcEndpointConnections: OperationHandler = (_input, _ctx) => {
+  return { VpcEndpointConnections: [] };
+};
+
+const DescribeVpcEndpointServiceConfigurations: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const ids = stringList(input["ServiceIds"]);
+  const configs = allVpcEndpointServiceConfigurations(ctx).filter((c) =>
+    ids.length === 0 ? true : ids.includes(c.ServiceId),
+  );
+  return {
+    ServiceConfigurations: configs.map((c) => ({
+      ServiceId: c.ServiceId,
+      ServiceName: c.ServiceName,
+      ServiceState: c.ServiceState,
+      AcceptanceRequired: c.AcceptanceRequired,
+      NetworkLoadBalancerArns: c.NetworkLoadBalancerArns,
+      GatewayLoadBalancerArns: c.GatewayLoadBalancerArns,
+      PrivateDnsName: c.PrivateDnsName,
+      Tags: c.Tags,
+    })),
+  };
+};
+
+const DescribeVpcEndpointServicePermissions: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { AllowedPrincipals: [] };
+};
+
+const awsManagedEndpointServices = (region: string) => {
+  const svcs = [
+    "s3",
+    "ec2",
+    "sts",
+    "elasticloadbalancing",
+    "rds",
+    "dynamodb",
+    "sns",
+    "sqs",
+    "ssm",
+    "secretsmanager",
+  ];
+  return svcs.map((svc) => ({
+    ServiceName: `com.amazonaws.${region}.${svc}`,
+    ServiceType: [
+      {
+        ServiceType:
+          svc === "s3" || svc === "dynamodb" ? "Gateway" : "Interface",
+      },
+    ],
+    ServiceId: `vpce-svc-managed-${svc}`,
+    Owner: "amazon",
+    BaseEndpointDnsNames: [`${svc}.${region}.vpce.amazonaws.com`],
+    PrivateDnsName: `${svc}.${region}.amazonaws.com`,
+    VpcEndpointPolicySupported: true,
+    AcceptanceRequired: false,
+    ManagesVpcEndpoints: false,
+    Tags: [],
+  }));
+};
+
+const DescribeVpcEndpointServices: OperationHandler = (input, ctx) => {
+  const filterNames = stringList(input["ServiceNames"]);
+  const managed = awsManagedEndpointServices(ctx.region);
+  const userConfigs = allVpcEndpointServiceConfigurations(ctx).map((c) => ({
+    ServiceName: c.ServiceName,
+    ServiceType: [{ ServiceType: "Interface" as const }],
+    ServiceId: c.ServiceId,
+    Owner: ctx.account,
+    BaseEndpointDnsNames: [],
+    VpcEndpointPolicySupported: false,
+    AcceptanceRequired: c.AcceptanceRequired,
+    ManagesVpcEndpoints: false,
+    Tags: c.Tags,
+  }));
+  const allServices = [...managed, ...userConfigs];
+  const filtered =
+    filterNames.length === 0
+      ? allServices
+      : allServices.filter((s) => filterNames.includes(s.ServiceName));
+  return {
+    ServiceNames: filtered.map((s) => s.ServiceName),
+    ServiceDetails: filtered,
+  };
+};
+
+const DescribeVpcEndpoints: OperationHandler = (input, ctx) => {
+  const ids = stringList(input["VpcEndpointIds"]);
+  const endpoints = allVpcEndpoints(ctx).filter((e) =>
+    ids.length === 0 ? true : ids.includes(e.VpcEndpointId),
+  );
+  return {
+    VpcEndpoints: endpoints.map((e) => ({
+      VpcEndpointId: e.VpcEndpointId,
+      VpcEndpointType: e.VpcEndpointType,
+      VpcId: e.VpcId,
+      ServiceName: e.ServiceName,
+      State: e.State,
+      RouteTableIds: e.RouteTableIds,
+      SubnetIds: e.SubnetIds,
+      Groups: e.Groups,
+      IpAddressType: e.IpAddressType,
+      PrivateDnsEnabled: e.PrivateDnsEnabled,
+      OwnerId: e.OwnerId,
+      CreationTimestamp: e.CreationTimestamp,
+      Tags: e.Tags,
+    })),
+  };
+};
+
 const ec2: ServiceDefinition = {
   name: "ec2",
   protocol: "ec2",
@@ -13545,6 +13789,18 @@ const ec2: ServiceDefinition = {
     DescribeVolumeStatus,
     DescribeVolumesModifications,
     DescribeVpcAttribute,
+    DescribeVpcBlockPublicAccessExclusions,
+    DescribeVpcBlockPublicAccessOptions,
+    DescribeVpcClassicLink,
+    DescribeVpcClassicLinkDnsSupport,
+    DescribeVpcEncryptionControls,
+    DescribeVpcEndpointAssociations,
+    DescribeVpcEndpointConnectionNotifications,
+    DescribeVpcEndpointConnections,
+    DescribeVpcEndpointServiceConfigurations,
+    DescribeVpcEndpointServicePermissions,
+    DescribeVpcEndpointServices,
+    DescribeVpcEndpoints,
   },
   model,
 } as const;

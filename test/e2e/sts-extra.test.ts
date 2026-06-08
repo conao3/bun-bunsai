@@ -214,8 +214,53 @@ test("AssumeRole into another account flows through to later calls", async () =>
   });
   const identity = await assumedClient.send(new GetCallerIdentityCommand({}));
   expect(identity.Account).toBe("111122223333");
-  expect(identity.Arn).toBe("arn:aws:iam::111122223333:root");
+  expect(identity.Arn).toBe(
+    "arn:aws:sts::111122223333:assumed-role/cross-account/bunsai-cross",
+  );
+  expect(identity.UserId).toContain("bunsai-cross");
 
   const defaultIdentity = await caller.send(new GetCallerIdentityCommand({}));
   expect(defaultIdentity.Account).toBe("000000000000");
+});
+
+test("AssumeRole GetCallerIdentity fidelity: session creds reflect assumed role", async () => {
+  const client = sts();
+  const durationSeconds = 7200;
+  const assumed = await client.send(
+    new AssumeRoleCommand({
+      RoleArn: "arn:aws:iam::555566667777:role/fidelity-role",
+      RoleSessionName: "fidelity-session",
+      DurationSeconds: durationSeconds,
+    }),
+  );
+  expect(assumed.Credentials?.AccessKeyId).toMatch(/^ASIA/);
+  expect(assumed.Credentials?.SecretAccessKey).toBeDefined();
+  expect(assumed.Credentials?.SessionToken).toBeDefined();
+  expect(assumed.Credentials?.Expiration).toBeInstanceOf(Date);
+  const now = Math.floor(Date.now() / 1000);
+  const exp = Math.floor(
+    (assumed.Credentials?.Expiration?.getTime() ?? 0) / 1000,
+  );
+  expect(exp).toBeGreaterThan(now + durationSeconds - 5);
+  expect(exp).toBeLessThanOrEqual(now + durationSeconds + 5);
+  expect(assumed.AssumedRoleUser?.Arn).toBe(
+    "arn:aws:sts::555566667777:assumed-role/fidelity-role/fidelity-session",
+  );
+  expect(assumed.AssumedRoleUser?.AssumedRoleId).toContain("fidelity-session");
+  const assumedClient = new STSClient({
+    endpoint,
+    region,
+    requestHandler,
+    credentials: {
+      accessKeyId: assumed.Credentials?.AccessKeyId ?? "",
+      secretAccessKey: assumed.Credentials?.SecretAccessKey ?? "",
+      sessionToken: assumed.Credentials?.SessionToken ?? "",
+    },
+  });
+  const identity = await assumedClient.send(new GetCallerIdentityCommand({}));
+  expect(identity.Account).toBe("555566667777");
+  expect(identity.Arn).toBe(
+    "arn:aws:sts::555566667777:assumed-role/fidelity-role/fidelity-session",
+  );
+  expect(identity.UserId).toContain("fidelity-session");
 });

@@ -372,14 +372,91 @@ const requireName = (input: Record<string, unknown>): string => {
   return name;
 };
 
-const toApiParameter = (stored: StoredParameter): Record<string, unknown> => ({
+const toApiParameter = (
+  stored: StoredParameter,
+  withDecryption: boolean,
+): Record<string, unknown> => ({
   Name: stored.Name,
   Type: stored.Type,
-  Value: stored.Value,
+  Value:
+    !withDecryption && stored.Type === "SecureString"
+      ? `kms:ssm:${Buffer.from(stored.Value).toString("base64")}`
+      : stored.Value,
   Version: stored.Version,
   LastModifiedDate: stored.LastModifiedDate,
   ARN: stored.ARN,
 });
+
+const parseSelector = (
+  name: string,
+): { baseName: string; selector: string | undefined } => {
+  const idx = name.lastIndexOf(":");
+  if (idx === -1) return { baseName: name, selector: undefined };
+  const sel = name.slice(idx + 1);
+  if (sel === "") return { baseName: name, selector: undefined };
+  return { baseName: name.slice(0, idx), selector: sel };
+};
+
+const resolveParameterBySelector = (
+  ctx: ServiceContext,
+  baseName: string,
+  selector: string | undefined,
+): StoredParameter => {
+  const stored = ctx.store.get<StoredParameter>(baseName);
+  if (stored === undefined) {
+    throw awsError(
+      "ParameterNotFound",
+      `Parameter ${baseName} not found.`,
+      400,
+    );
+  }
+  if (selector === undefined) return stored;
+  if (/^\d+$/.test(selector)) {
+    const version = Number(selector);
+    const entry = stored.History?.find((e) => e.Version === version);
+    if (entry === undefined) {
+      throw awsError(
+        "ParameterVersionNotFound",
+        `Parameter version ${version} not found for ${baseName}.`,
+        400,
+      );
+    }
+    return {
+      ...stored,
+      Value: entry.Value,
+      Type: entry.Type,
+      Version: entry.Version,
+      LastModifiedDate: entry.LastModifiedDate,
+    };
+  }
+  const labelsByVersion = stored.Labels ?? {};
+  const versionKey = Object.keys(labelsByVersion).find((vk) =>
+    labelsByVersion[vk].includes(selector),
+  );
+  if (versionKey === undefined) {
+    throw awsError(
+      "ParameterVersionLabelNotFound",
+      `Label ${selector} not found for ${baseName}.`,
+      400,
+    );
+  }
+  const version = Number(versionKey);
+  const entry = stored.History?.find((e) => e.Version === version);
+  if (entry === undefined) {
+    throw awsError(
+      "ParameterVersionNotFound",
+      `Parameter version ${version} not found for ${baseName}.`,
+      400,
+    );
+  }
+  return {
+    ...stored,
+    Value: entry.Value,
+    Type: entry.Type,
+    Version: entry.Version,
+    LastModifiedDate: entry.LastModifiedDate,
+  };
+};
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -519,27 +596,28 @@ const PutParameter: OperationHandler = (input, ctx) => {
 };
 
 const GetParameter: OperationHandler = (input, ctx) => {
-  const name = requireName(input);
-  const stored = ctx.store.get<StoredParameter>(name);
-  if (stored === undefined) {
-    throw awsError("ParameterNotFound", `Parameter ${name} not found.`, 400);
-  }
-  return { Parameter: toApiParameter(stored) };
+  const rawName = requireName(input);
+  const { baseName, selector } = parseSelector(rawName);
+  const withDecryption = input["WithDecryption"] === true;
+  const stored = resolveParameterBySelector(ctx, baseName, selector);
+  return { Parameter: toApiParameter(stored, withDecryption) };
 };
 
 const GetParameters: OperationHandler = (input, ctx) => {
   const names = Array.isArray(input["Names"])
     ? (input["Names"] as unknown[]).map((value) => String(value))
     : [];
+  const withDecryption = input["WithDecryption"] === true;
   const parameters: Record<string, unknown>[] = [];
   const invalid: string[] = [];
-  for (const name of names) {
-    const stored = ctx.store.get<StoredParameter>(name);
-    if (stored === undefined) {
-      invalid.push(name);
-      continue;
+  for (const nameWithSelector of names) {
+    const { baseName, selector } = parseSelector(nameWithSelector);
+    try {
+      const resolved = resolveParameterBySelector(ctx, baseName, selector);
+      parameters.push(toApiParameter(resolved, withDecryption));
+    } catch {
+      invalid.push(nameWithSelector);
     }
-    parameters.push(toApiParameter(stored));
   }
   return { Parameters: parameters, InvalidParameters: invalid };
 };
@@ -550,6 +628,7 @@ const GetParametersByPath: OperationHandler = (input, ctx) => {
     throw awsError("ValidationException", "Path is required.", 400);
   }
   const recursive = input["Recursive"] === true;
+  const withDecryption = input["WithDecryption"] === true;
   const normalized = path.endsWith("/") ? path : `${path}/`;
   const parameters = ctx.store
     .list<StoredParameter>()
@@ -560,7 +639,7 @@ const GetParametersByPath: OperationHandler = (input, ctx) => {
       const rest = entry.key.slice(normalized.length);
       return !rest.includes("/");
     })
-    .map((entry) => toApiParameter(entry.value));
+    .map((entry) => toApiParameter(entry.value, withDecryption));
   return { Parameters: parameters };
 };
 

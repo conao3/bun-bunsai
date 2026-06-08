@@ -28,9 +28,11 @@ import {
   GetOpsItemCommand,
   GetOpsMetadataCommand,
   GetParameterCommand,
+  GetParameterHistoryCommand,
   GetParametersByPathCommand,
   GetParametersCommand,
   GetPatchBaselineCommand,
+  LabelParameterVersionCommand,
   ListCommandInvocationsCommand,
   ListCommandsCommand,
   ListResourceDataSyncCommand,
@@ -321,6 +323,110 @@ describe("ssm e2e", () => {
     await client.send(
       new DeleteResourceDataSyncCommand({ SyncName: syncName }),
     );
+  });
+
+  test("Parameter version and label selectors", async () => {
+    const client = ssm();
+    const name = "/bunsai/e2e/versioned";
+
+    const v1 = await client.send(
+      new PutParameterCommand({
+        Name: name,
+        Value: "value-v1",
+        Type: "String",
+      }),
+    );
+    expect(v1.Version).toBe(1);
+
+    const v2 = await client.send(
+      new PutParameterCommand({
+        Name: name,
+        Value: "value-v2",
+        Type: "String",
+        Overwrite: true,
+      }),
+    );
+    expect(v2.Version).toBe(2);
+
+    const byV1 = await client.send(
+      new GetParameterCommand({ Name: `${name}:1` }),
+    );
+    expect(byV1.Parameter?.Value).toBe("value-v1");
+    expect(byV1.Parameter?.Version).toBe(1);
+
+    const bare = await client.send(new GetParameterCommand({ Name: name }));
+    expect(bare.Parameter?.Value).toBe("value-v2");
+    expect(bare.Parameter?.Version).toBe(2);
+
+    await client.send(
+      new LabelParameterVersionCommand({
+        Name: name,
+        ParameterVersion: 1,
+        Labels: ["stable"],
+      }),
+    );
+
+    const byLabel = await client.send(
+      new GetParameterCommand({ Name: `${name}:stable` }),
+    );
+    expect(byLabel.Parameter?.Value).toBe("value-v1");
+    expect(byLabel.Parameter?.Version).toBe(1);
+
+    const history = await client.send(
+      new GetParameterHistoryCommand({ Name: name }),
+    );
+    expect(history.Parameters?.length).toBe(2);
+    const histV1 = history.Parameters?.find((p) => p.Version === 1);
+    expect(histV1?.Labels).toContain("stable");
+
+    const batchBySelector = await client.send(
+      new GetParametersCommand({ Names: [`${name}:1`, `${name}:2`] }),
+    );
+    expect(batchBySelector.Parameters?.length).toBe(2);
+    const batchV1 = batchBySelector.Parameters?.find((p) => p.Version === 1);
+    const batchV2 = batchBySelector.Parameters?.find((p) => p.Version === 2);
+    expect(batchV1?.Value).toBe("value-v1");
+    expect(batchV2?.Value).toBe("value-v2");
+
+    await client.send(new DeleteParameterCommand({ Name: name }));
+  });
+
+  test("SecureString WithDecryption toggle", async () => {
+    const client = ssm();
+    const name = "/bunsai/e2e/secure";
+    const plaintext = "my-secret-value";
+
+    await client.send(
+      new PutParameterCommand({
+        Name: name,
+        Value: plaintext,
+        Type: "SecureString",
+      }),
+    );
+
+    const decrypted = await client.send(
+      new GetParameterCommand({ Name: name, WithDecryption: true }),
+    );
+    expect(decrypted.Parameter?.Value).toBe(plaintext);
+    expect(decrypted.Parameter?.Type).toBe("SecureString");
+
+    const encrypted = await client.send(
+      new GetParameterCommand({ Name: name, WithDecryption: false }),
+    );
+    expect(encrypted.Parameter?.Value).not.toBe(plaintext);
+    expect(encrypted.Parameter?.Type).toBe("SecureString");
+
+    const batchDecrypted = await client.send(
+      new GetParametersCommand({ Names: [name], WithDecryption: true }),
+    );
+    expect(batchDecrypted.Parameters?.[0]?.Value).toBe(plaintext);
+
+    const batchEncrypted = await client.send(
+      new GetParametersCommand({ Names: [name], WithDecryption: false }),
+    );
+    expect(batchEncrypted.Parameters?.[0]?.Value).not.toBe(plaintext);
+
+    await client.send(new DeleteParameterCommand({ Name: name }));
   });
 
   test("SendCommand and GetCommandInvocation lifecycle", async () => {

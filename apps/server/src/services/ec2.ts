@@ -1325,6 +1325,8 @@ const imageBlockPublicAccessKey = (): string =>
 const snapshotBlockPublicAccessKey = (): string =>
   `snapshot-block-public-access/singleton`;
 const vpcClassicLinkKey = (id: string): string => `vpc-classic-link/${id}`;
+const allowedImagesSettingsKey = (): string =>
+  `allowed-images-settings/singleton`;
 const spotInstanceRequestKey = (id: string): string => `sir/${id}`;
 const spotFleetRequestKey = (id: string): string => `sfr/${id}`;
 const tgwMcastMemberKey = (
@@ -13505,7 +13507,8 @@ const DisableAddressTransfer: OperationHandler = (input, ctx) => {
   };
 };
 
-const DisableAllowedImagesSettings: OperationHandler = (_input, _ctx) => {
+const DisableAllowedImagesSettings: OperationHandler = (_input, ctx) => {
+  ctx.store.set(allowedImagesSettingsKey(), { state: "disabled" });
   return { AllowedImagesSettingsState: "disabled" };
 };
 
@@ -14059,11 +14062,12 @@ const EnableAddressTransfer: OperationHandler = (input, ctx) => {
   };
 };
 
-const EnableAllowedImagesSettings: OperationHandler = (input, _ctx) => {
+const EnableAllowedImagesSettings: OperationHandler = (input, ctx) => {
   const state =
     typeof input["AllowedImagesSettingsState"] === "string"
       ? input["AllowedImagesSettingsState"]
       : "enabled";
+  ctx.store.set(allowedImagesSettingsKey(), { state });
   return { AllowedImagesSettingsState: state };
 };
 
@@ -14259,6 +14263,215 @@ const GetSnapshotBlockPublicAccessState: OperationHandler = (_input, ctx) => {
     snapshotBlockPublicAccessKey(),
   );
   return { State: stored?.state ?? "unblocked" };
+};
+
+const EnableTransitGatewayRouteTablePropagation: OperationHandler = (
+  input,
+  _ctx,
+) => {
+  const rtbId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const attachmentId =
+    typeof input["TransitGatewayAttachmentId"] === "string"
+      ? input["TransitGatewayAttachmentId"]
+      : undefined;
+  return {
+    Propagation: {
+      TransitGatewayRouteTableId: rtbId,
+      TransitGatewayAttachmentId: attachmentId,
+      State: "enabled",
+    },
+  };
+};
+
+const EnableVgwRoutePropagation: OperationHandler = (_input, _ctx) => {
+  return {};
+};
+
+const EnableVolumeIO: OperationHandler = (input, ctx) => {
+  const volumeId =
+    typeof input["VolumeId"] === "string" ? input["VolumeId"] : "";
+  const volume = ctx.store.get<StoredVolume>(volumeKey(volumeId));
+  if (volume === undefined) {
+    throw awsError(
+      "InvalidVolume.NotFound",
+      `The volume '${volumeId}' does not exist.`,
+      400,
+    );
+  }
+  return {};
+};
+
+const EnableVpcClassicLink: OperationHandler = (input, ctx) => {
+  const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const vpc = ctx.store.get<StoredVpc>(vpcKey(vpcId));
+  if (vpc === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${vpcId}' does not exist`,
+      400,
+    );
+  }
+  ctx.store.set(vpcClassicLinkKey(vpcId), { enabled: true });
+  return { Return: true };
+};
+
+const EnableVpcClassicLinkDnsSupport: OperationHandler = (_input, _ctx) => {
+  return { Return: true };
+};
+
+const ExportClientVpnClientCertificateRevocationList: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const endpointId =
+    typeof input["ClientVpnEndpointId"] === "string"
+      ? input["ClientVpnEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredClientVpnEndpoint>(
+    clientVpnEndpointKey(endpointId),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidClientVpnEndpointId.NotFound",
+      `The Client VPN endpoint '${endpointId}' does not exist.`,
+      400,
+    );
+  }
+  return {
+    CertificateRevocationList: "",
+    Status: { Code: "active", Message: "" },
+  };
+};
+
+const ExportClientVpnClientConfiguration: OperationHandler = (input, ctx) => {
+  const endpointId =
+    typeof input["ClientVpnEndpointId"] === "string"
+      ? input["ClientVpnEndpointId"]
+      : "";
+  const endpoint = ctx.store.get<StoredClientVpnEndpoint>(
+    clientVpnEndpointKey(endpointId),
+  );
+  if (endpoint === undefined) {
+    throw awsError(
+      "InvalidClientVpnEndpointId.NotFound",
+      `The Client VPN endpoint '${endpointId}' does not exist.`,
+      400,
+    );
+  }
+  return { ClientConfiguration: `client-config-${endpointId}` };
+};
+
+const ExportImage: OperationHandler = (input, ctx) => {
+  const imageId = typeof input["ImageId"] === "string" ? input["ImageId"] : "";
+  const image = ctx.store.get<StoredImage>(imageKey(imageId));
+  if (image === undefined) {
+    throw awsError(
+      "InvalidAMIID.NotFound",
+      `The image id '[${imageId}]' does not exist`,
+      400,
+    );
+  }
+  const diskImageFormat =
+    typeof input["DiskImageFormat"] === "string"
+      ? input["DiskImageFormat"]
+      : "VMDK";
+  const taskId = `export-ami-${imageId.replace("ami-", "")}`;
+  return {
+    ExportImageTaskId: taskId,
+    ImageId: imageId,
+    DiskImageFormat: diskImageFormat,
+    Status: "active",
+    Progress: "0",
+    S3ExportLocation: {
+      S3Bucket:
+        typeof input["S3ExportLocation"] === "object" &&
+        input["S3ExportLocation"] !== null &&
+        typeof (input["S3ExportLocation"] as { S3Bucket?: unknown })
+          .S3Bucket === "string"
+          ? (input["S3ExportLocation"] as { S3Bucket: string }).S3Bucket
+          : "export-bucket",
+    },
+  };
+};
+
+const ExportTransitGatewayRoutes: OperationHandler = (input, _ctx) => {
+  const rtbId =
+    typeof input["TransitGatewayRouteTableId"] === "string"
+      ? input["TransitGatewayRouteTableId"]
+      : "";
+  const s3Bucket =
+    typeof input["S3Bucket"] === "string" ? input["S3Bucket"] : "export-bucket";
+  return {
+    S3Location: `s3://${s3Bucket}/VPCTransitGateway/TransitGatewayRouteTables/${rtbId}.json`,
+  };
+};
+
+const ExportVerifiedAccessInstanceClientConfiguration: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const instanceId =
+    typeof input["VerifiedAccessInstanceId"] === "string"
+      ? input["VerifiedAccessInstanceId"]
+      : "";
+  const instance = ctx.store.get<StoredVerifiedAccessInstance>(
+    vaInstanceKey(instanceId),
+  );
+  if (instance === undefined) {
+    throw awsError(
+      "InvalidVerifiedAccessInstanceId.NotFound",
+      `The Verified Access instance '${instanceId}' does not exist.`,
+      400,
+    );
+  }
+  return {
+    Version: "1.0",
+    VerifiedAccessInstanceId: instanceId,
+    Region: "us-east-1",
+    DeviceTrustProviders: [],
+    OpenVpnConfigurations: [],
+  };
+};
+
+const GetActiveVpnTunnelStatus: OperationHandler = (input, ctx) => {
+  const vpnConnectionId =
+    typeof input["VpnConnectionId"] === "string"
+      ? input["VpnConnectionId"]
+      : "";
+  const connection = ctx.store.get<StoredVpnConnection>(
+    vpnConnectionKey(vpnConnectionId),
+  );
+  if (connection === undefined) {
+    throw awsError(
+      "InvalidVpnConnectionID.NotFound",
+      `The vpnConnection ID '${vpnConnectionId}' does not exist`,
+      400,
+    );
+  }
+  return {
+    ActiveVpnTunnelStatus: {
+      Phase1EncryptionAlgorithm: "AES-256-GCM-16",
+      Phase2EncryptionAlgorithm: "AES-256-GCM-16",
+      Phase1IntegrityAlgorithm: "SHA2-256",
+      Phase2IntegrityAlgorithm: "SHA2-256",
+      Phase1DHGroup: 14,
+      Phase2DHGroup: 14,
+      IkeVersion: "ikev2",
+      ProvisioningStatus: "available",
+    },
+  };
+};
+
+const GetAllowedImagesSettings: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<{ state: string }>(allowedImagesSettingsKey());
+  return {
+    State: stored?.state ?? "disabled",
+    ImageCriteria: [],
+    ManagedBy: "account",
+  };
 };
 
 const ec2: ServiceDefinition = {
@@ -14773,6 +14986,7 @@ const ec2: ServiceDefinition = {
     DisassociateVpcCidrBlock,
     EnableAddressTransfer,
     EnableAllowedImagesSettings,
+    GetAllowedImagesSettings,
     EnableAwsNetworkPerformanceMetricSubscription,
     EnableCapacityManager,
     EnableEbsEncryptionByDefault,
@@ -14793,6 +15007,17 @@ const ec2: ServiceDefinition = {
     GetSerialConsoleAccessStatus,
     EnableSnapshotBlockPublicAccess,
     GetSnapshotBlockPublicAccessState,
+    EnableTransitGatewayRouteTablePropagation,
+    EnableVgwRoutePropagation,
+    EnableVolumeIO,
+    EnableVpcClassicLink,
+    EnableVpcClassicLinkDnsSupport,
+    ExportClientVpnClientCertificateRevocationList,
+    ExportClientVpnClientConfiguration,
+    ExportImage,
+    ExportTransitGatewayRoutes,
+    ExportVerifiedAccessInstanceClientConfiguration,
+    GetActiveVpnTunnelStatus,
   },
   model,
 } as const;

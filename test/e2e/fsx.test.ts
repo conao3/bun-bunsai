@@ -614,3 +614,189 @@ test("fsx describe pagination and soft-delete queryable", async () => {
   await fsx.send(new DeleteFileSystemCommand({ FileSystemId: id2 }));
   await fsx.send(new DeleteFileSystemCommand({ FileSystemId: id3 }));
 });
+
+test("fsx HIGH-1: ClientRequestToken idempotency for CreateFileSystem and CreateBackup", async () => {
+  const fsx = client();
+
+  const token1 = "unique-token-fs-001";
+  const fs1 = await fsx.send(
+    new CreateFileSystemCommand({
+      FileSystemType: "LUSTRE",
+      StorageCapacity: 1200,
+      SubnetIds: ["subnet-0123456789abcdef0"],
+      ClientRequestToken: token1,
+    }),
+  );
+  const fsId = fs1.FileSystem?.FileSystemId;
+  expect(fsId).toMatch(/^fs-/);
+
+  const fs2 = await fsx.send(
+    new CreateFileSystemCommand({
+      FileSystemType: "LUSTRE",
+      StorageCapacity: 1200,
+      SubnetIds: ["subnet-0123456789abcdef0"],
+      ClientRequestToken: token1,
+    }),
+  );
+  expect(fs2.FileSystem?.FileSystemId).toBe(fsId);
+
+  const token2 = "unique-token-backup-001";
+  const bk1 = await fsx.send(
+    new CreateBackupCommand({
+      FileSystemId: fsId,
+      ClientRequestToken: token2,
+    }),
+  );
+  const backupId = bk1.Backup?.BackupId;
+  expect(backupId).toMatch(/^backup-/);
+
+  const bk2 = await fsx.send(
+    new CreateBackupCommand({
+      FileSystemId: fsId,
+      ClientRequestToken: token2,
+    }),
+  );
+  expect(bk2.Backup?.BackupId).toBe(backupId);
+
+  await fsx.send(new DeleteBackupCommand({ BackupId: backupId }));
+  await fsx.send(new DeleteFileSystemCommand({ FileSystemId: fsId }));
+});
+
+test("fsx HIGH-2: tag cleanup on delete — no tag leak after re-create", async () => {
+  const fsx = client();
+
+  const created = await fsx.send(
+    new CreateFileSystemCommand({
+      FileSystemType: "LUSTRE",
+      StorageCapacity: 1200,
+      SubnetIds: ["subnet-0123456789abcdef0"],
+      Tags: [{ Key: "leak-test", Value: "yes" }],
+    }),
+  );
+  const fsId = created.FileSystem?.FileSystemId;
+  const arn = created.FileSystem?.ResourceARN;
+
+  await fsx.send(
+    new TagResourceCommand({
+      ResourceARN: arn,
+      Tags: [{ Key: "extra", Value: "tag" }],
+    }),
+  );
+  const beforeDelete = await fsx.send(
+    new ListTagsForResourceCommand({ ResourceARN: arn }),
+  );
+  expect(beforeDelete.Tags?.map((t) => t.Key)).toContain("extra");
+
+  await fsx.send(new DeleteFileSystemCommand({ FileSystemId: fsId }));
+
+  const afterDelete = await fsx.send(
+    new ListTagsForResourceCommand({ ResourceARN: arn }),
+  );
+  expect(afterDelete.Tags ?? []).toHaveLength(0);
+});
+
+test("fsx HIGH-3: in-use guards prevent deletion of parent with active children", async () => {
+  const fsx = client();
+
+  const fsResult = await fsx.send(
+    new CreateFileSystemCommand({
+      FileSystemType: "ONTAP",
+      StorageCapacity: 1024,
+      SubnetIds: ["subnet-0123456789abcdef0"],
+    }),
+  );
+  const fsId = fsResult.FileSystem?.FileSystemId;
+
+  const svmResult = await fsx.send(
+    new CreateStorageVirtualMachineCommand({
+      FileSystemId: fsId,
+      Name: "svm-guard-test",
+    }),
+  );
+  const svmId = svmResult.StorageVirtualMachine?.StorageVirtualMachineId;
+
+  const volResult = await fsx.send(
+    new CreateVolumeCommand({
+      VolumeType: "ONTAP",
+      Name: "vol-guard-test",
+      OntapConfiguration: {
+        StorageVirtualMachineId: svmId,
+        SizeInMegabytes: 512,
+        StorageEfficiencyEnabled: true,
+        JunctionPath: "/guard",
+      },
+    }),
+  );
+  const volId = volResult.Volume?.VolumeId;
+
+  const snapResult = await fsx.send(
+    new CreateSnapshotCommand({
+      VolumeId: volId,
+      Name: "snap-guard-test",
+    }),
+  );
+  const snapId = snapResult.Snapshot?.SnapshotId;
+
+  await expect(
+    fsx.send(new DeleteVolumeCommand({ VolumeId: volId })),
+  ).rejects.toThrow();
+
+  await expect(
+    fsx.send(
+      new DeleteStorageVirtualMachineCommand({
+        StorageVirtualMachineId: svmId,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    fsx.send(new DeleteFileSystemCommand({ FileSystemId: fsId })),
+  ).rejects.toThrow();
+
+  await fsx.send(new DeleteSnapshotCommand({ SnapshotId: snapId }));
+  await fsx.send(new DeleteVolumeCommand({ VolumeId: volId }));
+  await fsx.send(
+    new DeleteStorageVirtualMachineCommand({ StorageVirtualMachineId: svmId }),
+  );
+  await fsx.send(new DeleteFileSystemCommand({ FileSystemId: fsId }));
+});
+
+test("fsx HIGH-4: DeleteDataRepositoryAssociation is soft-delete — Lifecycle=DELETING visible", async () => {
+  const fsx = client();
+
+  const fsResult = await fsx.send(
+    new CreateFileSystemCommand({
+      FileSystemType: "LUSTRE",
+      StorageCapacity: 1200,
+      SubnetIds: ["subnet-0123456789abcdef0"],
+    }),
+  );
+  const fsId = fsResult.FileSystem?.FileSystemId;
+
+  const draResult = await fsx.send(
+    new CreateDataRepositoryAssociationCommand({
+      FileSystemId: fsId,
+      DataRepositoryPath: "s3://my-bucket-high4",
+      FileSystemPath: "/data-high4",
+    }),
+  );
+  const associationId = draResult.Association?.AssociationId;
+  expect(associationId).toMatch(/^dra-/);
+
+  const deleteResult = await fsx.send(
+    new DeleteDataRepositoryAssociationCommand({
+      AssociationId: associationId,
+    }),
+  );
+  expect(deleteResult.Lifecycle).toBe("DELETING");
+
+  const described = await fsx.send(
+    new DescribeDataRepositoryAssociationsCommand({
+      AssociationIds: [associationId ?? ""],
+    }),
+  );
+  expect(described.Associations?.length).toBe(1);
+  expect(described.Associations?.[0]?.Lifecycle).toBe("DELETING");
+
+  await fsx.send(new DeleteFileSystemCommand({ FileSystemId: fsId }));
+});

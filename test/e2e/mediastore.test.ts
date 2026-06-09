@@ -45,9 +45,8 @@ test("MediaStore container lifecycle", async () => {
     new CreateContainerCommand({ ContainerName: name }),
   );
   expect(created.Container?.Name).toBe(name);
-  expect(created.Container?.Status).toBe("ACTIVE");
+  expect(created.Container?.Status).toBe("CREATING");
   expect(created.Container?.ARN).toContain(name);
-  expect(created.Container?.Endpoint).toContain(name);
 
   const described = await client.send(
     new DescribeContainerCommand({ ContainerName: name }),
@@ -64,6 +63,63 @@ test("MediaStore container lifecycle", async () => {
   expect((afterDelete.Containers ?? []).some((c) => c.Name === name)).toBe(
     false,
   );
+
+  await client.send(new DeleteContainerCommand({ ContainerName: name }));
+});
+
+test("MediaStore container CREATING→ACTIVE and DELETING lifecycle", async () => {
+  const client = mediastore();
+  const name = "bunsai-e2e-lifecycle2";
+
+  const created = await client.send(
+    new CreateContainerCommand({ ContainerName: name }),
+  );
+  expect(created.Container?.Status).toBe("CREATING");
+  expect(created.Container?.Endpoint).toBe("");
+
+  const active = await client.send(
+    new DescribeContainerCommand({ ContainerName: name }),
+  );
+  expect(active.Container?.Status).toBe("ACTIVE");
+  expect(active.Container?.Endpoint).toContain(name);
+
+  await client.send(new DeleteContainerCommand({ ContainerName: name }));
+
+  const deleting = await client.send(
+    new DescribeContainerCommand({ ContainerName: name }),
+  );
+  expect(deleting.Container?.Status).toBe("DELETING");
+
+  await client.send(new DeleteContainerCommand({ ContainerName: name }));
+
+  await expect(
+    client.send(new DescribeContainerCommand({ ContainerName: name })),
+  ).rejects.toThrow();
+});
+
+test("MediaStore ListContainers pagination", async () => {
+  const client = mediastore();
+  const names = ["bunsai-pg-a", "bunsai-pg-b", "bunsai-pg-c"];
+  for (const n of names) {
+    await client.send(new CreateContainerCommand({ ContainerName: n }));
+  }
+
+  const page1 = await client.send(new ListContainersCommand({ MaxResults: 2 }));
+  expect(page1.Containers).toHaveLength(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListContainersCommand({ NextToken: page1.NextToken }),
+  );
+  expect(
+    (page2.Containers ?? []).some((c) => names.includes(c.Name ?? "")),
+  ).toBe(true);
+  expect(page2.NextToken).toBeUndefined();
+
+  for (const n of names) {
+    await client.send(new DeleteContainerCommand({ ContainerName: n }));
+    await client.send(new DeleteContainerCommand({ ContainerName: n }));
+  }
 });
 
 test("MediaStore container policy operations", async () => {

@@ -26,6 +26,7 @@ type StoredCustomActionType = {
   outputArtifactDetails: Record<string, unknown>;
   created: number;
   tags: Record<string, unknown>[];
+  region?: string;
 };
 
 type StoredWebhook = {
@@ -42,6 +43,12 @@ type StoredPipelineExecution = {
   status: string;
   startTime: number;
   lastUpdateTime: number;
+  statusSummary?: string;
+  artifactRevisions?: Record<string, unknown>[];
+  variables?: Record<string, unknown>[];
+  trigger?: Record<string, unknown>;
+  executionMode?: string;
+  executionType?: string;
 };
 
 type StoredJob = {
@@ -83,6 +90,32 @@ const asArray = (value: unknown): Record<string, unknown>[] =>
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; nextToken?: string } => {
+  const limit =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : undefined;
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(atob(nextToken), 10)
+      : 0;
+  const sliced =
+    limit !== undefined
+      ? items.slice(offset, offset + limit)
+      : items.slice(offset);
+  const nextOffset = offset + sliced.length;
+  return {
+    items: sliced,
+    ...(limit !== undefined && nextOffset < items.length
+      ? { nextToken: btoa(String(nextOffset)) }
+      : {}),
+  };
+};
+
+const terminalJobStates = new Set(["Succeeded", "Failed"]);
+
 const pipelineKey = (name: string): string => `pipeline:${name}`;
 
 const pipelineArn = (ctx: ServiceContext, name: string): string =>
@@ -101,6 +134,9 @@ const webhookArn = (ctx: ServiceContext, name: string): string =>
 
 const executionKey = (executionId: string): string =>
   `execution:${executionId}`;
+
+const pipelineVersionKey = (name: string, version: number): string =>
+  `pipelineVersion:${name}:${version}`;
 
 const jobKey = (jobId: string): string => `job:${jobId}`;
 
@@ -190,6 +226,7 @@ const CreatePipeline: OperationHandler = (input, ctx) => {
     tags: asArray(input["tags"]),
   };
   ctx.store.set(pipelineKey(name), pipeline);
+  ctx.store.set(pipelineVersionKey(name, pipeline.version), pipeline);
   return {
     pipeline: declarationView(pipeline),
     tags: pipeline.tags,
@@ -201,7 +238,25 @@ const GetPipeline: OperationHandler = (input, ctx) => {
   if (name === undefined) {
     throw awsError("ValidationException", "name is required.", 400);
   }
-  const pipeline = getPipelineOrThrow(name, ctx);
+  const current = getPipelineOrThrow(name, ctx);
+  const requestedVersion =
+    typeof input["version"] === "number" ? input["version"] : undefined;
+  const pipeline =
+    requestedVersion === undefined || requestedVersion === current.version
+      ? current
+      : (() => {
+          const historical = ctx.store.get<StoredPipeline>(
+            pipelineVersionKey(name, requestedVersion),
+          );
+          if (historical === undefined) {
+            throw awsError(
+              "PipelineVersionNotFoundException",
+              `Pipeline ${name} version ${requestedVersion} not found.`,
+              400,
+            );
+          }
+          return historical;
+        })();
   return {
     pipeline: declarationView(pipeline),
     metadata: {
@@ -213,7 +268,7 @@ const GetPipeline: OperationHandler = (input, ctx) => {
 };
 
 const ListPipelines: OperationHandler = (input, ctx) => {
-  const pipelines = ctx.store
+  const all = ctx.store
     .list<StoredPipeline>()
     .filter((entry) => entry.key.startsWith("pipeline:"))
     .map((entry) => entry.value)
@@ -222,7 +277,15 @@ const ListPipelines: OperationHandler = (input, ctx) => {
       const bn = stringOrUndefined(b.declaration["name"]) ?? "";
       return an < bn ? -1 : an > bn ? 1 : 0;
     });
-  return { pipelines: pipelines.map(summaryView) };
+  const { items, nextToken } = paginate(
+    all,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return {
+    pipelines: items.map(summaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const UpdatePipeline: OperationHandler = (input, ctx) => {
@@ -238,6 +301,7 @@ const UpdatePipeline: OperationHandler = (input, ctx) => {
     tags: existing.tags,
   };
   ctx.store.set(pipelineKey(name), pipeline);
+  ctx.store.set(pipelineVersionKey(name, pipeline.version), pipeline);
   return { pipeline: declarationView(pipeline) };
 };
 
@@ -266,6 +330,11 @@ const StartPipelineExecution: OperationHandler = (input, ctx) => {
     status: "InProgress",
     startTime: now,
     lastUpdateTime: now,
+    variables: asArray(input["variables"]),
+    trigger: { triggerType: "StartPipelineExecution", triggerDetail: "" },
+    executionMode:
+      stringOrUndefined(pipeline.declaration["executionMode"]) ?? "SUPERSEDED",
+    executionType: "STANDARD",
   };
   ctx.store.set(executionKey(executionId), execution);
   return { pipelineExecutionId: executionId };
@@ -279,6 +348,14 @@ const AcknowledgeJob: OperationHandler = (input, ctx) => {
   const job = ctx.store.get<StoredJob>(jobKey(jobId));
   if (job === undefined) {
     throw awsError("InvalidJobException", `Job ${jobId} not found.`, 400);
+  }
+  const nonce = stringOrUndefined(input["nonce"]);
+  if (nonce !== job.nonce) {
+    throw awsError(
+      "InvalidNonceException",
+      "The nonce supplied is not valid.",
+      400,
+    );
   }
   const updatedJob: StoredJob = { ...job, status: "InProgress" };
   ctx.store.set(jobKey(jobId), updatedJob);
@@ -295,6 +372,14 @@ const AcknowledgeThirdPartyJob: OperationHandler = (input, ctx) => {
     throw awsError(
       "InvalidJobException",
       `ThirdPartyJob ${jobId} not found.`,
+      400,
+    );
+  }
+  const nonce = stringOrUndefined(input["nonce"]);
+  if (nonce !== job.nonce) {
+    throw awsError(
+      "InvalidNonceException",
+      "The nonce supplied is not valid.",
       400,
     );
   }
@@ -323,6 +408,7 @@ const CreateCustomActionType: OperationHandler = (input, ctx) => {
     outputArtifactDetails: asRecord(input["outputArtifactDetails"]),
     created: nowSeconds(),
     tags: asArray(input["tags"]),
+    region: ctx.region,
   };
   ctx.store.set(key, cat);
   return {
@@ -478,6 +564,12 @@ const GetPipelineExecution: OperationHandler = (input, ctx) => {
       pipelineVersion: execution.pipelineVersion,
       pipelineExecutionId: execution.pipelineExecutionId,
       status: execution.status,
+      statusSummary: execution.statusSummary,
+      artifactRevisions: execution.artifactRevisions ?? [],
+      variables: execution.variables ?? [],
+      trigger: execution.trigger,
+      executionMode: execution.executionMode,
+      executionType: execution.executionType,
     },
   };
 };
@@ -555,12 +647,19 @@ const ListActionExecutions: OperationHandler = (input, ctx) => {
     throw awsError("ValidationException", "pipelineName is required.", 400);
   }
   getPipelineOrThrow(pName, ctx);
-  const allExecutions = ctx.store
+  const filter = asRecord(input["filter"] ?? {});
+  const execIdFilter = stringOrUndefined(filter["pipelineExecutionId"]);
+  let allExecutions = ctx.store
     .list<StoredPipelineExecution>()
     .filter((e) => e.key.startsWith("execution:"))
     .map((e) => e.value)
     .filter((e) => e.pipelineName === pName);
-  const actionExecutionDetails = allExecutions.map((exec) => ({
+  if (execIdFilter !== undefined) {
+    allExecutions = allExecutions.filter(
+      (e) => e.pipelineExecutionId === execIdFilter,
+    );
+  }
+  const details = allExecutions.map((exec) => ({
     pipelineExecutionId: exec.pipelineExecutionId,
     actionExecutionId: `ae-${exec.pipelineExecutionId}`,
     pipelineVersion: exec.pipelineVersion,
@@ -568,21 +667,41 @@ const ListActionExecutions: OperationHandler = (input, ctx) => {
     startTime: exec.startTime,
     lastUpdateTime: exec.lastUpdateTime,
   }));
-  return { actionExecutionDetails };
+  const { items, nextToken } = paginate(
+    details,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return {
+    actionExecutionDetails: items,
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const ListActionTypes: OperationHandler = (input, ctx) => {
   const ownerFilter = stringOrUndefined(input["actionOwnerFilter"]);
-  let cats = ctx.store
+  const regionFilter = stringOrUndefined(input["regionFilter"]);
+  let catEntries = ctx.store
     .list<StoredCustomActionType>()
     .filter((e) => e.key.startsWith("customActionType:"))
-    .map((e) => actionTypeView(e.value));
+    .map((e) => e.value);
   if (ownerFilter) {
-    cats = cats.filter(
-      (at) => stringOrUndefined(asRecord(at["id"])["owner"]) === ownerFilter,
+    catEntries = catEntries.filter(
+      (cat) => stringOrUndefined(asRecord(cat.id)["owner"]) === ownerFilter,
     );
   }
-  return { actionTypes: cats };
+  if (regionFilter !== undefined) {
+    catEntries = catEntries.filter((cat) => cat.region === regionFilter);
+  }
+  const { items, nextToken } = paginate(
+    catEntries,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return {
+    actionTypes: items.map(actionTypeView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const ListDeployActionExecutionTargets: OperationHandler = () => {
@@ -595,19 +714,32 @@ const ListPipelineExecutions: OperationHandler = (input, ctx) => {
     throw awsError("ValidationException", "pipelineName is required.", 400);
   }
   getPipelineOrThrow(pName, ctx);
-  const summaries = ctx.store
+  const filter = asRecord(input["filter"] ?? {});
+  const statusFilter = stringOrUndefined(filter["pipelineExecutionStatus"]);
+  let executions = ctx.store
     .list<StoredPipelineExecution>()
     .filter((e) => e.key.startsWith("execution:"))
     .map((e) => e.value)
     .filter((e) => e.pipelineName === pName)
-    .sort((a, b) => b.startTime - a.startTime)
-    .map((e) => ({
-      pipelineExecutionId: e.pipelineExecutionId,
-      status: e.status,
-      startTime: e.startTime,
-      lastUpdateTime: e.lastUpdateTime,
-    }));
-  return { pipelineExecutionSummaries: summaries };
+    .sort((a, b) => b.startTime - a.startTime);
+  if (statusFilter !== undefined) {
+    executions = executions.filter((e) => e.status === statusFilter);
+  }
+  const summaries = executions.map((e) => ({
+    pipelineExecutionId: e.pipelineExecutionId,
+    status: e.status,
+    startTime: e.startTime,
+    lastUpdateTime: e.lastUpdateTime,
+  }));
+  const { items, nextToken } = paginate(
+    summaries,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return {
+    pipelineExecutionSummaries: items,
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const ListRuleExecutions: OperationHandler = (input, ctx) => {
@@ -745,6 +877,13 @@ const PutJobFailureResult: OperationHandler = (input, ctx) => {
   if (job === undefined) {
     throw awsError("JobNotFoundException", `Job ${jobId} not found.`, 400);
   }
+  if (terminalJobStates.has(job.status)) {
+    throw awsError(
+      "InvalidJobStateException",
+      `Job ${jobId} is already in a terminal state.`,
+      400,
+    );
+  }
   ctx.store.set(jobKey(jobId), { ...job, status: "Failed" });
   return {};
 };
@@ -757,6 +896,13 @@ const PutJobSuccessResult: OperationHandler = (input, ctx) => {
   const job = ctx.store.get<StoredJob>(jobKey(jobId));
   if (job === undefined) {
     throw awsError("JobNotFoundException", `Job ${jobId} not found.`, 400);
+  }
+  if (terminalJobStates.has(job.status)) {
+    throw awsError(
+      "InvalidJobStateException",
+      `Job ${jobId} is already in a terminal state.`,
+      400,
+    );
   }
   ctx.store.set(jobKey(jobId), { ...job, status: "Succeeded" });
   return {};
@@ -775,6 +921,13 @@ const PutThirdPartyJobFailureResult: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  if (terminalJobStates.has(job.status)) {
+    throw awsError(
+      "InvalidJobStateException",
+      `ThirdPartyJob ${jobId} is already in a terminal state.`,
+      400,
+    );
+  }
   ctx.store.set(tpJobKey(jobId), { ...job, status: "Failed" });
   return {};
 };
@@ -789,6 +942,13 @@ const PutThirdPartyJobSuccessResult: OperationHandler = (input, ctx) => {
     throw awsError(
       "JobNotFoundException",
       `ThirdPartyJob ${jobId} not found.`,
+      400,
+    );
+  }
+  if (terminalJobStates.has(job.status)) {
+    throw awsError(
+      "InvalidJobStateException",
+      `ThirdPartyJob ${jobId} is already in a terminal state.`,
       400,
     );
   }

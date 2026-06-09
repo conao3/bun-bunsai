@@ -92,7 +92,7 @@ test("Elastic Beanstalk application and environment lifecycle round-trip", async
   );
   expect(createdEnv.EnvironmentName).toBe(environmentName);
   expect(createdEnv.ApplicationName).toBe(applicationName);
-  expect(createdEnv.Status).toBe("Ready");
+  expect(createdEnv.Status).toBe("Launching");
   expect(createdEnv.EnvironmentId).toBeDefined();
 
   const describedEnvs = await client.send(
@@ -145,7 +145,7 @@ test("application version CRUD", async () => {
   );
   expect(created.ApplicationVersion?.VersionLabel).toBe(versionLabel);
   expect(created.ApplicationVersion?.ApplicationName).toBe(applicationName);
-  expect(created.ApplicationVersion?.Status).toBe("Processed");
+  expect(created.ApplicationVersion?.Status).toBe("Processing");
 
   const described = await client.send(
     new DescribeApplicationVersionsCommand({
@@ -263,7 +263,7 @@ test("platform version lifecycle", async () => {
     }),
   );
   expect(created.PlatformSummary?.PlatformVersion).toBe("1.0.0");
-  expect(created.PlatformSummary?.PlatformStatus).toBe("Ready");
+  expect(created.PlatformSummary?.PlatformStatus).toBe("Creating");
 
   const platformArn = created.PlatformSummary?.PlatformArn;
   expect(platformArn).toBeDefined();
@@ -656,6 +656,180 @@ test("compose environments", async () => {
     }),
   );
   expect(composed.Environments?.length).toBe(2);
+
+  await client.send(
+    new DeleteApplicationCommand({
+      ApplicationName: applicationName,
+      TerminateEnvByForce: true,
+    }),
+  );
+});
+
+test("environment status lifecycle: Launching→Ready", async () => {
+  const client = eb();
+  const applicationName = "eb-e2e-lifecycle-app";
+  const environmentName = "eb-e2e-lifecycle-env";
+
+  await client.send(
+    new CreateApplicationCommand({ ApplicationName: applicationName }),
+  );
+
+  const created = await client.send(
+    new CreateEnvironmentCommand({
+      ApplicationName: applicationName,
+      EnvironmentName: environmentName,
+      SolutionStackName: "64bit Amazon Linux 2 v3.0.0 running Python 3.8",
+    }),
+  );
+  expect(created.Status).toBe("Launching");
+
+  const described = await client.send(
+    new DescribeEnvironmentsCommand({
+      ApplicationName: applicationName,
+      EnvironmentNames: [environmentName],
+    }),
+  );
+  expect(described.Environments?.[0]?.Status).toBe("Ready");
+
+  await client.send(
+    new DeleteApplicationCommand({
+      ApplicationName: applicationName,
+      TerminateEnvByForce: true,
+    }),
+  );
+});
+
+test("application version status lifecycle: Processing→Processed", async () => {
+  const client = eb();
+  const applicationName = "eb-e2e-ver-lifecycle-app";
+  const versionLabel = "v1.0.0-lifecycle";
+
+  await client.send(
+    new CreateApplicationCommand({ ApplicationName: applicationName }),
+  );
+
+  const created = await client.send(
+    new CreateApplicationVersionCommand({
+      ApplicationName: applicationName,
+      VersionLabel: versionLabel,
+    }),
+  );
+  expect(created.ApplicationVersion?.Status).toBe("Processing");
+
+  const described = await client.send(
+    new DescribeApplicationVersionsCommand({
+      ApplicationName: applicationName,
+      VersionLabels: [versionLabel],
+    }),
+  );
+  expect(described.ApplicationVersions?.[0]?.Status).toBe("Processed");
+
+  await client.send(
+    new DeleteApplicationCommand({
+      ApplicationName: applicationName,
+      TerminateEnvByForce: true,
+    }),
+  );
+});
+
+test("platform version status lifecycle: Creating→Ready", async () => {
+  const client = eb();
+
+  const created = await client.send(
+    new CreatePlatformVersionCommand({
+      PlatformName: "my-platform-lifecycle",
+      PlatformVersion: "2.0.0",
+      PlatformDefinitionBundle: {
+        S3Bucket: "my-bucket",
+        S3Key: "platform.zip",
+      },
+    }),
+  );
+  expect(created.PlatformSummary?.PlatformStatus).toBe("Creating");
+
+  const platformArn = created.PlatformSummary?.PlatformArn!;
+  const described = await client.send(
+    new DescribePlatformVersionCommand({ PlatformArn: platformArn }),
+  );
+  expect(described.PlatformDescription?.PlatformStatus).toBe("Ready");
+
+  await client.send(
+    new DeletePlatformVersionCommand({ PlatformArn: platformArn }),
+  );
+});
+
+test("CreateEnvironment rejects unknown VersionLabel", async () => {
+  const client = eb();
+  const applicationName = "eb-e2e-ver-validate-app";
+
+  await client.send(
+    new CreateApplicationCommand({ ApplicationName: applicationName }),
+  );
+
+  await expect(
+    client.send(
+      new CreateEnvironmentCommand({
+        ApplicationName: applicationName,
+        EnvironmentName: "eb-e2e-ver-validate-env",
+        VersionLabel: "nonexistent-version",
+        SolutionStackName: "64bit Amazon Linux 2 v3.0.0 running Python 3.8",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteApplicationCommand({
+      ApplicationName: applicationName,
+      TerminateEnvByForce: true,
+    }),
+  );
+});
+
+test("DescribePlatformVersion throws ResourceNotFoundException for unknown custom ARN", async () => {
+  const client = eb();
+  const customArn =
+    "arn:aws:elasticbeanstalk:us-east-1:123456789012:platform/no-such-platform/9.9.9";
+
+  await expect(
+    client.send(new DescribePlatformVersionCommand({ PlatformArn: customArn })),
+  ).rejects.toThrow();
+});
+
+test("pagination: DescribeEnvironments MaxRecords + NextToken", async () => {
+  const client = eb();
+  const applicationName = "eb-e2e-pagination-app";
+
+  await client.send(
+    new CreateApplicationCommand({ ApplicationName: applicationName }),
+  );
+  for (const name of ["env-a", "env-b", "env-c"]) {
+    await client.send(
+      new CreateEnvironmentCommand({
+        ApplicationName: applicationName,
+        EnvironmentName: name,
+        SolutionStackName: "64bit Amazon Linux 2 v3.0.0 running Python 3.8",
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new DescribeEnvironmentsCommand({
+      ApplicationName: applicationName,
+      MaxRecords: 2,
+    }),
+  );
+  expect(page1.Environments?.length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new DescribeEnvironmentsCommand({
+      ApplicationName: applicationName,
+      MaxRecords: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect(page2.Environments?.length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
 
   await client.send(
     new DeleteApplicationCommand({

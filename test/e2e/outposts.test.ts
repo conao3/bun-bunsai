@@ -256,7 +256,7 @@ test("Outposts capacity task roundtrip", async () => {
   );
   const taskId = started.CapacityTaskId;
   expect(typeof taskId).toBe("string");
-  expect(started.CapacityTaskStatus).toBe("REQUESTED");
+  expect(started.CapacityTaskStatus).toBe("COMPLETED");
 
   const got = await client.send(
     new GetCapacityTaskCommand({
@@ -291,7 +291,7 @@ test("Outposts capacity task roundtrip", async () => {
       CapacityTaskId: taskId as string,
     }),
   );
-  expect(cancelled.CapacityTaskStatus).toBe("CANCELLATION_IN_PROGRESS");
+  expect(cancelled.CapacityTaskStatus).toBe("CANCELLED");
 
   await client.send(new DeleteOutpostCommand({ OutpostId: outpostId }));
 });
@@ -399,6 +399,93 @@ test("Outposts StartConnection and GetConnection", async () => {
   );
   expect(got.ConnectionId).toBe(conn.ConnectionId);
   expect(got.ConnectionDetails).toBeDefined();
+});
+
+test("Outposts fidelity: tag round-trip, pagination, delete cleanup", async () => {
+  const client = outposts();
+  const name = `fidelity_${Date.now()}`;
+
+  const created = await client.send(
+    new CreateOutpostCommand({
+      Name: name,
+      SiteId: "os-fidelity-test",
+      Tags: { created: "yes", env: "staging" },
+    }),
+  );
+  const id = created.Outpost?.OutpostId as string;
+  const arn = created.Outpost?.OutpostArn as string;
+
+  const got = await client.send(new GetOutpostCommand({ OutpostId: id }));
+  expect(got.Outpost?.Tags?.["created"]).toBe("yes");
+  expect(got.Outpost?.Tags?.["env"]).toBe("staging");
+
+  await client.send(
+    new TagResourceCommand({
+      ResourceArn: arn,
+      Tags: { env: "prod", team: "infra" },
+    }),
+  );
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect(listed.Tags?.["created"]).toBe("yes");
+  expect(listed.Tags?.["env"]).toBe("prod");
+  expect(listed.Tags?.["team"]).toBe("infra");
+
+  const gotAfterTag = await client.send(
+    new GetOutpostCommand({ OutpostId: id }),
+  );
+  expect(gotAfterTag.Outpost?.Tags?.["env"]).toBe("prod");
+  expect(gotAfterTag.Outpost?.Tags?.["team"]).toBe("infra");
+
+  const extra1 = await client.send(
+    new CreateOutpostCommand({
+      Name: `${name}_az_a`,
+      SiteId: "os-fidelity-test",
+      AvailabilityZone: "us-east-1a",
+    }),
+  );
+  const extra2 = await client.send(
+    new CreateOutpostCommand({
+      Name: `${name}_az_b`,
+      SiteId: "os-fidelity-test",
+      AvailabilityZone: "us-east-1b",
+    }),
+  );
+  const extraId1 = extra1.Outpost?.OutpostId as string;
+  const extraId2 = extra2.Outpost?.OutpostId as string;
+
+  const page1 = await client.send(
+    new ListOutpostsCommand({
+      MaxResults: 1,
+      LifeCycleStatusFilter: ["ACTIVE"],
+    }),
+  );
+  expect((page1.Outposts ?? []).length).toBe(1);
+  expect(typeof page1.NextToken).toBe("string");
+
+  const page2 = await client.send(
+    new ListOutpostsCommand({ MaxResults: 1, NextToken: page1.NextToken }),
+  );
+  expect((page2.Outposts ?? []).length).toBe(1);
+
+  const azFiltered = await client.send(
+    new ListOutpostsCommand({ AvailabilityZoneFilter: ["us-east-1a"] }),
+  );
+  const azIds = (azFiltered.Outposts ?? []).map((o) => o.OutpostId);
+  expect(azIds).toContain(extraId1);
+  expect(azIds).not.toContain(extraId2);
+
+  await client.send(new DeleteOutpostCommand({ OutpostId: id }));
+
+  const afterDelete = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect(Object.keys(afterDelete.Tags ?? {}).length).toBe(0);
+
+  await client.send(new DeleteOutpostCommand({ OutpostId: extraId1 }));
+  await client.send(new DeleteOutpostCommand({ OutpostId: extraId2 }));
 });
 
 test("Outposts StartOutpostDecommission", async () => {

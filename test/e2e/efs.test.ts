@@ -520,3 +520,343 @@ test("EFS TagResource / UntagResource / ListTagsForResource", async () => {
     new DeleteFileSystemCommand({ FileSystemId: fileSystemId }),
   );
 });
+
+test("EFS DescribeFileSystems pagination via Marker/MaxItems", async () => {
+  const client = efs();
+  const prefix = `pg-fs-${Date.now()}`;
+  const ids: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const fs = await client.send(
+      new CreateFileSystemCommand({ CreationToken: `${prefix}-${i}` }),
+    );
+    ids.push(fs.FileSystemId as string);
+  }
+
+  const page1 = await client.send(
+    new DescribeFileSystemsCommand({ MaxItems: 2 }),
+  );
+  expect((page1.FileSystems ?? []).length).toBeGreaterThanOrEqual(2);
+  expect(page1.NextMarker).toBeDefined();
+
+  const page2 = await client.send(
+    new DescribeFileSystemsCommand({ Marker: page1.NextMarker }),
+  );
+  expect(page2.FileSystems).toBeDefined();
+  const page1Ids = (page1.FileSystems ?? []).map((fs) => fs.FileSystemId);
+  const page2Ids = (page2.FileSystems ?? []).map((fs) => fs.FileSystemId);
+  expect(page1Ids.some((id) => page2Ids.includes(id))).toBe(false);
+
+  for (const id of ids) {
+    await client.send(new DeleteFileSystemCommand({ FileSystemId: id }));
+  }
+});
+
+test("EFS DescribeMountTargets pagination via Marker/MaxItems", async () => {
+  const client = efs();
+  const token = `pg-mt-${Date.now()}`;
+  const fs = await client.send(
+    new CreateFileSystemCommand({ CreationToken: token }),
+  );
+  const fileSystemId = fs.FileSystemId as string;
+  const mtIds: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const mt = await client.send(
+      new CreateMountTargetCommand({
+        FileSystemId: fileSystemId,
+        SubnetId: `subnet-pg-${i}`,
+      }),
+    );
+    mtIds.push(mt.MountTargetId as string);
+  }
+
+  const page1 = await client.send(
+    new DescribeMountTargetsCommand({
+      FileSystemId: fileSystemId,
+      MaxItems: 2,
+    }),
+  );
+  expect((page1.MountTargets ?? []).length).toBe(2);
+  expect(page1.NextMarker).toBeDefined();
+
+  const page2 = await client.send(
+    new DescribeMountTargetsCommand({
+      FileSystemId: fileSystemId,
+      Marker: page1.NextMarker,
+    }),
+  );
+  expect((page2.MountTargets ?? []).length).toBe(1);
+  expect(page2.NextMarker).toBeUndefined();
+
+  for (const id of mtIds) {
+    await client.send(new DeleteMountTargetCommand({ MountTargetId: id }));
+  }
+  await client.send(
+    new DeleteFileSystemCommand({ FileSystemId: fileSystemId }),
+  );
+});
+
+test("EFS DescribeAccessPoints pagination via NextToken/MaxResults", async () => {
+  const client = efs();
+  const token = `pg-ap-${Date.now()}`;
+  const fs = await client.send(
+    new CreateFileSystemCommand({ CreationToken: token }),
+  );
+  const fileSystemId = fs.FileSystemId as string;
+  const apIds: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const ap = await client.send(
+      new CreateAccessPointCommand({
+        ClientToken: `${token}-ct-${i}`,
+        FileSystemId: fileSystemId,
+      }),
+    );
+    apIds.push(ap.AccessPointId as string);
+  }
+
+  const page1 = await client.send(
+    new DescribeAccessPointsCommand({
+      FileSystemId: fileSystemId,
+      MaxResults: 2,
+    }),
+  );
+  expect((page1.AccessPoints ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new DescribeAccessPointsCommand({
+      FileSystemId: fileSystemId,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.AccessPoints ?? []).length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  for (const id of apIds) {
+    await client.send(new DeleteAccessPointCommand({ AccessPointId: id }));
+  }
+  await client.send(
+    new DeleteFileSystemCommand({ FileSystemId: fileSystemId }),
+  );
+});
+
+test("EFS DescribeReplicationConfigurations pagination via NextToken/MaxResults", async () => {
+  const client = efs();
+  const fsIds: string[] = [];
+  const prefix = `pg-repl-${Date.now()}`;
+  for (let i = 0; i < 3; i++) {
+    const fs = await client.send(
+      new CreateFileSystemCommand({ CreationToken: `${prefix}-${i}` }),
+    );
+    fsIds.push(fs.FileSystemId as string);
+    await client.send(
+      new CreateReplicationConfigurationCommand({
+        SourceFileSystemId: fs.FileSystemId as string,
+        Destinations: [{ Region: "us-west-2" }],
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new DescribeReplicationConfigurationsCommand({ MaxResults: 2 }),
+  );
+  expect((page1.Replications ?? []).length).toBeGreaterThanOrEqual(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new DescribeReplicationConfigurationsCommand({
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect(page2.Replications).toBeDefined();
+
+  for (const id of fsIds) {
+    await client.send(
+      new DeleteReplicationConfigurationCommand({ SourceFileSystemId: id }),
+    );
+    await client.send(new DeleteFileSystemCommand({ FileSystemId: id }));
+  }
+});
+
+test("EFS LifeCycleState guard: available FS allows operations", async () => {
+  const client = efs();
+  const token = `lcs-${Date.now()}`;
+  const fs = await client.send(
+    new CreateFileSystemCommand({ CreationToken: token }),
+  );
+  const fileSystemId = fs.FileSystemId as string;
+
+  const mt = await client.send(
+    new CreateMountTargetCommand({
+      FileSystemId: fileSystemId,
+      SubnetId: "subnet-lcs",
+    }),
+  );
+  expect(mt.MountTargetId).toMatch(/^fsmt-/);
+
+  const ap = await client.send(
+    new CreateAccessPointCommand({
+      ClientToken: `lcs-ct-${Date.now()}`,
+      FileSystemId: fileSystemId,
+    }),
+  );
+  expect(ap.AccessPointId).toMatch(/^fsap-/);
+
+  const upd = await client.send(
+    new UpdateFileSystemCommand({
+      FileSystemId: fileSystemId,
+      ThroughputMode: "bursting",
+    }),
+  );
+  expect(upd.ThroughputMode).toBe("bursting");
+
+  await client.send(
+    new DeleteMountTargetCommand({ MountTargetId: mt.MountTargetId as string }),
+  );
+  await client.send(
+    new DeleteAccessPointCommand({ AccessPointId: ap.AccessPointId as string }),
+  );
+  await client.send(
+    new DeleteFileSystemCommand({ FileSystemId: fileSystemId }),
+  );
+});
+
+test("EFS CreateAccessPoint ClientToken idempotency", async () => {
+  const client = efs();
+  const token = `ct-idem-${Date.now()}`;
+  const fs = await client.send(
+    new CreateFileSystemCommand({ CreationToken: token }),
+  );
+  const fileSystemId = fs.FileSystemId as string;
+
+  const clientToken = `ct-${Date.now()}`;
+  const ap1 = await client.send(
+    new CreateAccessPointCommand({
+      ClientToken: clientToken,
+      FileSystemId: fileSystemId,
+      Tags: [{ Key: "Name", Value: "first" }],
+    }),
+  );
+  const ap2 = await client.send(
+    new CreateAccessPointCommand({
+      ClientToken: clientToken,
+      FileSystemId: fileSystemId,
+      Tags: [{ Key: "Name", Value: "second" }],
+    }),
+  );
+  expect(ap1.AccessPointId).toBe(ap2.AccessPointId);
+
+  await client.send(
+    new DeleteAccessPointCommand({
+      AccessPointId: ap1.AccessPointId as string,
+    }),
+  );
+  await client.send(
+    new DeleteFileSystemCommand({ FileSystemId: fileSystemId }),
+  );
+});
+
+test("EFS CreateFileSystem KmsKeyId persistence and AvailabilityZoneId", async () => {
+  const client = efs();
+  const token = `kms-az-${Date.now()}`;
+
+  const withKms = await client.send(
+    new CreateFileSystemCommand({
+      CreationToken: token,
+      Encrypted: true,
+      KmsKeyId: "arn:aws:kms:us-east-1:123456789012:key/test-key-id",
+      AvailabilityZoneName: "us-east-1a",
+    }),
+  );
+  expect(withKms.KmsKeyId).toBe(
+    "arn:aws:kms:us-east-1:123456789012:key/test-key-id",
+  );
+  expect(withKms.AvailabilityZoneId).toBeDefined();
+  expect(typeof withKms.AvailabilityZoneId).toBe("string");
+
+  await client.send(
+    new DeleteFileSystemCommand({
+      FileSystemId: withKms.FileSystemId as string,
+    }),
+  );
+
+  await expect(
+    client.send(
+      new CreateFileSystemCommand({
+        CreationToken: `${token}-nokms`,
+        KmsKeyId: "some-key",
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("EFS CreateFileSystem Backup param initializes backup policy", async () => {
+  const client = efs();
+
+  const withBackup = await client.send(
+    new CreateFileSystemCommand({
+      CreationToken: `backup-true-${Date.now()}`,
+      Backup: true,
+    }),
+  );
+  const backupEnabled = await client.send(
+    new DescribeBackupPolicyCommand({
+      FileSystemId: withBackup.FileSystemId as string,
+    }),
+  );
+  expect(backupEnabled.BackupPolicy?.Status).toBe("ENABLED");
+  await client.send(
+    new DeleteFileSystemCommand({
+      FileSystemId: withBackup.FileSystemId as string,
+    }),
+  );
+
+  const withoutBackup = await client.send(
+    new CreateFileSystemCommand({
+      CreationToken: `backup-false-${Date.now()}`,
+      Backup: false,
+    }),
+  );
+  const backupDisabled = await client.send(
+    new DescribeBackupPolicyCommand({
+      FileSystemId: withoutBackup.FileSystemId as string,
+    }),
+  );
+  expect(backupDisabled.BackupPolicy?.Status).toBe("DISABLED");
+  await client.send(
+    new DeleteFileSystemCommand({
+      FileSystemId: withoutBackup.FileSystemId as string,
+    }),
+  );
+});
+
+test("EFS UpdateFileSystem ProvisionedThroughputInMibps requires provisioned mode", async () => {
+  const client = efs();
+  const token = `prov-${Date.now()}`;
+  const fs = await client.send(
+    new CreateFileSystemCommand({ CreationToken: token }),
+  );
+  const fileSystemId = fs.FileSystemId as string;
+
+  await expect(
+    client.send(
+      new UpdateFileSystemCommand({
+        FileSystemId: fileSystemId,
+        ProvisionedThroughputInMibps: 100,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const updated = await client.send(
+    new UpdateFileSystemCommand({
+      FileSystemId: fileSystemId,
+      ThroughputMode: "provisioned",
+      ProvisionedThroughputInMibps: 100,
+    }),
+  );
+  expect(updated.ThroughputMode).toBe("provisioned");
+  expect(updated.ProvisionedThroughputInMibps).toBe(100);
+
+  await client.send(
+    new DeleteFileSystemCommand({ FileSystemId: fileSystemId }),
+  );
+});

@@ -22,9 +22,11 @@ type StoredFileSystem = {
   sizeInBytes: { Value: number; Timestamp: number };
   performanceMode: string;
   encrypted: boolean;
+  kmsKeyId: string | undefined;
   throughputMode: string;
   provisionedThroughputInMibps: number | undefined;
   availabilityZoneName: string | undefined;
+  availabilityZoneId: string | undefined;
   tags: { Key: string; Value: string }[];
   replicationOverwriteProtection: string;
 };
@@ -112,6 +114,54 @@ const hex = (length: number): string => {
   );
 };
 
+const azNameToZoneId = (azName: string): string => {
+  const letter = azName.slice(-1);
+  const num = letter.charCodeAt(0) - 96;
+  const region = azName.slice(0, -1);
+  const short = region
+    .split("-")
+    .map((p) => (/^\d+$/.test(p) ? p : p[0]))
+    .join("");
+  return `${short}-az${num}`;
+};
+
+const applyMarkerPagination = <T>(
+  items: T[],
+  marker: string | undefined,
+  maxItems: number | undefined,
+  getKey: (item: T) => string,
+): { items: T[]; nextMarker: string | undefined } => {
+  const limit = typeof maxItems === "number" && maxItems > 0 ? maxItems : 100;
+  let start = 0;
+  if (marker !== undefined) {
+    const idx = items.findIndex((item) => getKey(item) === marker);
+    if (idx !== -1) start = idx;
+  }
+  const page = items.slice(start, start + limit);
+  const nextMarker =
+    start + limit < items.length ? getKey(items[start + limit]) : undefined;
+  return { items: page, nextMarker };
+};
+
+const applyTokenPagination = <T>(
+  items: T[],
+  nextToken: string | undefined,
+  maxResults: number | undefined,
+  getKey: (item: T) => string,
+): { items: T[]; nextToken: string | undefined } => {
+  const limit =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  let start = 0;
+  if (nextToken !== undefined) {
+    const idx = items.findIndex((item) => getKey(item) === nextToken);
+    if (idx !== -1) start = idx;
+  }
+  const page = items.slice(start, start + limit);
+  const outToken =
+    start + limit < items.length ? getKey(items[start + limit]) : undefined;
+  return { items: page, nextToken: outToken };
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -143,9 +193,11 @@ const fileSystemView = (
   SizeInBytes: fileSystem.sizeInBytes,
   PerformanceMode: fileSystem.performanceMode,
   Encrypted: fileSystem.encrypted,
+  KmsKeyId: fileSystem.kmsKeyId,
   ThroughputMode: fileSystem.throughputMode,
   ProvisionedThroughputInMibps: fileSystem.provisionedThroughputInMibps,
   AvailabilityZoneName: fileSystem.availabilityZoneName,
+  AvailabilityZoneId: fileSystem.availabilityZoneId,
   Tags: fileSystem.tags,
   FileSystemProtection: {
     ReplicationOverwriteProtection: fileSystem.replicationOverwriteProtection,
@@ -209,6 +261,21 @@ const requireFileSystem = (
     );
   }
   return fileSystem;
+};
+
+const requireAvailableFileSystem = (
+  ctx: ServiceContext,
+  fileSystemId: string,
+): StoredFileSystem => {
+  const fs = requireFileSystem(ctx, fileSystemId);
+  if (fs.lifeCycleState !== "available") {
+    throw awsError(
+      "IncorrectFileSystemLifeCycleState",
+      `File system '${fileSystemId}' is not in the available state.`,
+      409,
+    );
+  }
+  return fs;
 };
 
 const requireMountTarget = (
@@ -309,6 +376,15 @@ const CreateFileSystem: OperationHandler = (input, ctx) => {
       409,
     );
   }
+  const kmsKeyId = stringOrUndefined(input["KmsKeyId"]);
+  if (kmsKeyId !== undefined && input["Encrypted"] !== true) {
+    throw awsError("BadRequest", "KmsKeyId requires Encrypted=true.", 400);
+  }
+  const availabilityZoneName = stringOrUndefined(input["AvailabilityZoneName"]);
+  const availabilityZoneId =
+    availabilityZoneName !== undefined
+      ? azNameToZoneId(availabilityZoneName)
+      : undefined;
   const fileSystemId = `fs-${hex(8)}`;
   const tags = tagsFromInput(input["Tags"]);
   const nameTag = tags.find((tag) => tag.Key === "Name");
@@ -325,20 +401,35 @@ const CreateFileSystem: OperationHandler = (input, ctx) => {
     performanceMode:
       stringOrUndefined(input["PerformanceMode"]) ?? "generalPurpose",
     encrypted: input["Encrypted"] === true,
+    kmsKeyId,
     throughputMode: stringOrUndefined(input["ThroughputMode"]) ?? "bursting",
     provisionedThroughputInMibps: undefined,
-    availabilityZoneName: stringOrUndefined(input["AvailabilityZoneName"]),
+    availabilityZoneName,
+    availabilityZoneId,
     tags,
     replicationOverwriteProtection: "ENABLED",
   };
   ctx.store.set(fileSystemKey(fileSystemId), fileSystem);
+  const backup = input["Backup"];
+  if (
+    backup === true ||
+    (backup === undefined && availabilityZoneName !== undefined)
+  ) {
+    ctx.store.set(backupKey(fileSystemId), {
+      fileSystemId,
+      status: "ENABLED",
+    } satisfies StoredBackupPolicy);
+  }
   return fileSystemView(fileSystem);
 };
 
 const DescribeFileSystems: OperationHandler = (input, ctx) => {
   const fileSystemId = stringOrUndefined(input["FileSystemId"]);
   const creationToken = stringOrUndefined(input["CreationToken"]);
-  const fileSystems = ctx.store
+  const marker = stringOrUndefined(input["Marker"]);
+  const maxItems =
+    typeof input["MaxItems"] === "number" ? input["MaxItems"] : undefined;
+  const filtered = ctx.store
     .list<StoredFileSystem>()
     .filter((entry) => entry.key.startsWith("fs/"))
     .map((entry) => entry.value)
@@ -349,7 +440,17 @@ const DescribeFileSystems: OperationHandler = (input, ctx) => {
         (creationToken === undefined ||
           fileSystem.creationToken === creationToken),
     );
-  return { FileSystems: fileSystems.map(fileSystemView) };
+  const { items, nextMarker } = applyMarkerPagination(
+    filtered,
+    marker,
+    maxItems,
+    (fs) => fs.fileSystemId,
+  );
+  return {
+    Marker: marker,
+    FileSystems: items.map(fileSystemView),
+    ...(nextMarker !== undefined ? { NextMarker: nextMarker } : {}),
+  };
 };
 
 const DeleteFileSystem: OperationHandler = (input, ctx) => {
@@ -381,12 +482,23 @@ const UpdateFileSystem: OperationHandler = (input, ctx) => {
   if (fileSystemId === undefined) {
     throw awsError("BadRequest", "FileSystemId is required.", 400);
   }
-  const fileSystem = requireFileSystem(ctx, fileSystemId);
+  const fileSystem = requireAvailableFileSystem(ctx, fileSystemId);
   const throughputMode = stringOrUndefined(input["ThroughputMode"]);
   const provisionedThroughputInMibps =
     typeof input["ProvisionedThroughputInMibps"] === "number"
       ? input["ProvisionedThroughputInMibps"]
       : undefined;
+  const effectiveThroughputMode = throughputMode ?? fileSystem.throughputMode;
+  if (
+    provisionedThroughputInMibps !== undefined &&
+    effectiveThroughputMode !== "provisioned"
+  ) {
+    throw awsError(
+      "BadRequest",
+      "ProvisionedThroughputInMibps requires ThroughputMode=provisioned.",
+      400,
+    );
+  }
   const updated: StoredFileSystem = {
     ...fileSystem,
     ...(throughputMode !== undefined ? { throughputMode } : {}),
@@ -492,7 +604,7 @@ const CreateMountTarget: OperationHandler = (input, ctx) => {
       400,
     );
   }
-  const fileSystem = requireFileSystem(ctx, fileSystemId);
+  const fileSystem = requireAvailableFileSystem(ctx, fileSystemId);
   const mountTargetId = `fsmt-${hex(8)}`;
   const mountTarget: StoredMountTarget = {
     ownerId: ctx.account,
@@ -516,18 +628,29 @@ const CreateMountTarget: OperationHandler = (input, ctx) => {
 const DescribeMountTargets: OperationHandler = (input, ctx) => {
   const fileSystemId = stringOrUndefined(input["FileSystemId"]);
   const mountTargetId = stringOrUndefined(input["MountTargetId"]);
-  const mountTargets = ctx.store
+  const marker = stringOrUndefined(input["Marker"]);
+  const maxItems =
+    typeof input["MaxItems"] === "number" ? input["MaxItems"] : undefined;
+  const filtered = ctx.store
     .list<StoredMountTarget>()
     .filter((entry) => entry.key.startsWith("mt/"))
     .map((entry) => entry.value)
     .filter(
-      (mountTarget) =>
-        (fileSystemId === undefined ||
-          mountTarget.fileSystemId === fileSystemId) &&
-        (mountTargetId === undefined ||
-          mountTarget.mountTargetId === mountTargetId),
+      (mt) =>
+        (fileSystemId === undefined || mt.fileSystemId === fileSystemId) &&
+        (mountTargetId === undefined || mt.mountTargetId === mountTargetId),
     );
-  return { MountTargets: mountTargets.map(mountTargetView) };
+  const { items, nextMarker } = applyMarkerPagination(
+    filtered,
+    marker,
+    maxItems,
+    (mt) => mt.mountTargetId,
+  );
+  return {
+    Marker: marker,
+    MountTargets: items.map(mountTargetView),
+    ...(nextMarker !== undefined ? { NextMarker: nextMarker } : {}),
+  };
 };
 
 const DeleteMountTarget: OperationHandler = (input, ctx) => {
@@ -606,7 +729,15 @@ const CreateAccessPoint: OperationHandler = (input, ctx) => {
   if (fileSystemId === undefined) {
     throw awsError("BadRequest", "FileSystemId is required.", 400);
   }
-  requireFileSystem(ctx, fileSystemId);
+  requireAvailableFileSystem(ctx, fileSystemId);
+  const clientToken = stringOrUndefined(input["ClientToken"]) ?? hex(16);
+  const existing = ctx.store
+    .list<StoredAccessPoint>()
+    .filter((entry) => entry.key.startsWith("ap/"))
+    .find((entry) => entry.value.clientToken === clientToken);
+  if (existing !== undefined) {
+    return accessPointView(existing.value);
+  }
   const accessPointId = `fsap-${hex(8)}`;
   const tags = tagsFromInput(input["Tags"]);
   const nameTag = tags.find((tag) => tag.Key === "Name");
@@ -620,7 +751,7 @@ const CreateAccessPoint: OperationHandler = (input, ctx) => {
       ? (input["RootDirectory"] as Record<string, unknown>)
       : undefined;
   const ap: StoredAccessPoint = {
-    clientToken: stringOrUndefined(input["ClientToken"]) ?? hex(16),
+    clientToken,
     name: nameTag?.Value,
     tags,
     accessPointId,
@@ -655,7 +786,10 @@ const DeleteAccessPoint: OperationHandler = (input, ctx) => {
 const DescribeAccessPoints: OperationHandler = (input, ctx) => {
   const accessPointId = stringOrUndefined(input["AccessPointId"]);
   const fileSystemId = stringOrUndefined(input["FileSystemId"]);
-  const accessPoints = ctx.store
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const filtered = ctx.store
     .list<StoredAccessPoint>()
     .filter((entry) => entry.key.startsWith("ap/"))
     .map((entry) => entry.value)
@@ -664,7 +798,16 @@ const DescribeAccessPoints: OperationHandler = (input, ctx) => {
         (accessPointId === undefined || ap.accessPointId === accessPointId) &&
         (fileSystemId === undefined || ap.fileSystemId === fileSystemId),
     );
-  return { AccessPoints: accessPoints.map(accessPointView) };
+  const { items, nextToken: outToken } = applyTokenPagination(
+    filtered,
+    nextToken,
+    maxResults,
+    (ap) => ap.accessPointId,
+  );
+  return {
+    AccessPoints: items.map(accessPointView),
+    ...(outToken !== undefined ? { NextToken: outToken } : {}),
+  };
 };
 
 const CreateReplicationConfiguration: OperationHandler = (input, ctx) => {
@@ -672,7 +815,7 @@ const CreateReplicationConfiguration: OperationHandler = (input, ctx) => {
   if (sourceFileSystemId === undefined) {
     throw awsError("BadRequest", "SourceFileSystemId is required.", 400);
   }
-  requireFileSystem(ctx, sourceFileSystemId);
+  requireAvailableFileSystem(ctx, sourceFileSystemId);
   const existing = ctx.store.get<StoredReplication>(
     replKey(sourceFileSystemId),
   );
@@ -718,7 +861,10 @@ const CreateReplicationConfiguration: OperationHandler = (input, ctx) => {
 
 const DescribeReplicationConfigurations: OperationHandler = (input, ctx) => {
   const fileSystemId = stringOrUndefined(input["FileSystemId"]);
-  const replications = ctx.store
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const filtered = ctx.store
     .list<StoredReplication>()
     .filter((entry) => entry.key.startsWith("repl/"))
     .map((entry) => entry.value)
@@ -728,7 +874,16 @@ const DescribeReplicationConfigurations: OperationHandler = (input, ctx) => {
         r.sourceFileSystemId === fileSystemId ||
         r.destinations.some((d) => d.fileSystemId === fileSystemId),
     );
-  return { Replications: replications.map(replicationView) };
+  const { items, nextToken: outToken } = applyTokenPagination(
+    filtered,
+    nextToken,
+    maxResults,
+    (r) => r.sourceFileSystemId,
+  );
+  return {
+    Replications: items.map(replicationView),
+    ...(outToken !== undefined ? { NextToken: outToken } : {}),
+  };
 };
 
 const DeleteReplicationConfiguration: OperationHandler = (input, ctx) => {

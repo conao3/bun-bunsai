@@ -411,3 +411,127 @@ test("Pinpoint tags lifecycle", async () => {
     new DeleteAppCommand({ ApplicationId: app.ApplicationResponse?.Id ?? "" }),
   );
 });
+
+test("Pinpoint tag split-brain: create-time tags visible via ListTagsForResource", async () => {
+  const client = pinpoint();
+  const app = await client.send(
+    new CreateAppCommand({
+      CreateApplicationRequest: {
+        Name: `tag-create-test-${Date.now()}`,
+        tags: { created: "yes" },
+      },
+    }),
+  );
+  const appId = app.ApplicationResponse?.Id ?? "";
+  const arn = app.ApplicationResponse?.Arn ?? "";
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect(listed.TagsModel?.tags?.created).toBe("yes");
+
+  await client.send(
+    new TagResourceCommand({
+      ResourceArn: arn,
+      TagsModel: { tags: { extra: "tag" } },
+    }),
+  );
+
+  const both = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect(both.TagsModel?.tags?.created).toBe("yes");
+  expect(both.TagsModel?.tags?.extra).toBe("tag");
+
+  await client.send(new DeleteAppCommand({ ApplicationId: appId }));
+
+  const afterDelete = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect(Object.keys(afterDelete.TagsModel?.tags ?? {})).toHaveLength(0);
+});
+
+test("Pinpoint GetCampaigns pagination", async () => {
+  const client = pinpoint();
+  const app = await client.send(
+    new CreateAppCommand({
+      CreateApplicationRequest: { Name: `paginate-test-${Date.now()}` },
+    }),
+  );
+  const appId = app.ApplicationResponse?.Id ?? "";
+
+  await client.send(
+    new CreateCampaignCommand({
+      ApplicationId: appId,
+      WriteCampaignRequest: { Name: "Campaign-A" },
+    }),
+  );
+  await client.send(
+    new CreateCampaignCommand({
+      ApplicationId: appId,
+      WriteCampaignRequest: { Name: "Campaign-B" },
+    }),
+  );
+
+  const page1 = await client.send(
+    new GetCampaignsCommand({ ApplicationId: appId, PageSize: "1" }),
+  );
+  expect(page1.CampaignsResponse?.Item).toHaveLength(1);
+  expect(page1.CampaignsResponse?.NextToken).toBeDefined();
+
+  const token = page1.CampaignsResponse?.NextToken ?? "";
+  const page2 = await client.send(
+    new GetCampaignsCommand({
+      ApplicationId: appId,
+      PageSize: "1",
+      Token: token,
+    }),
+  );
+  expect(page2.CampaignsResponse?.Item).toHaveLength(1);
+  expect(page2.CampaignsResponse?.NextToken).toBeUndefined();
+
+  const ids1 = page1.CampaignsResponse?.Item?.map((c) => c.Id) ?? [];
+  const ids2 = page2.CampaignsResponse?.Item?.map((c) => c.Id) ?? [];
+  expect(ids1[0]).not.toBe(ids2[0]);
+
+  await client.send(new DeleteAppCommand({ ApplicationId: appId }));
+});
+
+test("Pinpoint UpdateJourneyState rejects invalid state", async () => {
+  const client = pinpoint();
+  const app = await client.send(
+    new CreateAppCommand({
+      CreateApplicationRequest: { Name: `jrn-state-test-${Date.now()}` },
+    }),
+  );
+  const appId = app.ApplicationResponse?.Id ?? "";
+
+  const jrn = await client.send(
+    new CreateJourneyCommand({
+      ApplicationId: appId,
+      WriteJourneyRequest: { Name: "TestJourney" },
+    }),
+  );
+  const jrnId = jrn.JourneyResponse?.Id ?? "";
+
+  await expect(
+    client.send(
+      new UpdateJourneyStateCommand({
+        ApplicationId: appId,
+        JourneyId: jrnId,
+        JourneyStateRequest: { State: "INVALID_STATE" as never },
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const activated = await client.send(
+    new UpdateJourneyStateCommand({
+      ApplicationId: appId,
+      JourneyId: jrnId,
+      JourneyStateRequest: { State: "ACTIVE" },
+    }),
+  );
+  expect(activated.JourneyResponse?.State).toBe("ACTIVE");
+
+  await client.send(new DeleteAppCommand({ ApplicationId: appId }));
+});

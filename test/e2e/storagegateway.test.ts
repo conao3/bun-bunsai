@@ -564,3 +564,80 @@ test("storagegateway ListTapes pagination", async () => {
 
   await sgw.send(new DeleteGatewayCommand({ GatewayARN: gatewayArn }));
 });
+
+test("StorageGateway CreateNFSFileShare is idempotent with ClientToken and tags cleared on Delete", async () => {
+  const sgw = client();
+  const activated = await sgw.send(
+    new ActivateGatewayCommand({
+      ActivationKey: "act-key-idem",
+      GatewayName: "gw-idem",
+      GatewayTimezone: "GMT",
+      GatewayRegion: "us-east-1",
+      GatewayType: "FILE_S3",
+    }),
+  );
+  const gatewayArn = activated.GatewayARN as string;
+  const token = `idem-${Date.now()}`;
+
+  const first = await sgw.send(
+    new CreateNFSFileShareCommand({
+      ClientToken: token,
+      GatewayARN: gatewayArn,
+      LocationARN: "arn:aws:s3:::my-bucket",
+      Role: "arn:aws:iam::000000000000:role/sg",
+    }),
+  );
+  const second = await sgw.send(
+    new CreateNFSFileShareCommand({
+      ClientToken: token,
+      GatewayARN: gatewayArn,
+      LocationARN: "arn:aws:s3:::my-bucket",
+      Role: "arn:aws:iam::000000000000:role/sg",
+    }),
+  );
+  expect(second.FileShareARN).toBe(first.FileShareARN);
+
+  const shareArn = first.FileShareARN as string;
+  await sgw.send(
+    new AddTagsToResourceCommand({
+      ResourceARN: shareArn,
+      Tags: [{ Key: "env", Value: "test" }],
+    }),
+  );
+  const tagsBefore = await sgw.send(
+    new ListTagsForResourceCommand({ ResourceARN: shareArn }),
+  );
+  expect((tagsBefore.Tags ?? []).some((t) => t.Key === "env")).toBe(true);
+
+  await sgw.send(new DeleteFileShareCommand({ FileShareARN: shareArn }));
+  const tagsAfter = await sgw.send(
+    new ListTagsForResourceCommand({ ResourceARN: shareArn }),
+  );
+  expect((tagsAfter.Tags ?? []).length).toBe(0);
+});
+
+test("StorageGateway Start/Shutdown gateway enforce state guards", async () => {
+  const sgw = client();
+  const activated = await sgw.send(
+    new ActivateGatewayCommand({
+      ActivationKey: "act-key-state",
+      GatewayName: "gw-state",
+      GatewayTimezone: "GMT",
+      GatewayRegion: "us-east-1",
+      GatewayType: "FILE_S3",
+    }),
+  );
+  const arn = activated.GatewayARN as string;
+
+  await expect(
+    sgw.send(new StartGatewayCommand({ GatewayARN: arn })),
+  ).rejects.toThrow(/SHUTDOWN/);
+
+  await sgw.send(new ShutdownGatewayCommand({ GatewayARN: arn }));
+
+  await expect(
+    sgw.send(new ShutdownGatewayCommand({ GatewayARN: arn })),
+  ).rejects.toThrow(/RUNNING/);
+
+  await sgw.send(new StartGatewayCommand({ GatewayARN: arn }));
+});

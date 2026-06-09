@@ -74,6 +74,7 @@ type StoredFileShare = {
   CacheAttributes: Record<string, unknown> | undefined;
   NotificationPolicy: string | undefined;
   OplocksEnabled: boolean | undefined;
+  ClientToken: string | undefined;
 };
 
 type StoredTapePool = {
@@ -390,12 +391,20 @@ const DeleteGateway: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "GatewayARN");
   const gateway = requireGateway(ctx, arn);
   ctx.store.delete(gateway.GatewayId);
+  ctx.store.delete(tagKey(arn));
   return { GatewayARN: gateway.GatewayARN };
 };
 
 const StartGateway: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "GatewayARN");
   const gateway = requireGateway(ctx, arn);
+  if (gateway.GatewayState !== "SHUTDOWN") {
+    throw awsError(
+      "InvalidGatewayRequestException",
+      `Gateway ${arn} is not SHUTDOWN (current state: ${gateway.GatewayState}).`,
+      400,
+    );
+  }
   ctx.store.set(gateway.GatewayId, { ...gateway, GatewayState: "RUNNING" });
   return { GatewayARN: gateway.GatewayARN };
 };
@@ -403,6 +412,13 @@ const StartGateway: OperationHandler = (input, ctx) => {
 const ShutdownGateway: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "GatewayARN");
   const gateway = requireGateway(ctx, arn);
+  if (gateway.GatewayState !== "RUNNING") {
+    throw awsError(
+      "InvalidGatewayRequestException",
+      `Gateway ${arn} is not RUNNING (current state: ${gateway.GatewayState}).`,
+      400,
+    );
+  }
   ctx.store.set(gateway.GatewayId, {
     ...gateway,
     GatewayState: "SHUTDOWN",
@@ -1012,6 +1028,18 @@ const CreateNFSFileShare: OperationHandler = (input, ctx) => {
   requireGateway(ctx, gatewayArn);
   const locationArn = requireString(input, "LocationARN");
   const role = requireString(input, "Role");
+  const clientToken = stringOrUndefined(input["ClientToken"]);
+  if (clientToken !== undefined) {
+    const existing = ctx.store
+      .list<StoredFileShare>()
+      .filter((entry) => entry.key.startsWith("fs:"))
+      .map((entry) => entry.value)
+      .find(
+        (share) =>
+          share.FileShareType === "NFS" && share.ClientToken === clientToken,
+      );
+    if (existing !== undefined) return { FileShareARN: existing.FileShareARN };
+  }
   const shareId = hex12();
   const arn = makeFileShareArn(ctx, shareId);
   const share: StoredFileShare = {
@@ -1041,6 +1069,7 @@ const CreateNFSFileShare: OperationHandler = (input, ctx) => {
     CacheAttributes: recordOrUndefined(input["CacheAttributes"]),
     NotificationPolicy: stringOrUndefined(input["NotificationPolicy"]),
     OplocksEnabled: undefined,
+    ClientToken: clientToken,
   };
   ctx.store.set(fileShareKey(arn), share);
   return { FileShareARN: arn };
@@ -1051,6 +1080,18 @@ const CreateSMBFileShare: OperationHandler = (input, ctx) => {
   requireGateway(ctx, gatewayArn);
   const locationArn = requireString(input, "LocationARN");
   const role = requireString(input, "Role");
+  const clientToken = stringOrUndefined(input["ClientToken"]);
+  if (clientToken !== undefined) {
+    const existing = ctx.store
+      .list<StoredFileShare>()
+      .filter((entry) => entry.key.startsWith("fs:"))
+      .map((entry) => entry.value)
+      .find(
+        (share) =>
+          share.FileShareType === "SMB" && share.ClientToken === clientToken,
+      );
+    if (existing !== undefined) return { FileShareARN: existing.FileShareARN };
+  }
   const shareId = hex12();
   const arn = makeFileShareArn(ctx, shareId);
   const share: StoredFileShare = {
@@ -1080,6 +1121,7 @@ const CreateSMBFileShare: OperationHandler = (input, ctx) => {
     CacheAttributes: recordOrUndefined(input["CacheAttributes"]),
     NotificationPolicy: stringOrUndefined(input["NotificationPolicy"]),
     OplocksEnabled: boolOrFalse(input["OplocksEnabled"]),
+    ClientToken: clientToken,
   };
   ctx.store.set(fileShareKey(arn), share);
   return { FileShareARN: arn };
@@ -1181,6 +1223,7 @@ const DeleteFileShare: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "FileShareARN");
   const share = requireFileShare(ctx, arn);
   ctx.store.delete(fileShareKey(arn));
+  ctx.store.delete(tagKey(arn));
   return { FileShareARN: share.FileShareARN };
 };
 

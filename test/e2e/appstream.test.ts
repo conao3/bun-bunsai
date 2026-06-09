@@ -618,15 +618,9 @@ test("AppStream multi-account fleet isolation", async () => {
 test("AppStream DescribeImages pagination with MaxResults and NextToken", async () => {
   const client = appstream();
 
-  await client.send(
-    new CreateImportedImageCommand({ Name: "e2e-img-1" }),
-  );
-  await client.send(
-    new CreateImportedImageCommand({ Name: "e2e-img-2" }),
-  );
-  await client.send(
-    new CreateImportedImageCommand({ Name: "e2e-img-3" }),
-  );
+  await client.send(new CreateImportedImageCommand({ Name: "e2e-img-1" }));
+  await client.send(new CreateImportedImageCommand({ Name: "e2e-img-2" }));
+  await client.send(new CreateImportedImageCommand({ Name: "e2e-img-3" }));
 
   const page1 = await client.send(
     new DescribeImagesCommand({

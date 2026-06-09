@@ -33,6 +33,7 @@ type StoredSubnetGroup = {
 type StoredParameterGroup = {
   ParameterGroupName: string;
   Description: string | undefined;
+  Parameters: Record<string, string>;
 };
 
 type StoredTags = Record<string, string>;
@@ -100,6 +101,36 @@ const requireParameterGroup = (
   return pg;
 };
 
+const encodeNextToken = (offset: number): string => btoa(String(offset));
+
+const decodeNextToken = (token: string): number => {
+  try {
+    const n = Number(atob(token));
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? decodeNextToken(nextToken)
+      : 0;
+  const limit =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : items.length;
+  const page = items.slice(offset, offset + limit);
+  const next =
+    offset + limit < items.length ? encodeNextToken(offset + limit) : undefined;
+  return { items: page, nextToken: next };
+};
+
 const staticParameters = [
   {
     ParameterName: "query-ttl-millis",
@@ -157,19 +188,24 @@ const CreateCluster: OperationHandler = (input, ctx) => {
     ParameterGroupName: stringOrUndefined(input["ParameterGroupName"]),
   };
   ctx.store.set(clusterKey(name), cluster);
-  return { Cluster: cluster };
+  return { Cluster: { ...cluster, Status: "creating" } };
 };
 
 const DescribeClusters: OperationHandler = (input, ctx) => {
   const names = stringList(input["ClusterNames"]);
-  const clusters = ctx.store
+  const all = ctx.store
     .list<StoredCluster>()
     .filter((entry) => entry.key.startsWith("cluster/"))
     .map((entry) => entry.value)
     .filter(
       (cluster) => names.length === 0 || names.includes(cluster.ClusterName),
     );
-  return { Clusters: clusters };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Clusters: items, NextToken: nextToken };
 };
 
 const DeleteCluster: OperationHandler = (input, ctx) => {
@@ -206,7 +242,7 @@ const IncreaseReplicationFactor: OperationHandler = (input, ctx) => {
     ActiveNodes: newFactor,
   };
   ctx.store.set(clusterKey(name), updated);
-  return { Cluster: updated };
+  return { Cluster: { ...updated, Status: "modifying" } };
 };
 
 const DecreaseReplicationFactor: OperationHandler = (input, ctx) => {
@@ -222,7 +258,7 @@ const DecreaseReplicationFactor: OperationHandler = (input, ctx) => {
     ActiveNodes: newFactor,
   };
   ctx.store.set(clusterKey(name), updated);
-  return { Cluster: updated };
+  return { Cluster: { ...updated, Status: "modifying" } };
 };
 
 const RebootNode: OperationHandler = (input, ctx) => {
@@ -254,14 +290,19 @@ const CreateSubnetGroup: OperationHandler = (input, ctx) => {
 
 const DescribeSubnetGroups: OperationHandler = (input, ctx) => {
   const names = stringList(input["SubnetGroupNames"]);
-  const subnetGroups = ctx.store
+  const all = ctx.store
     .list<StoredSubnetGroup>()
     .filter((entry) => entry.key.startsWith("subnetgroup/"))
     .map((entry) => entry.value)
     .filter(
       (group) => names.length === 0 || names.includes(group.SubnetGroupName),
     );
-  return { SubnetGroups: subnetGroups };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { SubnetGroups: items, NextToken: nextToken };
 };
 
 const UpdateSubnetGroup: OperationHandler = (input, ctx) => {
@@ -302,6 +343,7 @@ const CreateParameterGroup: OperationHandler = (input, ctx) => {
   const pg: StoredParameterGroup = {
     ParameterGroupName: name,
     Description: stringOrUndefined(input["Description"]),
+    Parameters: {},
   };
   ctx.store.set(paramGroupKey(name), pg);
   return { ParameterGroup: pg };
@@ -310,7 +352,22 @@ const CreateParameterGroup: OperationHandler = (input, ctx) => {
 const UpdateParameterGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ParameterGroupName");
   const pg = requireParameterGroup(ctx, name);
-  return { ParameterGroup: pg };
+  const nameValues = Array.isArray(input["ParameterNameValues"])
+    ? (input["ParameterNameValues"] as {
+        ParameterName?: unknown;
+        ParameterValue?: unknown;
+      }[])
+    : [];
+  const updatedParams: Record<string, string> = { ...pg.Parameters };
+  for (const nv of nameValues) {
+    if (typeof nv.ParameterName === "string") {
+      updatedParams[nv.ParameterName] =
+        typeof nv.ParameterValue === "string" ? nv.ParameterValue : "";
+    }
+  }
+  const updated: StoredParameterGroup = { ...pg, Parameters: updatedParams };
+  ctx.store.set(paramGroupKey(name), updated);
+  return { ParameterGroup: updated };
 };
 
 const DeleteParameterGroup: OperationHandler = (input, ctx) => {
@@ -322,20 +379,37 @@ const DeleteParameterGroup: OperationHandler = (input, ctx) => {
 
 const DescribeParameterGroups: OperationHandler = (input, ctx) => {
   const names = stringList(input["ParameterGroupNames"]);
-  const pgs = ctx.store
+  const all = ctx.store
     .list<StoredParameterGroup>()
     .filter((entry) => entry.key.startsWith("paramgroup/"))
     .map((entry) => entry.value)
     .filter(
       (pg) => names.length === 0 || names.includes(pg.ParameterGroupName),
     );
-  return { ParameterGroups: pgs };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { ParameterGroups: items, NextToken: nextToken };
 };
 
 const DescribeParameters: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ParameterGroupName");
-  requireParameterGroup(ctx, name);
-  return { Parameters: staticParameters };
+  const pg = requireParameterGroup(ctx, name);
+  const params = staticParameters.map((p) => {
+    const override = pg.Parameters[p.ParameterName];
+    if (override !== undefined) {
+      return {
+        ...p,
+        ParameterValue: override,
+        ParameterType: "USER",
+        Source: "user",
+      };
+    }
+    return p;
+  });
+  return { Parameters: params };
 };
 
 const DescribeDefaultParameters: OperationHandler = (_input, _ctx) => {

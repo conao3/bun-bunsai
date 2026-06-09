@@ -14,6 +14,15 @@ const groupPrefix = "group:" as const;
 const taskPrefix = "task:" as const;
 const accountKey = "account-settings" as const;
 
+type StoredGroupingStatusItem = {
+  ResourceArn: string;
+  Action: "GROUP" | "UNGROUP";
+  Status: "SUCCESS" | "FAILED" | "IN_PROGRESS" | "SKIPPED";
+  ErrorMessage: string | undefined;
+  ErrorCode: string | undefined;
+  UpdatedAt: number;
+};
+
 type StoredGroup = {
   Name: string;
   GroupArn: string;
@@ -24,7 +33,9 @@ type StoredGroup = {
   ResourceQuery: Record<string, unknown> | undefined;
   Tags: Record<string, string>;
   GroupConfiguration: Record<string, unknown> | undefined;
+  GroupConfigurationStatus: string;
   ResourceArns: string[];
+  GroupingStatuses: StoredGroupingStatusItem[];
 };
 
 type StoredTagSyncTask = {
@@ -145,6 +156,90 @@ const taskView = (task: StoredTagSyncTask): Record<string, unknown> => ({
   CreatedAt: task.CreatedAt,
 });
 
+const paginate = <T>(
+  items: T[],
+  max: number,
+  rawToken: unknown,
+): { page: T[]; nextToken: string | undefined } => {
+  const offset =
+    typeof rawToken === "string" && rawToken !== ""
+      ? parseInt(atob(rawToken), 10)
+      : 0;
+  const page = items.slice(offset, offset + max);
+  const nextToken =
+    offset + max < items.length ? btoa(String(offset + max)) : undefined;
+  return { page, nextToken };
+};
+
+const filterValues = (raw: unknown): string[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((v): v is string => typeof v === "string");
+};
+
+const asFilterList = (
+  raw: unknown,
+): Array<{ Name: string; Values: string[] }> => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(
+      (item): item is Record<string, unknown> => asRecord(item) !== undefined,
+    )
+    .map((item) => ({
+      Name: stringOrUndefined(item["Name"]) ?? "",
+      Values: filterValues(item["Values"]),
+    }))
+    .filter((f) => f.Name !== "");
+};
+
+const groupMatchesFilters = (
+  group: StoredGroup,
+  filters: Array<{ Name: string; Values: string[] }>,
+): boolean => {
+  for (const filter of filters) {
+    if (filter.Values.length === 0) continue;
+    if (filter.Name === "owner") {
+      if (!filter.Values.some((v) => group.Owner === v)) return false;
+    } else if (filter.Name === "display-name") {
+      if (!filter.Values.some((v) => group.DisplayName === v)) return false;
+    } else if (filter.Name === "criticality") {
+      if (!filter.Values.some((v) => String(group.Criticality ?? "") === v))
+        return false;
+    } else if (filter.Name === "resource-type") {
+      const rq = group.ResourceQuery;
+      if (rq === undefined) return false;
+      const queryStr = stringOrUndefined(rq["Query"]);
+      if (queryStr === undefined) return false;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(queryStr);
+      } catch {
+        return false;
+      }
+      const parsedRec = asRecord(parsed);
+      if (parsedRec === undefined) return false;
+      const typeFilters = filterValues(parsedRec["ResourceTypeFilters"]);
+      if (
+        !typeFilters.includes("AWS::AllSupported") &&
+        !filter.Values.some((v) => typeFilters.includes(v))
+      )
+        return false;
+    } else if (filter.Name === "configuration-type") {
+      const cfg = group.GroupConfiguration;
+      if (cfg === undefined) return false;
+      const cfgItems = Array.isArray(cfg["Configuration"])
+        ? (cfg["Configuration"] as unknown[])
+        : [];
+      const cfgTypes = cfgItems
+        .map((item) => asRecord(item))
+        .filter((r): r is Record<string, unknown> => r !== undefined)
+        .map((r) => stringOrUndefined(r["Type"]))
+        .filter((t): t is string => t !== undefined);
+      if (!filter.Values.some((v) => cfgTypes.includes(v))) return false;
+    }
+  }
+  return true;
+};
+
 const CreateGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   if (ctx.store.get<StoredGroup>(groupKey(name)) !== undefined) {
@@ -164,7 +259,9 @@ const CreateGroup: OperationHandler = (input, ctx) => {
     ResourceQuery: asRecord(input["ResourceQuery"]),
     Tags: stringMapFrom(input["Tags"]),
     GroupConfiguration: undefined,
+    GroupConfigurationStatus: "UPDATE_COMPLETE",
     ResourceArns: [],
+    GroupingStatuses: [],
   };
   ctx.store.set(groupKey(name), group);
   return {
@@ -186,18 +283,25 @@ const ListGroups: OperationHandler = (input, ctx) => {
     typeof input["MaxResults"] === "number"
       ? (input["MaxResults"] as number)
       : 50;
-  const groups = ctx.store
+  const filters = asFilterList(input["Filters"]);
+  const allGroups = ctx.store
     .list<StoredGroup>()
     .filter((entry) => entry.key.startsWith(groupPrefix))
     .map((entry) => entry.value)
-    .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0))
-    .slice(0, max);
+    .filter((group) => groupMatchesFilters(group, filters))
+    .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
+  const { page: groups, nextToken } = paginate(
+    allGroups,
+    max,
+    input["NextToken"],
+  );
   return {
     GroupIdentifiers: groups.map((group) => ({
       GroupName: group.Name,
       GroupArn: group.GroupArn,
     })),
     Groups: groups.map(groupView),
+    NextToken: nextToken,
   };
 };
 
@@ -259,7 +363,7 @@ const GetGroupConfiguration: OperationHandler = (input, ctx) => {
   return {
     GroupConfiguration: {
       Configuration: cfg?.["Configuration"] ?? [],
-      Status: "UPDATE_COMPLETE",
+      Status: group.GroupConfigurationStatus,
       FailureReason: undefined,
     },
   };
@@ -271,6 +375,7 @@ const PutGroupConfiguration: OperationHandler = (input, ctx) => {
   const group: StoredGroup = {
     ...existing,
     GroupConfiguration: { Configuration: input["Configuration"] ?? [] },
+    GroupConfigurationStatus: "UPDATE_COMPLETE",
   };
   ctx.store.set(groupKey(name), group);
   return {};
@@ -285,10 +390,20 @@ const GroupResources: OperationHandler = (input, ctx) => {
       )
     : [];
   const current = new Set(existing.ResourceArns);
+  const now = Math.floor(Date.now() / 1000);
+  const newStatuses: StoredGroupingStatusItem[] = arns.map((arn) => ({
+    ResourceArn: arn,
+    Action: "GROUP" as const,
+    Status: "SUCCESS" as const,
+    ErrorMessage: undefined,
+    ErrorCode: undefined,
+    UpdatedAt: now,
+  }));
   for (const arn of arns) current.add(arn);
   const group: StoredGroup = {
     ...existing,
     ResourceArns: Array.from(current),
+    GroupingStatuses: [...existing.GroupingStatuses, ...newStatuses],
   };
   ctx.store.set(groupKey(name), group);
   return { Succeeded: arns, Failed: [], Pending: [] };
@@ -303,9 +418,19 @@ const UngroupResources: OperationHandler = (input, ctx) => {
       )
     : [];
   const toRemove = new Set(arns);
+  const now = Math.floor(Date.now() / 1000);
+  const newStatuses: StoredGroupingStatusItem[] = arns.map((arn) => ({
+    ResourceArn: arn,
+    Action: "UNGROUP" as const,
+    Status: "SUCCESS" as const,
+    ErrorMessage: undefined,
+    ErrorCode: undefined,
+    UpdatedAt: now,
+  }));
   const group: StoredGroup = {
     ...existing,
     ResourceArns: existing.ResourceArns.filter((a) => !toRemove.has(a)),
+    GroupingStatuses: [...existing.GroupingStatuses, ...newStatuses],
   };
   ctx.store.set(groupKey(name), group);
   return { Succeeded: arns, Failed: [], Pending: [] };
@@ -314,36 +439,138 @@ const UngroupResources: OperationHandler = (input, ctx) => {
 const ListGroupResources: OperationHandler = (input, ctx) => {
   const name = groupNameOf(input);
   const group = requireGroup(ctx, name);
-  const identifiers = group.ResourceArns.map((arn) => ({
+  const max =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 50;
+  const typeFilters = asFilterList(input["Filters"])
+    .filter((f) => f.Name === "resource-type")
+    .flatMap((f) => f.Values);
+  const filtered =
+    typeFilters.length === 0
+      ? group.ResourceArns
+      : group.ResourceArns.filter((arn) => {
+          const parts = arn.split(":");
+          if (parts.length < 6) return true;
+          const svc = parts[2] ?? "";
+          const resourcePart = parts[5] ?? "";
+          const slash = resourcePart.indexOf("/");
+          const resourceType =
+            slash === -1 ? resourcePart : resourcePart.slice(0, slash);
+          const awsType = `AWS::${svc.charAt(0).toUpperCase()}${svc.slice(1)}::${resourceType.charAt(0).toUpperCase()}${resourceType.slice(1)}`;
+          return typeFilters.some(
+            (t) => t === "AWS::AllSupported" || t === awsType,
+          );
+        });
+  const { page: pageArns, nextToken } = paginate(
+    filtered,
+    max,
+    input["NextToken"],
+  );
+  const identifiers = pageArns.map((arn) => ({
     ResourceArn: arn,
     ResourceType: undefined,
   }));
-  const resources = group.ResourceArns.map((arn) => ({
+  const resources = pageArns.map((arn) => ({
     Identifier: { ResourceArn: arn, ResourceType: undefined },
     Status: undefined,
   }));
   return {
     Resources: resources,
     ResourceIdentifiers: identifiers,
-    NextToken: undefined,
+    NextToken: nextToken,
     QueryErrors: [],
   };
 };
 
 const ListGroupingStatuses: OperationHandler = (input, ctx) => {
   const name = groupNameOf(input);
-  requireGroup(ctx, name);
+  const group = requireGroup(ctx, name);
+  const max =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 50;
+  const filters = asFilterList(input["Filters"]);
+  const filtered = group.GroupingStatuses.filter((item) => {
+    for (const filter of filters) {
+      if (filter.Values.length === 0) continue;
+      if (filter.Name === "status") {
+        if (!filter.Values.includes(item.Status)) return false;
+      } else if (filter.Name === "resource-arn") {
+        if (!filter.Values.includes(item.ResourceArn)) return false;
+      }
+    }
+    return true;
+  });
+  const { page, nextToken } = paginate(filtered, max, input["NextToken"]);
   return {
     Group: stringOrUndefined(input["Group"]) ?? name,
-    GroupingStatuses: [],
-    NextToken: undefined,
+    GroupingStatuses: page.map((item) => ({
+      ResourceArn: item.ResourceArn,
+      Action: item.Action,
+      Status: item.Status,
+      ErrorMessage: item.ErrorMessage,
+      ErrorCode: item.ErrorCode,
+      UpdatedAt: item.UpdatedAt,
+    })),
+    NextToken: nextToken,
   };
 };
 
-const SearchResources: OperationHandler = () => {
+const SearchResources: OperationHandler = (input, ctx) => {
+  const rq = asRecord(input["ResourceQuery"]);
+  const max =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 50;
+  const allArns = Array.from(
+    new Set(
+      ctx.store
+        .list<StoredGroup>()
+        .filter((entry) => entry.key.startsWith(groupPrefix))
+        .flatMap((entry) => entry.value.ResourceArns),
+    ),
+  ).sort();
+  let candidates = allArns;
+  if (rq !== undefined) {
+    const queryType = stringOrUndefined(rq["Type"]);
+    const queryStr = stringOrUndefined(rq["Query"]);
+    if (queryType === "TAG_FILTERS_1_0" && queryStr !== undefined) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(queryStr);
+      } catch {
+        parsed = undefined;
+      }
+      const parsedRec = asRecord(parsed);
+      if (parsedRec !== undefined) {
+        const typeFilters = filterValues(parsedRec["ResourceTypeFilters"]);
+        if (
+          typeFilters.length > 0 &&
+          !typeFilters.includes("AWS::AllSupported")
+        ) {
+          candidates = candidates.filter((arn) => {
+            const parts = arn.split(":");
+            if (parts.length < 6) return true;
+            const svc = parts[2] ?? "";
+            const resourcePart = parts[5] ?? "";
+            const slash = resourcePart.indexOf("/");
+            const resourceType =
+              slash === -1 ? resourcePart : resourcePart.slice(0, slash);
+            const awsType = `AWS::${svc.charAt(0).toUpperCase()}${svc.slice(1)}::${resourceType.charAt(0).toUpperCase()}${resourceType.slice(1)}`;
+            return typeFilters.includes(awsType);
+          });
+        }
+      }
+    }
+  }
+  const { page, nextToken } = paginate(candidates, max, input["NextToken"]);
   return {
-    ResourceIdentifiers: [],
-    NextToken: undefined,
+    ResourceIdentifiers: page.map((arn) => ({
+      ResourceArn: arn,
+      ResourceType: undefined,
+    })),
+    NextToken: nextToken,
     QueryErrors: [],
   };
 };
@@ -455,12 +682,35 @@ const GetTagSyncTask: OperationHandler = (input, ctx) => {
   return taskView(task);
 };
 
-const ListTagSyncTasks: OperationHandler = (_input, ctx) => {
-  const tasks = ctx.store
+const ListTagSyncTasks: OperationHandler = (input, ctx) => {
+  const max =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 50;
+  const rawFilters = Array.isArray(input["Filters"]) ? input["Filters"] : [];
+  const groupFilters = rawFilters
+    .filter((f): f is Record<string, unknown> => asRecord(f) !== undefined)
+    .map((f) => ({
+      GroupArn: stringOrUndefined(f["GroupArn"]),
+      GroupName: stringOrUndefined(f["GroupName"]),
+    }))
+    .filter((f) => f.GroupArn !== undefined || f.GroupName !== undefined);
+
+  const allTasks = ctx.store
     .list<StoredTagSyncTask>()
     .filter((entry) => entry.key.startsWith(taskPrefix))
-    .map((entry) => taskView(entry.value));
-  return { TagSyncTasks: tasks, NextToken: undefined };
+    .map((entry) => entry.value)
+    .filter((task) => {
+      if (groupFilters.length === 0) return true;
+      return groupFilters.some(
+        (f) =>
+          (f.GroupArn !== undefined && task.GroupArn === f.GroupArn) ||
+          (f.GroupName !== undefined && task.GroupName === f.GroupName),
+      );
+    });
+
+  const { page, nextToken } = paginate(allTasks, max, input["NextToken"]);
+  return { TagSyncTasks: page.map(taskView), NextToken: nextToken };
 };
 
 const CancelTagSyncTask: OperationHandler = (input, ctx) => {

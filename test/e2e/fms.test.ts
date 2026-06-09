@@ -416,8 +416,18 @@ test("FMS NotificationChannel lifecycle", async () => {
 test("FMS Tags lifecycle", async () => {
   const client = fms();
 
-  const resourceArn =
-    "arn:aws:fms:us-east-1:123456789012:policy/test-tag-policy";
+  const put = await client.send(
+    new PutPolicyCommand({
+      Policy: {
+        PolicyName: "bunsai-tags-policy",
+        SecurityServicePolicyData: { Type: "WAFV2" },
+        ResourceType: "AWS::ElasticLoadBalancingV2::LoadBalancer",
+        ExcludeResourceTags: false,
+        RemediationEnabled: true,
+      },
+    }),
+  );
+  const resourceArn = put.PolicyArn ?? "";
 
   await client.send(
     new TagResourceCommand({
@@ -530,4 +540,108 @@ test("FMS ListMemberAccounts returns stored", async () => {
   expect(members.MemberAccounts).toBeDefined();
   expect((members.MemberAccounts ?? []).includes("111111111111")).toBe(true);
   expect((members.MemberAccounts ?? []).includes("222222222222")).toBe(true);
+});
+
+test("FMS PutPolicy TagList persists tags visible via ListTagsForResource", async () => {
+  const client = fms();
+
+  const put = await client.send(
+    new PutPolicyCommand({
+      Policy: {
+        PolicyName: "bunsai-puttags-policy",
+        SecurityServicePolicyData: { Type: "WAFV2" },
+        ResourceType: "AWS::ElasticLoadBalancingV2::LoadBalancer",
+        ExcludeResourceTags: false,
+        RemediationEnabled: true,
+      },
+      TagList: [
+        { Key: "src", Value: "putpolicy" },
+        { Key: "owner", Value: "ops" },
+      ],
+    }),
+  );
+  const arn = put.PolicyArn ?? "";
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect((listed.TagList ?? []).find((t) => t.Key === "src")?.Value).toBe(
+    "putpolicy",
+  );
+  expect((listed.TagList ?? []).find((t) => t.Key === "owner")?.Value).toBe(
+    "ops",
+  );
+});
+
+test("FMS tag operations reject unknown resource ARN", async () => {
+  const client = fms();
+
+  const bogusArn = "arn:aws:fms:us-east-1:000000000000:policy/does-not-exist";
+
+  await expect(
+    client.send(
+      new TagResourceCommand({
+        ResourceArn: bogusArn,
+        TagList: [{ Key: "k", Value: "v" }],
+      }),
+    ),
+  ).rejects.toThrow(/Resource not found/);
+
+  await expect(
+    client.send(new ListTagsForResourceCommand({ ResourceArn: bogusArn })),
+  ).rejects.toThrow(/Resource not found/);
+});
+
+test("FMS AssociateAdminAccount rejects re-association with different account", async () => {
+  const client = fms();
+
+  await client.send(
+    new AssociateAdminAccountCommand({ AdminAccount: "111111111111" }),
+  );
+
+  await expect(
+    client.send(
+      new AssociateAdminAccountCommand({ AdminAccount: "222222222222" }),
+    ),
+  ).rejects.toThrow(/already associated/);
+
+  await client.send(
+    new AssociateAdminAccountCommand({ AdminAccount: "111111111111" }),
+  );
+});
+
+test("FMS ListDiscoveredResources rejects >1 MemberAccountIds", async () => {
+  const client = fms();
+
+  await expect(
+    client.send(
+      new ListDiscoveredResourcesCommand({
+        MemberAccountIds: ["111", "222"],
+        ResourceType: "AWS::EC2::Instance",
+      }),
+    ),
+  ).rejects.toThrow(/Only one MemberAccountId/);
+});
+
+test("FMS BatchAssociateResource requires non-empty Items", async () => {
+  const client = fms();
+
+  const set = await client.send(
+    new PutResourceSetCommand({
+      ResourceSet: {
+        Name: "bunsai-empty-items-set",
+        ResourceTypeList: ["AWS::EC2::Instance"],
+      },
+    }),
+  );
+  const setId = set.ResourceSet?.Id ?? "";
+
+  await expect(
+    client.send(
+      new BatchAssociateResourceCommand({
+        ResourceSetIdentifier: setId,
+        Items: [],
+      }),
+    ),
+  ).rejects.toThrow(/Items is required/);
 });

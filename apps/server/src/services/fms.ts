@@ -88,7 +88,8 @@ const paginateItems = <T>(
 };
 
 const PutPolicy: OperationHandler = (input, ctx) => {
-  const requested = requirePolicy(input as Record<string, unknown>);
+  const inp = input as Record<string, unknown>;
+  const requested = requirePolicy(inp);
   const existingId =
     typeof requested["PolicyId"] === "string" && requested["PolicyId"] !== ""
       ? (requested["PolicyId"] as string)
@@ -110,15 +111,25 @@ const PutPolicy: OperationHandler = (input, ctx) => {
     }
   }
   const updateToken = crypto.randomUUID();
+  const arn = policyArn(ctx, existingId);
   const policy: StoredPolicy = {
     ...requested,
     PolicyId: existingId,
     PolicyName: requireString(requested, "PolicyName"),
     PolicyUpdateToken: updateToken,
-    PolicyArn: policyArn(ctx, existingId),
+    PolicyArn: arn,
   };
   ctx.store.set(policyKey(existingId), policy);
-  return { Policy: policy, PolicyArn: policyArn(ctx, existingId) };
+  const tagList = inp["TagList"];
+  if (Array.isArray(tagList) && tagList.length > 0) {
+    const existingTags =
+      ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
+    for (const tag of tagList as Array<{ Key: string; Value: string }>) {
+      existingTags[tag.Key] = tag.Value;
+    }
+    ctx.store.set(tagsKey(arn), existingTags);
+  }
+  return { Policy: policy, PolicyArn: arn };
 };
 
 const GetPolicy: OperationHandler = (input, ctx) => {
@@ -410,7 +421,13 @@ const BatchAssociateResource: OperationHandler = (input, ctx) => {
   const inp = input as Record<string, unknown>;
   const setId = requireString(inp, "ResourceSetIdentifier");
   loadResourceSet(ctx, setId);
-  const items = (inp["Items"] as string[] | undefined) ?? [];
+  if (
+    !Array.isArray(inp["Items"]) ||
+    (inp["Items"] as unknown[]).length === 0
+  ) {
+    throw awsError("InvalidInputException", "Items is required.", 400);
+  }
+  const items = inp["Items"] as string[];
   const existing =
     ctx.store.get<string[]>(resourceSetResourcesKey(setId)) ?? [];
   const updated = Array.from(new Set([...existing, ...items]));
@@ -422,7 +439,13 @@ const BatchDisassociateResource: OperationHandler = (input, ctx) => {
   const inp = input as Record<string, unknown>;
   const setId = requireString(inp, "ResourceSetIdentifier");
   loadResourceSet(ctx, setId);
-  const items = new Set((inp["Items"] as string[] | undefined) ?? []);
+  if (
+    !Array.isArray(inp["Items"]) ||
+    (inp["Items"] as unknown[]).length === 0
+  ) {
+    throw awsError("InvalidInputException", "Items is required.", 400);
+  }
+  const items = new Set(inp["Items"] as string[]);
   const existing =
     ctx.store.get<string[]>(resourceSetResourcesKey(setId)) ?? [];
   ctx.store.set(
@@ -459,6 +482,14 @@ const AssociateAdminAccount: OperationHandler = (input, ctx) => {
     input as Record<string, unknown>,
     "AdminAccount",
   );
+  const existing = ctx.store.get<string>(adminAccountKey);
+  if (existing !== undefined && existing !== account) {
+    throw awsError(
+      "InvalidOperationException",
+      `Admin account is already associated: ${existing}.`,
+      400,
+    );
+  }
   ctx.store.set(adminAccountKey, account);
   return {};
 };
@@ -649,9 +680,38 @@ const DeleteNotificationChannel: OperationHandler = (_input, ctx) => {
 
 const tagsKey = (arn: string): string => `tags/${arn}`;
 
+const validateFmsResourceArn = (ctx: ServiceContext, arn: string): void => {
+  const match = arn.match(
+    /^arn:aws:fms:[^:]*:[^:]*:(policy|applications-list|protocols-list)\/(.+)$/,
+  );
+  if (match === null) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${arn}`,
+      404,
+    );
+  }
+  const resourceType = match[1] as string;
+  const id = match[2] as string;
+  const key =
+    resourceType === "policy"
+      ? policyKey(id)
+      : resourceType === "applications-list"
+        ? appsListKey(id)
+        : protocolsListKey(id);
+  if (ctx.store.get(key) === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${arn}`,
+      404,
+    );
+  }
+};
+
 const TagResource: OperationHandler = (input, ctx) => {
   const inp = input as Record<string, unknown>;
   const arn = requireString(inp, "ResourceArn");
+  validateFmsResourceArn(ctx, arn);
   const tagList =
     (inp["TagList"] as Array<{ Key: string; Value: string }> | undefined) ?? [];
   const existing = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
@@ -665,6 +725,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 const UntagResource: OperationHandler = (input, ctx) => {
   const inp = input as Record<string, unknown>;
   const arn = requireString(inp, "ResourceArn");
+  validateFmsResourceArn(ctx, arn);
   const tagKeys = (inp["TagKeys"] as string[] | undefined) ?? [];
   const existing = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
   for (const key of tagKeys) {
@@ -676,6 +737,7 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input as Record<string, unknown>, "ResourceArn");
+  validateFmsResourceArn(ctx, arn);
   const tags = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
   return {
     TagList: Object.entries(tags).map(([Key, Value]) => ({ Key, Value })),
@@ -766,6 +828,13 @@ const ListDiscoveredResources: OperationHandler = (input, _ctx) => {
   const inp = input as Record<string, unknown>;
   const memberAccountIds =
     (inp["MemberAccountIds"] as string[] | undefined) ?? [];
+  if (memberAccountIds.length > 1) {
+    throw awsError(
+      "InvalidInputException",
+      "Only one MemberAccountId is supported per request.",
+      400,
+    );
+  }
   const resourceType = (inp["ResourceType"] as string | undefined) ?? "";
   const typeSlug = resourceType.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase();
   const resources = memberAccountIds.map((accountId) => ({

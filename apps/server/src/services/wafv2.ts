@@ -279,6 +279,26 @@ const ruleGroupKey = (scope: string, name: string): string =>
 
 const tagsKey = (arn: string): string => `tags/${arn}`;
 
+const isArnReferenced = (ctx: ServiceContext, arn: string): boolean => {
+  const inRules = (rules: unknown[]): boolean =>
+    JSON.stringify(rules).includes(arn);
+  return (
+    ctx.store
+      .list<StoredWebACL>()
+      .some((e) => e.key.startsWith("webacl/") && inRules(e.value.Rules)) ||
+    ctx.store
+      .list<StoredRuleGroup>()
+      .some((e) => e.key.startsWith("rulegroup/") && inRules(e.value.Rules))
+  );
+};
+
+const isWebAclAssociated = (ctx: ServiceContext, aclArn: string): boolean =>
+  ctx.store
+    .list<StoredAssociation>()
+    .some(
+      (e) => e.key.startsWith("assoc/res/") && e.value.WebACLArn === aclArn,
+    );
+
 const ruleGroupArn = (
   region: string,
   account: string,
@@ -379,6 +399,12 @@ const CreateWebACL: OperationHandler = (input, ctx) => {
     LockToken: lockToken(),
   };
   ctx.store.set(key, acl);
+  if (Array.isArray(input["Tags"]) && input["Tags"].length > 0) {
+    ctx.store.set<StoredTags>(tagsKey(acl.ARN), {
+      ResourceARN: acl.ARN,
+      TagList: normalizeTags(input),
+    });
+  }
   return { Summary: webAclSummary(acl) };
 };
 
@@ -489,7 +515,15 @@ const DeleteWebACL: OperationHandler = (input, ctx) => {
   if (acl.LockToken !== token) {
     throw awsError("WAFOptimisticLockException", "LockToken mismatch.", 400);
   }
+  if (isWebAclAssociated(ctx, acl.ARN)) {
+    throw awsError(
+      "WAFAssociatedItemException",
+      `WebACL ${name} is in use.`,
+      400,
+    );
+  }
   ctx.store.delete(webAclKey(scope, name));
+  ctx.store.delete(tagsKey(acl.ARN));
   return {};
 };
 
@@ -518,6 +552,12 @@ const CreateIPSet: OperationHandler = (input, ctx) => {
     LockToken: lockToken(),
   };
   ctx.store.set(key, set);
+  if (Array.isArray(input["Tags"]) && input["Tags"].length > 0) {
+    ctx.store.set<StoredTags>(tagsKey(set.ARN), {
+      ResourceARN: set.ARN,
+      TagList: normalizeTags(input),
+    });
+  }
   return { Summary: ipSetSummary(set) };
 };
 
@@ -575,8 +615,16 @@ const ListIPSets: OperationHandler = (input, ctx) => {
 const UpdateIPSet: OperationHandler = (input, ctx) => {
   const scope = normalizeScope(input);
   const name = requireString(input, "Name");
+  const id = requireString(input, "Id");
   const token = requireString(input, "LockToken");
   const set = findIPSet(ctx, scope, name);
+  if (set.Id !== id) {
+    throw awsError(
+      "WAFNonexistentItemException",
+      `IPSet ${name} not found.`,
+      400,
+    );
+  }
   if (set.LockToken !== token) {
     throw awsError("WAFOptimisticLockException", "LockToken mismatch.", 400);
   }
@@ -595,12 +643,28 @@ const UpdateIPSet: OperationHandler = (input, ctx) => {
 const DeleteIPSet: OperationHandler = (input, ctx) => {
   const scope = normalizeScope(input);
   const name = requireString(input, "Name");
+  const id = requireString(input, "Id");
   const token = requireString(input, "LockToken");
   const set = findIPSet(ctx, scope, name);
+  if (set.Id !== id) {
+    throw awsError(
+      "WAFNonexistentItemException",
+      `IPSet ${name} not found.`,
+      400,
+    );
+  }
   if (set.LockToken !== token) {
     throw awsError("WAFOptimisticLockException", "LockToken mismatch.", 400);
   }
+  if (isArnReferenced(ctx, set.ARN)) {
+    throw awsError(
+      "WAFAssociatedItemException",
+      `IPSet ${name} is in use.`,
+      400,
+    );
+  }
   ctx.store.delete(ipSetKey(scope, name));
+  ctx.store.delete(tagsKey(set.ARN));
   return {};
 };
 
@@ -626,6 +690,12 @@ const CreateRegexPatternSet: OperationHandler = (input, ctx) => {
     LockToken: lockToken(),
   };
   ctx.store.set(key, set);
+  if (Array.isArray(input["Tags"]) && input["Tags"].length > 0) {
+    ctx.store.set<StoredTags>(tagsKey(set.ARN), {
+      ResourceARN: set.ARN,
+      TagList: normalizeTags(input),
+    });
+  }
   return { Summary: regexSetSummary(set) };
 };
 
@@ -684,8 +754,16 @@ const ListRegexPatternSets: OperationHandler = (input, ctx) => {
 const UpdateRegexPatternSet: OperationHandler = (input, ctx) => {
   const scope = normalizeScope(input);
   const name = requireString(input, "Name");
+  const id = requireString(input, "Id");
   const token = requireString(input, "LockToken");
   const set = findRegexSet(ctx, scope, name);
+  if (set.Id !== id) {
+    throw awsError(
+      "WAFNonexistentItemException",
+      `RegexPatternSet ${name} not found.`,
+      400,
+    );
+  }
   if (set.LockToken !== token) {
     throw awsError("WAFOptimisticLockException", "LockToken mismatch.", 400);
   }
@@ -702,12 +780,28 @@ const UpdateRegexPatternSet: OperationHandler = (input, ctx) => {
 const DeleteRegexPatternSet: OperationHandler = (input, ctx) => {
   const scope = normalizeScope(input);
   const name = requireString(input, "Name");
+  const id = requireString(input, "Id");
   const token = requireString(input, "LockToken");
   const set = findRegexSet(ctx, scope, name);
+  if (set.Id !== id) {
+    throw awsError(
+      "WAFNonexistentItemException",
+      `RegexPatternSet ${name} not found.`,
+      400,
+    );
+  }
   if (set.LockToken !== token) {
     throw awsError("WAFOptimisticLockException", "LockToken mismatch.", 400);
   }
+  if (isArnReferenced(ctx, set.ARN)) {
+    throw awsError(
+      "WAFAssociatedItemException",
+      `RegexPatternSet ${name} is in use.`,
+      400,
+    );
+  }
   ctx.store.delete(regexSetKey(scope, name));
+  ctx.store.delete(tagsKey(set.ARN));
   return {};
 };
 
@@ -754,13 +848,36 @@ const ListLoggingConfigurations: OperationHandler = (input, ctx) => {
       (entry) =>
         entry.key.startsWith("logging/") && entry.value.Scope === scope,
     )
-    .map((entry) => entry.value.Config);
-  return { LoggingConfigurations: configs };
+    .map((entry) => entry.value.Config)
+    .sort((a, b) =>
+      String(a["ResourceArn"] ?? "").localeCompare(
+        String(b["ResourceArn"] ?? ""),
+      ),
+    );
+  const { page, NextMarker } = paginateItems(
+    configs,
+    paginationLimit(input),
+    optionalString(input, "NextMarker"),
+    (item) => String(item["ResourceArn"] ?? ""),
+  );
+  const result: Record<string, unknown> = { LoggingConfigurations: page };
+  if (NextMarker !== undefined) result["NextMarker"] = NextMarker;
+  return result;
 };
 
 const AssociateWebACL: OperationHandler = (input, ctx) => {
   const webACLArnVal = requireString(input, "WebACLArn");
   const resourceArn = requireString(input, "ResourceArn");
+  const webAclExists = ctx.store
+    .list<StoredWebACL>()
+    .some((e) => e.key.startsWith("webacl/") && e.value.ARN === webACLArnVal);
+  if (!webAclExists) {
+    throw awsError(
+      "WAFNonexistentItemException",
+      `WebACL ${webACLArnVal} not found.`,
+      400,
+    );
+  }
   ctx.store.set<StoredAssociation>(assocByResourceKey(resourceArn), {
     WebACLArn: webACLArnVal,
     ResourceArn: resourceArn,
@@ -966,7 +1083,17 @@ const ListManagedRuleSets: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(`managedruleset/${scope}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.Name.localeCompare(b.Name));
-  return { ManagedRuleSets: sets.map(managedRuleSetSummary) };
+  const { page, NextMarker } = paginateItems(
+    sets,
+    paginationLimit(input),
+    optionalString(input, "NextMarker"),
+    (item) => item.Name,
+  );
+  const result: Record<string, unknown> = {
+    ManagedRuleSets: page.map(managedRuleSetSummary),
+  };
+  if (NextMarker !== undefined) result["NextMarker"] = NextMarker;
+  return result;
 };
 
 const PutManagedRuleSetVersions: OperationHandler = (input, ctx) => {
@@ -1231,7 +1358,15 @@ const DeleteRuleGroup: OperationHandler = (input, ctx) => {
   if (group.LockToken !== token) {
     throw awsError("WAFOptimisticLockException", "LockToken mismatch.", 400);
   }
+  if (isArnReferenced(ctx, group.ARN)) {
+    throw awsError(
+      "WAFAssociatedItemException",
+      `RuleGroup ${name} is in use.`,
+      400,
+    );
+  }
   ctx.store.delete(ruleGroupKey(scope, name));
+  ctx.store.delete(tagsKey(group.ARN));
   return {};
 };
 

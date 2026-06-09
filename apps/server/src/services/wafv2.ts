@@ -110,6 +110,31 @@ const optionalString = (
   return typeof value === "string" ? value : undefined;
 };
 
+const paginationLimit = (input: Record<string, unknown>): number => {
+  const l = input["Limit"];
+  if (typeof l !== "number") return 100;
+  return Math.min(Math.max(Math.floor(l), 1), 100);
+};
+
+const paginateItems = <T>(
+  items: T[],
+  limit: number,
+  marker: string | undefined,
+  keyFn: (item: T) => string,
+): { page: T[]; NextMarker: string | undefined } => {
+  let start = 0;
+  if (marker !== undefined) {
+    const idx = items.findIndex((item) => keyFn(item) === marker);
+    start = idx === -1 ? items.length : idx + 1;
+  }
+  const page = items.slice(start, start + limit);
+  const hasMore = start + limit < items.length;
+  return {
+    page,
+    NextMarker: hasMore ? keyFn(page[page.length - 1]!) : undefined,
+  };
+};
+
 const normalizeScope = (input: Record<string, unknown>): string => {
   const scope = requireString(input, "Scope");
   if (scope !== "REGIONAL" && scope !== "CLOUDFRONT") {
@@ -127,6 +152,18 @@ const scopeRegion = (region: string, scope: string): string =>
 
 const scopeFromArn = (arn: string): string =>
   arn.includes(":global:") ? "CLOUDFRONT" : "REGIONAL";
+
+const parseWebAclArn = (
+  arn: string,
+): { scope: string; name: string; id: string } | undefined => {
+  const arnParts = arn.split(":");
+  if (arnParts.length < 6) return undefined;
+  const resourceParts = (arnParts[5] ?? "").split("/");
+  if (resourceParts.length < 4 || resourceParts[1] !== "webacl")
+    return undefined;
+  const scope = resourceParts[0] === "global" ? "CLOUDFRONT" : "REGIONAL";
+  return { scope, name: resourceParts[2] ?? "", id: resourceParts[3] ?? "" };
+};
 
 const hexId = (): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -362,9 +399,29 @@ const findWebAcl = (
 };
 
 const GetWebACL: OperationHandler = (input, ctx) => {
-  const scope = normalizeScope(input);
-  const name = requireString(input, "Name");
+  const arn = optionalString(input, "ARN");
+  let scope: string;
+  let name: string;
+  let id: string;
+  if (arn !== undefined) {
+    const parsed = parseWebAclArn(arn);
+    if (parsed === undefined) {
+      throw awsError("WAFInvalidParameterException", "Invalid ARN.", 400);
+    }
+    ({ scope, name, id } = parsed);
+  } else {
+    scope = normalizeScope(input);
+    name = requireString(input, "Name");
+    id = requireString(input, "Id");
+  }
   const acl = findWebAcl(ctx, scope, name);
+  if (acl.Id !== id) {
+    throw awsError(
+      "WAFNonexistentItemException",
+      `WebACL ${name} not found.`,
+      400,
+    );
+  }
   return { WebACL: webAclView(acl), LockToken: acl.LockToken };
 };
 
@@ -375,14 +432,30 @@ const ListWebACLs: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(`webacl/${scope}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.Name.localeCompare(b.Name));
-  return { WebACLs: acls.map(webAclSummary) };
+  const { page, NextMarker } = paginateItems(
+    acls,
+    paginationLimit(input),
+    optionalString(input, "NextMarker"),
+    (item) => item.Name,
+  );
+  const result: Record<string, unknown> = { WebACLs: page.map(webAclSummary) };
+  if (NextMarker !== undefined) result["NextMarker"] = NextMarker;
+  return result;
 };
 
 const UpdateWebACL: OperationHandler = (input, ctx) => {
   const scope = normalizeScope(input);
   const name = requireString(input, "Name");
+  const id = requireString(input, "Id");
   const token = requireString(input, "LockToken");
   const acl = findWebAcl(ctx, scope, name);
+  if (acl.Id !== id) {
+    throw awsError(
+      "WAFNonexistentItemException",
+      `WebACL ${name} not found.`,
+      400,
+    );
+  }
   if (acl.LockToken !== token) {
     throw awsError("WAFOptimisticLockException", "LockToken mismatch.", 400);
   }
@@ -403,8 +476,16 @@ const UpdateWebACL: OperationHandler = (input, ctx) => {
 const DeleteWebACL: OperationHandler = (input, ctx) => {
   const scope = normalizeScope(input);
   const name = requireString(input, "Name");
+  const id = requireString(input, "Id");
   const token = requireString(input, "LockToken");
   const acl = findWebAcl(ctx, scope, name);
+  if (acl.Id !== id) {
+    throw awsError(
+      "WAFNonexistentItemException",
+      `WebACL ${name} not found.`,
+      400,
+    );
+  }
   if (acl.LockToken !== token) {
     throw awsError("WAFOptimisticLockException", "LockToken mismatch.", 400);
   }
@@ -480,7 +561,15 @@ const ListIPSets: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(`ipset/${scope}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.Name.localeCompare(b.Name));
-  return { IPSets: sets.map(ipSetSummary) };
+  const { page, NextMarker } = paginateItems(
+    sets,
+    paginationLimit(input),
+    optionalString(input, "NextMarker"),
+    (item) => item.Name,
+  );
+  const result: Record<string, unknown> = { IPSets: page.map(ipSetSummary) };
+  if (NextMarker !== undefined) result["NextMarker"] = NextMarker;
+  return result;
 };
 
 const UpdateIPSet: OperationHandler = (input, ctx) => {
@@ -579,7 +668,17 @@ const ListRegexPatternSets: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(`regexset/${scope}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.Name.localeCompare(b.Name));
-  return { RegexPatternSets: sets.map(regexSetSummary) };
+  const { page, NextMarker } = paginateItems(
+    sets,
+    paginationLimit(input),
+    optionalString(input, "NextMarker"),
+    (item) => item.Name,
+  );
+  const result: Record<string, unknown> = {
+    RegexPatternSets: page.map(regexSetSummary),
+  };
+  if (NextMarker !== undefined) result["NextMarker"] = NextMarker;
+  return result;
 };
 
 const UpdateRegexPatternSet: OperationHandler = (input, ctx) => {
@@ -764,8 +863,14 @@ const ListAPIKeys: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(`apikey/${scope}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.CreationTimestamp - b.CreationTimestamp);
-  return {
-    APIKeySummaries: keys.map((k) => ({
+  const { page, NextMarker } = paginateItems(
+    keys,
+    paginationLimit(input),
+    optionalString(input, "NextMarker"),
+    (item) => item.APIKey,
+  );
+  const result: Record<string, unknown> = {
+    APIKeySummaries: page.map((k) => ({
       TokenDomains: k.TokenDomains,
       APIKey: k.APIKey,
       CreationTimestamp: k.CreationTimestamp,
@@ -773,6 +878,8 @@ const ListAPIKeys: OperationHandler = (input, ctx) => {
     })),
     ApplicationIntegrationURL: `https://waf.${ctx.region}.amazonaws.com/v1/`,
   };
+  if (NextMarker !== undefined) result["NextMarker"] = NextMarker;
+  return result;
 };
 
 const GetDecryptedAPIKey: OperationHandler = (input, ctx) => {
@@ -1077,7 +1184,17 @@ const ListRuleGroups: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(`rulegroup/${scope}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.Name.localeCompare(b.Name));
-  return { RuleGroups: groups.map(ruleGroupSummary) };
+  const { page, NextMarker } = paginateItems(
+    groups,
+    paginationLimit(input),
+    optionalString(input, "NextMarker"),
+    (item) => item.Name,
+  );
+  const result: Record<string, unknown> = {
+    RuleGroups: page.map(ruleGroupSummary),
+  };
+  if (NextMarker !== undefined) result["NextMarker"] = NextMarker;
+  return result;
 };
 
 const UpdateRuleGroup: OperationHandler = (input, ctx) => {

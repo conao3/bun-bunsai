@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  BatchDeleteDocumentCommand,
   BatchDeleteFeaturedResultsSetCommand,
+  BatchGetDocumentStatusCommand,
+  BatchPutDocumentCommand,
   CreateAccessControlConfigurationCommand,
   CreateDataSourceCommand,
   CreateExperienceCommand,
@@ -408,4 +411,100 @@ test("Kendra featured-results-set lifecycle", async () => {
   ).toBe(false);
 
   await client.send(new DeleteIndexCommand({ Id: indexId! }));
+});
+
+test("Kendra document store round-trip", async () => {
+  const client = kendra();
+
+  const { Id: indexId } = await client.send(
+    new CreateIndexCommand({
+      Name: "doc-test-index",
+      RoleArn: "arn:aws:iam::000000000000:role/kendra",
+    }),
+  );
+
+  const putResult = await client.send(
+    new BatchPutDocumentCommand({
+      IndexId: indexId!,
+      Documents: [
+        { Id: "doc-1", Title: "Test Doc", ContentType: "PLAIN_TEXT" },
+        { Id: "doc-2", Title: "Another Doc", ContentType: "PLAIN_TEXT" },
+      ],
+    }),
+  );
+  expect((putResult.FailedDocuments ?? []).length).toBe(0);
+
+  const statusAfterPut = await client.send(
+    new BatchGetDocumentStatusCommand({
+      IndexId: indexId!,
+      DocumentInfoList: [
+        { DocumentId: "doc-1" },
+        { DocumentId: "doc-2" },
+        { DocumentId: "doc-missing" },
+      ],
+    }),
+  );
+  const statuses = statusAfterPut.DocumentStatusList ?? [];
+  expect(statuses.find((s) => s.DocumentId === "doc-1")?.DocumentStatus).toBe(
+    "INDEXED",
+  );
+  expect(statuses.find((s) => s.DocumentId === "doc-2")?.DocumentStatus).toBe(
+    "INDEXED",
+  );
+  expect(
+    statuses.find((s) => s.DocumentId === "doc-missing")?.DocumentStatus,
+  ).toBe("NOT_FOUND");
+
+  await client.send(
+    new BatchDeleteDocumentCommand({
+      IndexId: indexId!,
+      DocumentIdList: ["doc-1"],
+    }),
+  );
+
+  const statusAfterDelete = await client.send(
+    new BatchGetDocumentStatusCommand({
+      IndexId: indexId!,
+      DocumentInfoList: [{ DocumentId: "doc-1" }, { DocumentId: "doc-2" }],
+    }),
+  );
+  const statusesAfter = statusAfterDelete.DocumentStatusList ?? [];
+  expect(
+    statusesAfter.find((s) => s.DocumentId === "doc-1")?.DocumentStatus,
+  ).toBe("NOT_FOUND");
+  expect(
+    statusesAfter.find((s) => s.DocumentId === "doc-2")?.DocumentStatus,
+  ).toBe("INDEXED");
+
+  await client.send(new DeleteIndexCommand({ Id: indexId! }));
+});
+
+test("Kendra ListIndices pagination", async () => {
+  const client = kendra();
+
+  const indexIds: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const { Id } = await client.send(
+      new CreateIndexCommand({
+        Name: `paginate-index-${i}`,
+        RoleArn: "arn:aws:iam::000000000000:role/kendra",
+      }),
+    );
+    indexIds.push(Id!);
+  }
+
+  const page1 = await client.send(new ListIndicesCommand({ MaxResults: 2 }));
+  expect((page1.IndexConfigurationSummaryItems ?? []).length).toBe(2);
+  expect(typeof page1.NextToken).toBe("string");
+
+  const page2 = await client.send(
+    new ListIndicesCommand({ MaxResults: 2, NextToken: page1.NextToken }),
+  );
+  expect(
+    (page2.IndexConfigurationSummaryItems ?? []).length,
+  ).toBeGreaterThanOrEqual(1);
+
+  for (const id of indexIds) {
+    await client.send(new DeleteIndexCommand({ Id: id }));
+  }
 });

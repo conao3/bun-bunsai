@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  ConflictException,
   CreateAssistantAssociationCommand,
   CreateAssistantCommand,
   CreateContentCommand,
@@ -8,9 +9,11 @@ import {
   CreateQuickResponseCommand,
   CreateSessionCommand,
   DeleteAssistantCommand,
+  DeleteContentCommand,
   DeleteKnowledgeBaseCommand,
   GetAssistantCommand,
   GetContentCommand,
+  GetImportJobCommand,
   GetKnowledgeBaseCommand,
   GetQuickResponseCommand,
   GetRecommendationsCommand,
@@ -64,13 +67,14 @@ test("Wisdom knowledge base create, get, list and delete lifecycle", async () =>
   expect(created.knowledgeBase?.name).toBe(name);
   expect(created.knowledgeBase?.knowledgeBaseType).toBe("CUSTOM");
   expect(created.knowledgeBase?.knowledgeBaseArn).toContain("knowledge-base/");
-  expect(created.knowledgeBase?.status).toBe("ACTIVE");
+  expect(created.knowledgeBase?.status).toBe("CREATE_IN_PROGRESS");
 
   const fetched = await client.send(
     new GetKnowledgeBaseCommand({ knowledgeBaseId }),
   );
   expect(fetched.knowledgeBase?.knowledgeBaseId).toBe(knowledgeBaseId);
   expect(fetched.knowledgeBase?.name).toBe(name);
+  expect(fetched.knowledgeBase?.status).toBe("ACTIVE");
 
   const listed = await client.send(new ListKnowledgeBasesCommand({}));
   const ids = (listed.knowledgeBaseSummaries ?? []).map(
@@ -96,11 +100,12 @@ test("Wisdom assistant lifecycle", async () => {
   expect(assistantId).toBeDefined();
   expect(created.assistant?.name).toBe("bunsai-e2e-assistant");
   expect(created.assistant?.type).toBe("AGENT");
-  expect(created.assistant?.status).toBe("ACTIVE");
+  expect(created.assistant?.status).toBe("CREATE_IN_PROGRESS");
   expect(created.assistant?.assistantArn).toContain("assistant/");
 
   const fetched = await client.send(new GetAssistantCommand({ assistantId }));
   expect(fetched.assistant?.assistantId).toBe(assistantId);
+  expect(fetched.assistant?.status).toBe("ACTIVE");
 
   const listed = await client.send(new ListAssistantsCommand({}));
   expect((listed.assistantSummaries ?? []).map((s) => s.assistantId)).toContain(
@@ -421,4 +426,150 @@ test("Wisdom tag operations", async () => {
       knowledgeBaseId: kb.knowledgeBase?.knowledgeBaseId!,
     }),
   );
+});
+
+test("Wisdom fidelity: lifecycle, pagination, conflict, tag round-trip, import-job", async () => {
+  const client = wisdom();
+
+  const kb1 = await client.send(
+    new CreateKnowledgeBaseCommand({
+      name: "bunsai-e2e-fidelity-kb-1",
+      knowledgeBaseType: "CUSTOM",
+      tags: { env: "prod", team: "bunsai" },
+    }),
+  );
+  expect(kb1.knowledgeBase?.status).toBe("CREATE_IN_PROGRESS");
+  const kb1Id = kb1.knowledgeBase?.knowledgeBaseId!;
+  const kb1Arn = kb1.knowledgeBase?.knowledgeBaseArn!;
+
+  const kb1Fetched = await client.send(
+    new GetKnowledgeBaseCommand({ knowledgeBaseId: kb1Id }),
+  );
+  expect(kb1Fetched.knowledgeBase?.status).toBe("ACTIVE");
+
+  const tagsAfterCreate = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: kb1Arn }),
+  );
+  expect(tagsAfterCreate.tags?.["env"]).toBe("prod");
+  expect(tagsAfterCreate.tags?.["team"]).toBe("bunsai");
+
+  const asst1 = await client.send(
+    new CreateAssistantCommand({
+      name: "bunsai-e2e-fidelity-asst-1",
+      type: "AGENT",
+      tags: { env: "prod" },
+    }),
+  );
+  expect(asst1.assistant?.status).toBe("CREATE_IN_PROGRESS");
+  const asst1Fetched = await client.send(
+    new GetAssistantCommand({ assistantId: asst1.assistant?.assistantId }),
+  );
+  expect(asst1Fetched.assistant?.status).toBe("ACTIVE");
+  const asstTags = await client.send(
+    new ListTagsForResourceCommand({
+      resourceArn: asst1.assistant?.assistantArn!,
+    }),
+  );
+  expect(asstTags.tags?.["env"]).toBe("prod");
+
+  const kb2 = await client.send(
+    new CreateKnowledgeBaseCommand({
+      name: "bunsai-e2e-fidelity-kb-2",
+      knowledgeBaseType: "CUSTOM",
+    }),
+  );
+  await client.send(
+    new GetKnowledgeBaseCommand({
+      knowledgeBaseId: kb2.knowledgeBase?.knowledgeBaseId,
+    }),
+  );
+
+  const page1 = await client.send(
+    new ListKnowledgeBasesCommand({ maxResults: 1 }),
+  );
+  expect(page1.knowledgeBaseSummaries?.length).toBe(1);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListKnowledgeBasesCommand({
+      maxResults: 1,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect(page2.knowledgeBaseSummaries?.length).toBeGreaterThan(0);
+
+  await expect(
+    client.send(
+      new CreateKnowledgeBaseCommand({
+        name: "bunsai-e2e-fidelity-kb-1",
+        knowledgeBaseType: "CUSTOM",
+      }),
+    ),
+  ).rejects.toThrow(ConflictException);
+
+  await expect(
+    client.send(
+      new CreateAssistantCommand({
+        name: "bunsai-e2e-fidelity-asst-1",
+        type: "AGENT",
+      }),
+    ),
+  ).rejects.toThrow(ConflictException);
+
+  const upload = await client.send(
+    new StartContentUploadCommand({
+      knowledgeBaseId: kb1Id,
+      contentType: "text/plain",
+    }),
+  );
+  const content = await client.send(
+    new CreateContentCommand({
+      knowledgeBaseId: kb1Id,
+      name: "bunsai-e2e-fidelity-content",
+      uploadId: upload.uploadId!,
+    }),
+  );
+  const contentId = content.content?.contentId!;
+
+  await expect(
+    client.send(
+      new CreateContentCommand({
+        knowledgeBaseId: kb1Id,
+        name: "bunsai-e2e-fidelity-content",
+        uploadId: upload.uploadId!,
+      }),
+    ),
+  ).rejects.toThrow(ConflictException);
+
+  const importJob = await client.send(
+    new StartImportJobCommand({
+      knowledgeBaseId: kb1Id,
+      importJobType: "QUICK_RESPONSES",
+      uploadId: "fidelity-upload-id",
+    }),
+  );
+  expect(importJob.importJob?.status).toBe("START_IN_PROGRESS");
+
+  const importJobFetched = await client.send(
+    new GetImportJobCommand({
+      knowledgeBaseId: kb1Id,
+      importJobId: importJob.importJob?.importJobId,
+    }),
+  );
+  expect(importJobFetched.importJob?.status).toBe("COMPLETE");
+
+  await expect(
+    client.send(new DeleteKnowledgeBaseCommand({ knowledgeBaseId: kb1Id })),
+  ).rejects.toThrow(ConflictException);
+
+  await client.send(
+    new DeleteContentCommand({ knowledgeBaseId: kb1Id, contentId }),
+  );
+
+  await client.send(new DeleteKnowledgeBaseCommand({ knowledgeBaseId: kb1Id }));
+
+  const tagsAfterDelete = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: kb1Arn }),
+  );
+  expect(tagsAfterDelete.tags).toEqual({});
 });

@@ -481,6 +481,7 @@ const CreateComputeEnvironment: OperationHandler = (input, ctx) => {
   const name = requireString(input, "computeEnvironmentName");
   const type = requireString(input, "type");
   const computeEnvironmentArn = `arn:aws:batch:${ctx.region}:${ctx.account}:compute-environment/${name}`;
+  const tags = tagsFromInput(input["tags"]);
   const computeEnvironment: StoredComputeEnvironment = {
     computeEnvironmentName: name,
     computeEnvironmentArn,
@@ -491,11 +492,14 @@ const CreateComputeEnvironment: OperationHandler = (input, ctx) => {
     statusReason: "ComputeEnvironment Healthy",
     serviceRole: stringOrUndefined(input["serviceRole"]),
     computeResources: recordOrUndefined(input["computeResources"]),
-    tags: tagsFromInput(input["tags"]),
+    tags,
     uuid: uuid(),
     containerOrchestrationType: "ECS",
   };
   ctx.store.set(computeEnvironmentKey(name), computeEnvironment);
+  if (Object.keys(tags).length > 0) {
+    ctx.store.set(tagsKey(computeEnvironmentArn), { ...tags });
+  }
   return {
     computeEnvironmentName: name,
     computeEnvironmentArn,
@@ -531,6 +535,7 @@ const CreateJobQueue: OperationHandler = (input, ctx) => {
   const name = requireString(input, "jobQueueName");
   const priority = requireNumber(input, "priority");
   const jobQueueArn = `arn:aws:batch:${ctx.region}:${ctx.account}:job-queue/${name}`;
+  const tags = tagsFromInput(input["tags"]);
   const jobQueue: StoredJobQueue = {
     jobQueueName: name,
     jobQueueArn,
@@ -543,8 +548,11 @@ const CreateJobQueue: OperationHandler = (input, ctx) => {
       ? (input["computeEnvironmentOrder"] as unknown[])
       : [],
     jobQueueType: stringOrUndefined(input["jobQueueType"]),
-    tags: tagsFromInput(input["tags"]),
+    tags,
   };
+  if (Object.keys(tags).length > 0) {
+    ctx.store.set(tagsKey(jobQueueArn), { ...tags });
+  }
   ctx.store.set(jobQueueKey(name), jobQueue);
   return {
     jobQueueName: name,
@@ -881,9 +889,18 @@ const UpdateJobQueue: OperationHandler = (input, ctx) => {
 const DeleteJobQueue: OperationHandler = (input, ctx) => {
   const identifier = requireString(input, "jobQueue");
   const existing = findJobQueue(ctx, identifier);
-  if (existing !== undefined) {
-    ctx.store.delete(jobQueueKey(existing.jobQueueName));
+  if (existing === undefined) {
+    throw awsError("ClientException", `JobQueue ${identifier} not found.`, 400);
   }
+  if (existing.state !== "DISABLED") {
+    throw awsError(
+      "ClientException",
+      `JobQueue ${identifier} must be DISABLED before it can be deleted (current state: ${existing.state}).`,
+      400,
+    );
+  }
+  ctx.store.delete(jobQueueKey(existing.jobQueueName));
+  ctx.store.delete(tagsKey(existing.jobQueueArn));
   return {};
 };
 
@@ -928,9 +945,22 @@ const UpdateComputeEnvironment: OperationHandler = (input, ctx) => {
 const DeleteComputeEnvironment: OperationHandler = (input, ctx) => {
   const identifier = requireString(input, "computeEnvironment");
   const existing = findComputeEnvironment(ctx, identifier);
-  if (existing !== undefined) {
-    ctx.store.delete(computeEnvironmentKey(existing.computeEnvironmentName));
+  if (existing === undefined) {
+    throw awsError(
+      "ClientException",
+      `ComputeEnvironment ${identifier} not found.`,
+      400,
+    );
   }
+  if (existing.state !== "DISABLED") {
+    throw awsError(
+      "ClientException",
+      `ComputeEnvironment ${identifier} must be DISABLED before it can be deleted (current state: ${existing.state}).`,
+      400,
+    );
+  }
+  ctx.store.delete(computeEnvironmentKey(existing.computeEnvironmentName));
+  ctx.store.delete(tagsKey(existing.computeEnvironmentArn));
   return {};
 };
 

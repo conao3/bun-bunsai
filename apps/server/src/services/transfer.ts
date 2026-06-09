@@ -1748,7 +1748,8 @@ const DeleteCertificate: OperationHandler = (input, ctx) => {
       400,
     );
   }
-  if (ctx.store.get<StoredCertificate>(certKey(certId)) === undefined) return {};
+  if (ctx.store.get<StoredCertificate>(certKey(certId)) === undefined)
+    return {};
   ctx.store.delete(certKey(certId));
   return {};
 };

@@ -643,15 +643,11 @@ test("DeleteProfile in-use guard — ConflictException when agreement references
   ).rejects.toThrow();
 
   await expect(
-    transfer.send(
-      new DeleteProfileCommand({ ProfileId: partnerProfileId! }),
-    ),
+    transfer.send(new DeleteProfileCommand({ ProfileId: partnerProfileId! })),
   ).rejects.toThrow();
 
   await transfer.send(new DeleteServerCommand({ ServerId: serverId! }));
-  await transfer.send(
-    new DeleteProfileCommand({ ProfileId: localProfileId! }),
-  );
+  await transfer.send(new DeleteProfileCommand({ ProfileId: localProfileId! }));
   await transfer.send(
     new DeleteProfileCommand({ ProfileId: partnerProfileId! }),
   );

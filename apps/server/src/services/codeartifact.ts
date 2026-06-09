@@ -58,6 +58,7 @@ type StoredPackageVersion = {
   version: string;
   status: string;
   revision: string;
+  revisionSeq: number;
   domainName: string;
   repositoryName: string;
   publishedTime: number;
@@ -919,16 +920,18 @@ const PublishPackageVersion: OperationHandler = (input, ctx) => {
   const ns = stringOrUndefined(input["namespace"]);
   const unfinished = input["unfinished"] === true;
   requireRepo(ctx, domain, repo);
-  const newRevision = `${Date.now()}`;
   const { content, size: assetSize } = assetContentToString(
     input["assetContent"],
   );
   const key = pkgVerKey(domain, repo, format, ns, pkg, version);
   const existing = ctx.store.get<StoredPackageVersion>(key);
+  const newSeq = (existing?.revisionSeq ?? 0) + 1;
+  const newRevision = `${newSeq}`;
   const updated: StoredPackageVersion = existing
     ? {
         ...existing,
         revision: newRevision,
+        revisionSeq: newSeq,
         status: unfinished ? "Unfinished" : existing.status,
         assets: [
           ...existing.assets.filter((a) => a.name !== assetName),
@@ -942,6 +945,7 @@ const PublishPackageVersion: OperationHandler = (input, ctx) => {
         version,
         status: unfinished ? "Unfinished" : "Published",
         revision: newRevision,
+        revisionSeq: newSeq,
         domainName: domain,
         repositoryName: repo,
         publishedTime: Date.now(),

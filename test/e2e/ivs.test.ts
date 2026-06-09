@@ -164,11 +164,12 @@ test("IVS recording configuration CRUD", async () => {
     }),
   );
   expect(created.recordingConfiguration?.arn).toBeDefined();
-  expect(created.recordingConfiguration?.state).toBe("ACTIVE");
+  expect(created.recordingConfiguration?.state).toBe("CREATING");
   const arn = created.recordingConfiguration?.arn ?? "";
 
   const got = await client.send(new GetRecordingConfigurationCommand({ arn }));
   expect(got.recordingConfiguration?.arn).toBe(arn);
+  expect(got.recordingConfiguration?.state).toBe("ACTIVE");
 
   const listed = await client.send(new ListRecordingConfigurationsCommand({}));
   expect((listed.recordingConfigurations ?? []).map((rc) => rc.arn)).toContain(
@@ -347,6 +348,161 @@ test("IVS StartViewerSessionRevocation and Batch", async () => {
   expect(batchResult.errors).toBeDefined();
 
   await client.send(new DeleteChannelCommand({ arn: channelArn }));
+});
+
+test("IVS CreateChannel persists default StreamKey", async () => {
+  const client = ivs();
+  const ch = await client.send(
+    new CreateChannelCommand({ name: `sk-default-${Date.now()}` }),
+  );
+  const channelArn = ch.channel?.arn ?? "";
+  const skArn = ch.streamKey?.arn ?? "";
+  expect(skArn).toBeDefined();
+
+  const got = await client.send(new GetStreamKeyCommand({ arn: skArn }));
+  expect(got.streamKey?.arn).toBe(skArn);
+  expect(got.streamKey?.channelArn).toBe(channelArn);
+
+  const listed = await client.send(new ListStreamKeysCommand({ channelArn }));
+  expect((listed.streamKeys ?? []).map((sk) => sk.arn)).toContain(skArn);
+
+  await client.send(new DeleteChannelCommand({ arn: channelArn }));
+});
+
+test("IVS ListChannels pagination and filters", async () => {
+  const client = ivs();
+  const rc = await client.send(
+    new CreateRecordingConfigurationCommand({
+      name: `rc-filter-${Date.now()}`,
+      destinationConfiguration: { s3: { bucketName: "test-bucket" } },
+    }),
+  );
+  const rcArn = rc.recordingConfiguration?.arn ?? "";
+
+  const ch1 = await client.send(
+    new CreateChannelCommand({
+      name: `pag-ch1-${Date.now()}`,
+      recordingConfigurationArn: rcArn,
+    }),
+  );
+  const ch2 = await client.send(
+    new CreateChannelCommand({ name: `pag-ch2-${Date.now()}` }),
+  );
+  const arn1 = ch1.channel?.arn ?? "";
+  const arn2 = ch2.channel?.arn ?? "";
+
+  const page1 = await client.send(new ListChannelsCommand({ maxResults: 1 }));
+  expect(page1.channels?.length).toBe(1);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListChannelsCommand({ maxResults: 100, nextToken: page1.nextToken }),
+  );
+  const allArns = [
+    ...(page1.channels ?? []).map((c) => c.arn),
+    ...(page2.channels ?? []).map((c) => c.arn),
+  ];
+  expect(allArns).toContain(arn1);
+  expect(allArns).toContain(arn2);
+
+  const filtered = await client.send(
+    new ListChannelsCommand({ filterByRecordingConfigurationArn: rcArn }),
+  );
+  expect((filtered.channels ?? []).map((c) => c.arn)).toContain(arn1);
+  expect((filtered.channels ?? []).map((c) => c.arn)).not.toContain(arn2);
+
+  await client.send(new DeleteChannelCommand({ arn: arn1 }));
+  await client.send(new DeleteChannelCommand({ arn: arn2 }));
+  await client.send(new DeleteRecordingConfigurationCommand({ arn: rcArn }));
+});
+
+test("IVS tag round-trip: create tags visible in ListTagsForResource and GetChannel", async () => {
+  const client = ivs();
+  const ch = await client.send(
+    new CreateChannelCommand({
+      name: `tag-rt-${Date.now()}`,
+      tags: { env: "staging" },
+    }),
+  );
+  const arn = ch.channel?.arn ?? "";
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: arn }),
+  );
+  expect(listed.tags?.env).toBe("staging");
+
+  await client.send(
+    new TagResourceCommand({ resourceArn: arn, tags: { app: "bunsai" } }),
+  );
+
+  const got = await client.send(new GetChannelCommand({ arn }));
+  expect((got.channel?.tags as Record<string, string>)?.env).toBe("staging");
+  expect((got.channel?.tags as Record<string, string>)?.app).toBe("bunsai");
+
+  await client.send(new DeleteChannelCommand({ arn }));
+});
+
+test("IVS StopStream persists session with endTime", async () => {
+  const client = ivs();
+  const ch = await client.send(
+    new CreateChannelCommand({ name: `stop-test-${Date.now()}` }),
+  );
+  const channelArn = ch.channel?.arn ?? "";
+
+  const session = await client.send(
+    new GetStreamSessionCommand({ channelArn }),
+  );
+  const streamId = session.streamSession?.streamId ?? "";
+  expect(streamId).toBeDefined();
+
+  await client.send(new StopStreamCommand({ channelArn }));
+
+  const past = await client.send(
+    new GetStreamSessionCommand({ channelArn, streamId }),
+  );
+  expect(past.streamSession?.streamId).toBe(streamId);
+  expect(past.streamSession?.endTime).toBeDefined();
+
+  const sessions = await client.send(
+    new ListStreamSessionsCommand({ channelArn }),
+  );
+  const found = (sessions.streamSessions ?? []).find(
+    (s) => s.streamId === streamId,
+  );
+  expect(found).toBeDefined();
+  expect(found?.endTime).toBeDefined();
+
+  await client.send(new DeleteChannelCommand({ arn: channelArn }));
+});
+
+test("IVS GetStreamSession includes ingestConfiguration", async () => {
+  const client = ivs();
+  const rc = await client.send(
+    new CreateRecordingConfigurationCommand({
+      name: `rc-session-${Date.now()}`,
+      destinationConfiguration: { s3: { bucketName: "test-bucket" } },
+    }),
+  );
+  const rcArn = rc.recordingConfiguration?.arn ?? "";
+  await client.send(new GetRecordingConfigurationCommand({ arn: rcArn }));
+
+  const ch = await client.send(
+    new CreateChannelCommand({
+      name: `session-ingest-${Date.now()}`,
+      recordingConfigurationArn: rcArn,
+    }),
+  );
+  const channelArn = ch.channel?.arn ?? "";
+
+  const session = await client.send(
+    new GetStreamSessionCommand({ channelArn }),
+  );
+  expect(session.streamSession?.ingestConfiguration?.video?.codec).toBe("AVC");
+  expect(session.streamSession?.ingestConfiguration?.audio?.codec).toBe("AAC");
+  expect(session.streamSession?.recordingConfiguration?.arn).toBe(rcArn);
+
+  await client.send(new DeleteChannelCommand({ arn: channelArn }));
+  await client.send(new DeleteRecordingConfigurationCommand({ arn: rcArn }));
 });
 
 test("IVS tags CRUD", async () => {

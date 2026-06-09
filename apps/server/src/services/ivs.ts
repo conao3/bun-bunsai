@@ -128,6 +128,16 @@ const requireString = (
 const newId = (): string =>
   crypto.randomUUID().replaceAll("-", "").slice(0, 12);
 
+const encodeNextToken = (idx: number): string => btoa(String(idx));
+
+const decodeNextToken = (token: string): number => {
+  try {
+    return parseInt(atob(token), 10);
+  } catch {
+    return 0;
+  }
+};
+
 const channelArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:ivs:${ctx.region}:${ctx.account}:channel/${id}`;
 
@@ -408,6 +418,7 @@ const CreateChannel: OperationHandler = (input, ctx) => {
   const id = newId();
   const arn = channelArn(ctx, id);
   const name = stringOrUndefined(input["name"]) ?? `channel-${id}`;
+  const tags = tagsOrEmpty(input["tags"]);
   const channel: StoredChannel = {
     arn,
     name,
@@ -418,7 +429,7 @@ const CreateChannel: OperationHandler = (input, ctx) => {
     ingestEndpoint: `${id}.global-contribute.live-video.net`,
     playbackUrl: `https://${id}.${ctx.region}.playback.live-video.net/api/video/v1/${arn}.m3u8`,
     authorized: booleanOrFalse(input["authorized"]),
-    tags: tagsOrEmpty(input["tags"]),
+    tags,
     insecureIngest: booleanOrFalse(input["insecureIngest"]),
     preset: stringOrUndefined(input["preset"]) ?? "",
     playbackRestrictionPolicyArn:
@@ -426,34 +437,79 @@ const CreateChannel: OperationHandler = (input, ctx) => {
     adConfigurationArn: stringOrUndefined(input["adConfigurationArn"]) ?? "",
   };
   ctx.store.set(channelKey(arn), channel);
+  ctx.store.set(tagsKey(arn), tags as Record<string, string>);
+  const skId = newId();
+  const skArnVal = streamKeyArn(ctx, skId);
+  const defaultSk: StoredStreamKey = {
+    arn: skArnVal,
+    value: `sk_${ctx.region}_${newId()}`,
+    channelArn: arn,
+    tags: {},
+  };
+  ctx.store.set(streamKeyKey(skArnVal), defaultSk);
   return {
     channel: channelView(channel),
-    streamKey: {
-      arn: `arn:aws:ivs:${ctx.region}:${ctx.account}:stream-key/${id}`,
-      value: `sk_${ctx.region}_${newId()}`,
-      channelArn: arn,
-      tags: {},
-    },
+    streamKey: streamKeyView(defaultSk),
   };
 };
 
 const GetChannel: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
-  return { channel: channelView(requireChannel(ctx, arn)) };
+  const channel = requireChannel(ctx, arn);
+  const tags =
+    ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? channel.tags;
+  return { channel: { ...channelView(channel), tags } };
 };
 
 const ListChannels: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const token = stringOrUndefined(input["nextToken"]);
   const filterByName = stringOrUndefined(input["filterByName"]);
+  const filterByRecordingConfigurationArn = stringOrUndefined(
+    input["filterByRecordingConfigurationArn"],
+  );
+  const filterByPlaybackRestrictionPolicyArn = stringOrUndefined(
+    input["filterByPlaybackRestrictionPolicyArn"],
+  );
+  const filterByAdConfigurationArn = stringOrUndefined(
+    input["filterByAdConfigurationArn"],
+  );
+  const start = token !== undefined ? decodeNextToken(token) : 0;
   const channels = ctx.store
     .list<StoredChannel>()
     .filter((entry) => entry.key.startsWith(channelPrefix))
     .map((entry) => entry.value)
-    .filter((channel) =>
-      filterByName === undefined ? true : channel.name === filterByName,
+    .filter((c) =>
+      filterByName === undefined ? true : c.name === filterByName,
+    )
+    .filter((c) =>
+      filterByRecordingConfigurationArn === undefined
+        ? true
+        : c.recordingConfigurationArn === filterByRecordingConfigurationArn,
+    )
+    .filter((c) =>
+      filterByPlaybackRestrictionPolicyArn === undefined
+        ? true
+        : c.playbackRestrictionPolicyArn ===
+          filterByPlaybackRestrictionPolicyArn,
+    )
+    .filter((c) =>
+      filterByAdConfigurationArn === undefined
+        ? true
+        : c.adConfigurationArn === filterByAdConfigurationArn,
     )
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { channels: channels.slice(0, max).map(channelSummaryView) };
+  const slice = channels.slice(start, start + max);
+  const nextToken =
+    start + max < channels.length ? encodeNextToken(start + max) : undefined;
+  return {
+    channels: slice.map((c) => {
+      const tags =
+        ctx.store.get<Record<string, string>>(tagsKey(c.arn)) ?? c.tags;
+      return { ...channelSummaryView(c), tags };
+    }),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteChannel: OperationHandler = (input, ctx) => {
@@ -523,19 +579,23 @@ const CreateStreamKey: OperationHandler = (input, ctx) => {
   requireChannel(ctx, chArn);
   const id = newId();
   const arn = streamKeyArn(ctx, id);
+  const tags = tagsOrEmpty(input["tags"]);
   const sk: StoredStreamKey = {
     arn,
     value: `sk_${ctx.region}_${newId()}`,
     channelArn: chArn,
-    tags: tagsOrEmpty(input["tags"]),
+    tags,
   };
   ctx.store.set(streamKeyKey(arn), sk);
+  ctx.store.set(tagsKey(arn), tags as Record<string, string>);
   return { streamKey: streamKeyView(sk) };
 };
 
 const GetStreamKey: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
-  return { streamKey: streamKeyView(requireStreamKey(ctx, arn)) };
+  const sk = requireStreamKey(ctx, arn);
+  const tags = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? sk.tags;
+  return { streamKey: { ...streamKeyView(sk), tags } };
 };
 
 const DeleteStreamKey: OperationHandler = (input, ctx) => {
@@ -549,12 +609,20 @@ const ListStreamKeys: OperationHandler = (input, ctx) => {
   const chArn = requireString(input, "channelArn");
   requireChannel(ctx, chArn);
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const token = stringOrUndefined(input["nextToken"]);
+  const start = token !== undefined ? decodeNextToken(token) : 0;
   const keys = ctx.store
     .list<StoredStreamKey>()
     .filter((entry) => entry.key.startsWith(streamKeyPrefix))
     .map((entry) => entry.value)
     .filter((sk) => sk.channelArn === chArn);
-  return { streamKeys: keys.slice(0, max).map(streamKeySummaryView) };
+  const slice = keys.slice(start, start + max);
+  const nextToken =
+    start + max < keys.length ? encodeNextToken(start + max) : undefined;
+  return {
+    streamKeys: slice.map(streamKeySummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const BatchGetStreamKey: OperationHandler = (input, ctx) => {
@@ -582,24 +650,32 @@ const CreateRecordingConfiguration: OperationHandler = (input, ctx) => {
   const id = newId();
   const arn = recConfigArn(ctx, id);
   const destConfig = tagsOrEmpty(input["destinationConfiguration"]);
+  const tags = tagsOrEmpty(input["tags"]);
   const rc: StoredRecordingConfiguration = {
     arn,
     name: stringOrUndefined(input["name"]) ?? `rec-config-${id}`,
     destinationConfiguration: destConfig,
-    state: "ACTIVE",
-    tags: tagsOrEmpty(input["tags"]),
+    state: "CREATING",
+    tags,
     thumbnailConfiguration: tagsOrEmpty(input["thumbnailConfiguration"]),
     recordingReconnectWindowSeconds:
       numberOrUndefined(input["recordingReconnectWindowSeconds"]) ?? 0,
     renditionConfiguration: tagsOrEmpty(input["renditionConfiguration"]),
   };
   ctx.store.set(recConfigKey(arn), rc);
+  ctx.store.set(tagsKey(arn), tags as Record<string, string>);
   return { recordingConfiguration: recConfigView(rc) };
 };
 
 const GetRecordingConfiguration: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
-  return { recordingConfiguration: recConfigView(requireRecConfig(ctx, arn)) };
+  let rc = requireRecConfig(ctx, arn);
+  if (rc.state === "CREATING") {
+    rc = { ...rc, state: "ACTIVE" };
+    ctx.store.set(recConfigKey(arn), rc);
+  }
+  const tags = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? rc.tags;
+  return { recordingConfiguration: { ...recConfigView(rc), tags } };
 };
 
 const DeleteRecordingConfiguration: OperationHandler = (input, ctx) => {
@@ -611,12 +687,18 @@ const DeleteRecordingConfiguration: OperationHandler = (input, ctx) => {
 
 const ListRecordingConfigurations: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const token = stringOrUndefined(input["nextToken"]);
+  const start = token !== undefined ? decodeNextToken(token) : 0;
   const configs = ctx.store
     .list<StoredRecordingConfiguration>()
     .filter((entry) => entry.key.startsWith(recConfigPrefix))
     .map((entry) => entry.value);
+  const slice = configs.slice(start, start + max);
+  const nextToken =
+    start + max < configs.length ? encodeNextToken(start + max) : undefined;
   return {
-    recordingConfigurations: configs.slice(0, max).map(recConfigSummaryView),
+    recordingConfigurations: slice.map(recConfigSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -625,19 +707,23 @@ const ImportPlaybackKeyPair: OperationHandler = (input, ctx) => {
   const arn = playbackKeyPairArn(ctx, id);
   const publicKey = requireString(input, "publicKeyMaterial");
   const fingerprint = publicKey.slice(0, 16).replaceAll(" ", "") || "fp-mock";
+  const tags = tagsOrEmpty(input["tags"]);
   const kp: StoredPlaybackKeyPair = {
     arn,
     name: stringOrUndefined(input["name"]) ?? `key-pair-${id}`,
     fingerprint,
-    tags: tagsOrEmpty(input["tags"]),
+    tags,
   };
   ctx.store.set(playbackKeyPairKey(arn), kp);
+  ctx.store.set(tagsKey(arn), tags as Record<string, string>);
   return { keyPair: playbackKeyPairView(kp) };
 };
 
 const GetPlaybackKeyPair: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
-  return { keyPair: playbackKeyPairView(requirePlaybackKeyPair(ctx, arn)) };
+  const kp = requirePlaybackKeyPair(ctx, arn);
+  const tags = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? kp.tags;
+  return { keyPair: { ...playbackKeyPairView(kp), tags } };
 };
 
 const DeletePlaybackKeyPair: OperationHandler = (input, ctx) => {
@@ -649,11 +735,19 @@ const DeletePlaybackKeyPair: OperationHandler = (input, ctx) => {
 
 const ListPlaybackKeyPairs: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const token = stringOrUndefined(input["nextToken"]);
+  const start = token !== undefined ? decodeNextToken(token) : 0;
   const keyPairs = ctx.store
     .list<StoredPlaybackKeyPair>()
     .filter((entry) => entry.key.startsWith(playbackKeyPairPrefix))
     .map((entry) => entry.value);
-  return { keyPairs: keyPairs.slice(0, max).map(playbackKeyPairSummaryView) };
+  const slice = keyPairs.slice(start, start + max);
+  const nextToken =
+    start + max < keyPairs.length ? encodeNextToken(start + max) : undefined;
+  return {
+    keyPairs: slice.map(playbackKeyPairSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const CreatePlaybackRestrictionPolicy: OperationHandler = (input, ctx) => {
@@ -665,6 +759,7 @@ const CreatePlaybackRestrictionPolicy: OperationHandler = (input, ctx) => {
   const allowedOrigins = arrayOrEmpty(input["allowedOrigins"]).filter(
     (o): o is string => typeof o === "string",
   );
+  const tags = tagsOrEmpty(input["tags"]);
   const policy: StoredPlaybackRestrictionPolicy = {
     arn,
     allowedCountries,
@@ -673,18 +768,23 @@ const CreatePlaybackRestrictionPolicy: OperationHandler = (input, ctx) => {
       input["enableStrictOriginEnforcement"],
     ),
     name: stringOrUndefined(input["name"]) ?? `policy-${id}`,
-    tags: tagsOrEmpty(input["tags"]),
+    tags,
   };
   ctx.store.set(playbackRestrictionPolicyKey(arn), policy);
+  ctx.store.set(tagsKey(arn), tags as Record<string, string>);
   return { playbackRestrictionPolicy: playbackRestrictionPolicyView(policy) };
 };
 
 const GetPlaybackRestrictionPolicy: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
+  const policy = requirePlaybackRestrictionPolicy(ctx, arn);
+  const tags =
+    ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? policy.tags;
   return {
-    playbackRestrictionPolicy: playbackRestrictionPolicyView(
-      requirePlaybackRestrictionPolicy(ctx, arn),
-    ),
+    playbackRestrictionPolicy: {
+      ...playbackRestrictionPolicyView(policy),
+      tags,
+    },
   };
 };
 
@@ -752,19 +852,23 @@ const CreateAdConfiguration: OperationHandler = (input, ctx) => {
         stringOrUndefined(obj["playbackConfigurationArn"]) ?? "",
     };
   });
+  const tags = tagsOrEmpty(input["tags"]);
   const ac: StoredAdConfiguration = {
     arn,
     name: requireString(input, "name"),
     mediaTailorPlaybackConfigurations,
-    tags: tagsOrEmpty(input["tags"]),
+    tags,
   };
   ctx.store.set(adConfigKey(arn), ac);
+  ctx.store.set(tagsKey(arn), tags as Record<string, string>);
   return { adConfiguration: adConfigView(ac) };
 };
 
 const GetAdConfiguration: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
-  return { adConfiguration: adConfigView(requireAdConfig(ctx, arn)) };
+  const ac = requireAdConfig(ctx, arn);
+  const tags = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? ac.tags;
+  return { adConfiguration: { ...adConfigView(ac), tags } };
 };
 
 const DeleteAdConfiguration: OperationHandler = (input, ctx) => {
@@ -792,18 +896,47 @@ const GetStream: OperationHandler = (input, ctx) => {
 
 const ListStreams: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const token = stringOrUndefined(input["nextToken"]);
+  const filterBy =
+    typeof input["filterBy"] === "object" && input["filterBy"] !== null
+      ? (input["filterBy"] as Record<string, unknown>)
+      : undefined;
+  const filterByHealth =
+    filterBy !== undefined ? stringOrUndefined(filterBy["health"]) : undefined;
+  const start = token !== undefined ? decodeNextToken(token) : 0;
   const streams = ctx.store
     .list<StoredStream>()
     .filter((entry) => entry.key.startsWith(streamPrefix))
     .map((entry) => entry.value)
-    .filter((s) => s.state === "LIVE");
-  return { streams: streams.slice(0, max).map(streamSummaryView) };
+    .filter((s) => s.state === "LIVE")
+    .filter((s) =>
+      filterByHealth === undefined ? true : s.health === filterByHealth,
+    );
+  const slice = streams.slice(start, start + max);
+  const nextToken =
+    start + max < streams.length ? encodeNextToken(start + max) : undefined;
+  return {
+    streams: slice.map(streamSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const StopStream: OperationHandler = (input, ctx) => {
   const chArn = requireString(input, "channelArn");
   requireChannel(ctx, chArn);
-  ctx.store.delete(streamKey(chArn));
+  const liveStream = ctx.store.get<StoredStream>(streamKey(chArn));
+  if (liveStream !== undefined) {
+    const endTime = new Date().toISOString();
+    const session: StoredStreamSession = {
+      streamId: liveStream.streamId,
+      startTime: liveStream.startTime,
+      endTime,
+      channelArn: chArn,
+      hasErrorEvent: false,
+    };
+    ctx.store.set(streamSessionKey(chArn, liveStream.streamId), session);
+    ctx.store.delete(streamKey(chArn));
+  }
   return {};
 };
 
@@ -817,6 +950,30 @@ const GetStreamSession: OperationHandler = (input, ctx) => {
   const chArn = requireString(input, "channelArn");
   const channel = requireChannel(ctx, chArn);
   const requestedStreamId = stringOrUndefined(input["streamId"]);
+  const mockIngestConfig = {
+    video: {
+      avcLevel: "4",
+      avcProfile: "High",
+      codec: "AVC",
+      encoder: "FFMPEG",
+      targetFramerate: 30,
+      targetBitrate: 2500000,
+      videoHeight: 720,
+      videoWidth: 1280,
+    },
+    audio: {
+      codec: "AAC",
+      channels: 2,
+      sampleRate: 48000,
+      targetBitrate: 128000,
+    },
+  };
+  const recConfigResult =
+    channel.recordingConfigurationArn !== ""
+      ? ctx.store.get<StoredRecordingConfiguration>(
+          recConfigKey(channel.recordingConfigurationArn),
+        )
+      : undefined;
   if (requestedStreamId !== undefined) {
     const stored = ctx.store.get<StoredStreamSession>(
       streamSessionKey(chArn, requestedStreamId),
@@ -834,6 +991,10 @@ const GetStreamSession: OperationHandler = (input, ctx) => {
         startTime: stored.startTime,
         endTime: stored.endTime,
         channel: channelView(channel),
+        ingestConfiguration: mockIngestConfig,
+        ...(recConfigResult !== undefined
+          ? { recordingConfiguration: recConfigView(recConfigResult) }
+          : {}),
         truncatedEvents: [],
       },
     };
@@ -844,6 +1005,10 @@ const GetStreamSession: OperationHandler = (input, ctx) => {
       streamId: liveStream.streamId,
       startTime: liveStream.startTime,
       channel: channelView(channel),
+      ingestConfiguration: mockIngestConfig,
+      ...(recConfigResult !== undefined
+        ? { recordingConfiguration: recConfigView(recConfigResult) }
+        : {}),
       truncatedEvents: [],
     },
   };

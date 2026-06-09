@@ -586,3 +586,98 @@ test("ServiceDiscovery tag operations", async () => {
 
   void nsRes;
 });
+
+test("ServiceDiscovery CreateHttpNamespace is idempotent with same CreatorRequestId", async () => {
+  const client = servicediscovery();
+  const name = `e2e-idem-ns-${Date.now()}`;
+  const requestId = `req-${Date.now()}`;
+
+  const first = await client.send(
+    new CreateHttpNamespaceCommand({
+      Name: name,
+      CreatorRequestId: requestId,
+    }),
+  );
+
+  const second = await client.send(
+    new CreateHttpNamespaceCommand({
+      Name: name,
+      CreatorRequestId: requestId,
+    }),
+  );
+
+  expect(second.OperationId).toBeDefined();
+  expect(first.OperationId).toBeDefined();
+});
+
+test("ServiceDiscovery DeleteNamespace rejects when services attached, DeleteService rejects when instances attached", async () => {
+  const client = servicediscovery();
+  const nsName = `e2e-in-use-ns-${Date.now()}`;
+  const ns = await client.send(
+    new CreateHttpNamespaceCommand({ Name: nsName }),
+  );
+  const nsListed = await client.send(new ListNamespacesCommand({}));
+  const created = (nsListed.Namespaces ?? []).find((n) => n.Name === nsName);
+  const namespaceId = created?.Id as string;
+  void ns;
+
+  const svc = await client.send(
+    new CreateServiceCommand({
+      Name: `e2e-in-use-svc-${Date.now()}`,
+      NamespaceId: namespaceId,
+    }),
+  );
+  const serviceId = svc.Service?.Id as string;
+
+  await client.send(
+    new RegisterInstanceCommand({
+      ServiceId: serviceId,
+      InstanceId: "i-1",
+      Attributes: { AWS_INSTANCE_IPV4: "10.0.0.1" },
+    }),
+  );
+
+  await expect(
+    client.send(new DeleteServiceCommand({ Id: serviceId })),
+  ).rejects.toThrow(/ResourceInUse|in-use|instance/i);
+
+  await expect(
+    client.send(new DeleteNamespaceCommand({ Id: namespaceId })),
+  ).rejects.toThrow(/ResourceInUse|in-use|service/i);
+
+  await client.send(
+    new DeregisterInstanceCommand({ ServiceId: serviceId, InstanceId: "i-1" }),
+  );
+  await client.send(new DeleteServiceCommand({ Id: serviceId }));
+  await client.send(new DeleteNamespaceCommand({ Id: namespaceId }));
+});
+
+test("ServiceDiscovery ListNamespaces and ListServices honor MaxResults and NextToken", async () => {
+  const client = servicediscovery();
+  const base = `e2e-page-${Date.now()}`;
+  const ids: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const ns = await client.send(
+      new CreateHttpNamespaceCommand({ Name: `${base}-${i}` }),
+    );
+    void ns;
+  }
+  const all = await client.send(new ListNamespacesCommand({}));
+  const created = (all.Namespaces ?? []).filter((n) =>
+    (n.Name ?? "").startsWith(base),
+  );
+  for (const n of created) ids.push(n.Id as string);
+
+  const page1 = await client.send(new ListNamespacesCommand({ MaxResults: 1 }));
+  expect((page1.Namespaces ?? []).length).toBe(1);
+  expect(typeof page1.NextToken).toBe("string");
+
+  const page2 = await client.send(
+    new ListNamespacesCommand({ MaxResults: 1, NextToken: page1.NextToken }),
+  );
+  expect((page2.Namespaces ?? []).length).toBe(1);
+
+  for (const id of ids) {
+    await client.send(new DeleteNamespaceCommand({ Id: id }));
+  }
+});

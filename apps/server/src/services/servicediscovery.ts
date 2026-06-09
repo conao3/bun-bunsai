@@ -216,25 +216,74 @@ const serviceView = (svc: StoredService): Record<string, unknown> => ({
   CreatedByAccount: svc.CreatedByAccount,
 });
 
-const checkNamespaceDuplicate = (ctx: ServiceContext, name: string): void => {
+const checkNamespaceDuplicate = (
+  ctx: ServiceContext,
+  name: string,
+  creatorRequestId: string | undefined,
+): StoredNamespace | undefined => {
   const existing = ctx.store
     .list<StoredNamespace>()
     .filter((entry) => entry.key.startsWith("namespace/"))
     .map((entry) => entry.value)
     .find((ns) => ns.Name === name);
-  if (existing !== undefined) {
-    throw awsError(
-      "NamespaceAlreadyExists",
-      `The namespace ${name} already exists.`,
-      400,
-    );
+  if (existing === undefined) return undefined;
+  if (
+    creatorRequestId !== undefined &&
+    existing.CreatorRequestId === creatorRequestId
+  ) {
+    return existing;
   }
+  throw awsError(
+    "NamespaceAlreadyExists",
+    `The namespace ${name} already exists.`,
+    400,
+  );
+};
+
+const encodeListToken = (offset: number): string => btoa(String(offset));
+
+const decodeListToken = (token: string | undefined): number => {
+  if (token === undefined || token === "") return 0;
+  try {
+    const n = parseInt(atob(token), 10);
+    return isNaN(n) ? 0 : n;
+  } catch {
+    return 0;
+  }
+};
+
+const resolveListMax = (value: unknown): number => {
+  if (typeof value !== "number" || value <= 0) return 100;
+  return Math.floor(Math.min(value, 100));
+};
+
+const paginateList = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { page: T[]; NextToken: string | undefined } => {
+  const offset = decodeListToken(
+    typeof nextToken === "string" ? nextToken : undefined,
+  );
+  const max = resolveListMax(maxResults);
+  const page = items.slice(offset, offset + max);
+  const next =
+    offset + max < items.length ? encodeListToken(offset + max) : undefined;
+  return { page, NextToken: next };
 };
 
 const CreatePrivateDnsNamespace: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   const vpc = requireString(input, "Vpc");
-  checkNamespaceDuplicate(ctx, name);
+  const creatorRequestId = optionalString(input, "CreatorRequestId");
+  const idemMatch = checkNamespaceDuplicate(ctx, name, creatorRequestId);
+  if (idemMatch !== undefined) {
+    return {
+      OperationId: storeOperation(ctx, "CREATE_NAMESPACE", {
+        NAMESPACE: idemMatch.Id,
+      }),
+    };
+  }
   const id = `ns-${randomHex(13)}`;
   const namespace: StoredNamespace = {
     Id: id,
@@ -264,7 +313,15 @@ const CreatePrivateDnsNamespace: OperationHandler = (input, ctx) => {
 
 const CreateHttpNamespace: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
-  checkNamespaceDuplicate(ctx, name);
+  const creatorRequestId = optionalString(input, "CreatorRequestId");
+  const idemMatch = checkNamespaceDuplicate(ctx, name, creatorRequestId);
+  if (idemMatch !== undefined) {
+    return {
+      OperationId: storeOperation(ctx, "CREATE_NAMESPACE", {
+        NAMESPACE: idemMatch.Id,
+      }),
+    };
+  }
   const id = `ns-${randomHex(13)}`;
   const namespace: StoredNamespace = {
     Id: id,
@@ -287,7 +344,15 @@ const CreateHttpNamespace: OperationHandler = (input, ctx) => {
 
 const CreatePublicDnsNamespace: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
-  checkNamespaceDuplicate(ctx, name);
+  const creatorRequestId = optionalString(input, "CreatorRequestId");
+  const idemMatch = checkNamespaceDuplicate(ctx, name, creatorRequestId);
+  if (idemMatch !== undefined) {
+    return {
+      OperationId: storeOperation(ctx, "CREATE_NAMESPACE", {
+        NAMESPACE: idemMatch.Id,
+      }),
+    };
+  }
   const id = `ns-${randomHex(13)}`;
   const namespace: StoredNamespace = {
     Id: id,
@@ -320,14 +385,19 @@ const GetNamespace: OperationHandler = (input, ctx) => {
   return { Namespace: namespaceView(namespace) };
 };
 
-const ListNamespaces: OperationHandler = (_input, ctx) => {
+const ListNamespaces: OperationHandler = (input, ctx) => {
   const namespaces = ctx.store
     .list<StoredNamespace>()
     .filter((entry) => entry.key.startsWith("namespace/"))
     .map((entry) => entry.value)
     .sort((a, b) => a.Name.localeCompare(b.Name));
-  return {
-    Namespaces: namespaces.map((ns) => ({
+  const { page, NextToken } = paginateList(
+    namespaces,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  const result: Record<string, unknown> = {
+    Namespaces: page.map((ns) => ({
       Id: ns.Id,
       Arn: ns.Arn,
       ResourceOwner: ns.ResourceOwner,
@@ -339,6 +409,8 @@ const ListNamespaces: OperationHandler = (_input, ctx) => {
       CreateDate: ns.CreateDate,
     })),
   };
+  if (NextToken !== undefined) result["NextToken"] = NextToken;
+  return result;
 };
 
 const UpdateHttpNamespace: OperationHandler = (input, ctx) => {
@@ -385,7 +457,14 @@ const UpdatePrivateDnsNamespace: OperationHandler = (input, ctx) => {
 
 const DeleteNamespace: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
-  requireNamespace(ctx, id);
+  const namespace = requireNamespace(ctx, id);
+  if (namespace.ServiceCount > 0) {
+    throw awsError(
+      "ResourceInUse",
+      `Namespace ${id} contains ${namespace.ServiceCount} service(s); detach them before deletion.`,
+      400,
+    );
+  }
   ctx.store.delete(namespaceKey(id));
   return {
     OperationId: storeOperation(ctx, "DELETE_NAMESPACE", { NAMESPACE: id }),
@@ -435,14 +514,34 @@ const GetService: OperationHandler = (input, ctx) => {
   return { Service: serviceView(service) };
 };
 
-const ListServices: OperationHandler = (_input, ctx) => {
-  const services = ctx.store
+const ListServices: OperationHandler = (input, ctx) => {
+  const filters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as Array<{
+        Name: string;
+        Values: string[];
+        Condition?: string;
+      }>)
+    : [];
+  const nsFilter = filters.find((f) => f.Name === "NAMESPACE_ID");
+  let services = ctx.store
     .list<StoredService>()
     .filter((entry) => entry.key.startsWith("service/"))
     .map((entry) => entry.value)
     .sort((a, b) => a.Name.localeCompare(b.Name));
-  return {
-    Services: services.map((svc) => ({
+  if (nsFilter !== undefined && Array.isArray(nsFilter.Values)) {
+    services = services.filter(
+      (svc) =>
+        svc.NamespaceId !== undefined &&
+        nsFilter.Values.includes(svc.NamespaceId),
+    );
+  }
+  const { page, NextToken } = paginateList(
+    services,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  const result: Record<string, unknown> = {
+    Services: page.map((svc) => ({
       Id: svc.Id,
       Arn: svc.Arn,
       ResourceOwner: svc.ResourceOwner,
@@ -457,6 +556,8 @@ const ListServices: OperationHandler = (_input, ctx) => {
       CreatedByAccount: svc.CreatedByAccount,
     })),
   };
+  if (NextToken !== undefined) result["NextToken"] = NextToken;
+  return result;
 };
 
 const UpdateService: OperationHandler = (input, ctx) => {
@@ -480,8 +581,24 @@ const UpdateService: OperationHandler = (input, ctx) => {
 
 const DeleteService: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
-  requireService(ctx, id);
+  const service = requireService(ctx, id);
+  if (service.InstanceCount > 0) {
+    throw awsError(
+      "ResourceInUse",
+      `Service ${id} contains ${service.InstanceCount} instance(s); deregister them before deletion.`,
+      400,
+    );
+  }
   ctx.store.delete(serviceKey(id));
+  if (service.NamespaceId !== undefined) {
+    const namespace = ctx.store.get<StoredNamespace>(
+      namespaceKey(service.NamespaceId),
+    );
+    if (namespace !== undefined) {
+      namespace.ServiceCount = Math.max(0, namespace.ServiceCount - 1);
+      ctx.store.set(namespaceKey(service.NamespaceId), namespace);
+    }
+  }
   return {};
 };
 

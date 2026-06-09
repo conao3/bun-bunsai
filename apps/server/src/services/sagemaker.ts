@@ -829,6 +829,9 @@ const associationKey = (sourceArn: string, destinationArn: string): string =>
 
 const tagsKey = (resourceArn: string): string => `tags/${resourceArn}`;
 
+const idempotencyKey = (prefix: string, token: string): string =>
+  `idempotency/${prefix}/${token}`;
+
 const trialComponentAssociationKey = (
   trialComponentName: string,
   trialName: string,
@@ -1387,7 +1390,8 @@ const ListModels: OperationHandler = (_input, ctx) => {
 
 const DeleteModel: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ModelName");
-  requireModel(ctx, name);
+  const stored = requireModel(ctx, name);
+  ctx.store.delete(tagsKey(stored.ModelArn));
   ctx.store.delete(modelKey(name));
   return {};
 };
@@ -1441,7 +1445,19 @@ const DescribeEndpointConfig: OperationHandler = (input, ctx) => {
 
 const DeleteEndpointConfig: OperationHandler = (input, ctx) => {
   const name = requireString(input, "EndpointConfigName");
-  requireEndpointConfig(ctx, name);
+  const stored = requireEndpointConfig(ctx, name);
+  const inUse = ctx.store
+    .list<StoredEndpoint>()
+    .filter((e) => e.key.startsWith("endpoint/"))
+    .some((e) => e.value.EndpointConfigName === name);
+  if (inUse) {
+    throw awsError(
+      "ResourceInUse",
+      `EndpointConfig ${name} is currently in use by one or more endpoints.`,
+      400,
+    );
+  }
+  ctx.store.delete(tagsKey(stored.EndpointConfigArn));
   ctx.store.delete(configKey(name));
   return {};
 };
@@ -1492,6 +1508,12 @@ const CreateEndpoint: OperationHandler = (input, ctx) => {
     LastModifiedTime: at,
   };
   ctx.store.set(endpointKey(name), stored);
+  const inputTags = Array.isArray(input["Tags"])
+    ? (input["Tags"] as Array<{ Key: string; Value: string }>)
+    : [];
+  if (inputTags.length > 0) {
+    ctx.store.set(tagsKey(arn), { ResourceArn: arn, Tags: inputTags });
+  }
   return { EndpointArn: arn };
 };
 
@@ -1523,6 +1545,12 @@ const endpointEffectiveStatus = (stored: StoredEndpoint): string => {
   ) {
     return "InService";
   }
+  if (
+    stored.EndpointStatus === "Updating" &&
+    nowSeconds() - stored.LastModifiedTime >= ENDPOINT_INSERVICE_DELAY_SECS
+  ) {
+    return "InService";
+  }
   return stored.EndpointStatus;
 };
 
@@ -1536,6 +1564,7 @@ const DeleteEndpoint: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  ctx.store.delete(tagsKey(stored.EndpointArn));
   ctx.store.delete(endpointKey(name));
   return {};
 };
@@ -1821,6 +1850,16 @@ const DeleteModelPackageGroupPolicy: OperationHandler = (input, ctx) => {
 };
 
 const CreateModelPackage: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string"
+      ? (input["ClientToken"] as string)
+      : undefined;
+  if (clientToken !== undefined) {
+    const existingArn = ctx.store.get<string>(
+      idempotencyKey("model-package", clientToken),
+    );
+    if (existingArn !== undefined) return { ModelPackageArn: existingArn };
+  }
   const pkgName =
     typeof input["ModelPackageName"] === "string" &&
     input["ModelPackageName"] !== ""
@@ -1858,6 +1897,9 @@ const CreateModelPackage: OperationHandler = (input, ctx) => {
     LastModifiedTime: at,
   };
   ctx.store.set(modelPackageKey(pkgName), stored);
+  if (clientToken !== undefined) {
+    ctx.store.set(idempotencyKey("model-package", clientToken), arn);
+  }
   return { ModelPackageArn: arn };
 };
 
@@ -2434,6 +2476,16 @@ const ListNotebookInstanceLifecycleConfigs: OperationHandler = (
 };
 
 const CreatePipeline: OperationHandler = (input, ctx) => {
+  const clientRequestToken =
+    typeof input["ClientRequestToken"] === "string"
+      ? (input["ClientRequestToken"] as string)
+      : undefined;
+  if (clientRequestToken !== undefined) {
+    const existingArn = ctx.store.get<string>(
+      idempotencyKey("pipeline", clientRequestToken),
+    );
+    if (existingArn !== undefined) return { PipelineArn: existingArn };
+  }
   const name = requireString(input, "PipelineName");
   const existing = ctx.store.get<StoredPipeline>(pipelineKey(name));
   if (existing !== undefined) {
@@ -2469,6 +2521,9 @@ const CreatePipeline: OperationHandler = (input, ctx) => {
     LastModifiedTime: at,
   };
   ctx.store.set(pipelineKey(name), stored);
+  if (clientRequestToken !== undefined) {
+    ctx.store.set(idempotencyKey("pipeline", clientRequestToken), arn);
+  }
   return { PipelineArn: arn };
 };
 
@@ -2975,6 +3030,16 @@ const CreatePresignedMlflowAppUrl: OperationHandler = (input, ctx) => {
 };
 
 const CreatePartnerApp: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string"
+      ? (input["ClientToken"] as string)
+      : undefined;
+  if (clientToken !== undefined) {
+    const existingArn = ctx.store.get<string>(
+      idempotencyKey("partner-app", clientToken),
+    );
+    if (existingArn !== undefined) return { Arn: existingArn };
+  }
   const name = requireString(input, "Name");
   const existing = ctx.store.get<StoredPartnerApp>(partnerAppKey(name));
   if (existing !== undefined) {
@@ -3003,6 +3068,9 @@ const CreatePartnerApp: OperationHandler = (input, ctx) => {
     CreationTime: nowSeconds(),
   };
   ctx.store.set(partnerAppKey(name), stored);
+  if (clientToken !== undefined) {
+    ctx.store.set(idempotencyKey("partner-app", clientToken), arn);
+  }
   return { Arn: arn };
 };
 
@@ -3200,6 +3268,16 @@ const requireImage = (ctx: ServiceContext, name: string): StoredImage => {
 };
 
 const CreateImageVersion: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string"
+      ? (input["ClientToken"] as string)
+      : undefined;
+  if (clientToken !== undefined) {
+    const existingArn = ctx.store.get<string>(
+      idempotencyKey("image-version", clientToken),
+    );
+    if (existingArn !== undefined) return { ImageVersionArn: existingArn };
+  }
   const imageName = requireString(input, "ImageName");
   requireImage(ctx, imageName);
   const versions = ctx.store
@@ -3216,6 +3294,9 @@ const CreateImageVersion: OperationHandler = (input, ctx) => {
     CreationTime: nowSeconds(),
   };
   ctx.store.set(imageVersionKey(imageName, version), stored);
+  if (clientToken !== undefined) {
+    ctx.store.set(idempotencyKey("image-version", clientToken), arn);
+  }
   return { ImageVersionArn: arn };
 };
 
@@ -9250,13 +9331,18 @@ const UpdateEndpoint: OperationHandler = (input, ctx) => {
   const newConfig = ctx.store.get<StoredEndpointConfig>(
     configKey(newConfigName),
   );
+  if (newConfig === undefined) {
+    throw awsError(
+      "ValidationException",
+      `Could not find endpoint configuration "${newConfigName}".`,
+      400,
+    );
+  }
   ctx.store.set(endpointKey(name), {
     ...stored,
     EndpointConfigName: newConfigName,
-    ProductionVariants:
-      newConfig !== undefined
-        ? newConfig.ProductionVariants
-        : stored.ProductionVariants,
+    EndpointStatus: "Updating",
+    ProductionVariants: newConfig.ProductionVariants,
     LastModifiedTime: nowSeconds(),
   });
   return { EndpointArn: stored.EndpointArn };

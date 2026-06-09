@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import logsModel from "../../../../test/vendor/aws-models/logs.json" with { type: "json" };
@@ -359,6 +360,16 @@ const optionalNumber = (
   return typeof value === "number" ? value : undefined;
 };
 
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
 const requireGroup = (ctx: ServiceContext, name: string): StoredGroup => {
   const group = ctx.store.get<StoredGroup>(name);
   if (group === undefined) {
@@ -454,7 +465,9 @@ const logGroupView = (group: StoredGroup): Record<string, unknown> => {
 const DescribeLogGroups: OperationHandler = (input, ctx) => {
   const prefix = optionalString(input, "logGroupNamePrefix");
   const pattern = optionalString(input, "logGroupNamePattern");
-  const groups = ctx.store
+  const limit = optionalNumber(input, "limit") ?? 50;
+  const offset = decodePageToken(input["nextToken"]);
+  const all = ctx.store
     .list<StoredGroup>()
     .filter(
       (entry) =>
@@ -472,9 +485,12 @@ const DescribeLogGroups: OperationHandler = (input, ctx) => {
       pattern === undefined ? true : group.logGroupName.includes(pattern),
     )
     .sort((a, b) => a.logGroupName.localeCompare(b.logGroupName));
-  return {
-    logGroups: groups.map(logGroupView),
-  };
+  const page = all.slice(offset, offset + limit);
+  const result: Record<string, unknown> = { logGroups: page.map(logGroupView) };
+  if (offset + limit < all.length) {
+    result["nextToken"] = encodePageToken(offset + limit);
+  }
+  return result;
 };
 
 const CreateLogStream: OperationHandler = (input, ctx) => {
@@ -535,14 +551,136 @@ const DescribeLogStreams: OperationHandler = (input, ctx) => {
   const groupName = requireString(input, "logGroupName");
   const group = requireGroup(ctx, groupName);
   const prefix = optionalString(input, "logStreamNamePrefix");
-  const streams = Object.values(group.streams)
+  const limit = optionalNumber(input, "limit") ?? 50;
+  const offset = decodePageToken(input["nextToken"]);
+  const all = Object.values(group.streams)
     .filter((stream) =>
       prefix === undefined ? true : stream.logStreamName.startsWith(prefix),
     )
     .sort((a, b) => a.logStreamName.localeCompare(b.logStreamName));
-  return {
-    logStreams: streams.map((stream) => logStreamView(ctx, groupName, stream)),
+  const page = all.slice(offset, offset + limit);
+  const result: Record<string, unknown> = {
+    logStreams: page.map((stream) => logStreamView(ctx, groupName, stream)),
   };
+  if (offset + limit < all.length) {
+    result["nextToken"] = encodePageToken(offset + limit);
+  }
+  return result;
+};
+
+const matchesPattern = (pattern: string, message: string): boolean => {
+  if (pattern === "") return true;
+  const terms = pattern.trim().split(/\s+/).filter(Boolean);
+  return terms.every((term) => message.includes(term));
+};
+
+const emitMetrics = (
+  ctx: ServiceContext,
+  groupName: string,
+  events: StoredEvent[],
+): void => {
+  const cwStore = ctx.storeFor("monitoring");
+  const filters = ctx.store
+    .list<StoredMetricFilter>()
+    .filter((entry) =>
+      entry.key.startsWith(`${metricFilterPrefix}${groupName} `),
+    )
+    .map((entry) => entry.value);
+  for (const filter of filters) {
+    const matching = events.filter((e) =>
+      matchesPattern(filter.filterPattern, e.message),
+    );
+    if (matching.length === 0) continue;
+    for (const transformation of filter.metricTransformations) {
+      const rawValue = parseFloat(transformation.metricValue);
+      const pointValue = Number.isFinite(rawValue)
+        ? rawValue
+        : (transformation.defaultValue ?? 1);
+      const cwKey = `metric/${transformation.metricNamespace}/${transformation.metricName}/`;
+      const existing = cwStore.get<{
+        Namespace: string;
+        MetricName: string;
+        Dimensions: unknown[];
+        Unit: string;
+        Points: { Timestamp: number; Value: number; Unit: string }[];
+      }>(cwKey);
+      const series = existing ?? {
+        Namespace: transformation.metricNamespace,
+        MetricName: transformation.metricName,
+        Dimensions: [],
+        Unit: "None",
+        Points: [],
+      };
+      for (const event of matching) {
+        series.Points.push({
+          Timestamp: Math.floor(event.ingestionTime / 1000),
+          Value: pointValue,
+          Unit: "None",
+        });
+      }
+      cwStore.set(cwKey, series);
+    }
+  }
+};
+
+const deliverToSubscriptions = (
+  ctx: ServiceContext,
+  groupName: string,
+  streamName: string,
+  events: StoredEvent[],
+): void => {
+  const filters = ctx.store
+    .list<StoredSubscriptionFilter>()
+    .filter((entry) => entry.key.startsWith(`${subFilterPrefix}${groupName} `))
+    .map((entry) => entry.value);
+  for (const filter of filters) {
+    const matching = events.filter((e) =>
+      matchesPattern(filter.filterPattern, e.message),
+    );
+    if (matching.length === 0) continue;
+    if (!filter.destinationArn.startsWith("arn:aws:kinesis:")) continue;
+    const parts = filter.destinationArn.split("/");
+    const streamName2 = parts[parts.length - 1] ?? "";
+    if (streamName2 === "") continue;
+    const kinesisStore = ctx.storeFor("kinesis");
+    const kStream = kinesisStore.get<{
+      nextSequence: number;
+      shards: { ShardId: string; Status: string }[];
+      records: {
+        SequenceNumber: string;
+        Data: string;
+        PartitionKey: string;
+        ApproximateArrivalTimestamp: number;
+        ShardId: string;
+      }[];
+    }>(`stream/${streamName2}`);
+    if (kStream === undefined) continue;
+    const openShard = kStream.shards.find((s) => s.Status === "OPEN");
+    if (openShard === undefined) continue;
+    const payload = {
+      messageType: "DATA_MESSAGE",
+      owner: ctx.account,
+      logGroup: groupName,
+      logStream: streamName,
+      subscriptionFilters: [filter.filterName],
+      logEvents: matching.map((e) => ({
+        id: e.eventId,
+        timestamp: e.timestamp,
+        message: e.message,
+      })),
+    };
+    const compressed = gzipSync(Buffer.from(JSON.stringify(payload)));
+    const record = {
+      SequenceNumber: String(kStream.nextSequence),
+      Data: compressed.toString("binary"),
+      PartitionKey: groupName,
+      ApproximateArrivalTimestamp: Math.floor(Date.now() / 1000),
+      ShardId: openShard.ShardId,
+    };
+    kStream.nextSequence += 1;
+    kStream.records.push(record);
+    kinesisStore.set(`stream/${streamName2}`, kStream);
+  }
 };
 
 const PutLogEvents: OperationHandler = (input, ctx) => {
@@ -555,6 +693,7 @@ const PutLogEvents: OperationHandler = (input, ctx) => {
     throw awsError("InvalidParameterException", "logEvents is required.", 400);
   }
   const ingestionTime = Date.now();
+  const newEvents: StoredEvent[] = [];
   for (const raw of rawEvents) {
     const event = raw as Record<string, unknown>;
     const timestamp = optionalNumber(event, "timestamp");
@@ -566,15 +705,19 @@ const PutLogEvents: OperationHandler = (input, ctx) => {
         400,
       );
     }
-    stream.events.push({
+    const stored: StoredEvent = {
       timestamp,
       message,
       ingestionTime,
       eventId: crypto.randomUUID(),
-    });
+    };
+    stream.events.push(stored);
+    newEvents.push(stored);
   }
   stream.events.sort((a, b) => a.timestamp - b.timestamp);
   ctx.store.set(groupName, group);
+  emitMetrics(ctx, groupName, newEvents);
+  deliverToSubscriptions(ctx, groupName, streamName, newEvents);
   return { nextSequenceToken: sequenceTokenOf(stream) };
 };
 

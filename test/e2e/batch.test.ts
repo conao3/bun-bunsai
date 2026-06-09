@@ -4,12 +4,17 @@ import {
   BatchClient,
   CreateComputeEnvironmentCommand,
   CreateJobQueueCommand,
+  DeleteComputeEnvironmentCommand,
+  DeleteJobQueueCommand,
   DescribeComputeEnvironmentsCommand,
   DescribeJobDefinitionsCommand,
   DescribeJobQueuesCommand,
   DescribeJobsCommand,
+  ListTagsForResourceCommand,
   RegisterJobDefinitionCommand,
   SubmitJobCommand,
+  UpdateComputeEnvironmentCommand,
+  UpdateJobQueueCommand,
 } from "@aws-sdk/client-batch";
 
 const { endpoint, requestHandler } = startApp();
@@ -132,4 +137,75 @@ test("Batch compute environment, job queue, job definition and job lifecycle", a
     new DescribeJobsCommand({ jobs: [submitted.jobId ?? ""] }),
   );
   expect((terminal.jobs ?? [])[0]?.status).toBe("SUCCEEDED");
+});
+
+test("Batch tag round-trip on Create and Delete with state guards", async () => {
+  const client = batch();
+  const ceName = `bunsai-tags-ce-${Date.now()}`;
+  const jqName = `bunsai-tags-jq-${Date.now()}`;
+
+  const ce = await client.send(
+    new CreateComputeEnvironmentCommand({
+      computeEnvironmentName: ceName,
+      type: "MANAGED",
+      computeResources: {
+        type: "FARGATE",
+        maxvCpus: 16,
+        subnets: ["subnet-12345678"],
+        securityGroupIds: ["sg-12345678"],
+      },
+      tags: { env: "test", team: "bunsai" },
+    }),
+  );
+  const ceArn = ce.computeEnvironmentArn as string;
+
+  const ceTags = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: ceArn }),
+  );
+  expect(ceTags.tags?.env).toBe("test");
+  expect(ceTags.tags?.team).toBe("bunsai");
+
+  const jq = await client.send(
+    new CreateJobQueueCommand({
+      jobQueueName: jqName,
+      priority: 1,
+      computeEnvironmentOrder: [{ order: 1, computeEnvironment: ceArn }],
+      tags: { env: "test" },
+    }),
+  );
+  const jqArn = jq.jobQueueArn as string;
+
+  const jqTags = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: jqArn }),
+  );
+  expect(jqTags.tags?.env).toBe("test");
+
+  await expect(
+    client.send(new DeleteJobQueueCommand({ jobQueue: jqName })),
+  ).rejects.toThrow(/DISABLED/);
+
+  await client.send(
+    new UpdateJobQueueCommand({ jobQueue: jqName, state: "DISABLED" }),
+  );
+  await client.send(new DeleteJobQueueCommand({ jobQueue: jqName }));
+
+  await expect(
+    client.send(
+      new DeleteComputeEnvironmentCommand({ computeEnvironment: ceName }),
+    ),
+  ).rejects.toThrow(/DISABLED/);
+
+  await client.send(
+    new UpdateComputeEnvironmentCommand({
+      computeEnvironment: ceName,
+      state: "DISABLED",
+    }),
+  );
+  await client.send(
+    new DeleteComputeEnvironmentCommand({ computeEnvironment: ceName }),
+  );
+
+  await expect(
+    client.send(new DeleteJobQueueCommand({ jobQueue: "non-existent-jq" })),
+  ).rejects.toThrow(/not found/);
 });

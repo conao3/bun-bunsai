@@ -238,6 +238,24 @@ const requireTape = (ctx: ServiceContext, arn: string): StoredTape => {
   return tape;
 };
 
+const paginateList = <T>(
+  items: T[],
+  getKey: (item: T) => string,
+  marker: string | undefined,
+  limit: number | undefined,
+): { items: T[]; nextMarker: string | undefined } => {
+  let start = 0;
+  if (marker !== undefined) {
+    const idx = items.findIndex((item) => getKey(item) === marker);
+    start = idx === -1 ? 0 : idx + 1;
+  }
+  const count = limit ?? items.length;
+  const page = items.slice(start, start + count);
+  const nextMarker =
+    start + count < items.length ? getKey(items[start + count]) : undefined;
+  return { items: page, nextMarker };
+};
+
 const snapshotKey = (arn: string): string => `snap:${arn}`;
 
 const requireSnapshotSchedule = (
@@ -875,7 +893,10 @@ const DescribeStorediSCSIVolumes: OperationHandler = (input, ctx) => {
 
 const ListVolumes: OperationHandler = (input, ctx) => {
   const gatewayArn = stringOrUndefined(input["GatewayARN"]);
-  const volumes = ctx.store
+  const marker = stringOrUndefined(input["Marker"]);
+  const limit =
+    typeof input["Limit"] === "number" ? (input["Limit"] as number) : undefined;
+  const all = ctx.store
     .list<StoredVolume>()
     .filter((e) => e.key.startsWith("vol:"))
     .filter(
@@ -890,7 +911,13 @@ const ListVolumes: OperationHandler = (input, ctx) => {
       VolumeStatus: e.value.VolumeStatus,
       VolumeSizeInBytes: e.value.VolumeSizeInBytes,
     }));
-  return { VolumeInfos: volumes };
+  const { items, nextMarker } = paginateList(
+    all,
+    (v) => v.VolumeARN,
+    marker,
+    limit,
+  );
+  return { VolumeInfos: items, Marker: nextMarker };
 };
 
 const ListVolumeInitiators: OperationHandler = (input, ctx) => {
@@ -1225,7 +1252,10 @@ const DescribeSMBFileShares: OperationHandler = (input, ctx) => {
 
 const ListFileShares: OperationHandler = (input, ctx) => {
   const gatewayArn = stringOrUndefined(input["GatewayARN"]);
-  const shares = ctx.store
+  const inputMarker = stringOrUndefined(input["Marker"]);
+  const limit =
+    typeof input["Limit"] === "number" ? (input["Limit"] as number) : undefined;
+  const all = ctx.store
     .list<StoredFileShare>()
     .filter((e) => e.key.startsWith("fs:"))
     .filter(
@@ -1238,7 +1268,17 @@ const ListFileShares: OperationHandler = (input, ctx) => {
       FileShareStatus: e.value.FileShareStatus,
       GatewayARN: e.value.GatewayARN,
     }));
-  return { FileShareInfoList: shares };
+  const { items, nextMarker } = paginateList(
+    all,
+    (s) => s.FileShareARN,
+    inputMarker,
+    limit,
+  );
+  return {
+    Marker: inputMarker,
+    NextMarker: nextMarker,
+    FileShareInfoList: items,
+  };
 };
 
 const NotifyWhenUploaded: OperationHandler = (input, ctx) => {
@@ -1290,7 +1330,10 @@ const DeleteTapePool: OperationHandler = (input, ctx) => {
 
 const ListTapePools: OperationHandler = (input, ctx) => {
   const arns = arrayOrEmpty(input["PoolARNs"]) as string[];
-  const pools = ctx.store
+  const marker = stringOrUndefined(input["Marker"]);
+  const limit =
+    typeof input["Limit"] === "number" ? (input["Limit"] as number) : undefined;
+  const all = ctx.store
     .list<StoredTapePool>()
     .filter((e) => e.key.startsWith("tp:"))
     .filter((e) => arns.length === 0 || arns.includes(e.value.PoolARN))
@@ -1303,7 +1346,13 @@ const ListTapePools: OperationHandler = (input, ctx) => {
       PoolStatus: e.value.PoolStatus,
       CreatedDate: e.value.CreatedDate,
     }));
-  return { PoolInfos: pools };
+  const { items, nextMarker } = paginateList(
+    all,
+    (p) => p.PoolARN,
+    marker,
+    limit,
+  );
+  return { PoolInfos: items, Marker: nextMarker };
 };
 
 const CreateTapeWithBarcode: OperationHandler = (input, ctx) => {
@@ -1392,7 +1441,10 @@ const DescribeTapes: OperationHandler = (input, ctx) => {
 
 const ListTapes: OperationHandler = (input, ctx) => {
   const arns = arrayOrEmpty(input["TapeARNs"]) as string[];
-  const tapes = ctx.store
+  const marker = stringOrUndefined(input["Marker"]);
+  const limit =
+    typeof input["Limit"] === "number" ? (input["Limit"] as number) : undefined;
+  const all = ctx.store
     .list<StoredTape>()
     .filter((e) => e.key.startsWith("tape:"))
     .filter((e) => arns.length === 0 || arns.includes(e.value.TapeARN))
@@ -1407,7 +1459,13 @@ const ListTapes: OperationHandler = (input, ctx) => {
       RetentionStartDate: e.value.RetentionStartDate,
       PoolEntryDate: e.value.PoolEntryDate,
     }));
-  return { TapeInfos: tapes };
+  const { items, nextMarker } = paginateList(
+    all,
+    (t) => t.TapeARN,
+    marker,
+    limit,
+  );
+  return { TapeInfos: items, Marker: nextMarker };
 };
 
 const AssignTapePool: OperationHandler = (input, ctx) => {
@@ -1429,18 +1487,24 @@ const DeleteTape: OperationHandler = (input, ctx) => {
 const RetrieveTapeArchive: OperationHandler = (input, ctx) => {
   const tapeArn = requireString(input, "TapeARN");
   requireGateway(ctx, requireString(input, "GatewayARN"));
+  const tape = requireTape(ctx, tapeArn);
+  ctx.store.set(tapeKey(tapeArn), { ...tape, TapeStatus: "RETRIEVING" });
   return { TapeARN: tapeArn };
 };
 
 const RetrieveTapeRecoveryPoint: OperationHandler = (input, ctx) => {
   const tapeArn = requireString(input, "TapeARN");
   requireGateway(ctx, requireString(input, "GatewayARN"));
+  const tape = requireTape(ctx, tapeArn);
+  ctx.store.set(tapeKey(tapeArn), { ...tape, TapeStatus: "RETRIEVING" });
   return { TapeARN: tapeArn };
 };
 
 const CancelRetrieval: OperationHandler = (input, ctx) => {
   const tapeArn = requireString(input, "TapeARN");
   requireGateway(ctx, requireString(input, "GatewayARN"));
+  const tape = requireTape(ctx, tapeArn);
+  ctx.store.set(tapeKey(tapeArn), { ...tape, TapeStatus: "ARCHIVED" });
   return { TapeARN: tapeArn };
 };
 
@@ -1474,12 +1538,23 @@ const DescribeTapeArchives: OperationHandler = (input, ctx) => {
 
 const DeleteTapeArchive: OperationHandler = (input, ctx) => {
   const tapeArn = requireString(input, "TapeARN");
+  const tape = requireTape(ctx, tapeArn);
+  if (tape.TapeStatus !== "ARCHIVED") {
+    throw awsError(
+      "InvalidGatewayRequestException",
+      `Cannot delete tape ${tapeArn}: status must be ARCHIVED.`,
+      400,
+    );
+  }
+  ctx.store.delete(tapeKey(tapeArn));
   return { TapeARN: tapeArn };
 };
 
 const CancelArchival: OperationHandler = (input, ctx) => {
   const tapeArn = requireString(input, "TapeARN");
   requireGateway(ctx, requireString(input, "GatewayARN"));
+  const tape = requireTape(ctx, tapeArn);
+  ctx.store.set(tapeKey(tapeArn), { ...tape, TapeStatus: "AVAILABLE" });
   return { TapeARN: tapeArn };
 };
 

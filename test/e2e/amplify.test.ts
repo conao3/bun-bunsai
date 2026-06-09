@@ -469,7 +469,7 @@ test("Amplify unified tag store via GetApp", async () => {
   );
 
   const got2 = await client.send(new GetAppCommand({ appId }));
-  expect(got2.app?.tags?.["initial"]).toBe("yes");
+  expect(got2.app?.tags?.["initial"]).toBeUndefined();
   expect(got2.app?.tags?.["added"]).toBe("later");
 
   await client.send(new DeleteAppCommand({ appId }));
@@ -543,15 +543,24 @@ test("Amplify job lifecycle", async () => {
   const step3 = await client.send(
     new GetJobCommand({ appId, branchName, jobId }),
   );
-  expect(step3.job?.summary?.status).toBe("RUNNING");
+  expect(step3.job?.summary?.status).toBe("SUCCEED");
+
+  await expect(
+    client.send(new StopJobCommand({ appId, branchName, jobId })),
+  ).rejects.toThrow();
+
+  const { jobSummary: js2 } = await client.send(
+    new StartJobCommand({ appId, branchName, jobType: "RELEASE" }),
+  );
+  const jobId2 = js2?.jobId ?? "";
 
   const { jobSummary: stopResult } = await client.send(
-    new StopJobCommand({ appId, branchName, jobId }),
+    new StopJobCommand({ appId, branchName, jobId: jobId2 }),
   );
   expect(stopResult?.status).toBe("CANCELLING");
 
   const cancelled = await client.send(
-    new GetJobCommand({ appId, branchName, jobId }),
+    new GetJobCommand({ appId, branchName, jobId: jobId2 }),
   );
   expect(cancelled.job?.summary?.status).toBe("CANCELLED");
 
@@ -592,4 +601,52 @@ test("Amplify tag operations", async () => {
   expect(listedAfter.tags?.["team"]).toBe("infra");
 
   await client.send(new DeleteAppCommand({ appId }));
+});
+
+test("Amplify fidelity: tag round-trip, delete cascade, job state machine", async () => {
+  const client = amplify();
+
+  const { app } = await client.send(
+    new CreateAppCommand({
+      name: `bunsai-fidelity-${Date.now()}`,
+      platform: "WEB",
+      tags: { env: "prod", team: "ops" },
+    }),
+  );
+  const appId = app?.appId ?? "";
+  const appArn = app?.appArn ?? "";
+
+  const tags1 = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: appArn }),
+  );
+  expect(tags1.tags?.["env"]).toBe("prod");
+  expect(tags1.tags?.["team"]).toBe("ops");
+
+  const branchName = `main-${Date.now()}`;
+  await client.send(new CreateBranchCommand({ appId, branchName }));
+
+  const { jobSummary } = await client.send(
+    new StartJobCommand({ appId, branchName, jobType: "RELEASE" }),
+  );
+  const jobId = jobSummary?.jobId ?? "";
+
+  const s1 = await client.send(new GetJobCommand({ appId, branchName, jobId }));
+  expect(s1.job?.summary?.status).toBe("PROVISIONING");
+
+  const s2 = await client.send(new GetJobCommand({ appId, branchName, jobId }));
+  expect(s2.job?.summary?.status).toBe("RUNNING");
+
+  const s3 = await client.send(new GetJobCommand({ appId, branchName, jobId }));
+  expect(s3.job?.summary?.status).toBe("SUCCEED");
+
+  await expect(
+    client.send(new StopJobCommand({ appId, branchName, jobId })),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteAppCommand({ appId }));
+
+  const tags2 = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: appArn }),
+  );
+  expect(tags2.tags).toEqual({});
 });

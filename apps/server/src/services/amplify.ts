@@ -201,6 +201,7 @@ const advanceDomainStatus = (status: string): string => {
 const advanceJobStatus = (status: string): string => {
   if (status === "PENDING") return "PROVISIONING";
   if (status === "PROVISIONING") return "RUNNING";
+  if (status === "RUNNING") return "SUCCEED";
   if (status === "CANCELLING") return "CANCELLED";
   return status;
 };
@@ -520,15 +521,17 @@ const CreateApp: OperationHandler = (input, ctx) => {
     tags: stringMapFrom(input["tags"]),
   };
   ctx.store.set(appKey(appId), app);
+  if (Object.keys(app.tags).length > 0) {
+    ctx.store.set(tagKey(app.appArn), app.tags);
+  }
   return { app: appView(app) };
 };
 
 const GetApp: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "appId");
   const app = requireApp(ctx, appId);
-  const extraTags =
-    ctx.store.get<Record<string, string>>(tagKey(app.appArn)) ?? {};
-  return { app: appView({ ...app, tags: { ...app.tags, ...extraTags } }) };
+  const tags = ctx.store.get<Record<string, string>>(tagKey(app.appArn)) ?? {};
+  return { app: appView({ ...app, tags }) };
 };
 
 const ListApps: OperationHandler = (input, ctx) => {
@@ -600,9 +603,26 @@ const DeleteApp: OperationHandler = (input, ctx) => {
   const app = requireApp(ctx, appId);
   for (const entry of ctx.store.list<StoredBranch>()) {
     if (entry.key.startsWith(`branch/${appId}/`)) {
+      ctx.store.delete(tagKey(entry.value.branchArn));
       ctx.store.delete(entry.key);
     }
   }
+  for (const entry of ctx.store.list()) {
+    if (
+      entry.key.startsWith(`job/${appId}/`) ||
+      entry.key.startsWith(`artifact/${appId}/`) ||
+      entry.key.startsWith(`domain/${appId}/`) ||
+      entry.key.startsWith(`backendenvironment/${appId}/`)
+    ) {
+      ctx.store.delete(entry.key);
+    }
+  }
+  for (const entry of ctx.store.list<StoredWebhook>()) {
+    if (entry.key.startsWith("webhook/") && entry.value.appId === appId) {
+      ctx.store.delete(entry.key);
+    }
+  }
+  ctx.store.delete(tagKey(app.appArn));
   ctx.store.delete(appKey(appId));
   return { app: appView(app) };
 };
@@ -646,6 +666,9 @@ const CreateBranch: OperationHandler = (input, ctx) => {
     tags: stringMapFrom(input["tags"]),
   };
   ctx.store.set(branchKey(appId, branchName), branch);
+  if (Object.keys(branch.tags).length > 0) {
+    ctx.store.set(tagKey(branch.branchArn), branch.tags);
+  }
   return { branch: branchView(branch) };
 };
 
@@ -660,10 +683,10 @@ const GetBranch: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  const extraTags =
+  const tags =
     ctx.store.get<Record<string, string>>(tagKey(stored.branchArn)) ?? {};
   return {
-    branch: branchView({ ...stored, tags: { ...stored.tags, ...extraTags } }),
+    branch: branchView({ ...stored, tags }),
   };
 };
 
@@ -691,6 +714,15 @@ const DeleteBranch: OperationHandler = (input, ctx) => {
   const branchName = requireString(input, "branchName");
   const branch = requireBranch(ctx, appId, branchName);
   ctx.store.delete(branchKey(appId, branchName));
+  ctx.store.delete(tagKey(branch.branchArn));
+  for (const entry of ctx.store.list()) {
+    if (
+      entry.key.startsWith(`job/${appId}/${branchName}/`) ||
+      entry.key.startsWith(`artifact/${appId}/${branchName}/`)
+    ) {
+      ctx.store.delete(entry.key);
+    }
+  }
   return { branch: branchView(branch) };
 };
 
@@ -1091,6 +1123,14 @@ const StopJob: OperationHandler = (input, ctx) => {
   const branchName = requireString(input, "branchName");
   const jobId = requireString(input, "jobId");
   const job = requireJob(ctx, appId, branchName, jobId);
+  const terminalStatuses = ["CANCELLED", "SUCCEED", "FAILED"] as const;
+  if ((terminalStatuses as readonly string[]).includes(job.status)) {
+    throw awsError(
+      "BadRequestException",
+      `Job ${jobId} is already in a terminal state.`,
+      400,
+    );
+  }
   const cancelling: StoredJob = { ...job, status: "CANCELLING" };
   ctx.store.set(jobKey(appId, branchName, jobId), cancelling);
   return { jobSummary: jobSummaryView(cancelling) };

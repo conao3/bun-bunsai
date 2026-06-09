@@ -532,6 +532,10 @@ const CreateApplication: OperationHandler = (input, ctx) => {
     Description: stringOrUndefined(input["Description"]),
   };
   ctx.store.set(applicationKey(id), application);
+  const tags = input["Tags"] as Record<string, string> | undefined;
+  if (tags && Object.keys(tags).length > 0) {
+    ctx.store.set(tagsKey(makeArn(ctx, "application", id)), tags);
+  }
   return applicationView(application);
 };
 
@@ -568,6 +572,7 @@ const DeleteApplication: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ApplicationId");
   requireApplication(ctx, id);
   ctx.store.delete(applicationKey(id));
+  ctx.store.delete(tagsKey(makeArn(ctx, "application", id)));
   return {};
 };
 
@@ -585,6 +590,13 @@ const CreateEnvironment: OperationHandler = (input, ctx) => {
     Monitors: arrayOrEmpty(input["Monitors"]),
   };
   ctx.store.set(environmentKey(applicationId, id), environment);
+  const tags = input["Tags"] as Record<string, string> | undefined;
+  if (tags && Object.keys(tags).length > 0) {
+    ctx.store.set(
+      tagsKey(makeArn(ctx, "application", applicationId, "environment", id)),
+      tags,
+    );
+  }
   return environmentView(environment);
 };
 
@@ -632,7 +644,24 @@ const DeleteEnvironment: OperationHandler = (input, ctx) => {
   const applicationId = requireString(input, "ApplicationId");
   const id = requireString(input, "EnvironmentId");
   requireEnvironment(ctx, applicationId, id);
+  const activeDeployments = ctx.store
+    .list<StoredDeployment>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith(`${deploymentPrefix}${applicationId}/${id}/`) &&
+        entry.value.State === "DEPLOYING",
+    );
+  if (activeDeployments.length > 0) {
+    throw awsError(
+      "ConflictException",
+      `Environment ${id} has an active deployment. Stop the deployment before deleting the environment.`,
+      409,
+    );
+  }
   ctx.store.delete(environmentKey(applicationId, id));
+  ctx.store.delete(
+    tagsKey(makeArn(ctx, "application", applicationId, "environment", id)),
+  );
   return {};
 };
 
@@ -655,6 +684,15 @@ const CreateConfigurationProfile: OperationHandler = (input, ctx) => {
     KmsKeyIdentifier: stringOrUndefined(input["KmsKeyIdentifier"]),
   };
   ctx.store.set(configProfileKey(applicationId, id), profile);
+  const tags = input["Tags"] as Record<string, string> | undefined;
+  if (tags && Object.keys(tags).length > 0) {
+    ctx.store.set(
+      tagsKey(
+        makeArn(ctx, "application", applicationId, "configurationprofile", id),
+      ),
+      tags,
+    );
+  }
   return configProfileView(profile);
 };
 
@@ -709,6 +747,11 @@ const DeleteConfigurationProfile: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ConfigurationProfileId");
   requireConfigProfile(ctx, applicationId, id);
   ctx.store.delete(configProfileKey(applicationId, id));
+  ctx.store.delete(
+    tagsKey(
+      makeArn(ctx, "application", applicationId, "configurationprofile", id),
+    ),
+  );
   return {};
 };
 
@@ -729,6 +772,10 @@ const CreateDeploymentStrategy: OperationHandler = (input, ctx) => {
     ReplicateTo: stringOrUndefined(input["ReplicateTo"]) ?? "NONE",
   };
   ctx.store.set(deploymentStrategyKey(id), strategy);
+  const tags = input["Tags"] as Record<string, string> | undefined;
+  if (tags && Object.keys(tags).length > 0) {
+    ctx.store.set(tagsKey(makeArn(ctx, "deploymentstrategy", id)), tags);
+  }
   return deploymentStrategyView(strategy);
 };
 
@@ -775,6 +822,7 @@ const DeleteDeploymentStrategy: OperationHandler = (input, ctx) => {
   const id = requireString(input, "DeploymentStrategyId");
   requireDeploymentStrategy(ctx, id);
   ctx.store.delete(deploymentStrategyKey(id));
+  ctx.store.delete(tagsKey(makeArn(ctx, "deploymentstrategy", id)));
   return {};
 };
 
@@ -791,6 +839,10 @@ const CreateExtension: OperationHandler = (input, ctx) => {
     Parameters: input["Parameters"] ?? {},
   };
   ctx.store.set(extensionKey(id), extension);
+  const tags = input["Tags"] as Record<string, string> | undefined;
+  if (tags && Object.keys(tags).length > 0) {
+    ctx.store.set(tagsKey(extension.Arn), tags);
+  }
   return extensionView(extension);
 };
 
@@ -801,12 +853,17 @@ const GetExtension: OperationHandler = (input, ctx) => {
 
 const ListExtensions: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["MaxResults"]) ?? 50;
-  const extensions = ctx.store
+  const nameFilter = stringOrUndefined(input["Name"]);
+  let extensions = ctx.store
     .list<StoredExtension>()
     .filter((entry) => entry.key.startsWith(extensionPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
-  return { Items: extensions.slice(0, max).map(extensionView) };
+  if (nameFilter !== undefined) {
+    extensions = extensions.filter((e) => e.Name === nameFilter);
+  }
+  const { page, nextToken } = paginate(extensions, max, input["NextToken"]);
+  return { Items: page.map(extensionView), NextToken: nextToken };
 };
 
 const UpdateExtension: OperationHandler = (input, ctx) => {
@@ -828,8 +885,23 @@ const UpdateExtension: OperationHandler = (input, ctx) => {
 
 const DeleteExtension: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ExtensionIdentifier");
-  requireExtension(ctx, id);
+  const extension = requireExtension(ctx, id);
+  const associations = ctx.store
+    .list<StoredExtensionAssociation>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith(extensionAssocPrefix) &&
+        entry.value.ExtensionArn === extension.Arn,
+    );
+  if (associations.length > 0) {
+    throw awsError(
+      "ConflictException",
+      `Extension ${id} has ${associations.length} active association(s). Delete all associations before deleting the extension.`,
+      409,
+    );
+  }
   ctx.store.delete(extensionKey(id));
+  ctx.store.delete(tagsKey(extension.Arn));
   return {};
 };
 
@@ -849,6 +921,10 @@ const CreateExtensionAssociation: OperationHandler = (input, ctx) => {
       extension.VersionNumber,
   };
   ctx.store.set(extensionAssocKey(id), assoc);
+  const tags = input["Tags"] as Record<string, string> | undefined;
+  if (tags && Object.keys(tags).length > 0) {
+    ctx.store.set(tagsKey(assoc.Arn), tags);
+  }
   return extensionAssocView(assoc);
 };
 
@@ -859,11 +935,28 @@ const GetExtensionAssociation: OperationHandler = (input, ctx) => {
 
 const ListExtensionAssociations: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["MaxResults"]) ?? 50;
-  const assocs = ctx.store
+  const resourceIdFilter = stringOrUndefined(input["ResourceIdentifier"]);
+  const extensionIdFilter = stringOrUndefined(input["ExtensionIdentifier"]);
+  const extensionVersionFilter = numberOrUndefined(
+    input["ExtensionVersionNumber"],
+  );
+  let assocs = ctx.store
     .list<StoredExtensionAssociation>()
     .filter((entry) => entry.key.startsWith(extensionAssocPrefix))
     .map((entry) => entry.value);
-  return { Items: assocs.slice(0, max).map(extensionAssocView) };
+  if (resourceIdFilter !== undefined) {
+    assocs = assocs.filter((a) => a.ResourceArn === resourceIdFilter);
+  }
+  if (extensionIdFilter !== undefined) {
+    assocs = assocs.filter((a) => a.ExtensionArn.includes(extensionIdFilter));
+  }
+  if (extensionVersionFilter !== undefined) {
+    assocs = assocs.filter(
+      (a) => a.ExtensionVersionNumber === extensionVersionFilter,
+    );
+  }
+  const { page, nextToken } = paginate(assocs, max, input["NextToken"]);
+  return { Items: page.map(extensionAssocView), NextToken: nextToken };
 };
 
 const UpdateExtensionAssociation: OperationHandler = (input, ctx) => {
@@ -883,8 +976,9 @@ const UpdateExtensionAssociation: OperationHandler = (input, ctx) => {
 
 const DeleteExtensionAssociation: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ExtensionAssociationId");
-  requireExtensionAssoc(ctx, id);
+  const assoc = requireExtensionAssoc(ctx, id);
   ctx.store.delete(extensionAssocKey(id));
+  ctx.store.delete(tagsKey(assoc.Arn));
   return {};
 };
 
@@ -900,6 +994,20 @@ const CreateHostedConfigurationVersion: OperationHandler = (input, ctx) => {
         `${hostedConfigVersionPrefix}${applicationId}/${profileId}/`,
       ),
     );
+  const latestVersionNumber = numberOrUndefined(input["LatestVersionNumber"]);
+  if (latestVersionNumber !== undefined) {
+    const currentLatest =
+      existingVersions.length > 0
+        ? Math.max(...existingVersions.map((v) => v.value.VersionNumber))
+        : 0;
+    if (currentLatest !== latestVersionNumber) {
+      throw awsError(
+        "ConflictException",
+        `Latest version number mismatch: provided ${latestVersionNumber}, current latest is ${currentLatest}.`,
+        409,
+      );
+    }
+  }
   const nextVersion = existingVersions.length + 1;
   const rawContent = input["Content"];
   const content: string | Uint8Array =
@@ -939,7 +1047,8 @@ const ListHostedConfigurationVersions: OperationHandler = (input, ctx) => {
   const profileId = requireString(input, "ConfigurationProfileId");
   requireConfigProfile(ctx, applicationId, profileId);
   const max = numberOrUndefined(input["MaxResults"]) ?? 50;
-  const versions = ctx.store
+  const versionLabelFilter = stringOrUndefined(input["VersionLabel"]);
+  let versions = ctx.store
     .list<StoredHostedConfigurationVersion>()
     .filter((entry) =>
       entry.key.startsWith(
@@ -948,8 +1057,14 @@ const ListHostedConfigurationVersions: OperationHandler = (input, ctx) => {
     )
     .map((entry) => entry.value)
     .sort((a, b) => a.VersionNumber - b.VersionNumber);
+  if (versionLabelFilter !== undefined) {
+    versions = versions.filter((v) =>
+      v.VersionLabel?.startsWith(versionLabelFilter),
+    );
+  }
+  const { page, nextToken } = paginate(versions, max, input["NextToken"]);
   return {
-    Items: versions.slice(0, max).map((v) => ({
+    Items: page.map((v) => ({
       ApplicationId: v.ApplicationId,
       ConfigurationProfileId: v.ConfigurationProfileId,
       VersionNumber: v.VersionNumber,
@@ -958,6 +1073,7 @@ const ListHostedConfigurationVersions: OperationHandler = (input, ctx) => {
       VersionLabel: v.VersionLabel,
       KmsKeyArn: v.KmsKeyArn,
     })),
+    NextToken: nextToken,
   };
 };
 
@@ -966,6 +1082,21 @@ const DeleteHostedConfigurationVersion: OperationHandler = (input, ctx) => {
   const profileId = requireString(input, "ConfigurationProfileId");
   const versionNumber = requireNumber(input, "VersionNumber");
   requireHostedConfigVersion(ctx, applicationId, profileId, versionNumber);
+  const referencingDeployments = ctx.store
+    .list<StoredDeployment>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith(`${deploymentPrefix}${applicationId}/`) &&
+        entry.value.ConfigurationProfileId === profileId &&
+        entry.value.ConfigurationVersion === String(versionNumber),
+    );
+  if (referencingDeployments.length > 0) {
+    throw awsError(
+      "ConflictException",
+      `Hosted configuration version ${versionNumber} is referenced by ${referencingDeployments.length} deployment(s).`,
+      409,
+    );
+  }
   ctx.store.delete(
     hostedConfigVersionKey(applicationId, profileId, versionNumber),
   );
@@ -1051,7 +1182,8 @@ const ListDeployments: OperationHandler = (input, ctx) => {
     )
     .map((entry) => entry.value)
     .sort((a, b) => b.DeploymentNumber - a.DeploymentNumber);
-  return { Items: deployments.slice(0, max).map(deploymentView) };
+  const { page, nextToken } = paginate(deployments, max, input["NextToken"]);
+  return { Items: page.map(deploymentView), NextToken: nextToken };
 };
 
 const StopDeployment: OperationHandler = (input, ctx) => {

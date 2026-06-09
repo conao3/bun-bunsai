@@ -871,3 +871,469 @@ test("AppConfig tags lifecycle", async () => {
     new DeleteApplicationCommand({ ApplicationId: applicationId }),
   );
 });
+
+test("AppConfig Create with Tags round-trip", async () => {
+  const client = appconfig();
+  const ts = Date.now();
+
+  const app = await client.send(
+    new CreateApplicationCommand({
+      Name: `e2e-tags-create-app-${ts}`,
+      Tags: { tier: "gold", owner: "bunsai" },
+    }),
+  );
+  const applicationId = app.Id ?? "";
+  const appArn = `arn:aws:appconfig:${region}:000000000000:application/${applicationId}`;
+  const appTags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: appArn }),
+  );
+  expect(appTags.Tags?.tier).toBe("gold");
+  expect(appTags.Tags?.owner).toBe("bunsai");
+
+  const env = await client.send(
+    new CreateEnvironmentCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-tags-env-${ts}`,
+      Tags: { env: "staging" },
+    }),
+  );
+  const envId = env.Id ?? "";
+  const envArn = `arn:aws:appconfig:${region}:000000000000:application/${applicationId}/environment/${envId}`;
+  const envTags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: envArn }),
+  );
+  expect(envTags.Tags?.env).toBe("staging");
+
+  const profile = await client.send(
+    new CreateConfigurationProfileCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-tags-cp-${ts}`,
+      LocationUri: "hosted",
+      Tags: { profile: "main" },
+    }),
+  );
+  const profileId = profile.Id ?? "";
+  const profileArn = `arn:aws:appconfig:${region}:000000000000:application/${applicationId}/configurationprofile/${profileId}`;
+  const profileTags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: profileArn }),
+  );
+  expect(profileTags.Tags?.profile).toBe("main");
+
+  const strategy = await client.send(
+    new CreateDeploymentStrategyCommand({
+      Name: `e2e-tags-strat-${ts}`,
+      DeploymentDurationInMinutes: 0,
+      GrowthFactor: 100,
+      ReplicateTo: "NONE",
+      Tags: { strategy: "fast" },
+    }),
+  );
+  const strategyId = strategy.Id ?? "";
+  const stratArn = `arn:aws:appconfig:${region}:000000000000:deploymentstrategy/${strategyId}`;
+  const stratTags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: stratArn }),
+  );
+  expect(stratTags.Tags?.strategy).toBe("fast");
+
+  const ext = await client.send(
+    new CreateExtensionCommand({
+      Name: `e2e-tags-ext-${ts}`,
+      Actions: {},
+      Tags: { ext: "yes" },
+    }),
+  );
+  const extId = ext.Id ?? "";
+  const extArn = ext.Arn ?? "";
+  const extTags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: extArn }),
+  );
+  expect(extTags.Tags?.ext).toBe("yes");
+
+  const assoc = await client.send(
+    new CreateExtensionAssociationCommand({
+      ExtensionIdentifier: extId,
+      ResourceIdentifier: appArn,
+      Tags: { assoc: "bound" },
+    }),
+  );
+  const assocArn = assoc.Arn ?? "";
+  const assocTags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: assocArn }),
+  );
+  expect(assocTags.Tags?.assoc).toBe("bound");
+
+  await client.send(
+    new DeleteExtensionAssociationCommand({
+      ExtensionAssociationId: assoc.Id ?? "",
+    }),
+  );
+  await client.send(new DeleteExtensionCommand({ ExtensionIdentifier: extId }));
+  await client.send(
+    new DeleteDeploymentStrategyCommand({ DeploymentStrategyId: strategyId }),
+  );
+  await client.send(
+    new DeleteApplicationCommand({ ApplicationId: applicationId }),
+  );
+});
+
+test("AppConfig Delete cleans up tags", async () => {
+  const client = appconfig();
+  const ts = Date.now();
+
+  const app = await client.send(
+    new CreateApplicationCommand({
+      Name: `e2e-tags-del-app-${ts}`,
+      Tags: { leak: "yes" },
+    }),
+  );
+  const applicationId = app.Id ?? "";
+  const appArn = `arn:aws:appconfig:${region}:000000000000:application/${applicationId}`;
+
+  await client.send(
+    new DeleteApplicationCommand({ ApplicationId: applicationId }),
+  );
+
+  const app2 = await client.send(
+    new CreateApplicationCommand({ Name: `e2e-tags-del-app2-${ts}` }),
+  );
+  const applicationId2 = app2.Id ?? "";
+  const app2Arn = `arn:aws:appconfig:${region}:000000000000:application/${applicationId2}`;
+
+  expect(applicationId2).not.toBe(applicationId);
+  expect(app2Arn).not.toBe(appArn);
+
+  const tags2 = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: app2Arn }),
+  );
+  expect(tags2.Tags?.leak).toBeUndefined();
+
+  await client.send(
+    new DeleteApplicationCommand({ ApplicationId: applicationId2 }),
+  );
+});
+
+test("AppConfig pagination: extensions, associations, versions, deployments", async () => {
+  const client = appconfig();
+  const ts = Date.now();
+
+  const app = await client.send(
+    new CreateApplicationCommand({ Name: `e2e-page2-app-${ts}` }),
+  );
+  const applicationId = app.Id ?? "";
+
+  const env = await client.send(
+    new CreateEnvironmentCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-page2-env-${ts}`,
+    }),
+  );
+  const environmentId = env.Id ?? "";
+
+  const profile = await client.send(
+    new CreateConfigurationProfileCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-page2-cp-${ts}`,
+      LocationUri: "hosted",
+    }),
+  );
+  const configurationProfileId = profile.Id ?? "";
+
+  const strategy = await client.send(
+    new CreateDeploymentStrategyCommand({
+      Name: `e2e-page2-strat-${ts}`,
+      DeploymentDurationInMinutes: 0,
+      GrowthFactor: 100,
+      ReplicateTo: "NONE",
+    }),
+  );
+  const deploymentStrategyId = strategy.Id ?? "";
+
+  const extIds: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const e = await client.send(
+      new CreateExtensionCommand({
+        Name: `e2e-page2-ext-${ts}-${i}`,
+        Actions: {},
+      }),
+    );
+    extIds.push(e.Id ?? "");
+  }
+
+  const extPage1 = await client.send(
+    new ListExtensionsCommand({ MaxResults: 2 }),
+  );
+  expect(extPage1.NextToken).toBeDefined();
+  if (extPage1.NextToken) {
+    const extPage2 = await client.send(
+      new ListExtensionsCommand({
+        MaxResults: 2,
+        NextToken: extPage1.NextToken,
+      }),
+    );
+    expect(Array.isArray(extPage2.Items)).toBe(true);
+  }
+
+  const assocIds: string[] = [];
+  for (const extId of extIds) {
+    const a = await client.send(
+      new CreateExtensionAssociationCommand({
+        ExtensionIdentifier: extId,
+        ResourceIdentifier: applicationId,
+      }),
+    );
+    assocIds.push(a.Id ?? "");
+  }
+
+  const assocPage1 = await client.send(
+    new ListExtensionAssociationsCommand({ MaxResults: 2 }),
+  );
+  expect(assocPage1.NextToken).toBeDefined();
+  if (assocPage1.NextToken) {
+    const assocPage2 = await client.send(
+      new ListExtensionAssociationsCommand({
+        MaxResults: 2,
+        NextToken: assocPage1.NextToken,
+      }),
+    );
+    expect(Array.isArray(assocPage2.Items)).toBe(true);
+  }
+
+  for (let i = 0; i < 3; i++) {
+    await client.send(
+      new CreateHostedConfigurationVersionCommand({
+        ApplicationId: applicationId,
+        ConfigurationProfileId: configurationProfileId,
+        Content: Buffer.from(`v${i + 1}`),
+        ContentType: "text/plain",
+      }),
+    );
+  }
+
+  const hcvPage1 = await client.send(
+    new ListHostedConfigurationVersionsCommand({
+      ApplicationId: applicationId,
+      ConfigurationProfileId: configurationProfileId,
+      MaxResults: 2,
+    }),
+  );
+  expect((hcvPage1.Items ?? []).length).toBe(2);
+  expect(hcvPage1.NextToken).toBeDefined();
+  const hcvPage2 = await client.send(
+    new ListHostedConfigurationVersionsCommand({
+      ApplicationId: applicationId,
+      ConfigurationProfileId: configurationProfileId,
+      MaxResults: 2,
+      NextToken: hcvPage1.NextToken,
+    }),
+  );
+  expect((hcvPage2.Items ?? []).length).toBe(1);
+  expect(hcvPage2.NextToken).toBeUndefined();
+
+  for (let i = 0; i < 3; i++) {
+    await client.send(
+      new StartDeploymentCommand({
+        ApplicationId: applicationId,
+        EnvironmentId: environmentId,
+        DeploymentStrategyId: deploymentStrategyId,
+        ConfigurationProfileId: configurationProfileId,
+        ConfigurationVersion: String(i + 1),
+      }),
+    );
+  }
+
+  const depPage1 = await client.send(
+    new ListDeploymentsCommand({
+      ApplicationId: applicationId,
+      EnvironmentId: environmentId,
+      MaxResults: 2,
+    }),
+  );
+  expect((depPage1.Items ?? []).length).toBe(2);
+  expect(depPage1.NextToken).toBeDefined();
+  const depPage2 = await client.send(
+    new ListDeploymentsCommand({
+      ApplicationId: applicationId,
+      EnvironmentId: environmentId,
+      MaxResults: 2,
+      NextToken: depPage1.NextToken,
+    }),
+  );
+  expect((depPage2.Items ?? []).length).toBe(1);
+  expect(depPage2.NextToken).toBeUndefined();
+
+  for (const assocId of assocIds) {
+    await client.send(
+      new DeleteExtensionAssociationCommand({
+        ExtensionAssociationId: assocId,
+      }),
+    );
+  }
+  for (const extId of extIds) {
+    await client.send(
+      new DeleteExtensionCommand({ ExtensionIdentifier: extId }),
+    );
+  }
+  await client.send(
+    new DeleteDeploymentStrategyCommand({
+      DeploymentStrategyId: deploymentStrategyId,
+    }),
+  );
+  await client.send(
+    new DeleteApplicationCommand({ ApplicationId: applicationId }),
+  );
+});
+
+test("AppConfig in-use guards: ConflictException on delete", async () => {
+  const client = appconfig();
+  const ts = Date.now();
+
+  const ext = await client.send(
+    new CreateExtensionCommand({
+      Name: `e2e-guard-ext-${ts}`,
+      Actions: {},
+    }),
+  );
+  const extId = ext.Id ?? "";
+
+  const app = await client.send(
+    new CreateApplicationCommand({ Name: `e2e-guard-app-${ts}` }),
+  );
+  const applicationId = app.Id ?? "";
+
+  const assoc = await client.send(
+    new CreateExtensionAssociationCommand({
+      ExtensionIdentifier: extId,
+      ResourceIdentifier: applicationId,
+    }),
+  );
+  const assocId = assoc.Id ?? "";
+
+  await expect(
+    client.send(new DeleteExtensionCommand({ ExtensionIdentifier: extId })),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteExtensionAssociationCommand({ ExtensionAssociationId: assocId }),
+  );
+  await client.send(new DeleteExtensionCommand({ ExtensionIdentifier: extId }));
+
+  const profile = await client.send(
+    new CreateConfigurationProfileCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-guard-cp-${ts}`,
+      LocationUri: "hosted",
+    }),
+  );
+  const configurationProfileId = profile.Id ?? "";
+
+  const env = await client.send(
+    new CreateEnvironmentCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-guard-env-${ts}`,
+    }),
+  );
+  const environmentId = env.Id ?? "";
+
+  const strategy = await client.send(
+    new CreateDeploymentStrategyCommand({
+      Name: `e2e-guard-strat-${ts}`,
+      DeploymentDurationInMinutes: 0,
+      GrowthFactor: 100,
+      ReplicateTo: "NONE",
+    }),
+  );
+  const deploymentStrategyId = strategy.Id ?? "";
+
+  await client.send(
+    new CreateHostedConfigurationVersionCommand({
+      ApplicationId: applicationId,
+      ConfigurationProfileId: configurationProfileId,
+      Content: Buffer.from("config"),
+      ContentType: "text/plain",
+    }),
+  );
+
+  await client.send(
+    new StartDeploymentCommand({
+      ApplicationId: applicationId,
+      EnvironmentId: environmentId,
+      DeploymentStrategyId: deploymentStrategyId,
+      ConfigurationProfileId: configurationProfileId,
+      ConfigurationVersion: "1",
+    }),
+  );
+
+  await expect(
+    client.send(
+      new DeleteHostedConfigurationVersionCommand({
+        ApplicationId: applicationId,
+        ConfigurationProfileId: configurationProfileId,
+        VersionNumber: 1,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteDeploymentStrategyCommand({
+      DeploymentStrategyId: deploymentStrategyId,
+    }),
+  );
+  await client.send(
+    new DeleteApplicationCommand({ ApplicationId: applicationId }),
+  );
+});
+
+test("AppConfig LatestVersionNumber optimistic lock", async () => {
+  const client = appconfig();
+  const ts = Date.now();
+
+  const app = await client.send(
+    new CreateApplicationCommand({ Name: `e2e-optlock-app-${ts}` }),
+  );
+  const applicationId = app.Id ?? "";
+
+  const profile = await client.send(
+    new CreateConfigurationProfileCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-optlock-cp-${ts}`,
+      LocationUri: "hosted",
+    }),
+  );
+  const configurationProfileId = profile.Id ?? "";
+
+  await client.send(
+    new CreateHostedConfigurationVersionCommand({
+      ApplicationId: applicationId,
+      ConfigurationProfileId: configurationProfileId,
+      Content: Buffer.from("v1"),
+      ContentType: "text/plain",
+    }),
+  );
+
+  await expect(
+    client.send(
+      new CreateHostedConfigurationVersionCommand({
+        ApplicationId: applicationId,
+        ConfigurationProfileId: configurationProfileId,
+        Content: Buffer.from("v2"),
+        ContentType: "text/plain",
+        LatestVersionNumber: 99,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const v2 = await client.send(
+    new CreateHostedConfigurationVersionCommand({
+      ApplicationId: applicationId,
+      ConfigurationProfileId: configurationProfileId,
+      Content: Buffer.from("v2-correct"),
+      ContentType: "text/plain",
+      LatestVersionNumber: 1,
+    }),
+  );
+  expect(v2.VersionNumber).toBe(2);
+
+  await client.send(
+    new DeleteApplicationCommand({ ApplicationId: applicationId }),
+  );
+});

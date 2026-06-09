@@ -44,6 +44,8 @@ type StoredFleet = {
   Name: string;
   InstanceFleetType: string;
   State: string;
+  TargetOnDemandCapacity: number | undefined;
+  TargetSpotCapacity: number | undefined;
 };
 
 type StoredGroup = {
@@ -305,18 +307,40 @@ const RunJobFlow: OperationHandler = (input, ctx) => {
   return { JobFlowId: id, ClusterArn: cluster.ClusterArn };
 };
 
-const ListClusters: OperationHandler = (_input, ctx) => {
-  const clusters = ctx.store
+const LIST_CLUSTERS_PAGE_SIZE = 50;
+
+const ListClusters: OperationHandler = (input, ctx) => {
+  const stateFilter = stringList(input["ClusterStates"]);
+  const marker =
+    typeof input["Marker"] === "string" ? input["Marker"] : undefined;
+
+  let all = ctx.store
     .list<StoredCluster>()
-    .filter((entry) => entry.key.startsWith("cluster/"))
-    .map((entry) => ({
-      Id: entry.value.Id,
-      Name: entry.value.Name,
-      ClusterArn: entry.value.ClusterArn,
-      Status: statusOf(entry.value.State),
-      NormalizedInstanceHours: 0,
-    }));
-  return { Clusters: clusters };
+    .filter((entry) => entry.key.startsWith("cluster/"));
+
+  if (stateFilter.length > 0) {
+    all = all.filter((entry) => stateFilter.includes(entry.value.State));
+  }
+
+  const startIdx =
+    marker !== undefined
+      ? all.findIndex((entry) => entry.value.Id === marker) + 1
+      : 0;
+
+  const page = all.slice(startIdx, startIdx + LIST_CLUSTERS_PAGE_SIZE);
+  const hasMore = startIdx + LIST_CLUSTERS_PAGE_SIZE < all.length;
+  const nextMarker =
+    hasMore && page.length > 0 ? page[page.length - 1]?.value.Id : undefined;
+
+  const clusters = page.map((entry) => ({
+    Id: entry.value.Id,
+    Name: entry.value.Name,
+    ClusterArn: entry.value.ClusterArn,
+    Status: statusOf(entry.value.State),
+    NormalizedInstanceHours: 0,
+  }));
+
+  return { Clusters: clusters, Marker: nextMarker };
 };
 
 const DescribeCluster: OperationHandler = (input, ctx) => {
@@ -374,7 +398,20 @@ const AddJobFlowSteps: OperationHandler = (input, ctx) => {
 const TerminateJobFlows: OperationHandler = (input, ctx) => {
   const ids = stringList(input["JobFlowIds"]);
   for (const id of ids) {
-    ctx.store.delete(clusterKey(id));
+    const cluster = ctx.store.get<StoredCluster>(clusterKey(id));
+    if (cluster !== undefined && cluster.TerminationProtected) {
+      throw awsError(
+        "ValidationException",
+        `Termination protection is enabled for cluster ${id}.`,
+        400,
+      );
+    }
+  }
+  for (const id of ids) {
+    const cluster = ctx.store.get<StoredCluster>(clusterKey(id));
+    if (cluster !== undefined) {
+      ctx.store.set(clusterKey(id), { ...cluster, State: "TERMINATED" });
+    }
   }
   return {};
 };
@@ -393,7 +430,15 @@ const AddInstanceFleet: OperationHandler = (input, ctx) => {
       typeof fleetInput["InstanceFleetType"] === "string"
         ? fleetInput["InstanceFleetType"]
         : "CORE",
-    State: "RUNNING",
+    State: "PROVISIONING",
+    TargetOnDemandCapacity:
+      typeof fleetInput["TargetOnDemandCapacity"] === "number"
+        ? fleetInput["TargetOnDemandCapacity"]
+        : undefined,
+    TargetSpotCapacity:
+      typeof fleetInput["TargetSpotCapacity"] === "number"
+        ? fleetInput["TargetSpotCapacity"]
+        : undefined,
   };
   ctx.store.set(fleetKey(clusterId, fleetId), fleet);
   return {
@@ -415,19 +460,37 @@ const AddInstanceGroups: OperationHandler = (input, ctx) => {
       typeof grp === "object" && grp !== null
         ? (grp as Record<string, unknown>)
         : {};
+    if (typeof g["InstanceType"] !== "string" || g["InstanceType"] === "") {
+      throw awsError(
+        "InvalidRequestException",
+        "InstanceType is required.",
+        400,
+      );
+    }
+    if (typeof g["InstanceCount"] !== "number") {
+      throw awsError(
+        "InvalidRequestException",
+        "InstanceCount is required.",
+        400,
+      );
+    }
+    if (typeof g["InstanceRole"] !== "string" || g["InstanceRole"] === "") {
+      throw awsError(
+        "InvalidRequestException",
+        "InstanceRole is required.",
+        400,
+      );
+    }
     const groupId = newGroupId();
     const group: StoredGroup = {
       Id: groupId,
       ClusterId: jobFlowId,
       Name: typeof g["Name"] === "string" ? g["Name"] : "group",
-      InstanceGroupType:
-        typeof g["InstanceRole"] === "string" ? g["InstanceRole"] : "CORE",
-      InstanceType:
-        typeof g["InstanceType"] === "string" ? g["InstanceType"] : "m5.xlarge",
-      RequestedInstanceCount:
-        typeof g["InstanceCount"] === "number" ? g["InstanceCount"] : 1,
+      InstanceGroupType: g["InstanceRole"] as string,
+      InstanceType: g["InstanceType"] as string,
+      RequestedInstanceCount: g["InstanceCount"] as number,
       RunningInstanceCount: 0,
-      State: "RUNNING",
+      State: "PROVISIONING",
       Market: typeof g["Market"] === "string" ? g["Market"] : "ON_DEMAND",
     };
     ctx.store.set(groupKey(jobFlowId, groupId), group);
@@ -495,6 +558,13 @@ const CreatePersistentAppUI: OperationHandler = (input, ctx) => {
 
 const CreateSecurityConfiguration: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
+  if (ctx.store.get<StoredSecurityConfig>(secConfigKey(name)) !== undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      `SecurityConfiguration with name '${name}' already exists.`,
+      400,
+    );
+  }
   const secConfig =
     typeof input["SecurityConfiguration"] === "string"
       ? input["SecurityConfiguration"]
@@ -863,8 +933,8 @@ const ListInstanceFleets: OperationHandler = (input, ctx) => {
       Name: e.value.Name,
       InstanceFleetType: e.value.InstanceFleetType,
       Status: { State: e.value.State, StateChangeReason: {}, Timeline: {} },
-      TargetOnDemandCapacity: 0,
-      TargetSpotCapacity: 0,
+      TargetOnDemandCapacity: e.value.TargetOnDemandCapacity ?? 0,
+      TargetSpotCapacity: e.value.TargetSpotCapacity ?? 0,
       ProvisionedOnDemandCapacity: 0,
       ProvisionedSpotCapacity: 0,
       InstanceTypeSpecifications: [],
@@ -1038,7 +1108,17 @@ const ModifyInstanceFleet: OperationHandler = (input, ctx) => {
   if (fleetId !== "") {
     const fleet = ctx.store.get<StoredFleet>(fleetKey(clusterId, fleetId));
     if (fleet !== undefined) {
-      ctx.store.set(fleetKey(clusterId, fleetId), { ...fleet });
+      ctx.store.set(fleetKey(clusterId, fleetId), {
+        ...fleet,
+        TargetOnDemandCapacity:
+          typeof fleetInput["TargetOnDemandCapacity"] === "number"
+            ? fleetInput["TargetOnDemandCapacity"]
+            : fleet.TargetOnDemandCapacity,
+        TargetSpotCapacity:
+          typeof fleetInput["TargetSpotCapacity"] === "number"
+            ? fleetInput["TargetSpotCapacity"]
+            : fleet.TargetSpotCapacity,
+      });
     }
   }
   return {};
@@ -1237,7 +1317,6 @@ const StopNotebookExecution: OperationHandler = (input, ctx) => {
   ctx.store.set(notebookKey(id), {
     ...nb,
     Status: "STOPPING",
-    EndTime: nowEpoch(),
   });
   return {};
 };

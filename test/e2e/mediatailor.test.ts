@@ -551,6 +551,74 @@ test("MediaTailor list alerts", async () => {
   await client.send(new DeleteChannelCommand({ ChannelName: channelName }));
 });
 
+test("MediaTailor CreateProgram missing ScheduleConfiguration error", async () => {
+  const client = mediatailor();
+  const suffix = `${Date.now()}`;
+  const channelName = `ch-sched-${suffix}`;
+  const sourceLocationName = `sl-sched-${suffix}`;
+  const programName = `prog-sched-${suffix}`;
+
+  await client.send(
+    new CreateChannelCommand({
+      ChannelName: channelName,
+      Outputs: [{ ManifestName: "index", SourceGroup: "default" }],
+      PlaybackMode: "LINEAR",
+    }),
+  );
+  await client.send(
+    new CreateSourceLocationCommand({
+      SourceLocationName: sourceLocationName,
+      HttpConfiguration: { BaseUrl: "https://vod.example.com" },
+    }),
+  );
+
+  await expect(
+    client.send(
+      new CreateProgramCommand({
+        ChannelName: channelName,
+        ProgramName: programName,
+        SourceLocationName: sourceLocationName,
+      } as unknown as ConstructorParameters<typeof CreateProgramCommand>[0]),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteChannelCommand({ ChannelName: channelName }));
+  await client.send(
+    new DeleteSourceLocationCommand({
+      SourceLocationName: sourceLocationName,
+    }),
+  );
+});
+
+test("MediaTailor ListChannels pagination", async () => {
+  const client = mediatailor();
+  const suffix = `${Date.now()}`;
+  const names = [`ch-pg-a-${suffix}`, `ch-pg-b-${suffix}`, `ch-pg-c-${suffix}`];
+
+  for (const name of names) {
+    await client.send(
+      new CreateChannelCommand({
+        ChannelName: name,
+        Outputs: [{ ManifestName: "index", SourceGroup: "default" }],
+        PlaybackMode: "LOOP",
+      }),
+    );
+  }
+
+  const page1 = await client.send(new ListChannelsCommand({ MaxResults: 2 }));
+  expect((page1.Items ?? []).length).toBeGreaterThanOrEqual(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListChannelsCommand({ MaxResults: 2, NextToken: page1.NextToken }),
+  );
+  expect(page2.Items).toBeDefined();
+
+  for (const name of names) {
+    await client.send(new DeleteChannelCommand({ ChannelName: name }));
+  }
+});
+
 test("MediaTailor tags roundtrip", async () => {
   const client = mediatailor();
   const suffix = `${Date.now()}`;

@@ -168,6 +168,26 @@ const requireString = (
 
 const now = (): number => Math.floor(Date.now() / 1000);
 
+const paginateItems = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+  maxCap = 100,
+): { page: T[]; nextToken: string | undefined } => {
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? Math.min(maxResults, maxCap)
+      : maxCap;
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(atob(nextToken), 10) || 0
+      : 0;
+  const page = items.slice(offset, offset + max);
+  const next =
+    offset + max < items.length ? btoa(String(offset + max)) : undefined;
+  return { page, nextToken: next };
+};
+
 const configurationKey = (name: string): string =>
   `${configurationPrefix}${name}`;
 
@@ -489,13 +509,19 @@ const GetPlaybackConfiguration: OperationHandler = (input, ctx) => {
 };
 
 const ListPlaybackConfigurations: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
-  const configurations = ctx.store
+  const items = ctx.store
     .list<StoredConfiguration>()
     .filter((entry) => entry.key.startsWith(configurationPrefix))
     .map((entry) => entry.value)
-    .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
-  return { Items: configurations.slice(0, max).map(configurationView) };
+    .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0))
+    .map(configurationView);
+  const { page, nextToken } = paginateItems(
+    items,
+    input["MaxResults"],
+    input["NextToken"],
+    50,
+  );
+  return { Items: page, NextToken: nextToken };
 };
 
 const DeletePlaybackConfiguration: OperationHandler = (input, ctx) => {
@@ -509,6 +535,9 @@ const ConfigureLogsForChannel: OperationHandler = (input, ctx) => {
   const channelName = requireString(input, "ChannelName");
   requireChannel(ctx, channelName);
   const logTypes = stringArrayOrUndefined(input["LogTypes"]);
+  if (logTypes === undefined) {
+    throw awsError("BadRequestException", "LogTypes is required.", 400);
+  }
   ctx.store.set(`${channelLogsPrefix}${channelName}`, {
     channelName,
     logTypes,
@@ -524,7 +553,10 @@ const ConfigureLogsForPlaybackConfiguration: OperationHandler = (
     input,
     "PlaybackConfigurationName",
   );
-  const percentEnabled = numberOrUndefined(input["PercentEnabled"]) ?? 0;
+  if (typeof input["PercentEnabled"] !== "number") {
+    throw awsError("BadRequestException", "PercentEnabled is required.", 400);
+  }
+  const percentEnabled = input["PercentEnabled"];
   ctx.store.set(`${logsForPlaybackPrefix}${playbackConfigurationName}`, {
     percentEnabled,
     playbackConfigurationName,
@@ -619,10 +651,35 @@ const DeleteChannelPolicy: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const scheduleEntryView = (p: StoredProgram): Record<string, unknown> => ({
+  Arn: p.Arn,
+  ChannelName: p.ChannelName,
+  ProgramName: p.ProgramName,
+  SourceLocationName: p.SourceLocationName,
+  LiveSourceName: p.LiveSourceName,
+  VodSourceName: p.VodSourceName,
+  ApproximateStartTime: p.ScheduledStartTime,
+});
+
 const GetChannelSchedule: OperationHandler = (input, ctx) => {
   const channelName = requireString(input, "ChannelName");
   requireChannel(ctx, channelName);
-  return { Items: [], NextToken: undefined };
+  const prefix = `${programPrefix}${channelName}:`;
+  const items = ctx.store
+    .list<StoredProgram>()
+    .filter((e) => e.key.startsWith(prefix))
+    .map((e) => scheduleEntryView(e.value))
+    .sort((a, b) =>
+      Number(a["ApproximateStartTime"]) < Number(b["ApproximateStartTime"])
+        ? -1
+        : 1,
+    );
+  const { page, nextToken } = paginateItems(
+    items,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Items: page, NextToken: nextToken };
 };
 
 const StartChannel: OperationHandler = (input, ctx) => {
@@ -648,7 +705,6 @@ const StopChannel: OperationHandler = (input, ctx) => {
 };
 
 const ListChannels: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["MaxResults"]) ?? 100;
   const items = ctx.store
     .list<StoredChannel>()
     .filter((e) => e.key.startsWith(channelPrefix))
@@ -656,7 +712,12 @@ const ListChannels: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       String(a["ChannelName"]) < String(b["ChannelName"]) ? -1 : 1,
     );
-  return { Items: items.slice(0, max) };
+  const { page, nextToken } = paginateItems(
+    items,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Items: page, NextToken: nextToken };
 };
 
 const CreateProgram: OperationHandler = (input, ctx) => {
@@ -664,6 +725,30 @@ const CreateProgram: OperationHandler = (input, ctx) => {
   const programName = requireString(input, "ProgramName");
   const sourceLocationName = requireString(input, "SourceLocationName");
   requireChannel(ctx, channelName);
+  const scheduleConfig = recordOrUndefined(input["ScheduleConfiguration"]);
+  if (scheduleConfig === undefined) {
+    throw awsError(
+      "BadRequestException",
+      "ScheduleConfiguration is required.",
+      400,
+    );
+  }
+  const transition = recordOrUndefined(scheduleConfig["Transition"]);
+  if (transition === undefined) {
+    throw awsError(
+      "BadRequestException",
+      "ScheduleConfiguration.Transition is required.",
+      400,
+    );
+  }
+  const transitionType = stringOrUndefined(transition["Type"]);
+  const scheduledStartTimeMillis = numberOrUndefined(
+    transition["ScheduledStartTimeMillis"],
+  );
+  const scheduledStartTime =
+    transitionType === "ABSOLUTE" && scheduledStartTimeMillis !== undefined
+      ? Math.floor(scheduledStartTimeMillis / 1000)
+      : now();
   const t = now();
   const program: StoredProgram = {
     AdBreaks: Array.isArray(input["AdBreaks"])
@@ -674,7 +759,7 @@ const CreateProgram: OperationHandler = (input, ctx) => {
     CreationTime: t,
     LiveSourceName: stringOrUndefined(input["LiveSourceName"]),
     ProgramName: programName,
-    ScheduledStartTime: t,
+    ScheduledStartTime: scheduledStartTime,
     SourceLocationName: sourceLocationName,
     VodSourceName: stringOrUndefined(input["VodSourceName"]),
     ClipRange: recordOrUndefined(input["ClipRange"]),
@@ -781,7 +866,6 @@ const UpdateSourceLocation: OperationHandler = (input, ctx) => {
 };
 
 const ListSourceLocations: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["MaxResults"]) ?? 100;
   const items = ctx.store
     .list<StoredSourceLocation>()
     .filter((e) => e.key.startsWith(sourceLocationPrefix))
@@ -791,7 +875,12 @@ const ListSourceLocations: OperationHandler = (input, ctx) => {
         ? -1
         : 1,
     );
-  return { Items: items.slice(0, max) };
+  const { page, nextToken } = paginateItems(
+    items,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Items: page, NextToken: nextToken };
 };
 
 const CreateLiveSource: OperationHandler = (input, ctx) => {
@@ -846,7 +935,6 @@ const UpdateLiveSource: OperationHandler = (input, ctx) => {
 const ListLiveSources: OperationHandler = (input, ctx) => {
   const sourceLocationName = requireString(input, "SourceLocationName");
   requireSourceLocation(ctx, sourceLocationName);
-  const max = numberOrUndefined(input["MaxResults"]) ?? 100;
   const prefix = liveSourceKey(sourceLocationName, "");
   const items = ctx.store
     .list<StoredLiveSource>()
@@ -855,7 +943,12 @@ const ListLiveSources: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       String(a["LiveSourceName"]) < String(b["LiveSourceName"]) ? -1 : 1,
     );
-  return { Items: items.slice(0, max) };
+  const { page, nextToken } = paginateItems(
+    items,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Items: page, NextToken: nextToken };
 };
 
 const CreateVodSource: OperationHandler = (input, ctx) => {
@@ -910,7 +1003,6 @@ const UpdateVodSource: OperationHandler = (input, ctx) => {
 const ListVodSources: OperationHandler = (input, ctx) => {
   const sourceLocationName = requireString(input, "SourceLocationName");
   requireSourceLocation(ctx, sourceLocationName);
-  const max = numberOrUndefined(input["MaxResults"]) ?? 100;
   const prefix = vodSourceKey(sourceLocationName, "");
   const items = ctx.store
     .list<StoredVodSource>()
@@ -919,7 +1011,12 @@ const ListVodSources: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       String(a["VodSourceName"]) < String(b["VodSourceName"]) ? -1 : 1,
     );
-  return { Items: items.slice(0, max) };
+  const { page, nextToken } = paginateItems(
+    items,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Items: page, NextToken: nextToken };
 };
 
 const CreatePrefetchSchedule: OperationHandler = (input, ctx) => {
@@ -973,14 +1070,18 @@ const ListPrefetchSchedules: OperationHandler = (input, ctx) => {
     input,
     "PlaybackConfigurationName",
   );
-  const max = numberOrUndefined(input["MaxResults"]) ?? 100;
   const prefix = prefetchScheduleKey(playbackConfigurationName, "");
   const items = ctx.store
     .list<StoredPrefetchSchedule>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => prefetchScheduleView(e.value))
     .sort((a, b) => (String(a["Name"]) < String(b["Name"]) ? -1 : 1));
-  return { Items: items.slice(0, max) };
+  const { page, nextToken } = paginateItems(
+    items,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Items: page, NextToken: nextToken };
 };
 
 const PutFunction: OperationHandler = (input, ctx) => {
@@ -1019,7 +1120,6 @@ const DeleteFunction: OperationHandler = (input, ctx) => {
 };
 
 const ListFunctions: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["MaxResults"]) ?? 100;
   const items = ctx.store
     .list<StoredFunction>()
     .filter((e) => e.key.startsWith(functionPrefix))
@@ -1027,11 +1127,22 @@ const ListFunctions: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       String(a["FunctionId"]) < String(b["FunctionId"]) ? -1 : 1,
     );
-  return { Items: items.slice(0, max) };
+  const { page, nextToken } = paginateItems(
+    items,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Items: page, NextToken: nextToken };
 };
 
-const ListAlerts: OperationHandler = (_input, _ctx) => {
-  return { Items: [] };
+const ListAlerts: OperationHandler = (input, _ctx) => {
+  requireString(input, "ResourceArn");
+  const { page, nextToken } = paginateItems(
+    [],
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Items: page, NextToken: nextToken };
 };
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {

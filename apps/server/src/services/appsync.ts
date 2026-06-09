@@ -24,6 +24,8 @@ const cnPrefix = "cn:" as const;
 const tgPrefix = "tg:" as const;
 const evPrefix = "ev:" as const;
 const saPrefix = "sa:" as const;
+const scPrefix = "sc:" as const;
+const diPrefix = "di:" as const;
 
 type StoredApiKey = {
   id: string;
@@ -173,6 +175,22 @@ type StoredSourceApiAssociation = {
   lastSuccessfulMergeDate: string | undefined;
 };
 
+type StoredSchemaCreation = {
+  status: string;
+  details: string;
+  definition: string;
+};
+
+type StoredDataSourceIntrospection = {
+  introspectionId: string;
+  introspectionStatus: string;
+  introspectionStatusDetail: string | undefined;
+  introspectionResult: {
+    models: unknown[];
+    nextToken: string | undefined;
+  };
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -223,6 +241,9 @@ const cnKey = (apiId: string, name: string): string =>
 const tgKey = (resourceArn: string): string => `${tgPrefix}${resourceArn}`;
 const evKey = (apiId: string): string => `${evPrefix}${apiId}`;
 const saKey = (associationId: string): string => `${saPrefix}${associationId}`;
+const scKey = (apiId: string): string => `${scPrefix}${apiId}`;
+const diKey = (introspectionId: string): string =>
+  `${diPrefix}${introspectionId}`;
 
 const apiArn = (ctx: ServiceContext, apiId: string): string =>
   `arn:aws:appsync:${ctx.region}:${ctx.account}:apis/${apiId}`;
@@ -233,6 +254,10 @@ const randomId = (): string =>
       Math.floor(Math.random() * 36),
     ),
   ).join("");
+
+const paginationToken = (offset: number): string => btoa(String(offset));
+const paginationOffset = (token: string | undefined): number =>
+  token !== undefined ? parseInt(atob(token), 10) || 0 : 0;
 
 const isoNow = (): string => new Date().toISOString();
 
@@ -673,13 +698,17 @@ const GetGraphqlApi: OperationHandler = (input, ctx) => {
 const ListGraphqlApis: OperationHandler = (input, ctx) => {
   const apiType = stringOrUndefined(input["apiType"]);
   const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const offset = paginationOffset(stringOrUndefined(input["nextToken"]));
   const apis = ctx.store
     .list<StoredApi>()
     .filter((entry) => entry.key.startsWith(apiPrefix))
     .map((entry) => entry.value)
     .filter((api) => apiType === undefined || api.apiType === apiType)
     .sort((a, b) => (a.apiId < b.apiId ? -1 : a.apiId > b.apiId ? 1 : 0));
-  return { graphqlApis: apis.slice(0, max).map(apiView) };
+  const page = apis.slice(offset, offset + max);
+  const nextToken =
+    offset + max < apis.length ? paginationToken(offset + max) : undefined;
+  return { graphqlApis: page.map(apiView), nextToken };
 };
 
 const UpdateGraphqlApi: OperationHandler = (input, ctx) => {
@@ -726,12 +755,16 @@ const ListApiKeys: OperationHandler = (input, ctx) => {
   const apiId = requireString(input, "apiId");
   requireApi(ctx, apiId);
   const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const offset = paginationOffset(stringOrUndefined(input["nextToken"]));
   const keys = ctx.store
     .list<StoredApiKey>()
     .filter((entry) => entry.key.startsWith(`${keyPrefix}${apiId}/`))
     .map((entry) => entry.value)
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return { apiKeys: keys.slice(0, max).map(keyView) };
+  const page = keys.slice(offset, offset + max);
+  const nextToken =
+    offset + max < keys.length ? paginationToken(offset + max) : undefined;
+  return { apiKeys: page.map(keyView), nextToken };
 };
 
 const UpdateApiKey: OperationHandler = (input, ctx) => {
@@ -783,13 +816,17 @@ const ListDataSources: OperationHandler = (input, ctx) => {
   const apiId = requireString(input, "apiId");
   requireApi(ctx, apiId);
   const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const offset = paginationOffset(stringOrUndefined(input["nextToken"]));
   const prefix = `${dsPrefix}${apiId}:`;
   const list = ctx.store
     .list<StoredDataSource>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { dataSources: list.slice(0, max).map(dsView) };
+  const page = list.slice(offset, offset + max);
+  const nextToken =
+    offset + max < list.length ? paginationToken(offset + max) : undefined;
+  return { dataSources: page.map(dsView), nextToken };
 };
 
 const UpdateDataSource: OperationHandler = (input, ctx) => {
@@ -833,6 +870,7 @@ const ListResolvers: OperationHandler = (input, ctx) => {
   const typeName = requireString(input, "typeName");
   requireApi(ctx, apiId);
   const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const offset = paginationOffset(stringOrUndefined(input["nextToken"]));
   const prefix = `${rsPrefix}${apiId}:${typeName}:`;
   const list = ctx.store
     .list<StoredResolver>()
@@ -841,7 +879,10 @@ const ListResolvers: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       a.fieldName < b.fieldName ? -1 : a.fieldName > b.fieldName ? 1 : 0,
     );
-  return { resolvers: list.slice(0, max).map(rsView) };
+  const page = list.slice(offset, offset + max);
+  const nextToken =
+    offset + max < list.length ? paginationToken(offset + max) : undefined;
+  return { resolvers: page.map(rsView), nextToken };
 };
 
 const ListResolversByFunction: OperationHandler = (input, ctx) => {
@@ -904,6 +945,7 @@ const ListFunctions: OperationHandler = (input, ctx) => {
   const apiId = requireString(input, "apiId");
   requireApi(ctx, apiId);
   const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const offset = paginationOffset(stringOrUndefined(input["nextToken"]));
   const prefix = `${fnPrefix}${apiId}:`;
   const list = ctx.store
     .list<StoredFunction>()
@@ -912,7 +954,10 @@ const ListFunctions: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       a.functionId < b.functionId ? -1 : a.functionId > b.functionId ? 1 : 0,
     );
-  return { functions: list.slice(0, max).map(fnView) };
+  const page = list.slice(offset, offset + max);
+  const nextToken =
+    offset + max < list.length ? paginationToken(offset + max) : undefined;
+  return { functions: page.map(fnView), nextToken };
 };
 
 const UpdateFunction: OperationHandler = (input, ctx) => {
@@ -953,13 +998,17 @@ const ListTypes: OperationHandler = (input, ctx) => {
   const apiId = requireString(input, "apiId");
   requireApi(ctx, apiId);
   const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const offset = paginationOffset(stringOrUndefined(input["nextToken"]));
   const prefix = `${tpPrefix}${apiId}:`;
   const list = ctx.store
     .list<StoredType>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { types: list.slice(0, max).map(tpView) };
+  const page = list.slice(offset, offset + max);
+  const nextToken =
+    offset + max < list.length ? paginationToken(offset + max) : undefined;
+  return { types: page.map(tpView), nextToken };
 };
 
 const UpdateType: OperationHandler = (input, ctx) => {
@@ -999,7 +1048,7 @@ const CreateApiCache: OperationHandler = (input, ctx) => {
     healthMetricsConfig: stringOrUndefined(input["healthMetricsConfig"]),
   };
   ctx.store.set(acKey(apiId), ac);
-  return { apiCache: acView(ac) };
+  return { apiCache: { ...acView(ac), status: "CREATING" } };
 };
 
 const GetApiCache: OperationHandler = (input, ctx) => {
@@ -1104,7 +1153,7 @@ const AssociateApi: OperationHandler = (input, ctx) => {
     deploymentDetail: undefined,
   };
   ctx.store.set(aaKey(domainName), aa);
-  return { apiAssociation: aaView(aa) };
+  return { apiAssociation: { ...aaView(aa), associationStatus: "PROCESSING" } };
 };
 
 const DisassociateApi: OperationHandler = (input, ctx) => {
@@ -1301,18 +1350,61 @@ const PutGraphqlApiEnvironmentVariables: OperationHandler = (input, ctx) => {
 const GetIntrospectionSchema: OperationHandler = (input, ctx) => {
   const apiId = requireString(input, "apiId");
   requireApi(ctx, apiId);
-  return { schema: `type Query {\n  placeholder: String\n}\n` };
+  const format = stringOrUndefined(input["format"]) ?? "SDL";
+  const prefix = `${tpPrefix}${apiId}:`;
+  const types = ctx.store
+    .list<StoredType>()
+    .filter((e) => e.key.startsWith(prefix))
+    .map((e) => e.value)
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  if (format === "JSON") {
+    const typeDefs = types.map((tp) => ({
+      kind: "OBJECT",
+      name: tp.name,
+      fields: [],
+    }));
+    return {
+      schema: JSON.stringify({ data: { __schema: { types: typeDefs } } }),
+    };
+  }
+  if (types.length > 0) {
+    return {
+      schema: types
+        .map((tp) => tp.definition ?? `type ${tp.name} {}`)
+        .join("\n\n"),
+    };
+  }
+  const sc = ctx.store.get<StoredSchemaCreation>(scKey(apiId));
+  if (sc !== undefined && sc.definition !== "") {
+    return { schema: sc.definition };
+  }
+  return { schema: "type Query {\n  placeholder: String\n}\n" };
 };
 
 const GetSchemaCreationStatus: OperationHandler = (input, ctx) => {
   const apiId = requireString(input, "apiId");
   requireApi(ctx, apiId);
-  return { status: "SUCCESS", details: "Schema is up to date." };
+  const sc = ctx.store.get<StoredSchemaCreation>(scKey(apiId));
+  if (sc === undefined) {
+    return { status: "NOT_APPLICABLE", details: undefined };
+  }
+  return { status: sc.status, details: sc.details };
 };
 
 const StartSchemaCreation: OperationHandler = (input, ctx) => {
   const apiId = requireString(input, "apiId");
   requireApi(ctx, apiId);
+  const rawDef = input["definition"];
+  const definition =
+    typeof rawDef === "string"
+      ? Buffer.from(rawDef, "binary").toString("utf8")
+      : "";
+  const sc: StoredSchemaCreation = {
+    status: "ACTIVE",
+    details: "Schema successfully created.",
+    definition,
+  };
+  ctx.store.set(scKey(apiId), sc);
   return { status: "PROCESSING" };
 };
 
@@ -1449,8 +1541,15 @@ const ListTypesByAssociation: OperationHandler = (input, ctx) => {
   return { types: list.slice(0, max).map(tpView) };
 };
 
-const StartDataSourceIntrospection: OperationHandler = (_input, _ctx) => {
+const StartDataSourceIntrospection: OperationHandler = (_input, ctx) => {
   const introspectionId = randomId();
+  const di: StoredDataSourceIntrospection = {
+    introspectionId,
+    introspectionStatus: "SUCCESS",
+    introspectionStatusDetail: undefined,
+    introspectionResult: { models: [], nextToken: undefined },
+  };
+  ctx.store.set(diKey(introspectionId), di);
   return {
     introspectionId,
     introspectionStatus: "SUCCESS",
@@ -1458,12 +1557,23 @@ const StartDataSourceIntrospection: OperationHandler = (_input, _ctx) => {
   };
 };
 
-const GetDataSourceIntrospection: OperationHandler = (_input, _ctx) => {
+const GetDataSourceIntrospection: OperationHandler = (input, ctx) => {
+  const introspectionId = requireString(input, "introspectionId");
+  const di = ctx.store.get<StoredDataSourceIntrospection>(
+    diKey(introspectionId),
+  );
+  if (di === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Introspection ${introspectionId} not found.`,
+      404,
+    );
+  }
   return {
-    introspectionId: requireString(_input, "introspectionId"),
-    introspectionStatus: "SUCCESS",
-    introspectionStatusDetail: undefined,
-    introspectionResult: { models: [], nextToken: undefined },
+    introspectionId: di.introspectionId,
+    introspectionStatus: di.introspectionStatus,
+    introspectionStatusDetail: di.introspectionStatusDetail,
+    introspectionResult: di.introspectionResult,
   };
 };
 

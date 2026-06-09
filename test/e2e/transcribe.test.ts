@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  ConflictException,
   CreateCallAnalyticsCategoryCommand,
   CreateLanguageModelCommand,
   CreateMedicalVocabularyCommand,
@@ -69,12 +70,15 @@ test("Transcribe transcription job lifecycle", async () => {
     }),
   );
   expect(started.TranscriptionJob?.TranscriptionJobName).toBe(name);
-  expect(started.TranscriptionJob?.TranscriptionJobStatus).toBe("COMPLETED");
+  expect(started.TranscriptionJob?.TranscriptionJobStatus).toBe("IN_PROGRESS");
+  expect(started.TranscriptionJob?.CompletionTime).toBeUndefined();
 
   const got = await client.send(
     new GetTranscriptionJobCommand({ TranscriptionJobName: name }),
   );
   expect(got.TranscriptionJob?.TranscriptionJobName).toBe(name);
+  expect(got.TranscriptionJob?.TranscriptionJobStatus).toBe("COMPLETED");
+  expect(got.TranscriptionJob?.CompletionTime).toBeDefined();
   expect(got.TranscriptionJob?.Transcript?.TranscriptFileUri).toContain(name);
 
   const listed = await client.send(new ListTranscriptionJobsCommand({}));
@@ -87,6 +91,96 @@ test("Transcribe transcription job lifecycle", async () => {
   await client.send(
     new DeleteTranscriptionJobCommand({ TranscriptionJobName: name }),
   );
+});
+
+test("Transcribe transcription job IN_PROGRESS→COMPLETED + name filter + pagination", async () => {
+  const client = transcribe();
+  const prefix = "bunsai-filter-test";
+  const names = [`${prefix}-alpha`, `${prefix}-beta`, `${prefix}-gamma`];
+
+  for (const n of names) {
+    await client.send(
+      new StartTranscriptionJobCommand({
+        TranscriptionJobName: n,
+        Media: { MediaFileUri: "s3://bunsai-e2e/sample.flac" },
+        Tags: [{ Key: "suite", Value: "filter-test" }],
+      }),
+    );
+  }
+
+  const filtered = await client.send(
+    new ListTranscriptionJobsCommand({ JobNameContains: prefix }),
+  );
+  const summaries = filtered.TranscriptionJobSummaries ?? [];
+  expect(summaries.length).toBe(names.length);
+  expect(
+    summaries.every((s) => s.TranscriptionJobName?.startsWith(prefix)),
+  ).toBe(true);
+
+  const caseInsensitive = await client.send(
+    new ListTranscriptionJobsCommand({
+      JobNameContains: prefix.toUpperCase(),
+    }),
+  );
+  expect((caseInsensitive.TranscriptionJobSummaries ?? []).length).toBe(
+    names.length,
+  );
+
+  const page1 = await client.send(
+    new ListTranscriptionJobsCommand({
+      JobNameContains: prefix,
+      MaxResults: 2,
+    }),
+  );
+  expect((page1.TranscriptionJobSummaries ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListTranscriptionJobsCommand({
+      JobNameContains: prefix,
+      MaxResults: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.TranscriptionJobSummaries ?? []).length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  const got = await client.send(
+    new GetTranscriptionJobCommand({ TranscriptionJobName: names[0] }),
+  );
+  expect(got.TranscriptionJob?.TranscriptionJobStatus).toBe("COMPLETED");
+  expect(got.TranscriptionJob?.Tags).toEqual([
+    { Key: "suite", Value: "filter-test" },
+  ]);
+
+  for (const n of names) {
+    await client.send(
+      new DeleteTranscriptionJobCommand({ TranscriptionJobName: n }),
+    );
+  }
+});
+
+test("Transcribe vocabulary ConflictException on duplicate", async () => {
+  const client = transcribe();
+  const name = "bunsai-conflict-vocab";
+
+  await client.send(
+    new CreateVocabularyCommand({
+      VocabularyName: name,
+      LanguageCode: "en-US",
+    }),
+  );
+
+  await expect(
+    client.send(
+      new CreateVocabularyCommand({
+        VocabularyName: name,
+        LanguageCode: "en-US",
+      }),
+    ),
+  ).rejects.toThrow(ConflictException);
+
+  await client.send(new DeleteVocabularyCommand({ VocabularyName: name }));
 });
 
 test("Transcribe vocabulary lifecycle", async () => {
@@ -234,12 +328,15 @@ test("Transcribe call analytics category + job lifecycle", async () => {
     }),
   );
   expect(startedJob.CallAnalyticsJob?.CallAnalyticsJobName).toBe(jobName);
-  expect(startedJob.CallAnalyticsJob?.CallAnalyticsJobStatus).toBe("COMPLETED");
+  expect(startedJob.CallAnalyticsJob?.CallAnalyticsJobStatus).toBe(
+    "IN_PROGRESS",
+  );
 
   const gotJob = await client.send(
     new GetCallAnalyticsJobCommand({ CallAnalyticsJobName: jobName }),
   );
   expect(gotJob.CallAnalyticsJob?.CallAnalyticsJobName).toBe(jobName);
+  expect(gotJob.CallAnalyticsJob?.CallAnalyticsJobStatus).toBe("COMPLETED");
 
   const listedJobs = await client.send(new ListCallAnalyticsJobsCommand({}));
   expect(
@@ -312,7 +409,7 @@ test("Transcribe medical transcription job lifecycle", async () => {
     name,
   );
   expect(started.MedicalTranscriptionJob?.TranscriptionJobStatus).toBe(
-    "COMPLETED",
+    "IN_PROGRESS",
   );
 
   const got = await client.send(
@@ -321,6 +418,7 @@ test("Transcribe medical transcription job lifecycle", async () => {
     }),
   );
   expect(got.MedicalTranscriptionJob?.MedicalTranscriptionJobName).toBe(name);
+  expect(got.MedicalTranscriptionJob?.TranscriptionJobStatus).toBe("COMPLETED");
 
   const listed = await client.send(new ListMedicalTranscriptionJobsCommand({}));
   expect(
@@ -350,12 +448,13 @@ test("Transcribe medical scribe job lifecycle", async () => {
     }),
   );
   expect(started.MedicalScribeJob?.MedicalScribeJobName).toBe(name);
-  expect(started.MedicalScribeJob?.MedicalScribeJobStatus).toBe("COMPLETED");
+  expect(started.MedicalScribeJob?.MedicalScribeJobStatus).toBe("IN_PROGRESS");
 
   const got = await client.send(
     new GetMedicalScribeJobCommand({ MedicalScribeJobName: name }),
   );
   expect(got.MedicalScribeJob?.MedicalScribeJobName).toBe(name);
+  expect(got.MedicalScribeJob?.MedicalScribeJobStatus).toBe("COMPLETED");
   expect(
     got.MedicalScribeJob?.MedicalScribeOutput?.TranscriptFileUri,
   ).toBeTruthy();

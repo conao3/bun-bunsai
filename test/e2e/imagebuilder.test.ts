@@ -48,6 +48,7 @@ import {
   ListLifecyclePoliciesCommand,
   ListTagsForResourceCommand,
   ListWorkflowBuildVersionsCommand,
+  ListWorkflowExecutionsCommand,
   ListWorkflowsCommand,
   PutComponentPolicyCommand,
   PutImagePolicyCommand,
@@ -398,8 +399,29 @@ test("Imagebuilder tag operations", async () => {
 test("Imagebuilder image create/get/list/policy/cancel/retry/delete lifecycle", async () => {
   const client = imagebuilder();
   const name = `img-e2e-${Date.now()}`;
-  const imageRecipeArn = `arn:aws:imagebuilder:${region}:000000000000:image-recipe/${name}/1.0.0`;
-  const infrastructureConfigurationArn = `arn:aws:imagebuilder:${region}:000000000000:infrastructure-configuration/${name}`;
+
+  const recipeRes = await client.send(
+    new CreateImageRecipeCommand({
+      name,
+      semanticVersion: "1.0.0",
+      parentImage: "ami-12345678",
+      components: [
+        {
+          componentArn: `arn:aws:imagebuilder:${region}:aws:component/amazon-cloudwatch-agent-linux/x.x.x`,
+        },
+      ],
+    }),
+  );
+  const imageRecipeArn = recipeRes.imageRecipeArn ?? "";
+
+  const infraRes = await client.send(
+    new CreateInfrastructureConfigurationCommand({
+      name,
+      instanceProfileName: "EC2InstanceProfileForImageBuilder",
+    }),
+  );
+  const infrastructureConfigurationArn =
+    infraRes.infrastructureConfigurationArn ?? "";
 
   const created = await client.send(
     new CreateImageCommand({
@@ -680,5 +702,131 @@ test("Imagebuilder workflow create→get→list lifecycle", async () => {
 
   await expect(
     client.send(new GetWorkflowCommand({ workflowBuildVersionArn: arn })),
+  ).rejects.toThrow();
+});
+
+test("Imagebuilder ListImages pagination and filter", async () => {
+  const client = imagebuilder();
+  const prefix = `pagtest-${Date.now()}`;
+
+  const infraRes = await client.send(
+    new CreateInfrastructureConfigurationCommand({
+      name: prefix,
+      instanceProfileName: "EC2InstanceProfileForImageBuilder",
+    }),
+  );
+  const infraArn = infraRes.infrastructureConfigurationArn ?? "";
+
+  const arns: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const rName = `${prefix}-${i}`;
+    const recipeRes = await client.send(
+      new CreateImageRecipeCommand({
+        name: rName,
+        semanticVersion: "1.0.0",
+        parentImage: "ami-12345678",
+        components: [
+          {
+            componentArn: `arn:aws:imagebuilder:${region}:aws:component/amazon-cloudwatch-agent-linux/x.x.x`,
+          },
+        ],
+      }),
+    );
+    const rArn = recipeRes.imageRecipeArn ?? "";
+    const imgRes = await client.send(
+      new CreateImageCommand({
+        imageRecipeArn: rArn,
+        infrastructureConfigurationArn: infraArn,
+      }),
+    );
+    arns.push(imgRes.imageBuildVersionArn ?? "");
+  }
+
+  const page1 = await client.send(new ListImagesCommand({ maxResults: 2 }));
+  expect((page1.imageVersionList ?? []).length).toBeLessThanOrEqual(2);
+  if (page1.nextToken) {
+    const page2 = await client.send(
+      new ListImagesCommand({ maxResults: 2, nextToken: page1.nextToken }),
+    );
+    expect(page2.imageVersionList).toBeDefined();
+  }
+
+  const filtered = await client.send(
+    new ListImagesCommand({
+      filters: [{ name: "name", values: [`${prefix}-0`] }],
+    }),
+  );
+  expect(
+    (filtered.imageVersionList ?? []).every((v) => v.name === `${prefix}-0`),
+  ).toBe(true);
+  expect((filtered.imageVersionList ?? []).length).toBeGreaterThanOrEqual(1);
+});
+
+test("Imagebuilder CreateImage missing recipe error", async () => {
+  const client = imagebuilder();
+  const name = `missing-recipe-${Date.now()}`;
+
+  const infraRes = await client.send(
+    new CreateInfrastructureConfigurationCommand({
+      name,
+      instanceProfileName: "EC2InstanceProfileForImageBuilder",
+    }),
+  );
+  const infraArn = infraRes.infrastructureConfigurationArn ?? "";
+
+  await expect(
+    client.send(
+      new CreateImageCommand({
+        imageRecipeArn: `arn:aws:imagebuilder:${region}:000000000000:image-recipe/nonexistent/1.0.0`,
+        infrastructureConfigurationArn: infraArn,
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("Imagebuilder RetryImage invalid state error", async () => {
+  const client = imagebuilder();
+  const name = `retry-state-${Date.now()}`;
+
+  const recipeRes = await client.send(
+    new CreateImageRecipeCommand({
+      name,
+      semanticVersion: "1.0.0",
+      parentImage: "ami-12345678",
+      components: [
+        {
+          componentArn: `arn:aws:imagebuilder:${region}:aws:component/amazon-cloudwatch-agent-linux/x.x.x`,
+        },
+      ],
+    }),
+  );
+  const imageRecipeArn = recipeRes.imageRecipeArn ?? "";
+
+  const infraRes = await client.send(
+    new CreateInfrastructureConfigurationCommand({
+      name,
+      instanceProfileName: "EC2InstanceProfileForImageBuilder",
+    }),
+  );
+  const infraArn = infraRes.infrastructureConfigurationArn ?? "";
+
+  const created = await client.send(
+    new CreateImageCommand({
+      imageRecipeArn,
+      infrastructureConfigurationArn: infraArn,
+    }),
+  );
+  const buildArn = created.imageBuildVersionArn ?? "";
+
+  const executions = await client.send(
+    new ListWorkflowExecutionsCommand({ imageBuildVersionArn: buildArn }),
+  );
+  expect((executions.workflowExecutions ?? []).length).toBeGreaterThanOrEqual(
+    1,
+  );
+  expect(executions.workflowExecutions?.[0]?.status).toBe("RUNNING");
+
+  await expect(
+    client.send(new RetryImageCommand({ imageBuildVersionArn: buildArn })),
   ).rejects.toThrow();
 });

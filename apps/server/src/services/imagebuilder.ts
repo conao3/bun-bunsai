@@ -245,6 +245,67 @@ const stringMapFrom = (value: unknown): Record<string, string> => {
 const arrayOrUndefined = (value: unknown): unknown[] | undefined =>
   Array.isArray(value) ? value : undefined;
 
+const numberOrUndefined = (value: unknown): number | undefined =>
+  typeof value === "number" ? value : undefined;
+
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: number,
+  nextToken: unknown,
+): { page: T[]; nextToken: string | undefined } => {
+  const offset = decodePageToken(nextToken);
+  const page = items.slice(offset, offset + maxResults);
+  const nextOffset = offset + maxResults;
+  return {
+    page,
+    nextToken:
+      nextOffset < items.length ? encodePageToken(nextOffset) : undefined,
+  };
+};
+
+type Filter = { name: string; values: string[] };
+
+const extractFilters = (input: Record<string, unknown>): Filter[] => {
+  const raw = input["filters"];
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((f: unknown) => {
+    const rec = asRecord(f);
+    if (!rec) return [];
+    const name = typeof rec["name"] === "string" ? rec["name"] : undefined;
+    const vals = Array.isArray(rec["values"])
+      ? (rec["values"] as unknown[]).filter(
+          (v): v is string => typeof v === "string",
+        )
+      : [];
+    if (!name || vals.length === 0) return [];
+    return [{ name, values: vals }];
+  });
+};
+
+const applyFilters = <T extends Record<string, unknown>>(
+  items: T[],
+  filters: Filter[],
+): T[] => {
+  if (filters.length === 0) return items;
+  return items.filter((item) =>
+    filters.every((f) => {
+      const val = item[f.name];
+      if (val === undefined || val === null) return false;
+      return f.values.includes(String(val));
+    }),
+  );
+};
+
 const requireString = (
   input: Record<string, unknown>,
   field: string,
@@ -254,6 +315,18 @@ const requireString = (
     throw awsError("InvalidParameterException", `${field} is required.`, 400);
   }
   return value;
+};
+
+const requireValidJsonPolicy = (policy: string): void => {
+  try {
+    JSON.parse(policy);
+  } catch {
+    throw awsError(
+      "InvalidParameterValueException",
+      "The policy document is not valid JSON.",
+      400,
+    );
+  }
 };
 
 const nowIso = (): string => new Date().toISOString();
@@ -949,15 +1022,18 @@ const GetImagePipeline: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListImagePipelines: OperationHandler = (_input, ctx) => {
-  const pipelines = ctx.store
+const ListImagePipelines: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredPipeline>()
     .filter((entry) => entry.key.startsWith(pipelinePrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    imagePipelineList: pipelines.map(pipelineView),
+    imagePipelineList: page.map(pipelineView),
+    nextToken,
   };
 };
 
@@ -1082,6 +1158,7 @@ const GetComponentPolicy: OperationHandler = (input, ctx) => {
 const PutComponentPolicy: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "componentArn");
   const policy = requireString(input, "policy");
+  requireValidJsonPolicy(policy);
   ctx.store.set(componentPolicyKey(arn), policy);
   return {
     requestId: crypto.randomUUID(),
@@ -1089,29 +1166,40 @@ const PutComponentPolicy: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListComponents: OperationHandler = (_input, ctx) => {
-  const components = ctx.store
+const ListComponents: OperationHandler = (input, ctx) => {
+  const filters = extractFilters(input);
+  const all = ctx.store
     .list<StoredComponent>()
     .filter((entry) => entry.key.startsWith(componentPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const filtered = applyFilters(
+    all as unknown as Record<string, unknown>[],
+    filters,
+  ) as unknown as StoredComponent[];
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(filtered, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    componentVersionList: components.map(componentVersionView),
+    componentVersionList: page.map(componentVersionView),
+    nextToken,
   };
 };
 
 const ListComponentBuildVersions: OperationHandler = (input, ctx) => {
   const versionArn = requireString(input, "componentVersionArn");
-  const components = ctx.store
+  const all = ctx.store
     .list<StoredComponent>()
     .filter((entry) => entry.key.startsWith(componentPrefix))
     .map((entry) => entry.value)
     .filter((c) => c.arn.startsWith(versionArn))
     .sort((a, b) => (a.arn < b.arn ? -1 : a.arn > b.arn ? 1 : 0));
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    componentSummaryList: components.map(componentSummaryView),
+    componentSummaryList: page.map(componentSummaryView),
+    nextToken,
   };
 };
 
@@ -1192,6 +1280,7 @@ const GetImageRecipePolicy: OperationHandler = (input, ctx) => {
 const PutImageRecipePolicy: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "imageRecipeArn");
   const policy = requireString(input, "policy");
+  requireValidJsonPolicy(policy);
   ctx.store.set(imageRecipePolicyKey(arn), policy);
   return {
     requestId: crypto.randomUUID(),
@@ -1199,15 +1288,23 @@ const PutImageRecipePolicy: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListImageRecipes: OperationHandler = (_input, ctx) => {
-  const recipes = ctx.store
+const ListImageRecipes: OperationHandler = (input, ctx) => {
+  const filters = extractFilters(input);
+  const all = ctx.store
     .list<StoredImageRecipe>()
     .filter((entry) => entry.key.startsWith(imageRecipePrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const filtered = applyFilters(
+    all as unknown as Record<string, unknown>[],
+    filters,
+  ) as unknown as StoredImageRecipe[];
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(filtered, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    imageRecipeSummaryList: recipes.map(imageRecipeSummaryView),
+    imageRecipeSummaryList: page.map(imageRecipeSummaryView),
+    nextToken,
   };
 };
 
@@ -1300,6 +1397,7 @@ const GetContainerRecipePolicy: OperationHandler = (input, ctx) => {
 const PutContainerRecipePolicy: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "containerRecipeArn");
   const policy = requireString(input, "policy");
+  requireValidJsonPolicy(policy);
   ctx.store.set(containerRecipePolicyKey(arn), policy);
   return {
     requestId: crypto.randomUUID(),
@@ -1307,15 +1405,23 @@ const PutContainerRecipePolicy: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListContainerRecipes: OperationHandler = (_input, ctx) => {
-  const recipes = ctx.store
+const ListContainerRecipes: OperationHandler = (input, ctx) => {
+  const filters = extractFilters(input);
+  const all = ctx.store
     .list<StoredContainerRecipe>()
     .filter((entry) => entry.key.startsWith(containerRecipePrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const filtered = applyFilters(
+    all as unknown as Record<string, unknown>[],
+    filters,
+  ) as unknown as StoredContainerRecipe[];
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(filtered, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    containerRecipeSummaryList: recipes.map(containerRecipeSummaryView),
+    containerRecipeSummaryList: page.map(containerRecipeSummaryView),
+    nextToken,
   };
 };
 
@@ -1385,15 +1491,18 @@ const DeleteDistributionConfiguration: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListDistributionConfigurations: OperationHandler = (_input, ctx) => {
-  const configs = ctx.store
+const ListDistributionConfigurations: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredDistributionConfig>()
     .filter((entry) => entry.key.startsWith(distConfigPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    distributionConfigurationSummaryList: configs.map(distConfigSummaryView),
+    distributionConfigurationSummaryList: page.map(distConfigSummaryView),
+    nextToken,
   };
 };
 
@@ -1499,15 +1608,18 @@ const DeleteInfrastructureConfiguration: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListInfrastructureConfigurations: OperationHandler = (_input, ctx) => {
-  const configs = ctx.store
+const ListInfrastructureConfigurations: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredInfraConfig>()
     .filter((entry) => entry.key.startsWith(infraConfigPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    infrastructureConfigurationSummaryList: configs.map(infraConfigSummaryView),
+    infrastructureConfigurationSummaryList: page.map(infraConfigSummaryView),
+    nextToken,
   };
 };
 
@@ -1518,15 +1630,18 @@ const CreateImage: OperationHandler = (input, ctx) => {
     input,
     "infrastructureConfigurationArn",
   );
+  requireInfraConfig(ctx, infrastructureConfigurationArn);
   let name: string;
   let version: string;
   let type: string;
   if (imageRecipeArn) {
+    requireImageRecipe(ctx, imageRecipeArn);
     const parts = imageRecipeArn.split("/");
     name = parts[parts.length - 2] ?? "image";
     version = parts[parts.length - 1] ?? "1.0.0";
     type = "AMI";
   } else if (containerRecipeArn) {
+    requireContainerRecipe(ctx, containerRecipeArn);
     const parts = containerRecipeArn.split("/");
     name = parts[parts.length - 2] ?? "image";
     version = parts[parts.length - 1] ?? "1.0.0";
@@ -1564,6 +1679,24 @@ const CreateImage: OperationHandler = (input, ctx) => {
     dateCreated: now,
   };
   ctx.store.set(imageKey(arn), image);
+  const executionId = crypto.randomUUID();
+  const syntheticWorkflowArn = `arn:aws:imagebuilder:${ctx.region}:${ctx.account}:workflow/build/build-image/1.0.0/1`;
+  const execution: StoredWorkflowExecution = {
+    workflowBuildVersionArn: syntheticWorkflowArn,
+    workflowExecutionId: executionId,
+    imageBuildVersionArn: arn,
+    type: "BUILD",
+    status: "RUNNING",
+    message: undefined,
+    totalStepCount: 1,
+    totalStepsSucceeded: 0,
+    totalStepsFailed: 0,
+    totalStepsSkipped: 0,
+    startTime: now,
+    endTime: undefined,
+    parallelGroup: undefined,
+  };
+  ctx.store.set(workflowExecutionKey(executionId), execution);
   return {
     requestId: crypto.randomUUID(),
     clientToken: stringOrUndefined(input["clientToken"]),
@@ -1590,15 +1723,23 @@ const DeleteImage: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListImages: OperationHandler = (_input, ctx) => {
-  const images = ctx.store
+const ListImages: OperationHandler = (input, ctx) => {
+  const filters = extractFilters(input);
+  const all = ctx.store
     .list<StoredImage>()
     .filter((entry) => entry.key.startsWith(imagePrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const filtered = applyFilters(
+    all as unknown as Record<string, unknown>[],
+    filters,
+  ) as unknown as StoredImage[];
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(filtered, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    imageVersionList: images.map(imageVersionView),
+    imageVersionList: page.map(imageVersionView),
+    nextToken,
   };
 };
 
@@ -1621,6 +1762,7 @@ const GetImagePolicy: OperationHandler = (input, ctx) => {
 const PutImagePolicy: OperationHandler = (input, ctx) => {
   const imageArn = requireString(input, "imageArn");
   const policy = requireString(input, "policy");
+  requireValidJsonPolicy(policy);
   ctx.store.set(imagePolicyKey(imageArn), policy);
   return {
     requestId: crypto.randomUUID(),
@@ -1628,9 +1770,25 @@ const PutImagePolicy: OperationHandler = (input, ctx) => {
   };
 };
 
+const terminalImageStatuses = new Set([
+  "AVAILABLE",
+  "CANCELLED",
+  "FAILED",
+  "DELETED",
+  "DEPRECATED",
+  "DISTRIBUTED",
+] as const);
+
 const CancelImageCreation: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "imageBuildVersionArn");
   const image = requireImage(ctx, arn);
+  if (terminalImageStatuses.has(image.state.status as never)) {
+    throw awsError(
+      "InvalidRequestException",
+      `Image build ${arn} is in terminal state ${image.state.status} and cannot be cancelled.`,
+      400,
+    );
+  }
   const updated: StoredImage = { ...image, state: { status: "CANCELLED" } };
   ctx.store.set(imageKey(arn), updated);
   return {
@@ -1683,9 +1841,18 @@ const DistributeImage: OperationHandler = (input, ctx) => {
   };
 };
 
+const retryableImageStatuses = new Set(["FAILED", "CANCELLED"] as const);
+
 const RetryImage: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "imageBuildVersionArn");
   const image = requireImage(ctx, arn);
+  if (!retryableImageStatuses.has(image.state.status as never)) {
+    throw awsError(
+      "InvalidRequestException",
+      `Image build ${arn} is in state ${image.state.status}. Retry is only allowed for FAILED or CANCELLED images.`,
+      400,
+    );
+  }
   const updated: StoredImage = { ...image, state: { status: "BUILDING" } };
   ctx.store.set(imageKey(arn), updated);
   return {
@@ -1766,7 +1933,7 @@ const ImportVmImage: OperationHandler = (input, ctx) => {
 
 const ListImageBuildVersions: OperationHandler = (input, ctx) => {
   const imageVersionArn = requireString(input, "imageVersionArn");
-  const images = ctx.store
+  const all = ctx.store
     .list<StoredImage>()
     .filter((entry) => entry.key.startsWith(imagePrefix))
     .map((entry) => entry.value)
@@ -1781,9 +1948,12 @@ const ListImageBuildVersions: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    imageSummaryList: images.map(imageSummaryView),
+    imageSummaryList: page.map(imageSummaryView),
+    nextToken,
   };
 };
 
@@ -1837,14 +2007,17 @@ const GetLifecyclePolicy: OperationHandler = (input, ctx) => {
   return { lifecyclePolicy: lifecyclePolicyView(policy) };
 };
 
-const ListLifecyclePolicies: OperationHandler = (_input, ctx) => {
-  const policies = ctx.store
+const ListLifecyclePolicies: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredLifecyclePolicy>()
     .filter((entry) => entry.key.startsWith(lifecyclePolicyPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
   return {
-    lifecyclePolicySummaryList: policies.map(lifecyclePolicySummaryView),
+    lifecyclePolicySummaryList: page.map(lifecyclePolicySummaryView),
+    nextToken,
   };
 };
 
@@ -1909,7 +2082,7 @@ const CancelLifecycleExecution: OperationHandler = (input, ctx) => {
 
 const ListLifecycleExecutions: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "resourceArn");
-  const executions = ctx.store
+  const all = ctx.store
     .list<StoredLifecycleExecution>()
     .filter((entry) => entry.key.startsWith(lifecycleExecutionPrefix))
     .map((entry) => entry.value)
@@ -1917,7 +2090,9 @@ const ListLifecycleExecutions: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0,
     );
-  return { lifecycleExecutions: executions.map(lifecycleExecutionView) };
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
+  return { lifecycleExecutions: page.map(lifecycleExecutionView), nextToken };
 };
 
 const ListLifecycleExecutionResources: OperationHandler = (input, ctx) => {
@@ -1937,14 +2112,20 @@ const UpdateImagePipeline: OperationHandler = (input, ctx) => {
     input,
     "infrastructureConfigurationArn",
   );
+  const newImageRecipeArn = stringOrUndefined(input["imageRecipeArn"]);
+  const newContainerRecipeArn = stringOrUndefined(input["containerRecipeArn"]);
+  if (newImageRecipeArn && newContainerRecipeArn) {
+    throw awsError(
+      "InvalidRequestException",
+      "A pipeline can specify either imageRecipeArn or containerRecipeArn, but not both.",
+      400,
+    );
+  }
   const updated: StoredPipeline = {
     ...existing,
     description: stringOrUndefined(input["description"]),
-    imageRecipeArn:
-      stringOrUndefined(input["imageRecipeArn"]) ?? existing.imageRecipeArn,
-    containerRecipeArn:
-      stringOrUndefined(input["containerRecipeArn"]) ??
-      existing.containerRecipeArn,
+    imageRecipeArn: newImageRecipeArn ?? existing.imageRecipeArn,
+    containerRecipeArn: newContainerRecipeArn ?? existing.containerRecipeArn,
     infrastructureConfigurationArn,
     distributionConfigurationArn:
       stringOrUndefined(input["distributionConfigurationArn"]) ??
@@ -2010,7 +2191,7 @@ const StartImagePipelineExecution: OperationHandler = (input, ctx) => {
 const ListImagePipelineImages: OperationHandler = (input, ctx) => {
   const pipelineArn = requireString(input, "imagePipelineArn");
   requirePipeline(ctx, pipelineArn);
-  const images = ctx.store
+  const all = ctx.store
     .list<StoredImage>()
     .filter((entry) => entry.key.startsWith(imagePrefix))
     .map((entry) => entry.value)
@@ -2022,9 +2203,12 @@ const ListImagePipelineImages: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    imageSummaryList: images.map(imageSummaryView),
+    imageSummaryList: page.map(imageSummaryView),
+    nextToken,
   };
 };
 
@@ -2101,24 +2285,28 @@ const GetWorkflow: OperationHandler = (input, ctx) => {
   return { workflow: workflowView(workflow) };
 };
 
-const ListWorkflows: OperationHandler = (_input, ctx) => {
-  const workflows = ctx.store
+const ListWorkflows: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredWorkflow>()
     .filter((entry) => entry.key.startsWith(workflowPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { workflowVersionList: workflows.map(workflowVersionView) };
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
+  return { workflowVersionList: page.map(workflowVersionView), nextToken };
 };
 
 const ListWorkflowBuildVersions: OperationHandler = (input, ctx) => {
   const versionArn = requireString(input, "workflowVersionArn");
-  const workflows = ctx.store
+  const all = ctx.store
     .list<StoredWorkflow>()
     .filter((entry) => entry.key.startsWith(workflowPrefix))
     .map((entry) => entry.value)
     .filter((w) => w.arn.startsWith(versionArn))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { workflowSummaryList: workflows.map(workflowSummaryView) };
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
+  return { workflowSummaryList: page.map(workflowSummaryView), nextToken };
 };
 
 const GetWorkflowExecution: OperationHandler = (input, ctx) => {
@@ -2168,7 +2356,7 @@ const GetWorkflowStepExecution: OperationHandler = (input, ctx) => {
 
 const ListWorkflowExecutions: OperationHandler = (input, ctx) => {
   const imageBuildVersionArn = requireString(input, "imageBuildVersionArn");
-  const executions = ctx.store
+  const all = ctx.store
     .list<StoredWorkflowExecution>()
     .filter((entry) => entry.key.startsWith(workflowExecutionPrefix))
     .map((entry) => entry.value)
@@ -2176,17 +2364,20 @@ const ListWorkflowExecutions: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0,
     );
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    workflowExecutions: executions.map(workflowExecutionView),
+    workflowExecutions: page.map(workflowExecutionView),
     imageBuildVersionArn,
+    nextToken,
   };
 };
 
 const ListWorkflowStepExecutions: OperationHandler = (input, ctx) => {
   const workflowExecutionId = requireString(input, "workflowExecutionId");
   const execution = requireWorkflowExecution(ctx, workflowExecutionId);
-  const steps = ctx.store
+  const all = ctx.store
     .list<StoredWorkflowStepExecution>()
     .filter((entry) => entry.key.startsWith(workflowStepExecutionPrefix))
     .map((entry) => entry.value)
@@ -2194,12 +2385,15 @@ const ListWorkflowStepExecutions: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0,
     );
+  const max = numberOrUndefined(input["maxResults"]) ?? 25;
+  const { page, nextToken } = paginate(all, max, input["nextToken"]);
   return {
     requestId: crypto.randomUUID(),
-    steps: steps.map(workflowStepExecutionView),
+    steps: page.map(workflowStepExecutionView),
     workflowBuildVersionArn: execution.workflowBuildVersionArn,
     workflowExecutionId,
     imageBuildVersionArn: execution.imageBuildVersionArn,
+    nextToken,
   };
 };
 

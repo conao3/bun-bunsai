@@ -119,7 +119,9 @@ test("CodeBuild project and build lifecycle", async () => {
   const buildId = started.build?.id ?? "";
   expect(buildId).toContain(name);
   expect(started.build?.projectName).toBe(name);
-  expect(started.build?.buildStatus).toBe("SUCCEEDED");
+  expect(started.build?.buildStatus).toBe("IN_PROGRESS");
+  expect(started.build?.currentPhase).toBe("SUBMITTED");
+  expect(started.build?.buildComplete).toBe(false);
 
   const builds = await client.send(
     new BatchGetBuildsCommand({ ids: [buildId, "missing-build"] }),
@@ -161,7 +163,8 @@ test("CodeBuild build stop, retry, list, delete", async () => {
   const retried = await client.send(new RetryBuildCommand({ id: id1 }));
   const id2 = retried.build?.id ?? "";
   expect(id2).not.toBe(id1);
-  expect(retried.build?.buildStatus).toBe("SUCCEEDED");
+  expect(retried.build?.buildStatus).toBe("IN_PROGRESS");
+  expect(retried.build?.buildComplete).toBe(false);
 
   const listedAll = await client.send(new ListBuildsCommand({}));
   expect(listedAll.ids ?? []).toContain(id1);
@@ -260,7 +263,8 @@ test("CodeBuild build batch lifecycle", async () => {
   );
   const batchId = started.buildBatch?.id ?? "";
   expect(batchId).toContain(name);
-  expect(started.buildBatch?.buildBatchStatus).toBe("SUCCEEDED");
+  expect(started.buildBatch?.buildBatchStatus).toBe("IN_PROGRESS");
+  expect(started.buildBatch?.complete).toBe(false);
 
   const fetched = await client.send(
     new BatchGetBuildBatchesCommand({ ids: [batchId, "missing-batch"] }),
@@ -610,4 +614,134 @@ test("CodeBuild ListCuratedEnvironmentImages", async () => {
 
   const result = await client.send(new ListCuratedEnvironmentImagesCommand({}));
   expect((result.platforms ?? []).length).toBeGreaterThan(0);
+});
+
+test("CodeBuild ListBuildBatches pagination", async () => {
+  const client = codebuild();
+  const name = "bunsai-e2e-batch-pagination";
+
+  await client.send(
+    new CreateProjectCommand({
+      name,
+      source: { type: "NO_SOURCE", buildspec: "version: 0.2" },
+      artifacts: { type: "NO_ARTIFACTS" },
+      environment: {
+        type: "LINUX_CONTAINER",
+        image: "aws/codebuild/standard:7.0",
+        computeType: "BUILD_GENERAL1_SMALL",
+      },
+      serviceRole: `arn:aws:iam::000000000000:role/codebuild-${name}`,
+    }),
+  );
+
+  const b1 = await client.send(
+    new StartBuildBatchCommand({ projectName: name }),
+  );
+  const b2 = await client.send(
+    new StartBuildBatchCommand({ projectName: name }),
+  );
+  const b3 = await client.send(
+    new StartBuildBatchCommand({ projectName: name }),
+  );
+  const id1 = b1.buildBatch?.id ?? "";
+  const id2 = b2.buildBatch?.id ?? "";
+  const id3 = b3.buildBatch?.id ?? "";
+
+  expect(b1.buildBatch?.buildBatchStatus).toBe("IN_PROGRESS");
+
+  const page1 = await client.send(
+    new ListBuildBatchesForProjectCommand({ projectName: name, maxResults: 2 }),
+  );
+  expect((page1.ids ?? []).length).toBe(2);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListBuildBatchesForProjectCommand({
+      projectName: name,
+      maxResults: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect((page2.ids ?? []).length).toBe(1);
+  expect(page2.nextToken).toBeUndefined();
+
+  const allIds = [...(page1.ids ?? []), ...(page2.ids ?? [])];
+  expect(allIds).toContain(id1);
+  expect(allIds).toContain(id2);
+  expect(allIds).toContain(id3);
+
+  await client.send(new DeleteProjectCommand({ name }));
+});
+
+test("CodeBuild ListBuildBatches status filter", async () => {
+  const client = codebuild();
+  const name = "bunsai-e2e-batch-filter";
+
+  await client.send(
+    new CreateProjectCommand({
+      name,
+      source: { type: "NO_SOURCE", buildspec: "version: 0.2" },
+      artifacts: { type: "NO_ARTIFACTS" },
+      environment: {
+        type: "LINUX_CONTAINER",
+        image: "aws/codebuild/standard:7.0",
+        computeType: "BUILD_GENERAL1_SMALL",
+      },
+      serviceRole: `arn:aws:iam::000000000000:role/codebuild-${name}`,
+    }),
+  );
+
+  const batch1 = await client.send(
+    new StartBuildBatchCommand({ projectName: name }),
+  );
+  const batchId1 = batch1.buildBatch?.id ?? "";
+  expect(batch1.buildBatch?.buildBatchStatus).toBe("IN_PROGRESS");
+
+  await client.send(new StopBuildBatchCommand({ id: batchId1 }));
+
+  const batch2 = await client.send(
+    new StartBuildBatchCommand({ projectName: name }),
+  );
+  const batchId2 = batch2.buildBatch?.id ?? "";
+
+  const inProgress = await client.send(
+    new ListBuildBatchesCommand({ filter: { status: "IN_PROGRESS" } }),
+  );
+  expect(inProgress.ids ?? []).toContain(batchId2);
+  expect(inProgress.ids ?? []).not.toContain(batchId1);
+
+  const stopped = await client.send(
+    new ListBuildBatchesCommand({ filter: { status: "STOPPED" } }),
+  );
+  expect(stopped.ids ?? []).toContain(batchId1);
+  expect(stopped.ids ?? []).not.toContain(batchId2);
+
+  await client.send(new DeleteProjectCommand({ name }));
+});
+
+test("CodeBuild RetryBuild rejects non-retryable state", async () => {
+  const client = codebuild();
+  const name = "bunsai-e2e-retry-validation";
+
+  await client.send(
+    new CreateProjectCommand({
+      name,
+      source: { type: "NO_SOURCE", buildspec: "version: 0.2" },
+      artifacts: { type: "NO_ARTIFACTS" },
+      environment: {
+        type: "LINUX_CONTAINER",
+        image: "aws/codebuild/standard:7.0",
+        computeType: "BUILD_GENERAL1_SMALL",
+      },
+      serviceRole: `arn:aws:iam::000000000000:role/codebuild-${name}`,
+    }),
+  );
+
+  const b = await client.send(new StartBuildCommand({ projectName: name }));
+  const id = b.build?.id ?? "";
+  expect(b.build?.buildStatus).toBe("IN_PROGRESS");
+
+  await expect(client.send(new RetryBuildCommand({ id }))).rejects.toThrow();
+
+  await client.send(new DeleteProjectCommand({ name }));
 });

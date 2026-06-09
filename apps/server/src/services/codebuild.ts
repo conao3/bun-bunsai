@@ -37,7 +37,7 @@ type StoredBuild = {
   arn: string;
   buildNumber: number;
   startTime: number;
-  endTime: number;
+  endTime: number | undefined;
   currentPhase: string;
   buildStatus: string;
   sourceVersion: string | undefined;
@@ -59,7 +59,7 @@ type StoredBuildBatch = {
   id: string;
   arn: string;
   startTime: number;
-  endTime: number;
+  endTime: number | undefined;
   currentPhase: string;
   buildBatchStatus: string;
   projectName: string;
@@ -246,6 +246,25 @@ const tagsFromInput = (value: unknown): unknown[] =>
 const stringListFromInput = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is string => typeof entry === "string");
+};
+
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
 };
 
 const projectArn = (ctx: ServiceContext, name: string): string =>
@@ -645,9 +664,9 @@ const StartBuild: OperationHandler = (input, ctx) => {
     arn: buildArn(ctx, id),
     buildNumber: existingCount + 1,
     startTime: now,
-    endTime: now,
-    currentPhase: "COMPLETED",
-    buildStatus: "SUCCEEDED",
+    endTime: undefined,
+    currentPhase: "SUBMITTED",
+    buildStatus: "IN_PROGRESS",
     sourceVersion:
       stringOrUndefined(input["sourceVersion"]) ?? project.sourceVersion,
     resolvedSourceVersion: stringOrUndefined(input["sourceVersion"]),
@@ -665,7 +684,7 @@ const StartBuild: OperationHandler = (input, ctx) => {
     queuedTimeoutInMinutes:
       numberOrUndefined(input["queuedTimeoutInMinutesOverride"]) ??
       project.queuedTimeoutInMinutes,
-    buildComplete: true,
+    buildComplete: false,
     initiator: "bunsai",
     encryptionKey:
       stringOrUndefined(input["encryptionKeyOverride"]) ??
@@ -740,6 +759,21 @@ const RetryBuild: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const retryableStatuses = [
+    "FAILED",
+    "FAULT",
+    "STOPPED",
+    "TIMED_OUT",
+  ] as const;
+  if (
+    !(retryableStatuses as readonly string[]).includes(existing.buildStatus)
+  ) {
+    throw awsError(
+      "InvalidInputException",
+      `Build is not in a retryable state: ${existing.buildStatus}`,
+      400,
+    );
+  }
   const newId = buildId(existing.projectName);
   const existingCount = listBuilds(ctx).filter(
     (entry) => entry.projectName === existing.projectName,
@@ -751,10 +785,10 @@ const RetryBuild: OperationHandler = (input, ctx) => {
     arn: buildArn(ctx, newId),
     buildNumber: existingCount + 1,
     startTime: now,
-    endTime: now,
-    currentPhase: "COMPLETED",
-    buildStatus: "SUCCEEDED",
-    buildComplete: true,
+    endTime: undefined,
+    currentPhase: "SUBMITTED",
+    buildStatus: "IN_PROGRESS",
+    buildComplete: false,
   };
   ctx.store.set(buildKey(newId), newBuild);
   return { build: buildView(newBuild) };
@@ -762,12 +796,17 @@ const RetryBuild: OperationHandler = (input, ctx) => {
 
 const ListBuilds: OperationHandler = (input, ctx) => {
   const order = stringOrUndefined(input["sortOrder"]) ?? "ASCENDING";
-  const ids = listBuilds(ctx)
+  const sorted = listBuilds(ctx)
     .map((b) => b.id)
     .sort((a, b) =>
       order === "DESCENDING" ? b.localeCompare(a) : a.localeCompare(b),
     );
-  return { ids };
+  const { items, nextToken } = paginateList(
+    sorted,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { ids: items, nextToken };
 };
 
 const ListBuildsForProject: OperationHandler = (input, ctx) => {
@@ -781,13 +820,18 @@ const ListBuildsForProject: OperationHandler = (input, ctx) => {
     );
   }
   const order = stringOrUndefined(input["sortOrder"]) ?? "ASCENDING";
-  const ids = listBuilds(ctx)
+  const sorted = listBuilds(ctx)
     .filter((b) => b.projectName === projectName)
     .map((b) => b.id)
     .sort((a, b) =>
       order === "DESCENDING" ? b.localeCompare(a) : a.localeCompare(b),
     );
-  return { ids };
+  const { items, nextToken } = paginateList(
+    sorted,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { ids: items, nextToken };
 };
 
 const InvalidateProjectCache: OperationHandler = (input, ctx) => {
@@ -827,8 +871,16 @@ const UpdateProjectVisibility: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListSharedProjects: OperationHandler = (_input, _ctx) => {
-  return { projects: [], nextToken: undefined };
+const ListSharedProjects: OperationHandler = (input, ctx) => {
+  const all = listProjects(ctx)
+    .filter((p) => p.projectVisibility === "PUBLIC_READ")
+    .map((p) => p.arn);
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { projects: items, nextToken };
 };
 
 const StartBuildBatch: OperationHandler = (input, ctx) => {
@@ -850,9 +902,9 @@ const StartBuildBatch: OperationHandler = (input, ctx) => {
     id,
     arn: buildBatchArn(ctx, id),
     startTime: now,
-    endTime: now,
-    currentPhase: "SUCCEEDED",
-    buildBatchStatus: "SUCCEEDED",
+    endTime: undefined,
+    currentPhase: "SUBMITTED",
+    buildBatchStatus: "IN_PROGRESS",
     projectName,
     sourceVersion:
       stringOrUndefined(input["sourceVersion"]) ?? project.sourceVersion,
@@ -870,7 +922,7 @@ const StartBuildBatch: OperationHandler = (input, ctx) => {
     queuedTimeoutInMinutes:
       numberOrUndefined(input["queuedTimeoutInMinutesOverride"]) ??
       project.queuedTimeoutInMinutes,
-    complete: true,
+    complete: false,
     initiator: "bunsai",
     encryptionKey:
       stringOrUndefined(input["encryptionKeyOverride"]) ??
@@ -928,6 +980,23 @@ const RetryBuildBatch: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const retryableBatchStatuses = [
+    "FAILED",
+    "FAULT",
+    "STOPPED",
+    "TIMED_OUT",
+  ] as const;
+  if (
+    !(retryableBatchStatuses as readonly string[]).includes(
+      existing.buildBatchStatus,
+    )
+  ) {
+    throw awsError(
+      "InvalidInputException",
+      `Build batch is not in a retryable state: ${existing.buildBatchStatus}`,
+      400,
+    );
+  }
   const newId = buildBatchId(existing.projectName);
   const existingCount = listBuildBatches(ctx).filter(
     (entry) => entry.projectName === existing.projectName,
@@ -939,10 +1008,10 @@ const RetryBuildBatch: OperationHandler = (input, ctx) => {
     arn: buildBatchArn(ctx, newId),
     buildBatchNumber: existingCount + 1,
     startTime: now,
-    endTime: now,
-    currentPhase: "SUCCEEDED",
-    buildBatchStatus: "SUCCEEDED",
-    complete: true,
+    endTime: undefined,
+    currentPhase: "SUBMITTED",
+    buildBatchStatus: "IN_PROGRESS",
+    complete: false,
   };
   ctx.store.set(buildBatchKey(newId), newBatch);
   return { buildBatch: buildBatchView(newBatch) };
@@ -969,9 +1038,20 @@ const StopBuildBatch: OperationHandler = (input, ctx) => {
   return { buildBatch: buildBatchView(stopped) };
 };
 
-const ListBuildBatches: OperationHandler = (_input, ctx) => {
-  const ids = listBuildBatches(ctx).map((b) => b.id);
-  return { ids, nextToken: undefined };
+const ListBuildBatches: OperationHandler = (input, ctx) => {
+  const filter = recordOrUndefined(input["filter"]);
+  const statusFilter = stringOrUndefined(filter?.["status"]);
+  const all = listBuildBatches(ctx)
+    .filter((b) =>
+      statusFilter === undefined ? true : b.buildBatchStatus === statusFilter,
+    )
+    .map((b) => b.id);
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { ids: items, nextToken };
 };
 
 const ListBuildBatchesForProject: OperationHandler = (input, ctx) => {
@@ -986,12 +1066,22 @@ const ListBuildBatchesForProject: OperationHandler = (input, ctx) => {
       );
     }
   }
-  const ids = listBuildBatches(ctx)
+  const filter = recordOrUndefined(input["filter"]);
+  const statusFilter = stringOrUndefined(filter?.["status"]);
+  const all = listBuildBatches(ctx)
     .filter((b) =>
       projectName === undefined ? true : b.projectName === projectName,
     )
+    .filter((b) =>
+      statusFilter === undefined ? true : b.buildBatchStatus === statusFilter,
+    )
     .map((b) => b.id);
-  return { ids, nextToken: undefined };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { ids: items, nextToken };
 };
 
 const CreateFleet: OperationHandler = (input, ctx) => {
@@ -1110,9 +1200,14 @@ const UpdateFleet: OperationHandler = (input, ctx) => {
   return { fleet: fleetView(updated) };
 };
 
-const ListFleets: OperationHandler = (_input, ctx) => {
-  const fleetArns = listFleets(ctx).map((f) => f.arn);
-  return { fleets: fleetArns, nextToken: undefined };
+const ListFleets: OperationHandler = (input, ctx) => {
+  const all = listFleets(ctx).map((f) => f.arn);
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { fleets: items, nextToken };
 };
 
 const CreateReportGroup: OperationHandler = (input, ctx) => {
@@ -1208,13 +1303,24 @@ const UpdateReportGroup: OperationHandler = (input, ctx) => {
   return { reportGroup: reportGroupView(updated) };
 };
 
-const ListReportGroups: OperationHandler = (_input, ctx) => {
-  const reportGroupArns = listReportGroups(ctx).map((rg) => rg.arn);
-  return { reportGroups: reportGroupArns, nextToken: undefined };
+const ListReportGroups: OperationHandler = (input, ctx) => {
+  const all = listReportGroups(ctx).map((rg) => rg.arn);
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { reportGroups: items, nextToken };
 };
 
-const ListSharedReportGroups: OperationHandler = (_input, _ctx) => {
-  return { reportGroups: [], nextToken: undefined };
+const ListSharedReportGroups: OperationHandler = (input, ctx) => {
+  const all = listReportGroups(ctx).map((rg) => rg.arn);
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { reportGroups: items, nextToken };
 };
 
 const GetReportGroupTrend: OperationHandler = (input, ctx) => {
@@ -1254,9 +1360,14 @@ const DeleteReport: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const ListReports: OperationHandler = (_input, ctx) => {
-  const reportArns = listReports(ctx).map((r) => r.arn);
-  return { reports: reportArns, nextToken: undefined };
+const ListReports: OperationHandler = (input, ctx) => {
+  const all = listReports(ctx).map((r) => r.arn);
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { reports: items, nextToken };
 };
 
 const ListReportsForReportGroup: OperationHandler = (input, ctx) => {
@@ -1285,7 +1396,12 @@ const DescribeCodeCoverages: OperationHandler = (input, ctx) => {
       400,
     );
   }
-  return { codeCoverages: [], nextToken: undefined };
+  const { items, nextToken } = paginateList(
+    [] as unknown[],
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { codeCoverages: items, nextToken };
 };
 
 const DescribeTestCases: OperationHandler = (input, ctx) => {
@@ -1298,7 +1414,12 @@ const DescribeTestCases: OperationHandler = (input, ctx) => {
       400,
     );
   }
-  return { testCases: [], nextToken: undefined };
+  const { items, nextToken } = paginateList(
+    [] as unknown[],
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { testCases: items, nextToken };
 };
 
 const CreateWebhook: OperationHandler = (input, ctx) => {

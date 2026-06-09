@@ -124,6 +124,14 @@ type StoredPortfolioShare = {
   SharePrincipals: boolean;
 };
 
+type StoredCopyJob = {
+  CopyProductToken: string;
+  CopyProductStatus: string;
+  SourceProductId: string;
+  TargetProductId: string;
+  StatusDetail: string;
+};
+
 const portfolioKey = (id: string): string => `portfolio/${id}`;
 const productKey = (id: string): string => `product/${id}`;
 const paKey = (id: string): string => `pa/${id}`;
@@ -154,6 +162,11 @@ const assocTagOptionKey = (resourceId: string, tagOptionId: string): string =>
 
 const assocBudgetKey = (resourceId: string, budgetName: string): string =>
   `assoc/budget/${resourceId}/${budgetName}`;
+
+const copyJobKey = (token: string): string => `copyjob/${token}`;
+
+const acceptedShareKey = (portfolioId: string): string =>
+  `accepted/${portfolioId}`;
 
 const orgsAccessKey = (): string => `orgsAccess`;
 
@@ -238,6 +251,21 @@ const randomChars = (length: number): string => {
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
+
+const paginate = <T>(
+  items: T[],
+  input: Record<string, unknown>,
+): { page: T[]; nextPageToken: string | undefined } => {
+  const pageToken = optionalString(input, "PageToken");
+  const pageSizeRaw = input["PageSize"];
+  const pageSize =
+    typeof pageSizeRaw === "number" && pageSizeRaw > 0 ? pageSizeRaw : 20;
+  const start = pageToken !== undefined ? parseInt(pageToken, 10) : 0;
+  const page = items.slice(start, start + pageSize);
+  const nextPageToken =
+    start + pageSize < items.length ? String(start + pageSize) : undefined;
+  return { page, nextPageToken };
+};
 
 const detailOf = (portfolio: StoredPortfolio): Record<string, unknown> => ({
   Id: portfolio.Id,
@@ -414,6 +442,7 @@ const createRecord = (
   ppId: string,
   ppName: string,
   recordType: string,
+  initialStatus = "SUCCEEDED",
 ): StoredRecord => {
   const recordId = `rec-${randomChars(13)}`;
   const now = nowSeconds();
@@ -422,7 +451,7 @@ const createRecord = (
     ProvisionedProductId: ppId,
     ProvisionedProductName: ppName,
     RecordType: recordType,
-    Status: "SUCCEEDED",
+    Status: initialStatus,
     CreatedTime: now,
     UpdatedTime: now,
     RecordErrors: [],
@@ -450,12 +479,13 @@ const CreatePortfolio: OperationHandler = (input, ctx) => {
   return { PortfolioDetail: detailOf(portfolio), Tags: portfolio.Tags };
 };
 
-const ListPortfolios: OperationHandler = (_input, ctx) => {
+const ListPortfolios: OperationHandler = (input, ctx) => {
   const portfolios = ctx.store
     .list<StoredPortfolio>()
     .filter((entry) => entry.key.startsWith("portfolio/"))
     .map((entry) => detailOf(entry.value));
-  return { PortfolioDetails: portfolios };
+  const { page, nextPageToken } = paginate(portfolios, input);
+  return { PortfolioDetails: page, NextPageToken: nextPageToken };
 };
 
 const DescribePortfolio: OperationHandler = (input, ctx) => {
@@ -579,16 +609,40 @@ const DescribePortfolioShares: OperationHandler = (input, ctx) => {
   return { PortfolioShareDetails: shares };
 };
 
-const AcceptPortfolioShare: OperationHandler = (_input, _ctx) => ({});
+const AcceptPortfolioShare: OperationHandler = (input, ctx) => {
+  const portfolioId = requireString(input, "PortfolioId");
+  requirePortfolio(ctx, portfolioId);
+  const shareType = optionalString(input, "PortfolioShareType") ?? "IMPORTED";
+  ctx.store.set(acceptedShareKey(portfolioId), shareType);
+  return {};
+};
 
-const RejectPortfolioShare: OperationHandler = (_input, _ctx) => ({});
+const RejectPortfolioShare: OperationHandler = (input, ctx) => {
+  const portfolioId = requireString(input, "PortfolioId");
+  requirePortfolio(ctx, portfolioId);
+  ctx.store.delete(acceptedShareKey(portfolioId));
+  return {};
+};
 
-const ListAcceptedPortfolioShares: OperationHandler = (_input, ctx) => {
+const ListAcceptedPortfolioShares: OperationHandler = (input, ctx) => {
+  const shareTypeFilter = optionalString(input, "PortfolioShareType");
   const portfolios = ctx.store
-    .list<StoredPortfolio>()
-    .filter((entry) => entry.key.startsWith("portfolio/"))
-    .map((entry) => detailOf(entry.value));
-  return { PortfolioDetails: portfolios };
+    .list<string>()
+    .filter((entry) => entry.key.startsWith("accepted/"))
+    .filter(
+      (entry) =>
+        shareTypeFilter === undefined || entry.value === shareTypeFilter,
+    )
+    .map((entry) => {
+      const portfolioId = entry.key.slice("accepted/".length);
+      const portfolio = ctx.store.get<StoredPortfolio>(
+        portfolioKey(portfolioId),
+      );
+      return portfolio ? detailOf(portfolio) : null;
+    })
+    .filter((p): p is Record<string, unknown> => p !== null);
+  const { page, nextPageToken } = paginate(portfolios, input);
+  return { PortfolioDetails: page, NextPageToken: nextPageToken };
 };
 
 const ListPortfolioAccess: OperationHandler = (input, ctx) => {
@@ -825,12 +879,17 @@ const DeleteProduct: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const SearchProducts: OperationHandler = (_input, ctx) => {
+const SearchProducts: OperationHandler = (input, ctx) => {
   const products = ctx.store
     .list<StoredProduct>()
     .filter((entry) => entry.key.startsWith("product/"))
     .map((entry) => productSummary(entry.value));
-  return { ProductViewSummaries: products, ProductViewAggregations: {} };
+  const { page, nextPageToken } = paginate(products, input);
+  return {
+    ProductViewSummaries: page,
+    ProductViewAggregations: {},
+    NextPageToken: nextPageToken,
+  };
 };
 
 const SearchProductsAsAdmin: OperationHandler = (_input, ctx) => {
@@ -848,15 +907,68 @@ const SearchProductsAsAdmin: OperationHandler = (_input, ctx) => {
   return { ProductViewDetails: products };
 };
 
-const CopyProduct: OperationHandler = (_input, _ctx) => ({
-  CopyProductToken: `copy-${randomChars(13)}`,
-});
+const CopyProduct: OperationHandler = (input, ctx) => {
+  const sourceProductArn = requireString(input, "SourceProductArn");
+  requireString(input, "IdempotencyToken");
+  const sourceProduct = ctx.store
+    .list<StoredProduct>()
+    .find(
+      (e) => e.key.startsWith("product/") && e.value.ARN === sourceProductArn,
+    )?.value;
+  if (sourceProduct === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      "The specified resource was not found.",
+      400,
+    );
+  }
+  const token = `copy-${randomChars(13)}`;
+  const now = nowSeconds();
+  const targetProductId = `prod-${randomChars(13)}`;
+  const targetProductName =
+    optionalString(input, "TargetProductName") ?? sourceProduct.Name;
+  const targetProduct: StoredProduct = {
+    Id: targetProductId,
+    ARN: `arn:aws:catalog:${ctx.region}:${ctx.account}:product/${targetProductId}`,
+    Name: targetProductName,
+    Owner: sourceProduct.Owner,
+    Description: sourceProduct.Description,
+    ProductType: sourceProduct.ProductType,
+    Distributor: sourceProduct.Distributor,
+    SupportDescription: sourceProduct.SupportDescription,
+    SupportEmail: sourceProduct.SupportEmail,
+    SupportUrl: sourceProduct.SupportUrl,
+    CreatedTime: now,
+    Tags: sourceProduct.Tags,
+  };
+  ctx.store.set(productKey(targetProductId), targetProduct);
+  const job: StoredCopyJob = {
+    CopyProductToken: token,
+    CopyProductStatus: "SUCCEEDED",
+    SourceProductId: sourceProduct.Id,
+    TargetProductId: targetProductId,
+    StatusDetail: "",
+  };
+  ctx.store.set(copyJobKey(token), job);
+  return { CopyProductToken: token };
+};
 
-const DescribeCopyProductStatus: OperationHandler = (_input, _ctx) => ({
-  CopyProductStatus: "SUCCEEDED",
-  TargetProductId: "",
-  StatusDetail: "",
-});
+const DescribeCopyProductStatus: OperationHandler = (input, ctx) => {
+  const token = requireString(input, "CopyProductToken");
+  const job = ctx.store.get<StoredCopyJob>(copyJobKey(token));
+  if (job === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      "The specified resource was not found.",
+      400,
+    );
+  }
+  return {
+    CopyProductStatus: job.CopyProductStatus,
+    TargetProductId: job.TargetProductId,
+    StatusDetail: job.StatusDetail,
+  };
+};
 
 const AssociateProductWithPortfolio: OperationHandler = (input, ctx) => {
   const portfolioId = requireString(input, "PortfolioId");
@@ -1152,14 +1264,20 @@ const ProvisionProduct: OperationHandler = (input, ctx) => {
   requirePA(ctx, paId);
   const ppId = `pp-${randomChars(13)}`;
   const now = nowSeconds();
-  const record = createRecord(ctx, ppId, ppName, "PROVISION_PRODUCT");
+  const record = createRecord(
+    ctx,
+    ppId,
+    ppName,
+    "PROVISION_PRODUCT",
+    "CREATED",
+  );
   const pp: StoredProvisionedProduct = {
     Id: ppId,
     ARN: `arn:aws:servicecatalog:${ctx.region}:${ctx.account}:stack/${ppName}/${ppId}`,
     Name: ppName,
     ProductId: productId,
     ProvisioningArtifactId: paId,
-    Status: "AVAILABLE",
+    Status: "UNDER_CHANGE",
     CreatedTime: now,
     LastRecordId: record.RecordId,
     Tags: readTags(input, "Tags"),
@@ -1197,7 +1315,14 @@ const UpdateProvisionedProduct: OperationHandler = (input, ctx) => {
   if (paId !== undefined) {
     pp.ProvisioningArtifactId = paId;
   }
-  const record = createRecord(ctx, ppId, pp.Name, "UPDATE_PROVISIONED_PRODUCT");
+  const record = createRecord(
+    ctx,
+    ppId,
+    pp.Name,
+    "UPDATE_PROVISIONED_PRODUCT",
+    "CREATED",
+  );
+  pp.Status = "UNDER_CHANGE";
   pp.LastRecordId = record.RecordId;
   ctx.store.set(ppKey(ppId), pp);
   return { RecordDetail: recordSummary(record) };
@@ -1212,17 +1337,21 @@ const TerminateProvisionedProduct: OperationHandler = (input, ctx) => {
     ppId,
     pp.Name,
     "TERMINATE_PROVISIONED_PRODUCT",
+    "CREATED",
   );
-  ctx.store.delete(ppKey(ppId));
+  pp.Status = "UNDER_CHANGE";
+  pp.LastRecordId = record.RecordId;
+  ctx.store.set(ppKey(ppId), pp);
   return { RecordDetail: recordSummary(record) };
 };
 
-const ScanProvisionedProducts: OperationHandler = (_input, ctx) => {
+const ScanProvisionedProducts: OperationHandler = (input, ctx) => {
   const pps = ctx.store
     .list<StoredProvisionedProduct>()
     .filter((entry) => entry.key.startsWith("pp/"))
     .map((entry) => ppSummary(entry.value));
-  return { ProvisionedProducts: pps };
+  const { page, nextPageToken } = paginate(pps, input);
+  return { ProvisionedProducts: page, NextPageToken: nextPageToken };
 };
 
 const SearchProvisionedProducts: OperationHandler = (_input, ctx) => {
@@ -1248,14 +1377,20 @@ const ImportAsProvisionedProduct: OperationHandler = (input, ctx) => {
   requirePA(ctx, paId);
   const ppId = `pp-${randomChars(13)}`;
   const now = nowSeconds();
-  const record = createRecord(ctx, ppId, ppName, "IMPORT_PROVISIONED_PRODUCT");
+  const record = createRecord(
+    ctx,
+    ppId,
+    ppName,
+    "IMPORT_PROVISIONED_PRODUCT",
+    "CREATED",
+  );
   const pp: StoredProvisionedProduct = {
     Id: ppId,
     ARN: `arn:aws:servicecatalog:${ctx.region}:${ctx.account}:stack/${ppName}/${ppId}`,
     Name: ppName,
     ProductId: productId,
     ProvisioningArtifactId: paId,
-    Status: "AVAILABLE",
+    Status: "UNDER_CHANGE",
     CreatedTime: now,
     LastRecordId: record.RecordId,
     Tags: [],
@@ -1390,12 +1525,13 @@ const DescribeRecord: OperationHandler = (input, ctx) => {
   return { RecordDetail: recordSummary(record), RecordOutputs: [] };
 };
 
-const ListRecordHistory: OperationHandler = (_input, ctx) => {
+const ListRecordHistory: OperationHandler = (input, ctx) => {
   const records = ctx.store
     .list<StoredRecord>()
     .filter((entry) => entry.key.startsWith("record/"))
     .map((entry) => recordSummary(entry.value));
-  return { RecordDetails: records };
+  const { page, nextPageToken } = paginate(records, input);
+  return { RecordDetails: page, NextPageToken: nextPageToken };
 };
 
 const CreateServiceAction: OperationHandler = (input, ctx) => {
@@ -1722,17 +1858,100 @@ const GetAWSOrganizationsAccessStatus: OperationHandler = (_input, ctx) => {
 };
 
 const NotifyProvisionProductEngineWorkflowResult: OperationHandler = (
-  _input,
-  _ctx,
-) => ({});
+  input,
+  ctx,
+) => {
+  const recordId = requireString(input, "RecordId");
+  const status = requireString(input, "Status");
+  requireString(input, "WorkflowToken");
+  requireString(input, "IdempotencyToken");
+  const record = ctx.store.get<StoredRecord>(recordKey(recordId));
+  if (record === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      "The specified resource was not found.",
+      400,
+    );
+  }
+  const isSuccess = status === "SUCCEEDED";
+  record.Status = isSuccess ? "SUCCEEDED" : "FAILED";
+  record.UpdatedTime = nowSeconds();
+  ctx.store.set(recordKey(recordId), record);
+  const pp = ctx.store.get<StoredProvisionedProduct>(
+    ppKey(record.ProvisionedProductId),
+  );
+  if (pp !== undefined) {
+    pp.Status = isSuccess ? "AVAILABLE" : "ERROR";
+    if (!isSuccess) {
+      const reason = optionalString(input, "FailureReason");
+      if (reason !== undefined) pp.StatusMessage = reason;
+    }
+    ctx.store.set(ppKey(pp.Id), pp);
+  }
+  return {};
+};
 
 const NotifyTerminateProvisionedProductEngineWorkflowResult: OperationHandler =
-  (_input, _ctx) => ({});
+  (input, ctx) => {
+    const recordId = requireString(input, "RecordId");
+    const status = requireString(input, "Status");
+    requireString(input, "WorkflowToken");
+    requireString(input, "IdempotencyToken");
+    const record = ctx.store.get<StoredRecord>(recordKey(recordId));
+    if (record === undefined) {
+      throw awsError(
+        "ResourceNotFoundException",
+        "The specified resource was not found.",
+        400,
+      );
+    }
+    const isSuccess = status === "SUCCEEDED";
+    record.Status = isSuccess ? "SUCCEEDED" : "FAILED";
+    record.UpdatedTime = nowSeconds();
+    ctx.store.set(recordKey(recordId), record);
+    const pp = ctx.store.get<StoredProvisionedProduct>(
+      ppKey(record.ProvisionedProductId),
+    );
+    if (pp !== undefined) {
+      pp.Status = isSuccess ? "TERMINATED" : "ERROR";
+      ctx.store.set(ppKey(pp.Id), pp);
+    }
+    return {};
+  };
 
 const NotifyUpdateProvisionedProductEngineWorkflowResult: OperationHandler = (
-  _input,
-  _ctx,
-) => ({});
+  input,
+  ctx,
+) => {
+  const recordId = requireString(input, "RecordId");
+  const status = requireString(input, "Status");
+  requireString(input, "WorkflowToken");
+  requireString(input, "IdempotencyToken");
+  const record = ctx.store.get<StoredRecord>(recordKey(recordId));
+  if (record === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      "The specified resource was not found.",
+      400,
+    );
+  }
+  const isSuccess = status === "SUCCEEDED";
+  record.Status = isSuccess ? "SUCCEEDED" : "FAILED";
+  record.UpdatedTime = nowSeconds();
+  ctx.store.set(recordKey(recordId), record);
+  const pp = ctx.store.get<StoredProvisionedProduct>(
+    ppKey(record.ProvisionedProductId),
+  );
+  if (pp !== undefined) {
+    pp.Status = isSuccess ? "AVAILABLE" : "ERROR";
+    if (!isSuccess) {
+      const reason = optionalString(input, "FailureReason");
+      if (reason !== undefined) pp.StatusMessage = reason;
+    }
+    ctx.store.set(ppKey(pp.Id), pp);
+  }
+  return {};
+};
 
 const servicecatalog = {
   name: "servicecatalog",

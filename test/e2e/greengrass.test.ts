@@ -206,6 +206,14 @@ test("Greengrass group version + deployment + role association", async () => {
   );
   expect(deployStatus.DeploymentStatus).toBe("InProgress");
 
+  const deployStatus2 = await client.send(
+    new GetDeploymentStatusCommand({
+      GroupId: groupId,
+      DeploymentId: deployId,
+    }),
+  );
+  expect(deployStatus2.DeploymentStatus).toBe("Success");
+
   const listedDeploys = await client.send(
     new ListDeploymentsCommand({ GroupId: groupId }),
   );
@@ -253,4 +261,105 @@ test("Greengrass tags lifecycle", async () => {
   );
   expect(tagsAfter.tags?.env).toBe("test");
   expect(tagsAfter.tags?.owner).toBeUndefined();
+});
+
+test("Greengrass definition version extraction", async () => {
+  const client = greengrass();
+
+  const group = await client.send(
+    new CreateGroupCommand({ Name: `e2e-defextract-${Date.now()}` }),
+  );
+  const groupId = group.Id!;
+
+  const coreArn =
+    "arn:aws:greengrass:us-east-1:123456789012:/greengrass/definition/cores/fake/versions/fake";
+  const groupVer = await client.send(
+    new CreateGroupVersionCommand({
+      GroupId: groupId,
+      CoreDefinitionVersionArn: coreArn,
+    }),
+  );
+  const groupVerId = groupVer.Version!;
+
+  const gotVer = await client.send(
+    new GetGroupVersionCommand({
+      GroupId: groupId,
+      GroupVersionId: groupVerId,
+    }),
+  );
+  expect(gotVer.Definition?.CoreDefinitionVersionArn).toBe(coreArn);
+  expect(
+    (gotVer.Definition as Record<string, unknown>)?.GroupId,
+  ).toBeUndefined();
+
+  const def = await client.send(
+    new CreateCoreDefinitionCommand({ Name: "test-def-extract" }),
+  );
+  const defId = def.Id!;
+
+  const ver = await client.send(
+    new CreateCoreDefinitionVersionCommand({
+      CoreDefinitionId: defId,
+      Cores: [
+        {
+          CertificateArn: "arn:aws:iot:us-east-1:123456789012:cert/abc",
+          Id: "core-1",
+          ThingArn: "arn:aws:iot:us-east-1:123456789012:thing/MyCore",
+        },
+      ],
+    }),
+  );
+  const verId = ver.Version!;
+
+  const gotDefVer = await client.send(
+    new GetCoreDefinitionVersionCommand({
+      CoreDefinitionId: defId,
+      CoreDefinitionVersionId: verId,
+    }),
+  );
+  expect(gotDefVer.Definition?.Cores).toHaveLength(1);
+  expect(
+    (gotDefVer.Definition as Record<string, unknown>)?.CoreDefinitionId,
+  ).toBeUndefined();
+});
+
+test("Greengrass CreateDeployment requires DeploymentType", async () => {
+  const client = greengrass();
+
+  const group = await client.send(
+    new CreateGroupCommand({ Name: `e2e-deploy-type-${Date.now()}` }),
+  );
+  const groupId = group.Id!;
+
+  await expect(
+    client.send(new CreateDeploymentCommand({ GroupId: groupId } as any)),
+  ).rejects.toThrow();
+});
+
+test("Greengrass ListGroups pagination", async () => {
+  const client = greengrass();
+
+  const prefix = `e2e-page-${Date.now()}`;
+  const g1 = await client.send(new CreateGroupCommand({ Name: `${prefix}-1` }));
+  const g2 = await client.send(new CreateGroupCommand({ Name: `${prefix}-2` }));
+  const g3 = await client.send(new CreateGroupCommand({ Name: `${prefix}-3` }));
+  const allCreated = new Set([g1.Id!, g2.Id!, g3.Id!]);
+
+  type PageResult = { Groups?: Array<{ Id?: string }>; NextToken?: string };
+  const allIds: string[] = [];
+  let nextToken: string | undefined = undefined;
+  let pageCount = 0;
+  do {
+    const page = (await client.send(
+      new ListGroupsCommand({ MaxResults: "2", NextToken: nextToken } as any),
+    )) as PageResult;
+    allIds.push(...(page.Groups ?? []).map((g) => g.Id ?? ""));
+    nextToken = page.NextToken;
+    pageCount++;
+  } while (nextToken !== undefined);
+
+  expect(pageCount).toBeGreaterThan(1);
+  for (const id of allCreated) {
+    expect(allIds).toContain(id);
+  }
 });

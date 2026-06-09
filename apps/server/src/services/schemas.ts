@@ -28,6 +28,7 @@ type StoredSchemaVersion = {
   Content: string;
   Type: string;
   VersionCreatedDate: string;
+  ClientTokenId?: string;
 };
 
 type StoredSchema = {
@@ -77,6 +78,18 @@ const asTags = (value: unknown): Record<string, string> => {
   }
   return result;
 };
+
+const decodePage = (nextToken: unknown): number =>
+  typeof nextToken === "string" && nextToken !== ""
+    ? parseInt(atob(nextToken), 10) || 0
+    : 0;
+
+const encodeNext = (
+  offset: number,
+  limit: number,
+  total: number,
+): string | undefined =>
+  offset + limit < total ? btoa(String(offset + limit)) : undefined;
 
 const requireString = (
   input: Record<string, unknown>,
@@ -278,8 +291,10 @@ const UpdateRegistry: OperationHandler = (input, ctx) => {
 
 const ListRegistries: OperationHandler = (input, ctx) => {
   const prefix = stringOrUndefined(input["RegistryNamePrefix"]);
+  const scope = stringOrUndefined(input["Scope"]);
   const limit =
     typeof input["Limit"] === "number" ? (input["Limit"] as number) : 100;
+  const offset = decodePage(input["NextToken"]);
   const registries = ctx.store
     .list<StoredRegistry>()
     .filter((entry) => entry.key.startsWith(registryPrefix))
@@ -288,6 +303,12 @@ const ListRegistries: OperationHandler = (input, ctx) => {
       (registry) =>
         prefix === undefined || registry.RegistryName.startsWith(prefix),
     )
+    .filter((registry) => {
+      const isAws = registry.RegistryName.startsWith("aws.");
+      if (scope === "LOCAL") return !isAws;
+      if (scope === "AWS") return isAws;
+      return true;
+    })
     .sort((a, b) =>
       a.RegistryName < b.RegistryName
         ? -1
@@ -295,8 +316,12 @@ const ListRegistries: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
-  const page = registries.slice(0, limit);
-  return { Registries: page.map(registrySummary) };
+  const page = registries.slice(offset, offset + limit);
+  const nextToken = encodeNext(offset, limit, registries.length);
+  return {
+    Registries: page.map(registrySummary),
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeleteRegistry: OperationHandler = (input, ctx) => {
@@ -369,6 +394,13 @@ const UpdateSchema: OperationHandler = (input, ctx) => {
   if (schema === undefined) {
     throw awsError("NotFoundException", `Schema ${schemaName} not found.`, 404);
   }
+  const clientTokenId = stringOrUndefined(input["ClientTokenId"]);
+  if (clientTokenId !== undefined) {
+    const existing = schema.Versions.find(
+      (v) => v.ClientTokenId === clientTokenId,
+    );
+    if (existing !== undefined) return schemaView(schema, existing);
+  }
   const ts = nowIso();
   const lastVersion = schema.Versions[schema.Versions.length - 1];
   const content =
@@ -380,6 +412,7 @@ const UpdateSchema: OperationHandler = (input, ctx) => {
     Content: content,
     Type: type,
     VersionCreatedDate: ts,
+    ...(clientTokenId !== undefined ? { ClientTokenId: clientTokenId } : {}),
   };
   const updated: StoredSchema = {
     ...schema,
@@ -419,6 +452,7 @@ const ListSchemas: OperationHandler = (input, ctx) => {
   const prefix = stringOrUndefined(input["SchemaNamePrefix"]);
   const limit =
     typeof input["Limit"] === "number" ? (input["Limit"] as number) : 100;
+  const offset = decodePage(input["NextToken"]);
   const keyPrefix = `${schemaPrefix}${registryName}:`;
   const schemas = ctx.store
     .list<StoredSchema>()
@@ -428,7 +462,12 @@ const ListSchemas: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       a.SchemaName < b.SchemaName ? -1 : a.SchemaName > b.SchemaName ? 1 : 0,
     );
-  return { Schemas: schemas.slice(0, limit).map(schemaSummary) };
+  const page = schemas.slice(offset, offset + limit);
+  const nextToken = encodeNext(offset, limit, schemas.length);
+  return {
+    Schemas: page.map(schemaSummary),
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const ListSchemaVersions: OperationHandler = (input, ctx) => {
@@ -442,13 +481,17 @@ const ListSchemaVersions: OperationHandler = (input, ctx) => {
   }
   const limit =
     typeof input["Limit"] === "number" ? (input["Limit"] as number) : 100;
+  const offset = decodePage(input["NextToken"]);
+  const page = schema.Versions.slice(offset, offset + limit);
+  const nextToken = encodeNext(offset, limit, schema.Versions.length);
   return {
-    SchemaVersions: schema.Versions.slice(0, limit).map((v) => ({
+    SchemaVersions: page.map((v) => ({
       SchemaArn: schema.SchemaArn,
       SchemaName: schema.SchemaName,
       SchemaVersion: v.SchemaVersion,
       Type: v.Type,
     })),
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 
@@ -515,8 +558,11 @@ const SearchSchemas: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const limit =
+    typeof input["Limit"] === "number" ? (input["Limit"] as number) : 100;
+  const offset = decodePage(input["NextToken"]);
   const keyPrefix = `${schemaPrefix}${registryName}:`;
-  const schemas = ctx.store
+  const matching = ctx.store
     .list<StoredSchema>()
     .filter((entry) => entry.key.startsWith(keyPrefix))
     .map((entry) => entry.value)
@@ -526,8 +572,10 @@ const SearchSchemas: OperationHandler = (input, ctx) => {
         s.SchemaName.includes(keywords) ||
         s.Versions.some((v) => v.Content.includes(keywords)),
     );
+  const page = matching.slice(offset, offset + limit);
+  const nextToken = encodeNext(offset, limit, matching.length);
   return {
-    Schemas: schemas.map((s) => ({
+    Schemas: page.map((s) => ({
       RegistryName: s.RegistryName,
       SchemaArn: s.SchemaArn,
       SchemaName: s.SchemaName,
@@ -537,6 +585,7 @@ const SearchSchemas: OperationHandler = (input, ctx) => {
         Type: v.Type,
       })),
     })),
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 
@@ -606,16 +655,28 @@ const DeleteDiscoverer: OperationHandler = (input, ctx) => {
 
 const ListDiscoverers: OperationHandler = (input, ctx) => {
   const idPrefix = stringOrUndefined(input["DiscovererIdPrefix"]);
+  const sourceArnPrefix = stringOrUndefined(input["SourceArnPrefix"]);
   const limit =
     typeof input["Limit"] === "number" ? (input["Limit"] as number) : 100;
+  const offset = decodePage(input["NextToken"]);
   const discoverers = ctx.store
     .list<StoredDiscoverer>()
     .filter((entry) => entry.key.startsWith(discovererPrefix))
     .map((entry) => entry.value)
     .filter(
       (d) => idPrefix === undefined || d.DiscovererId.startsWith(idPrefix),
+    )
+    .filter(
+      (d) =>
+        sourceArnPrefix === undefined ||
+        d.SourceArn.startsWith(sourceArnPrefix),
     );
-  return { Discoverers: discoverers.slice(0, limit).map(discovererSummary) };
+  const page = discoverers.slice(offset, offset + limit);
+  const nextToken = encodeNext(offset, limit, discoverers.length);
+  return {
+    Discoverers: page.map(discovererSummary),
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const StartDiscoverer: OperationHandler = (input, ctx) => {
@@ -696,7 +757,7 @@ const PutCodeBinding: OperationHandler = (input, ctx) => {
     CreationDate: binding.CreationDate,
     LastModified: binding.LastModified,
     SchemaVersion: binding.SchemaVersion,
-    Status: binding.Status,
+    Status: "CREATE_IN_PROGRESS",
   };
 };
 

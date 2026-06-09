@@ -58,6 +58,7 @@ type StoredPackageVersion = {
   version: string;
   status: string;
   revision: string;
+  revisionSeq: number;
   domainName: string;
   repositoryName: string;
   publishedTime: number;
@@ -92,6 +93,27 @@ const stringOrUndefined = (value: unknown): string | undefined =>
 
 const numberOrUndefined = (value: unknown): number | undefined =>
   typeof value === "number" ? value : undefined;
+
+const encodeToken = (offset: number): string =>
+  Buffer.from(String(offset)).toString("base64");
+
+const decodeToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const n = parseInt(Buffer.from(token, "base64").toString("utf8"), 10);
+  return isNaN(n) ? 0 : n;
+};
+
+const paginate = <T>(
+  items: T[],
+  max: number,
+  token: unknown,
+): { page: T[]; nextToken: string | undefined } => {
+  const offset = decodeToken(token);
+  const page = items.slice(offset, offset + max);
+  const next =
+    offset + max < items.length ? encodeToken(offset + max) : undefined;
+  return { page, nextToken: next };
+};
 
 const requireString = (
   input: Record<string, unknown>,
@@ -438,7 +460,8 @@ const ListDomains: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(domainPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { domains: domains.slice(0, max).map(domainSummary) };
+  const { page, nextToken } = paginate(domains, max, input["nextToken"]);
+  return { domains: page.map(domainSummary), nextToken };
 };
 
 const DeleteDomain: OperationHandler = (input, ctx) => {
@@ -527,7 +550,8 @@ const UpdateRepository: OperationHandler = (input, ctx) => {
 const ListRepositories: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 1000;
   const repos = listAllRepos(ctx);
-  return { repositories: repos.slice(0, max).map(repoSummary) };
+  const { page, nextToken } = paginate(repos, max, input["nextToken"]);
+  return { repositories: page.map(repoSummary), nextToken };
 };
 
 const ListRepositoriesInDomain: OperationHandler = (input, ctx) => {
@@ -535,7 +559,8 @@ const ListRepositoriesInDomain: OperationHandler = (input, ctx) => {
   requireDomain(ctx, domain);
   const max = numberOrUndefined(input["maxResults"]) ?? 1000;
   const repos = listRepos(ctx, domain);
-  return { repositories: repos.slice(0, max).map(repoSummary) };
+  const { page, nextToken } = paginate(repos, max, input["nextToken"]);
+  return { repositories: page.map(repoSummary), nextToken };
 };
 
 const AssociateExternalConnection: OperationHandler = (input, ctx) => {
@@ -603,7 +628,8 @@ const ListPackages: OperationHandler = (input, ctx) => {
   requireRepo(ctx, domain, repo);
   const max = numberOrUndefined(input["maxResults"]) ?? 1000;
   const pkgs = listPkgs(ctx, domain, repo);
-  return { packages: pkgs.slice(0, max).map(pkgSummary) };
+  const { page, nextToken } = paginate(pkgs, max, input["nextToken"]);
+  return { packages: page.map(pkgSummary), nextToken };
 };
 
 const PutPackageOriginConfiguration: OperationHandler = (input, ctx) => {
@@ -770,12 +796,14 @@ const ListPackageVersions: OperationHandler = (input, ctx) => {
   requireRepo(ctx, domain, repo);
   const max = numberOrUndefined(input["maxResults"]) ?? 1000;
   const pvs = listPkgVers(ctx, domain, repo, format, ns, pkg);
+  const { page, nextToken } = paginate(pvs, max, input["nextToken"]);
   return {
     defaultDisplayVersion: pvs[pvs.length - 1]?.version,
     format,
     namespace: ns,
     package: pkg,
-    versions: pvs.slice(0, max).map(pkgVerSummary),
+    versions: page.map(pkgVerSummary),
+    nextToken,
   };
 };
 
@@ -866,6 +894,22 @@ const GetPackageVersionReadme: OperationHandler = (input, ctx) => {
   };
 };
 
+const assetContentToString = (
+  raw: unknown,
+): { content: string; size: number } => {
+  if (typeof raw === "string") {
+    return { content: raw, size: raw.length };
+  }
+  if (raw instanceof Uint8Array) {
+    const content = Buffer.from(raw).toString("base64");
+    return { content, size: raw.byteLength };
+  }
+  if (Buffer.isBuffer(raw)) {
+    return { content: raw.toString("base64"), size: raw.byteLength };
+  }
+  return { content: "", size: 0 };
+};
+
 const PublishPackageVersion: OperationHandler = (input, ctx) => {
   const domain = requireString(input, "domain");
   const repo = requireString(input, "repository");
@@ -874,16 +918,21 @@ const PublishPackageVersion: OperationHandler = (input, ctx) => {
   const version = requireString(input, "packageVersion");
   const assetName = requireString(input, "assetName");
   const ns = stringOrUndefined(input["namespace"]);
+  const unfinished = input["unfinished"] === true;
   requireRepo(ctx, domain, repo);
-  const revision = `${Date.now()}`;
-  const content =
-    typeof input["assetContent"] === "string" ? input["assetContent"] : "";
-  const assetSize = content.length;
+  const { content, size: assetSize } = assetContentToString(
+    input["assetContent"],
+  );
   const key = pkgVerKey(domain, repo, format, ns, pkg, version);
   const existing = ctx.store.get<StoredPackageVersion>(key);
+  const newSeq = (existing?.revisionSeq ?? 0) + 1;
+  const newRevision = `${newSeq}`;
   const updated: StoredPackageVersion = existing
     ? {
         ...existing,
+        revision: newRevision,
+        revisionSeq: newSeq,
+        status: unfinished ? "Unfinished" : existing.status,
         assets: [
           ...existing.assets.filter((a) => a.name !== assetName),
           { name: assetName, content, size: assetSize },
@@ -894,8 +943,9 @@ const PublishPackageVersion: OperationHandler = (input, ctx) => {
         namespace: ns,
         packageName: pkg,
         version,
-        status: "Published",
-        revision,
+        status: unfinished ? "Unfinished" : "Published",
+        revision: newRevision,
+        revisionSeq: newSeq,
         domainName: domain,
         repositoryName: repo,
         publishedTime: Date.now(),
@@ -1025,7 +1075,8 @@ const ListPackageGroups: OperationHandler = (input, ctx) => {
   requireDomain(ctx, domain);
   const max = numberOrUndefined(input["maxResults"]) ?? 1000;
   const grps = listPkgGrps(ctx, domain);
-  return { packageGroups: grps.slice(0, max).map(pkgGrpView) };
+  const { page, nextToken } = paginate(grps, max, input["nextToken"]);
+  return { packageGroups: page.map(pkgGrpView), nextToken };
 };
 
 const ListSubPackageGroups: OperationHandler = (input, ctx) => {
@@ -1062,22 +1113,53 @@ const GetAssociatedPackageGroup: OperationHandler = (input, ctx) => {
   };
 };
 
+const pkgMatchesGroup = (
+  pkg: StoredPackage,
+  pattern: string,
+  allGroups: StoredPackageGroup[],
+): boolean => {
+  const pkgPath = pkg.namespace
+    ? `${pkg.format}/${pkg.namespace}/${pkg.name}`
+    : `${pkg.format}/${pkg.name}`;
+  const pat = pattern.startsWith("$") ? pattern.slice(1) : pattern;
+  const normalized = pat.replace(/^\//, "");
+  const glob = normalized.replace(/\*/g, "");
+  if (!pkgPath.startsWith(glob)) return false;
+  const bestGroup = allGroups
+    .filter((g) => {
+      const gp = g.pattern.startsWith("$") ? g.pattern.slice(1) : g.pattern;
+      return pkgPath.startsWith(gp.replace(/^\//, "").replace(/\*/g, ""));
+    })
+    .sort((a, b) => b.pattern.length - a.pattern.length)[0];
+  return bestGroup?.pattern === pattern;
+};
+
 const ListAssociatedPackages: OperationHandler = (input, ctx) => {
   const domain = requireString(input, "domain");
   const pattern = requireString(input, "packageGroup");
   requirePkgGrp(ctx, domain, pattern);
   const max = numberOrUndefined(input["maxResults"]) ?? 1000;
-  return { packages: [], nextToken: undefined };
-  void max;
+  const allGroups = listPkgGrps(ctx, domain);
+  const pkgs = ctx.store
+    .list<StoredPackage>()
+    .filter((e) => e.key.startsWith(pkgPrefix) && e.value.domainName === domain)
+    .map((e) => e.value)
+    .filter((p) => pkgMatchesGroup(p, pattern, allGroups));
+  const { page, nextToken } = paginate(pkgs, max, input["nextToken"]);
+  return { packages: page.map(pkgSummary), nextToken };
 };
 
 const ListAllowedRepositoriesForGroup: OperationHandler = (input, ctx) => {
   const domain = requireString(input, "domain");
   const pattern = requireString(input, "packageGroup");
-  requirePkgGrp(ctx, domain, pattern);
+  const grp = requirePkgGrp(ctx, domain, pattern);
   const max = numberOrUndefined(input["maxResults"]) ?? 1000;
-  return { allowedRepositories: [], nextToken: undefined };
-  void max;
+  const hasSpecific = Object.values(grp.originConfiguration.restrictions).some(
+    (r) => r.restrictionMode === "ALLOW_SPECIFIC_REPOSITORIES",
+  );
+  const repos = hasSpecific ? listRepos(ctx, domain) : [];
+  const { page, nextToken } = paginate(repos, max, input["nextToken"]);
+  return { allowedRepositories: page.map((r) => r.name), nextToken };
 };
 
 const GetAuthorizationToken: OperationHandler = (input, ctx) => {

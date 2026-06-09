@@ -395,6 +395,132 @@ test("CodeArtifact tags lifecycle", async () => {
   await client.send(new DeleteDomainCommand({ domain: domainName }));
 });
 
+test("PublishPackageVersion revision increment and unfinished status", async () => {
+  const client = codeartifact();
+  const ts = Date.now();
+  const domainName = `e2e-rev-dom-${ts}`;
+  const repoName = `e2e-rev-repo-${ts}`;
+
+  await client.send(new CreateDomainCommand({ domain: domainName }));
+  await client.send(
+    new CreateRepositoryCommand({ domain: domainName, repository: repoName }),
+  );
+
+  const first = await client.send(
+    new PublishPackageVersionCommand({
+      domain: domainName,
+      repository: repoName,
+      format: "generic",
+      package: "mypkg",
+      packageVersion: "1.0.0",
+      assetName: "mypkg-1.0.0.tar.gz",
+      assetContent: new TextEncoder().encode("first asset content"),
+      assetSHA256:
+        "0000000000000000000000000000000000000000000000000000000000000000",
+    }),
+  );
+  expect(first.status).toBe("Published");
+  expect(first.versionRevision).toBeDefined();
+  const firstRevision = first.versionRevision;
+
+  const second = await client.send(
+    new PublishPackageVersionCommand({
+      domain: domainName,
+      repository: repoName,
+      format: "generic",
+      package: "mypkg",
+      packageVersion: "1.0.0",
+      assetName: "mypkg-1.0.0-extra.tar.gz",
+      assetContent: new TextEncoder().encode("second asset content"),
+      assetSHA256:
+        "0000000000000000000000000000000000000000000000000000000000000000",
+    }),
+  );
+  expect(second.versionRevision).toBeDefined();
+  expect(second.versionRevision).not.toBe(firstRevision);
+
+  const unfinished = await client.send(
+    new PublishPackageVersionCommand({
+      domain: domainName,
+      repository: repoName,
+      format: "generic",
+      package: "mypkg2",
+      packageVersion: "2.0.0",
+      assetName: "mypkg2-2.0.0.tar.gz",
+      assetContent: new TextEncoder().encode("partial upload"),
+      assetSHA256:
+        "0000000000000000000000000000000000000000000000000000000000000000",
+      unfinished: true,
+    }),
+  );
+  expect(unfinished.status).toBe("Unfinished");
+
+  await client.send(
+    new DeleteRepositoryCommand({ domain: domainName, repository: repoName }),
+  );
+  await client.send(new DeleteDomainCommand({ domain: domainName }));
+});
+
+test("ListPackages nextToken pagination", async () => {
+  const client = codeartifact();
+  const ts = Date.now();
+  const domainName = `e2e-page-dom-${ts}`;
+  const repoName = `e2e-page-repo-${ts}`;
+
+  await client.send(new CreateDomainCommand({ domain: domainName }));
+  await client.send(
+    new CreateRepositoryCommand({ domain: domainName, repository: repoName }),
+  );
+
+  for (let i = 0; i < 5; i++) {
+    await client.send(
+      new PublishPackageVersionCommand({
+        domain: domainName,
+        repository: repoName,
+        format: "generic",
+        package: `pkg${i}`,
+        packageVersion: "1.0.0",
+        assetName: `pkg${i}-1.0.0.tar.gz`,
+        assetContent: new TextEncoder().encode(`content${i}`),
+        assetSHA256:
+          "0000000000000000000000000000000000000000000000000000000000000000",
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListPackagesCommand({
+      domain: domainName,
+      repository: repoName,
+      maxResults: 3,
+    }),
+  );
+  expect((page1.packages ?? []).length).toBe(3);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListPackagesCommand({
+      domain: domainName,
+      repository: repoName,
+      maxResults: 3,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect((page2.packages ?? []).length).toBe(2);
+  expect(page2.nextToken).toBeUndefined();
+
+  const allNames = [
+    ...(page1.packages ?? []).map((p) => p.package),
+    ...(page2.packages ?? []).map((p) => p.package),
+  ].sort();
+  expect(allNames).toEqual(["pkg0", "pkg1", "pkg2", "pkg3", "pkg4"]);
+
+  await client.send(
+    new DeleteRepositoryCommand({ domain: domainName, repository: repoName }),
+  );
+  await client.send(new DeleteDomainCommand({ domain: domainName }));
+});
+
 test("CodeArtifact auth token and endpoint", async () => {
   const client = codeartifact();
   const ts = Date.now();

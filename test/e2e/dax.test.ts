@@ -391,6 +391,92 @@ test("DAX DescribeEvents", async () => {
   expect(Array.isArray(result.Events)).toBe(true);
 });
 
+test("DAX fidelity: tag persistence, ref validation, in-use guards, tag cleanup", async () => {
+  const client = dax();
+
+  const sgName = "bunsai-e2e-fidelity-sg";
+  await client.send(
+    new CreateSubnetGroupCommand({
+      SubnetGroupName: sgName,
+      SubnetIds: ["subnet-fidelity0001"],
+    }),
+  );
+
+  const pgName = "bunsai-e2e-fidelity-pg";
+  await client.send(
+    new CreateParameterGroupCommand({ ParameterGroupName: pgName }),
+  );
+
+  const clusterName = "bunsai-e2e-fidelity";
+  const created = await client.send(
+    new CreateClusterCommand({
+      ClusterName: clusterName,
+      NodeType: "dax.r4.large",
+      ReplicationFactor: 1,
+      IamRoleArn: "arn:aws:iam::000000000000:role/dax",
+      SubnetGroupName: sgName,
+      ParameterGroupName: pgName,
+      Tags: [
+        { Key: "env", Value: "test" },
+        { Key: "tier", Value: "11" },
+      ],
+    }),
+  );
+  const arn = created.Cluster?.ClusterArn ?? "";
+  expect(arn).toBeTruthy();
+
+  const listed = await client.send(new ListTagsCommand({ ResourceName: arn }));
+  expect((listed.Tags ?? []).some((t) => t.Key === "env")).toBe(true);
+  expect((listed.Tags ?? []).some((t) => t.Key === "tier")).toBe(true);
+  expect((listed.Tags ?? []).length).toBe(2);
+
+  await expect(
+    client.send(
+      new CreateClusterCommand({
+        ClusterName: "bunsai-e2e-fidelity-bad-sg",
+        NodeType: "dax.r4.large",
+        ReplicationFactor: 1,
+        IamRoleArn: "arn:aws:iam::000000000000:role/dax",
+        SubnetGroupName: "no-such-subnet-group",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "SubnetGroupNotFoundFault" });
+
+  await expect(
+    client.send(
+      new CreateClusterCommand({
+        ClusterName: "bunsai-e2e-fidelity-bad-pg",
+        NodeType: "dax.r4.large",
+        ReplicationFactor: 1,
+        IamRoleArn: "arn:aws:iam::000000000000:role/dax",
+        ParameterGroupName: "no-such-param-group",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "ParameterGroupNotFoundFault" });
+
+  await expect(
+    client.send(new DeleteSubnetGroupCommand({ SubnetGroupName: sgName })),
+  ).rejects.toMatchObject({ name: "SubnetGroupInUseFault" });
+
+  await expect(
+    client.send(
+      new DeleteParameterGroupCommand({ ParameterGroupName: pgName }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidParameterGroupStateFault" });
+
+  await client.send(new DeleteClusterCommand({ ClusterName: clusterName }));
+
+  const afterDelete = await client.send(
+    new ListTagsCommand({ ResourceName: arn }),
+  );
+  expect((afterDelete.Tags ?? []).length).toBe(0);
+
+  await client.send(new DeleteSubnetGroupCommand({ SubnetGroupName: sgName }));
+  await client.send(
+    new DeleteParameterGroupCommand({ ParameterGroupName: pgName }),
+  );
+});
+
 test("DAX tags lifecycle", async () => {
   const client = dax();
   const name = "bunsai-e2e-tags";

@@ -179,7 +179,38 @@ const defaultDatasources = (): StoredDatasources => ({
   },
 });
 
+const paginateItems = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+  maxCap = 200,
+): { page: T[]; nextToken: string | undefined } => {
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? Math.min(maxResults, maxCap)
+      : maxCap;
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(atob(nextToken), 10) || 0
+      : 0;
+  const page = items.slice(offset, offset + max);
+  const next =
+    offset + max < items.length ? btoa(String(offset + max)) : undefined;
+  return { page, nextToken: next };
+};
+
 const CreateGraph: OperationHandler = (_input, ctx) => {
+  const arnPrefix = `arn:aws:detective:${ctx.region}:${ctx.account}:graph:`;
+  const existing = ctx.store
+    .list<StoredGraph>()
+    .find(
+      (entry) =>
+        entry.key.startsWith(graphPrefix) &&
+        entry.value.arn.startsWith(arnPrefix),
+    );
+  if (existing !== undefined) {
+    return { GraphArn: existing.value.arn };
+  }
   const id = hex32();
   const arn = graphArn(ctx, id);
   const graph: StoredGraph = {
@@ -192,17 +223,17 @@ const CreateGraph: OperationHandler = (_input, ctx) => {
 };
 
 const ListGraphs: OperationHandler = (input, ctx) => {
-  const max =
-    typeof input["MaxResults"] === "number"
-      ? (input["MaxResults"] as number)
-      : 200;
   const graphs = ctx.store
     .list<StoredGraph>()
     .filter((entry) => entry.key.startsWith(graphPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.arn < b.arn ? -1 : a.arn > b.arn ? 1 : 0));
-  const page = graphs.slice(0, max);
-  return { GraphList: page.map(graphSummary) };
+  const { page, nextToken } = paginateItems(
+    graphs,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { GraphList: page.map(graphSummary), NextToken: nextToken };
 };
 
 const DeleteGraph: OperationHandler = (input, ctx) => {
@@ -284,7 +315,12 @@ const ListMembers: OperationHandler = (input, ctx) => {
     .list<StoredMember>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => memberDetail(entry.value));
-  return { MemberDetails: members, NextToken: undefined };
+  const { page, nextToken } = paginateItems(
+    members,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { MemberDetails: page, NextToken: nextToken };
 };
 
 const DeleteMembers: OperationHandler = (input, ctx) => {
@@ -342,13 +378,25 @@ const AcceptInvitation: OperationHandler = (input, ctx) => {
   const graphId = graphIdFromArn(graphArnValue);
   const key = memberKey(graphId, ctx.account);
   const stored = ctx.store.get<StoredMember>(key);
-  if (stored !== undefined) {
-    ctx.store.set(key, {
-      ...stored,
-      Status: "ENABLED",
-      UpdatedTime: nowSeconds(),
-    });
+  if (stored === undefined) {
+    throw awsError(
+      "ValidationException",
+      "The member account has not been invited to the graph.",
+      400,
+    );
   }
+  if (stored.Status !== "INVITED") {
+    throw awsError(
+      "ConflictException",
+      "The member account is not in INVITED state.",
+      409,
+    );
+  }
+  ctx.store.set(key, {
+    ...stored,
+    Status: "ENABLED",
+    UpdatedTime: nowSeconds(),
+  });
   return {};
 };
 
@@ -360,7 +408,7 @@ const RejectInvitation: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const ListInvitations: OperationHandler = (_input, ctx) => {
+const ListInvitations: OperationHandler = (input, ctx) => {
   const invitations = ctx.store
     .list<StoredMember>()
     .filter(
@@ -370,7 +418,12 @@ const ListInvitations: OperationHandler = (_input, ctx) => {
         entry.value.Status === "INVITED",
     )
     .map((entry) => memberDetail(entry.value));
-  return { Invitations: invitations, NextToken: undefined };
+  const { page, nextToken } = paginateItems(
+    invitations,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Invitations: page, NextToken: nextToken };
 };
 
 const EnableOrganizationAdminAccount: OperationHandler = (input, ctx) => {
@@ -390,12 +443,7 @@ const EnableOrganizationAdminAccount: OperationHandler = (input, ctx) => {
 };
 
 const DisableOrganizationAdminAccount: OperationHandler = (_input, ctx) => {
-  const admins = ctx.store
-    .list<StoredOrgAdmin>()
-    .filter((entry) => entry.key.startsWith("orgadmin:"));
-  for (const admin of admins) {
-    ctx.store.delete(admin.key);
-  }
+  ctx.store.delete(orgAdminKey(ctx.account));
   return {};
 };
 
@@ -436,7 +484,17 @@ const ListDatasourcePackages: OperationHandler = (input, ctx) => {
   const stored =
     ctx.store.get<StoredDatasources>(datasourceKey(graphId)) ??
     defaultDatasources();
-  return { DatasourcePackages: stored, NextToken: undefined };
+  const entries = Object.entries(stored).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  const { page, nextToken } = paginateItems(
+    entries,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  const result: StoredDatasources = {};
+  for (const [k, v] of page) result[k] = v;
+  return { DatasourcePackages: result, NextToken: nextToken };
 };
 
 const UpdateDatasourcePackages: OperationHandler = (input, ctx) => {
@@ -575,19 +633,115 @@ const ListInvestigations: OperationHandler = (input, ctx) => {
   requireGraph(ctx, graphArnValue);
   const graphId = graphIdFromArn(graphArnValue);
   const prefix = `investigation:${graphId}:`;
-  const investigations = ctx.store
+
+  const filter =
+    typeof input["FilterCriteria"] === "object" &&
+    input["FilterCriteria"] !== null
+      ? (input["FilterCriteria"] as Record<string, unknown>)
+      : undefined;
+
+  const filterString = (
+    f: Record<string, unknown> | undefined,
+    key: string,
+  ): string | undefined => {
+    const node = f?.[key];
+    if (typeof node === "object" && node !== null) {
+      const v = (node as Record<string, unknown>)["Value"];
+      if (typeof v === "string") return v;
+    }
+    return undefined;
+  };
+
+  const filterSeverity = filterString(filter, "Severity");
+  const filterStatus = filterString(filter, "Status");
+  const filterState = filterString(filter, "State");
+  const filterEntityArn = filterString(filter, "EntityArn");
+
+  const filterCreated = ((): { start: number; end: number } | undefined => {
+    const node = filter?.["CreatedTime"];
+    if (typeof node !== "object" || node === null) return undefined;
+    const n = node as Record<string, unknown>;
+    const start =
+      typeof n["StartInclusive"] === "number"
+        ? n["StartInclusive"]
+        : typeof n["StartInclusive"] === "string"
+          ? Date.parse(n["StartInclusive"] as string) / 1000
+          : undefined;
+    const end =
+      typeof n["EndInclusive"] === "number"
+        ? n["EndInclusive"]
+        : typeof n["EndInclusive"] === "string"
+          ? Date.parse(n["EndInclusive"] as string) / 1000
+          : undefined;
+    if (start === undefined || end === undefined) return undefined;
+    return { start, end };
+  })();
+
+  const sort =
+    typeof input["SortCriteria"] === "object" && input["SortCriteria"] !== null
+      ? (input["SortCriteria"] as Record<string, unknown>)
+      : undefined;
+  const sortField =
+    typeof sort?.["Field"] === "string" ? sort["Field"] : undefined;
+  const sortOrder =
+    typeof sort?.["SortOrder"] === "string" ? sort["SortOrder"] : "ASC";
+
+  let items = ctx.store
     .list<StoredInvestigation>()
     .filter((entry) => entry.key.startsWith(prefix))
-    .map((entry) => ({
-      InvestigationId: entry.value.InvestigationId,
-      Severity: entry.value.Severity,
-      Status: entry.value.Status,
-      State: entry.value.State,
-      CreatedTime: entry.value.CreatedTime,
-      EntityArn: entry.value.EntityArn,
-      EntityType: entry.value.EntityType,
-    }));
-  return { InvestigationDetails: investigations, NextToken: undefined };
+    .map((entry) => entry.value)
+    .filter((inv) => {
+      if (filterSeverity !== undefined && inv.Severity !== filterSeverity)
+        return false;
+      if (filterStatus !== undefined && inv.Status !== filterStatus)
+        return false;
+      if (filterState !== undefined && inv.State !== filterState) return false;
+      if (filterEntityArn !== undefined && inv.EntityArn !== filterEntityArn)
+        return false;
+      if (
+        filterCreated !== undefined &&
+        (inv.CreatedTime < filterCreated.start ||
+          inv.CreatedTime > filterCreated.end)
+      )
+        return false;
+      return true;
+    });
+
+  if (sortField !== undefined) {
+    const dir = sortOrder === "DESC" ? -1 : 1;
+    items = items.slice().sort((a, b) => {
+      let av: string | number;
+      let bv: string | number;
+      if (sortField === "SEVERITY") {
+        av = a.Severity;
+        bv = b.Severity;
+      } else if (sortField === "STATUS") {
+        av = a.Status;
+        bv = b.Status;
+      } else {
+        av = a.CreatedTime;
+        bv = b.CreatedTime;
+      }
+      return av < bv ? -dir : av > bv ? dir : 0;
+    });
+  }
+
+  const summaries = items.map((inv) => ({
+    InvestigationId: inv.InvestigationId,
+    Severity: inv.Severity,
+    Status: inv.Status,
+    State: inv.State,
+    CreatedTime: inv.CreatedTime,
+    EntityArn: inv.EntityArn,
+    EntityType: inv.EntityType,
+  }));
+
+  const { page, nextToken } = paginateItems(
+    summaries,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { InvestigationDetails: page, NextToken: nextToken };
 };
 
 const UpdateInvestigationState: OperationHandler = (input, ctx) => {
@@ -624,11 +778,25 @@ const ListIndicators: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const indicatorType =
+    typeof input["IndicatorType"] === "string"
+      ? input["IndicatorType"]
+      : undefined;
+  const allIndicators: Record<string, unknown>[] = [];
+  const filtered =
+    indicatorType !== undefined
+      ? allIndicators.filter((i) => i["IndicatorType"] === indicatorType)
+      : allIndicators;
+  const { page, nextToken } = paginateItems(
+    filtered,
+    input["MaxResults"],
+    input["NextToken"],
+  );
   return {
     GraphArn: graphArnValue,
     InvestigationId: investigationId,
-    NextToken: undefined,
-    Indicators: [],
+    NextToken: nextToken,
+    Indicators: page,
   };
 };
 

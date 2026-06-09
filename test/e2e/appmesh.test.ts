@@ -421,3 +421,120 @@ test("AppMesh tags roundtrip", async () => {
 
   await client.send(new DeleteMeshCommand({ meshName }));
 });
+
+test("AppMesh list pagination", async () => {
+  const client = appmesh();
+  const meshName = `bunsai-e2e-${Date.now()}`;
+  await client.send(new CreateMeshCommand({ meshName }));
+
+  const names = ["alpha", "beta", "gamma"];
+  for (const virtualNodeName of names) {
+    await client.send(
+      new CreateVirtualNodeCommand({
+        meshName,
+        virtualNodeName,
+        spec: { listeners: [] },
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListVirtualNodesCommand({ meshName, limit: 2 }),
+  );
+  expect(page1.virtualNodes?.length).toBe(2);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListVirtualNodesCommand({
+      meshName,
+      limit: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect(page2.virtualNodes?.length).toBe(1);
+  expect(page2.nextToken).toBeUndefined();
+
+  const allNames = [
+    ...(page1.virtualNodes ?? []),
+    ...(page2.virtualNodes ?? []),
+  ].map((n) => n.virtualNodeName);
+  expect(allNames.sort()).toEqual(names.sort());
+
+  for (const virtualNodeName of names) {
+    await client.send(
+      new DeleteVirtualNodeCommand({ meshName, virtualNodeName }),
+    );
+  }
+  await client.send(new DeleteMeshCommand({ meshName }));
+});
+
+test("AppMesh partial spec update preserves spec", async () => {
+  const client = appmesh();
+  const meshName = `bunsai-e2e-${Date.now()}`;
+
+  await client.send(
+    new CreateMeshCommand({
+      meshName,
+      spec: { egressFilter: { type: "DROP_ALL" } },
+    }),
+  );
+
+  const upd = await client.send(new UpdateMeshCommand({ meshName }));
+  expect(
+    (upd.mesh?.spec as Record<string, unknown> | undefined)?.egressFilter,
+  ).toBeDefined();
+
+  await client.send(new DeleteMeshCommand({ meshName }));
+});
+
+test("AppMesh delete clears tags", async () => {
+  const client = appmesh();
+  const meshName = `bunsai-e2e-${Date.now()}`;
+
+  const created = await client.send(new CreateMeshCommand({ meshName }));
+  const resourceArn = created.mesh?.metadata?.arn ?? "";
+
+  await client.send(
+    new TagResourceCommand({
+      resourceArn,
+      tags: [{ key: "env", value: "test" }],
+    }),
+  );
+  const beforeDelete = await client.send(
+    new ListTagsForResourceCommand({ resourceArn }),
+  );
+  expect(beforeDelete.tags?.find((t) => t.key === "env")?.value).toBe("test");
+
+  await client.send(new DeleteMeshCommand({ meshName }));
+
+  const recreated = await client.send(new CreateMeshCommand({ meshName }));
+  const newArn = recreated.mesh?.metadata?.arn ?? "";
+  expect(newArn).toBe(resourceArn);
+
+  const afterRecreate = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: newArn }),
+  );
+  expect(afterRecreate.tags?.find((t) => t.key === "env")).toBeUndefined();
+
+  await client.send(new DeleteMeshCommand({ meshName }));
+});
+
+test("AppMesh CreateMesh tags initialized in storage", async () => {
+  const client = appmesh();
+  const meshName = `bunsai-e2e-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateMeshCommand({
+      meshName,
+      tags: [{ key: "env", value: "prod" }],
+    }),
+  );
+  const resourceArn = created.mesh?.metadata?.arn ?? "";
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ resourceArn }),
+  );
+  expect(listed.tags?.find((t) => t.key === "env")?.value).toBe("prod");
+
+  await client.send(new DeleteMeshCommand({ meshName }));
+});

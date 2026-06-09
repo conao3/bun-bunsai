@@ -11,6 +11,7 @@ import type {
 const model = loadServiceModel(mwaaModel);
 
 const environmentPrefix = "environment:" as const;
+const tagsPrefix = "tags:" as const;
 
 type StoredEnvironment = {
   Name: string;
@@ -31,7 +32,15 @@ type StoredEnvironment = {
   Schedulers: number;
   WeeklyMaintenanceWindowStart: string;
   NetworkConfiguration: Record<string, unknown>;
-  Tags: Record<string, string>;
+  AirflowConfigurationOptions?: Record<string, string>;
+  KmsKey?: string;
+  LoggingConfiguration?: Record<string, unknown>;
+  PluginsS3ObjectVersion?: string;
+  PluginsS3Path?: string;
+  RequirementsS3ObjectVersion?: string;
+  RequirementsS3Path?: string;
+  StartupScriptS3ObjectVersion?: string;
+  StartupScriptS3Path?: string;
 };
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -67,6 +76,7 @@ const requireString = (
 };
 
 const environmentKey = (name: string): string => `${environmentPrefix}${name}`;
+const tagsKey = (arn: string): string => `${tagsPrefix}${arn}`;
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
@@ -75,27 +85,49 @@ const environmentArn = (ctx: ServiceContext, name: string): string =>
 
 const environmentView = (
   environment: StoredEnvironment,
-): Record<string, unknown> => ({
-  Name: environment.Name,
-  Arn: environment.Arn,
-  Status: environment.Status,
-  CreatedAt: environment.CreatedAt,
-  ExecutionRoleArn: environment.ExecutionRoleArn,
-  ServiceRoleArn: environment.ServiceRoleArn,
-  SourceBucketArn: environment.SourceBucketArn,
-  DagS3Path: environment.DagS3Path,
-  WebserverUrl: environment.WebserverUrl,
-  EnvironmentClass: environment.EnvironmentClass,
-  AirflowVersion: environment.AirflowVersion,
-  WebserverAccessMode: environment.WebserverAccessMode,
-  EndpointManagement: environment.EndpointManagement,
-  MaxWorkers: environment.MaxWorkers,
-  MinWorkers: environment.MinWorkers,
-  Schedulers: environment.Schedulers,
-  WeeklyMaintenanceWindowStart: environment.WeeklyMaintenanceWindowStart,
-  NetworkConfiguration: environment.NetworkConfiguration,
-  Tags: environment.Tags,
-});
+  ctx: ServiceContext,
+): Record<string, unknown> => {
+  const view: Record<string, unknown> = {
+    Name: environment.Name,
+    Arn: environment.Arn,
+    Status: environment.Status,
+    CreatedAt: environment.CreatedAt,
+    ExecutionRoleArn: environment.ExecutionRoleArn,
+    ServiceRoleArn: environment.ServiceRoleArn,
+    SourceBucketArn: environment.SourceBucketArn,
+    DagS3Path: environment.DagS3Path,
+    WebserverUrl: environment.WebserverUrl,
+    EnvironmentClass: environment.EnvironmentClass,
+    AirflowVersion: environment.AirflowVersion,
+    WebserverAccessMode: environment.WebserverAccessMode,
+    EndpointManagement: environment.EndpointManagement,
+    MaxWorkers: environment.MaxWorkers,
+    MinWorkers: environment.MinWorkers,
+    Schedulers: environment.Schedulers,
+    WeeklyMaintenanceWindowStart: environment.WeeklyMaintenanceWindowStart,
+    NetworkConfiguration: environment.NetworkConfiguration,
+    Tags: ctx.store.get<Record<string, string>>(tagsKey(environment.Arn)) ?? {},
+  };
+  if (environment.AirflowConfigurationOptions !== undefined)
+    view.AirflowConfigurationOptions = environment.AirflowConfigurationOptions;
+  if (environment.KmsKey !== undefined) view.KmsKey = environment.KmsKey;
+  if (environment.LoggingConfiguration !== undefined)
+    view.LoggingConfiguration = environment.LoggingConfiguration;
+  if (environment.PluginsS3ObjectVersion !== undefined)
+    view.PluginsS3ObjectVersion = environment.PluginsS3ObjectVersion;
+  if (environment.PluginsS3Path !== undefined)
+    view.PluginsS3Path = environment.PluginsS3Path;
+  if (environment.RequirementsS3ObjectVersion !== undefined)
+    view.RequirementsS3ObjectVersion = environment.RequirementsS3ObjectVersion;
+  if (environment.RequirementsS3Path !== undefined)
+    view.RequirementsS3Path = environment.RequirementsS3Path;
+  if (environment.StartupScriptS3ObjectVersion !== undefined)
+    view.StartupScriptS3ObjectVersion =
+      environment.StartupScriptS3ObjectVersion;
+  if (environment.StartupScriptS3Path !== undefined)
+    view.StartupScriptS3Path = environment.StartupScriptS3Path;
+  return view;
+};
 
 const requireEnvironment = (
   ctx: ServiceContext,
@@ -110,6 +142,44 @@ const requireEnvironment = (
     );
   }
   return stored;
+};
+
+const applyOptionalFields = (
+  target: StoredEnvironment,
+  input: Record<string, unknown>,
+): void => {
+  if (asRecord(input["AirflowConfigurationOptions"]) !== undefined)
+    target.AirflowConfigurationOptions = stringMapFrom(
+      input["AirflowConfigurationOptions"],
+    );
+  const kmsKey = stringOrUndefined(input["KmsKey"]);
+  if (kmsKey !== undefined) target.KmsKey = kmsKey;
+  const loggingConfiguration = asRecord(input["LoggingConfiguration"]);
+  if (loggingConfiguration !== undefined)
+    target.LoggingConfiguration = loggingConfiguration;
+  const pluginsS3ObjectVersion = stringOrUndefined(
+    input["PluginsS3ObjectVersion"],
+  );
+  if (pluginsS3ObjectVersion !== undefined)
+    target.PluginsS3ObjectVersion = pluginsS3ObjectVersion;
+  const pluginsS3Path = stringOrUndefined(input["PluginsS3Path"]);
+  if (pluginsS3Path !== undefined) target.PluginsS3Path = pluginsS3Path;
+  const requirementsS3ObjectVersion = stringOrUndefined(
+    input["RequirementsS3ObjectVersion"],
+  );
+  if (requirementsS3ObjectVersion !== undefined)
+    target.RequirementsS3ObjectVersion = requirementsS3ObjectVersion;
+  const requirementsS3Path = stringOrUndefined(input["RequirementsS3Path"]);
+  if (requirementsS3Path !== undefined)
+    target.RequirementsS3Path = requirementsS3Path;
+  const startupScriptS3ObjectVersion = stringOrUndefined(
+    input["StartupScriptS3ObjectVersion"],
+  );
+  if (startupScriptS3ObjectVersion !== undefined)
+    target.StartupScriptS3ObjectVersion = startupScriptS3ObjectVersion;
+  const startupScriptS3Path = stringOrUndefined(input["StartupScriptS3Path"]);
+  if (startupScriptS3Path !== undefined)
+    target.StartupScriptS3Path = startupScriptS3Path;
 };
 
 const CreateEnvironment: OperationHandler = (input, ctx) => {
@@ -132,9 +202,10 @@ const CreateEnvironment: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const arn = environmentArn(ctx, name);
   const environment: StoredEnvironment = {
     Name: name,
-    Arn: environmentArn(ctx, name),
+    Arn: arn,
     Status: "AVAILABLE",
     CreatedAt: nowSeconds(),
     ExecutionRoleArn: executionRoleArn,
@@ -162,29 +233,42 @@ const CreateEnvironment: OperationHandler = (input, ctx) => {
         ? (network["SecurityGroupIds"] as unknown[])
         : [],
     },
-    Tags: stringMapFrom(input["Tags"]),
   };
+  applyOptionalFields(environment, input);
   ctx.store.set(environmentKey(name), environment);
-  return { Arn: environment.Arn };
+  ctx.store.set(tagsKey(arn), stringMapFrom(input["Tags"]));
+  return { Arn: arn };
 };
 
 const GetEnvironment: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
-  return { Environment: environmentView(requireEnvironment(ctx, name)) };
+  return { Environment: environmentView(requireEnvironment(ctx, name), ctx) };
 };
 
-const ListEnvironments: OperationHandler = (_input, ctx) => {
-  const names = ctx.store
+const ListEnvironments: OperationHandler = (input, ctx) => {
+  const maxResults = numberOr(input["MaxResults"], 25);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const allNames = ctx.store
     .list<StoredEnvironment>()
     .filter((entry) => entry.key.startsWith(environmentPrefix))
     .map((entry) => entry.value.Name)
     .sort((a, b) => a.localeCompare(b));
-  return { Environments: names };
+  const startIdx = nextToken !== undefined ? allNames.indexOf(nextToken) : 0;
+  const start = startIdx < 0 ? 0 : startIdx;
+  const page = allNames.slice(start, start + maxResults);
+  const newNextToken =
+    start + maxResults < allNames.length
+      ? allNames[start + maxResults]
+      : undefined;
+  const result: Record<string, unknown> = { Environments: page };
+  if (newNextToken !== undefined) result.NextToken = newNextToken;
+  return result;
 };
 
 const DeleteEnvironment: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
-  requireEnvironment(ctx, name);
+  const environment = requireEnvironment(ctx, name);
+  ctx.store.delete(tagsKey(environment.Arn));
   ctx.store.delete(environmentKey(name));
   return {};
 };
@@ -233,6 +317,7 @@ const UpdateEnvironment: OperationHandler = (input, ctx) => {
         : environment.NetworkConfiguration["SecurityGroupIds"],
     };
   }
+  applyOptionalFields(updated, input);
   ctx.store.set(environmentKey(name), updated);
   return { Arn: updated.Arn };
 };
@@ -269,8 +354,6 @@ const InvokeRestApi: OperationHandler = (input, ctx) => {
 const PublishMetrics: OperationHandler = (_input, _ctx) => {
   return {};
 };
-
-const tagsKey = (arn: string): string => `tags:${arn}`;
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");

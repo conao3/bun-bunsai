@@ -37,6 +37,17 @@ import {
 } from "@aws-sdk/client-personalize";
 import type { TagResourceCommandInput } from "@aws-sdk/client-personalize";
 
+const advanceToActive = async (
+  getStatus: () => Promise<string | undefined>,
+): Promise<string> => {
+  let status = "";
+  for (let i = 0; i < 3; i++) {
+    status = (await getStatus()) ?? "";
+    if (status === "ACTIVE" || status === "INACTIVE") break;
+  }
+  return status;
+};
+
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
@@ -102,7 +113,13 @@ test("Personalize dataset-group lifecycle", async () => {
   );
   expect(described.datasetGroup?.name).toBe(name);
   expect(described.datasetGroup?.datasetGroupArn).toBe(arn);
-  expect(described.datasetGroup?.status).toBe("ACTIVE");
+  expect(described.datasetGroup?.status).toBe("CREATE IN_PROGRESS");
+  const dsgStatus = await advanceToActive(() =>
+    client
+      .send(new DescribeDatasetGroupCommand({ datasetGroupArn: arn }))
+      .then((r) => r.datasetGroup?.status),
+  );
+  expect(dsgStatus).toBe("ACTIVE");
 
   const listed = await client.send(new ListDatasetGroupsCommand({}));
   expect(
@@ -174,7 +191,17 @@ test("Personalize dataset + import-job lifecycle", async () => {
   );
   expect(described.datasetImportJob?.jobName).toBe("bunsai-e2e-import");
   expect(described.datasetImportJob?.datasetArn).toBe(dsArn);
-  expect(described.datasetImportJob?.status).toBe("ACTIVE");
+  expect(described.datasetImportJob?.status).toBe("CREATE IN_PROGRESS");
+  const importStatus = await advanceToActive(() =>
+    client
+      .send(
+        new DescribeDatasetImportJobCommand({
+          datasetImportJobArn: importJobArn,
+        }),
+      )
+      .then((r) => r.datasetImportJob?.status),
+  );
+  expect(importStatus).toBe("ACTIVE");
 });
 
 test("Personalize solution + solution-version lifecycle", async () => {
@@ -220,7 +247,13 @@ test("Personalize solution + solution-version lifecycle", async () => {
     new DescribeSolutionVersionCommand({ solutionVersionArn: svArn }),
   );
   expect(svDescribed.solutionVersion?.solutionArn).toBe(solArn);
-  expect(svDescribed.solutionVersion?.status).toBe("ACTIVE");
+  expect(svDescribed.solutionVersion?.status).toBe("CREATE IN_PROGRESS");
+  const svStatus = await advanceToActive(() =>
+    client
+      .send(new DescribeSolutionVersionCommand({ solutionVersionArn: svArn }))
+      .then((r) => r.solutionVersion?.status),
+  );
+  expect(svStatus).toBe("ACTIVE");
 });
 
 test("Personalize campaign lifecycle", async () => {
@@ -383,6 +416,129 @@ test("Personalize filter lifecycle", async () => {
     new ListFiltersCommand({ datasetGroupArn: dsgArn }),
   );
   expect((listed.Filters ?? []).some((f) => f.filterArn === fltArn)).toBe(true);
+});
+
+test("Personalize campaign CREATE PENDING→ACTIVE lifecycle", async () => {
+  const client = personalize();
+
+  const dsgArn =
+    (
+      await client.send(
+        new CreateDatasetGroupCommand({ name: "bunsai-e2e-dsg-lc" }),
+      )
+    ).datasetGroupArn ?? "";
+
+  const solArn =
+    (
+      await client.send(
+        new CreateSolutionCommand({
+          name: "bunsai-e2e-sol-lc",
+          datasetGroupArn: dsgArn,
+        }),
+      )
+    ).solutionArn ?? "";
+
+  const svArn =
+    (
+      await client.send(
+        new CreateSolutionVersionCommand({ solutionArn: solArn }),
+      )
+    ).solutionVersionArn ?? "";
+
+  const { campaignArn } = await client.send(
+    new CreateCampaignCommand({
+      name: "bunsai-e2e-cmp-lc",
+      solutionVersionArn: svArn,
+    }),
+  );
+  expect(campaignArn).toContain("bunsai-e2e-cmp-lc");
+  const cmpArn = campaignArn ?? "";
+
+  const listed = await client.send(new ListCampaignsCommand({}));
+  const pendingCmp = (listed.campaigns ?? []).find(
+    (c) => c.campaignArn === cmpArn,
+  );
+  expect(pendingCmp?.status).toBe("CREATE PENDING");
+
+  const described1 = await client.send(
+    new DescribeCampaignCommand({ campaignArn: cmpArn }),
+  );
+  expect(described1.campaign?.status).toBe("CREATE IN_PROGRESS");
+
+  const described2 = await client.send(
+    new DescribeCampaignCommand({ campaignArn: cmpArn }),
+  );
+  expect(described2.campaign?.status).toBe("ACTIVE");
+});
+
+test("Personalize ListCampaigns nextToken pagination", async () => {
+  const client = personalize();
+
+  const dsgArn =
+    (
+      await client.send(
+        new CreateDatasetGroupCommand({ name: "bunsai-e2e-dsg-pg" }),
+      )
+    ).datasetGroupArn ?? "";
+
+  const solArn =
+    (
+      await client.send(
+        new CreateSolutionCommand({
+          name: "bunsai-e2e-sol-pg",
+          datasetGroupArn: dsgArn,
+        }),
+      )
+    ).solutionArn ?? "";
+
+  const svArn =
+    (
+      await client.send(
+        new CreateSolutionVersionCommand({ solutionArn: solArn }),
+      )
+    ).solutionVersionArn ?? "";
+
+  for (const suffix of ["a", "b", "c"]) {
+    await client.send(
+      new CreateCampaignCommand({
+        name: `bunsai-e2e-cmp-pg-${suffix}`,
+        solutionVersionArn: svArn,
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListCampaignsCommand({
+      solutionArn: solArn,
+      maxResults: 2,
+    }),
+  );
+  expect((page1.campaigns ?? []).length).toBe(2);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListCampaignsCommand({
+      solutionArn: solArn,
+      maxResults: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect((page2.campaigns ?? []).length).toBe(1);
+  expect(page2.nextToken).toBeUndefined();
+});
+
+test("Personalize CreateCampaign missing-ref ResourceNotFoundException", async () => {
+  const client = personalize();
+
+  await expect(
+    client.send(
+      new CreateCampaignCommand({
+        name: "bunsai-e2e-cmp-noref",
+        solutionVersionArn:
+          "arn:aws:personalize:us-east-1:000000000000:solution-version/nonexistent",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
 });
 
 test("Personalize tags lifecycle", async () => {

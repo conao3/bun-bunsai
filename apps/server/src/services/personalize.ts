@@ -210,6 +210,32 @@ const numberOrUndefined = (value: unknown): number | undefined =>
 const boolOrUndefined = (value: unknown): boolean | undefined =>
   typeof value === "boolean" ? value : undefined;
 
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
+
+const advancePersonalizeStatus = (status: string): string => {
+  if (status === "CREATE PENDING") return "CREATE IN_PROGRESS";
+  if (status === "CREATE IN_PROGRESS") return "ACTIVE";
+  if (status === "STOPPING") return "INACTIVE";
+  return status;
+};
+
 const requireString = (
   input: Record<string, unknown>,
   field: string,
@@ -870,13 +896,20 @@ const DescribeSchema: OperationHandler = (input, ctx) => {
 };
 
 const ListSchemas: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const schemas = ctx.store
+  const all = ctx.store
     .list<StoredSchema>()
     .filter((entry) => entry.key.startsWith(schemaPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
-  return { schemas: schemas.slice(0, max).map(schemaSummaryView) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    schemas: items.map(schemaSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteSchema: OperationHandler = (input, ctx) => {
@@ -903,7 +936,7 @@ const CreateDatasetGroup: OperationHandler = (input, ctx) => {
     roleArn: stringOrUndefined(input["roleArn"]),
     kmsKeyArn: stringOrUndefined(input["kmsKeyArn"]),
     domain: stringOrUndefined(input["domain"]),
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -923,17 +956,33 @@ const CreateDatasetGroup: OperationHandler = (input, ctx) => {
 
 const DescribeDatasetGroup: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "datasetGroupArn");
-  return { datasetGroup: datasetGroupView(requireDatasetGroup(ctx, arn)) };
+  const stored = requireDatasetGroup(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(datasetGroupKey(arn), current);
+  }
+  return { datasetGroup: datasetGroupView(current) };
 };
 
 const ListDatasetGroups: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const groups = ctx.store
+  const all = ctx.store
     .list<StoredDatasetGroup>()
     .filter((entry) => entry.key.startsWith(datasetGroupPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
-  return { datasetGroups: groups.slice(0, max).map(datasetGroupSummaryView) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    datasetGroups: items.map(datasetGroupSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteDatasetGroup: OperationHandler = (input, ctx) => {
@@ -949,6 +998,8 @@ const CreateDataset: OperationHandler = (input, ctx) => {
   const schemaArnVal = requireString(input, "schemaArn");
   const datasetGroupArn = requireString(input, "datasetGroupArn");
   const datasetType = requireString(input, "datasetType");
+  requireDatasetGroup(ctx, datasetGroupArn);
+  requireSchema(ctx, schemaArnVal);
   const arn = makeArn(
     ctx,
     "dataset",
@@ -961,7 +1012,7 @@ const CreateDataset: OperationHandler = (input, ctx) => {
     datasetGroupArn,
     datasetType,
     schemaArn: schemaArnVal,
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -981,23 +1032,37 @@ const CreateDataset: OperationHandler = (input, ctx) => {
 
 const DescribeDataset: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "datasetArn");
-  return { dataset: datasetView(requireDataset(ctx, arn)) };
+  const stored = requireDataset(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(datasetKey(arn), current);
+  }
+  return { dataset: datasetView(current) };
 };
 
 const ListDatasets: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const datasetGroupArnFilter = stringOrUndefined(input["datasetGroupArn"]);
-  let datasets = ctx.store
+  let all = ctx.store
     .list<StoredDataset>()
     .filter((entry) => entry.key.startsWith(datasetPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (datasetGroupArnFilter !== undefined) {
-    datasets = datasets.filter(
-      (d) => d.datasetGroupArn === datasetGroupArnFilter,
-    );
+    all = all.filter((d) => d.datasetGroupArn === datasetGroupArnFilter);
   }
-  return { datasets: datasets.slice(0, max).map(datasetSummaryView) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    datasets: items.map(datasetSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteDataset: OperationHandler = (input, ctx) => {
@@ -1025,6 +1090,7 @@ const CreateDatasetImportJob: OperationHandler = (input, ctx) => {
   const jobName = requireString(input, "jobName");
   const datasetArn = requireString(input, "datasetArn");
   const roleArn = requireString(input, "roleArn");
+  requireDataset(ctx, datasetArn);
   const arn = makeArnWithId(ctx, "dataset-import-job");
   const now = nowSeconds();
   const stored: StoredDatasetImportJob = {
@@ -1037,7 +1103,7 @@ const CreateDatasetImportJob: OperationHandler = (input, ctx) => {
     publishAttributionMetricsToS3: boolOrUndefined(
       input["publishAttributionMetricsToS3"],
     ),
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1057,24 +1123,36 @@ const CreateDatasetImportJob: OperationHandler = (input, ctx) => {
 
 const DescribeDatasetImportJob: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "datasetImportJobArn");
-  return {
-    datasetImportJob: datasetImportJobView(requireDatasetImportJob(ctx, arn)),
-  };
+  const stored = requireDatasetImportJob(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(datasetImportJobKey(arn), current);
+  }
+  return { datasetImportJob: datasetImportJobView(current) };
 };
 
 const ListDatasetImportJobs: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const datasetArnFilter = stringOrUndefined(input["datasetArn"]);
-  let jobs = ctx.store
+  let all = ctx.store
     .list<StoredDatasetImportJob>()
     .filter((entry) => entry.key.startsWith(datasetImportJobPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (datasetArnFilter !== undefined) {
-    jobs = jobs.filter((j) => j.datasetArn === datasetArnFilter);
+    all = all.filter((j) => j.datasetArn === datasetArnFilter);
   }
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
   return {
-    datasetImportJobs: jobs.slice(0, max).map(datasetImportJobSummaryView),
+    datasetImportJobs: items.map(datasetImportJobSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1082,6 +1160,7 @@ const CreateDatasetExportJob: OperationHandler = (input, ctx) => {
   const jobName = requireString(input, "jobName");
   const datasetArn = requireString(input, "datasetArn");
   const roleArn = requireString(input, "roleArn");
+  requireDataset(ctx, datasetArn);
   const arn = makeArnWithId(ctx, "dataset-export-job");
   const now = nowSeconds();
   const stored: StoredDatasetExportJob = {
@@ -1091,7 +1170,7 @@ const CreateDatasetExportJob: OperationHandler = (input, ctx) => {
     ingestionMode: stringOrUndefined(input["ingestionMode"]),
     roleArn,
     jobOutput: input["jobOutput"],
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1111,24 +1190,36 @@ const CreateDatasetExportJob: OperationHandler = (input, ctx) => {
 
 const DescribeDatasetExportJob: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "datasetExportJobArn");
-  return {
-    datasetExportJob: datasetExportJobView(requireDatasetExportJob(ctx, arn)),
-  };
+  const stored = requireDatasetExportJob(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(datasetExportJobKey(arn), current);
+  }
+  return { datasetExportJob: datasetExportJobView(current) };
 };
 
 const ListDatasetExportJobs: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const datasetArnFilter = stringOrUndefined(input["datasetArn"]);
-  let jobs = ctx.store
+  let all = ctx.store
     .list<StoredDatasetExportJob>()
     .filter((entry) => entry.key.startsWith(datasetExportJobPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (datasetArnFilter !== undefined) {
-    jobs = jobs.filter((j) => j.datasetArn === datasetArnFilter);
+    all = all.filter((j) => j.datasetArn === datasetArnFilter);
   }
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
   return {
-    datasetExportJobs: jobs.slice(0, max).map(datasetExportJobSummaryView),
+    datasetExportJobs: items.map(datasetExportJobSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1136,6 +1227,7 @@ const CreateDataDeletionJob: OperationHandler = (input, ctx) => {
   const jobName = requireString(input, "jobName");
   const datasetGroupArn = requireString(input, "datasetGroupArn");
   const roleArn = requireString(input, "roleArn");
+  requireDatasetGroup(ctx, datasetGroupArn);
   const arn = makeArnWithId(ctx, "data-deletion-job");
   const now = nowSeconds();
   const stored: StoredDataDeletionJob = {
@@ -1144,7 +1236,7 @@ const CreateDataDeletionJob: OperationHandler = (input, ctx) => {
     datasetGroupArn,
     dataSource: input["dataSource"],
     roleArn,
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1164,30 +1256,43 @@ const CreateDataDeletionJob: OperationHandler = (input, ctx) => {
 
 const DescribeDataDeletionJob: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "dataDeletionJobArn");
-  return {
-    dataDeletionJob: dataDeletionJobView(requireDataDeletionJob(ctx, arn)),
-  };
+  const stored = requireDataDeletionJob(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(dataDeletionJobKey(arn), current);
+  }
+  return { dataDeletionJob: dataDeletionJobView(current) };
 };
 
 const ListDataDeletionJobs: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const datasetGroupArnFilter = stringOrUndefined(input["datasetGroupArn"]);
-  let jobs = ctx.store
+  let all = ctx.store
     .list<StoredDataDeletionJob>()
     .filter((entry) => entry.key.startsWith(dataDeletionJobPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (datasetGroupArnFilter !== undefined) {
-    jobs = jobs.filter((j) => j.datasetGroupArn === datasetGroupArnFilter);
+    all = all.filter((j) => j.datasetGroupArn === datasetGroupArnFilter);
   }
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
   return {
-    dataDeletionJobs: jobs.slice(0, max).map(dataDeletionJobSummaryView),
+    dataDeletionJobs: items.map(dataDeletionJobSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
 const CreateSolution: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const datasetGroupArn = requireString(input, "datasetGroupArn");
+  requireDatasetGroup(ctx, datasetGroupArn);
   const arn = makeArn(ctx, "solution", name);
   const now = nowSeconds();
   const stored: StoredSolution = {
@@ -1200,7 +1305,7 @@ const CreateSolution: OperationHandler = (input, ctx) => {
     performAutoTraining: boolOrUndefined(input["performAutoTraining"]),
     eventType: stringOrUndefined(input["eventType"]),
     solutionConfig: input["solutionConfig"],
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1220,23 +1325,37 @@ const CreateSolution: OperationHandler = (input, ctx) => {
 
 const DescribeSolution: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "solutionArn");
-  return { solution: solutionView(requireSolution(ctx, arn)) };
+  const stored = requireSolution(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(solutionKey(arn), current);
+  }
+  return { solution: solutionView(current) };
 };
 
 const ListSolutions: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const datasetGroupArnFilter = stringOrUndefined(input["datasetGroupArn"]);
-  let solutions = ctx.store
+  let all = ctx.store
     .list<StoredSolution>()
     .filter((entry) => entry.key.startsWith(solutionPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (datasetGroupArnFilter !== undefined) {
-    solutions = solutions.filter(
-      (s) => s.datasetGroupArn === datasetGroupArnFilter,
-    );
+    all = all.filter((s) => s.datasetGroupArn === datasetGroupArnFilter);
   }
-  return { solutions: solutions.slice(0, max).map(solutionSummaryView) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    solutions: items.map(solutionSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteSolution: OperationHandler = (input, ctx) => {
@@ -1264,6 +1383,7 @@ const UpdateSolution: OperationHandler = (input, ctx) => {
 
 const CreateSolutionVersion: OperationHandler = (input, ctx) => {
   const solutionArn = requireString(input, "solutionArn");
+  requireSolution(ctx, solutionArn);
   const arn = makeArnWithId(ctx, "solution-version");
   const now = nowSeconds();
   const stored: StoredSolutionVersion = {
@@ -1271,7 +1391,7 @@ const CreateSolutionVersion: OperationHandler = (input, ctx) => {
     solutionVersionArn: arn,
     solutionArn,
     trainingMode: stringOrUndefined(input["trainingMode"]),
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1291,24 +1411,36 @@ const CreateSolutionVersion: OperationHandler = (input, ctx) => {
 
 const DescribeSolutionVersion: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "solutionVersionArn");
-  return {
-    solutionVersion: solutionVersionView(requireSolutionVersion(ctx, arn)),
-  };
+  const stored = requireSolutionVersion(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(solutionVersionKey(arn), current);
+  }
+  return { solutionVersion: solutionVersionView(current) };
 };
 
 const ListSolutionVersions: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const solutionArnFilter = stringOrUndefined(input["solutionArn"]);
-  let versions = ctx.store
+  let all = ctx.store
     .list<StoredSolutionVersion>()
     .filter((entry) => entry.key.startsWith(solutionVersionPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (solutionArnFilter !== undefined) {
-    versions = versions.filter((v) => v.solutionArn === solutionArnFilter);
+    all = all.filter((v) => v.solutionArn === solutionArnFilter);
   }
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
   return {
-    solutionVersions: versions.slice(0, max).map(solutionVersionSummaryView),
+    solutionVersions: items.map(solutionVersionSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1345,6 +1477,7 @@ const GetSolutionMetrics: OperationHandler = (input, ctx) => {
 const CreateCampaign: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const solutionVersionArn = requireString(input, "solutionVersionArn");
+  requireSolutionVersion(ctx, solutionVersionArn);
   const arn = makeArn(ctx, "campaign", name);
   const now = nowSeconds();
   const stored: StoredCampaign = {
@@ -1353,7 +1486,7 @@ const CreateCampaign: OperationHandler = (input, ctx) => {
     solutionVersionArn,
     minProvisionedTPS: numberOrUndefined(input["minProvisionedTPS"]),
     campaignConfig: input["campaignConfig"],
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1373,23 +1506,45 @@ const CreateCampaign: OperationHandler = (input, ctx) => {
 
 const DescribeCampaign: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "campaignArn");
-  return { campaign: campaignView(requireCampaign(ctx, arn)) };
+  const stored = requireCampaign(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(campaignKey(arn), current);
+  }
+  return { campaign: campaignView(current) };
 };
 
 const ListCampaigns: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const solutionArnFilter = stringOrUndefined(input["solutionArn"]);
-  let campaigns = ctx.store
+  let all = ctx.store
     .list<StoredCampaign>()
     .filter((entry) => entry.key.startsWith(campaignPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (solutionArnFilter !== undefined) {
-    campaigns = campaigns.filter((c) =>
-      c.solutionVersionArn.startsWith(solutionArnFilter),
+    const svArns = new Set(
+      ctx.store
+        .list<StoredSolutionVersion>()
+        .filter((e) => e.key.startsWith(solutionVersionPrefix))
+        .map((e) => e.value)
+        .filter((sv) => sv.solutionArn === solutionArnFilter)
+        .map((sv) => sv.solutionVersionArn),
     );
+    all = all.filter((c) => svArns.has(c.solutionVersionArn));
   }
-  return { campaigns: campaigns.slice(0, max).map(campaignSummaryView) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    campaigns: items.map(campaignSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteCampaign: OperationHandler = (input, ctx) => {
@@ -1421,6 +1576,7 @@ const CreateRecommender: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const datasetGroupArn = requireString(input, "datasetGroupArn");
   const recipeArn = requireString(input, "recipeArn");
+  requireDatasetGroup(ctx, datasetGroupArn);
   const arn = makeArn(ctx, "recommender", name);
   const now = nowSeconds();
   const stored: StoredRecommender = {
@@ -1429,7 +1585,7 @@ const CreateRecommender: OperationHandler = (input, ctx) => {
     datasetGroupArn,
     recipeArn,
     recommenderConfig: input["recommenderConfig"],
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1449,24 +1605,36 @@ const CreateRecommender: OperationHandler = (input, ctx) => {
 
 const DescribeRecommender: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "recommenderArn");
-  return { recommender: recommenderView(requireRecommender(ctx, arn)) };
+  const stored = requireRecommender(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(recommenderKey(arn), current);
+  }
+  return { recommender: recommenderView(current) };
 };
 
 const ListRecommenders: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const datasetGroupArnFilter = stringOrUndefined(input["datasetGroupArn"]);
-  let recommenders = ctx.store
+  let all = ctx.store
     .list<StoredRecommender>()
     .filter((entry) => entry.key.startsWith(recommenderPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (datasetGroupArnFilter !== undefined) {
-    recommenders = recommenders.filter(
-      (r) => r.datasetGroupArn === datasetGroupArnFilter,
-    );
+    all = all.filter((r) => r.datasetGroupArn === datasetGroupArnFilter);
   }
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
   return {
-    recommenders: recommenders.slice(0, max).map(recommenderSummaryView),
+    recommenders: items.map(recommenderSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1495,7 +1663,7 @@ const StartRecommender: OperationHandler = (input, ctx) => {
   const stored = requireRecommender(ctx, arn);
   const updated: StoredRecommender = {
     ...stored,
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     lastUpdatedDateTime: nowSeconds(),
   };
   ctx.store.set(recommenderKey(arn), updated);
@@ -1507,7 +1675,7 @@ const StopRecommender: OperationHandler = (input, ctx) => {
   const stored = requireRecommender(ctx, arn);
   const updated: StoredRecommender = {
     ...stored,
-    status: "INACTIVE",
+    status: "STOPPING",
     lastUpdatedDateTime: nowSeconds(),
   };
   ctx.store.set(recommenderKey(arn), updated);
@@ -1517,6 +1685,7 @@ const StopRecommender: OperationHandler = (input, ctx) => {
 const CreateEventTracker: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const datasetGroupArn = requireString(input, "datasetGroupArn");
+  requireDatasetGroup(ctx, datasetGroupArn);
   const arn = makeArn(ctx, "event-tracker", name);
   const trackingId = crypto.randomUUID();
   const now = nowSeconds();
@@ -1525,7 +1694,7 @@ const CreateEventTracker: OperationHandler = (input, ctx) => {
     eventTrackerArn: arn,
     trackingId,
     datasetGroupArn,
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1545,23 +1714,37 @@ const CreateEventTracker: OperationHandler = (input, ctx) => {
 
 const DescribeEventTracker: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "eventTrackerArn");
-  return { eventTracker: eventTrackerView(requireEventTracker(ctx, arn)) };
+  const stored = requireEventTracker(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(eventTrackerKey(arn), current);
+  }
+  return { eventTracker: eventTrackerView(current) };
 };
 
 const ListEventTrackers: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const datasetGroupArnFilter = stringOrUndefined(input["datasetGroupArn"]);
-  let trackers = ctx.store
+  let all = ctx.store
     .list<StoredEventTracker>()
     .filter((entry) => entry.key.startsWith(eventTrackerPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (datasetGroupArnFilter !== undefined) {
-    trackers = trackers.filter(
-      (t) => t.datasetGroupArn === datasetGroupArnFilter,
-    );
+    all = all.filter((t) => t.datasetGroupArn === datasetGroupArnFilter);
   }
-  return { eventTrackers: trackers.slice(0, max).map(eventTrackerSummaryView) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    eventTrackers: items.map(eventTrackerSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteEventTracker: OperationHandler = (input, ctx) => {
@@ -1576,6 +1759,7 @@ const CreateFilter: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const datasetGroupArn = requireString(input, "datasetGroupArn");
   const filterExpression = requireString(input, "filterExpression");
+  requireDatasetGroup(ctx, datasetGroupArn);
   const arn = makeArn(ctx, "filter", name);
   const now = nowSeconds();
   const stored: StoredFilter = {
@@ -1583,7 +1767,7 @@ const CreateFilter: OperationHandler = (input, ctx) => {
     filterArn: arn,
     datasetGroupArn,
     filterExpression,
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1603,23 +1787,37 @@ const CreateFilter: OperationHandler = (input, ctx) => {
 
 const DescribeFilter: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "filterArn");
-  return { filter: filterView(requireFilter(ctx, arn)) };
+  const stored = requireFilter(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(filterKey(arn), current);
+  }
+  return { filter: filterView(current) };
 };
 
 const ListFilters: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const datasetGroupArnFilter = stringOrUndefined(input["datasetGroupArn"]);
-  let filters = ctx.store
+  let all = ctx.store
     .list<StoredFilter>()
     .filter((entry) => entry.key.startsWith(filterPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (datasetGroupArnFilter !== undefined) {
-    filters = filters.filter(
-      (f) => f.datasetGroupArn === datasetGroupArnFilter,
-    );
+    all = all.filter((f) => f.datasetGroupArn === datasetGroupArnFilter);
   }
-  return { Filters: filters.slice(0, max).map(filterSummaryView) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    Filters: items.map(filterSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteFilter: OperationHandler = (input, ctx) => {
@@ -1633,6 +1831,7 @@ const DeleteFilter: OperationHandler = (input, ctx) => {
 const CreateMetricAttribution: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const datasetGroupArn = requireString(input, "datasetGroupArn");
+  requireDatasetGroup(ctx, datasetGroupArn);
   const arn = makeArn(ctx, "metric-attribution", name);
   const now = nowSeconds();
   const stored: StoredMetricAttribution = {
@@ -1643,7 +1842,7 @@ const CreateMetricAttribution: OperationHandler = (input, ctx) => {
       ? (input["metrics"] as unknown[])
       : [],
     metricsOutputConfig: input["metricsOutputConfig"],
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1653,26 +1852,36 @@ const CreateMetricAttribution: OperationHandler = (input, ctx) => {
 
 const DescribeMetricAttribution: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "metricAttributionArn");
-  return {
-    metricAttribution: metricAttributionView(
-      requireMetricAttribution(ctx, arn),
-    ),
-  };
+  const stored = requireMetricAttribution(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(metricAttributionKey(arn), current);
+  }
+  return { metricAttribution: metricAttributionView(current) };
 };
 
 const ListMetricAttributions: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const datasetGroupArnFilter = stringOrUndefined(input["datasetGroupArn"]);
-  let mas = ctx.store
+  let all = ctx.store
     .list<StoredMetricAttribution>()
     .filter((entry) => entry.key.startsWith(metricAttributionPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (datasetGroupArnFilter !== undefined) {
-    mas = mas.filter((m) => m.datasetGroupArn === datasetGroupArnFilter);
+    all = all.filter((m) => m.datasetGroupArn === datasetGroupArnFilter);
   }
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
   return {
-    metricAttributions: mas.slice(0, max).map(metricAttributionSummaryView),
+    metricAttributions: items.map(metricAttributionSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1710,15 +1919,22 @@ const UpdateMetricAttribution: OperationHandler = (input, ctx) => {
 const ListMetricAttributionMetrics: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "metricAttributionArn");
   const stored = requireMetricAttribution(ctx, arn);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const metrics = (stored.metrics as unknown[]).slice(0, max);
-  return { metrics };
+  const { items, nextToken } = paginateList(
+    stored.metrics as unknown[],
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    metrics: items,
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const CreateBatchInferenceJob: OperationHandler = (input, ctx) => {
   const jobName = requireString(input, "jobName");
   const solutionVersionArn = requireString(input, "solutionVersionArn");
   const roleArn = requireString(input, "roleArn");
+  requireSolutionVersion(ctx, solutionVersionArn);
   const arn = makeArnWithId(ctx, "batch-inference-job");
   const now = nowSeconds();
   const stored: StoredBatchInferenceJob = {
@@ -1732,7 +1948,7 @@ const CreateBatchInferenceJob: OperationHandler = (input, ctx) => {
     roleArn,
     batchInferenceJobConfig: input["batchInferenceJobConfig"],
     batchInferenceJobMode: stringOrUndefined(input["batchInferenceJobMode"]),
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1752,30 +1968,38 @@ const CreateBatchInferenceJob: OperationHandler = (input, ctx) => {
 
 const DescribeBatchInferenceJob: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "batchInferenceJobArn");
-  return {
-    batchInferenceJob: batchInferenceJobView(
-      requireBatchInferenceJob(ctx, arn),
-    ),
-  };
+  const stored = requireBatchInferenceJob(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(batchInferenceJobKey(arn), current);
+  }
+  return { batchInferenceJob: batchInferenceJobView(current) };
 };
 
 const ListBatchInferenceJobs: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const solutionVersionArnFilter = stringOrUndefined(
     input["solutionVersionArn"],
   );
-  let jobs = ctx.store
+  let all = ctx.store
     .list<StoredBatchInferenceJob>()
     .filter((entry) => entry.key.startsWith(batchInferenceJobPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (solutionVersionArnFilter !== undefined) {
-    jobs = jobs.filter(
-      (j) => j.solutionVersionArn === solutionVersionArnFilter,
-    );
+    all = all.filter((j) => j.solutionVersionArn === solutionVersionArnFilter);
   }
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
   return {
-    batchInferenceJobs: jobs.slice(0, max).map(batchInferenceJobSummaryView),
+    batchInferenceJobs: items.map(batchInferenceJobSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1783,6 +2007,7 @@ const CreateBatchSegmentJob: OperationHandler = (input, ctx) => {
   const jobName = requireString(input, "jobName");
   const solutionVersionArn = requireString(input, "solutionVersionArn");
   const roleArn = requireString(input, "roleArn");
+  requireSolutionVersion(ctx, solutionVersionArn);
   const arn = makeArnWithId(ctx, "batch-segment-job");
   const now = nowSeconds();
   const stored: StoredBatchSegmentJob = {
@@ -1794,7 +2019,7 @@ const CreateBatchSegmentJob: OperationHandler = (input, ctx) => {
     jobInput: input["jobInput"],
     jobOutput: input["jobOutput"],
     roleArn,
-    status: "ACTIVE",
+    status: "CREATE PENDING",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1814,28 +2039,38 @@ const CreateBatchSegmentJob: OperationHandler = (input, ctx) => {
 
 const DescribeBatchSegmentJob: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "batchSegmentJobArn");
-  return {
-    batchSegmentJob: batchSegmentJobView(requireBatchSegmentJob(ctx, arn)),
-  };
+  const stored = requireBatchSegmentJob(ctx, arn);
+  const newStatus = advancePersonalizeStatus(stored.status);
+  const current =
+    newStatus !== stored.status
+      ? { ...stored, status: newStatus, lastUpdatedDateTime: nowSeconds() }
+      : stored;
+  if (newStatus !== stored.status) {
+    ctx.store.set(batchSegmentJobKey(arn), current);
+  }
+  return { batchSegmentJob: batchSegmentJobView(current) };
 };
 
 const ListBatchSegmentJobs: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const solutionVersionArnFilter = stringOrUndefined(
     input["solutionVersionArn"],
   );
-  let jobs = ctx.store
+  let all = ctx.store
     .list<StoredBatchSegmentJob>()
     .filter((entry) => entry.key.startsWith(batchSegmentJobPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.creationDateTime - b.creationDateTime);
   if (solutionVersionArnFilter !== undefined) {
-    jobs = jobs.filter(
-      (j) => j.solutionVersionArn === solutionVersionArnFilter,
-    );
+    all = all.filter((j) => j.solutionVersionArn === solutionVersionArnFilter);
   }
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
   return {
-    batchSegmentJobs: jobs.slice(0, max).map(batchSegmentJobSummaryView),
+    batchSegmentJobs: items.map(batchSegmentJobSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1922,7 +2157,6 @@ const DescribeRecipe: OperationHandler = (input, _ctx) => {
 };
 
 const ListRecipes: OperationHandler = (input, _ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
   const domain = stringOrUndefined(input["domain"]);
   const recipes = [
     {
@@ -1961,7 +2195,15 @@ const ListRecipes: OperationHandler = (input, _ctx) => {
   const filtered = domain
     ? recipes.filter((r) => r.domain === domain || r.domain === undefined)
     : recipes;
-  return { recipes: filtered.slice(0, max) };
+  const { items, nextToken } = paginateList(
+    filtered,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    recipes: items,
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const personalize = {

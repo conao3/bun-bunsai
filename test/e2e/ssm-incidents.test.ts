@@ -417,3 +417,109 @@ test("SSMIncidents tags lifecycle", async () => {
 
   await client.send(new DeleteResponsePlanCommand({ arn: resourceArn }));
 });
+
+test("SSMIncidents ListIncidentRecords pagination and filters", async () => {
+  const client = incidents();
+  const planName = `bunsaie2e-lir-${Date.now()}`;
+
+  const plan = await client.send(
+    new CreateResponsePlanCommand({
+      name: planName,
+      incidentTemplate: { title: "filter test", impact: 2 },
+    }),
+  );
+  const planArn = plan.arn ?? "";
+
+  const s1 = await client.send(
+    new StartIncidentCommand({ responsePlanArn: planArn, impact: 2 }),
+  );
+  const s2 = await client.send(
+    new StartIncidentCommand({ responsePlanArn: planArn, impact: 3 }),
+  );
+  const arn1 = s1.incidentRecordArn ?? "";
+  const arn2 = s2.incidentRecordArn ?? "";
+
+  await client.send(
+    new UpdateIncidentRecordCommand({ arn: arn1, status: "RESOLVED" }),
+  );
+
+  const openOnly = await client.send(
+    new ListIncidentRecordsCommand({
+      filters: [
+        { key: "status", condition: { equals: { stringValues: ["OPEN"] } } },
+      ],
+    }),
+  );
+  const openArns = (openOnly.incidentRecordSummaries ?? []).map((s) => s.arn);
+  expect(openArns).not.toContain(arn1);
+  expect(openArns).toContain(arn2);
+
+  const impactFilter = await client.send(
+    new ListIncidentRecordsCommand({
+      filters: [
+        { key: "impact", condition: { equals: { integerValues: [3] } } },
+      ],
+    }),
+  );
+  const impactArns = (impactFilter.incidentRecordSummaries ?? []).map(
+    (s) => s.arn,
+  );
+  expect(impactArns).not.toContain(arn1);
+  expect(impactArns).toContain(arn2);
+
+  const page1 = await client.send(
+    new ListIncidentRecordsCommand({ maxResults: 1 }),
+  );
+  expect((page1.incidentRecordSummaries ?? []).length).toBe(1);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListIncidentRecordsCommand({
+      maxResults: 1,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect((page2.incidentRecordSummaries ?? []).length).toBe(1);
+  const bothArns = [
+    ...(page1.incidentRecordSummaries ?? []),
+    ...(page2.incidentRecordSummaries ?? []),
+  ].map((s) => s.arn);
+  expect(bothArns).toContain(arn1);
+  expect(bothArns).toContain(arn2);
+
+  await client.send(new DeleteIncidentRecordCommand({ arn: arn1 }));
+  await client.send(new DeleteIncidentRecordCommand({ arn: arn2 }));
+  await client.send(new DeleteResponsePlanCommand({ arn: planArn }));
+});
+
+test("SSMIncidents UpdateIncidentRecord invalid status", async () => {
+  const client = incidents();
+  const planName = `bunsaie2e-uir-${Date.now()}`;
+
+  const plan = await client.send(
+    new CreateResponsePlanCommand({
+      name: planName,
+      incidentTemplate: { title: "status test", impact: 3 },
+    }),
+  );
+  const planArn = plan.arn ?? "";
+  const started = await client.send(
+    new StartIncidentCommand({ responsePlanArn: planArn }),
+  );
+  const incArn = started.incidentRecordArn ?? "";
+
+  await expect(
+    client.send(
+      new UpdateIncidentRecordCommand({
+        arn: incArn,
+        status: "INVALID_STATUS" as "OPEN",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const rec = await client.send(new GetIncidentRecordCommand({ arn: incArn }));
+  expect(rec.incidentRecord?.status).toBe("OPEN");
+
+  await client.send(new DeleteIncidentRecordCommand({ arn: incArn }));
+  await client.send(new DeleteResponsePlanCommand({ arn: planArn }));
+});

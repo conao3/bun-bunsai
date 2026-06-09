@@ -103,6 +103,27 @@ const cloneUrlHttp = (ctx: ServiceContext, name: string): string =>
 const cloneUrlSsh = (ctx: ServiceContext, name: string): string =>
   `ssh://git-codecommit.${ctx.region}.amazonaws.com/v1/repos/${name}`;
 
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { page: T[]; nextToken: string | undefined } => {
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10) || 0
+      : 0;
+  const limit =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : typeof maxResults === "string" && maxResults !== ""
+        ? parseInt(maxResults, 10) || items.length
+        : items.length;
+  const page = items.slice(offset, offset + limit);
+  const next =
+    offset + limit < items.length ? String(offset + limit) : undefined;
+  return { page, nextToken: next };
+};
+
 const listRepositories = (ctx: ServiceContext): StoredRepository[] =>
   ctx.store
     .list<StoredRepository>()
@@ -482,7 +503,12 @@ const ListRepositories: OperationHandler = (input, ctx) => {
       repositoryName: repository.repositoryName,
       repositoryId: repository.repositoryId,
     }));
-  return { repositories };
+  const { page, nextToken } = paginate(
+    repositories,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return { repositories: page, nextToken };
 };
 
 const DeleteRepository: OperationHandler = (input, ctx) => {
@@ -511,12 +537,17 @@ const CreateBranch: OperationHandler = (input, ctx) => {
   const branchName = requireString(input, "branchName");
   const commitId = requireString(input, "commitId");
   const repository = requireRepository(ctx, name);
-  const branches = repository.branches.includes(branchName)
-    ? repository.branches
-    : [...repository.branches, branchName];
+  if (ctx.store.get<StoredBranch>(branchKey(name, branchName)) !== undefined) {
+    throw awsError(
+      "BranchNameExistsException",
+      `Branch already exists: ${branchName}`,
+      400,
+    );
+  }
+  requireCommit(ctx, name, commitId);
   const updated: StoredRepository = {
     ...repository,
-    branches,
+    branches: [...repository.branches, branchName],
     defaultBranch: repository.defaultBranch ?? branchName,
     lastModifiedDate: Date.now(),
   };
@@ -529,7 +560,13 @@ const CreateBranch: OperationHandler = (input, ctx) => {
 const ListBranches: OperationHandler = (input, ctx) => {
   const name = requireString(input, "repositoryName");
   const repository = requireRepository(ctx, name);
-  return { branches: [...repository.branches].sort() };
+  const sorted = [...repository.branches].sort();
+  const { page, nextToken } = paginate(
+    sorted,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return { branches: page, nextToken };
 };
 
 const BatchGetRepositories: OperationHandler = (input, ctx) => {
@@ -1042,6 +1079,67 @@ const GetMergeCommit: OperationHandler = (input, ctx) => {
   };
 };
 
+type ConflictEntry = {
+  filePath: string;
+  srcSize: number;
+  dstSize: number;
+  baseSize: number;
+};
+
+const computeConflicts = (
+  ctx: ServiceContext,
+  repoName: string,
+  srcRef: string,
+  dstRef: string,
+  baseRef: string | undefined,
+): ConflictEntry[] => {
+  const srcFiles = filesForRef(ctx, repoName, srcRef).files;
+  const dstFiles = filesForRef(ctx, repoName, dstRef).files;
+  const baseFiles =
+    baseRef !== undefined ? filesForRef(ctx, repoName, baseRef).files : {};
+  const allPaths = new Set([
+    ...Object.keys(srcFiles),
+    ...Object.keys(dstFiles),
+    ...Object.keys(baseFiles),
+  ]);
+  const conflicts: ConflictEntry[] = [];
+  for (const path of allPaths) {
+    const srcEntry = srcFiles[path];
+    const dstEntry = dstFiles[path];
+    const baseEntry = baseFiles[path];
+    const srcChanged =
+      (srcEntry?.blobId ?? null) !== (baseEntry?.blobId ?? null);
+    const dstChanged =
+      (dstEntry?.blobId ?? null) !== (baseEntry?.blobId ?? null);
+    if (
+      srcChanged &&
+      dstChanged &&
+      (srcEntry?.blobId ?? null) !== (dstEntry?.blobId ?? null)
+    ) {
+      conflicts.push({
+        filePath: path,
+        srcSize: srcEntry?.fileSize ?? 0,
+        dstSize: dstEntry?.fileSize ?? 0,
+        baseSize: baseEntry?.fileSize ?? 0,
+      });
+    }
+  }
+  return conflicts;
+};
+
+const conflictMetadataFor = (c: ConflictEntry): Record<string, unknown> => ({
+  filePath: c.filePath,
+  fileSizes: { source: c.srcSize, destination: c.dstSize, base: c.baseSize },
+  fileModes: { source: "NORMAL", destination: "NORMAL", base: "NORMAL" },
+  objectTypes: { source: "FILE", destination: "FILE", base: "FILE" },
+  numberOfConflicts: 1,
+  isBinaryFile: { source: false, destination: false, base: false },
+  contentConflict: true,
+  fileModeConflict: false,
+  objectTypeConflict: false,
+  mergeOperations: { source: "EDITED", destination: "EDITED" },
+});
+
 const GetMergeConflicts: OperationHandler = (input, ctx) => {
   const repoName = requireString(input, "repositoryName");
   const sourceCommitSpecifier = requireString(input, "sourceCommitSpecifier");
@@ -1055,12 +1153,13 @@ const GetMergeConflicts: OperationHandler = (input, ctx) => {
   const dstRef = resolveRef(ctx, repoName, destinationCommitSpecifier);
   const baseRef = getMergeBase(ctx, repoName, srcRef, dstRef);
 
+  const conflicts = computeConflicts(ctx, repoName, srcRef, dstRef, baseRef);
   return {
-    mergeable: true,
+    mergeable: conflicts.length === 0,
     destinationCommitId: dstRef,
     sourceCommitId: srcRef,
     baseCommitId: baseRef,
-    conflictMetadataList: [],
+    conflictMetadataList: conflicts.map(conflictMetadataFor),
     nextToken: undefined,
   };
 };
@@ -1103,23 +1202,30 @@ const DescribeMergeConflicts: OperationHandler = (input, ctx) => {
   const dstRef = resolveRef(ctx, repoName, destinationCommitSpecifier);
   const baseRef = getMergeBase(ctx, repoName, srcRef, dstRef);
 
+  const filePath = stringOrUndefined(input["filePath"]) ?? "";
+  const conflicts = computeConflicts(ctx, repoName, srcRef, dstRef, baseRef);
+  const match = conflicts.find((c) => c.filePath === filePath);
+
   return {
-    conflictMetadata: {
-      filePath: stringOrUndefined(input["filePath"]) ?? "",
-      fileSizes: { source: 0, destination: 0, base: 0 },
-      fileModes: { source: "NORMAL", destination: "NORMAL", base: "NORMAL" },
-      objectTypes: {
-        source: "FILE",
-        destination: "FILE",
-        base: "FILE",
-      },
-      numberOfConflicts: 0,
-      isBinaryFile: { source: false, destination: false, base: false },
-      contentConflict: false,
-      fileModeConflict: false,
-      objectTypeConflict: false,
-      mergeOperations: { source: "NONE", destination: "NONE" },
-    },
+    conflictMetadata:
+      match !== undefined
+        ? conflictMetadataFor(match)
+        : {
+            filePath,
+            fileSizes: { source: 0, destination: 0, base: 0 },
+            fileModes: {
+              source: "NORMAL",
+              destination: "NORMAL",
+              base: "NORMAL",
+            },
+            objectTypes: { source: "FILE", destination: "FILE", base: "FILE" },
+            numberOfConflicts: 0,
+            isBinaryFile: { source: false, destination: false, base: false },
+            contentConflict: false,
+            fileModeConflict: false,
+            objectTypeConflict: false,
+            mergeOperations: { source: "NONE", destination: "NONE" },
+          },
     mergeHunks: [],
     destinationCommitId: dstRef,
     sourceCommitId: srcRef,
@@ -1141,8 +1247,15 @@ const BatchDescribeMergeConflicts: OperationHandler = (input, ctx) => {
   const dstRef = resolveRef(ctx, repoName, destinationCommitSpecifier);
   const baseRef = getMergeBase(ctx, repoName, srcRef, dstRef);
 
+  const allConflicts = computeConflicts(ctx, repoName, srcRef, dstRef, baseRef);
+  const conflicts = allConflicts.map((c) => ({
+    filePath: c.filePath,
+    conflictMetadata: conflictMetadataFor(c),
+    mergeHunks: [],
+  }));
+
   return {
-    conflicts: [],
+    conflicts,
     destinationCommitId: dstRef,
     sourceCommitId: srcRef,
     baseCommitId: baseRef,
@@ -1364,9 +1477,15 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "resourceArn");
-  const tags =
+  const allTags =
     ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
-  return { tags, nextToken: undefined };
+  const entries = Object.entries(allTags);
+  const { page, nextToken } = paginate(
+    entries,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return { tags: Object.fromEntries(page), nextToken };
 };
 
 const UpdateDefaultBranch: OperationHandler = (input, ctx) => {
@@ -1858,12 +1977,16 @@ const UpdateApprovalRuleTemplateName: OperationHandler = (input, ctx) => {
 };
 
 const ListApprovalRuleTemplates: OperationHandler = (input, ctx) => {
-  void input;
   const templateNames = ctx.store
     .list<StoredApprovalRuleTemplate>()
     .filter((entry) => entry.key.startsWith("art/"))
     .map((entry) => entry.value.approvalRuleTemplateName);
-  return { approvalRuleTemplateNames: templateNames, nextToken: undefined };
+  const { page, nextToken } = paginate(
+    templateNames,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return { approvalRuleTemplateNames: page, nextToken };
 };
 
 const AssociateApprovalRuleTemplateWithRepository: OperationHandler = (
@@ -2018,11 +2141,13 @@ const CreatePullRequest: OperationHandler = (input, ctx) => {
     repoName,
     stripRefsHeads(sourceReference),
   );
+  requireCommit(ctx, repoName, sourceCommit);
   const destinationCommit = resolveRef(
     ctx,
     repoName,
     stripRefsHeads(destinationReference),
   );
+  requireCommit(ctx, repoName, destinationCommit);
   const mergeBase = getMergeBase(
     ctx,
     repoName,
@@ -2067,7 +2192,7 @@ const ListPullRequests: OperationHandler = (input, ctx) => {
   const repoName = requireString(input, "repositoryName");
   requireRepository(ctx, repoName);
   const statusFilter = stringOrUndefined(input["pullRequestStatus"]);
-  const pullRequestIds = ctx.store
+  const all = ctx.store
     .list<StoredPullRequest>()
     .filter((entry) => entry.key.startsWith("pr/"))
     .map((entry) => entry.value)
@@ -2077,7 +2202,12 @@ const ListPullRequests: OperationHandler = (input, ctx) => {
         statusFilter === undefined || pr.pullRequestStatus === statusFilter,
     )
     .map((pr) => pr.pullRequestId);
-  return { pullRequestIds, nextToken: undefined };
+  const { page, nextToken } = paginate(
+    all,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return { pullRequestIds: page, nextToken };
 };
 
 const UpdatePullRequestDescription: OperationHandler = (input, ctx) => {
@@ -2096,12 +2226,17 @@ const UpdatePullRequestDescription: OperationHandler = (input, ctx) => {
 const UpdatePullRequestStatus: OperationHandler = (input, ctx) => {
   const prId = requireString(input, "pullRequestId");
   const pr = requirePullRequest(ctx, prId);
-  const newStatus = requireString(input, "pullRequestStatus") as
-    | "OPEN"
-    | "CLOSED";
+  const newStatus = requireString(input, "pullRequestStatus");
+  if (newStatus !== "OPEN" && newStatus !== "CLOSED") {
+    throw awsError(
+      "InvalidPullRequestStatusException",
+      `Invalid pull request status: ${newStatus}`,
+      400,
+    );
+  }
   const updated: StoredPullRequest = {
     ...pr,
-    pullRequestStatus: newStatus,
+    pullRequestStatus: newStatus as "OPEN" | "CLOSED",
     lastActivityDate: nowIso(),
   };
   ctx.store.set(pullRequestKey(prId), updated);
@@ -2127,6 +2262,13 @@ const MergePullRequestByFastForward: OperationHandler = (input, ctx) => {
   const prId = requireString(input, "pullRequestId");
   const repoName = requireString(input, "repositoryName");
   const pr = requirePullRequest(ctx, prId);
+  if (pr.pullRequestStatus !== "OPEN") {
+    throw awsError(
+      "PullRequestAlreadyMergedException",
+      "The pull request has already been merged.",
+      400,
+    );
+  }
   const repo = requireRepository(ctx, repoName);
 
   const srcRef = resolveRef(ctx, repoName, stripRefsHeads(pr.sourceReference));
@@ -2152,6 +2294,13 @@ const MergePullRequestBySquash: OperationHandler = (input, ctx) => {
   const prId = requireString(input, "pullRequestId");
   const repoName = requireString(input, "repositoryName");
   const pr = requirePullRequest(ctx, prId);
+  if (pr.pullRequestStatus !== "OPEN") {
+    throw awsError(
+      "PullRequestAlreadyMergedException",
+      "The pull request has already been merged.",
+      400,
+    );
+  }
   const repo = requireRepository(ctx, repoName);
 
   const srcRef = resolveRef(ctx, repoName, stripRefsHeads(pr.sourceReference));
@@ -2196,6 +2345,13 @@ const MergePullRequestByThreeWay: OperationHandler = (input, ctx) => {
   const prId = requireString(input, "pullRequestId");
   const repoName = requireString(input, "repositoryName");
   const pr = requirePullRequest(ctx, prId);
+  if (pr.pullRequestStatus !== "OPEN") {
+    throw awsError(
+      "PullRequestAlreadyMergedException",
+      "The pull request has already been merged.",
+      400,
+    );
+  }
   const repo = requireRepository(ctx, repoName);
 
   const srcRef = resolveRef(ctx, repoName, stripRefsHeads(pr.sourceReference));

@@ -105,11 +105,20 @@ test("CodeCommit repository and branch lifecycle", async () => {
     "updated description",
   );
 
+  const firstFile = await client.send(
+    new PutFileCommand({
+      repositoryName: name,
+      branchName: "main",
+      filePath: "README.md",
+      fileContent: Buffer.from("hello"),
+      commitMessage: "init",
+    }),
+  );
   await client.send(
     new CreateBranchCommand({
       repositoryName: name,
       branchName: "feature",
-      commitId: "0000000000000000000000000000000000000000",
+      commitId: firstFile.commitId!,
     }),
   );
   const branches = await client.send(
@@ -604,6 +613,182 @@ test("CodeCommit comment lifecycle", async () => {
   await client.send(new DeleteCommentContentCommand({ commentId }));
   const deleted = await client.send(new GetCommentCommand({ commentId }));
   expect(deleted.comment?.deleted).toBe(true);
+
+  await client.send(new DeleteRepositoryCommand({ repositoryName: repoName }));
+});
+
+test("CodeCommit CreateBranch error cases", async () => {
+  const client = codecommit();
+  const repoName = "branch-errors-e2e-repo";
+
+  await client.send(new CreateRepositoryCommand({ repositoryName: repoName }));
+  const put = await client.send(
+    new PutFileCommand({
+      repositoryName: repoName,
+      branchName: "main",
+      filePath: "README.md",
+      fileContent: Buffer.from("hello"),
+      commitMessage: "init",
+    }),
+  );
+  const commitId = put.commitId!;
+
+  await client.send(
+    new CreateBranchCommand({
+      repositoryName: repoName,
+      branchName: "feature",
+      commitId,
+    }),
+  );
+
+  await expect(
+    client.send(
+      new CreateBranchCommand({
+        repositoryName: repoName,
+        branchName: "feature",
+        commitId,
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "BranchNameExistsException" });
+
+  await expect(
+    client.send(
+      new CreateBranchCommand({
+        repositoryName: repoName,
+        branchName: "new-branch",
+        commitId: "0000000000000000000000000000000000000000",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "CommitDoesNotExistException" });
+
+  await client.send(new DeleteRepositoryCommand({ repositoryName: repoName }));
+});
+
+test("CodeCommit pagination (ListPullRequests maxResults + nextToken)", async () => {
+  const client = codecommit();
+  const repoName = "pagination-pr-e2e-repo";
+
+  await client.send(new CreateRepositoryCommand({ repositoryName: repoName }));
+  const put = await client.send(
+    new PutFileCommand({
+      repositoryName: repoName,
+      branchName: "main",
+      filePath: "README.md",
+      fileContent: Buffer.from("hello"),
+      commitMessage: "init",
+    }),
+  );
+  await client.send(
+    new CreateBranchCommand({
+      repositoryName: repoName,
+      branchName: "feature",
+      commitId: put.commitId!,
+    }),
+  );
+  await client.send(
+    new PutFileCommand({
+      repositoryName: repoName,
+      branchName: "feature",
+      filePath: "feat.md",
+      fileContent: Buffer.from("feature"),
+      commitMessage: "feat",
+    }),
+  );
+
+  for (let i = 0; i < 3; i++) {
+    await client.send(
+      new CreatePullRequestCommand({
+        title: `PR ${i}`,
+        targets: [
+          {
+            repositoryName: repoName,
+            sourceReference: "feature",
+            destinationReference: "main",
+          },
+        ],
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListPullRequestsCommand({ repositoryName: repoName, maxResults: 2 }),
+  );
+  expect((page1.pullRequestIds ?? []).length).toBe(2);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListPullRequestsCommand({
+      repositoryName: repoName,
+      maxResults: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect((page2.pullRequestIds ?? []).length).toBeGreaterThanOrEqual(1);
+  expect(page2.nextToken).toBeUndefined();
+
+  await client.send(new DeleteRepositoryCommand({ repositoryName: repoName }));
+});
+
+test("CodeCommit MergePullRequest already-merged error", async () => {
+  const client = codecommit();
+  const repoName = "merge-already-merged-e2e-repo";
+
+  await client.send(new CreateRepositoryCommand({ repositoryName: repoName }));
+  const put = await client.send(
+    new PutFileCommand({
+      repositoryName: repoName,
+      branchName: "main",
+      filePath: "README.md",
+      fileContent: Buffer.from("hello"),
+      commitMessage: "init",
+    }),
+  );
+  await client.send(
+    new CreateBranchCommand({
+      repositoryName: repoName,
+      branchName: "feature",
+      commitId: put.commitId!,
+    }),
+  );
+  await client.send(
+    new PutFileCommand({
+      repositoryName: repoName,
+      branchName: "feature",
+      filePath: "feat.md",
+      fileContent: Buffer.from("feature"),
+      commitMessage: "feat",
+    }),
+  );
+
+  const pr = await client.send(
+    new CreatePullRequestCommand({
+      title: "Merge once",
+      targets: [
+        {
+          repositoryName: repoName,
+          sourceReference: "feature",
+          destinationReference: "main",
+        },
+      ],
+    }),
+  );
+  const prId = pr.pullRequest?.pullRequestId!;
+
+  await client.send(
+    new MergePullRequestByFastForwardCommand({
+      pullRequestId: prId,
+      repositoryName: repoName,
+    }),
+  );
+
+  await expect(
+    client.send(
+      new MergePullRequestByFastForwardCommand({
+        pullRequestId: prId,
+        repositoryName: repoName,
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "PullRequestAlreadyMergedException" });
 
   await client.send(new DeleteRepositoryCommand({ repositoryName: repoName }));
 });

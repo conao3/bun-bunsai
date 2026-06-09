@@ -67,6 +67,19 @@ const requireStream = (
   return stream;
 };
 
+const descriptionOf = (stream: StoredDeliveryStream) => ({
+  DeliveryStreamName: stream.DeliveryStreamName,
+  DeliveryStreamARN: stream.DeliveryStreamARN,
+  DeliveryStreamStatus: stream.DeliveryStreamStatus,
+  DeliveryStreamType: stream.DeliveryStreamType,
+  VersionId: stream.VersionId,
+  CreateTimestamp: stream.CreateTimestamp,
+  LastUpdateTimestamp: stream.LastUpdateTimestamp,
+  Destinations: stream.Destinations,
+  HasMoreDestinations: stream.HasMoreDestinations,
+  DeliveryStreamEncryptionConfiguration: stream.EncryptionConfiguration,
+});
+
 const bucketNameFromArn = (arn: string): string =>
   arn.split(":").slice(-1)[0] ?? "";
 
@@ -160,7 +173,7 @@ const CreateDeliveryStream: OperationHandler = (input, ctx) => {
   const stream: StoredDeliveryStream = {
     DeliveryStreamName: name,
     DeliveryStreamARN: arn,
-    DeliveryStreamStatus: "ACTIVE",
+    DeliveryStreamStatus: "CREATING",
     DeliveryStreamType: type,
     VersionId: "1",
     CreateTimestamp: now,
@@ -176,20 +189,33 @@ const CreateDeliveryStream: OperationHandler = (input, ctx) => {
 const DescribeDeliveryStream: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DeliveryStreamName");
   const stream = requireStream(ctx, name);
-  return {
-    DeliveryStreamDescription: {
-      DeliveryStreamName: stream.DeliveryStreamName,
-      DeliveryStreamARN: stream.DeliveryStreamARN,
-      DeliveryStreamStatus: stream.DeliveryStreamStatus,
-      DeliveryStreamType: stream.DeliveryStreamType,
-      VersionId: stream.VersionId,
-      CreateTimestamp: stream.CreateTimestamp,
-      LastUpdateTimestamp: stream.LastUpdateTimestamp,
-      Destinations: stream.Destinations,
-      HasMoreDestinations: stream.HasMoreDestinations,
-      DeliveryStreamEncryptionConfiguration: stream.EncryptionConfiguration,
-    },
-  };
+  if (stream.DeliveryStreamStatus === "CREATING") {
+    const updated = { ...stream, DeliveryStreamStatus: "ACTIVE" };
+    ctx.store.set(`${streamPrefix}${name}`, updated);
+    return { DeliveryStreamDescription: descriptionOf(updated) };
+  }
+  if (stream.DeliveryStreamStatus === "DELETING") {
+    ctx.store.delete(`${streamPrefix}${name}`);
+    return { DeliveryStreamDescription: descriptionOf(stream) };
+  }
+  const enc = stream.EncryptionConfiguration;
+  if (enc?.Status === "ENABLING") {
+    const updated = {
+      ...stream,
+      EncryptionConfiguration: { ...enc, Status: "ENABLED" },
+    };
+    ctx.store.set(`${streamPrefix}${name}`, updated);
+    return { DeliveryStreamDescription: descriptionOf(updated) };
+  }
+  if (enc?.Status === "DISABLING") {
+    const updated = {
+      ...stream,
+      EncryptionConfiguration: { ...enc, Status: "DISABLED" },
+    };
+    ctx.store.set(`${streamPrefix}${name}`, updated);
+    return { DeliveryStreamDescription: descriptionOf(updated) };
+  }
+  return { DeliveryStreamDescription: descriptionOf(stream) };
 };
 
 const ListDeliveryStreams: OperationHandler = (input, ctx) => {
@@ -206,6 +232,7 @@ const ListDeliveryStreams: OperationHandler = (input, ctx) => {
   const names = ctx.store
     .list<StoredDeliveryStream>()
     .filter((entry) => entry.key.startsWith(streamPrefix))
+    .filter((entry) => entry.value.DeliveryStreamStatus !== "DELETING")
     .filter(
       (entry) => type === undefined || entry.value.DeliveryStreamType === type,
     )
@@ -221,14 +248,41 @@ const ListDeliveryStreams: OperationHandler = (input, ctx) => {
 
 const DeleteDeliveryStream: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DeliveryStreamName");
-  requireStream(ctx, name);
-  ctx.store.delete(`${streamPrefix}${name}`);
+  const stream = requireStream(ctx, name);
+  const status = stream.DeliveryStreamStatus;
+  const allowForce = input["AllowForceDelete"] === true;
+  if (status === "CREATING" || status === "DELETING") {
+    throw awsError(
+      "ResourceInUseException",
+      `Firehose ${name} is in ${status} state.`,
+      400,
+    );
+  }
+  if (status === "DELETING_FAILED" && !allowForce) {
+    throw awsError(
+      "ResourceInUseException",
+      `Firehose ${name} is in ${status} state.`,
+      400,
+    );
+  }
+  ctx.store.set(`${streamPrefix}${name}`, {
+    ...stream,
+    DeliveryStreamStatus: "DELETING",
+    LastUpdateTimestamp: Math.floor(Date.now() / 1000),
+  });
   return {};
 };
 
 const PutRecord: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DeliveryStreamName");
   const stream = requireStream(ctx, name);
+  if (stream.DeliveryStreamStatus !== "ACTIVE") {
+    throw awsError(
+      "ServiceUnavailableException",
+      `Firehose ${name} is not in ACTIVE state.`,
+      503,
+    );
+  }
   const record = asRecord(input["Record"]);
   if (record["Data"] === undefined) {
     throw awsError("InvalidArgumentException", "Record.Data is required.", 400);
@@ -241,6 +295,13 @@ const PutRecord: OperationHandler = (input, ctx) => {
 const PutRecordBatch: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DeliveryStreamName");
   const stream = requireStream(ctx, name);
+  if (stream.DeliveryStreamStatus !== "ACTIVE") {
+    throw awsError(
+      "ServiceUnavailableException",
+      `Firehose ${name} is not in ACTIVE state.`,
+      503,
+    );
+  }
   const records = Array.isArray(input["Records"])
     ? (input["Records"] as unknown[])
     : [];
@@ -335,7 +396,7 @@ const StartDeliveryStreamEncryption: OperationHandler = (input, ctx) => {
     EncryptionConfiguration: {
       KeyARN: keyArn,
       KeyType: keyType,
-      Status: "ENABLED",
+      Status: "ENABLING",
     },
     LastUpdateTimestamp: Math.floor(Date.now() / 1000),
   });
@@ -351,7 +412,7 @@ const StopDeliveryStreamEncryption: OperationHandler = (input, ctx) => {
     EncryptionConfiguration: {
       KeyARN: previous?.KeyARN,
       KeyType: previous?.KeyType,
-      Status: "DISABLED",
+      Status: "DISABLING",
     },
     LastUpdateTimestamp: Math.floor(Date.now() / 1000),
   });
@@ -377,18 +438,32 @@ const UpdateDestination: OperationHandler = (input, ctx) => {
     k.endsWith("DestinationUpdate"),
   );
   const updateData = updateKey !== undefined ? asRecord(input[updateKey]) : {};
+  const descriptionKey =
+    updateKey !== undefined
+      ? updateKey.replace("Update", "Description")
+      : undefined;
   const existingIdx = stream.Destinations.findIndex(
     (d) => asRecord(d)["DestinationId"] === destinationId,
   );
   const destinations = [...stream.Destinations];
   if (existingIdx >= 0) {
-    destinations[existingIdx] = {
-      ...asRecord(destinations[existingIdx]),
-      ...updateData,
+    const existing = asRecord(destinations[existingIdx]);
+    const existingDesc =
+      descriptionKey !== undefined ? asRecord(existing[descriptionKey]) : {};
+    const mergedEntry: Record<string, unknown> = {
+      ...existing,
       DestinationId: destinationId,
     };
+    if (descriptionKey !== undefined) {
+      mergedEntry[descriptionKey] = { ...existingDesc, ...updateData };
+    }
+    destinations[existingIdx] = mergedEntry;
   } else {
-    destinations.push({ DestinationId: destinationId, ...updateData });
+    const newEntry: Record<string, unknown> = { DestinationId: destinationId };
+    if (descriptionKey !== undefined) {
+      newEntry[descriptionKey] = updateData;
+    }
+    destinations.push(newEntry);
   }
   ctx.store.set(`${streamPrefix}${name}`, {
     ...stream,

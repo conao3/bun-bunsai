@@ -173,6 +173,19 @@ type StoredExportImageTask = {
   AmiId: string | undefined;
 };
 
+type StoredSession = {
+  Id: string;
+  UserId: string;
+  StackName: string;
+  FleetName: string;
+  State: string;
+  ConnectionState: string;
+  StartTime: number;
+  MaxExpirationTime: number;
+  AuthenticationType: string;
+  InstanceId: string;
+};
+
 const fleetKey = (name: string): string => `fleet/${name}`;
 const stackKey = (name: string): string => `stack/${name}`;
 const appBlockKey = (name: string): string => `appblock/${name}`;
@@ -189,6 +202,7 @@ const themeKey = (stackName: string): string => `theme/${stackName}`;
 const usageReportSubscriptionKey = (): string => `usage-report-subscription`;
 const exportImageTaskKey = (taskId: string): string =>
   `exportimagetask/${taskId}`;
+const sessionKey = (id: string): string => `session/${id}`;
 const tagsKey = (arn: string): string => `tags/${arn}`;
 const fleetStackAssocKey = (fleetName: string, stackName: string): string =>
   `fleet-stack/${fleetName}/${stackName}`;
@@ -238,6 +252,49 @@ const stringListFromInput = (value: unknown): string[] =>
   Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string")
     : [];
+
+const encodeCursor = (offset: number): string => btoa(String(offset));
+
+const decodeCursor = (token: string): number => {
+  const n = parseInt(atob(token), 10);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; NextToken: string | undefined } => {
+  const offset = typeof nextToken === "string" ? decodeCursor(nextToken) : 0;
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : items.length;
+  const page = items.slice(offset, offset + max);
+  const token =
+    offset + max < items.length ? encodeCursor(offset + max) : undefined;
+  return { items: page, NextToken: token };
+};
+
+const filtersFromInput = (
+  value: unknown,
+): { name: string; values: string[] }[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (f): f is Record<string, unknown> =>
+        typeof f === "object" && f !== null && !Array.isArray(f),
+    )
+    .map((f) => ({
+      name: typeof f["Name"] === "string" ? f["Name"] : "",
+      values: Array.isArray(f["Values"])
+        ? (f["Values"] as unknown[]).filter(
+            (v): v is string => typeof v === "string",
+          )
+        : [],
+    }))
+    .filter((f) => f.name !== "");
+};
 
 const desiredFromComputeCapacity = (value: unknown): number => {
   if (
@@ -373,6 +430,12 @@ const listExportImageTasks = (ctx: ServiceContext): StoredExportImageTask[] =>
     .filter((entry) => entry.key.startsWith("exportimagetask/"))
     .map((entry) => entry.value);
 
+const listSessions = (ctx: ServiceContext): StoredSession[] =>
+  ctx.store
+    .list<StoredSession>()
+    .filter((entry) => entry.key.startsWith("session/"))
+    .map((entry) => entry.value);
+
 const CreateFleet: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   const instanceType = requireString(input, "InstanceType");
@@ -466,11 +529,7 @@ const StopFleet: OperationHandler = (input, ctx) => {
 };
 
 const UpdateFleet: OperationHandler = (input, ctx) => {
-  const name = stringOrUndefined(input["Name"]);
-  if (name === undefined) {
-    const fleets = listFleets(ctx);
-    return { Fleet: fleets[0] };
-  }
+  const name = requireString(input, "Name");
   const fleet = ctx.store.get<StoredFleet>(fleetKey(name));
   if (fleet === undefined) {
     throw awsError(
@@ -1440,7 +1499,7 @@ const CreateExportImageTask: OperationHandler = (input, ctx) => {
   const imageName = requireString(input, "ImageName");
   const amiName = requireString(input, "AmiName");
   const image = ctx.store.get<StoredImage>(imageKey(imageName));
-  const taskId = `eit-${crypto.randomUUID().slice(0, 8)}`;
+  const taskId = crypto.randomUUID();
   const task: StoredExportImageTask = {
     TaskId: taskId,
     ImageArn: image?.Arn ?? imageArn(ctx, imageName),
@@ -1455,26 +1514,34 @@ const CreateExportImageTask: OperationHandler = (input, ctx) => {
 };
 
 const GetExportImageTask: OperationHandler = (input, ctx) => {
-  const taskId = stringOrUndefined(input["ExportImageTaskId"]);
-  if (taskId !== undefined) {
-    const task = ctx.store.get<StoredExportImageTask>(
-      exportImageTaskKey(taskId),
+  const taskId = requireString(input, "TaskId");
+  const task = ctx.store.get<StoredExportImageTask>(exportImageTaskKey(taskId));
+  if (task === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `ExportImageTask not found: ${taskId}`,
+      400,
     );
-    if (task === undefined) {
-      throw awsError(
-        "ResourceNotFoundException",
-        `ExportImageTask not found: ${taskId}`,
-        400,
-      );
-    }
-    return { ExportImageTask: task };
   }
-  const tasks = listExportImageTasks(ctx);
-  return { ExportImageTask: tasks[0] };
+  return { ExportImageTask: task };
 };
 
-const ListExportImageTasks: OperationHandler = (_input, ctx) => {
-  return { ExportImageTasks: listExportImageTasks(ctx) };
+const ListExportImageTasks: OperationHandler = (input, ctx) => {
+  let tasks = listExportImageTasks(ctx);
+  const filters = filtersFromInput(input["Filters"]);
+  for (const filter of filters) {
+    if (filter.name === "State") {
+      tasks = tasks.filter((t) => filter.values.includes(t.State));
+    } else if (filter.name === "ImageName") {
+      tasks = tasks.filter((t) => filter.values.includes(t.AmiName));
+    }
+  }
+  const { items, NextToken } = paginate(
+    tasks,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { ExportImageTasks: items, NextToken };
 };
 
 const CreateUser: OperationHandler = (input, ctx) => {
@@ -1760,6 +1827,20 @@ const CreateStreamingURL: OperationHandler = (input, ctx) => {
   const stackName = requireString(input, "StackName");
   const fleetName = requireString(input, "FleetName");
   const userId = requireString(input, "UserId");
+  const sessionId = `sess-${crypto.randomUUID().slice(0, 8)}`;
+  const session: StoredSession = {
+    Id: sessionId,
+    UserId: userId,
+    StackName: stackName,
+    FleetName: fleetName,
+    State: "ACTIVE",
+    ConnectionState: "CONNECTED",
+    StartTime: Math.floor(Date.now() / 1000) - 60,
+    MaxExpirationTime: Math.floor(Date.now() / 1000) + 3600,
+    AuthenticationType: stringOrUndefined(input["AuthenticationType"]) ?? "API",
+    InstanceId: `i-${crypto.randomUUID().slice(0, 12)}`,
+  };
+  ctx.store.set(sessionKey(sessionId), session);
   return {
     StreamingURL: `https://appstream2.${ctx.region}.aws.amazon.com/authenticate?version=1&stack=${stackName}&fleet=${fleetName}&user=${userId}`,
     Expires: Math.floor(Date.now() / 1000) + 3600,
@@ -1770,23 +1851,30 @@ const DescribeSessions: OperationHandler = (input, ctx) => {
   const stackName = requireString(input, "StackName");
   const fleetName = requireString(input, "FleetName");
   const userId = stringOrUndefined(input["UserId"]);
-  const sessions = [
-    {
-      Id: `sess-${crypto.randomUUID().slice(0, 8)}`,
-      UserId: userId ?? "test-user",
-      StackName: stackName,
-      FleetName: fleetName,
-      State: "ACTIVE",
-      ConnectionState: "CONNECTED",
-      StartTime: Math.floor(Date.now() / 1000) - 60,
-      MaxExpirationTime: Math.floor(Date.now() / 1000) + 3600,
-      AuthenticationType: "USERPOOL",
-    },
-  ];
-  return { Sessions: sessions };
+  const instanceId = stringOrUndefined(input["InstanceId"]);
+  let sessions = listSessions(ctx).filter(
+    (s) => s.StackName === stackName && s.FleetName === fleetName,
+  );
+  if (userId !== undefined) {
+    sessions = sessions.filter((s) => s.UserId === userId);
+  }
+  if (instanceId !== undefined) {
+    sessions = sessions.filter((s) => s.InstanceId === instanceId);
+  }
+  const { items, NextToken } = paginate(
+    sessions,
+    input["Limit"],
+    input["NextToken"],
+  );
+  return { Sessions: items, NextToken };
 };
 
-const ExpireSession: OperationHandler = (_input, _ctx) => {
+const ExpireSession: OperationHandler = (input, ctx) => {
+  const sessionId = requireString(input, "SessionId");
+  const session = ctx.store.get<StoredSession>(sessionKey(sessionId));
+  if (session !== undefined) {
+    ctx.store.set(sessionKey(sessionId), { ...session, State: "EXPIRED" });
+  }
   return {};
 };
 

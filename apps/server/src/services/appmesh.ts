@@ -28,6 +28,7 @@ type StoredMesh = {
   lastUpdatedAt: number;
   owner: string;
   spec: Record<string, unknown>;
+  clientToken?: string;
 };
 
 type StoredVirtualNode = {
@@ -40,6 +41,7 @@ type StoredVirtualNode = {
   lastUpdatedAt: number;
   owner: string;
   spec: Record<string, unknown>;
+  clientToken?: string;
 };
 
 type StoredVirtualRouter = {
@@ -52,6 +54,7 @@ type StoredVirtualRouter = {
   lastUpdatedAt: number;
   owner: string;
   spec: Record<string, unknown>;
+  clientToken?: string;
 };
 
 type StoredVirtualService = {
@@ -64,6 +67,7 @@ type StoredVirtualService = {
   lastUpdatedAt: number;
   owner: string;
   spec: Record<string, unknown>;
+  clientToken?: string;
 };
 
 type StoredVirtualGateway = {
@@ -76,6 +80,7 @@ type StoredVirtualGateway = {
   lastUpdatedAt: number;
   owner: string;
   spec: Record<string, unknown>;
+  clientToken?: string;
 };
 
 type StoredRoute = {
@@ -89,6 +94,7 @@ type StoredRoute = {
   lastUpdatedAt: number;
   owner: string;
   spec: Record<string, unknown>;
+  clientToken?: string;
 };
 
 type StoredGatewayRoute = {
@@ -102,6 +108,7 @@ type StoredGatewayRoute = {
   lastUpdatedAt: number;
   owner: string;
   spec: Record<string, unknown>;
+  clientToken?: string;
 };
 
 type TagRecord = { key: string; value: string };
@@ -481,7 +488,12 @@ const requireGwRoute = (
 
 const CreateMesh: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
-  if (ctx.store.get<StoredMesh>(meshKey(meshName)) !== undefined) {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  const existing = ctx.store.get<StoredMesh>(meshKey(meshName));
+  if (existing !== undefined) {
+    if (clientToken !== undefined && clientToken === existing.clientToken) {
+      return { mesh: meshData(existing) };
+    }
     throw awsError(
       "ConflictException",
       `Mesh ${meshName} already exists.`,
@@ -498,6 +510,7 @@ const CreateMesh: OperationHandler = (input, ctx) => {
     lastUpdatedAt: now,
     owner: ctx.account,
     spec: asRecord(input["spec"]),
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(meshKey(meshName), mesh);
   const initialTags = arrayOrEmpty(input["tags"]) as TagRecord[];
@@ -547,6 +560,24 @@ const ListMeshes: OperationHandler = (input, ctx) => {
 const DeleteMesh: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   const mesh = requireMesh(ctx, meshName);
+  const childPrefixes = [
+    `${vnPrefix}${meshName}:`,
+    `${vrPrefix}${meshName}:`,
+    `${vsPrefix}${meshName}:`,
+    `${vgPrefix}${meshName}:`,
+    `${routePrefix}${meshName}:`,
+    `${gwRoutePrefix}${meshName}:`,
+  ];
+  const hasChildren = ctx.store
+    .list()
+    .some((e) => childPrefixes.some((p) => e.key.startsWith(p)));
+  if (hasChildren) {
+    throw awsError(
+      "ResourceInUseException",
+      `Mesh ${meshName} still has active resources.`,
+      409,
+    );
+  }
   ctx.store.delete(meshKey(meshName));
   ctx.store.delete(tagsKey(mesh.arn));
   return { mesh: meshData(mesh) };
@@ -556,7 +587,14 @@ const CreateVirtualNode: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   requireMesh(ctx, meshName);
   const virtualNodeName = requireString(input, "virtualNodeName");
-  if (ctx.store.get(vnKey(meshName, virtualNodeName)) !== undefined) {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  const existing = ctx.store.get<StoredVirtualNode>(
+    vnKey(meshName, virtualNodeName),
+  );
+  if (existing !== undefined) {
+    if (clientToken !== undefined && clientToken === existing.clientToken) {
+      return { virtualNode: vnData(existing) };
+    }
     throw awsError(
       "ConflictException",
       `Virtual node ${virtualNodeName} already exists.`,
@@ -574,8 +612,13 @@ const CreateVirtualNode: OperationHandler = (input, ctx) => {
     lastUpdatedAt: now,
     owner: ctx.account,
     spec: asRecord(input["spec"]),
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(vnKey(meshName, virtualNodeName), rec);
+  const initialTags = arrayOrEmpty(input["tags"]) as TagRecord[];
+  if (initialTags.length > 0) {
+    ctx.store.set(tagsKey(rec.arn), initialTags);
+  }
   return { virtualNode: vnData(rec) };
 };
 
@@ -629,6 +672,28 @@ const DeleteVirtualNode: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   const virtualNodeName = requireString(input, "virtualNodeName");
   const rec = requireVn(ctx, meshName, virtualNodeName);
+  const vsStorePrefix = `${vsPrefix}${meshName}:`;
+  const inUse = ctx.store
+    .list<StoredVirtualService>()
+    .filter((e) => e.key.startsWith(vsStorePrefix))
+    .some((e) => {
+      const provider = asRecordOrUndefined(e.value.spec["provider"]);
+      const vnRef =
+        provider !== undefined
+          ? asRecordOrUndefined(provider["virtualNode"])
+          : undefined;
+      return (
+        vnRef !== undefined &&
+        stringOrUndefined(vnRef["virtualNodeName"]) === virtualNodeName
+      );
+    });
+  if (inUse) {
+    throw awsError(
+      "ResourceInUseException",
+      `Virtual node ${virtualNodeName} is referenced by a virtual service.`,
+      409,
+    );
+  }
   ctx.store.delete(vnKey(meshName, virtualNodeName));
   ctx.store.delete(tagsKey(rec.arn));
   return { virtualNode: vnData(rec) };
@@ -638,7 +703,14 @@ const CreateVirtualRouter: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   requireMesh(ctx, meshName);
   const virtualRouterName = requireString(input, "virtualRouterName");
-  if (ctx.store.get(vrKey(meshName, virtualRouterName)) !== undefined) {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  const existing = ctx.store.get<StoredVirtualRouter>(
+    vrKey(meshName, virtualRouterName),
+  );
+  if (existing !== undefined) {
+    if (clientToken !== undefined && clientToken === existing.clientToken) {
+      return { virtualRouter: vrData(existing) };
+    }
     throw awsError(
       "ConflictException",
       `Virtual router ${virtualRouterName} already exists.`,
@@ -656,8 +728,13 @@ const CreateVirtualRouter: OperationHandler = (input, ctx) => {
     lastUpdatedAt: now,
     owner: ctx.account,
     spec: asRecord(input["spec"]),
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(vrKey(meshName, virtualRouterName), rec);
+  const initialTags = arrayOrEmpty(input["tags"]) as TagRecord[];
+  if (initialTags.length > 0) {
+    ctx.store.set(tagsKey(rec.arn), initialTags);
+  }
   return { virtualRouter: vrData(rec) };
 };
 
@@ -713,6 +790,14 @@ const DeleteVirtualRouter: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   const virtualRouterName = requireString(input, "virtualRouterName");
   const rec = requireVr(ctx, meshName, virtualRouterName);
+  const routeStorePrefix = `${routePrefix}${meshName}:${virtualRouterName}:`;
+  if (ctx.store.list().some((e) => e.key.startsWith(routeStorePrefix))) {
+    throw awsError(
+      "ResourceInUseException",
+      `Virtual router ${virtualRouterName} still has active routes.`,
+      409,
+    );
+  }
   ctx.store.delete(vrKey(meshName, virtualRouterName));
   ctx.store.delete(tagsKey(rec.arn));
   return { virtualRouter: vrData(rec) };
@@ -724,10 +809,14 @@ const CreateRoute: OperationHandler = (input, ctx) => {
   const virtualRouterName = requireString(input, "virtualRouterName");
   requireVr(ctx, meshName, virtualRouterName);
   const routeName = requireString(input, "routeName");
-  if (
-    ctx.store.get(routeKey(meshName, virtualRouterName, routeName)) !==
-    undefined
-  ) {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  const existing = ctx.store.get<StoredRoute>(
+    routeKey(meshName, virtualRouterName, routeName),
+  );
+  if (existing !== undefined) {
+    if (clientToken !== undefined && clientToken === existing.clientToken) {
+      return { route: routeData(existing) };
+    }
     throw awsError(
       "ConflictException",
       `Route ${routeName} already exists.`,
@@ -746,8 +835,13 @@ const CreateRoute: OperationHandler = (input, ctx) => {
     lastUpdatedAt: now,
     owner: ctx.account,
     spec: asRecord(input["spec"]),
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(routeKey(meshName, virtualRouterName, routeName), rec);
+  const initialTags = arrayOrEmpty(input["tags"]) as TagRecord[];
+  if (initialTags.length > 0) {
+    ctx.store.set(tagsKey(rec.arn), initialTags);
+  }
   return { route: routeData(rec) };
 };
 
@@ -813,7 +907,14 @@ const CreateVirtualService: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   requireMesh(ctx, meshName);
   const virtualServiceName = requireString(input, "virtualServiceName");
-  if (ctx.store.get(vsKey(meshName, virtualServiceName)) !== undefined) {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  const existing = ctx.store.get<StoredVirtualService>(
+    vsKey(meshName, virtualServiceName),
+  );
+  if (existing !== undefined) {
+    if (clientToken !== undefined && clientToken === existing.clientToken) {
+      return { virtualService: vsData(existing) };
+    }
     throw awsError(
       "ConflictException",
       `Virtual service ${virtualServiceName} already exists.`,
@@ -831,8 +932,13 @@ const CreateVirtualService: OperationHandler = (input, ctx) => {
     lastUpdatedAt: now,
     owner: ctx.account,
     spec: asRecord(input["spec"]),
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(vsKey(meshName, virtualServiceName), rec);
+  const initialTags = arrayOrEmpty(input["tags"]) as TagRecord[];
+  if (initialTags.length > 0) {
+    ctx.store.set(tagsKey(rec.arn), initialTags);
+  }
   return { virtualService: vsData(rec) };
 };
 
@@ -897,7 +1003,14 @@ const CreateVirtualGateway: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   requireMesh(ctx, meshName);
   const virtualGatewayName = requireString(input, "virtualGatewayName");
-  if (ctx.store.get(vgKey(meshName, virtualGatewayName)) !== undefined) {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  const existing = ctx.store.get<StoredVirtualGateway>(
+    vgKey(meshName, virtualGatewayName),
+  );
+  if (existing !== undefined) {
+    if (clientToken !== undefined && clientToken === existing.clientToken) {
+      return { virtualGateway: vgData(existing) };
+    }
     throw awsError(
       "ConflictException",
       `Virtual gateway ${virtualGatewayName} already exists.`,
@@ -915,8 +1028,13 @@ const CreateVirtualGateway: OperationHandler = (input, ctx) => {
     lastUpdatedAt: now,
     owner: ctx.account,
     spec: asRecord(input["spec"]),
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(vgKey(meshName, virtualGatewayName), rec);
+  const initialTags = arrayOrEmpty(input["tags"]) as TagRecord[];
+  if (initialTags.length > 0) {
+    ctx.store.set(tagsKey(rec.arn), initialTags);
+  }
   return { virtualGateway: vgData(rec) };
 };
 
@@ -972,6 +1090,14 @@ const DeleteVirtualGateway: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   const virtualGatewayName = requireString(input, "virtualGatewayName");
   const rec = requireVg(ctx, meshName, virtualGatewayName);
+  const gwRouteStorePrefix = `${gwRoutePrefix}${meshName}:${virtualGatewayName}:`;
+  if (ctx.store.list().some((e) => e.key.startsWith(gwRouteStorePrefix))) {
+    throw awsError(
+      "ResourceInUseException",
+      `Virtual gateway ${virtualGatewayName} still has active gateway routes.`,
+      409,
+    );
+  }
   ctx.store.delete(vgKey(meshName, virtualGatewayName));
   ctx.store.delete(tagsKey(rec.arn));
   return { virtualGateway: vgData(rec) };
@@ -983,11 +1109,14 @@ const CreateGatewayRoute: OperationHandler = (input, ctx) => {
   const virtualGatewayName = requireString(input, "virtualGatewayName");
   requireVg(ctx, meshName, virtualGatewayName);
   const gatewayRouteName = requireString(input, "gatewayRouteName");
-  if (
-    ctx.store.get(
-      gwRouteKey(meshName, virtualGatewayName, gatewayRouteName),
-    ) !== undefined
-  ) {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  const existing = ctx.store.get<StoredGatewayRoute>(
+    gwRouteKey(meshName, virtualGatewayName, gatewayRouteName),
+  );
+  if (existing !== undefined) {
+    if (clientToken !== undefined && clientToken === existing.clientToken) {
+      return { gatewayRoute: gwRouteData(existing) };
+    }
     throw awsError(
       "ConflictException",
       `Gateway route ${gatewayRouteName} already exists.`,
@@ -1006,11 +1135,16 @@ const CreateGatewayRoute: OperationHandler = (input, ctx) => {
     lastUpdatedAt: now,
     owner: ctx.account,
     spec: asRecord(input["spec"]),
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(
     gwRouteKey(meshName, virtualGatewayName, gatewayRouteName),
     rec,
   );
+  const initialTags = arrayOrEmpty(input["tags"]) as TagRecord[];
+  if (initialTags.length > 0) {
+    ctx.store.set(tagsKey(rec.arn), initialTags);
+  }
   return { gatewayRoute: gwRouteData(rec) };
 };
 

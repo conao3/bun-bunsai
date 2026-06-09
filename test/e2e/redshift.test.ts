@@ -117,6 +117,7 @@ import {
   ResetClusterParameterGroupCommand,
   ResizeClusterCommand,
   RestoreFromClusterSnapshotCommand,
+  RestoreTableFromClusterSnapshotCommand,
   ResumeClusterCommand,
   RevokeClusterSecurityGroupIngressCommand,
   RevokeEndpointAccessCommand,
@@ -171,7 +172,7 @@ test("Redshift cluster lifecycle", async () => {
     }),
   );
   expect(created.Cluster?.ClusterIdentifier).toBe(clusterId);
-  expect(created.Cluster?.ClusterStatus).toBe("available");
+  expect(created.Cluster?.ClusterStatus).toBe("creating");
   expect(created.Cluster?.NodeType).toBe("ra3.xlplus");
   expect(created.Cluster?.DBName).toBe("bunsaidb");
   expect(created.Cluster?.Endpoint?.Port).toBe(5439);
@@ -222,6 +223,13 @@ test("Redshift cluster lifecycle", async () => {
   );
   expect(resized.Cluster?.NodeType).toBe("dc2.large");
 
+  const resizeInProgress = await client.send(
+    new DescribeResizeCommand({ ClusterIdentifier: clusterId }),
+  );
+  expect(resizeInProgress.Status).toBe("IN_PROGRESS");
+  expect(resizeInProgress.TargetNodeType).toBe("dc2.large");
+  expect(resizeInProgress.TargetNumberOfNodes).toBe(2);
+
   const iamModified = await client.send(
     new ModifyClusterIamRolesCommand({
       ClusterIdentifier: clusterId,
@@ -262,10 +270,15 @@ test("Redshift cluster lifecycle", async () => {
   );
   expect(iamCreds.DbUser).toBeDefined();
 
-  await client.send(new CancelResizeCommand({ ClusterIdentifier: clusterId }));
-  await client.send(
+  const cancelled = await client.send(
+    new CancelResizeCommand({ ClusterIdentifier: clusterId }),
+  );
+  expect(cancelled.Status).toBe("CANCELLED");
+
+  const resizeCancelled = await client.send(
     new DescribeResizeCommand({ ClusterIdentifier: clusterId }),
   );
+  expect(resizeCancelled.Status).toBe("CANCELLED");
 
   const deleted = await client.send(
     new DeleteClusterCommand({
@@ -306,7 +319,7 @@ test("Redshift cluster snapshot lifecycle", async () => {
   );
   expect(created.Snapshot?.SnapshotIdentifier).toBe(snapshotId);
   expect(created.Snapshot?.ClusterIdentifier).toBe(clusterId);
-  expect(created.Snapshot?.Status).toBe("available");
+  expect(created.Snapshot?.Status).toBe("creating");
 
   const described = await client.send(
     new DescribeClusterSnapshotsCommand({
@@ -316,6 +329,7 @@ test("Redshift cluster snapshot lifecycle", async () => {
   const snapshots = described.Snapshots ?? [];
   expect(snapshots.length).toBe(1);
   expect(snapshots[0]?.SnapshotIdentifier).toBe(snapshotId);
+  expect(snapshots[0]?.Status).toBe("available");
 
   const copied = await client.send(
     new CopyClusterSnapshotCommand({
@@ -380,6 +394,40 @@ test("Redshift cluster snapshot lifecycle", async () => {
     }),
   );
   expect(batchDeleted.Resources?.length).toBe(2);
+
+  await client.send(
+    new DeleteClusterCommand({
+      ClusterIdentifier: clusterId,
+      SkipFinalClusterSnapshot: true,
+    }),
+  );
+});
+
+test("Redshift RestoreTableFromClusterSnapshot missing snapshot error", async () => {
+  const client = redshift();
+  const clusterId = "bunsai-restore-table-cluster";
+
+  await client.send(
+    new CreateClusterCommand({
+      ClusterIdentifier: clusterId,
+      NodeType: "dc2.large",
+      MasterUsername: "admin",
+      MasterUserPassword: "BunsaiTestPw1",
+      ClusterType: "single-node",
+    }),
+  );
+
+  await expect(
+    client.send(
+      new RestoreTableFromClusterSnapshotCommand({
+        ClusterIdentifier: clusterId,
+        SnapshotIdentifier: "nonexistent-snapshot",
+        SourceDatabaseName: "dev",
+        SourceTableName: "mytable",
+        NewTableName: "restored_mytable",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "ClusterSnapshotNotFoundFault" });
 
   await client.send(
     new DeleteClusterCommand({

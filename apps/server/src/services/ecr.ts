@@ -190,8 +190,26 @@ const templateView = (
   ...(t.customRoleArn !== undefined ? { customRoleArn: t.customRoleArn } : {}),
 });
 
+const REPOSITORY_NAME_PATTERN =
+  /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+
+const validateRepositoryName = (name: string): void => {
+  if (
+    name.length < 2 ||
+    name.length > 256 ||
+    !REPOSITORY_NAME_PATTERN.test(name)
+  ) {
+    throw awsError(
+      "InvalidParameterException",
+      `Invalid parameter at 'repositoryName' failed to satisfy constraint: '${name}'`,
+      400,
+    );
+  }
+};
+
 const CreateRepository: OperationHandler = (input, ctx) => {
   const name = requireString(input, "repositoryName");
+  validateRepositoryName(name);
   if (ctx.store.get<StoredRepository>(name) !== undefined) {
     throw awsError(
       "RepositoryAlreadyExistsException",
@@ -199,10 +217,23 @@ const CreateRepository: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const imageTagMutabilityInput = input["imageTagMutability"];
   const imageTagMutability =
-    typeof input["imageTagMutability"] === "string"
-      ? (input["imageTagMutability"] as string)
+    typeof imageTagMutabilityInput === "string"
+      ? imageTagMutabilityInput
       : "MUTABLE";
+  if (
+    imageTagMutability !== "MUTABLE" &&
+    imageTagMutability !== "IMMUTABLE" &&
+    imageTagMutability !== "IMMUTABLE_WITH_EXCLUSION" &&
+    imageTagMutability !== "MUTABLE_WITH_EXCLUSION"
+  ) {
+    throw awsError(
+      "InvalidParameterException",
+      `Invalid imageTagMutability '${imageTagMutability}'. Must be MUTABLE, IMMUTABLE, MUTABLE_WITH_EXCLUSION, or IMMUTABLE_WITH_EXCLUSION.`,
+      400,
+    );
+  }
   const imageTagMutabilityExclusionFilters = Array.isArray(
     input["imageTagMutabilityExclusionFilters"],
   )
@@ -221,6 +252,19 @@ const CreateRepository: OperationHandler = (input, ctx) => {
     input["encryptionConfiguration"] !== null
       ? (input["encryptionConfiguration"] as Record<string, unknown>)
       : undefined;
+  if (
+    encInput !== undefined &&
+    typeof encInput["encryptionType"] === "string"
+  ) {
+    const et = encInput["encryptionType"] as string;
+    if (et !== "AES256" && et !== "KMS" && et !== "KMS_DSSE") {
+      throw awsError(
+        "InvalidParameterException",
+        `Invalid encryptionType '${et}'. Must be AES256, KMS, or KMS_DSSE.`,
+        400,
+      );
+    }
+  }
   const encryptionConfiguration =
     encInput !== undefined
       ? {
@@ -259,14 +303,30 @@ const DescribeRepositories: OperationHandler = (input, ctx) => {
   const names = Array.isArray(input["repositoryNames"])
     ? (input["repositoryNames"] as string[])
     : [];
-  const repositories =
+  const all =
     names.length > 0
       ? names.map((name) => requireRepository(ctx, name))
       : ctx.store
           .list<StoredRepository>()
           .filter((e) => !e.key.startsWith("_"))
           .map((e) => e.value);
-  return { repositories: repositories.map(repositoryView) };
+  const offset =
+    typeof input["nextToken"] === "string" && input["nextToken"] !== ""
+      ? parseInt(atob(input["nextToken"] as string), 10) || 0
+      : 0;
+  const max =
+    typeof input["maxResults"] === "number" &&
+    (input["maxResults"] as number) > 0
+      ? (input["maxResults"] as number)
+      : all.length;
+  const page = all.slice(offset, offset + max);
+  const result: Record<string, unknown> = {
+    repositories: page.map(repositoryView),
+  };
+  if (offset + max < all.length) {
+    result["nextToken"] = btoa(String(offset + max));
+  }
+  return result;
 };
 
 const DeleteRepository: OperationHandler = (input, ctx) => {
@@ -286,12 +346,39 @@ const DeleteRepository: OperationHandler = (input, ctx) => {
 const ListImages: OperationHandler = (input, ctx) => {
   const name = requireString(input, "repositoryName");
   const repository = requireRepository(ctx, name);
-  return {
-    imageIds: repository.images.map((image) => ({
+  const filterRaw = input["filter"];
+  const tagStatus =
+    typeof filterRaw === "object" &&
+    filterRaw !== null &&
+    typeof (filterRaw as Record<string, unknown>)["tagStatus"] === "string"
+      ? ((filterRaw as Record<string, unknown>)["tagStatus"] as string)
+      : "ANY";
+  let images = repository.images;
+  if (tagStatus === "TAGGED") {
+    images = images.filter((i) => i.imageTag !== undefined);
+  } else if (tagStatus === "UNTAGGED") {
+    images = images.filter((i) => i.imageTag === undefined);
+  }
+  const offset =
+    typeof input["nextToken"] === "string" && input["nextToken"] !== ""
+      ? parseInt(atob(input["nextToken"] as string), 10) || 0
+      : 0;
+  const max =
+    typeof input["maxResults"] === "number" &&
+    (input["maxResults"] as number) > 0
+      ? (input["maxResults"] as number)
+      : images.length;
+  const page = images.slice(offset, offset + max);
+  const result: Record<string, unknown> = {
+    imageIds: page.map((image) => ({
       imageDigest: image.imageDigest,
       ...(image.imageTag === undefined ? {} : { imageTag: image.imageTag }),
     })),
   };
+  if (offset + max < images.length) {
+    result["nextToken"] = btoa(String(offset + max));
+  }
+  return result;
 };
 
 const GetAuthorizationToken: OperationHandler = (input, ctx) => {

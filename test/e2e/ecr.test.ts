@@ -793,4 +793,82 @@ describe("ecr e2e", () => {
 
     await client.send(new DeleteRepositoryCommand({ repositoryName: name }));
   });
+
+  test("CreateRepository rejects invalid imageTagMutability enum and bad repositoryName", async () => {
+    const client = ecr();
+    await expect(
+      client.send(
+        new CreateRepositoryCommand({
+          repositoryName: `bunsai-bad-mut-${Date.now()}`,
+          imageTagMutability: "INVALID_VALUE" as unknown as "MUTABLE",
+        }),
+      ),
+    ).rejects.toThrow(/imageTagMutability/);
+
+    await expect(
+      client.send(new CreateRepositoryCommand({ repositoryName: "A" })),
+    ).rejects.toThrow(/repositoryName/);
+  });
+
+  test("DescribeRepositories paginates with maxResults+nextToken", async () => {
+    const client = ecr();
+    const ts = Date.now();
+    const names = [`paged-a-${ts}`, `paged-b-${ts}`, `paged-c-${ts}`];
+    for (const n of names) {
+      await client.send(new CreateRepositoryCommand({ repositoryName: n }));
+    }
+    const page1 = await client.send(
+      new DescribeRepositoriesCommand({ maxResults: 2 }),
+    );
+    expect((page1.repositories ?? []).length).toBeLessThanOrEqual(2);
+    for (const n of names) {
+      await client.send(new DeleteRepositoryCommand({ repositoryName: n }));
+    }
+  });
+
+  test("ListImages honors filter.tagStatus and paginates", async () => {
+    const client = ecr();
+    const name = `paged-imgs-${Date.now()}`;
+    await client.send(new CreateRepositoryCommand({ repositoryName: name }));
+
+    for (const tag of ["v1", "v2"]) {
+      await client.send(
+        new PutImageCommand({
+          repositoryName: name,
+          imageManifest: JSON.stringify({
+            schemaVersion: 2,
+            mediaType: "application/vnd.docker.distribution.manifest.v2+json",
+            config: {
+              mediaType: "application/vnd.docker.container.image.v1+json",
+              size: 5,
+              digest: `sha256:${tag.padEnd(64, "0")}`,
+            },
+            layers: [],
+          }),
+          imageTag: tag,
+        }),
+      );
+    }
+
+    const taggedOnly = await client.send(
+      new ListImagesCommand({
+        repositoryName: name,
+        filter: { tagStatus: "TAGGED" },
+      }),
+    );
+    expect((taggedOnly.imageIds ?? []).length).toBe(2);
+    for (const id of taggedOnly.imageIds ?? []) {
+      expect(id.imageTag).toBeDefined();
+    }
+
+    const page1 = await client.send(
+      new ListImagesCommand({ repositoryName: name, maxResults: 1 }),
+    );
+    expect((page1.imageIds ?? []).length).toBe(1);
+    expect(typeof page1.nextToken).toBe("string");
+
+    await client.send(
+      new DeleteRepositoryCommand({ repositoryName: name, force: true }),
+    );
+  });
 });

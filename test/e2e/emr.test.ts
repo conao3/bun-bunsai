@@ -867,3 +867,123 @@ test("EMR persistent app UI lifecycle", async () => {
 
   await client.send(new TerminateJobFlowsCommand({ JobFlowIds: [clusterId] }));
 });
+
+test("EMR termination lifecycle fidelity", async () => {
+  const client = emr();
+
+  const run = await client.send(
+    new RunJobFlowCommand({
+      Name: "emr-terminate-fidelity",
+      Instances: { InstanceCount: 1, MasterInstanceType: "m5.xlarge" },
+    }),
+  );
+  const id = run.JobFlowId ?? "";
+
+  await client.send(new TerminateJobFlowsCommand({ JobFlowIds: [id] }));
+
+  const described = await client.send(
+    new DescribeClusterCommand({ ClusterId: id }),
+  );
+  expect(described.Cluster?.Status?.State).toBe("TERMINATED");
+
+  const listedTerminated = await client.send(
+    new ListClustersCommand({ ClusterStates: ["TERMINATED"] }),
+  );
+  expect((listedTerminated.Clusters ?? []).some((c) => c.Id === id)).toBe(true);
+
+  const listedWaiting = await client.send(
+    new ListClustersCommand({ ClusterStates: ["WAITING"] }),
+  );
+  expect((listedWaiting.Clusters ?? []).some((c) => c.Id === id)).toBe(false);
+});
+
+test("EMR termination protection blocks terminate", async () => {
+  const client = emr();
+
+  const run = await client.send(
+    new RunJobFlowCommand({
+      Name: "emr-protection-fidelity",
+      Instances: { InstanceCount: 1, MasterInstanceType: "m5.xlarge" },
+    }),
+  );
+  const id = run.JobFlowId ?? "";
+
+  await client.send(
+    new SetTerminationProtectionCommand({
+      JobFlowIds: [id],
+      TerminationProtected: true,
+    }),
+  );
+
+  await expect(
+    client.send(new TerminateJobFlowsCommand({ JobFlowIds: [id] })),
+  ).rejects.toThrow();
+
+  const described = await client.send(
+    new DescribeClusterCommand({ ClusterId: id }),
+  );
+  expect(described.Cluster?.Status?.State).toBe("WAITING");
+
+  await client.send(
+    new SetTerminationProtectionCommand({
+      JobFlowIds: [id],
+      TerminationProtected: false,
+    }),
+  );
+  await client.send(new TerminateJobFlowsCommand({ JobFlowIds: [id] }));
+});
+
+test("EMR ModifyInstanceFleet persists capacity", async () => {
+  const client = emr();
+
+  const run = await client.send(
+    new RunJobFlowCommand({
+      Name: "emr-fleet-capacity-fidelity",
+      Instances: { InstanceCount: 1, MasterInstanceType: "m5.xlarge" },
+    }),
+  );
+  const clusterId = run.JobFlowId ?? "";
+
+  const added = await client.send(
+    new AddInstanceFleetCommand({
+      ClusterId: clusterId,
+      InstanceFleet: {
+        InstanceFleetType: "CORE",
+        Name: "capacity-fleet",
+        TargetOnDemandCapacity: 2,
+      },
+    }),
+  );
+  const fleetId = added.InstanceFleetId ?? "";
+
+  const beforeModify = await client.send(
+    new ListInstanceFleetsCommand({ ClusterId: clusterId }),
+  );
+  const fleetBefore = (beforeModify.InstanceFleets ?? []).find(
+    (f) => f.Id === fleetId,
+  );
+  expect(fleetBefore?.TargetOnDemandCapacity).toBe(2);
+  expect(fleetBefore?.Status?.State).toBe("PROVISIONING");
+
+  await client.send(
+    new ModifyInstanceFleetCommand({
+      ClusterId: clusterId,
+      InstanceFleet: {
+        InstanceFleetId: fleetId,
+        TargetOnDemandCapacity: 5,
+        TargetSpotCapacity: 3,
+      },
+    }),
+  );
+
+  const afterModify = await client.send(
+    new ListInstanceFleetsCommand({ ClusterId: clusterId }),
+  );
+  const fleetAfter = (afterModify.InstanceFleets ?? []).find(
+    (f) => f.Id === fleetId,
+  );
+  expect(fleetAfter?.TargetOnDemandCapacity).toBe(5);
+  expect(fleetAfter?.TargetSpotCapacity).toBe(3);
+
+  await client.send(new TerminateJobFlowsCommand({ JobFlowIds: [clusterId] }));
+});

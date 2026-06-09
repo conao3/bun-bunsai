@@ -74,7 +74,7 @@ test("AppRunner service lifecycle", async () => {
   expect(created.Service?.ServiceName).toBe(serviceName);
   expect(created.Service?.ServiceId).toBeDefined();
   expect(created.Service?.ServiceUrl).toContain("awsapprunner.com");
-  expect(created.Service?.Status).toBe("RUNNING");
+  expect(created.Service?.Status).toBe("OPERATION_IN_PROGRESS");
   expect(created.OperationId).toBeDefined();
 
   const described = await client.send(
@@ -342,7 +342,7 @@ test("AppRunner VpcIngressConnection lifecycle", async () => {
   const vicArn = created.VpcIngressConnection?.VpcIngressConnectionArn;
   expect(vicArn).toBeDefined();
   expect(created.VpcIngressConnection?.VpcIngressConnectionName).toBe(vicName);
-  expect(created.VpcIngressConnection?.Status).toBe("AVAILABLE");
+  expect(created.VpcIngressConnection?.Status).toBe("PENDING_CREATION");
 
   const described = await client.send(
     new DescribeVpcIngressConnectionCommand({
@@ -374,7 +374,7 @@ test("AppRunner VpcIngressConnection lifecycle", async () => {
   const deleted = await client.send(
     new DeleteVpcIngressConnectionCommand({ VpcIngressConnectionArn: vicArn }),
   );
-  expect(deleted.VpcIngressConnection?.Status).toBe("DELETED");
+  expect(deleted.VpcIngressConnection?.Status).toBe("PENDING_DELETION");
 
   await client.send(new DeleteServiceCommand({ ServiceArn: serviceArn }));
 });
@@ -423,6 +423,127 @@ test("AppRunner custom domain lifecycle", async () => {
   );
   expect(disassociated.CustomDomain?.Status).toBe("DELETING");
 
+  await client.send(new DeleteServiceCommand({ ServiceArn: serviceArn }));
+});
+
+test("AppRunner CreateService records CREATE_SERVICE operation", async () => {
+  const client = apprunner();
+  const serviceName = `bunsai-ops-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateServiceCommand({
+      ServiceName: serviceName,
+      SourceConfiguration: {
+        ImageRepository: {
+          ImageIdentifier:
+            "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageRepositoryType: "ECR_PUBLIC",
+        },
+      },
+    }),
+  );
+  const arn = created.Service?.ServiceArn;
+  expect(arn).toBeDefined();
+  expect(created.Service?.Status).toBe("OPERATION_IN_PROGRESS");
+
+  const ops = await client.send(new ListOperationsCommand({ ServiceArn: arn }));
+  const createOp = (ops.OperationSummaryList ?? []).find(
+    (op) => op.Type === "CREATE_SERVICE",
+  );
+  expect(createOp).toBeDefined();
+  expect(createOp?.Status).toBe("IN_PROGRESS");
+  expect(createOp?.Id).toBe(created.OperationId);
+
+  const described = await client.send(
+    new DescribeServiceCommand({ ServiceArn: arn }),
+  );
+  expect(described.Service?.Status).toBe("RUNNING");
+
+  await client.send(new DeleteServiceCommand({ ServiceArn: arn }));
+});
+
+test("AppRunner ListServices pagination", async () => {
+  const client = apprunner();
+  const names = [
+    `bunsai-pg-a-${Date.now()}`,
+    `bunsai-pg-b-${Date.now()}`,
+    `bunsai-pg-c-${Date.now()}`,
+  ];
+  const arns: string[] = [];
+
+  for (const name of names) {
+    const r = await client.send(
+      new CreateServiceCommand({
+        ServiceName: name,
+        SourceConfiguration: {
+          ImageRepository: {
+            ImageIdentifier:
+              "public.ecr.aws/aws-containers/hello-app-runner:latest",
+            ImageRepositoryType: "ECR_PUBLIC",
+          },
+        },
+      }),
+    );
+    arns.push(r.Service?.ServiceArn ?? "");
+  }
+
+  const page1 = await client.send(new ListServicesCommand({ MaxResults: 2 }));
+  expect((page1.ServiceSummaryList ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListServicesCommand({ MaxResults: 2, NextToken: page1.NextToken }),
+  );
+  expect((page2.ServiceSummaryList ?? []).length).toBeGreaterThanOrEqual(1);
+
+  for (const arn of arns) {
+    await client.send(new DeleteServiceCommand({ ServiceArn: arn }));
+  }
+});
+
+test("AppRunner custom domain lifecycle with status", async () => {
+  const client = apprunner();
+  const serviceName = `bunsai-domain2-${Date.now()}`;
+
+  const svc = await client.send(
+    new CreateServiceCommand({
+      ServiceName: serviceName,
+      SourceConfiguration: {
+        ImageRepository: {
+          ImageIdentifier:
+            "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageRepositoryType: "ECR_PUBLIC",
+        },
+      },
+    }),
+  );
+  const serviceArn = svc.Service?.ServiceArn;
+  expect(serviceArn).toBeDefined();
+
+  const domain = `lifecycle-${Date.now()}.example.com`;
+  const associated = await client.send(
+    new AssociateCustomDomainCommand({
+      ServiceArn: serviceArn,
+      DomainName: domain,
+    }),
+  );
+  expect(associated.CustomDomain?.Status).toBe("CREATING");
+
+  const described = await client.send(
+    new DescribeCustomDomainsCommand({ ServiceArn: serviceArn }),
+  );
+  const stored = (described.CustomDomains ?? []).find(
+    (d) => d.DomainName === domain,
+  );
+  expect(stored).toBeDefined();
+  expect(stored?.Status).toBe("ACTIVE");
+
+  await client.send(
+    new DisassociateCustomDomainCommand({
+      ServiceArn: serviceArn,
+      DomainName: domain,
+    }),
+  );
   await client.send(new DeleteServiceCommand({ ServiceArn: serviceArn }));
 });
 

@@ -111,6 +111,29 @@ type StoredOperation = {
   UpdatedAt: number;
 };
 
+const encodeCursor = (offset: number): string => btoa(String(offset));
+
+const decodeCursor = (token: string): number => {
+  const n = parseInt(atob(token), 10);
+  return isNaN(n) ? 0 : n;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; NextToken: string | undefined } => {
+  const offset = typeof nextToken === "string" ? decodeCursor(nextToken) : 0;
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : items.length;
+  const page = items.slice(offset, offset + max);
+  const token =
+    offset + max < items.length ? encodeCursor(offset + max) : undefined;
+  return { items: page, NextToken: token };
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -478,9 +501,19 @@ const CreateService: OperationHandler = (input, ctx) => {
     Tags: arrayOrEmpty(input["Tags"]),
   };
   ctx.store.set(serviceKey(serviceId), service);
+  const opId = operationId();
+  appendServiceOperation(ctx, arn, {
+    Id: opId,
+    Type: "CREATE_SERVICE",
+    Status: "IN_PROGRESS",
+    TargetArn: arn,
+    StartedAt: now,
+    EndedAt: undefined,
+    UpdatedAt: now,
+  });
   return {
-    Service: serviceView(service),
-    OperationId: operationId(),
+    Service: { ...serviceView(service), Status: "OPERATION_IN_PROGRESS" },
+    OperationId: opId,
   };
 };
 
@@ -490,8 +523,8 @@ const DescribeService: OperationHandler = (input, ctx) => {
   return { Service: serviceView(service) };
 };
 
-const ListServices: OperationHandler = (_input, ctx) => {
-  const services = ctx.store
+const ListServices: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredService>()
     .filter((entry) => entry.key.startsWith(servicePrefix))
     .map((entry) => entry.value)
@@ -502,7 +535,15 @@ const ListServices: OperationHandler = (_input, ctx) => {
           ? 1
           : 0,
     );
-  return { ServiceSummaryList: services.map(serviceSummary) };
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return {
+    ServiceSummaryList: items.map(serviceSummary),
+    NextToken,
+  };
 };
 
 const DeleteService: OperationHandler = (input, ctx) => {
@@ -615,10 +656,10 @@ const UpdateService: OperationHandler = (input, ctx) => {
   appendServiceOperation(ctx, arn, {
     Id: opId,
     Type: "UPDATE_SERVICE",
-    Status: "SUCCEEDED",
+    Status: "IN_PROGRESS",
     TargetArn: arn,
     StartedAt: now,
-    EndedAt: now,
+    EndedAt: undefined,
     UpdatedAt: now,
   });
   return {
@@ -635,10 +676,10 @@ const StartDeployment: OperationHandler = (input, ctx) => {
   appendServiceOperation(ctx, arn, {
     Id: opId,
     Type: "START_DEPLOYMENT",
-    Status: "SUCCEEDED",
+    Status: "IN_PROGRESS",
     TargetArn: arn,
     StartedAt: now,
-    EndedAt: now,
+    EndedAt: undefined,
     UpdatedAt: now,
   });
   return { OperationId: opId };
@@ -648,17 +689,21 @@ const ListOperations: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ServiceArn");
   requireService(ctx, arn);
   const ops = getServiceOperations(ctx, arn);
-  return {
-    OperationSummaryList: ops.map((op) => ({
-      Id: op.Id,
-      Type: op.Type,
-      Status: op.Status,
-      TargetArn: op.TargetArn,
-      StartedAt: op.StartedAt,
-      EndedAt: op.EndedAt,
-      UpdatedAt: op.UpdatedAt,
-    })),
-  };
+  const summaries = ops.map((op) => ({
+    Id: op.Id,
+    Type: op.Type,
+    Status: op.Status,
+    TargetArn: op.TargetArn,
+    StartedAt: op.StartedAt,
+    EndedAt: op.EndedAt,
+    UpdatedAt: op.UpdatedAt,
+  }));
+  const { items, NextToken } = paginate(
+    summaries,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { OperationSummaryList: items, NextToken };
 };
 
 const CreateAutoScalingConfiguration: OperationHandler = (input, ctx) => {
@@ -713,7 +758,7 @@ const DescribeAutoScalingConfiguration: OperationHandler = (input, ctx) => {
 
 const ListAutoScalingConfigurations: OperationHandler = (input, ctx) => {
   const filterName = stringOrUndefined(input["AutoScalingConfigurationName"]);
-  const cfgs = ctx.store
+  const all = ctx.store
     .list<StoredAutoScalingConfig>()
     .filter((entry) => entry.key.startsWith(autoScalingPrefix))
     .map((entry) => entry.value)
@@ -722,8 +767,14 @@ const ListAutoScalingConfigurations: OperationHandler = (input, ctx) => {
         filterName === undefined ||
         cfg.AutoScalingConfigurationName === filterName,
     );
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
   return {
-    AutoScalingConfigurationSummaryList: cfgs.map(autoScalingSummary),
+    AutoScalingConfigurationSummaryList: items.map(autoScalingSummary),
+    NextToken,
   };
 };
 
@@ -753,13 +804,18 @@ const ListServicesForAutoScalingConfiguration: OperationHandler = (
 ) => {
   const arn = requireString(input, "AutoScalingConfigurationArn");
   getAutoScalingByArn(ctx, arn);
-  const arns = ctx.store
+  const all = ctx.store
     .list<StoredService>()
     .filter((entry) => entry.key.startsWith(servicePrefix))
     .map((entry) => entry.value)
     .filter((svc) => svc.AutoScalingConfigurationArn === arn)
     .map((svc) => svc.ServiceArn);
-  return { ServiceArnList: arns };
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { ServiceArnList: items, NextToken };
 };
 
 const CreateConnection: OperationHandler = (input, ctx) => {
@@ -794,14 +850,19 @@ const DeleteConnection: OperationHandler = (input, ctx) => {
 
 const ListConnections: OperationHandler = (input, ctx) => {
   const filterName = stringOrUndefined(input["ConnectionName"]);
-  const conns = ctx.store
+  const all = ctx.store
     .list<StoredConnection>()
     .filter((entry) => entry.key.startsWith(connectionPrefix))
     .map((entry) => entry.value)
     .filter(
       (conn) => filterName === undefined || conn.ConnectionName === filterName,
     );
-  return { ConnectionSummaryList: conns.map(connectionView) };
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { ConnectionSummaryList: items.map(connectionView), NextToken };
 };
 
 const CreateObservabilityConfiguration: OperationHandler = (input, ctx) => {
@@ -849,7 +910,7 @@ const DescribeObservabilityConfiguration: OperationHandler = (input, ctx) => {
 
 const ListObservabilityConfigurations: OperationHandler = (input, ctx) => {
   const filterName = stringOrUndefined(input["ObservabilityConfigurationName"]);
-  const cfgs = ctx.store
+  const all = ctx.store
     .list<StoredObservabilityConfig>()
     .filter((entry) => entry.key.startsWith(observabilityPrefix))
     .map((entry) => entry.value)
@@ -858,8 +919,14 @@ const ListObservabilityConfigurations: OperationHandler = (input, ctx) => {
         filterName === undefined ||
         cfg.ObservabilityConfigurationName === filterName,
     );
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
   return {
-    ObservabilityConfigurationSummaryList: cfgs.map(observabilitySummary),
+    ObservabilityConfigurationSummaryList: items.map(observabilitySummary),
+    NextToken,
   };
 };
 
@@ -912,12 +979,17 @@ const DescribeVpcConnector: OperationHandler = (input, ctx) => {
   return { VpcConnector: vpcConnectorView(vc) };
 };
 
-const ListVpcConnectors: OperationHandler = (_input, ctx) => {
-  const vcs = ctx.store
+const ListVpcConnectors: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredVpcConnector>()
     .filter((entry) => entry.key.startsWith(vpcConnectorPrefix))
     .map((entry) => entry.value);
-  return { VpcConnectors: vcs.map(vpcConnectorView) };
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { VpcConnectors: items.map(vpcConnectorView), NextToken };
 };
 
 const CreateVpcIngressConnection: OperationHandler = (input, ctx) => {
@@ -945,19 +1017,25 @@ const CreateVpcIngressConnection: OperationHandler = (input, ctx) => {
   if (tagList.length > 0) {
     setTags(ctx, arn, listToTags(tagList));
   }
-  return { VpcIngressConnection: vpcIngressView(vic) };
+  return {
+    VpcIngressConnection: {
+      ...vpcIngressView(vic),
+      Status: "PENDING_CREATION",
+    },
+  };
 };
 
 const DeleteVpcIngressConnection: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "VpcIngressConnectionArn");
   const vic = getVpcIngressByArn(ctx, arn);
-  const deleted: StoredVpcIngressConnection = {
-    ...vic,
-    Status: "DELETED",
-    DeletedAt: nowSeconds(),
-  };
   ctx.store.delete(`${vpcIngressPrefix}${arn}`);
-  return { VpcIngressConnection: vpcIngressView(deleted) };
+  return {
+    VpcIngressConnection: {
+      ...vpcIngressView(vic),
+      Status: "PENDING_DELETION",
+      DeletedAt: nowSeconds(),
+    },
+  };
 };
 
 const DescribeVpcIngressConnection: OperationHandler = (input, ctx) => {
@@ -966,13 +1044,19 @@ const DescribeVpcIngressConnection: OperationHandler = (input, ctx) => {
   return { VpcIngressConnection: vpcIngressView(vic) };
 };
 
-const ListVpcIngressConnections: OperationHandler = (_input, ctx) => {
-  const vics = ctx.store
+const ListVpcIngressConnections: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredVpcIngressConnection>()
     .filter((entry) => entry.key.startsWith(vpcIngressPrefix))
     .map((entry) => entry.value);
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
   return {
-    VpcIngressConnectionSummaryList: vics.map(vpcIngressSummary),
+    VpcIngressConnectionSummaryList: items.map(vpcIngressSummary),
+    NextToken,
   };
 };
 
@@ -1010,7 +1094,7 @@ const AssociateCustomDomain: OperationHandler = (input, ctx) => {
   const newDomain: StoredCustomDomain = {
     DomainName: domainName,
     EnableWWWSubdomain: enableWWW as boolean,
-    Status: "PENDING_CERTIFICATE_DNS_VALIDATION",
+    Status: "ACTIVE",
   };
   setCustomDomains(ctx, serviceArn, [...domains, newDomain]);
   return {
@@ -1020,7 +1104,7 @@ const AssociateCustomDomain: OperationHandler = (input, ctx) => {
       DomainName: newDomain.DomainName,
       EnableWWWSubdomain: newDomain.EnableWWWSubdomain,
       CertificateValidationRecords: [],
-      Status: newDomain.Status,
+      Status: "CREATING",
     },
     VpcDNSTargets: [],
   };

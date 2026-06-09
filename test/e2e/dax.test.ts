@@ -50,7 +50,7 @@ test("DAX cluster and subnet group lifecycle", async () => {
     }),
   );
   expect(created.Cluster?.ClusterName).toBe(name);
-  expect(created.Cluster?.Status).toBe("available");
+  expect(created.Cluster?.Status).toBe("creating");
   expect(created.Cluster?.TotalNodes).toBe(3);
   expect(created.Cluster?.ClusterArn).toContain(name);
 
@@ -202,6 +202,151 @@ test("DAX parameter group lifecycle", async () => {
     new DeleteParameterGroupCommand({ ParameterGroupName: pgName }),
   );
   expect(deleted.DeletionMessage).toContain(pgName);
+});
+
+test("DAX UpdateParameterGroup persists values and DescribeParameters returns them", async () => {
+  const client = dax();
+  const pgName = "bunsai-e2e-pg-persist";
+
+  await client.send(
+    new CreateParameterGroupCommand({ ParameterGroupName: pgName }),
+  );
+
+  const beforeUpdate = await client.send(
+    new DescribeParametersCommand({ ParameterGroupName: pgName }),
+  );
+  const queryBefore = beforeUpdate.Parameters?.find(
+    (p) => p.ParameterName === "query-ttl-millis",
+  );
+  expect(queryBefore?.ParameterValue).toBe("300000");
+  expect(queryBefore?.Source).toBe("system");
+
+  await client.send(
+    new UpdateParameterGroupCommand({
+      ParameterGroupName: pgName,
+      ParameterNameValues: [
+        { ParameterName: "query-ttl-millis", ParameterValue: "600000" },
+        { ParameterName: "record-ttl-millis", ParameterValue: "120000" },
+      ],
+    }),
+  );
+
+  const afterUpdate = await client.send(
+    new DescribeParametersCommand({ ParameterGroupName: pgName }),
+  );
+  const queryAfter = afterUpdate.Parameters?.find(
+    (p) => p.ParameterName === "query-ttl-millis",
+  );
+  expect(queryAfter?.ParameterValue).toBe("600000");
+  expect(queryAfter?.Source).toBe("user");
+  const recordAfter = afterUpdate.Parameters?.find(
+    (p) => p.ParameterName === "record-ttl-millis",
+  );
+  expect(recordAfter?.ParameterValue).toBe("120000");
+
+  await client.send(
+    new DeleteParameterGroupCommand({ ParameterGroupName: pgName }),
+  );
+});
+
+test("DAX DescribeClusters pagination with MaxResults and NextToken", async () => {
+  const client = dax();
+  const prefix = "bunsai-e2e-pgpag";
+
+  const names: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const n = `${prefix}-${i}`;
+    names.push(n);
+    await client.send(
+      new CreateClusterCommand({
+        ClusterName: n,
+        NodeType: "dax.r4.large",
+        ReplicationFactor: 1,
+        IamRoleArn: "arn:aws:iam::000000000000:role/dax",
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new DescribeClustersCommand({ ClusterNames: names, MaxResults: 2 }),
+  );
+  expect((page1.Clusters ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeTruthy();
+
+  const page2 = await client.send(
+    new DescribeClustersCommand({
+      ClusterNames: names,
+      MaxResults: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.Clusters ?? []).length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  for (const n of names) {
+    await client.send(new DeleteClusterCommand({ ClusterName: n }));
+  }
+});
+
+test("DAX CreateCluster returns creating status; DescribeClusters returns available", async () => {
+  const client = dax();
+  const name = "bunsai-e2e-status-lifecycle";
+
+  const created = await client.send(
+    new CreateClusterCommand({
+      ClusterName: name,
+      NodeType: "dax.r4.large",
+      ReplicationFactor: 1,
+      IamRoleArn: "arn:aws:iam::000000000000:role/dax",
+    }),
+  );
+  expect(created.Cluster?.Status).toBe("creating");
+
+  const described = await client.send(
+    new DescribeClustersCommand({ ClusterNames: [name] }),
+  );
+  expect(described.Clusters?.[0]?.Status).toBe("available");
+
+  await client.send(new DeleteClusterCommand({ ClusterName: name }));
+});
+
+test("DAX DescribeParameterGroups pagination", async () => {
+  const client = dax();
+  const prefix = "bunsai-e2e-pglist";
+
+  const names: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const n = `${prefix}-${i}`;
+    names.push(n);
+    await client.send(
+      new CreateParameterGroupCommand({ ParameterGroupName: n }),
+    );
+  }
+
+  const page1 = await client.send(
+    new DescribeParameterGroupsCommand({
+      ParameterGroupNames: names,
+      MaxResults: 2,
+    }),
+  );
+  expect((page1.ParameterGroups ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeTruthy();
+
+  const page2 = await client.send(
+    new DescribeParameterGroupsCommand({
+      ParameterGroupNames: names,
+      MaxResults: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.ParameterGroups ?? []).length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  for (const n of names) {
+    await client.send(
+      new DeleteParameterGroupCommand({ ParameterGroupName: n }),
+    );
+  }
 });
 
 test("DAX DescribeDefaultParameters", async () => {

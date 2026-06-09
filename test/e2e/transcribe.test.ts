@@ -195,13 +195,15 @@ test("Transcribe vocabulary lifecycle", async () => {
     }),
   );
   expect(created.VocabularyName).toBe(name);
-  expect(created.VocabularyState).toBe("READY");
+  expect(created.VocabularyState).toBe("PENDING");
 
+  await client.send(new GetVocabularyCommand({ VocabularyName: name }));
   const got = await client.send(
     new GetVocabularyCommand({ VocabularyName: name }),
   );
   expect(got.VocabularyName).toBe(name);
   expect(got.LanguageCode).toBe("en-US");
+  expect(got.VocabularyState).toBe("READY");
 
   const listed = await client.send(new ListVocabulariesCommand({}));
   expect(
@@ -215,7 +217,7 @@ test("Transcribe vocabulary lifecycle", async () => {
       VocabularyFileUri: "s3://bunsai-e2e/vocab-v2.txt",
     }),
   );
-  expect(updated.VocabularyState).toBe("READY");
+  expect(updated.VocabularyState).toBe("PENDING");
 
   await client.send(new DeleteVocabularyCommand({ VocabularyName: name }));
 });
@@ -499,4 +501,49 @@ test("Transcribe tag resource lifecycle", async () => {
     new ListTagsForResourceCommand({ ResourceArn: arn }),
   );
   expect((after.Tags ?? []).length).toBe(0);
+});
+
+test("Transcribe StartCallAnalyticsJob persists Tags to job ARN", async () => {
+  const client = transcribe();
+  const name = `bunsai-ca-tags-${Date.now()}`;
+
+  await client.send(
+    new StartCallAnalyticsJobCommand({
+      CallAnalyticsJobName: name,
+      Media: { MediaFileUri: "s3://bunsai-e2e/audio.wav" },
+      DataAccessRoleArn: "arn:aws:iam::000000000000:role/transcribe",
+      Tags: [
+        { Key: "env", Value: "test" },
+        { Key: "owner", Value: "bunsai" },
+      ],
+    }),
+  );
+
+  const arn = `arn:aws:transcribe:us-east-1:000000000000:call-analytics-job/${name}`;
+  const tags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect((tags.Tags ?? []).some((t) => t.Key === "env")).toBe(true);
+  expect((tags.Tags ?? []).some((t) => t.Key === "owner")).toBe(true);
+});
+
+test("Transcribe CreateCallAnalyticsCategory rejects duplicate name", async () => {
+  const client = transcribe();
+  const name = `bunsai-dup-cat-${Date.now()}`;
+
+  await client.send(
+    new CreateCallAnalyticsCategoryCommand({
+      CategoryName: name,
+      Rules: [],
+    }),
+  );
+
+  await expect(
+    client.send(
+      new CreateCallAnalyticsCategoryCommand({
+        CategoryName: name,
+        Rules: [],
+      }),
+    ),
+  ).rejects.toThrow(/already exists|ConflictException/);
 });

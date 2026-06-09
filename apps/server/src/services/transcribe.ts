@@ -29,6 +29,7 @@ type StoredVocabulary = {
   VocabularyState: string;
   LastModifiedTime: Date;
   VocabularyFileUri: string | undefined;
+  describeCount: number;
 };
 
 type StoredVocabularyFilter = {
@@ -363,6 +364,7 @@ const StartTranscriptionJob: OperationHandler = (input, ctx) => {
       ? `https://s3.${ctx.region}.amazonaws.com/${outputBucket}/${outputKey ?? `${name}.json`}`
       : `https://s3.${ctx.region}.amazonaws.com/bunsai-transcribe/${name}.json`;
   const now = new Date();
+  const tags = parseTags(input["Tags"]);
   const job: StoredJob = {
     TranscriptionJobName: name,
     TranscriptionJobStatus: "IN_PROGRESS",
@@ -371,12 +373,16 @@ const StartTranscriptionJob: OperationHandler = (input, ctx) => {
     MediaFormat: stringOrUndefined(input["MediaFormat"]),
     Media: media as Record<string, unknown>,
     Transcript: { TranscriptFileUri: transcriptUri },
-    Tags: parseTags(input["Tags"]),
+    Tags: tags,
     StartTime: now,
     CreationTime: now,
     CompletionTime: undefined,
   };
   ctx.store.set(jobKey(name), job);
+  if (tags.length > 0) {
+    const arn = `arn:aws:transcribe:${ctx.region}:${ctx.account}:transcription-job/${name}`;
+    ctx.store.set(tagsKey(arn), [...tags]);
+  }
   return { TranscriptionJob: job };
 };
 
@@ -439,9 +445,10 @@ const CreateVocabulary: OperationHandler = (input, ctx) => {
   const vocab: StoredVocabulary = {
     VocabularyName: name,
     LanguageCode: languageCode,
-    VocabularyState: "READY",
+    VocabularyState: "PENDING",
     LastModifiedTime: now,
     VocabularyFileUri: stringOrUndefined(input["VocabularyFileUri"]),
+    describeCount: 0,
   };
   ctx.store.set(vocabKey(name), vocab);
   return {
@@ -454,7 +461,14 @@ const CreateVocabulary: OperationHandler = (input, ctx) => {
 
 const GetVocabulary: OperationHandler = (input, ctx) => {
   const name = requireString(input, "VocabularyName");
-  const vocab = requireVocab(ctx, name);
+  let vocab = requireVocab(ctx, name);
+  if (vocab.VocabularyState === "PENDING" && vocab.describeCount >= 1) {
+    vocab = { ...vocab, VocabularyState: "READY" };
+    ctx.store.set(vocabKey(name), vocab);
+  } else if (vocab.VocabularyState === "PENDING") {
+    vocab = { ...vocab, describeCount: vocab.describeCount + 1 };
+    ctx.store.set(vocabKey(name), vocab);
+  }
   return {
     VocabularyName: vocab.VocabularyName,
     LanguageCode: vocab.LanguageCode,
@@ -506,10 +520,11 @@ const UpdateVocabulary: OperationHandler = (input, ctx) => {
   const updated: StoredVocabulary = {
     ...vocab,
     LanguageCode: languageCode,
-    VocabularyState: "READY",
+    VocabularyState: "PENDING",
     LastModifiedTime: now,
     VocabularyFileUri:
       stringOrUndefined(input["VocabularyFileUri"]) ?? vocab.VocabularyFileUri,
+    describeCount: 0,
   };
   ctx.store.set(vocabKey(name), updated);
   return {
@@ -692,6 +707,16 @@ const DeleteLanguageModel: OperationHandler = (input, ctx) => {
 
 const CreateCallAnalyticsCategory: OperationHandler = (input, ctx) => {
   const categoryName = requireString(input, "CategoryName");
+  if (
+    ctx.store.get<StoredCallAnalyticsCategory>(caCategoryKey(categoryName)) !==
+    undefined
+  ) {
+    throw awsError(
+      "ConflictException",
+      `A category with the name ${categoryName} already exists.`,
+      400,
+    );
+  }
   const rules = Array.isArray(input["Rules"]) ? input["Rules"] : [];
   const now = new Date();
   const cat: StoredCallAnalyticsCategory = {
@@ -798,6 +823,7 @@ const StartCallAnalyticsJob: OperationHandler = (input, ctx) => {
     );
   }
   const now = new Date();
+  const tags = parseTags(input["Tags"]);
   const job: StoredCallAnalyticsJob = {
     CallAnalyticsJobName: name,
     CallAnalyticsJobStatus: "IN_PROGRESS",
@@ -811,6 +837,10 @@ const StartCallAnalyticsJob: OperationHandler = (input, ctx) => {
     CompletionTime: undefined,
   };
   ctx.store.set(caJobKey(name), job);
+  if (tags.length > 0) {
+    const arn = `arn:aws:transcribe:${ctx.region}:${ctx.account}:call-analytics-job/${name}`;
+    ctx.store.set(tagsKey(arn), [...tags]);
+  }
   return { CallAnalyticsJob: job };
 };
 

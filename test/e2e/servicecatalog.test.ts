@@ -300,7 +300,9 @@ test("ServiceCatalog product + provisioning-artifact lifecycle", async () => {
   const terminatedPP = await client.send(
     new DescribeProvisionedProductCommand({ Id: ppId }),
   );
-  expect(terminatedPP.ProvisionedProductDetail?.Status).toBe("TERMINATED");
+  expect(String(terminatedPP.ProvisionedProductDetail?.Status)).toBe(
+    "TERMINATED",
+  );
 
   const sa = await client.send(
     new CreateServiceActionCommand({

@@ -30,6 +30,7 @@ import {
   GetApiCommand,
   GetChannelNamespaceCommand,
   GetDataSourceCommand,
+  GetDataSourceIntrospectionCommand,
   GetDomainNameCommand,
   GetFunctionCommand,
   GetGraphqlApiCommand,
@@ -49,6 +50,8 @@ import {
   ListTagsForResourceCommand,
   ListTypesCommand,
   PutGraphqlApiEnvironmentVariablesCommand,
+  StartDataSourceIntrospectionCommand,
+  StartSchemaCreationCommand,
   TagResourceCommand,
   UntagResourceCommand,
   UpdateApiCacheCommand,
@@ -344,10 +347,11 @@ test("AppSync api cache lifecycle", async () => {
     }),
   );
   expect(ac.apiCache?.ttl).toBe(300);
-  expect(ac.apiCache?.status).toBe("AVAILABLE");
+  expect(ac.apiCache?.status).toBe("CREATING");
 
   const got = await client.send(new GetApiCacheCommand({ apiId }));
   expect(got.apiCache?.type).toBe("T2_SMALL");
+  expect(got.apiCache?.status).toBe("AVAILABLE");
 
   const upd = await client.send(
     new UpdateApiCacheCommand({
@@ -402,12 +406,13 @@ test("AppSync domain name lifecycle", async () => {
   const assoc = await client.send(
     new AssociateApiCommand({ domainName, apiId }),
   );
-  expect(assoc.apiAssociation?.associationStatus).toBe("SUCCESS");
+  expect(assoc.apiAssociation?.associationStatus).toBe("PROCESSING");
 
   const gotAssoc = await client.send(
     new GetApiAssociationCommand({ domainName }),
   );
   expect(gotAssoc.apiAssociation?.apiId).toBe(apiId);
+  expect(gotAssoc.apiAssociation?.associationStatus).toBe("SUCCESS");
 
   await client.send(new DisassociateApiCommand({ domainName }));
   await client.send(new DeleteDomainNameCommand({ domainName }));
@@ -546,15 +551,109 @@ test("AppSync schema operations", async () => {
   );
   const apiId = api.graphqlApi!.apiId!;
 
-  const status = await client.send(
+  const beforeStatus = await client.send(
     new GetSchemaCreationStatusCommand({ apiId }),
   );
-  expect(status.status).toBe("SUCCESS");
+  expect(beforeStatus.status).toBe("NOT_APPLICABLE");
 
-  const schema = await client.send(
+  const sdl = "type Query { placeholder: String }";
+  const startResult = await client.send(
+    new StartSchemaCreationCommand({
+      apiId,
+      definition: Buffer.from(sdl),
+    }),
+  );
+  expect(startResult.status).toBe("PROCESSING");
+
+  const afterStatus = await client.send(
+    new GetSchemaCreationStatusCommand({ apiId }),
+  );
+  expect(afterStatus.status).toBe("ACTIVE");
+
+  const schemaSdl = await client.send(
     new GetIntrospectionSchemaCommand({ apiId, format: "SDL" }),
   );
-  expect(schema.schema).toBeDefined();
+  expect(schemaSdl.schema).toBeDefined();
+
+  await client.send(
+    new CreateTypeCommand({
+      apiId,
+      definition: "type User { id: String name: String }",
+      format: "SDL",
+    }),
+  );
+
+  const schemaWithTypes = await client.send(
+    new GetIntrospectionSchemaCommand({ apiId, format: "SDL" }),
+  );
+  const schemaStr = Buffer.from(schemaWithTypes.schema!).toString("utf8");
+  expect(schemaStr).toContain("User");
 
   await client.send(new DeleteGraphqlApiCommand({ apiId }));
+});
+
+test("AppSync data source introspection lifecycle", async () => {
+  const client = appsync();
+
+  const started = await client.send(
+    new StartDataSourceIntrospectionCommand({}),
+  );
+  expect(started.introspectionId).toBeDefined();
+  expect(started.introspectionStatus).toBe("SUCCESS");
+
+  const result = await client.send(
+    new GetDataSourceIntrospectionCommand({
+      introspectionId: started.introspectionId,
+    }),
+  );
+  expect(result.introspectionId).toBe(started.introspectionId);
+  expect(result.introspectionStatus).toBe("SUCCESS");
+  expect(result.introspectionResult).toBeDefined();
+});
+
+test("AppSync List pagination", async () => {
+  const client = appsync();
+  const apiA = await client.send(
+    new CreateGraphqlApiCommand({
+      name: `pg-test-a-${Date.now()}`,
+      authenticationType: "API_KEY",
+    }),
+  );
+  const apiB = await client.send(
+    new CreateGraphqlApiCommand({
+      name: `pg-test-b-${Date.now()}`,
+      authenticationType: "API_KEY",
+    }),
+  );
+  const apiIdA = apiA.graphqlApi!.apiId!;
+  const apiIdB = apiB.graphqlApi!.apiId!;
+
+  await client.send(
+    new CreateDataSourceCommand({ apiId: apiIdA, name: "DS1", type: "NONE" }),
+  );
+  await client.send(
+    new CreateDataSourceCommand({ apiId: apiIdA, name: "DS2", type: "NONE" }),
+  );
+  await client.send(
+    new CreateDataSourceCommand({ apiId: apiIdA, name: "DS3", type: "NONE" }),
+  );
+
+  const page1 = await client.send(
+    new ListDataSourcesCommand({ apiId: apiIdA, maxResults: 2 }),
+  );
+  expect(page1.dataSources?.length).toBe(2);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListDataSourcesCommand({
+      apiId: apiIdA,
+      maxResults: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect(page2.dataSources?.length).toBe(1);
+  expect(page2.nextToken).toBeUndefined();
+
+  await client.send(new DeleteGraphqlApiCommand({ apiId: apiIdA }));
+  await client.send(new DeleteGraphqlApiCommand({ apiId: apiIdB }));
 });

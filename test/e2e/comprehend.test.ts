@@ -27,6 +27,7 @@ import {
   ListEndpointsCommand,
   ListFlywheelIterationHistoryCommand,
   ListFlywheelsCommand,
+  ListSentimentDetectionJobsCommand,
   ListTagsForResourceCommand,
   PutResourcePolicyCommand,
   StartDocumentClassificationJobCommand,
@@ -64,6 +65,12 @@ test("Comprehend endpoint roundtrip", async () => {
   );
   expect(created.EndpointArn).toBeDefined();
   const endpointArn = created.EndpointArn ?? "";
+
+  const described1 = await client.send(
+    new DescribeEndpointCommand({ EndpointArn: endpointArn }),
+  );
+  expect(described1.EndpointProperties?.EndpointArn).toBe(endpointArn);
+  expect(described1.EndpointProperties?.Status).toBe("CREATING");
 
   const described = await client.send(
     new DescribeEndpointCommand({ EndpointArn: endpointArn }),
@@ -205,6 +212,12 @@ test("Comprehend flywheel lifecycle", async () => {
   expect(created.FlywheelArn).toBeDefined();
   const fwArn = created.FlywheelArn ?? "";
 
+  const described1 = await client.send(
+    new DescribeFlywheelCommand({ FlywheelArn: fwArn }),
+  );
+  expect(described1.FlywheelProperties?.FlywheelArn).toBe(fwArn);
+  expect(described1.FlywheelProperties?.Status).toBe("CREATING");
+
   const described = await client.send(
     new DescribeFlywheelCommand({ FlywheelArn: fwArn }),
   );
@@ -320,6 +333,155 @@ test("Comprehend async detection job lifecycle", async () => {
   expect(classJobDesc.DocumentClassificationJobProperties?.JobStatus).toBe(
     "SUBMITTED",
   );
+});
+
+test("Comprehend job status lifecycle SUBMITTED→IN_PROGRESS→COMPLETED", async () => {
+  const client = comprehend();
+
+  const started = await client.send(
+    new StartSentimentDetectionJobCommand({
+      InputDataConfig: {
+        S3Uri: "s3://my-bucket/lifecycle-input/",
+        InputFormat: "ONE_DOC_PER_FILE",
+      },
+      OutputDataConfig: { S3Uri: "s3://my-bucket/lifecycle-output/" },
+      DataAccessRoleArn: `arn:aws:iam::${account}:role/ComprehendRole`,
+      LanguageCode: "en",
+      JobName: "bunsai-lifecycle-job",
+    }),
+  );
+  expect(started.JobId).toBeDefined();
+  const jobId = started.JobId ?? "";
+
+  const desc1 = await client.send(
+    new DescribeSentimentDetectionJobCommand({ JobId: jobId }),
+  );
+  expect(desc1.SentimentDetectionJobProperties?.JobStatus).toBe("SUBMITTED");
+
+  const desc2 = await client.send(
+    new DescribeSentimentDetectionJobCommand({ JobId: jobId }),
+  );
+  expect(desc2.SentimentDetectionJobProperties?.JobStatus).toBe("IN_PROGRESS");
+
+  const desc3 = await client.send(
+    new DescribeSentimentDetectionJobCommand({ JobId: jobId }),
+  );
+  expect(desc3.SentimentDetectionJobProperties?.JobStatus).toBe("COMPLETED");
+  expect(desc3.SentimentDetectionJobProperties?.EndTime).toBeDefined();
+});
+
+test("Comprehend endpoint CREATING→IN_SERVICE lifecycle", async () => {
+  const client = comprehend();
+  const endpointName = `bunsai-lifecycle-ep-${Date.now()}`;
+  const modelArn = `arn:aws:comprehend:${region}:${account}:document-classifier/lifecycle-model`;
+
+  const created = await client.send(
+    new CreateEndpointCommand({
+      EndpointName: endpointName,
+      ModelArn: modelArn,
+      DesiredInferenceUnits: 2,
+    }),
+  );
+  const endpointArn = created.EndpointArn ?? "";
+
+  const creating = await client.send(
+    new DescribeEndpointCommand({ EndpointArn: endpointArn }),
+  );
+  expect(creating.EndpointProperties?.Status).toBe("CREATING");
+
+  const inService = await client.send(
+    new DescribeEndpointCommand({ EndpointArn: endpointArn }),
+  );
+  expect(inService.EndpointProperties?.Status).toBe("IN_SERVICE");
+});
+
+test("Comprehend List pagination with MaxResults and NextToken", async () => {
+  const client = comprehend();
+
+  for (let i = 0; i < 3; i++) {
+    await client.send(
+      new CreateDocumentClassifierCommand({
+        DocumentClassifierName: `bunsai-paginate-dc-${Date.now()}-${i}`,
+        LanguageCode: "en",
+        DataAccessRoleArn: `arn:aws:iam::${account}:role/ComprehendRole`,
+        InputDataConfig: { S3Uri: "s3://my-bucket/train/" },
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListDocumentClassifiersCommand({ MaxResults: 2 }),
+  );
+  expect(
+    (page1.DocumentClassifierPropertiesList ?? []).length,
+  ).toBeGreaterThanOrEqual(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListDocumentClassifiersCommand({
+      MaxResults: 100,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect(
+    (page2.DocumentClassifierPropertiesList ?? []).length,
+  ).toBeGreaterThanOrEqual(1);
+
+  const arns1 = (page1.DocumentClassifierPropertiesList ?? []).map(
+    (c) => c.DocumentClassifierArn,
+  );
+  const arns2 = (page2.DocumentClassifierPropertiesList ?? []).map(
+    (c) => c.DocumentClassifierArn,
+  );
+  expect(arns1.filter((a) => arns2.includes(a))).toHaveLength(0);
+
+  const jobStarted = await client.send(
+    new StartSentimentDetectionJobCommand({
+      InputDataConfig: {
+        S3Uri: "s3://my-bucket/pg-input/",
+        InputFormat: "ONE_DOC_PER_FILE",
+      },
+      OutputDataConfig: { S3Uri: "s3://my-bucket/pg-output/" },
+      DataAccessRoleArn: `arn:aws:iam::${account}:role/ComprehendRole`,
+      LanguageCode: "en",
+      JobName: "bunsai-pg-job-1",
+    }),
+  );
+  await client.send(
+    new StartSentimentDetectionJobCommand({
+      InputDataConfig: {
+        S3Uri: "s3://my-bucket/pg-input2/",
+        InputFormat: "ONE_DOC_PER_FILE",
+      },
+      OutputDataConfig: { S3Uri: "s3://my-bucket/pg-output2/" },
+      DataAccessRoleArn: `arn:aws:iam::${account}:role/ComprehendRole`,
+      LanguageCode: "en",
+      JobName: "bunsai-pg-job-2",
+    }),
+  );
+
+  const jobPage1 = await client.send(
+    new ListSentimentDetectionJobsCommand({ MaxResults: 1 }),
+  );
+  expect((jobPage1.SentimentDetectionJobPropertiesList ?? []).length).toBe(1);
+  expect(jobPage1.NextToken).toBeDefined();
+
+  const jobPage2 = await client.send(
+    new ListSentimentDetectionJobsCommand({
+      MaxResults: 10,
+      NextToken: jobPage1.NextToken,
+    }),
+  );
+  expect(
+    (jobPage2.SentimentDetectionJobPropertiesList ?? []).length,
+  ).toBeGreaterThanOrEqual(1);
+  const jobIds1 = (jobPage1.SentimentDetectionJobPropertiesList ?? []).map(
+    (j) => j.JobId,
+  );
+  const jobIds2 = (jobPage2.SentimentDetectionJobPropertiesList ?? []).map(
+    (j) => j.JobId,
+  );
+  expect(jobIds1.filter((id) => jobIds2.includes(id))).toHaveLength(0);
 });
 
 test("Comprehend resource policy and tags", async () => {

@@ -169,6 +169,26 @@ const parseTags = (value: unknown): StoredTag[] => {
   return result;
 };
 
+const PAGE_SIZE_DEFAULT = 100;
+
+const applyPagination = <T>(
+  items: T[],
+  markerKey: (item: T) => string,
+  marker: string | undefined,
+  limit: number,
+): { page: T[]; nextMarker: string | undefined; hasMoreResults: boolean } => {
+  const start =
+    marker === undefined
+      ? 0
+      : items.findIndex((item) => markerKey(item) === marker) + 1;
+  const page = items.slice(start, start + limit);
+  const hasMoreResults = start + limit < items.length;
+  const nextMarker = hasMoreResults
+    ? markerKey(page[page.length - 1] as T)
+    : undefined;
+  return { page, nextMarker, hasMoreResults };
+};
+
 const CreatePipeline: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const uniqueId = requireString(input, "uniqueId");
@@ -200,11 +220,18 @@ const CreatePipeline: OperationHandler = (input, ctx) => {
 };
 
 const ListPipelines: OperationHandler = (input, ctx) => {
-  const pipelineIdList = ctx.store
+  const marker = stringOrUndefined(input["marker"]);
+  const all = ctx.store
     .list<StoredPipeline>()
     .map((entry) => entry.value)
     .map((pipeline) => ({ id: pipeline.pipelineId, name: pipeline.name }));
-  return { pipelineIdList, hasMoreResults: false };
+  const { page, nextMarker, hasMoreResults } = applyPagination(
+    all,
+    (p) => p.id,
+    marker,
+    PAGE_SIZE_DEFAULT,
+  );
+  return { pipelineIdList: page, marker: nextMarker, hasMoreResults };
 };
 
 const DescribePipelines: OperationHandler = (input, ctx) => {
@@ -216,6 +243,7 @@ const DescribePipelines: OperationHandler = (input, ctx) => {
       name: pipeline.name,
       description: pipeline.description,
       fields: pipeline.fields,
+      tags: pipeline.tags,
     };
   });
   return { pipelineDescriptionList };
@@ -276,9 +304,90 @@ const DeactivatePipeline: OperationHandler = (input, ctx) => {
   return {};
 };
 
+type StoredSelector = {
+  fieldName: string | undefined;
+  operatorType: string | undefined;
+  operatorValues: string[];
+};
+
+const parseSelectors = (query: unknown): StoredSelector[] => {
+  if (typeof query !== "object" || query === null) return [];
+  const q = query as Record<string, unknown>;
+  if (!Array.isArray(q["selectors"])) return [];
+  return q["selectors"].map((sel: unknown) => {
+    if (typeof sel !== "object" || sel === null)
+      return {
+        fieldName: undefined,
+        operatorType: undefined,
+        operatorValues: [],
+      };
+    const s = sel as Record<string, unknown>;
+    const op =
+      typeof s["operator"] === "object" && s["operator"] !== null
+        ? (s["operator"] as Record<string, unknown>)
+        : {};
+    return {
+      fieldName: stringOrUndefined(s["fieldName"]),
+      operatorType: stringOrUndefined(op["type"]),
+      operatorValues: stringList(op["values"]),
+    };
+  });
+};
+
+const matchesSelector = (
+  obj: StoredPipelineObject,
+  sel: StoredSelector,
+): boolean => {
+  if (!sel.fieldName || !sel.operatorType) return true;
+  const field = obj.fields.find((f) => f.key === sel.fieldName);
+  const fieldValue = field?.stringValue ?? field?.refValue;
+  if (fieldValue === undefined) return false;
+  if (sel.operatorType === "EQ" || sel.operatorType === "REF_EQ") {
+    return sel.operatorValues.includes(fieldValue);
+  }
+  return true;
+};
+
+const evaluateExpressions = (
+  obj: StoredPipelineObject,
+): StoredPipelineObject => {
+  const allFields = obj.fields;
+  const resolve = (val: string | undefined): string | undefined => {
+    if (!val) return val;
+    return val.replace(/#\{([^}]+)\}/g, (_match, key) => {
+      const ref = allFields.find((f) => f.key === key);
+      return ref?.stringValue ?? ref?.refValue ?? `#{${key}}`;
+    });
+  };
+  return {
+    ...obj,
+    fields: obj.fields.map((f) => ({
+      ...f,
+      stringValue: resolve(f.stringValue),
+      refValue: resolve(f.refValue),
+    })),
+  };
+};
+
 const SetStatus: OperationHandler = (input, ctx) => {
   const pipelineId = requireString(input, "pipelineId");
-  requirePipeline(ctx, pipelineId);
+  const pipeline = requirePipeline(ctx, pipelineId);
+  const objectIds = stringList(input["objectIds"]);
+  const status = requireString(input, "status");
+  for (const obj of pipeline.pipelineObjects) {
+    if (!objectIds.includes(obj.id)) continue;
+    const existing = obj.fields.find((f) => f.key === "@status");
+    if (existing) {
+      existing.stringValue = status;
+    } else {
+      obj.fields.push({
+        key: "@status",
+        stringValue: status,
+        refValue: undefined,
+      });
+    }
+  }
+  ctx.store.set(pipelineKey(pipelineId), pipeline);
   return {};
 };
 
@@ -286,17 +395,43 @@ const DescribeObjects: OperationHandler = (input, ctx) => {
   const pipelineId = requireString(input, "pipelineId");
   const pipeline = requirePipeline(ctx, pipelineId);
   const objectIds = stringList(input["objectIds"]);
-  const pipelineObjects = pipeline.pipelineObjects.filter((obj) =>
+  const evaluate = input["evaluateExpressions"] === true;
+  const marker = stringOrUndefined(input["marker"]);
+  let matched = pipeline.pipelineObjects.filter((obj) =>
     objectIds.includes(obj.id),
   );
-  return { pipelineObjects, marker: undefined, hasMoreResults: false };
+  if (evaluate) {
+    matched = matched.map(evaluateExpressions);
+  }
+  const { page, nextMarker, hasMoreResults } = applyPagination(
+    matched,
+    (obj) => obj.id,
+    marker,
+    PAGE_SIZE_DEFAULT,
+  );
+  return { pipelineObjects: page, marker: nextMarker, hasMoreResults };
 };
 
 const QueryObjects: OperationHandler = (input, ctx) => {
   const pipelineId = requireString(input, "pipelineId");
   const pipeline = requirePipeline(ctx, pipelineId);
-  const ids = pipeline.pipelineObjects.map((obj) => obj.id);
-  return { ids, marker: undefined, hasMoreResults: false };
+  const selectors = parseSelectors(input["query"]);
+  const limit =
+    typeof input["limit"] === "number" && input["limit"] > 0
+      ? input["limit"]
+      : PAGE_SIZE_DEFAULT;
+  const marker = stringOrUndefined(input["marker"]);
+  const filtered = pipeline.pipelineObjects.filter((obj) =>
+    selectors.every((sel) => matchesSelector(obj, sel)),
+  );
+  const { page, nextMarker, hasMoreResults } = applyPagination(
+    filtered,
+    (obj) => obj.id,
+    marker,
+    limit,
+  );
+  const ids = page.map((obj) => obj.id);
+  return { ids, marker: nextMarker, hasMoreResults };
 };
 
 const EvaluateExpression: OperationHandler = (input, ctx) => {

@@ -556,7 +556,8 @@ test("AppRunner CreateService tag round-trip and no stale tags on recreate", asy
       ServiceName: serviceName,
       SourceConfiguration: {
         ImageRepository: {
-          ImageIdentifier: "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageIdentifier:
+            "public.ecr.aws/aws-containers/hello-app-runner:latest",
           ImageRepositoryType: "ECR_PUBLIC",
         },
       },
@@ -566,8 +567,12 @@ test("AppRunner CreateService tag round-trip and no stale tags on recreate", asy
   const arn = created.Service?.ServiceArn;
   expect(arn).toBeDefined();
 
-  const tags = await client.send(new ListTagsForResourceCommand({ ResourceArn: arn }));
-  expect((tags.Tags ?? []).some((t) => t.Key === "env" && t.Value === "staging")).toBe(true);
+  const tags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect(
+    (tags.Tags ?? []).some((t) => t.Key === "env" && t.Value === "staging"),
+  ).toBe(true);
 
   await client.send(new DeleteServiceCommand({ ServiceArn: arn }));
 
@@ -576,7 +581,8 @@ test("AppRunner CreateService tag round-trip and no stale tags on recreate", asy
       ServiceName: `${serviceName}-v2`,
       SourceConfiguration: {
         ImageRepository: {
-          ImageIdentifier: "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageIdentifier:
+            "public.ecr.aws/aws-containers/hello-app-runner:latest",
           ImageRepositoryType: "ECR_PUBLIC",
         },
       },
@@ -585,7 +591,9 @@ test("AppRunner CreateService tag round-trip and no stale tags on recreate", asy
   const arn2 = created2.Service?.ServiceArn;
   expect(arn2).toBeDefined();
 
-  const tags2 = await client.send(new ListTagsForResourceCommand({ ResourceArn: arn2 }));
+  const tags2 = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn2 }),
+  );
   expect(tags2.Tags ?? []).toHaveLength(0);
 
   await client.send(new DeleteServiceCommand({ ServiceArn: arn2 }));
@@ -608,7 +616,8 @@ test("AppRunner AutoScaling in-use lifecycle", async () => {
       ServiceName: `bunsai-asc-svc-${Date.now()}`,
       SourceConfiguration: {
         ImageRepository: {
-          ImageIdentifier: "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageIdentifier:
+            "public.ecr.aws/aws-containers/hello-app-runner:latest",
           ImageRepositoryType: "ECR_PUBLIC",
         },
       },
@@ -619,23 +628,33 @@ test("AppRunner AutoScaling in-use lifecycle", async () => {
   expect(serviceArn).toBeDefined();
 
   const described = await client.send(
-    new DescribeAutoScalingConfigurationCommand({ AutoScalingConfigurationArn: ascArn }),
+    new DescribeAutoScalingConfigurationCommand({
+      AutoScalingConfigurationArn: ascArn,
+    }),
   );
   expect(described.AutoScalingConfiguration?.HasAssociatedService).toBe(true);
 
   await expect(
-    client.send(new DeleteAutoScalingConfigurationCommand({ AutoScalingConfigurationArn: ascArn })),
+    client.send(
+      new DeleteAutoScalingConfigurationCommand({
+        AutoScalingConfigurationArn: ascArn,
+      }),
+    ),
   ).rejects.toThrow();
 
   await client.send(new DeleteServiceCommand({ ServiceArn: serviceArn }));
 
   const described2 = await client.send(
-    new DescribeAutoScalingConfigurationCommand({ AutoScalingConfigurationArn: ascArn }),
+    new DescribeAutoScalingConfigurationCommand({
+      AutoScalingConfigurationArn: ascArn,
+    }),
   );
   expect(described2.AutoScalingConfiguration?.HasAssociatedService).toBe(false);
 
   const deletedAsc = await client.send(
-    new DeleteAutoScalingConfigurationCommand({ AutoScalingConfigurationArn: ascArn }),
+    new DeleteAutoScalingConfigurationCommand({
+      AutoScalingConfigurationArn: ascArn,
+    }),
   );
   expect(deletedAsc.AutoScalingConfiguration?.Status).toBe("INACTIVE");
 });
@@ -648,7 +667,8 @@ test("AppRunner service state transition guards", async () => {
       ServiceName: `bunsai-state-${Date.now()}`,
       SourceConfiguration: {
         ImageRepository: {
-          ImageIdentifier: "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageIdentifier:
+            "public.ecr.aws/aws-containers/hello-app-runner:latest",
           ImageRepositoryType: "ECR_PUBLIC",
         },
       },
@@ -657,14 +677,18 @@ test("AppRunner service state transition guards", async () => {
   const arn = created.Service?.ServiceArn;
   expect(arn).toBeDefined();
 
-  const paused = await client.send(new PauseServiceCommand({ ServiceArn: arn }));
+  const paused = await client.send(
+    new PauseServiceCommand({ ServiceArn: arn }),
+  );
   expect(paused.Service?.Status).toBe("PAUSED");
 
   await expect(
     client.send(new PauseServiceCommand({ ServiceArn: arn })),
   ).rejects.toThrow();
 
-  const resumed = await client.send(new ResumeServiceCommand({ ServiceArn: arn }));
+  const resumed = await client.send(
+    new ResumeServiceCommand({ ServiceArn: arn }),
+  );
   expect(resumed.Service?.Status).toBe("RUNNING");
 
   await expect(

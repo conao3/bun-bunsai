@@ -436,40 +436,61 @@ const listToTags = (tagList: unknown[]): Record<string, string> => {
   return result;
 };
 
-const updateAutoScalingAssociation = (ctx: ServiceContext, arn: string): void => {
-  const cfg = ctx.store.get<StoredAutoScalingConfig>(`${autoScalingPrefix}${arn}`);
+const updateAutoScalingAssociation = (
+  ctx: ServiceContext,
+  arn: string,
+): void => {
+  const cfg = ctx.store.get<StoredAutoScalingConfig>(
+    `${autoScalingPrefix}${arn}`,
+  );
   if (cfg === undefined) return;
   const inUse = ctx.store
     .list<StoredService>()
     .filter((e) => e.key.startsWith(servicePrefix))
     .some((e) => e.value.AutoScalingConfigurationArn === arn);
-  ctx.store.set(`${autoScalingPrefix}${arn}`, { ...cfg, HasAssociatedService: inUse });
+  ctx.store.set(`${autoScalingPrefix}${arn}`, {
+    ...cfg,
+    HasAssociatedService: inUse,
+  });
 };
 
-const isConnectionUsedByService = (ctx: ServiceContext, connectionArn: string): boolean =>
+const isConnectionUsedByService = (
+  ctx: ServiceContext,
+  connectionArn: string,
+): boolean =>
   ctx.store
     .list<StoredService>()
     .filter((e) => e.key.startsWith(servicePrefix))
     .some((e) => {
       const src = e.value.SourceConfiguration;
-      const codeRepo = src["CodeRepository"] as Record<string, unknown> | undefined;
+      const codeRepo = src["CodeRepository"] as
+        | Record<string, unknown>
+        | undefined;
       const authCfg = (
         codeRepo?.["CodeConfiguration"] as Record<string, unknown> | undefined
       )?.["AuthenticationConfiguration"] as Record<string, unknown> | undefined;
       return authCfg?.["ConnectionArn"] === connectionArn;
     });
 
-const isVpcConnectorUsedByService = (ctx: ServiceContext, vpcConnectorArn: string): boolean =>
+const isVpcConnectorUsedByService = (
+  ctx: ServiceContext,
+  vpcConnectorArn: string,
+): boolean =>
   ctx.store
     .list<StoredService>()
     .filter((e) => e.key.startsWith(servicePrefix))
     .some((e) => {
       const network = e.value.NetworkConfiguration;
-      const egress = network["EgressConfiguration"] as Record<string, unknown> | undefined;
+      const egress = network["EgressConfiguration"] as
+        | Record<string, unknown>
+        | undefined;
       return egress?.["VpcConnectorArn"] === vpcConnectorArn;
     });
 
-const hasVpcIngressConnections = (ctx: ServiceContext, serviceArn: string): boolean =>
+const hasVpcIngressConnections = (
+  ctx: ServiceContext,
+  serviceArn: string,
+): boolean =>
   ctx.store
     .list<StoredVpcIngressConnection>()
     .filter((e) => e.key.startsWith(vpcIngressPrefix))
@@ -679,7 +700,9 @@ const UpdateService: OperationHandler = (input, ctx) => {
   const now = nowSeconds();
   const instance = recordOrUndefined(input["InstanceConfiguration"]);
   const network = recordOrUndefined(input["NetworkConfiguration"]);
-  const newAutoScalingArn = stringOrUndefined(input["AutoScalingConfigurationArn"]);
+  const newAutoScalingArn = stringOrUndefined(
+    input["AutoScalingConfigurationArn"],
+  );
   const updated: StoredService = {
     ...service,
     UpdatedAt: now,
@@ -711,7 +734,8 @@ const UpdateService: OperationHandler = (input, ctx) => {
           AutoScalingConfigurationRevision: 1,
         }
       : service.AutoScalingConfigurationSummary,
-    AutoScalingConfigurationArn: newAutoScalingArn ?? service.AutoScalingConfigurationArn,
+    AutoScalingConfigurationArn:
+      newAutoScalingArn ?? service.AutoScalingConfigurationArn,
     NetworkConfiguration: network
       ? {
           EgressConfiguration: {
@@ -733,7 +757,10 @@ const UpdateService: OperationHandler = (input, ctx) => {
       service.ObservabilityConfiguration,
   };
   ctx.store.set(serviceKey(service.ServiceId), updated);
-  if (newAutoScalingArn && newAutoScalingArn !== service.AutoScalingConfigurationArn) {
+  if (
+    newAutoScalingArn &&
+    newAutoScalingArn !== service.AutoScalingConfigurationArn
+  ) {
     updateAutoScalingAssociation(ctx, service.AutoScalingConfigurationArn);
     updateAutoScalingAssociation(ctx, newAutoScalingArn);
   }

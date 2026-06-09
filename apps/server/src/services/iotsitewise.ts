@@ -30,6 +30,7 @@ const actionPrefix = "action:" as const;
 const executionPrefix = "execution:" as const;
 const timeseriesPrefix = "timeseries:" as const;
 const propertyValuePrefix = "property-value:" as const;
+const propertyValueHistoryPrefix = "property-value-history:" as const;
 const encryptionConfigKey = "config:encryption" as const;
 const storageConfigKey = "config:storage" as const;
 const loggingOptionsKey = "config:logging" as const;
@@ -221,6 +222,8 @@ const executionKey = (id: string): string => `${executionPrefix}${id}`;
 const timeseriesKey = (id: string): string => `${timeseriesPrefix}${id}`;
 const propertyValueKey = (assetId: string, propertyId: string): string =>
   `${propertyValuePrefix}${assetId}:${propertyId}`;
+const propertyValueHistoryKey = (assetId: string, propertyId: string): string =>
+  `${propertyValueHistoryPrefix}${assetId}:${propertyId}`;
 
 const makeArn = (
   ctx: ServiceContext,
@@ -361,6 +364,26 @@ const requireBulkImportJob = (
   return stored;
 };
 
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+  defaultMax = 50,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : defaultMax;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
+
 const assetModelSummaryView = (
   m: StoredAssetModel,
 ): Record<string, unknown> => ({
@@ -389,7 +412,7 @@ const CreateAssetModel: OperationHandler = (input, ctx) => {
     assetModelType: stringOrUndefined(input["assetModelType"]) ?? "ASSET_MODEL",
     creationDate: now,
     lastUpdateDate: now,
-    state: "CREATING",
+    state: "ACTIVE",
   };
   ctx.store.set(assetModelKey(id), assetModel);
   return {
@@ -417,14 +440,19 @@ const DescribeAssetModel: OperationHandler = (input, ctx) => {
 };
 
 const ListAssetModels: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 50;
   const summaries = ctx.store
     .list<StoredAssetModel>()
     .filter((entry) => entry.key.startsWith(assetModelPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const { items, nextToken } = paginateList(
+    summaries,
+    input["nextToken"],
+    input["maxResults"],
+  );
   return {
-    assetModelSummaries: summaries.slice(0, max).map(assetModelSummaryView),
+    assetModelSummaries: items.map(assetModelSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -447,7 +475,7 @@ const UpdateAssetModel: OperationHandler = (input, ctx) => {
     assetModelType: existing.assetModelType,
     creationDate: existing.creationDate,
     lastUpdateDate: nowSeconds(),
-    state: "UPDATING",
+    state: "ACTIVE",
   };
   ctx.store.set(assetModelKey(id), updated);
   return { assetModelStatus: { state: "UPDATING" } };
@@ -666,7 +694,7 @@ const CreateAsset: OperationHandler = (input, ctx) => {
     assetModelId,
     creationDate: now,
     lastUpdateDate: now,
-    state: "CREATING",
+    state: "ACTIVE",
   };
   ctx.store.set(assetKey(id), asset);
   return {
@@ -706,7 +734,7 @@ const UpdateAsset: OperationHandler = (input, ctx) => {
     assetModelId: existing.assetModelId,
     creationDate: existing.creationDate,
     lastUpdateDate: nowSeconds(),
-    state: "UPDATING",
+    state: "ACTIVE",
   };
   ctx.store.set(assetKey(id), updated);
   return { assetStatus: { state: "UPDATING" } };
@@ -721,13 +749,34 @@ const DeleteAsset: OperationHandler = (input, ctx) => {
 };
 
 const ListAssets: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 250;
-  const assets = ctx.store
+  const assetModelIdFilter = stringOrUndefined(input["assetModelId"]);
+  const filter = stringOrUndefined(input["filter"]) ?? "ALL";
+  const childIds = new Set(
+    ctx.store
+      .list<string[]>()
+      .filter((e) => e.key.startsWith(assetAssocPrefix))
+      .flatMap((e) => e.value),
+  );
+  let assets = ctx.store
     .list<StoredAsset>()
     .filter((e) => e.key.startsWith(assetPrefix))
     .map((e) => e.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { assetSummaries: assets.slice(0, max).map(assetSummaryView) };
+  if (filter === "TOP_LEVEL") {
+    assets = assets.filter((a) => !childIds.has(a.id));
+  } else if (assetModelIdFilter !== undefined) {
+    assets = assets.filter((a) => a.assetModelId === assetModelIdFilter);
+  }
+  const { items, nextToken } = paginateList(
+    assets,
+    input["nextToken"],
+    input["maxResults"],
+    250,
+  );
+  return {
+    assetSummaries: items.map(assetSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const AssociateAssets: OperationHandler = (input, ctx) => {
@@ -888,13 +937,21 @@ const DeleteGateway: OperationHandler = (input, ctx) => {
 };
 
 const ListGateways: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 250;
   const gateways = ctx.store
     .list<StoredGateway>()
     .filter((e) => e.key.startsWith(gatewayPrefix))
     .map((e) => e.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { gatewaySummaries: gateways.slice(0, max).map(gatewaySummaryView) };
+  const { items, nextToken } = paginateList(
+    gateways,
+    input["nextToken"],
+    input["maxResults"],
+    250,
+  );
+  return {
+    gatewaySummaries: items.map(gatewaySummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DescribeGatewayCapabilityConfiguration: OperationHandler = (
@@ -961,7 +1018,7 @@ const CreatePortal: OperationHandler = (input, ctx) => {
     description: stringOrUndefined(input["portalDescription"]) ?? "",
     contactEmail,
     startUrl: `https://${id}.app.iotsitewise.aws`,
-    status: "CREATING",
+    status: "ACTIVE",
     creationDate: now,
     lastUpdateDate: now,
   };
@@ -1005,7 +1062,7 @@ const UpdatePortal: OperationHandler = (input, ctx) => {
     contactEmail:
       stringOrUndefined(input["portalContactEmail"]) ?? existing.contactEmail,
     startUrl: existing.startUrl,
-    status: "UPDATING",
+    status: "ACTIVE",
     creationDate: existing.creationDate,
     lastUpdateDate: nowSeconds(),
   };
@@ -1021,13 +1078,21 @@ const DeletePortal: OperationHandler = (input, ctx) => {
 };
 
 const ListPortals: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["maxResults"]) ?? 250;
   const portals = ctx.store
     .list<StoredPortal>()
     .filter((e) => e.key.startsWith(portalPrefix))
     .map((e) => e.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { portalSummaries: portals.slice(0, max).map(portalSummaryView) };
+  const { items, nextToken } = paginateList(
+    portals,
+    input["nextToken"],
+    input["maxResults"],
+    250,
+  );
+  return {
+    portalSummaries: items.map(portalSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 // --- Projects ---
@@ -1097,7 +1162,6 @@ const DeleteProject: OperationHandler = (input, ctx) => {
 
 const ListProjects: OperationHandler = (input, ctx) => {
   const portalId = requireString(input, "portalId");
-  const max = numberOrUndefined(input["maxResults"]) ?? 250;
   const projects = ctx.store
     .list<StoredProject>()
     .filter(
@@ -1105,7 +1169,16 @@ const ListProjects: OperationHandler = (input, ctx) => {
     )
     .map((e) => e.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { projectSummaries: projects.slice(0, max).map(projectSummaryView) };
+  const { items, nextToken } = paginateList(
+    projects,
+    input["nextToken"],
+    input["maxResults"],
+    250,
+  );
+  return {
+    projectSummaries: items.map(projectSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const BatchAssociateProjectAssets: OperationHandler = (input, ctx) => {
@@ -1212,7 +1285,6 @@ const DeleteDashboard: OperationHandler = (input, ctx) => {
 
 const ListDashboards: OperationHandler = (input, ctx) => {
   const projectId = requireString(input, "projectId");
-  const max = numberOrUndefined(input["maxResults"]) ?? 250;
   const dashboards = ctx.store
     .list<StoredDashboard>()
     .filter(
@@ -1221,8 +1293,15 @@ const ListDashboards: OperationHandler = (input, ctx) => {
     )
     .map((e) => e.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const { items, nextToken } = paginateList(
+    dashboards,
+    input["nextToken"],
+    input["maxResults"],
+    250,
+  );
   return {
-    dashboardSummaries: dashboards.slice(0, max).map(dashboardSummaryView),
+    dashboardSummaries: items.map(dashboardSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1248,7 +1327,7 @@ const CreateDataset: OperationHandler = (input, ctx) => {
     arn,
     name,
     description: stringOrUndefined(input["datasetDescription"]) ?? "",
-    state: "CREATING",
+    state: "ACTIVE",
     creationDate: now,
     lastUpdateDate: now,
   };
@@ -1284,7 +1363,7 @@ const UpdateDataset: OperationHandler = (input, ctx) => {
     name: stringOrUndefined(input["datasetName"]) ?? existing.name,
     description:
       stringOrUndefined(input["datasetDescription"]) ?? existing.description,
-    state: "UPDATING",
+    state: "ACTIVE",
     creationDate: existing.creationDate,
     lastUpdateDate: nowSeconds(),
   };
@@ -1657,35 +1736,63 @@ const BatchPutAssetPropertyValue: OperationHandler = (input, ctx) => {
   const entries = arrayOrEmpty(input["entries"]) as Array<
     Record<string, unknown>
   >;
+  const errorEntries: Array<Record<string, unknown>> = [];
   for (const entry of entries) {
+    const entryId = stringOrUndefined(entry["entryId"]) ?? "";
     const assetId = stringOrUndefined(entry["assetId"]);
     const propertyId = stringOrUndefined(entry["propertyId"]);
+    if (assetId !== undefined) {
+      const assetExists = ctx.store.get<StoredAsset>(assetKey(assetId));
+      if (assetExists === undefined) {
+        errorEntries.push({
+          entryId,
+          errors: [
+            {
+              errorCode: "ResourceNotFoundException",
+              errorMessage: `No asset exists for ID ${assetId}.`,
+              timestamps: [],
+            },
+          ],
+        });
+        continue;
+      }
+    }
     if (assetId !== undefined && propertyId !== undefined) {
       const values = arrayOrEmpty(entry["propertyValues"]) as Array<
         Record<string, unknown>
       >;
-      const last = values[values.length - 1];
-      if (last !== undefined) {
+      for (const v of values) {
         const ts =
-          (last["timestamp"] as Record<string, unknown> | undefined) ?? {};
+          (v["timestamp"] as Record<string, unknown> | undefined) ?? {};
         const stored: StoredPropertyValue = {
           assetId,
           propertyId,
-          value: last["value"],
+          value: v["value"],
           timestamp:
             (ts["timeInSeconds"] as number | undefined) ?? nowSeconds(),
-          quality: stringOrUndefined(last["quality"]) ?? "GOOD",
+          quality: stringOrUndefined(v["quality"]) ?? "GOOD",
         };
         ctx.store.set(propertyValueKey(assetId, propertyId), stored);
+        const history =
+          ctx.store.get<StoredPropertyValue[]>(
+            propertyValueHistoryKey(assetId, propertyId),
+          ) ?? [];
+        ctx.store.set(propertyValueHistoryKey(assetId, propertyId), [
+          ...history,
+          stored,
+        ]);
       }
     }
   }
-  return { errorEntries: [] };
+  return { errorEntries };
 };
 
 const GetAssetPropertyValue: OperationHandler = (input, ctx) => {
   const assetId = stringOrUndefined(input["assetId"]);
   const propertyId = stringOrUndefined(input["propertyId"]);
+  if (assetId !== undefined) {
+    requireAsset(ctx, assetId);
+  }
   if (assetId !== undefined && propertyId !== undefined) {
     const stored = ctx.store.get<StoredPropertyValue>(
       propertyValueKey(assetId, propertyId),
@@ -1700,18 +1807,42 @@ const GetAssetPropertyValue: OperationHandler = (input, ctx) => {
       };
     }
   }
-  return {
-    propertyValue: {
-      value: { doubleValue: 0 },
-      timestamp: { timeInSeconds: nowSeconds() },
-      quality: "GOOD",
-    },
-  };
+  return {};
 };
 
-const GetAssetPropertyValueHistory: OperationHandler = (_input, _ctx) => ({
-  assetPropertyValueHistory: [],
-});
+const GetAssetPropertyValueHistory: OperationHandler = (input, ctx) => {
+  const assetId = stringOrUndefined(input["assetId"]);
+  const propertyId = stringOrUndefined(input["propertyId"]);
+  const startDate = numberOrUndefined(input["startDate"]);
+  const endDate = numberOrUndefined(input["endDate"]);
+  const timeOrdering = stringOrUndefined(input["timeOrdering"]) ?? "ASCENDING";
+  if (assetId !== undefined && propertyId !== undefined) {
+    let history =
+      ctx.store.get<StoredPropertyValue[]>(
+        propertyValueHistoryKey(assetId, propertyId),
+      ) ?? [];
+    if (startDate !== undefined)
+      history = history.filter((v) => v.timestamp > startDate);
+    if (endDate !== undefined)
+      history = history.filter((v) => v.timestamp <= endDate);
+    if (timeOrdering === "DESCENDING") history = [...history].reverse();
+    const { items, nextToken } = paginateList(
+      history,
+      input["nextToken"],
+      input["maxResults"],
+      20000,
+    );
+    return {
+      assetPropertyValueHistory: items.map((v) => ({
+        value: v.value,
+        timestamp: { timeInSeconds: v.timestamp },
+        quality: v.quality,
+      })),
+      ...(nextToken !== undefined ? { nextToken } : {}),
+    };
+  }
+  return { assetPropertyValueHistory: [] };
+};
 
 const GetAssetPropertyAggregates: OperationHandler = (_input, _ctx) => ({
   aggregatedValues: [],
@@ -1784,10 +1915,15 @@ const DescribeTimeSeries: OperationHandler = (input, ctx) => {
   const alias = stringOrUndefined(input["alias"]);
   const assetId = stringOrUndefined(input["assetId"]);
   const propertyId = stringOrUndefined(input["propertyId"]);
-  const key = alias !== undefined ? timeseriesKey(alias) : undefined;
-  const stored =
-    key !== undefined ? ctx.store.get<StoredTimeSeries>(key) : undefined;
-  if (stored !== undefined) {
+  if (alias !== undefined) {
+    const stored = ctx.store.get<StoredTimeSeries>(timeseriesKey(alias));
+    if (stored === undefined) {
+      throw awsError(
+        "ResourceNotFoundException",
+        `No time series exists for alias ${alias}.`,
+        404,
+      );
+    }
     return {
       alias: stored.alias,
       assetId: stored.assetId,
@@ -1799,17 +1935,29 @@ const DescribeTimeSeries: OperationHandler = (input, ctx) => {
       timeSeriesLastUpdateDate: stored.timeSeriesLastUpdateDate,
     };
   }
-  const syntheticId = crypto.randomUUID();
-  return {
-    alias,
-    assetId,
-    propertyId,
-    timeSeriesId: syntheticId,
-    timeSeriesArn: makeArn(ctx, "timeseries", syntheticId),
-    dataType: "DOUBLE",
-    timeSeriesCreationDate: nowSeconds(),
-    timeSeriesLastUpdateDate: nowSeconds(),
-  };
+  if (assetId !== undefined && propertyId !== undefined) {
+    const match = ctx.store
+      .list<StoredTimeSeries>()
+      .find(
+        (e) =>
+          e.key.startsWith(timeseriesPrefix) &&
+          e.value.assetId === assetId &&
+          e.value.propertyId === propertyId,
+      )?.value;
+    if (match !== undefined) {
+      return {
+        alias: match.alias,
+        assetId: match.assetId,
+        propertyId: match.propertyId,
+        timeSeriesId: match.timeSeriesId,
+        timeSeriesArn: match.timeSeriesArn,
+        dataType: match.dataType,
+        timeSeriesCreationDate: match.timeSeriesCreationDate,
+        timeSeriesLastUpdateDate: match.timeSeriesLastUpdateDate,
+      };
+    }
+  }
+  throw awsError("ResourceNotFoundException", `No time series found.`, 404);
 };
 
 const ListTimeSeries: OperationHandler = (input, ctx) => {

@@ -871,4 +871,110 @@ describe("ecr e2e", () => {
       new DeleteRepositoryCommand({ repositoryName: name, force: true }),
     );
   });
+
+  test("DeleteRepository force=true cleans orphan upload and layer keys", async () => {
+    const client = ecr();
+    const name = `orphan-cleanup-${Date.now()}`;
+    await client.send(new CreateRepositoryCommand({ repositoryName: name }));
+
+    const initResult = await client.send(
+      new InitiateLayerUploadCommand({ repositoryName: name }),
+    );
+    const uploadId = initResult.uploadId as string;
+
+    const layerData = new Uint8Array([10, 20, 30]);
+    await client.send(
+      new UploadLayerPartCommand({
+        repositoryName: name,
+        uploadId,
+        partFirstByte: 0,
+        partLastByte: 2,
+        layerPartBlob: layerData,
+      }),
+    );
+
+    const layerDigest = "sha256:" + "c".repeat(64);
+    await client.send(
+      new CompleteLayerUploadCommand({
+        repositoryName: name,
+        uploadId,
+        layerDigests: [layerDigest],
+      }),
+    );
+
+    await client.send(
+      new DeleteRepositoryCommand({ repositoryName: name, force: true }),
+    );
+
+    await client.send(new CreateRepositoryCommand({ repositoryName: name }));
+
+    const checkResult = await client.send(
+      new BatchCheckLayerAvailabilityCommand({
+        repositoryName: name,
+        layerDigests: [layerDigest],
+      }),
+    );
+    expect(checkResult.layers ?? []).toHaveLength(0);
+    expect(checkResult.failures).toHaveLength(1);
+    expect(checkResult.failures?.[0]?.failureCode).toBe("MissingLayerDigest");
+
+    await client.send(
+      new DeleteRepositoryCommand({ repositoryName: name, force: true }),
+    );
+  });
+
+  test("DescribeImages paginates with maxResults and nextToken", async () => {
+    const client = ecr();
+    const name = `desc-paged-${Date.now()}`;
+    await client.send(new CreateRepositoryCommand({ repositoryName: name }));
+
+    for (const tag of ["v1", "v2", "v3"]) {
+      await client.send(
+        new PutImageCommand({
+          repositoryName: name,
+          imageManifest: JSON.stringify({
+            schemaVersion: 2,
+            mediaType: "application/vnd.docker.distribution.manifest.v2+json",
+            config: {
+              mediaType: "application/vnd.docker.container.image.v1+json",
+              size: 5,
+              digest: `sha256:${tag.padEnd(64, "0")}`,
+            },
+            layers: [],
+          }),
+          imageTag: tag,
+        }),
+      );
+    }
+
+    const page1 = await client.send(
+      new DescribeImagesCommand({ repositoryName: name, maxResults: 1 }),
+    );
+    expect((page1.imageDetails ?? []).length).toBe(1);
+    expect(typeof page1.nextToken).toBe("string");
+
+    const page2 = await client.send(
+      new DescribeImagesCommand({
+        repositoryName: name,
+        maxResults: 1,
+        nextToken: page1.nextToken,
+      }),
+    );
+    expect((page2.imageDetails ?? []).length).toBe(1);
+    expect(typeof page2.nextToken).toBe("string");
+
+    const page3 = await client.send(
+      new DescribeImagesCommand({
+        repositoryName: name,
+        maxResults: 1,
+        nextToken: page2.nextToken,
+      }),
+    );
+    expect((page3.imageDetails ?? []).length).toBe(1);
+    expect(page3.nextToken).toBeUndefined();
+
+    await client.send(
+      new DeleteRepositoryCommand({ repositoryName: name, force: true }),
+    );
+  });
 });

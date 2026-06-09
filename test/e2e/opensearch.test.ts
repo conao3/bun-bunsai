@@ -21,6 +21,8 @@ import {
   DescribeDomainsCommand,
   DescribeInboundConnectionsCommand,
   DescribeOutboundConnectionsCommand,
+  DescribePackagesCommand,
+  DescribeVpcEndpointsCommand,
   GetApplicationCommand,
   GetDataSourceCommand,
   GetIndexCommand,
@@ -29,6 +31,7 @@ import {
   ListDomainNamesCommand,
   ListDomainsForPackageCommand,
   ListTagsCommand,
+  ListVersionsCommand,
   ListVpcEndpointsCommand,
   OpenSearchClient,
   RemoveTagsCommand,
@@ -360,4 +363,161 @@ test("OpenSearch tags add/list/remove lifecycle", async () => {
   );
   expect(afterMap["env"]).toBe("test");
   expect(afterMap["team"]).toBeUndefined();
+});
+
+test("OpenSearch ResourceNotFoundException returns 404", async () => {
+  const client = opensearch();
+  try {
+    await client.send(
+      new DeleteDomainCommand({ DomainName: "nonexistent-domain-404-test" }),
+    );
+    expect.unreachable("should have thrown");
+  } catch (err: unknown) {
+    const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+    expect(e.name).toBe("ResourceNotFoundException");
+    expect(e.$metadata?.httpStatusCode).toBe(404);
+  }
+});
+
+test("OpenSearch VpcEndpoint lifecycle", async () => {
+  const client = opensearch();
+  const domainName = `vpc-domain-${Date.now()}`.slice(0, 28).toLowerCase();
+
+  const created = await client.send(
+    new CreateDomainCommand({ DomainName: domainName }),
+  );
+  const domainArn = created.DomainStatus!.ARN!;
+
+  try {
+    await client.send(
+      new CreateVpcEndpointCommand({
+        DomainArn: "arn:aws:es:us-east-1:000000000000:domain/nonexistent",
+        VpcOptions: { SubnetIds: ["subnet-aaa"] },
+      }),
+    );
+    expect.unreachable("should have thrown for missing domain");
+  } catch (err: unknown) {
+    const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+    expect(e.name).toBe("ResourceNotFoundException");
+    expect(e.$metadata?.httpStatusCode).toBe(404);
+  }
+
+  const vpcCreated = await client.send(
+    new CreateVpcEndpointCommand({
+      DomainArn: domainArn,
+      VpcOptions: { SubnetIds: ["subnet-aaa"] },
+    }),
+  );
+  expect(vpcCreated.VpcEndpoint?.Status).toBe("CREATING");
+
+  const vpcId = vpcCreated.VpcEndpoint!.VpcEndpointId!;
+
+  const described = await client.send(
+    new DescribeVpcEndpointsCommand({ VpcEndpointIds: [vpcId] }),
+  );
+  expect(described.VpcEndpoints?.[0]?.Status).toBe("ACTIVE");
+
+  const deleted = await client.send(
+    new DeleteVpcEndpointCommand({ VpcEndpointId: vpcId }),
+  );
+  expect(deleted.VpcEndpointSummary?.Status).toBe("DELETING");
+
+  const afterDelete = await client.send(
+    new DescribeVpcEndpointsCommand({ VpcEndpointIds: [vpcId] }),
+  );
+  expect(afterDelete.VpcEndpoints?.[0]?.Status).toBe("DELETING");
+
+  await client.send(new DeleteDomainCommand({ DomainName: domainName }));
+});
+
+test("OpenSearch ListVersions pagination", async () => {
+  const client = opensearch();
+
+  const page1 = await client.send(new ListVersionsCommand({ MaxResults: 2 }));
+  expect(page1.Versions).toHaveLength(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListVersionsCommand({ MaxResults: 2, NextToken: page1.NextToken }),
+  );
+  expect(page2.Versions).toHaveLength(2);
+  expect(page2.NextToken).toBeDefined();
+
+  const page3 = await client.send(
+    new ListVersionsCommand({ MaxResults: 2, NextToken: page2.NextToken }),
+  );
+  expect(page3.Versions).toHaveLength(1);
+  expect(page3.NextToken).toBeUndefined();
+});
+
+test("OpenSearch DescribePackages filters", async () => {
+  const client = opensearch();
+
+  await client.send(
+    new CreatePackageCommand({
+      PackageName: "filter-pkg-1",
+      PackageType: "TXT-DICTIONARY",
+      PackageSource: {
+        S3BucketName: "my-bucket",
+        S3Key: "filter-pkg-1.txt",
+      },
+    }),
+  );
+  await client.send(
+    new CreatePackageCommand({
+      PackageName: "filter-pkg-2",
+      PackageType: "ZIP-PLUGIN",
+      PackageSource: {
+        S3BucketName: "my-bucket",
+        S3Key: "filter-pkg-2.zip",
+      },
+    }),
+  );
+
+  const byType = await client.send(
+    new DescribePackagesCommand({
+      Filters: [{ Name: "PackageType", Value: ["TXT-DICTIONARY"] }],
+    }),
+  );
+  expect(
+    (byType.PackageDetailsList ?? []).every(
+      (p) => p.PackageType === "TXT-DICTIONARY",
+    ),
+  ).toBe(true);
+  expect(
+    (byType.PackageDetailsList ?? []).some(
+      (p) => p.PackageName === "filter-pkg-1",
+    ),
+  ).toBe(true);
+
+  const byName = await client.send(
+    new DescribePackagesCommand({
+      Filters: [{ Name: "PackageName", Value: ["filter-pkg-2"] }],
+    }),
+  );
+  expect(byName.PackageDetailsList).toHaveLength(1);
+  expect(byName.PackageDetailsList?.[0]?.PackageName).toBe("filter-pkg-2");
+});
+
+test("OpenSearch index status lifecycle", async () => {
+  const client = opensearch();
+  const domainName = `idx-status-${Date.now()}`.slice(0, 28).toLowerCase();
+
+  await client.send(new CreateDomainCommand({ DomainName: domainName }));
+
+  const created = await client.send(
+    new CreateIndexCommand({
+      DomainName: domainName,
+      IndexName: "status-idx",
+      IndexSchema: { fields: [{ name: "id", type: "keyword" }] },
+    }),
+  );
+  expect(created.Status).toBe("CREATED");
+
+  const got = await client.send(
+    new GetIndexCommand({ DomainName: domainName, IndexName: "status-idx" }),
+  );
+  expect(got.IndexSchema).toBeDefined();
+
+  await client.send(new DeleteDomainCommand({ DomainName: domainName }));
 });

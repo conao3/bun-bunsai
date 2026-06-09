@@ -150,6 +150,27 @@ const expPersonasKey = (indexId: string, expId: string): string =>
   `exppersonas#${indexId}#${expId}`;
 const syncJobKey = (indexId: string, dsId: string, execId: string): string =>
   `syncjob#${indexId}#${dsId}#${execId}`;
+const docKey = (indexId: string, docId: string): string =>
+  `doc#${indexId}#${docId}`;
+
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
 
 const CreateIndex: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
@@ -194,18 +215,25 @@ const DescribeIndex: OperationHandler = (input, ctx) => {
 };
 
 const ListIndices: OperationHandler = (input, ctx) => {
-  const entries = ctx.store
+  const all = ctx.store
     .list<StoredIndex>()
-    .filter(({ key }) => !key.includes("#"));
-  return {
-    IndexConfigurationSummaryItems: entries.map(({ value: index }) => ({
+    .filter(({ key }) => !key.includes("#"))
+    .map(({ value: index }) => ({
       Name: index.Name,
       Id: index.Id,
       Edition: index.Edition,
       CreatedAt: index.CreatedAt,
       UpdatedAt: index.UpdatedAt,
       Status: index.Status,
-    })),
+    }));
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    IndexConfigurationSummaryItems: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 
@@ -285,18 +313,25 @@ const ListDataSources: OperationHandler = (input, ctx) => {
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const prefix = `ds#${indexId}#`;
-  const entries = ctx.store
+  const all = ctx.store
     .list<StoredDataSource>()
-    .filter(({ key }) => key.startsWith(prefix));
-  return {
-    SummaryItems: entries.map(({ value: ds }) => ({
+    .filter(({ key }) => key.startsWith(prefix))
+    .map(({ value: ds }) => ({
       Id: ds.Id,
       Name: ds.Name,
       Type: ds.Type,
       Status: ds.Status,
       CreatedAt: ds.CreatedAt,
       UpdatedAt: ds.UpdatedAt,
-    })),
+    }));
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    SummaryItems: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 
@@ -367,14 +402,19 @@ const StartDataSourceSyncJob: OperationHandler = (input, ctx) => {
 const StopDataSourceSyncJob: OperationHandler = (input, ctx) => {
   const indexId = requireString(input, "IndexId");
   const id = requireString(input, "Id");
-  const ds = ctx.store.get<StoredDataSource>(dsKey(indexId, id));
-  if (!ds) {
+  const prefix = `syncjob#${indexId}#${id}#`;
+  const running = ctx.store
+    .list<StoredSyncJob>()
+    .filter(({ key }) => key.startsWith(prefix))
+    .find(({ value }) => value.Status === "SYNCING");
+  if (!running) {
     throw awsError(
       "ResourceNotFoundException",
-      `DataSource ${id} not found.`,
+      `No active sync job for DataSource ${id}.`,
       404,
     );
   }
+  ctx.store.set(running.key, { ...running.value, Status: "STOPPING" });
   return {};
 };
 
@@ -446,11 +486,10 @@ const ListFaqs: OperationHandler = (input, ctx) => {
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const prefix = `faq#${indexId}#`;
-  const entries = ctx.store
+  const all = ctx.store
     .list<StoredFaq>()
-    .filter(({ key }) => key.startsWith(prefix));
-  return {
-    FaqSummaryItems: entries.map(({ value: faq }) => ({
+    .filter(({ key }) => key.startsWith(prefix))
+    .map(({ value: faq }) => ({
       Id: faq.Id,
       Name: faq.Name,
       Status: faq.Status,
@@ -458,7 +497,15 @@ const ListFaqs: OperationHandler = (input, ctx) => {
       UpdatedAt: faq.UpdatedAt,
       FileFormat: faq.FileFormat,
       LanguageCode: faq.LanguageCode,
-    })),
+    }));
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    FaqSummaryItems: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 
@@ -528,17 +575,24 @@ const ListExperiences: OperationHandler = (input, ctx) => {
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const prefix = `exp#${indexId}#`;
-  const entries = ctx.store
+  const all = ctx.store
     .list<StoredExperience>()
-    .filter(({ key }) => key.startsWith(prefix));
-  return {
-    SummaryItems: entries.map(({ value: exp }) => ({
+    .filter(({ key }) => key.startsWith(prefix))
+    .map(({ value: exp }) => ({
       Id: exp.Id,
       Name: exp.Name,
       Status: exp.Status,
       CreatedAt: exp.CreatedAt,
       Endpoints: exp.Endpoints,
-    })),
+    }));
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    SummaryItems: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 
@@ -614,6 +668,17 @@ const DisassociateEntitiesFromExperience: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const toRemove = Array.isArray(input["EntityList"])
+    ? (input["EntityList"] as { EntityId?: string }[])
+        .map((e) => e.EntityId)
+        .filter((id): id is string => typeof id === "string")
+    : [];
+  const key = expEntitiesKey(indexId, id);
+  const existing = ctx.store.get<{ EntityId?: string }[]>(key) ?? [];
+  ctx.store.set(
+    key,
+    existing.filter((e) => !toRemove.includes(e.EntityId ?? "")),
+  );
   return { FailedEntityList: [] };
 };
 
@@ -661,6 +726,15 @@ const DisassociatePersonasFromEntities: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const toRemove = Array.isArray(input["EntityIds"])
+    ? (input["EntityIds"] as string[])
+    : [];
+  const key = expPersonasKey(indexId, id);
+  const existing = ctx.store.get<{ EntityId?: string }[]>(key) ?? [];
+  ctx.store.set(
+    key,
+    existing.filter((p) => !toRemove.includes(p.EntityId ?? "")),
+  );
   return { FailedEntityList: [] };
 };
 
@@ -730,17 +804,24 @@ const ListThesauri: OperationHandler = (input, ctx) => {
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const prefix = `thes#${indexId}#`;
-  const entries = ctx.store
+  const all = ctx.store
     .list<StoredThesaurus>()
-    .filter(({ key }) => key.startsWith(prefix));
-  return {
-    ThesaurusSummaryItems: entries.map(({ value: thes }) => ({
+    .filter(({ key }) => key.startsWith(prefix))
+    .map(({ value: thes }) => ({
       Id: thes.Id,
       Name: thes.Name,
       Status: thes.Status,
       CreatedAt: thes.CreatedAt,
       UpdatedAt: thes.UpdatedAt,
-    })),
+    }));
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    ThesaurusSummaryItems: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 
@@ -828,13 +909,18 @@ const ListAccessControlConfigurations: OperationHandler = (input, ctx) => {
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const prefix = `acc#${indexId}#`;
-  const entries = ctx.store
+  const all = ctx.store
     .list<StoredAccessControlConfiguration>()
-    .filter(({ key }) => key.startsWith(prefix));
+    .filter(({ key }) => key.startsWith(prefix))
+    .map(({ value: acc }) => ({ Id: acc.Id }));
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
   return {
-    AccessControlConfigurations: entries.map(({ value: acc }) => ({
-      Id: acc.Id,
-    })),
+    AccessControlConfigurations: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 
@@ -1258,8 +1344,17 @@ const ClearQuerySuggestions: OperationHandler = (input, ctx) => {
 const GetQuerySuggestions: OperationHandler = (input, ctx) => {
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
+  const config = ctx.store.get<Record<string, unknown>>(qscKey(indexId)) ?? {};
+  const mode = typeof config["Mode"] === "string" ? config["Mode"] : "ENABLED";
+  const minCount =
+    typeof config["MinimumQueryCount"] === "number"
+      ? config["MinimumQueryCount"]
+      : 3;
   const queryText =
     typeof input["QueryText"] === "string" ? input["QueryText"] : "";
+  if (mode !== "ENABLED" || queryText.length < minCount) {
+    return { QuerySuggestionsId: crypto.randomUUID(), Suggestions: [] };
+  }
   return {
     QuerySuggestionsId: crypto.randomUUID(),
     Suggestions: [
@@ -1275,10 +1370,16 @@ const GetQuerySuggestions: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceARN");
-  const tags = Array.isArray(input["Tags"]) ? input["Tags"] : [];
+  const newTags = Array.isArray(input["Tags"])
+    ? (input["Tags"] as { Key: string; Value: string }[])
+    : [];
   const key = tagKey(arn);
-  const existing = ctx.store.get<unknown[]>(key) ?? [];
-  ctx.store.set(key, [...existing, ...tags]);
+  const existing = ctx.store.get<{ Key: string; Value: string }[]>(key) ?? [];
+  const newKeys = new Set(newTags.map((t) => t.Key));
+  ctx.store.set(key, [
+    ...existing.filter((t) => !newKeys.has(t.Key)),
+    ...newTags,
+  ]);
   return {};
 };
 
@@ -1306,25 +1407,41 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
 const BatchPutDocument: OperationHandler = (input, ctx) => {
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
-  const docs = Array.isArray(input["Documents"]) ? input["Documents"] : [];
-  const failed = docs
-    .filter(
-      (d: unknown) =>
-        typeof d !== "object" ||
-        d === null ||
-        !(d as Record<string, unknown>)["Id"],
-    )
-    .map((d: unknown) => ({
-      Id: (d as Record<string, unknown>)?.["Id"] ?? "",
-      ErrorCode: "INVALID_REQUEST",
-      ErrorMessage: "Missing Id",
-    }));
+  const docs = Array.isArray(input["Documents"])
+    ? (input["Documents"] as Record<string, unknown>[])
+    : [];
+  const failed: { Id: string; ErrorCode: string; ErrorMessage: string }[] = [];
+  for (const d of docs) {
+    if (
+      typeof d !== "object" ||
+      d === null ||
+      typeof d["Id"] !== "string" ||
+      d["Id"] === ""
+    ) {
+      failed.push({
+        Id: typeof d?.["Id"] === "string" ? d["Id"] : "",
+        ErrorCode: "INVALID_REQUEST",
+        ErrorMessage: "Missing Id",
+      });
+    } else {
+      ctx.store.set(docKey(indexId, d["Id"] as string), {
+        DocumentId: d["Id"],
+        DocumentStatus: "INDEXED",
+      });
+    }
+  }
   return { FailedDocuments: failed };
 };
 
 const BatchDeleteDocument: OperationHandler = (input, ctx) => {
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
+  const ids = Array.isArray(input["DocumentIdList"])
+    ? (input["DocumentIdList"] as string[])
+    : [];
+  for (const id of ids) {
+    ctx.store.delete(docKey(indexId, id));
+  }
   return { FailedDocuments: [] };
 };
 
@@ -1336,10 +1453,16 @@ const BatchGetDocumentStatus: OperationHandler = (input, ctx) => {
     : [];
   return {
     Failures: [],
-    DocumentStatusList: refs.map((ref: unknown) => ({
-      DocumentId: (ref as Record<string, unknown>)?.["DocumentId"] ?? "",
-      DocumentStatus: "INDEXED",
-    })),
+    DocumentStatusList: refs.map((ref: unknown) => {
+      const docId = (ref as Record<string, unknown>)?.["DocumentId"] ?? "";
+      const stored = ctx.store.get<{ DocumentStatus: string }>(
+        docKey(indexId, docId as string),
+      );
+      return {
+        DocumentId: docId,
+        DocumentStatus: stored ? stored.DocumentStatus : "NOT_FOUND",
+      };
+    }),
   };
 };
 

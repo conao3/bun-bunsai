@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  AllocatePrivateVirtualInterfaceCommand,
   ConfirmConnectionCommand,
+  ConfirmPrivateVirtualInterfaceCommand,
   CreateBGPPeerCommand,
   CreateConnectionCommand,
   CreateDirectConnectGatewayAssociationCommand,
@@ -75,7 +77,7 @@ test("DirectConnect connection lifecycle", async () => {
   );
   expect(created.connectionId).toMatch(/^dxcon-/);
   expect(created.connectionName).toBe("bunsai-e2e-connection");
-  expect(created.connectionState).toBe("available");
+  expect(created.connectionState).toBe("requested");
   expect(created.location).toBe("EqDC2");
   expect(created.bandwidth).toBe("1Gbps");
   const connectionId = created.connectionId;
@@ -111,6 +113,7 @@ test("DirectConnect connection update and confirm", async () => {
     }),
   );
   const connectionId = created.connectionId!;
+  expect(created.connectionState).toBe("requested");
 
   const updated = await client.send(
     new UpdateConnectionCommand({
@@ -217,6 +220,7 @@ test("DirectConnect virtual interface lifecycle", async () => {
   );
   expect(privateVi.virtualInterfaceId).toMatch(/^dxvif-/);
   expect(privateVi.virtualInterfaceType).toBe("private");
+  expect(privateVi.virtualInterfaceState).toBe("pending");
   const privateViId = privateVi.virtualInterfaceId!;
 
   const publicVi = await client.send(
@@ -544,6 +548,88 @@ test("DirectConnect virtual gateways and customer metadata", async () => {
 
   const meta = await client.send(new DescribeCustomerMetadataCommand({}));
   expect(Array.isArray(meta.agreements)).toBe(true);
+});
+
+test("DirectConnect VIF allocated state and confirm", async () => {
+  const client = directconnect();
+
+  const conn = await client.send(
+    new CreateConnectionCommand({
+      location: "EqDC2",
+      bandwidth: "1Gbps",
+      connectionName: "e2e-alloc-vif-conn",
+    }),
+  );
+  const connectionId = conn.connectionId!;
+
+  const allocatedVi = await client.send(
+    new AllocatePrivateVirtualInterfaceCommand({
+      connectionId,
+      ownerAccount: "111111111111",
+      newPrivateVirtualInterfaceAllocation: {
+        virtualInterfaceName: "e2e-alloc-vi",
+        vlan: 600,
+        asn: 65400,
+      },
+    }),
+  );
+  expect(allocatedVi.virtualInterfaceState).toBe("confirming");
+  const viId = allocatedVi.virtualInterfaceId!;
+
+  const confirmed = await client.send(
+    new ConfirmPrivateVirtualInterfaceCommand({
+      virtualInterfaceId: viId,
+      virtualGatewayId: "vgw-12345678",
+    }),
+  );
+  expect(confirmed.virtualInterfaceState).toBe("available");
+
+  const deleted = await client.send(
+    new DeleteVirtualInterfaceCommand({ virtualInterfaceId: viId }),
+  );
+  expect(deleted.virtualInterfaceState).toBe("deleted");
+
+  await client.send(new DeleteConnectionCommand({ connectionId }));
+});
+
+test("DirectConnect pagination", async () => {
+  const client = directconnect();
+
+  const ids: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const conn = await client.send(
+      new CreateConnectionCommand({
+        location: "EqDC2",
+        bandwidth: "1Gbps",
+        connectionName: `e2e-page-conn-${i}`,
+      }),
+    );
+    ids.push(conn.connectionId!);
+  }
+
+  const page1 = await client.send(
+    new DescribeConnectionsCommand({ maxResults: 2 }),
+  );
+  expect((page1.connections ?? []).length).toBeLessThanOrEqual(2);
+  expect(page1.nextToken).toBeDefined();
+
+  const allConns: string[] = [];
+  let token: string | undefined;
+  do {
+    const resp = await client.send(
+      new DescribeConnectionsCommand({ maxResults: 2, nextToken: token }),
+    );
+    allConns.push(...(resp.connections ?? []).map((c) => c.connectionId!));
+    token = resp.nextToken;
+  } while (token !== undefined);
+
+  for (const id of ids) {
+    expect(allConns).toContain(id);
+  }
+
+  for (const id of ids) {
+    await client.send(new DeleteConnectionCommand({ connectionId: id }));
+  }
 });
 
 test("DirectConnect BGP failover test", async () => {

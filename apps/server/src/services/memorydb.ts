@@ -19,6 +19,7 @@ type StoredCluster = {
   EngineVersion: string;
   ACLName: string;
   SubnetGroupName: string | undefined;
+  ParameterGroupName: string | undefined;
   ARN: string;
   ClusterEndpoint: { Address: string; Port: number };
 };
@@ -117,10 +118,18 @@ const paginateList = <T>(
 ): { items: T[]; nextToken: string | undefined } => {
   const pageSize =
     typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
-  const startIndex =
-    typeof nextToken === "string" && nextToken !== ""
-      ? parseInt(nextToken, 10)
-      : 0;
+  let startIndex = 0;
+  if (typeof nextToken === "string" && nextToken !== "") {
+    const parsed = parseInt(nextToken, 10);
+    if (isNaN(parsed)) {
+      throw awsError(
+        "InvalidNextTokenException",
+        "The NextToken value is invalid.",
+        400,
+      );
+    }
+    startIndex = parsed;
+  }
   const page = items.slice(startIndex, startIndex + pageSize);
   const newNextToken =
     startIndex + pageSize < items.length
@@ -273,7 +282,16 @@ const tagsFromInput = (input: Record<string, unknown>): StoredTag[] => {
 const CreateCluster: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ClusterName");
   const nodeType = requireString(input, "NodeType");
-  requireString(input, "ACLName");
+  const aclName = requireString(input, "ACLName");
+  requireACL(ctx, aclName);
+  const subnetGroupName = stringOrUndefined(input["SubnetGroupName"]);
+  if (subnetGroupName !== undefined) {
+    requireSubnetGroup(ctx, subnetGroupName);
+  }
+  const parameterGroupName = stringOrUndefined(input["ParameterGroupName"]);
+  if (parameterGroupName !== undefined) {
+    requireParameterGroup(ctx, parameterGroupName);
+  }
   if (ctx.store.get<StoredCluster>(clusterKey(name)) !== undefined) {
     throw awsError(
       "ClusterAlreadyExistsFault",
@@ -290,8 +308,9 @@ const CreateCluster: OperationHandler = (input, ctx) => {
       typeof input["NumShards"] === "number" ? input["NumShards"] : 1,
     Engine: stringOrUndefined(input["Engine"]) ?? "redis",
     EngineVersion: stringOrUndefined(input["EngineVersion"]) ?? "7.1",
-    ACLName: requireString(input, "ACLName"),
-    SubnetGroupName: stringOrUndefined(input["SubnetGroupName"]),
+    ACLName: aclName,
+    SubnetGroupName: subnetGroupName,
+    ParameterGroupName: parameterGroupName,
     ARN: clusterArn(ctx, name),
     ClusterEndpoint: {
       Address: `clustercfg.${name}.memorydb.${ctx.region}.amazonaws.com`,
@@ -364,6 +383,7 @@ const DeleteCluster: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ClusterName");
   const cluster = requireCluster(ctx, name);
   ctx.store.delete(clusterKey(name));
+  ctx.store.delete(tagKey(cluster.ARN));
   return { Cluster: { ...cluster, Status: "deleting" } };
 };
 
@@ -432,7 +452,22 @@ const CreateSubnetGroup: OperationHandler = (input, ctx) => {
 const DeleteSubnetGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "SubnetGroupName");
   const sg = requireSubnetGroup(ctx, name);
+  const inUse = ctx.store
+    .list<StoredCluster>()
+    .some(
+      (entry) =>
+        entry.key.startsWith("cluster/") &&
+        entry.value.SubnetGroupName === name,
+    );
+  if (inUse) {
+    throw awsError(
+      "SubnetGroupInUseFault",
+      `Subnet group is in use by a cluster: ${name}`,
+      400,
+    );
+  }
   ctx.store.delete(subnetGroupKey(name));
+  ctx.store.delete(tagKey(sg.ARN));
   return { SubnetGroup: sg };
 };
 
@@ -504,7 +539,22 @@ const CreateParameterGroup: OperationHandler = (input, ctx) => {
 const DeleteParameterGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ParameterGroupName");
   const pg = requireParameterGroup(ctx, name);
+  const inUse = ctx.store
+    .list<StoredCluster>()
+    .some(
+      (entry) =>
+        entry.key.startsWith("cluster/") &&
+        entry.value.ParameterGroupName === name,
+    );
+  if (inUse) {
+    throw awsError(
+      "InvalidParameterGroupStateFault",
+      `Parameter group is in use by a cluster: ${name}`,
+      400,
+    );
+  }
   ctx.store.delete(parameterGroupKey(name));
+  ctx.store.delete(tagKey(pg.ARN));
   return { ParameterGroup: pg };
 };
 
@@ -674,9 +724,14 @@ const CopySnapshot: OperationHandler = (input, ctx) => {
     KmsKeyId: stringOrUndefined(input["KmsKeyId"]) ?? source.KmsKeyId,
   };
   ctx.store.set(snapshotKey(targetName), snap);
-  const tags = tagsFromInput(input);
-  if (tags.length > 0) {
-    ctx.store.set(tagKey(snap.ARN), tags);
+  const inputTags = tagsFromInput(input);
+  const sourceTags = ctx.store.get<StoredTag[]>(tagKey(source.ARN)) ?? [];
+  const mergedTags = [
+    ...sourceTags.filter((st) => !inputTags.some((it) => it.Key === st.Key)),
+    ...inputTags,
+  ];
+  if (mergedTags.length > 0) {
+    ctx.store.set(tagKey(snap.ARN), mergedTags);
   }
   return { Snapshot: snap };
 };
@@ -685,6 +740,7 @@ const DeleteSnapshot: OperationHandler = (input, ctx) => {
   const name = requireString(input, "SnapshotName");
   const snap = requireSnapshot(ctx, name);
   ctx.store.delete(snapshotKey(name));
+  ctx.store.delete(tagKey(snap.ARN));
   return { Snapshot: { ...snap, Status: "deleting" } };
 };
 
@@ -761,7 +817,15 @@ const CreateUser: OperationHandler = (input, ctx) => {
 const DeleteUser: OperationHandler = (input, ctx) => {
   const name = requireString(input, "UserName");
   const user = requireUser(ctx, name);
+  if (user.ACLNames.length > 0) {
+    throw awsError(
+      "InvalidUserStateFault",
+      `User is associated with ACLs: ${name}`,
+      400,
+    );
+  }
   ctx.store.delete(userKey(name));
+  ctx.store.delete(tagKey(user.ARN));
   return { User: { ...user, Status: "deleting" } };
 };
 
@@ -871,7 +935,30 @@ const CreateACL: OperationHandler = (input, ctx) => {
 const DeleteACL: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ACLName");
   const acl = requireACL(ctx, name);
+  const inUse = ctx.store
+    .list<StoredCluster>()
+    .some(
+      (entry) =>
+        entry.key.startsWith("cluster/") && entry.value.ACLName === name,
+    );
+  if (inUse) {
+    throw awsError(
+      "InvalidACLStateFault",
+      `ACL is associated with a cluster: ${name}`,
+      400,
+    );
+  }
+  for (const userName of acl.UserNames) {
+    const u = ctx.store.get<StoredUser>(userKey(userName));
+    if (u !== undefined) {
+      ctx.store.set(userKey(userName), {
+        ...u,
+        ACLNames: u.ACLNames.filter((a) => a !== name),
+      });
+    }
+  }
   ctx.store.delete(aclKey(name));
+  ctx.store.delete(tagKey(acl.ARN));
   return { ACL: { ...acl, Status: "deleting" } };
 };
 
@@ -977,6 +1064,7 @@ const DeleteMultiRegionCluster: OperationHandler = (input, ctx) => {
   const name = requireString(input, "MultiRegionClusterName");
   const mrc = requireMultiRegionCluster(ctx, name);
   ctx.store.delete(multiRegionClusterKey(name));
+  ctx.store.delete(tagKey(mrc.ARN));
   return { MultiRegionCluster: { ...mrc, Status: "deleting" } };
 };
 

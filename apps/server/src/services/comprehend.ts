@@ -19,6 +19,7 @@ type StoredEndpoint = {
   DataAccessRoleArn: string | undefined;
   CreationTime: number;
   LastModifiedTime: number;
+  describeCount: number;
 };
 
 type StoredDocumentClassifier = {
@@ -29,9 +30,12 @@ type StoredDocumentClassifier = {
   Status: string;
   DataAccessRoleArn: string | undefined;
   SubmitTime: number;
+  TrainingEndTime: number | undefined;
   InputDataConfig: Record<string, unknown>;
   Mode: string;
   FlywheelArn: string | undefined;
+  ClientRequestToken: string | undefined;
+  describeCount: number;
 };
 
 type StoredEntityRecognizer = {
@@ -42,8 +46,11 @@ type StoredEntityRecognizer = {
   Status: string;
   DataAccessRoleArn: string | undefined;
   SubmitTime: number;
+  TrainingEndTime: number | undefined;
   InputDataConfig: Record<string, unknown>;
   FlywheelArn: string | undefined;
+  ClientRequestToken: string | undefined;
+  describeCount: number;
 };
 
 type StoredFlywheel = {
@@ -59,13 +66,16 @@ type StoredFlywheel = {
   CreationTime: number;
   LastModifiedTime: number;
   LatestFlywheelIteration: string | undefined;
+  describeCount: number;
 };
 
 type StoredFlywheelIteration = {
   FlywheelArn: string;
   FlywheelIterationId: string;
   CreationTime: number;
+  EndTime: number | undefined;
   Status: string;
+  describeCount: number;
 };
 
 type StoredDataset = {
@@ -75,7 +85,9 @@ type StoredDataset = {
   Description: string | undefined;
   Status: string;
   CreationTime: number;
+  EndTime: number | undefined;
   FlywheelArn: string;
+  describeCount: number;
 };
 
 type StoredResourcePolicy = {
@@ -91,6 +103,7 @@ type StoredDetectionJob = {
   JobName: string | undefined;
   JobStatus: string;
   SubmitTime: number;
+  EndTime: number | undefined;
   InputDataConfig: Record<string, unknown>;
   OutputDataConfig: Record<string, unknown>;
   DataAccessRoleArn: string | undefined;
@@ -102,6 +115,7 @@ type StoredDetectionJob = {
   Mode: string | undefined;
   TargetEventTypes: string[] | undefined;
   RedactionConfig: Record<string, unknown> | undefined;
+  describeCount: number;
 };
 
 const requireString = (
@@ -190,6 +204,8 @@ const parseTags = (raw: unknown): { Key: string; Value: string }[] => {
 
 const tagsKey = (arn: string): string => `tags/${arn}`;
 const policyKey = (arn: string): string => `policy/${arn}`;
+const idempotencyKey = (prefix: string, token: string): string =>
+  `idempotency/${prefix}/${token}`;
 
 const requireEndpoint = (ctx: ServiceContext, arn: string): StoredEndpoint => {
   const direct = ctx.store.get<StoredEndpoint>(endpointKey(arn));
@@ -267,6 +283,7 @@ const classifierProperties = (
   LanguageCode: c.LanguageCode,
   Status: c.Status,
   SubmitTime: c.SubmitTime,
+  TrainingEndTime: c.TrainingEndTime,
   DataAccessRoleArn: c.DataAccessRoleArn,
   InputDataConfig: c.InputDataConfig,
   Mode: c.Mode,
@@ -281,6 +298,7 @@ const recognizerProperties = (
   LanguageCode: r.LanguageCode,
   Status: r.Status,
   SubmitTime: r.SubmitTime,
+  TrainingEndTime: r.TrainingEndTime,
   DataAccessRoleArn: r.DataAccessRoleArn,
   InputDataConfig: r.InputDataConfig,
   VersionName: r.VersionName,
@@ -310,6 +328,7 @@ const detectionJobProperties = (
   JobName: j.JobName,
   JobStatus: j.JobStatus,
   SubmitTime: j.SubmitTime,
+  EndTime: j.EndTime,
   InputDataConfig: j.InputDataConfig,
   OutputDataConfig: j.OutputDataConfig,
   DataAccessRoleArn: j.DataAccessRoleArn,
@@ -337,22 +356,87 @@ const makeJobId = (): string =>
 
 const endpointKey = (arn: string): string => `endpoint/${arn}`;
 
+const encodeCursor = (offset: number): string => btoa(String(offset));
+
+const decodeCursor = (token: string): number => {
+  const n = parseInt(atob(token), 10);
+  return Number.isNaN(n) ? 0 : n;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; NextToken: string | undefined } => {
+  const offset = typeof nextToken === "string" ? decodeCursor(nextToken) : 0;
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : items.length;
+  const page = items.slice(offset, offset + max);
+  const token =
+    offset + max < items.length ? encodeCursor(offset + max) : undefined;
+  return { items: page, NextToken: token };
+};
+
+const matchJobFilter = (job: StoredDetectionJob, filter: unknown): boolean => {
+  if (typeof filter !== "object" || filter === null) return true;
+  const f = filter as Record<string, unknown>;
+  const jobName = stringOrUndefined(f.JobName);
+  const jobStatus = stringOrUndefined(f.JobStatus);
+  const submitBefore = numberOrUndefined(f.SubmitTimeBefore);
+  const submitAfter = numberOrUndefined(f.SubmitTimeAfter);
+  if (jobName !== undefined && job.JobName !== jobName) return false;
+  if (jobStatus !== undefined && job.JobStatus !== jobStatus) return false;
+  if (submitBefore !== undefined && job.SubmitTime > submitBefore * 1000)
+    return false;
+  if (submitAfter !== undefined && job.SubmitTime < submitAfter * 1000)
+    return false;
+  return true;
+};
+
+const advanceJobStatus = (job: StoredDetectionJob): StoredDetectionJob => {
+  if (job.JobStatus === "SUBMITTED") {
+    if (job.describeCount >= 1) {
+      return {
+        ...job,
+        JobStatus: "IN_PROGRESS",
+        describeCount: job.describeCount + 1,
+      };
+    }
+    return { ...job, describeCount: job.describeCount + 1 };
+  }
+  if (job.JobStatus === "IN_PROGRESS") {
+    if (job.describeCount >= 2) {
+      return {
+        ...job,
+        JobStatus: "COMPLETED",
+        EndTime: Date.now(),
+        describeCount: job.describeCount + 1,
+      };
+    }
+    return { ...job, describeCount: job.describeCount + 1 };
+  }
+  return job;
+};
+
 const CreateEndpoint: OperationHandler = (input, ctx) => {
   const name = requireString(input, "EndpointName");
   const desired = requireNumber(input, "DesiredInferenceUnits");
   const modelArn = stringOrUndefined(input.ModelArn);
   const arn = endpointArn(ctx.region, ctx.account, name);
-  const now = Date.now() / 1000;
+  const now = Date.now();
   const endpoint: StoredEndpoint = {
     EndpointArn: arn,
     EndpointName: name,
     ModelArn: modelArn,
-    Status: "IN_SERVICE",
+    Status: "CREATING",
     DesiredInferenceUnits: desired,
     CurrentInferenceUnits: desired,
     DataAccessRoleArn: stringOrUndefined(input.DataAccessRoleArn),
     CreationTime: now,
     LastModifiedTime: now,
+    describeCount: 0,
   };
   ctx.store.set(endpointKey(arn), endpoint);
   return { EndpointArn: arn, ModelArn: modelArn };
@@ -360,16 +444,51 @@ const CreateEndpoint: OperationHandler = (input, ctx) => {
 
 const DescribeEndpoint: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "EndpointArn");
-  const endpoint = requireEndpoint(ctx, arn);
+  let endpoint = requireEndpoint(ctx, arn);
+  if (endpoint.Status === "CREATING" || endpoint.Status === "UPDATING") {
+    if (endpoint.describeCount >= 1) {
+      const next: StoredEndpoint = {
+        ...endpoint,
+        Status: "IN_SERVICE",
+        CurrentInferenceUnits: endpoint.DesiredInferenceUnits,
+        LastModifiedTime: Date.now(),
+        describeCount: endpoint.describeCount + 1,
+      };
+      ctx.store.set(endpointKey(arn), next);
+      endpoint = next;
+    } else {
+      const next: StoredEndpoint = {
+        ...endpoint,
+        describeCount: endpoint.describeCount + 1,
+      };
+      ctx.store.set(endpointKey(arn), next);
+      endpoint = next;
+    }
+  }
   return { EndpointProperties: endpointProperties(endpoint) };
 };
 
-const ListEndpoints: OperationHandler = (_input, ctx) => {
-  const endpoints = ctx.store
+const ListEndpoints: OperationHandler = (input, ctx) => {
+  const filter = input.Filter;
+  const all = ctx.store
     .list<StoredEndpoint>()
     .filter((e) => e.key.startsWith("endpoint/"))
-    .map((entry) => endpointProperties(entry.value));
-  return { EndpointPropertiesList: endpoints };
+    .map((entry) => entry.value)
+    .filter((ep) => {
+      if (typeof filter !== "object" || filter === null) return true;
+      const f = filter as Record<string, unknown>;
+      const status = stringOrUndefined(f.Status);
+      const modelArn = stringOrUndefined(f.ModelArn);
+      const before = numberOrUndefined(f.CreationTimeBefore);
+      const after = numberOrUndefined(f.CreationTimeAfter);
+      if (status !== undefined && ep.Status !== status) return false;
+      if (modelArn !== undefined && ep.ModelArn !== modelArn) return false;
+      if (before !== undefined && ep.CreationTime > before * 1000) return false;
+      if (after !== undefined && ep.CreationTime < after * 1000) return false;
+      return true;
+    });
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
+  return { EndpointPropertiesList: items.map(endpointProperties), NextToken };
 };
 
 const DeleteEndpoint: OperationHandler = (input, ctx) => {
@@ -383,15 +502,16 @@ const UpdateEndpoint: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "EndpointArn");
   const endpoint = requireEndpoint(ctx, arn);
   const desired = numberOrUndefined(input.DesiredInferenceUnits);
-  const now = Date.now() / 1000;
+  const now = Date.now();
   const updated: StoredEndpoint = {
     ...endpoint,
     ModelArn: stringOrUndefined(input.DesiredModelArn) ?? endpoint.ModelArn,
     DesiredInferenceUnits: desired ?? endpoint.DesiredInferenceUnits,
-    CurrentInferenceUnits: desired ?? endpoint.CurrentInferenceUnits,
     DataAccessRoleArn:
       stringOrUndefined(input.DataAccessRoleArn) ?? endpoint.DataAccessRoleArn,
+    Status: "UPDATING",
     LastModifiedTime: now,
+    describeCount: 0,
   };
   ctx.store.set(endpointKey(arn), updated);
   return { DesiredModelArn: updated.ModelArn };
@@ -401,8 +521,15 @@ const CreateDocumentClassifier: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DocumentClassifierName");
   const languageCode = requireString(input, "LanguageCode");
   const version = stringOrUndefined(input.VersionName);
+  const token = stringOrUndefined(input.ClientRequestToken);
   const arn = classifierArn(ctx.region, ctx.account, name, version);
-  const now = Date.now() / 1000;
+
+  if (token !== undefined) {
+    const existing = ctx.store.get<string>(idempotencyKey("classifier", token));
+    if (existing !== undefined) return { DocumentClassifierArn: existing };
+  }
+
+  const now = Date.now();
   const rec: StoredDocumentClassifier = {
     DocumentClassifierArn: arn,
     DocumentClassifierName: name,
@@ -411,6 +538,7 @@ const CreateDocumentClassifier: OperationHandler = (input, ctx) => {
     Status: "TRAINING",
     DataAccessRoleArn: stringOrUndefined(input.DataAccessRoleArn),
     SubmitTime: now,
+    TrainingEndTime: undefined,
     InputDataConfig:
       typeof input.InputDataConfig === "object" &&
       input.InputDataConfig !== null
@@ -418,8 +546,13 @@ const CreateDocumentClassifier: OperationHandler = (input, ctx) => {
         : {},
     Mode: stringOrUndefined(input.Mode) ?? "MULTI_CLASS",
     FlywheelArn: undefined,
+    ClientRequestToken: token,
+    describeCount: 0,
   };
   ctx.store.set(`classifier/${arn}`, rec);
+  if (token !== undefined) {
+    ctx.store.set(idempotencyKey("classifier", token), arn);
+  }
   const tags = parseTags(input.Tags);
   if (tags.length > 0) ctx.store.set(tagsKey(arn), tags);
   return { DocumentClassifierArn: arn };
@@ -427,19 +560,57 @@ const CreateDocumentClassifier: OperationHandler = (input, ctx) => {
 
 const DescribeDocumentClassifier: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "DocumentClassifierArn");
-  const rec = requireClassifier(ctx, arn);
+  let rec = requireClassifier(ctx, arn);
+  if (rec.Status === "TRAINING") {
+    if (rec.describeCount >= 1) {
+      const updated: StoredDocumentClassifier = {
+        ...rec,
+        Status: "TRAINED",
+        TrainingEndTime: Date.now(),
+        describeCount: rec.describeCount + 1,
+      };
+      ctx.store.set(`classifier/${arn}`, updated);
+      rec = updated;
+    } else {
+      const updated: StoredDocumentClassifier = {
+        ...rec,
+        describeCount: rec.describeCount + 1,
+      };
+      ctx.store.set(`classifier/${arn}`, updated);
+      rec = updated;
+    }
+  }
   return { DocumentClassifierProperties: classifierProperties(rec) };
 };
 
-const ListDocumentClassifiers: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
+const ListDocumentClassifiers: OperationHandler = (input, ctx) => {
+  const filter = input.Filter;
+  const all = ctx.store
     .list<StoredDocumentClassifier>()
     .filter((e) => e.key.startsWith("classifier/"))
-    .map((e) => classifierProperties(e.value));
-  return { DocumentClassifierPropertiesList: list, NextToken: undefined };
+    .map((e) => e.value)
+    .filter((c) => {
+      if (typeof filter !== "object" || filter === null) return true;
+      const f = filter as Record<string, unknown>;
+      const status = stringOrUndefined(f.Status);
+      const dcName = stringOrUndefined(f.DocumentClassifierName);
+      const before = numberOrUndefined(f.SubmitTimeBefore);
+      const after = numberOrUndefined(f.SubmitTimeAfter);
+      if (status !== undefined && c.Status !== status) return false;
+      if (dcName !== undefined && c.DocumentClassifierName !== dcName)
+        return false;
+      if (before !== undefined && c.SubmitTime > before * 1000) return false;
+      if (after !== undefined && c.SubmitTime < after * 1000) return false;
+      return true;
+    });
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
+  return {
+    DocumentClassifierPropertiesList: items.map(classifierProperties),
+    NextToken,
+  };
 };
 
-const ListDocumentClassifierSummaries: OperationHandler = (_input, ctx) => {
+const ListDocumentClassifierSummaries: OperationHandler = (input, ctx) => {
   const byName = new Map<string, StoredDocumentClassifier[]>();
   for (const e of ctx.store
     .list<StoredDocumentClassifier>()
@@ -448,7 +619,7 @@ const ListDocumentClassifierSummaries: OperationHandler = (_input, ctx) => {
     if (!byName.has(n)) byName.set(n, []);
     byName.get(n)!.push(e.value);
   }
-  const summaries = Array.from(byName.entries()).map(([name, versions]) => {
+  const all = Array.from(byName.entries()).map(([name, versions]) => {
     const latest = versions.sort((a, b) => b.SubmitTime - a.SubmitTime)[0];
     return {
       DocumentClassifierName: name,
@@ -458,7 +629,8 @@ const ListDocumentClassifierSummaries: OperationHandler = (_input, ctx) => {
       LatestVersionStatus: latest.Status,
     };
   });
-  return { DocumentClassifierSummariesList: summaries, NextToken: undefined };
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
+  return { DocumentClassifierSummariesList: items, NextToken };
 };
 
 const DeleteDocumentClassifier: OperationHandler = (input, ctx) => {
@@ -480,7 +652,7 @@ const ImportModel: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input.ModelName) ?? "imported-model";
   const version = stringOrUndefined(input.VersionName);
   const arn = classifierArn(ctx.region, ctx.account, name, version);
-  const now = Date.now() / 1000;
+  const now = Date.now();
   const rec: StoredDocumentClassifier = {
     DocumentClassifierArn: arn,
     DocumentClassifierName: name,
@@ -489,9 +661,12 @@ const ImportModel: OperationHandler = (input, ctx) => {
     Status: "TRAINING",
     DataAccessRoleArn: stringOrUndefined(input.DataAccessRoleArn),
     SubmitTime: now,
+    TrainingEndTime: undefined,
     InputDataConfig: { SourceArn: sourceArn },
     Mode: "MULTI_CLASS",
     FlywheelArn: undefined,
+    ClientRequestToken: undefined,
+    describeCount: 0,
   };
   ctx.store.set(`classifier/${arn}`, rec);
   return { ModelArn: arn };
@@ -501,8 +676,15 @@ const CreateEntityRecognizer: OperationHandler = (input, ctx) => {
   const name = requireString(input, "RecognizerName");
   const languageCode = requireString(input, "LanguageCode");
   const version = stringOrUndefined(input.VersionName);
+  const token = stringOrUndefined(input.ClientRequestToken);
   const arn = recognizerArn(ctx.region, ctx.account, name, version);
-  const now = Date.now() / 1000;
+
+  if (token !== undefined) {
+    const existing = ctx.store.get<string>(idempotencyKey("recognizer", token));
+    if (existing !== undefined) return { EntityRecognizerArn: existing };
+  }
+
+  const now = Date.now();
   const rec: StoredEntityRecognizer = {
     EntityRecognizerArn: arn,
     RecognizerName: name,
@@ -511,14 +693,20 @@ const CreateEntityRecognizer: OperationHandler = (input, ctx) => {
     Status: "TRAINING",
     DataAccessRoleArn: stringOrUndefined(input.DataAccessRoleArn),
     SubmitTime: now,
+    TrainingEndTime: undefined,
     InputDataConfig:
       typeof input.InputDataConfig === "object" &&
       input.InputDataConfig !== null
         ? (input.InputDataConfig as Record<string, unknown>)
         : {},
     FlywheelArn: undefined,
+    ClientRequestToken: token,
+    describeCount: 0,
   };
   ctx.store.set(`recognizer/${arn}`, rec);
+  if (token !== undefined) {
+    ctx.store.set(idempotencyKey("recognizer", token), arn);
+  }
   const tags = parseTags(input.Tags);
   if (tags.length > 0) ctx.store.set(tagsKey(arn), tags);
   return { EntityRecognizerArn: arn };
@@ -526,19 +714,56 @@ const CreateEntityRecognizer: OperationHandler = (input, ctx) => {
 
 const DescribeEntityRecognizer: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "EntityRecognizerArn");
-  const rec = requireEntityRecognizer(ctx, arn);
+  let rec = requireEntityRecognizer(ctx, arn);
+  if (rec.Status === "TRAINING") {
+    if (rec.describeCount >= 1) {
+      const updated: StoredEntityRecognizer = {
+        ...rec,
+        Status: "TRAINED",
+        TrainingEndTime: Date.now(),
+        describeCount: rec.describeCount + 1,
+      };
+      ctx.store.set(`recognizer/${arn}`, updated);
+      rec = updated;
+    } else {
+      const updated: StoredEntityRecognizer = {
+        ...rec,
+        describeCount: rec.describeCount + 1,
+      };
+      ctx.store.set(`recognizer/${arn}`, updated);
+      rec = updated;
+    }
+  }
   return { EntityRecognizerProperties: recognizerProperties(rec) };
 };
 
-const ListEntityRecognizers: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
+const ListEntityRecognizers: OperationHandler = (input, ctx) => {
+  const filter = input.Filter;
+  const all = ctx.store
     .list<StoredEntityRecognizer>()
     .filter((e) => e.key.startsWith("recognizer/"))
-    .map((e) => recognizerProperties(e.value));
-  return { EntityRecognizerPropertiesList: list, NextToken: undefined };
+    .map((e) => e.value)
+    .filter((r) => {
+      if (typeof filter !== "object" || filter === null) return true;
+      const f = filter as Record<string, unknown>;
+      const status = stringOrUndefined(f.Status);
+      const rName = stringOrUndefined(f.RecognizerName);
+      const before = numberOrUndefined(f.SubmitTimeBefore);
+      const after = numberOrUndefined(f.SubmitTimeAfter);
+      if (status !== undefined && r.Status !== status) return false;
+      if (rName !== undefined && r.RecognizerName !== rName) return false;
+      if (before !== undefined && r.SubmitTime > before * 1000) return false;
+      if (after !== undefined && r.SubmitTime < after * 1000) return false;
+      return true;
+    });
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
+  return {
+    EntityRecognizerPropertiesList: items.map(recognizerProperties),
+    NextToken,
+  };
 };
 
-const ListEntityRecognizerSummaries: OperationHandler = (_input, ctx) => {
+const ListEntityRecognizerSummaries: OperationHandler = (input, ctx) => {
   const byName = new Map<string, StoredEntityRecognizer[]>();
   for (const e of ctx.store
     .list<StoredEntityRecognizer>()
@@ -547,7 +772,7 @@ const ListEntityRecognizerSummaries: OperationHandler = (_input, ctx) => {
     if (!byName.has(n)) byName.set(n, []);
     byName.get(n)!.push(e.value);
   }
-  const summaries = Array.from(byName.entries()).map(([name, versions]) => {
+  const all = Array.from(byName.entries()).map(([name, versions]) => {
     const latest = versions.sort((a, b) => b.SubmitTime - a.SubmitTime)[0];
     return {
       RecognizerName: name,
@@ -557,7 +782,8 @@ const ListEntityRecognizerSummaries: OperationHandler = (_input, ctx) => {
       LatestVersionStatus: latest.Status,
     };
   });
-  return { EntityRecognizerSummariesList: summaries, NextToken: undefined };
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
+  return { EntityRecognizerSummariesList: items, NextToken };
 };
 
 const DeleteEntityRecognizer: OperationHandler = (input, ctx) => {
@@ -577,7 +803,7 @@ const StopTrainingEntityRecognizer: OperationHandler = (input, ctx) => {
 const CreateFlywheel: OperationHandler = (input, ctx) => {
   const name = requireString(input, "FlywheelName");
   const arn = flywheelArn(ctx.region, ctx.account, name);
-  const now = Date.now() / 1000;
+  const now = Date.now();
   const rec: StoredFlywheel = {
     FlywheelArn: arn,
     FlywheelName: name,
@@ -593,11 +819,12 @@ const CreateFlywheel: OperationHandler = (input, ctx) => {
       input.DataSecurityConfig !== null
         ? (input.DataSecurityConfig as Record<string, unknown>)
         : undefined,
-    Status: "ACTIVE",
+    Status: "CREATING",
     ModelType: stringOrUndefined(input.ModelType),
     CreationTime: now,
     LastModifiedTime: now,
     LatestFlywheelIteration: undefined,
+    describeCount: 0,
   };
   ctx.store.set(`flywheel/${arn}`, rec);
   const tags = parseTags(input.Tags);
@@ -607,28 +834,58 @@ const CreateFlywheel: OperationHandler = (input, ctx) => {
 
 const DescribeFlywheel: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "FlywheelArn");
-  const rec = requireFlywheel(ctx, arn);
+  let rec = requireFlywheel(ctx, arn);
+  if (rec.Status === "CREATING") {
+    if (rec.describeCount >= 1) {
+      const updated: StoredFlywheel = {
+        ...rec,
+        Status: "ACTIVE",
+        LastModifiedTime: Date.now(),
+        describeCount: rec.describeCount + 1,
+      };
+      ctx.store.set(`flywheel/${arn}`, updated);
+      rec = updated;
+    } else {
+      const updated: StoredFlywheel = {
+        ...rec,
+        describeCount: rec.describeCount + 1,
+      };
+      ctx.store.set(`flywheel/${arn}`, updated);
+      rec = updated;
+    }
+  }
   return { FlywheelProperties: flywheelProperties(rec) };
 };
 
-const ListFlywheels: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
+const ListFlywheels: OperationHandler = (input, ctx) => {
+  const filter = input.Filter;
+  const all = ctx.store
     .list<StoredFlywheel>()
     .filter((e) => e.key.startsWith("flywheel/"))
-    .map((e) => {
-      const f = e.value;
-      return {
-        FlywheelArn: f.FlywheelArn,
-        ActiveModelArn: f.ActiveModelArn,
-        DataLakeS3Uri: f.DataLakeS3Uri,
-        Status: f.Status,
-        ModelType: f.ModelType,
-        CreationTime: f.CreationTime,
-        LastModifiedTime: f.LastModifiedTime,
-        LatestFlywheelIteration: f.LatestFlywheelIteration,
-      };
-    });
-  return { FlywheelSummaryList: list, NextToken: undefined };
+    .map((e) => e.value)
+    .filter((f) => {
+      if (typeof filter !== "object" || filter === null) return true;
+      const fi = filter as Record<string, unknown>;
+      const status = stringOrUndefined(fi.Status);
+      const before = numberOrUndefined(fi.CreationTimeBefore);
+      const after = numberOrUndefined(fi.CreationTimeAfter);
+      if (status !== undefined && f.Status !== status) return false;
+      if (before !== undefined && f.CreationTime > before * 1000) return false;
+      if (after !== undefined && f.CreationTime < after * 1000) return false;
+      return true;
+    })
+    .map((f) => ({
+      FlywheelArn: f.FlywheelArn,
+      ActiveModelArn: f.ActiveModelArn,
+      DataLakeS3Uri: f.DataLakeS3Uri,
+      Status: f.Status,
+      ModelType: f.ModelType,
+      CreationTime: f.CreationTime,
+      LastModifiedTime: f.LastModifiedTime,
+      LatestFlywheelIteration: f.LatestFlywheelIteration,
+    }));
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
+  return { FlywheelSummaryList: items, NextToken };
 };
 
 const DeleteFlywheel: OperationHandler = (input, ctx) => {
@@ -641,7 +898,7 @@ const DeleteFlywheel: OperationHandler = (input, ctx) => {
 const UpdateFlywheel: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "FlywheelArn");
   const rec = requireFlywheel(ctx, arn);
-  const now = Date.now() / 1000;
+  const now = Date.now();
   const updated: StoredFlywheel = {
     ...rec,
     ActiveModelArn:
@@ -663,12 +920,14 @@ const StartFlywheelIteration: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "FlywheelArn");
   const fw = requireFlywheel(ctx, arn);
   const iterationId = makeJobId();
-  const now = Date.now() / 1000;
+  const now = Date.now();
   const iter: StoredFlywheelIteration = {
     FlywheelArn: arn,
     FlywheelIterationId: iterationId,
     CreationTime: now,
+    EndTime: undefined,
     Status: "TRAINING",
+    describeCount: 0,
   };
   ctx.store.set(`flywheel-iteration/${arn}/${iterationId}`, iter);
   const updated: StoredFlywheel = {
@@ -683,7 +942,7 @@ const StartFlywheelIteration: OperationHandler = (input, ctx) => {
 const DescribeFlywheelIteration: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "FlywheelArn");
   const iterationId = requireString(input, "FlywheelIterationId");
-  const iter = ctx.store.get<StoredFlywheelIteration>(
+  let iter = ctx.store.get<StoredFlywheelIteration>(
     `flywheel-iteration/${arn}/${iterationId}`,
   );
   if (iter === undefined) {
@@ -693,11 +952,31 @@ const DescribeFlywheelIteration: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  if (iter.Status === "TRAINING") {
+    if (iter.describeCount >= 1) {
+      const updated: StoredFlywheelIteration = {
+        ...iter,
+        Status: "COMPLETED",
+        EndTime: Date.now(),
+        describeCount: iter.describeCount + 1,
+      };
+      ctx.store.set(`flywheel-iteration/${arn}/${iterationId}`, updated);
+      iter = updated;
+    } else {
+      const updated: StoredFlywheelIteration = {
+        ...iter,
+        describeCount: iter.describeCount + 1,
+      };
+      ctx.store.set(`flywheel-iteration/${arn}/${iterationId}`, updated);
+      iter = updated;
+    }
+  }
   return {
     FlywheelIterationProperties: {
       FlywheelArn: iter.FlywheelArn,
       FlywheelIterationId: iter.FlywheelIterationId,
       CreationTime: iter.CreationTime,
+      EndTime: iter.EndTime,
       Status: iter.Status,
     },
   };
@@ -707,16 +986,18 @@ const ListFlywheelIterationHistory: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "FlywheelArn");
   requireFlywheel(ctx, arn);
   const prefix = `flywheel-iteration/${arn}/`;
-  const list = ctx.store
+  const all = ctx.store
     .list<StoredFlywheelIteration>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => ({
       FlywheelArn: e.value.FlywheelArn,
       FlywheelIterationId: e.value.FlywheelIterationId,
       CreationTime: e.value.CreationTime,
+      EndTime: e.value.EndTime,
       Status: e.value.Status,
     }));
-  return { FlywheelIterationPropertiesList: list, NextToken: undefined };
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
+  return { FlywheelIterationPropertiesList: items, NextToken };
 };
 
 const CreateDataset: OperationHandler = (input, ctx) => {
@@ -725,7 +1006,7 @@ const CreateDataset: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DatasetName");
   const fwName = fwArn.split("/").pop() ?? "fw";
   const arn = datasetArn(ctx.region, ctx.account, fwName, name);
-  const now = Date.now() / 1000;
+  const now = Date.now();
   const rec: StoredDataset = {
     DatasetArn: arn,
     DatasetName: name,
@@ -733,7 +1014,9 @@ const CreateDataset: OperationHandler = (input, ctx) => {
     Description: stringOrUndefined(input.Description),
     Status: "CREATING",
     CreationTime: now,
+    EndTime: undefined,
     FlywheelArn: fwArn,
+    describeCount: 0,
   };
   ctx.store.set(`dataset/${arn}`, rec);
   return { DatasetArn: arn };
@@ -741,13 +1024,32 @@ const CreateDataset: OperationHandler = (input, ctx) => {
 
 const DescribeDataset: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "DatasetArn");
-  const rec = ctx.store.get<StoredDataset>(`dataset/${arn}`);
+  let rec = ctx.store.get<StoredDataset>(`dataset/${arn}`);
   if (rec === undefined) {
     throw awsError(
       "ResourceNotFoundException",
       `Dataset '${arn}' was not found.`,
       400,
     );
+  }
+  if (rec.Status === "CREATING") {
+    if (rec.describeCount >= 1) {
+      const updated: StoredDataset = {
+        ...rec,
+        Status: "COMPLETED",
+        EndTime: Date.now(),
+        describeCount: rec.describeCount + 1,
+      };
+      ctx.store.set(`dataset/${arn}`, updated);
+      rec = updated;
+    } else {
+      const updated: StoredDataset = {
+        ...rec,
+        describeCount: rec.describeCount + 1,
+      };
+      ctx.store.set(`dataset/${arn}`, updated);
+      rec = updated;
+    }
   }
   return {
     DatasetProperties: {
@@ -757,35 +1059,51 @@ const DescribeDataset: OperationHandler = (input, ctx) => {
       Description: rec.Description,
       Status: rec.Status,
       CreationTime: rec.CreationTime,
+      EndTime: rec.EndTime,
     },
   };
 };
 
 const ListDatasets: OperationHandler = (input, ctx) => {
   const fwArn = stringOrUndefined(input.FlywheelArn);
-  const list = ctx.store
+  const filter = input.Filter;
+  const all = ctx.store
     .list<StoredDataset>()
     .filter(
       (e) =>
         e.key.startsWith("dataset/") &&
         (fwArn === undefined || e.value.FlywheelArn === fwArn),
     )
-    .map((e) => ({
-      DatasetArn: e.value.DatasetArn,
-      DatasetName: e.value.DatasetName,
-      DatasetType: e.value.DatasetType,
-      Description: e.value.Description,
-      Status: e.value.Status,
-      CreationTime: e.value.CreationTime,
+    .map((e) => e.value)
+    .filter((d) => {
+      if (typeof filter !== "object" || filter === null) return true;
+      const f = filter as Record<string, unknown>;
+      const status = stringOrUndefined(f.Status);
+      const before = numberOrUndefined(f.CreationTimeBefore);
+      const after = numberOrUndefined(f.CreationTimeAfter);
+      if (status !== undefined && d.Status !== status) return false;
+      if (before !== undefined && d.CreationTime > before * 1000) return false;
+      if (after !== undefined && d.CreationTime < after * 1000) return false;
+      return true;
+    })
+    .map((d) => ({
+      DatasetArn: d.DatasetArn,
+      DatasetName: d.DatasetName,
+      DatasetType: d.DatasetType,
+      Description: d.Description,
+      Status: d.Status,
+      CreationTime: d.CreationTime,
+      EndTime: d.EndTime,
     }));
-  return { DatasetPropertiesList: list, NextToken: undefined };
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
+  return { DatasetPropertiesList: items, NextToken };
 };
 
 const PutResourcePolicy: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
   const policy = requireString(input, "ResourcePolicy");
   const revisionId = makeJobId();
-  const now = Date.now() / 1000;
+  const now = Date.now();
   const rec: StoredResourcePolicy = {
     ResourcePolicy: policy,
     PolicyRevisionId: revisionId,
@@ -870,13 +1188,14 @@ const startDetectionJob = (
 ): StoredDetectionJob => {
   const jobId = makeJobId();
   const arn = jobArn(ctx.region, ctx.account, jobType, jobId);
-  const now = Date.now() / 1000;
+  const now = Date.now();
   const rec: StoredDetectionJob = {
     JobId: jobId,
     JobArn: arn,
     JobName: stringOrUndefined(input.JobName),
     JobStatus: "SUBMITTED",
     SubmitTime: now,
+    EndTime: undefined,
     InputDataConfig:
       typeof input.InputDataConfig === "object" &&
       input.InputDataConfig !== null
@@ -896,9 +1215,24 @@ const startDetectionJob = (
     Mode: undefined,
     TargetEventTypes: undefined,
     RedactionConfig: undefined,
+    describeCount: 0,
     ...extra,
   };
   ctx.store.set(`${prefix}/${jobId}`, rec);
+  return rec;
+};
+
+const describeDetectionJob = (
+  jobId: string,
+  ctx: ServiceContext,
+  prefix: string,
+): StoredDetectionJob => {
+  let rec = requireJob(ctx, jobId, prefix);
+  const advanced = advanceJobStatus(rec);
+  if (advanced !== rec) {
+    ctx.store.set(`${prefix}/${jobId}`, advanced);
+    rec = advanced;
+  }
   return rec;
 };
 
@@ -914,6 +1248,19 @@ const stopDetectionJob = (
   return { JobId: jobId, JobStatus: "STOP_REQUESTED" };
 };
 
+const listDetectionJobs = (
+  input: Record<string, unknown>,
+  ctx: ServiceContext,
+  prefix: string,
+): StoredDetectionJob[] => {
+  const filter = input.Filter;
+  return ctx.store
+    .list<StoredDetectionJob>()
+    .filter((e) => e.key.startsWith(`${prefix}/`))
+    .map((e) => e.value)
+    .filter((j) => matchJobFilter(j, filter));
+};
+
 const StartDominantLanguageDetectionJob: OperationHandler = (input, ctx) => {
   const j = startDetectionJob(
     input,
@@ -926,7 +1273,7 @@ const StartDominantLanguageDetectionJob: OperationHandler = (input, ctx) => {
 
 const DescribeDominantLanguageDetectionJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "JobId");
-  const rec = requireJob(ctx, jobId, "dominant-language-job");
+  const rec = describeDetectionJob(jobId, ctx, "dominant-language-job");
   return {
     DominantLanguageDetectionJobProperties: detectionJobProperties(
       rec,
@@ -935,14 +1282,14 @@ const DescribeDominantLanguageDetectionJob: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListDominantLanguageDetectionJobs: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
-    .list<StoredDetectionJob>()
-    .filter((e) => e.key.startsWith("dominant-language-job/"))
-    .map((e) => detectionJobProperties(e.value, "dominant-language-job"));
+const ListDominantLanguageDetectionJobs: OperationHandler = (input, ctx) => {
+  const all = listDetectionJobs(input, ctx, "dominant-language-job").map((e) =>
+    detectionJobProperties(e, "dominant-language-job"),
+  );
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
   return {
-    DominantLanguageDetectionJobPropertiesList: list,
-    NextToken: undefined,
+    DominantLanguageDetectionJobPropertiesList: items,
+    NextToken,
   };
 };
 
@@ -971,20 +1318,20 @@ const StartEntitiesDetectionJob: OperationHandler = (input, ctx) => {
 
 const DescribeEntitiesDetectionJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "JobId");
-  const rec = requireJob(ctx, jobId, "entities-job");
+  const rec = describeDetectionJob(jobId, ctx, "entities-job");
   return {
     EntitiesDetectionJobProperties: detectionJobProperties(rec, "entities-job"),
   };
 };
 
-const ListEntitiesDetectionJobs: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
-    .list<StoredDetectionJob>()
-    .filter((e) => e.key.startsWith("entities-job/"))
-    .map((e) => detectionJobProperties(e.value, "entities-job"));
+const ListEntitiesDetectionJobs: OperationHandler = (input, ctx) => {
+  const all = listDetectionJobs(input, ctx, "entities-job").map((e) =>
+    detectionJobProperties(e, "entities-job"),
+  );
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
   return {
-    EntitiesDetectionJobPropertiesList: list,
-    NextToken: undefined,
+    EntitiesDetectionJobPropertiesList: items,
+    NextToken,
   };
 };
 
@@ -1012,18 +1359,18 @@ const StartEventsDetectionJob: OperationHandler = (input, ctx) => {
 
 const DescribeEventsDetectionJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "JobId");
-  const rec = requireJob(ctx, jobId, "events-job");
+  const rec = describeDetectionJob(jobId, ctx, "events-job");
   return {
     EventsDetectionJobProperties: detectionJobProperties(rec, "events-job"),
   };
 };
 
-const ListEventsDetectionJobs: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
-    .list<StoredDetectionJob>()
-    .filter((e) => e.key.startsWith("events-job/"))
-    .map((e) => detectionJobProperties(e.value, "events-job"));
-  return { EventsDetectionJobPropertiesList: list, NextToken: undefined };
+const ListEventsDetectionJobs: OperationHandler = (input, ctx) => {
+  const all = listDetectionJobs(input, ctx, "events-job").map((e) =>
+    detectionJobProperties(e, "events-job"),
+  );
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
+  return { EventsDetectionJobPropertiesList: items, NextToken };
 };
 
 const StopEventsDetectionJob: OperationHandler = (input, ctx) =>
@@ -1042,7 +1389,7 @@ const StartKeyPhrasesDetectionJob: OperationHandler = (input, ctx) => {
 
 const DescribeKeyPhrasesDetectionJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "JobId");
-  const rec = requireJob(ctx, jobId, "key-phrases-job");
+  const rec = describeDetectionJob(jobId, ctx, "key-phrases-job");
   return {
     KeyPhrasesDetectionJobProperties: detectionJobProperties(
       rec,
@@ -1051,14 +1398,14 @@ const DescribeKeyPhrasesDetectionJob: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListKeyPhrasesDetectionJobs: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
-    .list<StoredDetectionJob>()
-    .filter((e) => e.key.startsWith("key-phrases-job/"))
-    .map((e) => detectionJobProperties(e.value, "key-phrases-job"));
+const ListKeyPhrasesDetectionJobs: OperationHandler = (input, ctx) => {
+  const all = listDetectionJobs(input, ctx, "key-phrases-job").map((e) =>
+    detectionJobProperties(e, "key-phrases-job"),
+  );
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
   return {
-    KeyPhrasesDetectionJobPropertiesList: list,
-    NextToken: undefined,
+    KeyPhrasesDetectionJobPropertiesList: items,
+    NextToken,
   };
 };
 
@@ -1086,7 +1433,7 @@ const StartPiiEntitiesDetectionJob: OperationHandler = (input, ctx) => {
 
 const DescribePiiEntitiesDetectionJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "JobId");
-  const rec = requireJob(ctx, jobId, "pii-entities-job");
+  const rec = describeDetectionJob(jobId, ctx, "pii-entities-job");
   return {
     PiiEntitiesDetectionJobProperties: detectionJobProperties(
       rec,
@@ -1095,14 +1442,14 @@ const DescribePiiEntitiesDetectionJob: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListPiiEntitiesDetectionJobs: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
-    .list<StoredDetectionJob>()
-    .filter((e) => e.key.startsWith("pii-entities-job/"))
-    .map((e) => detectionJobProperties(e.value, "pii-entities-job"));
+const ListPiiEntitiesDetectionJobs: OperationHandler = (input, ctx) => {
+  const all = listDetectionJobs(input, ctx, "pii-entities-job").map((e) =>
+    detectionJobProperties(e, "pii-entities-job"),
+  );
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
   return {
-    PiiEntitiesDetectionJobPropertiesList: list,
-    NextToken: undefined,
+    PiiEntitiesDetectionJobPropertiesList: items,
+    NextToken,
   };
 };
 
@@ -1122,7 +1469,7 @@ const StartSentimentDetectionJob: OperationHandler = (input, ctx) => {
 
 const DescribeSentimentDetectionJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "JobId");
-  const rec = requireJob(ctx, jobId, "sentiment-job");
+  const rec = describeDetectionJob(jobId, ctx, "sentiment-job");
   return {
     SentimentDetectionJobProperties: detectionJobProperties(
       rec,
@@ -1131,14 +1478,14 @@ const DescribeSentimentDetectionJob: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListSentimentDetectionJobs: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
-    .list<StoredDetectionJob>()
-    .filter((e) => e.key.startsWith("sentiment-job/"))
-    .map((e) => detectionJobProperties(e.value, "sentiment-job"));
+const ListSentimentDetectionJobs: OperationHandler = (input, ctx) => {
+  const all = listDetectionJobs(input, ctx, "sentiment-job").map((e) =>
+    detectionJobProperties(e, "sentiment-job"),
+  );
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
   return {
-    SentimentDetectionJobPropertiesList: list,
-    NextToken: undefined,
+    SentimentDetectionJobPropertiesList: items,
+    NextToken,
   };
 };
 
@@ -1161,7 +1508,7 @@ const DescribeTargetedSentimentDetectionJob: OperationHandler = (
   ctx,
 ) => {
   const jobId = requireString(input, "JobId");
-  const rec = requireJob(ctx, jobId, "targeted-sentiment-job");
+  const rec = describeDetectionJob(jobId, ctx, "targeted-sentiment-job");
   return {
     TargetedSentimentDetectionJobProperties: detectionJobProperties(
       rec,
@@ -1170,14 +1517,14 @@ const DescribeTargetedSentimentDetectionJob: OperationHandler = (
   };
 };
 
-const ListTargetedSentimentDetectionJobs: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
-    .list<StoredDetectionJob>()
-    .filter((e) => e.key.startsWith("targeted-sentiment-job/"))
-    .map((e) => detectionJobProperties(e.value, "targeted-sentiment-job"));
+const ListTargetedSentimentDetectionJobs: OperationHandler = (input, ctx) => {
+  const all = listDetectionJobs(input, ctx, "targeted-sentiment-job").map((e) =>
+    detectionJobProperties(e, "targeted-sentiment-job"),
+  );
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
   return {
-    TargetedSentimentDetectionJobPropertiesList: list,
-    NextToken: undefined,
+    TargetedSentimentDetectionJobPropertiesList: items,
+    NextToken,
   };
 };
 
@@ -1197,20 +1544,20 @@ const StartTopicsDetectionJob: OperationHandler = (input, ctx) => {
 
 const DescribeTopicsDetectionJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "JobId");
-  const rec = requireJob(ctx, jobId, "topics-job");
+  const rec = describeDetectionJob(jobId, ctx, "topics-job");
   return {
     TopicsDetectionJobProperties: detectionJobProperties(rec, "topics-job"),
   };
 };
 
-const ListTopicsDetectionJobs: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
-    .list<StoredDetectionJob>()
-    .filter((e) => e.key.startsWith("topics-job/"))
-    .map((e) => detectionJobProperties(e.value, "topics-job"));
+const ListTopicsDetectionJobs: OperationHandler = (input, ctx) => {
+  const all = listDetectionJobs(input, ctx, "topics-job").map((e) =>
+    detectionJobProperties(e, "topics-job"),
+  );
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
   return {
-    TopicsDetectionJobPropertiesList: list,
-    NextToken: undefined,
+    TopicsDetectionJobPropertiesList: items,
+    NextToken,
   };
 };
 
@@ -1235,7 +1582,7 @@ const StartDocumentClassificationJob: OperationHandler = (input, ctx) => {
 
 const DescribeDocumentClassificationJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "JobId");
-  const rec = requireJob(ctx, jobId, "document-classification-job");
+  const rec = describeDetectionJob(jobId, ctx, "document-classification-job");
   return {
     DocumentClassificationJobProperties: detectionJobProperties(
       rec,
@@ -1244,14 +1591,14 @@ const DescribeDocumentClassificationJob: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListDocumentClassificationJobs: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
-    .list<StoredDetectionJob>()
-    .filter((e) => e.key.startsWith("document-classification-job/"))
-    .map((e) => detectionJobProperties(e.value, "document-classification-job"));
+const ListDocumentClassificationJobs: OperationHandler = (input, ctx) => {
+  const all = listDetectionJobs(input, ctx, "document-classification-job").map(
+    (e) => detectionJobProperties(e, "document-classification-job"),
+  );
+  const { items, NextToken } = paginate(all, input.MaxResults, input.NextToken);
   return {
-    DocumentClassificationJobPropertiesList: list,
-    NextToken: undefined,
+    DocumentClassificationJobPropertiesList: items,
+    NextToken,
   };
 };
 

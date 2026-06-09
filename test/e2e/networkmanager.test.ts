@@ -25,6 +25,7 @@ import {
   GetVpcAttachmentCommand,
   ListAttachmentsCommand,
   ListCoreNetworksCommand,
+  ListPeeringsCommand,
   ListTagsForResourceCommand,
   NetworkManagerClient,
   PutCoreNetworkPolicyCommand,
@@ -359,6 +360,129 @@ test("NetworkManager connect peer lifecycle", async () => {
     new GetConnectPeerCommand({ ConnectPeerId: cpId ?? "" }),
   );
   expect(fetched.ConnectPeer?.ConnectPeerId).toBe(cpId);
+
+  await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
+});
+
+test("NetworkManager GetSites SiteIds filter and pagination", async () => {
+  const client = networkmanager();
+
+  const gn = await client.send(
+    new CreateGlobalNetworkCommand({ Description: "sites-filter-test" }),
+  );
+  const gid = gn.GlobalNetwork?.GlobalNetworkId ?? "";
+
+  const s1 = await client.send(
+    new CreateSiteCommand({ GlobalNetworkId: gid, Description: "site-a" }),
+  );
+  const s2 = await client.send(
+    new CreateSiteCommand({ GlobalNetworkId: gid, Description: "site-b" }),
+  );
+  const s3 = await client.send(
+    new CreateSiteCommand({ GlobalNetworkId: gid, Description: "site-c" }),
+  );
+  const sid1 = s1.Site?.SiteId ?? "";
+  const sid2 = s2.Site?.SiteId ?? "";
+  const sid3 = s3.Site?.SiteId ?? "";
+
+  const filtered = await client.send(
+    new GetSitesCommand({ GlobalNetworkId: gid, SiteIds: [sid1, sid3] }),
+  );
+  expect(filtered.Sites?.length).toBe(2);
+  expect(filtered.Sites?.some((s) => s.SiteId === sid1)).toBe(true);
+  expect(filtered.Sites?.some((s) => s.SiteId === sid2)).toBe(false);
+  expect(filtered.Sites?.some((s) => s.SiteId === sid3)).toBe(true);
+
+  const page1 = await client.send(
+    new GetSitesCommand({ GlobalNetworkId: gid, MaxResults: 2 }),
+  );
+  expect(page1.Sites?.length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new GetSitesCommand({
+      GlobalNetworkId: gid,
+      MaxResults: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect(page2.Sites?.length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
+});
+
+test("NetworkManager GetDevices SiteId filter and pagination", async () => {
+  const client = networkmanager();
+
+  const gn = await client.send(
+    new CreateGlobalNetworkCommand({ Description: "devices-filter-test" }),
+  );
+  const gid = gn.GlobalNetwork?.GlobalNetworkId ?? "";
+
+  const sA = await client.send(
+    new CreateSiteCommand({ GlobalNetworkId: gid, Description: "site-a" }),
+  );
+  const sB = await client.send(
+    new CreateSiteCommand({ GlobalNetworkId: gid, Description: "site-b" }),
+  );
+  const siteA = sA.Site?.SiteId ?? "";
+  const siteB = sB.Site?.SiteId ?? "";
+
+  await client.send(
+    new CreateDeviceCommand({ GlobalNetworkId: gid, SiteId: siteA }),
+  );
+  await client.send(
+    new CreateDeviceCommand({ GlobalNetworkId: gid, SiteId: siteA }),
+  );
+  const dB = await client.send(
+    new CreateDeviceCommand({ GlobalNetworkId: gid, SiteId: siteB }),
+  );
+  const didB = dB.Device?.DeviceId ?? "";
+
+  const bySite = await client.send(
+    new GetDevicesCommand({ GlobalNetworkId: gid, SiteId: siteA }),
+  );
+  expect(bySite.Devices?.length).toBe(2);
+  expect(bySite.Devices?.some((d) => d.DeviceId === didB)).toBe(false);
+
+  const page1 = await client.send(
+    new GetDevicesCommand({ GlobalNetworkId: gid, MaxResults: 2 }),
+  );
+  expect(page1.Devices?.length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new GetDevicesCommand({
+      GlobalNetworkId: gid,
+      MaxResults: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect(page2.Devices?.length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
+});
+
+test("NetworkManager ListPeerings CoreNetworkId filter", async () => {
+  const client = networkmanager();
+
+  const gn = await client.send(
+    new CreateGlobalNetworkCommand({ Description: "peerings-filter-test" }),
+  );
+  const gid = gn.GlobalNetwork?.GlobalNetworkId ?? "";
+
+  const cn = await client.send(
+    new CreateCoreNetworkCommand({ GlobalNetworkId: gid }),
+  );
+  const cnId = cn.CoreNetwork?.CoreNetworkId ?? "";
+
+  const listed = await client.send(
+    new ListPeeringsCommand({ CoreNetworkId: cnId }),
+  );
+  expect(listed.Peerings).toBeDefined();
+  expect(Array.isArray(listed.Peerings)).toBe(true);
 
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });

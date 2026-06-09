@@ -20,6 +20,8 @@ type StoredConnection = {
   vlan?: number;
   partnerName?: string;
   lagId?: string;
+  parentConnectionId?: string;
+  parentInterconnectId?: string;
   providerName?: string;
   jumboFrameCapable: boolean;
   hasLogicalRedundancy: string;
@@ -502,6 +504,7 @@ const AllocateConnectionOnInterconnect: OperationHandler = (input, ctx) => {
     location: "",
     bandwidth,
     vlan,
+    parentInterconnectId: interconnectId,
     jumboFrameCapable: false,
     hasLogicalRedundancy: "unknown",
     macSecCapable: false,
@@ -527,6 +530,7 @@ const AllocateHostedConnection: OperationHandler = (input, ctx) => {
     location: "",
     bandwidth,
     vlan,
+    parentConnectionId: connectionId,
     jumboFrameCapable: false,
     hasLogicalRedundancy: "unknown",
     macSecCapable: false,
@@ -538,21 +542,33 @@ const AllocateHostedConnection: OperationHandler = (input, ctx) => {
 const DescribeConnectionsOnInterconnect: OperationHandler = (input, ctx) => {
   const interconnectId = requireString(input, "interconnectId");
   requireInterconnect(ctx, interconnectId);
-  const connections = ctx.store
+  const all = ctx.store
     .list<StoredConnection>()
     .filter((entry) => entry.key.startsWith("connection/"))
-    .map((entry) => entry.value);
-  return { connections };
+    .map((entry) => entry.value)
+    .filter((c) => c.parentInterconnectId === interconnectId);
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { connections: items, nextToken };
 };
 
 const DescribeHostedConnections: OperationHandler = (input, ctx) => {
   const connectionId = requireString(input, "connectionId");
   requireConnection(ctx, connectionId);
-  const connections = ctx.store
+  const all = ctx.store
     .list<StoredConnection>()
     .filter((entry) => entry.key.startsWith("connection/"))
-    .map((entry) => entry.value);
-  return { connections };
+    .map((entry) => entry.value)
+    .filter((c) => c.parentConnectionId === connectionId);
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { connections: items, nextToken };
 };
 
 const DescribeConnectionLoa: OperationHandler = (input, ctx) => {
@@ -905,6 +921,18 @@ const CreateLag: OperationHandler = (input, ctx) => {
 const DeleteLag: OperationHandler = (input, ctx) => {
   const lagId = requireString(input, "lagId");
   const lag = requireLag(ctx, lagId);
+  const childConnections = ctx.store
+    .list<StoredConnection>()
+    .filter((entry) => entry.key.startsWith("connection/"))
+    .map((entry) => entry.value)
+    .filter((c) => c.lagId === lagId && c.connectionState !== "deleted");
+  if (childConnections.length > 0) {
+    throw awsError(
+      "DirectConnectClientException",
+      `LAG ${lagId} has ${childConnections.length} active connection(s) attached; detach them before deletion.`,
+      400,
+    );
+  }
   const deleted = { ...lag, lagState: "deleted" };
   ctx.store.set(lagKey(lagId), deleted);
   return { ...deleted, connections: [] };
@@ -978,11 +1006,16 @@ const DescribeDirectConnectGateways: OperationHandler = (input, ctx) => {
     const gw = requireGateway(ctx, directConnectGatewayId);
     return { directConnectGateways: [gw] };
   }
-  const directConnectGateways = ctx.store
+  const all = ctx.store
     .list<StoredDirectConnectGateway>()
     .filter((entry) => entry.key.startsWith("gateway/"))
     .map((entry) => entry.value);
-  return { directConnectGateways };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { directConnectGateways: items, nextToken };
 };
 
 const UpdateDirectConnectGateway: OperationHandler = (input, ctx) => {
@@ -1099,7 +1132,12 @@ const DescribeDirectConnectGatewayAssociations: OperationHandler = (
       (a) => a.directConnectGatewayId === directConnectGatewayId,
     );
   }
-  return { directConnectGatewayAssociations: assocs };
+  const { items, nextToken } = paginateList(
+    assocs,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { directConnectGatewayAssociations: items, nextToken };
 };
 
 const UpdateDirectConnectGatewayAssociation: OperationHandler = (
@@ -1235,7 +1273,12 @@ const DescribeDirectConnectGatewayAssociationProposals: OperationHandler = (
       (p) => p.directConnectGatewayId === directConnectGatewayId,
     );
   }
-  return { directConnectGatewayAssociationProposals: proposals };
+  const { items, nextToken } = paginateList(
+    proposals,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { directConnectGatewayAssociationProposals: items, nextToken };
 };
 
 const DescribeDirectConnectGatewayAttachments: OperationHandler = (
@@ -1270,7 +1313,12 @@ const DescribeDirectConnectGatewayAttachments: OperationHandler = (
       (a) => a.virtualInterfaceId === virtualInterfaceId,
     );
   }
-  return { directConnectGatewayAttachments: attachments };
+  const { items, nextToken } = paginateList(
+    attachments,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { directConnectGatewayAttachments: items, nextToken };
 };
 
 const DescribeLocations: OperationHandler = (_input, _ctx) => ({

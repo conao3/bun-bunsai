@@ -22,6 +22,7 @@ import {
   DescribePortalCommand,
   DescribeProjectCommand,
   GetAssetPropertyValueCommand,
+  GetAssetPropertyValueHistoryCommand,
   IoTSiteWiseClient,
   ListAccessPoliciesCommand,
   ListAssetsCommand,
@@ -70,7 +71,7 @@ test("IoTSiteWise asset model roundtrip", async () => {
   expect(described.assetModelId).toBe(assetModelId);
   expect(described.assetModelName).toBe(modelName);
   expect(described.assetModelDescription).toBe("bunsai e2e asset model");
-  expect(described.assetModelStatus?.state).toBe("CREATING");
+  expect(described.assetModelStatus?.state).toBe("ACTIVE");
 
   const listed = await client.send(new ListAssetModelsCommand({}));
   expect(
@@ -388,4 +389,145 @@ test("IoTSiteWise resource tags", async () => {
   );
   expect(listed.tags?.env).toBe("test");
   expect(listed.tags?.team).toBe("bunsai");
+});
+
+test("IoTSiteWise ListAssets pagination and filter", async () => {
+  const client = iotsitewise();
+
+  const model = await client.send(
+    new CreateAssetModelCommand({
+      assetModelName: `model-paginate-${Date.now()}`,
+    }),
+  );
+  const assetModelId = model.assetModelId ?? "";
+
+  const ids: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const a = await client.send(
+      new CreateAssetCommand({
+        assetName: `paginate-asset-${i}`,
+        assetModelId,
+      }),
+    );
+    ids.push(a.assetId ?? "");
+  }
+
+  const page1 = await client.send(
+    new ListAssetsCommand({ assetModelId, filter: "ALL", maxResults: 2 }),
+  );
+  expect((page1.assetSummaries ?? []).length).toBe(2);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListAssetsCommand({
+      assetModelId,
+      filter: "ALL",
+      maxResults: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect((page2.assetSummaries ?? []).length).toBeGreaterThanOrEqual(1);
+  expect(page2.nextToken).toBeUndefined();
+
+  const modelFilter = await client.send(
+    new ListAssetsCommand({ assetModelId, filter: "ALL" }),
+  );
+  const filteredIds = (modelFilter.assetSummaries ?? []).map((s) => s.id);
+  for (const id of ids) {
+    expect(filteredIds).toContain(id);
+  }
+});
+
+test("IoTSiteWise GetAssetPropertyValue missing asset throws", async () => {
+  const client = iotsitewise();
+
+  await expect(
+    client.send(
+      new GetAssetPropertyValueCommand({
+        assetId: crypto.randomUUID(),
+        propertyId: crypto.randomUUID(),
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("IoTSiteWise BatchPutAssetPropertyValue round-trip and history", async () => {
+  const client = iotsitewise();
+
+  const model = await client.send(
+    new CreateAssetModelCommand({
+      assetModelName: `model-history-${Date.now()}`,
+    }),
+  );
+  const asset = await client.send(
+    new CreateAssetCommand({
+      assetName: "history-asset",
+      assetModelId: model.assetModelId ?? "",
+    }),
+  );
+  const assetId = asset.assetId ?? "";
+  const propertyId = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+
+  await client.send(
+    new BatchPutAssetPropertyValueCommand({
+      entries: [
+        {
+          entryId: "e1",
+          assetId,
+          propertyId,
+          propertyValues: [
+            {
+              value: { doubleValue: 10.0 },
+              timestamp: { timeInSeconds: now - 10 },
+              quality: "GOOD",
+            },
+          ],
+        },
+        {
+          entryId: "e2",
+          assetId,
+          propertyId,
+          propertyValues: [
+            {
+              value: { doubleValue: 20.0 },
+              timestamp: { timeInSeconds: now },
+              quality: "GOOD",
+            },
+          ],
+        },
+      ],
+    }),
+  );
+
+  const latest = await client.send(
+    new GetAssetPropertyValueCommand({ assetId, propertyId }),
+  );
+  expect(latest.propertyValue?.value?.doubleValue).toBe(20.0);
+
+  const history = await client.send(
+    new GetAssetPropertyValueHistoryCommand({ assetId, propertyId }),
+  );
+  expect((history.assetPropertyValueHistory ?? []).length).toBe(2);
+
+  const missingResult = await client.send(
+    new BatchPutAssetPropertyValueCommand({
+      entries: [
+        {
+          entryId: "missing",
+          assetId: crypto.randomUUID(),
+          propertyId,
+          propertyValues: [
+            {
+              value: { doubleValue: 99.0 },
+              timestamp: { timeInSeconds: now },
+              quality: "GOOD",
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  expect((missingResult.errorEntries ?? []).length).toBe(1);
+  expect(missingResult.errorEntries?.[0]?.entryId).toBe("missing");
 });

@@ -104,6 +104,11 @@ type StoredCustomVocabItem = {
   displayAs: string | undefined;
 };
 
+type StoredCustomVocabMeta = {
+  creationDateTime: number;
+  lastUpdatedDateTime: number;
+};
+
 type StoredExport = {
   exportId: string;
   resourceSpecification: Record<string, unknown>;
@@ -274,6 +279,11 @@ const vocabKey = (
   botVersion: string,
   localeId: string,
 ): string => `vocab:${botId}:${botVersion}:${localeId}`;
+const vocabMetaKey = (
+  botId: string,
+  botVersion: string,
+  localeId: string,
+): string => `vocabmeta:${botId}:${botVersion}:${localeId}`;
 const exportKey = (exportId: string): string => `export:${exportId}`;
 const importKey = (importId: string): string => `import:${importId}`;
 const policyKey = (resourceArn: string): string => `policy:${resourceArn}`;
@@ -308,6 +318,41 @@ const generateId = (): string => {
     id += chars[Math.floor(Math.random() * chars.length)];
   }
   return id;
+};
+
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
+
+const advanceBotStatus = (status: string): string => {
+  if (status === "Creating") return "Available";
+  return status;
+};
+
+const advanceBotAliasStatus = (status: string): string => {
+  if (status === "Creating") return "Available";
+  return status;
+};
+
+const advanceBotLocaleStatus = (status: string): string => {
+  if (status === "Creating") return "NotBuilt";
+  if (status === "Building") return "Built";
+  return status;
 };
 
 const requireBot = (ctx: ServiceContext, botId: string): StoredBot => {
@@ -496,7 +541,7 @@ const CreateBot: OperationHandler = (input, ctx) => {
     roleArn,
     dataPrivacy,
     idleSessionTTLInSeconds,
-    botStatus: "Available",
+    botStatus: "Creating",
     botType,
     creationDateTime: now,
     lastUpdatedDateTime: now,
@@ -518,26 +563,36 @@ const CreateBot: OperationHandler = (input, ctx) => {
 const DescribeBot: OperationHandler = (input, ctx) => {
   const request = input as Record<string, unknown>;
   const botId = requireString(request, "botId");
-  const bot = requireBot(ctx, botId);
+  const raw = requireBot(ctx, botId);
+  const botStatus = advanceBotStatus(raw.botStatus);
+  if (botStatus !== raw.botStatus) {
+    ctx.store.set(botKey(botId), { ...raw, botStatus });
+  }
   return {
-    botId: bot.botId,
-    botName: bot.botName,
-    description: bot.description,
-    roleArn: bot.roleArn,
-    dataPrivacy: bot.dataPrivacy,
-    idleSessionTTLInSeconds: bot.idleSessionTTLInSeconds,
-    botStatus: bot.botStatus,
-    botType: bot.botType,
-    creationDateTime: bot.creationDateTime,
-    lastUpdatedDateTime: bot.lastUpdatedDateTime,
+    botId: raw.botId,
+    botName: raw.botName,
+    description: raw.description,
+    roleArn: raw.roleArn,
+    dataPrivacy: raw.dataPrivacy,
+    idleSessionTTLInSeconds: raw.idleSessionTTLInSeconds,
+    botStatus,
+    botType: raw.botType,
+    creationDateTime: raw.creationDateTime,
+    lastUpdatedDateTime: raw.lastUpdatedDateTime,
   };
 };
 
-const ListBots: OperationHandler = (_input, ctx) => {
-  const bots = ctx.store
+const ListBots: OperationHandler = (input, ctx) => {
+  const request = input as Record<string, unknown>;
+  const allBots = ctx.store
     .list<StoredBot>()
     .filter((entry) => entry.key.startsWith("bot:"))
     .map((entry) => entry.value);
+  const { items: bots, nextToken } = paginateList(
+    allBots,
+    request.nextToken,
+    request.maxResults,
+  );
   return {
     botSummaries: bots.map((bot) => ({
       botId: bot.botId,
@@ -547,6 +602,7 @@ const ListBots: OperationHandler = (_input, ctx) => {
       botType: bot.botType,
       lastUpdatedDateTime: bot.lastUpdatedDateTime,
     })),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -554,7 +610,7 @@ const DeleteBot: OperationHandler = (input, ctx) => {
   const request = input as Record<string, unknown>;
   const botId = requireString(request, "botId");
   const bot = requireBot(ctx, botId);
-  ctx.store.delete(botKey(botId));
+  ctx.store.set(botKey(botId), { ...bot, botStatus: "Deleting" });
   return {
     botId: bot.botId,
     botStatus: "Deleting",
@@ -608,7 +664,7 @@ const CreateBotAlias: OperationHandler = (input, ctx) => {
     botId,
     botVersion: stringOrUndefined(request.botVersion),
     description: stringOrUndefined(request.description),
-    botAliasStatus: "Available",
+    botAliasStatus: "Creating",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -628,16 +684,20 @@ const DescribeBotAlias: OperationHandler = (input, ctx) => {
   const request = input as Record<string, unknown>;
   const botId = requireString(request, "botId");
   const botAliasId = requireString(request, "botAliasId");
-  const alias = requireBotAlias(ctx, botId, botAliasId);
+  const raw = requireBotAlias(ctx, botId, botAliasId);
+  const botAliasStatus = advanceBotAliasStatus(raw.botAliasStatus);
+  if (botAliasStatus !== raw.botAliasStatus) {
+    ctx.store.set(aliasKey(botId, botAliasId), { ...raw, botAliasStatus });
+  }
   return {
-    botAliasId: alias.botAliasId,
-    botAliasName: alias.botAliasName,
-    botId: alias.botId,
-    botVersion: alias.botVersion,
-    description: alias.description,
-    botAliasStatus: alias.botAliasStatus,
-    creationDateTime: alias.creationDateTime,
-    lastUpdatedDateTime: alias.lastUpdatedDateTime,
+    botAliasId: raw.botAliasId,
+    botAliasName: raw.botAliasName,
+    botId: raw.botId,
+    botVersion: raw.botVersion,
+    description: raw.description,
+    botAliasStatus,
+    creationDateTime: raw.creationDateTime,
+    lastUpdatedDateTime: raw.lastUpdatedDateTime,
   };
 };
 
@@ -646,10 +706,15 @@ const ListBotAliases: OperationHandler = (input, ctx) => {
   const botId = requireString(request, "botId");
   requireBot(ctx, botId);
   const prefix = `alias:${botId}:`;
-  const aliases = ctx.store
+  const allAliases = ctx.store
     .list<StoredBotAlias>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value);
+  const { items: aliases, nextToken } = paginateList(
+    allAliases,
+    request.nextToken,
+    request.maxResults,
+  );
   return {
     botAliasSummaries: aliases.map((a) => ({
       botAliasId: a.botAliasId,
@@ -661,6 +726,7 @@ const ListBotAliases: OperationHandler = (input, ctx) => {
       lastUpdatedDateTime: a.lastUpdatedDateTime,
     })),
     botId,
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -669,7 +735,10 @@ const DeleteBotAlias: OperationHandler = (input, ctx) => {
   const botId = requireString(request, "botId");
   const botAliasId = requireString(request, "botAliasId");
   const alias = requireBotAlias(ctx, botId, botAliasId);
-  ctx.store.delete(aliasKey(botId, botAliasId));
+  ctx.store.set(aliasKey(botId, botAliasId), {
+    ...alias,
+    botAliasStatus: "Deleting",
+  });
   return {
     botId: alias.botId,
     botAliasId: alias.botAliasId,
@@ -727,7 +796,7 @@ const CreateBotLocale: OperationHandler = (input, ctx) => {
     localeName: localeId,
     description: stringOrUndefined(request.description),
     nluIntentConfidenceThreshold,
-    botLocaleStatus: "NotBuilt",
+    botLocaleStatus: "Creating",
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -749,17 +818,24 @@ const DescribeBotLocale: OperationHandler = (input, ctx) => {
   const botId = requireString(request, "botId");
   const botVersion = requireString(request, "botVersion");
   const localeId = requireString(request, "localeId");
-  const locale = requireBotLocale(ctx, botId, botVersion, localeId);
+  const raw = requireBotLocale(ctx, botId, botVersion, localeId);
+  const botLocaleStatus = advanceBotLocaleStatus(raw.botLocaleStatus);
+  if (botLocaleStatus !== raw.botLocaleStatus) {
+    ctx.store.set(localeKey(botId, botVersion, localeId), {
+      ...raw,
+      botLocaleStatus,
+    });
+  }
   return {
-    botId: locale.botId,
-    botVersion: locale.botVersion,
-    localeId: locale.localeId,
-    localeName: locale.localeName,
-    description: locale.description,
-    nluIntentConfidenceThreshold: locale.nluIntentConfidenceThreshold,
-    botLocaleStatus: locale.botLocaleStatus,
-    creationDateTime: locale.creationDateTime,
-    lastUpdatedDateTime: locale.lastUpdatedDateTime,
+    botId: raw.botId,
+    botVersion: raw.botVersion,
+    localeId: raw.localeId,
+    localeName: raw.localeName,
+    description: raw.description,
+    nluIntentConfidenceThreshold: raw.nluIntentConfidenceThreshold,
+    botLocaleStatus,
+    creationDateTime: raw.creationDateTime,
+    lastUpdatedDateTime: raw.lastUpdatedDateTime,
   };
 };
 
@@ -769,10 +845,15 @@ const ListBotLocales: OperationHandler = (input, ctx) => {
   const botVersion = requireString(request, "botVersion");
   requireBot(ctx, botId);
   const prefix = `locale:${botId}:${botVersion}:`;
-  const locales = ctx.store
+  const allLocales = ctx.store
     .list<StoredBotLocale>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value);
+  const { items: locales, nextToken } = paginateList(
+    allLocales,
+    request.nextToken,
+    request.maxResults,
+  );
   return {
     botId,
     botVersion,
@@ -784,6 +865,7 @@ const ListBotLocales: OperationHandler = (input, ctx) => {
       lastUpdatedDateTime: l.lastUpdatedDateTime,
       lastBuildSubmittedDateTime: l.lastUpdatedDateTime,
     })),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -793,7 +875,10 @@ const DeleteBotLocale: OperationHandler = (input, ctx) => {
   const botVersion = requireString(request, "botVersion");
   const localeId = requireString(request, "localeId");
   const locale = requireBotLocale(ctx, botId, botVersion, localeId);
-  ctx.store.delete(localeKey(botId, botVersion, localeId));
+  ctx.store.set(localeKey(botId, botVersion, localeId), {
+    ...locale,
+    botLocaleStatus: "Deleting",
+  });
   return {
     botId: locale.botId,
     botVersion: locale.botVersion,
@@ -844,7 +929,7 @@ const BuildBotLocale: OperationHandler = (input, ctx) => {
   const now = nowSeconds();
   const updated: StoredBotLocale = {
     ...locale,
-    botLocaleStatus: "Built",
+    botLocaleStatus: "Building",
     lastUpdatedDateTime: now,
   };
   ctx.store.set(localeKey(botId, botVersion, localeId), updated);
@@ -898,10 +983,15 @@ const ListBotVersions: OperationHandler = (input, ctx) => {
   const botId = requireString(request, "botId");
   requireBot(ctx, botId);
   const prefix = `version:${botId}:`;
-  const versions = ctx.store
+  const allVersions = ctx.store
     .list<StoredBotVersion>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value);
+  const { items: versions, nextToken } = paginateList(
+    allVersions,
+    request.nextToken,
+    request.maxResults,
+  );
   return {
     botId,
     botVersionSummaries: versions.map((v) => ({
@@ -911,6 +1001,7 @@ const ListBotVersions: OperationHandler = (input, ctx) => {
       botStatus: v.botStatus,
       creationDateTime: v.creationDateTime,
     })),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1097,10 +1188,15 @@ const ListIntents: OperationHandler = (input, ctx) => {
   const localeId = requireString(request, "localeId");
   requireBot(ctx, botId);
   const prefix = `intent:${botId}:${botVersion}:${localeId}:`;
-  const intents = ctx.store
+  const allIntents = ctx.store
     .list<StoredIntent>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value);
+  const { items: intents, nextToken } = paginateList(
+    allIntents,
+    request.nextToken,
+    request.maxResults,
+  );
   return {
     botId,
     botVersion,
@@ -1111,6 +1207,7 @@ const ListIntents: OperationHandler = (input, ctx) => {
       description: i.description,
       lastUpdatedDateTime: i.lastUpdatedDateTime,
     })),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1223,10 +1320,15 @@ const ListSlots: OperationHandler = (input, ctx) => {
   const intentId = requireString(request, "intentId");
   requireBot(ctx, botId);
   const prefix = `slot:${botId}:${botVersion}:${localeId}:${intentId}:`;
-  const slots = ctx.store
+  const allSlots = ctx.store
     .list<StoredSlot>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value);
+  const { items: slots, nextToken } = paginateList(
+    allSlots,
+    request.nextToken,
+    request.maxResults,
+  );
   return {
     botId,
     botVersion,
@@ -1239,6 +1341,7 @@ const ListSlots: OperationHandler = (input, ctx) => {
       slotTypeId: s.slotTypeId,
       lastUpdatedDateTime: s.lastUpdatedDateTime,
     })),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1350,10 +1453,15 @@ const ListSlotTypes: OperationHandler = (input, ctx) => {
   const localeId = requireString(request, "localeId");
   requireBot(ctx, botId);
   const prefix = `slottype:${botId}:${botVersion}:${localeId}:`;
-  const types = ctx.store
+  const allTypes = ctx.store
     .list<StoredSlotType>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value);
+  const { items: types, nextToken } = paginateList(
+    allTypes,
+    request.nextToken,
+    request.maxResults,
+  );
   return {
     botId,
     botVersion,
@@ -1364,6 +1472,7 @@ const ListSlotTypes: OperationHandler = (input, ctx) => {
       description: t.description,
       lastUpdatedDateTime: t.lastUpdatedDateTime,
     })),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1420,7 +1529,18 @@ const BatchCreateCustomVocabularyItem: OperationHandler = (input, ctx) => {
     ? (request.customVocabularyItemList as Record<string, unknown>[])
     : [];
   const key = vocabKey(botId, botVersion, localeId);
+  const metaKey = vocabMetaKey(botId, botVersion, localeId);
   const existing = ctx.store.get<StoredCustomVocabItem[]>(key) ?? [];
+  const now = nowSeconds();
+  if (ctx.store.get<StoredCustomVocabMeta>(metaKey) === undefined) {
+    ctx.store.set(metaKey, {
+      creationDateTime: now,
+      lastUpdatedDateTime: now,
+    } as StoredCustomVocabMeta);
+  } else {
+    const meta = ctx.store.get<StoredCustomVocabMeta>(metaKey)!;
+    ctx.store.set(metaKey, { ...meta, lastUpdatedDateTime: now });
+  }
   const added: StoredCustomVocabItem[] = [];
   const errors: unknown[] = [];
   for (const item of customVocabularyItemList) {
@@ -1534,14 +1654,17 @@ const DescribeCustomVocabularyMetadata: OperationHandler = (input, ctx) => {
   const localeId = requireString(request, "localeId");
   requireBot(ctx, botId);
   const key = vocabKey(botId, botVersion, localeId);
+  const metaKey = vocabMetaKey(botId, botVersion, localeId);
   const items = ctx.store.get<StoredCustomVocabItem[]>(key) ?? [];
+  const meta = ctx.store.get<StoredCustomVocabMeta>(metaKey);
+  const now = nowSeconds();
   return {
     botId,
     botVersion,
     localeId,
     customVocabularyStatus: items.length > 0 ? "Ready" : "NotFound",
-    creationDateTime: nowSeconds(),
-    lastUpdatedDateTime: nowSeconds(),
+    creationDateTime: meta?.creationDateTime ?? now,
+    lastUpdatedDateTime: meta?.lastUpdatedDateTime ?? now,
   };
 };
 
@@ -1570,8 +1693,8 @@ const CreateExport: OperationHandler = (input, ctx) => {
     exportId: generateId(),
     resourceSpecification,
     fileFormat,
-    exportStatus: "Completed",
-    downloadUrl: `https://s3.amazonaws.com/exports/${generateId()}.zip`,
+    exportStatus: "InProgress",
+    downloadUrl: undefined,
     creationDateTime: now,
     lastUpdatedDateTime: now,
   };
@@ -1588,7 +1711,16 @@ const CreateExport: OperationHandler = (input, ctx) => {
 const DescribeExport: OperationHandler = (input, ctx) => {
   const request = input as Record<string, unknown>;
   const exportId = requireString(request, "exportId");
-  const exp = requireExport(ctx, exportId);
+  const raw = requireExport(ctx, exportId);
+  let exp = raw;
+  if (raw.exportStatus === "InProgress") {
+    exp = {
+      ...raw,
+      exportStatus: "Completed",
+      downloadUrl: `https://s3.amazonaws.com/exports/${exportId}.zip`,
+    };
+    ctx.store.set(exportKey(exportId), exp);
+  }
   return {
     exportId: exp.exportId,
     resourceSpecification: exp.resourceSpecification,
@@ -1654,7 +1786,7 @@ const StartImport: OperationHandler = (input, ctx) => {
     resourceSpecification: recordOrUndefined(request.resourceSpecification),
     importedResourceId: undefined,
     importedResourceName: undefined,
-    importStatus: "Completed",
+    importStatus: "InProgress",
     mergeStrategy: stringOrUndefined(request.mergeStrategy),
     creationDateTime: now,
     lastUpdatedDateTime: now,
@@ -1672,7 +1804,12 @@ const StartImport: OperationHandler = (input, ctx) => {
 const DescribeImport: OperationHandler = (input, ctx) => {
   const request = input as Record<string, unknown>;
   const importId = requireString(request, "importId");
-  const imp = requireImport(ctx, importId);
+  const raw = requireImport(ctx, importId);
+  let imp = raw;
+  if (raw.importStatus === "InProgress") {
+    imp = { ...raw, importStatus: "Completed" };
+    ctx.store.set(importKey(importId), imp);
+  }
   return {
     importId: imp.importId,
     resourceSpecification: imp.resourceSpecification,
@@ -1994,14 +2131,22 @@ const DescribeBotRecommendation: OperationHandler = (input, ctx) => {
   const botVersion = requireString(request, "botVersion");
   const localeId = requireString(request, "localeId");
   const botRecommendationId = requireString(request, "botRecommendationId");
-  const rec = ctx.store.get<StoredBotRecommendation>(
+  const raw = ctx.store.get<StoredBotRecommendation>(
     botRecKey(botId, botVersion, localeId, botRecommendationId),
   );
-  if (rec === undefined) {
+  if (raw === undefined) {
     throw awsError(
       "ResourceNotFoundException",
       `BotRecommendation ${botRecommendationId} does not exist.`,
       404,
+    );
+  }
+  let rec = raw;
+  if (raw.botRecommendationStatus === "Processing") {
+    rec = { ...raw, botRecommendationStatus: "Available" };
+    ctx.store.set(
+      botRecKey(botId, botVersion, localeId, botRecommendationId),
+      rec,
     );
   }
   return {
@@ -2182,15 +2327,20 @@ const DescribeBotResourceGeneration: OperationHandler = (input, ctx) => {
   const botVersion = requireString(request, "botVersion");
   const localeId = requireString(request, "localeId");
   const generationId = requireString(request, "generationId");
-  const gen = ctx.store.get<StoredBotResourceGeneration>(
+  const raw = ctx.store.get<StoredBotResourceGeneration>(
     botResGenKey(botId, botVersion, localeId, generationId),
   );
-  if (gen === undefined) {
+  if (raw === undefined) {
     throw awsError(
       "ResourceNotFoundException",
       `Generation ${generationId} does not exist.`,
       404,
     );
+  }
+  let gen = raw;
+  if (raw.generationStatus === "InProgress") {
+    gen = { ...raw, generationStatus: "Complete" };
+    ctx.store.set(botResGenKey(botId, botVersion, localeId, generationId), gen);
   }
   return {
     botId: gen.botId,

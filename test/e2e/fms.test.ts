@@ -94,6 +94,58 @@ test("FMS policy lifecycle", async () => {
   ).rejects.toThrow();
 });
 
+test("FMS PutPolicy optimistic locking", async () => {
+  const client = fms();
+
+  const put = await client.send(
+    new PutPolicyCommand({
+      Policy: {
+        PolicyName: "bunsai-e2e-lock-policy",
+        SecurityServicePolicyData: { Type: "WAFV2" },
+        ResourceType: "AWS::ElasticLoadBalancingV2::LoadBalancer",
+        ExcludeResourceTags: false,
+        RemediationEnabled: false,
+      },
+    }),
+  );
+  const policyId = put.Policy?.PolicyId ?? "";
+  const validToken = put.Policy?.PolicyUpdateToken ?? "";
+
+  await expect(
+    client.send(
+      new PutPolicyCommand({
+        Policy: {
+          PolicyId: policyId,
+          PolicyUpdateToken: "stale-token-invalid",
+          PolicyName: "bunsai-e2e-lock-policy-updated",
+          SecurityServicePolicyData: { Type: "WAFV2" },
+          ResourceType: "AWS::ElasticLoadBalancingV2::LoadBalancer",
+          ExcludeResourceTags: false,
+          RemediationEnabled: false,
+        },
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const updated = await client.send(
+    new PutPolicyCommand({
+      Policy: {
+        PolicyId: policyId,
+        PolicyUpdateToken: validToken,
+        PolicyName: "bunsai-e2e-lock-policy-updated",
+        SecurityServicePolicyData: { Type: "WAFV2" },
+        ResourceType: "AWS::ElasticLoadBalancingV2::LoadBalancer",
+        ExcludeResourceTags: false,
+        RemediationEnabled: false,
+      },
+    }),
+  );
+  expect(updated.Policy?.PolicyName).toBe("bunsai-e2e-lock-policy-updated");
+  expect(updated.Policy?.PolicyUpdateToken).not.toBe(validToken);
+
+  await client.send(new DeletePolicyCommand({ PolicyId: policyId }));
+});
+
 test("FMS AppsLists lifecycle", async () => {
   const client = fms();
 
@@ -124,6 +176,41 @@ test("FMS AppsLists lifecycle", async () => {
   await expect(
     client.send(new GetAppsListCommand({ ListId: listId })),
   ).rejects.toThrow();
+});
+
+test("FMS ListAppsLists pagination", async () => {
+  const client = fms();
+
+  const ids: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const put = await client.send(
+      new PutAppsListCommand({
+        AppsList: {
+          ListName: `bunsai-page-list-${i}`,
+          AppsList: [],
+        },
+      }),
+    );
+    ids.push(put.AppsList?.ListId ?? "");
+  }
+
+  const page1 = await client.send(new ListAppsListsCommand({ MaxResults: 3 }));
+  expect((page1.AppsLists ?? []).length).toBeLessThanOrEqual(3);
+  const hasMore = page1.NextToken !== undefined;
+
+  if (hasMore) {
+    const page2 = await client.send(
+      new ListAppsListsCommand({ MaxResults: 3, NextToken: page1.NextToken }),
+    );
+    expect(page2.AppsLists).toBeDefined();
+    const page1Ids = (page1.AppsLists ?? []).map((l) => l.ListId);
+    const page2Ids = (page2.AppsLists ?? []).map((l) => l.ListId);
+    expect(page1Ids.some((id) => page2Ids.includes(id))).toBe(false);
+  }
+
+  for (const id of ids) {
+    await client.send(new DeleteAppsListCommand({ ListId: id }));
+  }
 });
 
 test("FMS ProtocolsLists lifecycle", async () => {
@@ -280,6 +367,13 @@ test("FMS ThirdPartyFirewall lifecycle", async () => {
   );
   expect(status.ThirdPartyFirewallStatus).toBeDefined();
 
+  const statusAfter = await client.send(
+    new GetThirdPartyFirewallAssociationStatusCommand({
+      ThirdPartyFirewall: "PALO_ALTO_NETWORKS_CLOUD_NGFW",
+    }),
+  );
+  expect(statusAfter.ThirdPartyFirewallStatus).toBe("ONBOARD_COMPLETE");
+
   const policies = await client.send(
     new ListThirdPartyFirewallFirewallPoliciesCommand({
       ThirdPartyFirewall: "PALO_ALTO_NETWORKS_CLOUD_NGFW",
@@ -363,37 +457,50 @@ test("FMS Tags lifecycle", async () => {
   );
 });
 
-test("FMS compliance and status (synthetic)", async () => {
+test("FMS compliance and status (policy-tied)", async () => {
   const client = fms();
+
+  const put = await client.send(
+    new PutPolicyCommand({
+      Policy: {
+        PolicyName: "bunsai-compliance-policy",
+        SecurityServicePolicyData: { Type: "WAFV2" },
+        ResourceType: "AWS::ElasticLoadBalancingV2::LoadBalancer",
+        ExcludeResourceTags: false,
+        RemediationEnabled: false,
+      },
+    }),
+  );
+  const policyId = put.Policy?.PolicyId ?? "";
 
   const compliance = await client.send(
     new GetComplianceDetailCommand({
-      PolicyId: "test-policy-id",
+      PolicyId: policyId,
       MemberAccount: "123456789012",
     }),
   );
-  expect(compliance.PolicyComplianceDetail?.PolicyId).toBe("test-policy-id");
+  expect(compliance.PolicyComplianceDetail?.PolicyId).toBe(policyId);
   expect(compliance.PolicyComplianceDetail?.Violators).toBeDefined();
 
   const protection = await client.send(
-    new GetProtectionStatusCommand({ PolicyId: "test-policy-id" }),
+    new GetProtectionStatusCommand({ PolicyId: policyId }),
   );
   expect(protection.AdminAccountId).toBeDefined();
-  expect(protection.ServiceType).toBeDefined();
+  expect(protection.ServiceType).toBe("WAFV2");
 
   const violation = await client.send(
     new GetViolationDetailsCommand({
-      PolicyId: "test-policy-id",
+      PolicyId: policyId,
       MemberAccount: "123456789012",
       ResourceId: "test-resource-id",
       ResourceType: "AWS::EC2::Instance",
     }),
   );
-  expect(violation.ViolationDetail?.PolicyId).toBe("test-policy-id");
+  expect(violation.ViolationDetail?.PolicyId).toBe(policyId);
   expect(violation.ViolationDetail?.ResourceViolations).toBeDefined();
 
   const complianceList = await client.send(
-    new ListComplianceStatusCommand({ PolicyId: "test-policy-id" }),
+    new ListComplianceStatusCommand({ PolicyId: policyId }),
   );
   expect(complianceList.PolicyComplianceStatusList).toBeDefined();
 
@@ -404,7 +511,23 @@ test("FMS compliance and status (synthetic)", async () => {
     }),
   );
   expect(discovered.Items).toBeDefined();
+  expect((discovered.Items ?? []).length).toBeGreaterThan(0);
+
+  await client.send(new DeletePolicyCommand({ PolicyId: policyId }));
+});
+
+test("FMS ListMemberAccounts returns stored", async () => {
+  const client = fms();
+
+  await client.send(
+    new PutAdminAccountCommand({ AdminAccount: "111111111111" }),
+  );
+  await client.send(
+    new PutAdminAccountCommand({ AdminAccount: "222222222222" }),
+  );
 
   const members = await client.send(new ListMemberAccountsCommand({}));
   expect(members.MemberAccounts).toBeDefined();
+  expect((members.MemberAccounts ?? []).includes("111111111111")).toBe(true);
+  expect((members.MemberAccounts ?? []).includes("222222222222")).toBe(true);
 });

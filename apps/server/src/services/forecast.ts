@@ -157,6 +157,41 @@ const stringOrUndefined = (value: unknown): string | undefined =>
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 10;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
+
+type FilterEntry = { Key: string; Value: string; Condition: string };
+
+const applyFilters = <T extends Record<string, unknown>>(
+  items: T[],
+  rawFilters: unknown,
+): T[] => {
+  if (!Array.isArray(rawFilters) || rawFilters.length === 0) return items;
+  const filters = rawFilters as FilterEntry[];
+  return items.filter((item) =>
+    filters.every((f) => {
+      const val = String(item[f.Key] ?? "");
+      return f.Condition === "IS_NOT" ? val !== f.Value : val === f.Value;
+    }),
+  );
+};
+
 const datasetKey = (arn: string): string => `dataset#${arn}`;
 const datasetGroupKey = (arn: string): string => `datasetGroup#${arn}`;
 const datasetImportJobKey = (arn: string): string => `datasetImportJob#${arn}`;
@@ -441,20 +476,28 @@ const DescribeDataset: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListDatasets: OperationHandler = (_input, ctx) => {
-  const Datasets = ctx.store
-    .list<StoredDataset>()
-    .filter((entry) => entry.key.startsWith("dataset#"))
-    .map((entry) => entry.value)
-    .map((dataset) => ({
-      DatasetArn: dataset.DatasetArn,
-      DatasetName: dataset.DatasetName,
-      DatasetType: dataset.DatasetType,
-      Domain: dataset.Domain,
-      CreationTime: dataset.CreationTime,
-      LastModificationTime: dataset.LastModificationTime,
-    }));
-  return { Datasets };
+const ListDatasets: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredDataset>()
+      .filter((entry) => entry.key.startsWith("dataset#"))
+      .map((entry) => entry.value)
+      .map((dataset) => ({
+        DatasetArn: dataset.DatasetArn,
+        DatasetName: dataset.DatasetName,
+        DatasetType: dataset.DatasetType,
+        Domain: dataset.Domain,
+        CreationTime: dataset.CreationTime,
+        LastModificationTime: dataset.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { Datasets: items, NextToken: nextToken };
 };
 
 const DeleteDataset: OperationHandler = (input, ctx) => {
@@ -472,6 +515,9 @@ const CreateDatasetGroup: OperationHandler = (input, ctx) => {
   const DatasetArns = Array.isArray(input["DatasetArns"])
     ? (input["DatasetArns"] as string[])
     : [];
+  for (const arn of DatasetArns) {
+    requireDataset(ctx, arn);
+  }
   const item: StoredDatasetGroup = {
     DatasetGroupArn,
     DatasetGroupName,
@@ -499,20 +545,28 @@ const DescribeDatasetGroup: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListDatasetGroups: OperationHandler = (_input, ctx) => {
-  const DatasetGroups = ctx.store
-    .list<StoredDatasetGroup>()
-    .filter((entry) => entry.key.startsWith("datasetGroup#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      DatasetGroupArn: item.DatasetGroupArn,
-      DatasetGroupName: item.DatasetGroupName,
-      Domain: item.Domain,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { DatasetGroups };
+const ListDatasetGroups: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredDatasetGroup>()
+      .filter((entry) => entry.key.startsWith("datasetGroup#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        DatasetGroupArn: item.DatasetGroupArn,
+        DatasetGroupName: item.DatasetGroupName,
+        Domain: item.Domain,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { DatasetGroups: items, NextToken: nextToken };
 };
 
 const DeleteDatasetGroup: OperationHandler = (input, ctx) => {
@@ -532,6 +586,9 @@ const UpdateDatasetGroup: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  for (const arn of DatasetArns as string[]) {
+    requireDataset(ctx, arn);
+  }
   const item = requireDatasetGroup(ctx, DatasetGroupArn);
   item.DatasetArns = DatasetArns as string[];
   item.LastModificationTime = nowSeconds();
@@ -542,6 +599,7 @@ const UpdateDatasetGroup: OperationHandler = (input, ctx) => {
 const CreateDatasetImportJob: OperationHandler = (input, ctx) => {
   const DatasetImportJobName = requireString(input, "DatasetImportJobName");
   const DatasetArn = requireString(input, "DatasetArn");
+  requireDataset(ctx, DatasetArn);
   const DataSource = input["DataSource"];
   if (DataSource === undefined) {
     throw awsError(
@@ -592,21 +650,29 @@ const DescribeDatasetImportJob: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListDatasetImportJobs: OperationHandler = (_input, ctx) => {
-  const DatasetImportJobs = ctx.store
-    .list<StoredDatasetImportJob>()
-    .filter((entry) => entry.key.startsWith("datasetImportJob#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      DatasetImportJobArn: item.DatasetImportJobArn,
-      DatasetImportJobName: item.DatasetImportJobName,
-      DatasetArn: item.DatasetArn,
-      DataSource: item.DataSource,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { DatasetImportJobs };
+const ListDatasetImportJobs: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredDatasetImportJob>()
+      .filter((entry) => entry.key.startsWith("datasetImportJob#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        DatasetImportJobArn: item.DatasetImportJobArn,
+        DatasetImportJobName: item.DatasetImportJobName,
+        DatasetArn: item.DatasetArn,
+        DataSource: item.DataSource,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { DatasetImportJobs: items, NextToken: nextToken };
 };
 
 const DeleteDatasetImportJob: OperationHandler = (input, ctx) => {
@@ -704,20 +770,28 @@ const DescribePredictor: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListPredictors: OperationHandler = (_input, ctx) => {
-  const Predictors = ctx.store
-    .list<StoredPredictor>()
-    .filter((entry) => entry.key.startsWith("predictor#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      PredictorArn: item.PredictorArn,
-      PredictorName: item.PredictorName,
-      ForecastHorizon: item.ForecastHorizon,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { Predictors };
+const ListPredictors: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredPredictor>()
+      .filter((entry) => entry.key.startsWith("predictor#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        PredictorArn: item.PredictorArn,
+        PredictorName: item.PredictorName,
+        ForecastHorizon: item.ForecastHorizon,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { Predictors: items, NextToken: nextToken };
 };
 
 const DeletePredictor: OperationHandler = (input, ctx) => {
@@ -739,6 +813,7 @@ const GetAccuracyMetrics: OperationHandler = (input, ctx) => {
 const CreateForecast: OperationHandler = (input, ctx) => {
   const ForecastName = requireString(input, "ForecastName");
   const PredictorArn = requireString(input, "PredictorArn");
+  requirePredictor(ctx, PredictorArn);
   const ForecastArn = forecastResArn(ctx, ForecastName);
   const now = nowSeconds();
   const ForecastTypes = Array.isArray(input["ForecastTypes"])
@@ -771,20 +846,28 @@ const DescribeForecast: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListForecasts: OperationHandler = (_input, ctx) => {
-  const Forecasts = ctx.store
-    .list<StoredForecast>()
-    .filter((entry) => entry.key.startsWith("forecast#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      ForecastArn: item.ForecastArn,
-      ForecastName: item.ForecastName,
-      PredictorArn: item.PredictorArn,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { Forecasts };
+const ListForecasts: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredForecast>()
+      .filter((entry) => entry.key.startsWith("forecast#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        ForecastArn: item.ForecastArn,
+        ForecastName: item.ForecastName,
+        PredictorArn: item.PredictorArn,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { Forecasts: items, NextToken: nextToken };
 };
 
 const DeleteForecast: OperationHandler = (input, ctx) => {
@@ -797,6 +880,7 @@ const DeleteForecast: OperationHandler = (input, ctx) => {
 const CreateForecastExportJob: OperationHandler = (input, ctx) => {
   const ForecastExportJobName = requireString(input, "ForecastExportJobName");
   const ForecastArn = requireString(input, "ForecastArn");
+  requireForecast(ctx, ForecastArn);
   const Destination = input["Destination"];
   if (Destination === undefined) {
     throw awsError(
@@ -834,21 +918,29 @@ const DescribeForecastExportJob: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListForecastExportJobs: OperationHandler = (_input, ctx) => {
-  const ForecastExportJobs = ctx.store
-    .list<StoredForecastExportJob>()
-    .filter((entry) => entry.key.startsWith("forecastExportJob#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      ForecastExportJobArn: item.ForecastExportJobArn,
-      ForecastExportJobName: item.ForecastExportJobName,
-      ForecastArn: item.ForecastArn,
-      Destination: item.Destination,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { ForecastExportJobs };
+const ListForecastExportJobs: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredForecastExportJob>()
+      .filter((entry) => entry.key.startsWith("forecastExportJob#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        ForecastExportJobArn: item.ForecastExportJobArn,
+        ForecastExportJobName: item.ForecastExportJobName,
+        ForecastArn: item.ForecastArn,
+        Destination: item.Destination,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { ForecastExportJobs: items, NextToken: nextToken };
 };
 
 const DeleteForecastExportJob: OperationHandler = (input, ctx) => {
@@ -861,6 +953,17 @@ const DeleteForecastExportJob: OperationHandler = (input, ctx) => {
 const CreateExplainability: OperationHandler = (input, ctx) => {
   const ExplainabilityName = requireString(input, "ExplainabilityName");
   const ResourceArn = requireString(input, "ResourceArn");
+  const predictorItem = ctx.store.get<StoredPredictor>(
+    predictorKey(ResourceArn),
+  );
+  const forecastItem = ctx.store.get<StoredForecast>(forecastKey(ResourceArn));
+  if (predictorItem === undefined && forecastItem === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `No resource found ${ResourceArn}`,
+      400,
+    );
+  }
   const ExplainabilityConfig = input["ExplainabilityConfig"];
   if (ExplainabilityConfig === undefined) {
     throw awsError(
@@ -898,20 +1001,28 @@ const DescribeExplainability: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListExplainabilities: OperationHandler = (_input, ctx) => {
-  const Explainabilities = ctx.store
-    .list<StoredExplainability>()
-    .filter((entry) => entry.key.startsWith("explainability#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      ExplainabilityArn: item.ExplainabilityArn,
-      ExplainabilityName: item.ExplainabilityName,
-      ResourceArn: item.ResourceArn,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { Explainabilities };
+const ListExplainabilities: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredExplainability>()
+      .filter((entry) => entry.key.startsWith("explainability#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        ExplainabilityArn: item.ExplainabilityArn,
+        ExplainabilityName: item.ExplainabilityName,
+        ResourceArn: item.ResourceArn,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { Explainabilities: items, NextToken: nextToken };
 };
 
 const DeleteExplainability: OperationHandler = (input, ctx) => {
@@ -927,6 +1038,7 @@ const CreateExplainabilityExport: OperationHandler = (input, ctx) => {
     "ExplainabilityExportName",
   );
   const ExplainabilityArn = requireString(input, "ExplainabilityArn");
+  requireExplainability(ctx, ExplainabilityArn);
   const Destination = input["Destination"];
   if (Destination === undefined) {
     throw awsError(
@@ -970,21 +1082,29 @@ const DescribeExplainabilityExport: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListExplainabilityExports: OperationHandler = (_input, ctx) => {
-  const ExplainabilityExports = ctx.store
-    .list<StoredExplainabilityExport>()
-    .filter((entry) => entry.key.startsWith("explainabilityExport#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      ExplainabilityExportArn: item.ExplainabilityExportArn,
-      ExplainabilityExportName: item.ExplainabilityExportName,
-      ExplainabilityArn: item.ExplainabilityArn,
-      Destination: item.Destination,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { ExplainabilityExports };
+const ListExplainabilityExports: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredExplainabilityExport>()
+      .filter((entry) => entry.key.startsWith("explainabilityExport#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        ExplainabilityExportArn: item.ExplainabilityExportArn,
+        ExplainabilityExportName: item.ExplainabilityExportName,
+        ExplainabilityArn: item.ExplainabilityArn,
+        Destination: item.Destination,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { ExplainabilityExports: items, NextToken: nextToken };
 };
 
 const DeleteExplainabilityExport: OperationHandler = (input, ctx) => {
@@ -1000,6 +1120,19 @@ const DeleteExplainabilityExport: OperationHandler = (input, ctx) => {
 const CreateMonitor: OperationHandler = (input, ctx) => {
   const MonitorName = requireString(input, "MonitorName");
   const ResourceArn = requireString(input, "ResourceArn");
+  const monitorPredictorItem = ctx.store.get<StoredPredictor>(
+    predictorKey(ResourceArn),
+  );
+  const monitorForecastItem = ctx.store.get<StoredForecast>(
+    forecastKey(ResourceArn),
+  );
+  if (monitorPredictorItem === undefined && monitorForecastItem === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `No resource found ${ResourceArn}`,
+      400,
+    );
+  }
   const MonitorArn = monitorArn(ctx, MonitorName);
   const now = nowSeconds();
   const item: StoredMonitor = {
@@ -1027,20 +1160,28 @@ const DescribeMonitor: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListMonitors: OperationHandler = (_input, ctx) => {
-  const Monitors = ctx.store
-    .list<StoredMonitor>()
-    .filter((entry) => entry.key.startsWith("monitor#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      MonitorArn: item.MonitorArn,
-      MonitorName: item.MonitorName,
-      ResourceArn: item.ResourceArn,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { Monitors };
+const ListMonitors: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredMonitor>()
+      .filter((entry) => entry.key.startsWith("monitor#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        MonitorArn: item.MonitorArn,
+        MonitorName: item.MonitorName,
+        ResourceArn: item.ResourceArn,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { Monitors: items, NextToken: nextToken };
 };
 
 const ListMonitorEvaluations: OperationHandler = (input, ctx) => {
@@ -1062,6 +1203,7 @@ const CreatePredictorBacktestExportJob: OperationHandler = (input, ctx) => {
     "PredictorBacktestExportJobName",
   );
   const PredictorArn = requireString(input, "PredictorArn");
+  requirePredictor(ctx, PredictorArn);
   const Destination = input["Destination"];
   if (Destination === undefined) {
     throw awsError(
@@ -1111,21 +1253,29 @@ const DescribePredictorBacktestExportJob: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListPredictorBacktestExportJobs: OperationHandler = (_input, ctx) => {
-  const PredictorBacktestExportJobs = ctx.store
-    .list<StoredPredictorBacktestExportJob>()
-    .filter((entry) => entry.key.startsWith("predictorBacktestExportJob#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      PredictorBacktestExportJobArn: item.PredictorBacktestExportJobArn,
-      PredictorBacktestExportJobName: item.PredictorBacktestExportJobName,
-      PredictorArn: item.PredictorArn,
-      Destination: item.Destination,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { PredictorBacktestExportJobs };
+const ListPredictorBacktestExportJobs: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredPredictorBacktestExportJob>()
+      .filter((entry) => entry.key.startsWith("predictorBacktestExportJob#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        PredictorBacktestExportJobArn: item.PredictorBacktestExportJobArn,
+        PredictorBacktestExportJobName: item.PredictorBacktestExportJobName,
+        PredictorArn: item.PredictorArn,
+        Destination: item.Destination,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { PredictorBacktestExportJobs: items, NextToken: nextToken };
 };
 
 const DeletePredictorBacktestExportJob: OperationHandler = (input, ctx) => {
@@ -1143,6 +1293,7 @@ const DeletePredictorBacktestExportJob: OperationHandler = (input, ctx) => {
 const CreateWhatIfAnalysis: OperationHandler = (input, ctx) => {
   const WhatIfAnalysisName = requireString(input, "WhatIfAnalysisName");
   const ForecastArn = requireString(input, "ForecastArn");
+  requireForecast(ctx, ForecastArn);
   const WhatIfAnalysisArn = whatIfAnalysisArn(ctx, WhatIfAnalysisName);
   const now = nowSeconds();
   const item: StoredWhatIfAnalysis = {
@@ -1170,20 +1321,28 @@ const DescribeWhatIfAnalysis: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListWhatIfAnalyses: OperationHandler = (_input, ctx) => {
-  const WhatIfAnalyses = ctx.store
-    .list<StoredWhatIfAnalysis>()
-    .filter((entry) => entry.key.startsWith("whatIfAnalysis#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      WhatIfAnalysisArn: item.WhatIfAnalysisArn,
-      WhatIfAnalysisName: item.WhatIfAnalysisName,
-      ForecastArn: item.ForecastArn,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { WhatIfAnalyses };
+const ListWhatIfAnalyses: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredWhatIfAnalysis>()
+      .filter((entry) => entry.key.startsWith("whatIfAnalysis#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        WhatIfAnalysisArn: item.WhatIfAnalysisArn,
+        WhatIfAnalysisName: item.WhatIfAnalysisName,
+        ForecastArn: item.ForecastArn,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { WhatIfAnalyses: items, NextToken: nextToken };
 };
 
 const DeleteWhatIfAnalysis: OperationHandler = (input, ctx) => {
@@ -1196,6 +1355,7 @@ const DeleteWhatIfAnalysis: OperationHandler = (input, ctx) => {
 const CreateWhatIfForecast: OperationHandler = (input, ctx) => {
   const WhatIfForecastName = requireString(input, "WhatIfForecastName");
   const WhatIfAnalysisArn = requireString(input, "WhatIfAnalysisArn");
+  requireWhatIfAnalysis(ctx, WhatIfAnalysisArn);
   const WhatIfForecastArn = whatIfForecastResArn(ctx, WhatIfForecastName);
   const now = nowSeconds();
   const item: StoredWhatIfForecast = {
@@ -1223,20 +1383,28 @@ const DescribeWhatIfForecast: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListWhatIfForecasts: OperationHandler = (_input, ctx) => {
-  const WhatIfForecasts = ctx.store
-    .list<StoredWhatIfForecast>()
-    .filter((entry) => entry.key.startsWith("whatIfForecast#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      WhatIfForecastArn: item.WhatIfForecastArn,
-      WhatIfForecastName: item.WhatIfForecastName,
-      WhatIfAnalysisArn: item.WhatIfAnalysisArn,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { WhatIfForecasts };
+const ListWhatIfForecasts: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredWhatIfForecast>()
+      .filter((entry) => entry.key.startsWith("whatIfForecast#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        WhatIfForecastArn: item.WhatIfForecastArn,
+        WhatIfForecastName: item.WhatIfForecastName,
+        WhatIfAnalysisArn: item.WhatIfAnalysisArn,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { WhatIfForecasts: items, NextToken: nextToken };
 };
 
 const DeleteWhatIfForecast: OperationHandler = (input, ctx) => {
@@ -1302,21 +1470,29 @@ const DescribeWhatIfForecastExport: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListWhatIfForecastExports: OperationHandler = (_input, ctx) => {
-  const WhatIfForecastExports = ctx.store
-    .list<StoredWhatIfForecastExport>()
-    .filter((entry) => entry.key.startsWith("whatIfForecastExport#"))
-    .map((entry) => entry.value)
-    .map((item) => ({
-      WhatIfForecastExportArn: item.WhatIfForecastExportArn,
-      WhatIfForecastExportName: item.WhatIfForecastExportName,
-      WhatIfForecastArns: item.WhatIfForecastArns,
-      Destination: item.Destination,
-      Status: item.Status,
-      CreationTime: item.CreationTime,
-      LastModificationTime: item.LastModificationTime,
-    }));
-  return { WhatIfForecastExports };
+const ListWhatIfForecastExports: OperationHandler = (input, ctx) => {
+  const all = applyFilters(
+    ctx.store
+      .list<StoredWhatIfForecastExport>()
+      .filter((entry) => entry.key.startsWith("whatIfForecastExport#"))
+      .map((entry) => entry.value)
+      .map((item) => ({
+        WhatIfForecastExportArn: item.WhatIfForecastExportArn,
+        WhatIfForecastExportName: item.WhatIfForecastExportName,
+        WhatIfForecastArns: item.WhatIfForecastArns,
+        Destination: item.Destination,
+        Status: item.Status,
+        CreationTime: item.CreationTime,
+        LastModificationTime: item.LastModificationTime,
+      })),
+    input["Filters"],
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { WhatIfForecastExports: items, NextToken: nextToken };
 };
 
 const DeleteWhatIfForecastExport: OperationHandler = (input, ctx) => {

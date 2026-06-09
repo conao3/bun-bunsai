@@ -346,6 +346,49 @@ const strArray = (value: unknown): string[] =>
     ? (value as unknown[]).filter((x): x is string => typeof x === "string")
     : [];
 
+const decodeToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const n = parseInt(token, 10);
+  return isNaN(n) ? 0 : n;
+};
+
+const encodeToken = (offset: number): string => String(offset);
+
+const paginate = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { page: T[]; nextToken: string | undefined } => {
+  const offset = decodeToken(nextToken);
+  const limit =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 500;
+  const page = items.slice(offset, offset + limit);
+  const nextOffset = offset + limit;
+  return {
+    page,
+    nextToken: nextOffset < items.length ? encodeToken(nextOffset) : undefined,
+  };
+};
+
+const requireResourceOwner = (input: Record<string, unknown>): string => {
+  const val = stringOrUndefined(input["resourceOwner"]);
+  if (val === undefined) {
+    throw awsError(
+      "InvalidParameterException",
+      "resourceOwner is required.",
+      400,
+    );
+  }
+  if (val !== "SELF" && val !== "OTHER-ACCOUNTS") {
+    throw awsError(
+      "InvalidParameterException",
+      "resourceOwner must be SELF or OTHER-ACCOUNTS.",
+      400,
+    );
+  }
+  return val;
+};
+
 const CreateResourceShare: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const allowExternalPrincipals =
@@ -409,6 +452,7 @@ const CreateResourceShare: OperationHandler = (input, ctx) => {
 };
 
 const GetResourceShares: OperationHandler = (input, ctx) => {
+  const resourceOwner = requireResourceOwner(input);
   const arns = Array.isArray(input["resourceShareArns"])
     ? (input["resourceShareArns"] as unknown[]).filter(
         (item): item is string => typeof item === "string",
@@ -416,12 +460,62 @@ const GetResourceShares: OperationHandler = (input, ctx) => {
     : undefined;
   const name = stringOrUndefined(input["name"]);
   const status = stringOrUndefined(input["resourceShareStatus"]);
+  const filterPermArn = stringOrUndefined(input["permissionArn"]);
+  const filterPermVersion = versionString(input["permissionVersion"]);
+  const rawTagFilters = Array.isArray(input["tagFilters"])
+    ? (input["tagFilters"] as unknown[])
+        .filter(
+          (f): f is Record<string, unknown> =>
+            typeof f === "object" && f !== null,
+        )
+        .map((f) => ({
+          tagKey: typeof f["tagKey"] === "string" ? f["tagKey"] : "",
+          tagValues: Array.isArray(f["tagValues"])
+            ? (f["tagValues"] as unknown[]).filter(
+                (v): v is string => typeof v === "string",
+              )
+            : [],
+        }))
+        .filter((f) => f.tagKey !== "")
+    : [];
+  const permShareArns =
+    filterPermArn !== undefined
+      ? new Set(
+          allSharePermissions(ctx)
+            .filter(
+              (sp) =>
+                sp.permissionArn === filterPermArn &&
+                (filterPermVersion === undefined ||
+                  sp.permissionVersion === filterPermVersion),
+            )
+            .map((sp) => sp.resourceShareArn),
+        )
+      : undefined;
   const shares = allShares(ctx)
+    .filter((share) =>
+      resourceOwner === "SELF"
+        ? share.owningAccountId === ctx.account
+        : share.owningAccountId !== ctx.account,
+    )
     .filter(
       (share) => arns === undefined || arns.includes(share.resourceShareArn),
     )
     .filter((share) => name === undefined || share.name === name)
     .filter((share) => status === undefined || share.status === status)
+    .filter(
+      (share) =>
+        permShareArns === undefined ||
+        permShareArns.has(share.resourceShareArn),
+    )
+    .filter((share) =>
+      rawTagFilters.every((tf) =>
+        share.tags.some(
+          (t) =>
+            t.key === tf.tagKey &&
+            (tf.tagValues.length === 0 || tf.tagValues.includes(t.value)),
+        ),
+      ),
+    )
     .sort((a, b) =>
       a.resourceShareArn < b.resourceShareArn
         ? -1
@@ -429,7 +523,15 @@ const GetResourceShares: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
-  return { resourceShares: shares.map(shareView) };
+  const { page, nextToken } = paginate(
+    shares,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    resourceShares: page.map(shareView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const UpdateResourceShare: OperationHandler = (input, ctx) => {
@@ -511,7 +613,12 @@ const AssociateResourceShare: OperationHandler = (input, ctx) => {
     ctx.store.set(assocKey(arn, "PRINCIPAL", principal), updated);
     associations.push(updated);
   }
-  return { resourceShareAssociations: associations.map(assocView) };
+  return {
+    resourceShareAssociations: associations.map((a) => ({
+      ...assocView(a),
+      status: "ASSOCIATING",
+    })),
+  };
 };
 
 const DisassociateResourceShare: OperationHandler = (input, ctx) => {
@@ -549,7 +656,12 @@ const DisassociateResourceShare: OperationHandler = (input, ctx) => {
       associations.push(updated);
     }
   }
-  return { resourceShareAssociations: associations.map(assocView) };
+  return {
+    resourceShareAssociations: associations.map((a) => ({
+      ...assocView(a),
+      status: "DISASSOCIATING",
+    })),
+  };
 };
 
 const GetResourceShareAssociations: OperationHandler = (input, ctx) => {
@@ -568,15 +680,34 @@ const GetResourceShareAssociations: OperationHandler = (input, ctx) => {
     )
     .filter((a) => principal === undefined || a.associatedEntity === principal)
     .filter((a) => status === undefined || a.status === status);
-  return { resourceShareAssociations: assocs.map(assocView) };
+  const { page, nextToken } = paginate(
+    assocs,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    resourceShareAssociations: page.map(assocView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const ListResources: OperationHandler = (input, ctx) => {
+  const resourceOwner = requireResourceOwner(input);
+  const ownedShareArns = new Set(
+    allShares(ctx)
+      .filter((s) => s.owningAccountId === ctx.account)
+      .map((s) => s.resourceShareArn),
+  );
   const shareArns = strArray(input["resourceShareArns"]);
   const resourceArns = strArray(input["resourceArns"]);
   const resourceType = stringOrUndefined(input["resourceType"]);
   const assocs = allAssociations(ctx)
     .filter((a) => a.associationType === "RESOURCE")
+    .filter((a) =>
+      resourceOwner === "SELF"
+        ? ownedShareArns.has(a.resourceShareArn)
+        : !ownedShareArns.has(a.resourceShareArn),
+    )
     .filter(
       (a) => shareArns.length === 0 || shareArns.includes(a.resourceShareArn),
     )
@@ -603,15 +734,34 @@ const ListResources: OperationHandler = (input, ctx) => {
     lastUpdatedTime: a.lastUpdatedTime,
     resourceRegionScope: "REGIONAL",
   }));
-  return { resources };
+  const { page, nextToken } = paginate(
+    resources,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    resources: page,
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const ListPrincipals: OperationHandler = (input, ctx) => {
+  const resourceOwner = requireResourceOwner(input);
+  const ownedShareArns = new Set(
+    allShares(ctx)
+      .filter((s) => s.owningAccountId === ctx.account)
+      .map((s) => s.resourceShareArn),
+  );
   const shareArns = strArray(input["resourceShareArns"]);
   const principals = strArray(input["principals"]);
   const resourceArn = stringOrUndefined(input["resourceArn"]);
   const assocs = allAssociations(ctx)
     .filter((a) => a.associationType === "PRINCIPAL")
+    .filter((a) =>
+      resourceOwner === "SELF"
+        ? ownedShareArns.has(a.resourceShareArn)
+        : !ownedShareArns.has(a.resourceShareArn),
+    )
     .filter(
       (a) => shareArns.length === 0 || shareArns.includes(a.resourceShareArn),
     )
@@ -641,7 +791,15 @@ const ListPrincipals: OperationHandler = (input, ctx) => {
     lastUpdatedTime: a.lastUpdatedTime,
     external: a.external,
   }));
-  return { principals: result };
+  const { page, nextToken } = paginate(
+    result,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    principals: page,
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const ListResourceTypes: OperationHandler = (_input, _ctx) => ({
@@ -1056,7 +1214,12 @@ const ReplacePermissionAssociations: OperationHandler = (input, ctx) => {
     ctx.store.set(sharePermKey(sp.resourceShareArn, toArn), newSp);
   }
   void fromPerm;
-  return { replacePermissionAssociationsWork: workView(work) };
+  return {
+    replacePermissionAssociationsWork: {
+      ...workView(work),
+      status: "IN_PROGRESS",
+    },
+  };
 };
 
 const ListReplacePermissionAssociationsWork: OperationHandler = (

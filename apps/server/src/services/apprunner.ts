@@ -35,7 +35,6 @@ type StoredService = {
   NetworkConfiguration: Record<string, unknown>;
   ObservabilityConfiguration: Record<string, unknown> | undefined;
   AutoScalingConfigurationArn: string;
-  Tags: unknown[];
 };
 
 type StoredAutoScalingConfig = {
@@ -437,6 +436,66 @@ const listToTags = (tagList: unknown[]): Record<string, string> => {
   return result;
 };
 
+const updateAutoScalingAssociation = (
+  ctx: ServiceContext,
+  arn: string,
+): void => {
+  const cfg = ctx.store.get<StoredAutoScalingConfig>(
+    `${autoScalingPrefix}${arn}`,
+  );
+  if (cfg === undefined) return;
+  const inUse = ctx.store
+    .list<StoredService>()
+    .filter((e) => e.key.startsWith(servicePrefix))
+    .some((e) => e.value.AutoScalingConfigurationArn === arn);
+  ctx.store.set(`${autoScalingPrefix}${arn}`, {
+    ...cfg,
+    HasAssociatedService: inUse,
+  });
+};
+
+const isConnectionUsedByService = (
+  ctx: ServiceContext,
+  connectionArn: string,
+): boolean =>
+  ctx.store
+    .list<StoredService>()
+    .filter((e) => e.key.startsWith(servicePrefix))
+    .some((e) => {
+      const src = e.value.SourceConfiguration;
+      const codeRepo = src["CodeRepository"] as
+        | Record<string, unknown>
+        | undefined;
+      const authCfg = (
+        codeRepo?.["CodeConfiguration"] as Record<string, unknown> | undefined
+      )?.["AuthenticationConfiguration"] as Record<string, unknown> | undefined;
+      return authCfg?.["ConnectionArn"] === connectionArn;
+    });
+
+const isVpcConnectorUsedByService = (
+  ctx: ServiceContext,
+  vpcConnectorArn: string,
+): boolean =>
+  ctx.store
+    .list<StoredService>()
+    .filter((e) => e.key.startsWith(servicePrefix))
+    .some((e) => {
+      const network = e.value.NetworkConfiguration;
+      const egress = network["EgressConfiguration"] as
+        | Record<string, unknown>
+        | undefined;
+      return egress?.["VpcConnectorArn"] === vpcConnectorArn;
+    });
+
+const hasVpcIngressConnections = (
+  ctx: ServiceContext,
+  serviceArn: string,
+): boolean =>
+  ctx.store
+    .list<StoredVpcIngressConnection>()
+    .filter((e) => e.key.startsWith(vpcIngressPrefix))
+    .some((e) => e.value.ServiceArn === serviceArn);
+
 const CreateService: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ServiceName");
   const source = recordOrUndefined(input["SourceConfiguration"]);
@@ -498,9 +557,13 @@ const CreateService: OperationHandler = (input, ctx) => {
     ),
     AutoScalingConfigurationArn:
       stringOrUndefined(input["AutoScalingConfigurationArn"]) ?? autoScalingArn,
-    Tags: arrayOrEmpty(input["Tags"]),
   };
   ctx.store.set(serviceKey(serviceId), service);
+  const tagList = arrayOrEmpty(input["Tags"]);
+  if (tagList.length > 0) {
+    setTags(ctx, arn, listToTags(tagList));
+  }
+  updateAutoScalingAssociation(ctx, service.AutoScalingConfigurationArn);
   const opId = operationId();
   appendServiceOperation(ctx, arn, {
     Id: opId,
@@ -549,12 +612,31 @@ const ListServices: OperationHandler = (input, ctx) => {
 const DeleteService: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ServiceArn");
   const service = requireService(ctx, arn);
+  if (service.Status === "OPERATION_IN_PROGRESS") {
+    throw awsError(
+      "InvalidStateException",
+      `Service ${arn} is in OPERATION_IN_PROGRESS state and cannot be deleted.`,
+      400,
+    );
+  }
+  if (hasVpcIngressConnections(ctx, arn)) {
+    throw awsError(
+      "InvalidRequestException",
+      `Service ${arn} has dependent VPC ingress connections and cannot be deleted.`,
+      400,
+    );
+  }
   const deleted: StoredService = {
     ...service,
     Status: "DELETED",
     UpdatedAt: nowSeconds(),
   };
+  const autoScalingArn = service.AutoScalingConfigurationArn;
   ctx.store.delete(serviceKey(service.ServiceId));
+  ctx.store.delete(`${tagsPrefix}${arn}`);
+  ctx.store.delete(`${operationsPrefix}${arn}`);
+  ctx.store.delete(`${customDomainsPrefix}${arn}`);
+  updateAutoScalingAssociation(ctx, autoScalingArn);
   return {
     Service: serviceView(deleted),
     OperationId: operationId(),
@@ -564,6 +646,13 @@ const DeleteService: OperationHandler = (input, ctx) => {
 const PauseService: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ServiceArn");
   const service = requireService(ctx, arn);
+  if (service.Status !== "RUNNING") {
+    throw awsError(
+      "InvalidStateException",
+      `Service ${arn} must be in RUNNING state to pause, but is ${service.Status}.`,
+      400,
+    );
+  }
   const paused: StoredService = {
     ...service,
     Status: "PAUSED",
@@ -579,6 +668,13 @@ const PauseService: OperationHandler = (input, ctx) => {
 const ResumeService: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ServiceArn");
   const service = requireService(ctx, arn);
+  if (service.Status !== "PAUSED") {
+    throw awsError(
+      "InvalidStateException",
+      `Service ${arn} must be in PAUSED state to resume, but is ${service.Status}.`,
+      400,
+    );
+  }
   const resumed: StoredService = {
     ...service,
     Status: "RUNNING",
@@ -594,9 +690,19 @@ const ResumeService: OperationHandler = (input, ctx) => {
 const UpdateService: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ServiceArn");
   const service = requireService(ctx, arn);
+  if (service.Status !== "RUNNING" && service.Status !== "PAUSED") {
+    throw awsError(
+      "InvalidStateException",
+      `Service ${arn} must be in RUNNING or PAUSED state to update, but is ${service.Status}.`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const instance = recordOrUndefined(input["InstanceConfiguration"]);
   const network = recordOrUndefined(input["NetworkConfiguration"]);
+  const newAutoScalingArn = stringOrUndefined(
+    input["AutoScalingConfigurationArn"],
+  );
   const updated: StoredService = {
     ...service,
     UpdatedAt: now,
@@ -621,16 +727,15 @@ const UpdateService: OperationHandler = (input, ctx) => {
     HealthCheckConfiguration:
       recordOrUndefined(input["HealthCheckConfiguration"]) ??
       service.HealthCheckConfiguration,
-    AutoScalingConfigurationSummary: input["AutoScalingConfigurationArn"]
+    AutoScalingConfigurationSummary: newAutoScalingArn
       ? {
-          AutoScalingConfigurationArn: requireString(
-            input,
-            "AutoScalingConfigurationArn",
-          ),
+          AutoScalingConfigurationArn: newAutoScalingArn,
           AutoScalingConfigurationName: "DefaultConfiguration",
           AutoScalingConfigurationRevision: 1,
         }
       : service.AutoScalingConfigurationSummary,
+    AutoScalingConfigurationArn:
+      newAutoScalingArn ?? service.AutoScalingConfigurationArn,
     NetworkConfiguration: network
       ? {
           EgressConfiguration: {
@@ -652,6 +757,13 @@ const UpdateService: OperationHandler = (input, ctx) => {
       service.ObservabilityConfiguration,
   };
   ctx.store.set(serviceKey(service.ServiceId), updated);
+  if (
+    newAutoScalingArn &&
+    newAutoScalingArn !== service.AutoScalingConfigurationArn
+  ) {
+    updateAutoScalingAssociation(ctx, service.AutoScalingConfigurationArn);
+    updateAutoScalingAssociation(ctx, newAutoScalingArn);
+  }
   const opId = operationId();
   appendServiceOperation(ctx, arn, {
     Id: opId,
@@ -670,7 +782,14 @@ const UpdateService: OperationHandler = (input, ctx) => {
 
 const StartDeployment: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ServiceArn");
-  requireService(ctx, arn);
+  const service = requireService(ctx, arn);
+  if (service.Status !== "RUNNING") {
+    throw awsError(
+      "InvalidStateException",
+      `Service ${arn} must be in RUNNING state to start deployment, but is ${service.Status}.`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const opId = operationId();
   appendServiceOperation(ctx, arn, {
@@ -741,12 +860,20 @@ const CreateAutoScalingConfiguration: OperationHandler = (input, ctx) => {
 const DeleteAutoScalingConfiguration: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "AutoScalingConfigurationArn");
   const cfg = getAutoScalingByArn(ctx, arn);
+  if (cfg.HasAssociatedService) {
+    throw awsError(
+      "InvalidRequestException",
+      `AutoScalingConfiguration ${arn} is associated with a service and cannot be deleted.`,
+      400,
+    );
+  }
   const deleted: StoredAutoScalingConfig = {
     ...cfg,
     Status: "INACTIVE",
     DeletedAt: nowSeconds(),
   };
   ctx.store.delete(`${autoScalingPrefix}${arn}`);
+  ctx.store.delete(`${tagsPrefix}${arn}`);
   return { AutoScalingConfiguration: autoScalingView(deleted) };
 };
 
@@ -843,8 +970,16 @@ const CreateConnection: OperationHandler = (input, ctx) => {
 const DeleteConnection: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ConnectionArn");
   const conn = getConnectionByArn(ctx, arn);
+  if (isConnectionUsedByService(ctx, arn)) {
+    throw awsError(
+      "InvalidRequestException",
+      `Connection ${arn} is used by a service and cannot be deleted.`,
+      400,
+    );
+  }
   const deleted: StoredConnection = { ...conn, Status: "DELETED" };
   ctx.store.delete(`${connectionPrefix}${arn}`);
+  ctx.store.delete(`${tagsPrefix}${arn}`);
   return { Connection: connectionView(deleted) };
 };
 
@@ -899,6 +1034,7 @@ const DeleteObservabilityConfiguration: OperationHandler = (input, ctx) => {
     DeletedAt: nowSeconds(),
   };
   ctx.store.delete(`${observabilityPrefix}${arn}`);
+  ctx.store.delete(`${tagsPrefix}${arn}`);
   return { ObservabilityConfiguration: observabilityView(deleted) };
 };
 
@@ -964,12 +1100,20 @@ const CreateVpcConnector: OperationHandler = (input, ctx) => {
 const DeleteVpcConnector: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "VpcConnectorArn");
   const vc = getVpcConnectorByArn(ctx, arn);
+  if (isVpcConnectorUsedByService(ctx, arn)) {
+    throw awsError(
+      "InvalidRequestException",
+      `VpcConnector ${arn} is used by a service and cannot be deleted.`,
+      400,
+    );
+  }
   const deleted: StoredVpcConnector = {
     ...vc,
     Status: "INACTIVE",
     DeletedAt: nowSeconds(),
   };
   ctx.store.delete(`${vpcConnectorPrefix}${arn}`);
+  ctx.store.delete(`${tagsPrefix}${arn}`);
   return { VpcConnector: vpcConnectorView(deleted) };
 };
 
@@ -1029,6 +1173,7 @@ const DeleteVpcIngressConnection: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "VpcIngressConnectionArn");
   const vic = getVpcIngressByArn(ctx, arn);
   ctx.store.delete(`${vpcIngressPrefix}${arn}`);
+  ctx.store.delete(`${tagsPrefix}${arn}`);
   return {
     VpcIngressConnection: {
       ...vpcIngressView(vic),

@@ -279,6 +279,30 @@ const optionalString = (
   return typeof value === "string" ? value : undefined;
 };
 
+const paginateArns = (
+  arns: string[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { arns: string[]; nextToken?: string } => {
+  const limit =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : undefined;
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(atob(nextToken), 10)
+      : 0;
+  const sliced =
+    limit !== undefined
+      ? arns.slice(offset, offset + limit)
+      : arns.slice(offset);
+  const nextOffset = offset + sliced.length;
+  return {
+    arns: sliced,
+    ...(limit !== undefined && nextOffset < arns.length
+      ? { nextToken: btoa(String(nextOffset)) }
+      : {}),
+  };
+};
+
 const clusterNameFromInput = (input: Record<string, unknown>): string => {
   const value = input["cluster"];
   return typeof value === "string" && value !== "" ? value : "default";
@@ -536,12 +560,19 @@ const resolveTaskDefinition = (
 
 const CreateCluster: OperationHandler = (input, ctx) => {
   const name = optionalString(input, "clusterName") ?? "default";
+  const arn = clusterArn(ctx.region, ctx.account, name);
   const cluster: StoredCluster = {
     clusterName: name,
-    clusterArn: clusterArn(ctx.region, ctx.account, name),
+    clusterArn: arn,
     status: "ACTIVE",
   };
   ctx.store.set(clusterKey(name), cluster);
+  const inputTags = Array.isArray(input["tags"])
+    ? (input["tags"] as Record<string, string>[])
+    : [];
+  if (inputTags.length > 0) {
+    ctx.store.set(tagKey(arn), inputTags);
+  }
   return { cluster: clusterView(cluster) };
 };
 
@@ -574,12 +605,20 @@ const DescribeClusters: OperationHandler = (input, ctx) => {
 };
 
 const ListClusters: OperationHandler = (input, ctx) => {
-  const clusterArns = ctx.store
+  const allArns = ctx.store
     .list<StoredCluster>()
     .filter((entry) => entry.key.startsWith("cluster#"))
     .map((entry) => entry.value.clusterArn)
     .sort();
-  return { clusterArns };
+  const { arns, nextToken } = paginateArns(
+    allArns,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return {
+    clusterArns: arns,
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteCluster: OperationHandler = (input, ctx) => {
@@ -622,7 +661,13 @@ const RegisterTaskDefinition: OperationHandler = (input, ctx) => {
     registeredAt: Math.floor(Date.now() / 1000),
   };
   ctx.store.set(taskDefKey(family, revision), taskDef);
-  return { taskDefinition: taskDefinitionView(taskDef), tags: [] };
+  const inputTags = Array.isArray(input["tags"])
+    ? (input["tags"] as Record<string, string>[])
+    : [];
+  if (inputTags.length > 0) {
+    ctx.store.set(tagKey(taskDef.taskDefinitionArn), inputTags);
+  }
+  return { taskDefinition: taskDefinitionView(taskDef), tags: inputTags };
 };
 
 const DescribeTaskDefinition: OperationHandler = (input, ctx) => {
@@ -711,7 +756,15 @@ const ListTasks: OperationHandler = (input, ctx) => {
     })
     .map((task) => task.taskArn)
     .sort();
-  return { taskArns };
+  const { arns, nextToken } = paginateArns(
+    taskArns,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return {
+    taskArns: arns,
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const StopTask: OperationHandler = (input, ctx) => {
@@ -883,6 +936,12 @@ const CreateService: OperationHandler = (input, ctx) => {
     deployments: primaryDeployment !== undefined ? [primaryDeployment] : [],
   };
   ctx.store.set(serviceKey(clusterName, serviceName), service);
+  const inputTags = Array.isArray(input["tags"])
+    ? (input["tags"] as Record<string, string>[])
+    : [];
+  if (inputTags.length > 0) {
+    ctx.store.set(tagKey(service.serviceArn), inputTags);
+  }
   reconcileServiceTasks(ctx, service);
   const runningCount = countServiceTasks(ctx, clusterName, serviceName);
   return { service: serviceView(service, runningCount) };
@@ -1017,7 +1076,15 @@ const ListServices: OperationHandler = (input, ctx) => {
     )
     .map((service) => service.serviceArn)
     .sort();
-  return { serviceArns };
+  const { arns, nextToken } = paginateArns(
+    serviceArns,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return {
+    serviceArns: arns,
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const ListTaskDefinitions: OperationHandler = (input, ctx) => {

@@ -108,6 +108,26 @@ const originEndpointKey = (id: string): string =>
 const harvestJobKey = (id: string): string => `${harvestJobPrefix}${id}`;
 const tagKey = (arn: string): string => `${tagPrefix}${arn}`;
 
+const paginateItems = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+  maxCap = 200,
+): { page: T[]; nextToken: string | undefined } => {
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? Math.min(maxResults, maxCap)
+      : maxCap;
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(atob(nextToken), 10) || 0
+      : 0;
+  const page = items.slice(offset, offset + max);
+  const next =
+    offset + max < items.length ? btoa(String(offset + max)) : undefined;
+  return { page, nextToken: next };
+};
+
 const channelArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:mediapackage:${ctx.region}:${ctx.account}:channels/${id}`;
 
@@ -182,15 +202,21 @@ const CreateChannel: OperationHandler = (input, ctx) => {
       422,
     );
   }
+  const tags = recordOrEmpty(input["Tags"]) as Record<string, string>;
   const channel: StoredChannel = {
     Id: id,
     Arn: channelArn(ctx, id),
     Description: stringOrUndefined(input["Description"]) ?? "",
     CreatedAt: new Date().toISOString(),
-    Tags: recordOrEmpty(input["Tags"]),
+    Tags: tags,
     HlsIngest: { IngestEndpoints: defaultIngestEndpoints(ctx, id) },
   };
   ctx.store.set(channelKey(id), channel);
+  if (Object.keys(tags).length > 0) {
+    const existing =
+      ctx.store.get<Record<string, string>>(tagKey(channel.Arn)) ?? {};
+    ctx.store.set(tagKey(channel.Arn), { ...existing, ...tags });
+  }
   return channel;
 };
 
@@ -199,13 +225,18 @@ const DescribeChannel: OperationHandler = (input, ctx) => {
   return requireChannel(ctx, id);
 };
 
-const ListChannels: OperationHandler = (_input, ctx) => {
-  const channels = ctx.store
+const ListChannels: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredChannel>()
     .filter((entry) => entry.key.startsWith(channelPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0));
-  return { Channels: channels };
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Channels: page, NextToken: nextToken };
 };
 
 const DeleteChannel: OperationHandler = (input, ctx) => {
@@ -306,13 +337,14 @@ const CreateOriginEndpoint: OperationHandler = (input, ctx) => {
       422,
     );
   }
+  const epTags = recordOrEmpty(input["Tags"]) as Record<string, string>;
   const endpoint: StoredOriginEndpoint = {
     Id: id,
     Arn: originEndpointArn(ctx, id),
     ChannelId: channelId,
     Description: stringOrUndefined(input["Description"]) ?? "",
     CreatedAt: new Date().toISOString(),
-    Tags: recordOrEmpty(input["Tags"]),
+    Tags: epTags,
     Url: `https://${id}.mediapackage.${ctx.region}.amazonaws.com/out/v1/${id}/index.m3u8`,
     ManifestName: stringOrUndefined(input["ManifestName"]) ?? "index",
     StartoverWindowSeconds:
@@ -334,6 +366,11 @@ const CreateOriginEndpoint: OperationHandler = (input, ctx) => {
     MssPackage: input["MssPackage"],
   };
   ctx.store.set(originEndpointKey(id), endpoint);
+  if (Object.keys(epTags).length > 0) {
+    const existing =
+      ctx.store.get<Record<string, string>>(tagKey(endpoint.Arn)) ?? {};
+    ctx.store.set(tagKey(endpoint.Arn), { ...existing, ...epTags });
+  }
   return endpoint;
 };
 
@@ -344,13 +381,18 @@ const DescribeOriginEndpoint: OperationHandler = (input, ctx) => {
 
 const ListOriginEndpoints: OperationHandler = (input, ctx) => {
   const channelId = stringOrUndefined(input["ChannelId"]);
-  const endpoints = ctx.store
+  const all = ctx.store
     .list<StoredOriginEndpoint>()
     .filter((entry) => entry.key.startsWith(originEndpointPrefix))
     .map((entry) => entry.value)
     .filter((ep) => channelId === undefined || ep.ChannelId === channelId)
     .sort((a, b) => (a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0));
-  return { OriginEndpoints: endpoints };
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { OriginEndpoints: page, NextToken: nextToken };
 };
 
 const UpdateOriginEndpoint: OperationHandler = (input, ctx) => {
@@ -418,9 +460,25 @@ const CreateHarvestJob: OperationHandler = (input, ctx) => {
       422,
     );
   }
-  const s3Dest = recordOrEmpty(
-    input["S3Destination"],
-  ) as unknown as S3Destination;
+  const s3Raw = recordOrEmpty(input["S3Destination"]) as Record<
+    string,
+    unknown
+  >;
+  const bucketName = stringOrUndefined(s3Raw["BucketName"]);
+  const manifestKey = stringOrUndefined(s3Raw["ManifestKey"]);
+  const roleArn = stringOrUndefined(s3Raw["RoleArn"]);
+  if (!bucketName || !manifestKey || !roleArn) {
+    throw awsError(
+      "ValidationException",
+      "S3Destination requires BucketName, ManifestKey, and RoleArn.",
+      422,
+    );
+  }
+  const s3Dest: S3Destination = {
+    BucketName: bucketName,
+    ManifestKey: manifestKey,
+    RoleArn: roleArn,
+  };
   const job: StoredHarvestJob = {
     Id: id,
     Arn: harvestJobArn(ctx, id),
@@ -429,7 +487,7 @@ const CreateHarvestJob: OperationHandler = (input, ctx) => {
     S3Destination: s3Dest,
     StartTime: requireString(input, "StartTime"),
     EndTime: requireString(input, "EndTime"),
-    Status: "IN_PROGRESS",
+    Status: "SUCCEEDED",
     CreatedAt: new Date().toISOString(),
   };
   ctx.store.set(harvestJobKey(id), job);
@@ -444,7 +502,7 @@ const DescribeHarvestJob: OperationHandler = (input, ctx) => {
 const ListHarvestJobs: OperationHandler = (input, ctx) => {
   const includeChannelId = stringOrUndefined(input["IncludeChannelId"]);
   const includeStatus = stringOrUndefined(input["IncludeStatus"]);
-  const jobs = ctx.store
+  const all = ctx.store
     .list<StoredHarvestJob>()
     .filter((entry) => entry.key.startsWith(harvestJobPrefix))
     .map((entry) => entry.value)
@@ -456,7 +514,12 @@ const ListHarvestJobs: OperationHandler = (input, ctx) => {
       (job) => includeStatus === undefined || job.Status === includeStatus,
     )
     .sort((a, b) => (a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0));
-  return { HarvestJobs: jobs };
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { HarvestJobs: page, NextToken: nextToken };
 };
 
 const TagResource: OperationHandler = (input, ctx) => {

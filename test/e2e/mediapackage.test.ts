@@ -267,3 +267,83 @@ test("MediaPackage tagging operations", async () => {
 
   await client.send(new DeleteChannelCommand({ Id: channelId }));
 });
+
+test("MediaPackage ListChannels pagination", async () => {
+  const client = mediapackage();
+  const ids = [
+    "bunsai-e2e-pg-ch-a",
+    "bunsai-e2e-pg-ch-b",
+    "bunsai-e2e-pg-ch-c",
+  ];
+
+  for (const id of ids) {
+    await client.send(new CreateChannelCommand({ Id: id }));
+  }
+
+  const page1 = await client.send(new ListChannelsCommand({ MaxResults: 2 }));
+  expect((page1.Channels ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListChannelsCommand({ MaxResults: 2, NextToken: page1.NextToken }),
+  );
+  expect((page2.Channels ?? []).length).toBeGreaterThanOrEqual(1);
+
+  const allIds = [
+    ...(page1.Channels ?? []).map((c) => c.Id),
+    ...(page2.Channels ?? []).map((c) => c.Id),
+  ];
+  for (const id of ids) {
+    expect(allIds).toContain(id);
+  }
+
+  for (const id of ids) {
+    await client.send(new DeleteChannelCommand({ Id: id }));
+  }
+});
+
+test("MediaPackage CreateHarvestJob missing S3Destination", async () => {
+  const client = mediapackage();
+  const channelId = "bunsai-e2e-hj-val-channel";
+  const endpointId = "bunsai-e2e-hj-val-endpoint";
+
+  await client.send(new CreateChannelCommand({ Id: channelId }));
+  await client.send(
+    new CreateOriginEndpointCommand({ ChannelId: channelId, Id: endpointId }),
+  );
+
+  await expect(
+    client.send(
+      new CreateHarvestJobCommand({
+        Id: "bunsai-e2e-hj-missing-s3",
+        OriginEndpointId: endpointId,
+        StartTime: "2024-01-01T00:00:00Z",
+        EndTime: "2024-01-02T00:00:00Z",
+      } as never),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteOriginEndpointCommand({ Id: endpointId }));
+  await client.send(new DeleteChannelCommand({ Id: channelId }));
+});
+
+test("MediaPackage create-time tags queryable via ListTagsForResource", async () => {
+  const client = mediapackage();
+  const channelId = "bunsai-e2e-create-tag-channel";
+
+  const created = await client.send(
+    new CreateChannelCommand({
+      Id: channelId,
+      Tags: { team: "bunsai", tier: "5" },
+    }),
+  );
+  const arn = created.Arn ?? "";
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect(listed.Tags?.["team"]).toBe("bunsai");
+  expect(listed.Tags?.["tier"]).toBe("5");
+
+  await client.send(new DeleteChannelCommand({ Id: channelId }));
+});

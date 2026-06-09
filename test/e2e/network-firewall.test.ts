@@ -4,16 +4,20 @@ import {
   AssociateFirewallPolicyCommand,
   CreateFirewallCommand,
   CreateFirewallPolicyCommand,
+  CreateProxyRuleGroupCommand,
+  CreateProxyRulesCommand,
   CreateRuleGroupCommand,
   CreateTLSInspectionConfigurationCommand,
   DeleteFirewallCommand,
   DeleteFirewallPolicyCommand,
+  DeleteProxyRuleGroupCommand,
   DeleteResourcePolicyCommand,
   DeleteRuleGroupCommand,
   DeleteTLSInspectionConfigurationCommand,
   DescribeFirewallCommand,
   DescribeFirewallPolicyCommand,
   DescribeLoggingConfigurationCommand,
+  DescribeProxyRuleCommand,
   DescribeResourcePolicyCommand,
   DescribeRuleGroupCommand,
   DescribeTLSInspectionConfigurationCommand,
@@ -29,6 +33,7 @@ import {
   UpdateFirewallDeleteProtectionCommand,
   UpdateFirewallPolicyCommand,
   UpdateLoggingConfigurationCommand,
+  UpdateProxyRuleCommand,
   UpdateRuleGroupCommand,
   UpdateTLSInspectionConfigurationCommand,
 } from "@aws-sdk/client-network-firewall";
@@ -335,6 +340,153 @@ describe("network-firewall e2e", () => {
 
     await client.send(
       new DeleteResourcePolicyCommand({ ResourceArn: resourceArn }),
+    );
+  });
+
+  test("ListFirewalls: pagination and VpcIds filter", async () => {
+    const client = firewall();
+    const policyArn =
+      "arn:aws:network-firewall:us-east-1:000000000000:firewall-policy/pag-test";
+    const prefix = `bunsai-pag-${Date.now()}`;
+    const vpcA = "vpc-aaa0000000000000a";
+    const vpcB = "vpc-bbb0000000000000b";
+
+    const nameA = `${prefix}-a`;
+    const nameB = `${prefix}-b`;
+    await client.send(
+      new CreateFirewallCommand({
+        FirewallName: nameA,
+        FirewallPolicyArn: policyArn,
+        VpcId: vpcA,
+        SubnetMappings: [{ SubnetId: "subnet-aa" }],
+      }),
+    );
+    await client.send(
+      new CreateFirewallCommand({
+        FirewallName: nameB,
+        FirewallPolicyArn: policyArn,
+        VpcId: vpcB,
+        SubnetMappings: [{ SubnetId: "subnet-bb" }],
+      }),
+    );
+
+    const page1 = await client.send(
+      new ListFirewallsCommand({ MaxResults: 1 }),
+    );
+    expect((page1.Firewalls ?? []).length).toBe(1);
+    expect(page1.NextToken).toBeDefined();
+
+    const page2 = await client.send(
+      new ListFirewallsCommand({ NextToken: page1.NextToken }),
+    );
+    expect((page2.Firewalls ?? []).length).toBeGreaterThanOrEqual(1);
+
+    const filtered = await client.send(
+      new ListFirewallsCommand({ VpcIds: [vpcA] }),
+    );
+    const filteredNames = (filtered.Firewalls ?? []).map((f) => f.FirewallName);
+    expect(filteredNames).toContain(nameA);
+    expect(filteredNames).not.toContain(nameB);
+
+    await client.send(new DeleteFirewallCommand({ FirewallName: nameA }));
+    await client.send(new DeleteFirewallCommand({ FirewallName: nameB }));
+  });
+
+  test("UpdateFirewallPolicy: stale UpdateToken → InvalidTokenException", async () => {
+    const client = firewall();
+    const name = `bunsai-fp-tok-${Date.now()}`;
+
+    const created = await client.send(
+      new CreateFirewallPolicyCommand({
+        FirewallPolicyName: name,
+        FirewallPolicy: {
+          StatelessDefaultActions: ["aws:drop"],
+          StatelessFragmentDefaultActions: ["aws:drop"],
+        },
+      }),
+    );
+    expect(created.UpdateToken).toBeDefined();
+
+    const staleToken = "stale-token-xyz";
+    await expect(
+      client.send(
+        new UpdateFirewallPolicyCommand({
+          FirewallPolicyName: name,
+          FirewallPolicy: {
+            StatelessDefaultActions: ["aws:pass"],
+            StatelessFragmentDefaultActions: ["aws:pass"],
+          },
+          UpdateToken: staleToken,
+        }),
+      ),
+    ).rejects.toThrow();
+
+    await client.send(
+      new DeleteFirewallPolicyCommand({ FirewallPolicyName: name }),
+    );
+  });
+
+  test("proxy rule group: create rules, describe, update, delete round-trip", async () => {
+    const client = firewall();
+    const groupName = `bunsai-prg-${Date.now()}`;
+    const ruleName = "test-rule";
+
+    const createdGroup = await client.send(
+      new CreateProxyRuleGroupCommand({ ProxyRuleGroupName: groupName }),
+    );
+    expect(createdGroup.ProxyRuleGroup?.ProxyRuleGroupName).toBe(groupName);
+    expect(createdGroup.UpdateToken).toBeDefined();
+
+    const createdRules = await client.send(
+      new CreateProxyRulesCommand({
+        ProxyRuleGroupName: groupName,
+        Rules: {
+          PreDNS: [
+            {
+              ProxyRuleName: ruleName,
+              Action: "ALLOW",
+              Conditions: [],
+            },
+          ],
+        },
+      }),
+    );
+    expect(createdRules.ProxyRuleGroup?.ProxyRuleGroupName).toBe(groupName);
+
+    const described = await client.send(
+      new DescribeProxyRuleCommand({
+        ProxyRuleGroupName: groupName,
+        ProxyRuleName: ruleName,
+      }),
+    );
+    expect(described.ProxyRule?.ProxyRuleName).toBe(ruleName);
+    expect(described.ProxyRule?.Action).toBe("ALLOW");
+    expect(described.UpdateToken).toBeDefined();
+
+    const updated = await client.send(
+      new UpdateProxyRuleCommand({
+        ProxyRuleGroupName: groupName,
+        ProxyRuleName: ruleName,
+        Action: "DENY",
+        UpdateToken: described.UpdateToken,
+      }),
+    );
+    expect(updated.ProxyRule?.Action).toBe("DENY");
+    expect(updated.UpdateToken).not.toBe(described.UpdateToken);
+
+    await expect(
+      client.send(
+        new UpdateProxyRuleCommand({
+          ProxyRuleGroupName: groupName,
+          ProxyRuleName: ruleName,
+          Action: "ALLOW",
+          UpdateToken: described.UpdateToken,
+        }),
+      ),
+    ).rejects.toThrow();
+
+    await client.send(
+      new DeleteProxyRuleGroupCommand({ ProxyRuleGroupName: groupName }),
     );
   });
 

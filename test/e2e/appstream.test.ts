@@ -8,9 +8,11 @@ import {
   CreateApplicationCommand,
   CreateDirectoryConfigCommand,
   CreateEntitlementCommand,
+  CreateExportImageTaskCommand,
   CreateFleetCommand,
   CreateImageBuilderCommand,
   CreateStackCommand,
+  CreateStreamingURLCommand,
   CreateThemeForStackCommand,
   CreateUserCommand,
   DeleteAppBlockBuilderCommand,
@@ -31,12 +33,15 @@ import {
   DescribeEntitlementsCommand,
   DescribeFleetsCommand,
   DescribeImageBuildersCommand,
+  DescribeSessionsCommand,
   DescribeStacksCommand,
   DescribeThemeForStackCommand,
   DescribeUsersCommand,
   DisableUserCommand,
   DisassociateAppBlockBuilderAppBlockCommand,
   EnableUserCommand,
+  GetExportImageTaskCommand,
+  ListExportImageTasksCommand,
   ListTagsForResourceCommand,
   TagResourceCommand,
   UntagResourceCommand,
@@ -380,5 +385,141 @@ test("AppStream tag lifecycle", async () => {
   );
   expect(afterUntag.Tags?.env).toBeUndefined();
 
+  await client.send(new DeleteStackCommand({ Name: stackName }));
+});
+
+test("AppStream GetExportImageTask with TaskId and not-found error", async () => {
+  const client = appstream();
+  const imageName = "e2e-export-image";
+  const amiName = "e2e-ami";
+
+  await client.send(
+    new CreateStackCommand({ Name: "e2e-export-stack-placeholder" }),
+  );
+
+  const created = await client.send(
+    new CreateExportImageTaskCommand({
+      ImageName: imageName,
+      AmiName: amiName,
+      IamRoleArn: "arn:aws:iam::123456789012:role/AppStreamExportRole",
+    }),
+  );
+  const taskId = created.ExportImageTask?.TaskId;
+  expect(taskId).toBeDefined();
+
+  const fetched = await client.send(
+    new GetExportImageTaskCommand({ TaskId: taskId }),
+  );
+  expect(fetched.ExportImageTask?.TaskId).toBe(taskId);
+  expect(fetched.ExportImageTask?.AmiName).toBe(amiName);
+
+  const notFound = client.send(
+    new GetExportImageTaskCommand({ TaskId: "nonexistent-task-id" }),
+  );
+  await expect(notFound).rejects.toThrow();
+
+  const listed = await client.send(new ListExportImageTasksCommand({}));
+  expect((listed.ExportImageTasks ?? []).some((t) => t.TaskId === taskId)).toBe(
+    true,
+  );
+
+  const filteredByState = await client.send(
+    new ListExportImageTasksCommand({
+      Filters: [{ Name: "State", Values: ["ACTIVE"] }],
+    }),
+  );
+  expect(
+    (filteredByState.ExportImageTasks ?? []).some((t) => t.TaskId === taskId),
+  ).toBe(true);
+
+  await client.send(
+    new DeleteStackCommand({ Name: "e2e-export-stack-placeholder" }),
+  );
+});
+
+test("AppStream DescribeSessions persistent sessions and pagination", async () => {
+  const client = appstream();
+  const stackName = "e2e-sessions-stack";
+  const fleetName = "e2e-sessions-fleet";
+
+  await client.send(new CreateStackCommand({ Name: stackName }));
+  await client.send(
+    new CreateFleetCommand({
+      Name: fleetName,
+      InstanceType: "stream.standard.medium",
+      ComputeCapacity: { DesiredInstances: 2 },
+    }),
+  );
+
+  await client.send(
+    new CreateStreamingURLCommand({
+      StackName: stackName,
+      FleetName: fleetName,
+      UserId: "user-a",
+    }),
+  );
+  await client.send(
+    new CreateStreamingURLCommand({
+      StackName: stackName,
+      FleetName: fleetName,
+      UserId: "user-b",
+    }),
+  );
+  await client.send(
+    new CreateStreamingURLCommand({
+      StackName: stackName,
+      FleetName: fleetName,
+      UserId: "user-c",
+    }),
+  );
+
+  const allSessions = await client.send(
+    new DescribeSessionsCommand({ StackName: stackName, FleetName: fleetName }),
+  );
+  expect((allSessions.Sessions ?? []).length).toBe(3);
+
+  const page1 = await client.send(
+    new DescribeSessionsCommand({
+      StackName: stackName,
+      FleetName: fleetName,
+      Limit: 2,
+    }),
+  );
+  expect((page1.Sessions ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new DescribeSessionsCommand({
+      StackName: stackName,
+      FleetName: fleetName,
+      Limit: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.Sessions ?? []).length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  const userFiltered = await client.send(
+    new DescribeSessionsCommand({
+      StackName: stackName,
+      FleetName: fleetName,
+      UserId: "user-a",
+    }),
+  );
+  expect((userFiltered.Sessions ?? []).length).toBe(1);
+  expect(userFiltered.Sessions?.[0]?.UserId).toBe("user-a");
+
+  const instanceId = allSessions.Sessions?.[0]?.InstanceId;
+  expect(instanceId).toBeDefined();
+  const instanceFiltered = await client.send(
+    new DescribeSessionsCommand({
+      StackName: stackName,
+      FleetName: fleetName,
+      InstanceId: instanceId,
+    }),
+  );
+  expect((instanceFiltered.Sessions ?? []).length).toBe(1);
+
+  await client.send(new DeleteFleetCommand({ Name: fleetName }));
   await client.send(new DeleteStackCommand({ Name: stackName }));
 });

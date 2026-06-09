@@ -43,6 +43,8 @@ const trafficDistributionGroupPrefix = "traffic-distribution-group:" as const;
 const predefinedAttributePrefix = "predefined-attribute:" as const;
 const resourceTagsPrefix = "resource-tags:" as const;
 const instanceAttributePrefix = "instance-attribute:" as const;
+const taskTemplatePrefix = "task-template:" as const;
+const useCasePrefix = "use-case:" as const;
 
 type StoredInstance = {
   Id: string;
@@ -282,8 +284,34 @@ type StoredPredefinedAttribute = {
   InstanceId: string;
 };
 
+type StoredTaskTemplate = {
+  Id: string;
+  Arn: string;
+  InstanceId: string;
+};
+
+type StoredUseCase = {
+  UseCaseId: string;
+  UseCaseArn: string;
+  InstanceId: string;
+  IntegrationAssociationId: string;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
+
+const numberOrUndefined = (value: unknown): number | undefined =>
+  typeof value === "number" ? value : undefined;
+
+const encodeNextToken = (idx: number): string => btoa(String(idx));
+
+const decodeNextToken = (token: string): number => {
+  try {
+    return parseInt(atob(token), 10);
+  } catch {
+    return 0;
+  }
+};
 
 const booleanValue = (value: unknown): boolean =>
   typeof value === "boolean" ? value : false;
@@ -374,6 +402,14 @@ const trafficDistributionGroupKey = (id: string): string =>
 const predefinedAttributeKey = (instanceId: string, name: string): string =>
   `${predefinedAttributePrefix}${instanceId}:${name}`;
 const resourceTagsKey = (arn: string): string => `${resourceTagsPrefix}${arn}`;
+const taskTemplateKey = (instanceId: string, id: string): string =>
+  `${taskTemplatePrefix}${instanceId}:${id}`;
+const useCaseKey = (
+  instanceId: string,
+  integrationAssociationId: string,
+  useCaseId: string,
+): string =>
+  `${useCasePrefix}${instanceId}:${integrationAssociationId}:${useCaseId}`;
 const instanceAttributeKey = (
   instanceId: string,
   attributeType: string,
@@ -433,7 +469,7 @@ const CreateInstance: OperationHandler = (input, ctx) => {
     InstanceAlias: alias,
     CreatedTime: Date.now() / 1000,
     ServiceRole: `arn:aws:iam::${ctx.account}:role/aws-service-role/connect.amazonaws.com/AWSServiceRoleForAmazonConnect_${id}`,
-    InstanceStatus: "ACTIVE",
+    InstanceStatus: "CREATION_IN_PROGRESS",
     InboundCallsEnabled: inbound,
     OutboundCallsEnabled: outbound,
     InstanceAccessUrl: `https://${alias ?? id}.my.connect.aws`,
@@ -448,6 +484,9 @@ const CreateInstance: OperationHandler = (input, ctx) => {
 const DescribeInstance: OperationHandler = (input, ctx) => {
   const id = requireString(input, "InstanceId");
   const instance = requireInstance(ctx, id);
+  if (instance.InstanceStatus === "CREATION_IN_PROGRESS") {
+    ctx.store.set(instanceKey(id), { ...instance, InstanceStatus: "ACTIVE" });
+  }
   return { Instance: instanceView(instance) };
 };
 
@@ -494,6 +533,7 @@ const DeleteContactFlow: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(contactFlowKey(instanceId, contactFlowId));
+  ctx.store.delete(resourceTagsKey(stored.ContactFlowArn));
   return {};
 };
 
@@ -703,6 +743,7 @@ const DeleteQueue: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(queueKey(instanceId, queueId));
+  ctx.store.delete(resourceTagsKey(stored.QueueArn));
   return {};
 };
 
@@ -739,12 +780,23 @@ const DeleteRoutingProfile: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(routingProfileKey(instanceId, routingProfileId));
+  ctx.store.delete(resourceTagsKey(stored.RoutingProfileArn));
   return {};
 };
 
 const DeleteRule: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const ruleId = requireString(input, "RuleId");
+  const stored = ctx.store.get<StoredRule>(ruleKey(instanceId, ruleId));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Rule ${ruleId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(ruleKey(instanceId, ruleId));
   return {};
 };
 
@@ -763,12 +815,25 @@ const DeleteSecurityProfile: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(securityProfileKey(instanceId, securityProfileId));
+  ctx.store.delete(resourceTagsKey(stored.SecurityProfileArn));
   return {};
 };
 
 const DeleteTaskTemplate: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const taskTemplateId = requireString(input, "TaskTemplateId");
+  const storedTask = ctx.store.get<StoredTaskTemplate>(
+    taskTemplateKey(instanceId, taskTemplateId),
+  );
+  if (storedTask === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `TaskTemplate ${taskTemplateId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(taskTemplateKey(instanceId, taskTemplateId));
   return {};
 };
 
@@ -778,13 +843,44 @@ const DeleteTestCase: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const DeleteTrafficDistributionGroup: OperationHandler = (_input, _ctx) => {
+const DeleteTrafficDistributionGroup: OperationHandler = (input, ctx) => {
+  const trafficDistributionGroupId = requireString(
+    input,
+    "TrafficDistributionGroupId",
+  );
+  const storedTdg = ctx.store.get<StoredTrafficDistributionGroup>(
+    trafficDistributionGroupKey(trafficDistributionGroupId),
+  );
+  if (storedTdg === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `TrafficDistributionGroup ${trafficDistributionGroupId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(trafficDistributionGroupKey(trafficDistributionGroupId));
   return {};
 };
 
 const DeleteUseCase: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const integrationAssociationId = requireString(
+    input,
+    "IntegrationAssociationId",
+  );
+  const useCaseId = requireString(input, "UseCaseId");
+  const storedUc = ctx.store.get<StoredUseCase>(
+    useCaseKey(instanceId, integrationAssociationId, useCaseId),
+  );
+  if (storedUc === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `UseCase ${useCaseId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(useCaseKey(instanceId, integrationAssociationId, useCaseId));
   return {};
 };
 
@@ -801,6 +897,7 @@ const DeleteUser: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(userKey(instanceId, userId));
+  ctx.store.delete(resourceTagsKey(stored.UserArn));
   return {};
 };
 
@@ -1181,6 +1278,13 @@ const CreateContactFlow: OperationHandler = (input, ctx) => {
     InstanceId: instanceId,
   };
   ctx.store.set(contactFlowKey(instanceId, id), stored);
+  const contactFlowTags = input["Tags"];
+  if (typeof contactFlowTags === "object" && contactFlowTags !== null) {
+    ctx.store.set(
+      resourceTagsKey(arn),
+      contactFlowTags as Record<string, string>,
+    );
+  }
   return {
     ContactFlowId: id,
     ContactFlowArn: arn,
@@ -1416,6 +1520,10 @@ const CreateQueue: OperationHandler = (input, ctx) => {
     InstanceId: instanceId,
   };
   ctx.store.set(queueKey(instanceId, id), stored);
+  const queueTags = input["Tags"];
+  if (typeof queueTags === "object" && queueTags !== null) {
+    ctx.store.set(resourceTagsKey(arn), queueTags as Record<string, string>);
+  }
   return { QueueArn: arn, QueueId: id };
 };
 
@@ -1448,6 +1556,13 @@ const CreateRoutingProfile: OperationHandler = (input, ctx) => {
     InstanceId: instanceId,
   };
   ctx.store.set(routingProfileKey(instanceId, id), stored);
+  const routingProfileTags = input["Tags"];
+  if (typeof routingProfileTags === "object" && routingProfileTags !== null) {
+    ctx.store.set(
+      resourceTagsKey(arn),
+      routingProfileTags as Record<string, string>,
+    );
+  }
   return { RoutingProfileArn: arn, RoutingProfileId: id };
 };
 
@@ -1478,6 +1593,13 @@ const CreateSecurityProfile: OperationHandler = (input, ctx) => {
     InstanceId: instanceId,
   };
   ctx.store.set(securityProfileKey(instanceId, id), stored);
+  const securityProfileTags = input["Tags"];
+  if (typeof securityProfileTags === "object" && securityProfileTags !== null) {
+    ctx.store.set(
+      resourceTagsKey(arn),
+      securityProfileTags as Record<string, string>,
+    );
+  }
   return { SecurityProfileId: id, SecurityProfileArn: arn };
 };
 
@@ -1486,6 +1608,12 @@ const CreateTaskTemplate: OperationHandler = (input, ctx) => {
   requireInstance(ctx, instanceId);
   const id = crypto.randomUUID();
   const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/task-template/${id}`;
+  const stored: StoredTaskTemplate = {
+    Id: id,
+    Arn: arn,
+    InstanceId: instanceId,
+  };
+  ctx.store.set(taskTemplateKey(instanceId, id), stored);
   return { Id: id, Arn: arn };
 };
 
@@ -1514,8 +1642,19 @@ const CreateTrafficDistributionGroup: OperationHandler = (input, ctx) => {
 const CreateUseCase: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const integrationAssociationId = requireString(
+    input,
+    "IntegrationAssociationId",
+  );
   const id = crypto.randomUUID();
   const arn = `arn:aws:connect:${ctx.region}:${ctx.account}:instance/${instanceId}/use-case/${id}`;
+  const stored: StoredUseCase = {
+    UseCaseId: id,
+    UseCaseArn: arn,
+    InstanceId: instanceId,
+    IntegrationAssociationId: integrationAssociationId,
+  };
+  ctx.store.set(useCaseKey(instanceId, integrationAssociationId, id), stored);
   return { UseCaseId: id, UseCaseArn: arn };
 };
 
@@ -1628,6 +1767,10 @@ const CreateUser: OperationHandler = (input, ctx) => {
     InstanceId: instanceId,
   };
   ctx.store.set(userKey(instanceId, id), stored);
+  const userTags = input["Tags"];
+  if (typeof userTags === "object" && userTags !== null) {
+    ctx.store.set(resourceTagsKey(arn), userTags as Record<string, string>);
+  }
   return { UserId: id, UserArn: arn };
 };
 
@@ -1867,6 +2010,10 @@ const DescribeContactFlow: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const contactFlowTagsStored =
+    ctx.store.get<Record<string, string>>(
+      resourceTagsKey(stored.ContactFlowArn),
+    ) ?? {};
   return {
     ContactFlow: {
       Id: stored.ContactFlowId,
@@ -1875,6 +2022,7 @@ const DescribeContactFlow: OperationHandler = (input, ctx) => {
       Type: stored.Type,
       State: "ACTIVE",
       Status: "PUBLISHED",
+      Tags: contactFlowTagsStored,
     },
   };
 };
@@ -2090,6 +2238,9 @@ const DescribeUser: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const userTagsStored =
+    ctx.store.get<Record<string, string>>(resourceTagsKey(stored.UserArn)) ??
+    {};
   return {
     User: {
       Id: stored.UserId,
@@ -2100,6 +2251,7 @@ const DescribeUser: OperationHandler = (input, ctx) => {
       RoutingProfileId: stored.RoutingProfileId,
       SecurityProfileIds: stored.SecurityProfileIds,
       HierarchyGroupId: stored.HierarchyGroupId,
+      Tags: userTagsStored,
     },
   };
 };
@@ -3720,12 +3872,16 @@ const DescribeQueue: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const queueTagsStored =
+    ctx.store.get<Record<string, string>>(resourceTagsKey(stored.QueueArn)) ??
+    {};
   return {
     Queue: {
       QueueId: stored.QueueId,
       QueueArn: stored.QueueArn,
       Name: stored.Name,
       Status: stored.Status,
+      Tags: queueTagsStored,
     },
   };
 };
@@ -3768,6 +3924,10 @@ const DescribeRoutingProfile: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const routingProfileTagsStored =
+    ctx.store.get<Record<string, string>>(
+      resourceTagsKey(stored.RoutingProfileArn),
+    ) ?? {};
   return {
     RoutingProfile: {
       RoutingProfileId: stored.RoutingProfileId,
@@ -3776,6 +3936,7 @@ const DescribeRoutingProfile: OperationHandler = (input, ctx) => {
       InstanceId: stored.InstanceId,
       MediaConcurrencies: stored.MediaConcurrencies,
       AgentAvailabilityTimer: stored.AgentAvailabilityTimer,
+      Tags: routingProfileTagsStored,
     },
   };
 };
@@ -3819,12 +3980,17 @@ const DescribeSecurityProfile: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const securityProfileTagsStored =
+    ctx.store.get<Record<string, string>>(
+      resourceTagsKey(stored.SecurityProfileArn),
+    ) ?? {};
   return {
     SecurityProfile: {
       Id: stored.SecurityProfileId,
       Arn: stored.SecurityProfileArn,
       SecurityProfileName: stored.SecurityProfileName,
       Description: stored.Description,
+      Tags: securityProfileTagsStored,
     },
   };
 };
@@ -4359,17 +4525,24 @@ const ListQueueQuickConnects: OperationHandler = (input, ctx) => {
 const ListQueues: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const max = numberOrUndefined(input["MaxResults"]) ?? 1000;
+  const token = stringOrUndefined(input["NextToken"]);
+  const start = token !== undefined ? decodeNextToken(token) : 0;
   const queues = ctx.store
     .list<StoredQueue>()
     .filter((entry) => entry.key.startsWith(queuePrefix))
     .map((entry) => entry.value)
     .filter((q) => q.InstanceId === instanceId);
+  const slice = queues.slice(start, start + max);
+  const nextToken =
+    start + max < queues.length ? encodeNextToken(start + max) : undefined;
   return {
-    QueueSummaryList: queues.map((q) => ({
+    QueueSummaryList: slice.map((q) => ({
       Id: q.QueueId,
       Arn: q.QueueArn,
       Name: q.Name,
     })),
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 
@@ -4512,17 +4685,24 @@ const ListRoutingProfileQueues: OperationHandler = (input, ctx) => {
 const ListRoutingProfiles: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const max = numberOrUndefined(input["MaxResults"]) ?? 1000;
+  const token = stringOrUndefined(input["NextToken"]);
+  const start = token !== undefined ? decodeNextToken(token) : 0;
   const profiles = ctx.store
     .list<StoredRoutingProfile>()
     .filter((entry) => entry.key.startsWith(routingProfilePrefix))
     .map((entry) => entry.value)
     .filter((p) => p.InstanceId === instanceId);
+  const slice = profiles.slice(start, start + max);
+  const nextToken =
+    start + max < profiles.length ? encodeNextToken(start + max) : undefined;
   return {
-    RoutingProfileSummaryList: profiles.map((p) => ({
+    RoutingProfileSummaryList: slice.map((p) => ({
       Id: p.RoutingProfileId,
       Arn: p.RoutingProfileArn,
       Name: p.Name,
     })),
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 
@@ -4688,17 +4868,24 @@ const ListUserProficiencies: OperationHandler = (input, ctx) => {
 const ListUsers: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   requireInstance(ctx, instanceId);
+  const max = numberOrUndefined(input["MaxResults"]) ?? 1000;
+  const token = stringOrUndefined(input["NextToken"]);
+  const start = token !== undefined ? decodeNextToken(token) : 0;
   const users = ctx.store
     .list<StoredUser>()
     .filter((entry) => entry.key.startsWith(userPrefix))
     .map((entry) => entry.value)
     .filter((u) => u.InstanceId === instanceId);
+  const slice = users.slice(start, start + max);
+  const nextToken =
+    start + max < users.length ? encodeNextToken(start + max) : undefined;
   return {
-    UserSummaryList: users.map((u) => ({
+    UserSummaryList: slice.map((u) => ({
       Id: u.UserId,
       Arn: u.UserArn,
       Username: u.Username,
     })),
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 

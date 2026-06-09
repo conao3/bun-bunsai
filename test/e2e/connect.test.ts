@@ -35,6 +35,15 @@ import {
   CreateUserCommand,
   CreateViewCommand,
   CreateViewVersionCommand,
+  DescribeQueueCommand,
+  DescribeRoutingProfileCommand,
+  ListQueuesCommand,
+  TagResourceCommand,
+  UntagResourceCommand,
+  ListTagsForResourceCommand,
+  CreateRuleCommand,
+  DeleteRuleCommand,
+  DeleteQueueCommand,
 } from "@aws-sdk/client-connect";
 
 const { endpoint, requestHandler } = startApp();
@@ -731,6 +740,183 @@ test("CreateView and CreateViewVersion — view lifecycle", async () => {
   );
   expect(createdVersion.View?.Id).toBe(viewId);
   expect(createdVersion.View?.Version).toBe(1);
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("instance lifecycle CREATION_IN_PROGRESS → ACTIVE", async () => {
+  const client = connect();
+
+  const created = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-lifecycle-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = created.Id ?? "";
+
+  const first = await client.send(
+    new DescribeInstanceCommand({ InstanceId: instanceId }),
+  );
+  expect(first.Instance?.InstanceStatus).toBe("CREATION_IN_PROGRESS");
+
+  const second = await client.send(
+    new DescribeInstanceCommand({ InstanceId: instanceId }),
+  );
+  expect(second.Instance?.InstanceStatus).toBe("ACTIVE");
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("Create* Tags + Describe* returns Tags + DeleteQueue clears tags + ListQueues pagination", async () => {
+  const client = connect();
+
+  const inst = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-tags-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = inst.Id ?? "";
+
+  const dummyHoO = "00000000-0000-0000-0000-000000000001";
+
+  const q1 = await client.send(
+    new CreateQueueCommand({
+      InstanceId: instanceId,
+      Name: "queue-one",
+      HoursOfOperationId: dummyHoO,
+      Tags: { env: "test", tier: "1" },
+    }),
+  );
+  expect(q1.QueueId).toBeDefined();
+  expect(q1.QueueArn).toBeDefined();
+  const queueId = q1.QueueId!;
+  const queueArn = q1.QueueArn!;
+
+  const q2 = await client.send(
+    new CreateQueueCommand({
+      InstanceId: instanceId,
+      Name: "queue-two",
+      HoursOfOperationId: dummyHoO,
+    }),
+  );
+  expect(q2.QueueId).toBeDefined();
+
+  const rp = await client.send(
+    new CreateRoutingProfileCommand({
+      InstanceId: instanceId,
+      Name: "rp-one",
+      Description: "test routing profile",
+      DefaultOutboundQueueId: queueId,
+      MediaConcurrencies: [],
+      Tags: { rp: "yes" },
+    }),
+  );
+  expect(rp.RoutingProfileId).toBeDefined();
+
+  const descQ = await client.send(
+    new DescribeQueueCommand({ InstanceId: instanceId, QueueId: queueId }),
+  );
+  expect(descQ.Queue?.Tags).toEqual({ env: "test", tier: "1" });
+
+  const descRp = await client.send(
+    new DescribeRoutingProfileCommand({
+      InstanceId: instanceId,
+      RoutingProfileId: rp.RoutingProfileId ?? "",
+    }),
+  );
+  expect(descRp.RoutingProfile?.Tags).toEqual({ rp: "yes" });
+
+  const list1 = await client.send(
+    new ListQueuesCommand({ InstanceId: instanceId, MaxResults: 1 }),
+  );
+  expect(list1.QueueSummaryList?.length).toBe(1);
+  expect(list1.NextToken).toBeDefined();
+
+  const list2 = await client.send(
+    new ListQueuesCommand({
+      InstanceId: instanceId,
+      NextToken: list1.NextToken,
+    }),
+  );
+  expect(list2.QueueSummaryList?.length).toBe(1);
+  expect(list2.NextToken).toBeUndefined();
+
+  await client.send(
+    new TagResourceCommand({
+      resourceArn: queueArn,
+      tags: { extra: "val" },
+    }),
+  );
+  const afterTag = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: queueArn }),
+  );
+  expect(afterTag.tags?.["extra"]).toBe("val");
+  expect(afterTag.tags?.["env"]).toBe("test");
+
+  await client.send(
+    new UntagResourceCommand({
+      resourceArn: queueArn,
+      tagKeys: ["extra"],
+    }),
+  );
+  const afterUntag = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: queueArn }),
+  );
+  expect(afterUntag.tags?.["extra"]).toBeUndefined();
+  expect(afterUntag.tags?.["env"]).toBe("test");
+
+  await client.send(
+    new DeleteQueueCommand({ InstanceId: instanceId, QueueId: queueId }),
+  );
+  const afterDelete = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: queueArn }),
+  );
+  expect(Object.keys(afterDelete.tags ?? {}).length).toBe(0);
+
+  await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
+});
+
+test("DeleteRule second call raises ResourceNotFoundException", async () => {
+  const client = connect();
+
+  const inst = await client.send(
+    new CreateInstanceCommand({
+      IdentityManagementType: "CONNECT_MANAGED",
+      InstanceAlias: `bunsai-e2e-delrule-${Date.now()}`,
+      InboundCallsEnabled: true,
+      OutboundCallsEnabled: false,
+    }),
+  );
+  const instanceId = inst.Id ?? "";
+
+  const rule = await client.send(
+    new CreateRuleCommand({
+      InstanceId: instanceId,
+      Name: "test-rule",
+      TriggerEventSource: { EventSourceName: "OnContactEvaluationSubmit" },
+      Function: "TRUE",
+      Actions: [],
+      PublishStatus: "DRAFT",
+    }),
+  );
+  expect(rule.RuleId).toBeDefined();
+  const ruleId = rule.RuleId ?? "";
+
+  await client.send(
+    new DeleteRuleCommand({ InstanceId: instanceId, RuleId: ruleId }),
+  );
+
+  await expect(
+    client.send(
+      new DeleteRuleCommand({ InstanceId: instanceId, RuleId: ruleId }),
+    ),
+  ).rejects.toThrow();
 
   await client.send(new DeleteInstanceCommand({ InstanceId: instanceId }));
 });

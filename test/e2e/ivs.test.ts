@@ -534,3 +534,257 @@ test("IVS tags CRUD", async () => {
 
   await client.send(new DeleteChannelCommand({ arn: resourceArn }));
 });
+
+test("IVS CreateChannel with unknown recordingConfigurationArn → ResourceNotFoundException", async () => {
+  const client = ivs();
+  const bogusArn =
+    "arn:aws:ivs:us-east-1:123456789012:recording-configuration/doesnotexist";
+  await expect(
+    client.send(
+      new CreateChannelCommand({
+        name: `ref-val-test-${Date.now()}`,
+        recordingConfigurationArn: bogusArn,
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
+});
+
+test("IVS UpdateChannel with unknown playbackRestrictionPolicyArn → ResourceNotFoundException", async () => {
+  const client = ivs();
+  const ch = await client.send(
+    new CreateChannelCommand({ name: `upd-ref-test-${Date.now()}` }),
+  );
+  const arn = ch.channel?.arn ?? "";
+  const bogusArn =
+    "arn:aws:ivs:us-east-1:123456789012:playback-restriction-policy/doesnotexist";
+  await expect(
+    client.send(
+      new UpdateChannelCommand({ arn, playbackRestrictionPolicyArn: bogusArn }),
+    ),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
+  await client.send(new DeleteChannelCommand({ arn }));
+});
+
+test("IVS StopStream on non-broadcasting channel → ChannelNotBroadcasting", async () => {
+  const client = ivs();
+  const ch = await client.send(
+    new CreateChannelCommand({ name: `stop-nolive-${Date.now()}` }),
+  );
+  const channelArn = ch.channel?.arn ?? "";
+  await expect(
+    client.send(new StopStreamCommand({ channelArn })),
+  ).rejects.toMatchObject({ name: "ChannelNotBroadcasting" });
+  await client.send(new DeleteChannelCommand({ arn: channelArn }));
+});
+
+test("IVS DeleteRecordingConfiguration while referenced → ConflictException", async () => {
+  const client = ivs();
+  const rc = await client.send(
+    new CreateRecordingConfigurationCommand({
+      name: `rc-conflict-${Date.now()}`,
+      destinationConfiguration: { s3: { bucketName: "test-bucket" } },
+    }),
+  );
+  const rcArn = rc.recordingConfiguration?.arn ?? "";
+  const ch = await client.send(
+    new CreateChannelCommand({
+      name: `ch-rcref-${Date.now()}`,
+      recordingConfigurationArn: rcArn,
+    }),
+  );
+  const chArn = ch.channel?.arn ?? "";
+  await expect(
+    client.send(new DeleteRecordingConfigurationCommand({ arn: rcArn })),
+  ).rejects.toMatchObject({ name: "ConflictException" });
+  await client.send(
+    new UpdateChannelCommand({ arn: chArn, recordingConfigurationArn: "" }),
+  );
+  await client.send(new DeleteRecordingConfigurationCommand({ arn: rcArn }));
+  await client.send(new DeleteChannelCommand({ arn: chArn }));
+});
+
+test("IVS DeletePlaybackRestrictionPolicy while referenced → ConflictException", async () => {
+  const client = ivs();
+  const prp = await client.send(
+    new CreatePlaybackRestrictionPolicyCommand({
+      allowedCountries: ["US"],
+      allowedOrigins: ["https://example.com"],
+      name: `prp-conflict-${Date.now()}`,
+    }),
+  );
+  const prpArn = prp.playbackRestrictionPolicy?.arn ?? "";
+  const ch = await client.send(
+    new CreateChannelCommand({
+      name: `ch-prpref-${Date.now()}`,
+      playbackRestrictionPolicyArn: prpArn,
+    }),
+  );
+  const chArn = ch.channel?.arn ?? "";
+  await expect(
+    client.send(new DeletePlaybackRestrictionPolicyCommand({ arn: prpArn })),
+  ).rejects.toMatchObject({ name: "ConflictException" });
+  await client.send(
+    new UpdateChannelCommand({ arn: chArn, playbackRestrictionPolicyArn: "" }),
+  );
+  await client.send(
+    new DeletePlaybackRestrictionPolicyCommand({ arn: prpArn }),
+  );
+  await client.send(new DeleteChannelCommand({ arn: chArn }));
+});
+
+test("IVS DeleteAdConfiguration while referenced → ConflictException", async () => {
+  const client = ivs();
+  const ac = await client.send(
+    new CreateAdConfigurationCommand({
+      name: `ac-conflict-${Date.now()}`,
+      mediaTailorPlaybackConfigurations: [],
+    }),
+  );
+  const acArn = ac.adConfiguration?.arn ?? "";
+  const ch = await client.send(
+    new CreateChannelCommand({
+      name: `ch-acref-${Date.now()}`,
+      adConfigurationArn: acArn,
+    }),
+  );
+  const chArn = ch.channel?.arn ?? "";
+  await expect(
+    client.send(new DeleteAdConfigurationCommand({ arn: acArn })),
+  ).rejects.toMatchObject({ name: "ConflictException" });
+  await client.send(
+    new UpdateChannelCommand({ arn: chArn, adConfigurationArn: "" }),
+  );
+  await client.send(new DeleteAdConfigurationCommand({ arn: acArn }));
+  await client.send(new DeleteChannelCommand({ arn: chArn }));
+});
+
+test("IVS DeleteChannel cascades stream keys", async () => {
+  const client = ivs();
+  const ch = await client.send(
+    new CreateChannelCommand({ name: `cascade-test-${Date.now()}` }),
+  );
+  const chArn = ch.channel?.arn ?? "";
+  await client.send(new CreateStreamKeyCommand({ channelArn: chArn }));
+  const before = await client.send(
+    new ListStreamKeysCommand({ channelArn: chArn }),
+  );
+  expect((before.streamKeys ?? []).length).toBeGreaterThanOrEqual(2);
+  await client.send(new DeleteChannelCommand({ arn: chArn }));
+  const ch2 = await client.send(
+    new CreateChannelCommand({ name: `cascade-check-${Date.now()}` }),
+  );
+  const ch2Arn = ch2.channel?.arn ?? "";
+  const allKeys = await client.send(
+    new ListStreamKeysCommand({ channelArn: ch2Arn }),
+  );
+  const orphans = (allKeys.streamKeys ?? []).filter(
+    (sk) => sk.channelArn === chArn,
+  );
+  expect(orphans.length).toBe(0);
+  await client.send(new DeleteChannelCommand({ arn: ch2Arn }));
+});
+
+test("IVS ListStreamSessions paginates with maxResults + nextToken", async () => {
+  const client = ivs();
+  const ch = await client.send(
+    new CreateChannelCommand({ name: `sess-page-${Date.now()}` }),
+  );
+  const channelArn = ch.channel?.arn ?? "";
+  for (let i = 0; i < 3; i++) {
+    await client.send(new GetStreamSessionCommand({ channelArn }));
+    await client.send(new StopStreamCommand({ channelArn }));
+  }
+  const page1 = await client.send(
+    new ListStreamSessionsCommand({ channelArn, maxResults: 2 }),
+  );
+  expect((page1.streamSessions ?? []).length).toBe(2);
+  expect(page1.nextToken).toBeDefined();
+  const page2 = await client.send(
+    new ListStreamSessionsCommand({
+      channelArn,
+      maxResults: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect((page2.streamSessions ?? []).length).toBeGreaterThanOrEqual(1);
+  await client.send(new DeleteChannelCommand({ arn: channelArn }));
+});
+
+test("IVS ListPlaybackRestrictionPolicies paginates with maxResults + nextToken", async () => {
+  const client = ivs();
+  const arns: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const p = await client.send(
+      new CreatePlaybackRestrictionPolicyCommand({
+        allowedCountries: ["US"],
+        allowedOrigins: ["https://example.com"],
+        name: `prp-page-${Date.now()}-${i}`,
+      }),
+    );
+    arns.push(p.playbackRestrictionPolicy?.arn ?? "");
+  }
+  const page1 = await client.send(
+    new ListPlaybackRestrictionPoliciesCommand({ maxResults: 2 }),
+  );
+  expect((page1.playbackRestrictionPolicies ?? []).length).toBe(2);
+  expect(page1.nextToken).toBeDefined();
+  const page2 = await client.send(
+    new ListPlaybackRestrictionPoliciesCommand({
+      maxResults: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect(
+    (page2.playbackRestrictionPolicies ?? []).length,
+  ).toBeGreaterThanOrEqual(1);
+  for (const arn of arns) {
+    await client.send(new DeletePlaybackRestrictionPolicyCommand({ arn }));
+  }
+});
+
+test("IVS ListAdConfigurations paginates with maxResults + nextToken", async () => {
+  const client = ivs();
+  const arns: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const a = await client.send(
+      new CreateAdConfigurationCommand({
+        name: `ac-page-${Date.now()}-${i}`,
+        mediaTailorPlaybackConfigurations: [],
+      }),
+    );
+    arns.push(a.adConfiguration?.arn ?? "");
+  }
+  const page1 = await client.send(
+    new ListAdConfigurationsCommand({ maxResults: 2 }),
+  );
+  expect((page1.adConfigurations ?? []).length).toBe(2);
+  expect(page1.nextToken).toBeDefined();
+  const page2 = await client.send(
+    new ListAdConfigurationsCommand({
+      maxResults: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect((page2.adConfigurations ?? []).length).toBeGreaterThanOrEqual(1);
+  for (const arn of arns) {
+    await client.send(new DeleteAdConfigurationCommand({ arn }));
+  }
+});
+
+test("IVS TagResource / ListTagsForResource / UntagResource on bogus ARN → ResourceNotFoundException", async () => {
+  const client = ivs();
+  const bogusArn = "arn:aws:ivs:us-east-1:123456789012:channel/doesnotexist";
+  await expect(
+    client.send(
+      new TagResourceCommand({ resourceArn: bogusArn, tags: { k: "v" } }),
+    ),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
+  await expect(
+    client.send(new ListTagsForResourceCommand({ resourceArn: bogusArn })),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
+  await expect(
+    client.send(
+      new UntagResourceCommand({ resourceArn: bogusArn, tagKeys: ["k"] }),
+    ),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
+});

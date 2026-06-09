@@ -41,6 +41,7 @@ type StoredBackup = {
 type StoredVolume = {
   VolumeId: string;
   FileSystemId: string | undefined;
+  StorageVirtualMachineId: string | undefined;
   Name: string;
   VolumeType: string;
   Lifecycle: string;
@@ -139,7 +140,11 @@ const fileCacheKey = (id: string): string => `fc/${id}`;
 const aliasesKey = (fsId: string): string => `aliases/${fsId}`;
 const s3apKey = (name: string): string => `s3ap/${name}`;
 const tagsKey = (arn: string): string => `tags/${arn}`;
+const idempotencyKey = (prefix: string, token: string): string =>
+  `idempotency/${prefix}/${token}`;
 const sharedVpcConfigKey = (): string => `sharedvpc/config`;
+
+const TERMINAL_LIFECYCLES = new Set(["DELETING", "DELETED", "FAILED"]);
 
 const hex = (length: number): string => {
   const bytes = new Uint8Array(length);
@@ -354,6 +359,18 @@ const requireFileCache = (
 };
 
 const CreateFileSystem: OperationHandler = (input, ctx) => {
+  const clientRequestToken = stringOrUndefined(input["ClientRequestToken"]);
+  if (clientRequestToken !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("fs", clientRequestToken),
+    );
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredFileSystem>(
+        fileSystemKey(existingId),
+      );
+      if (existing !== undefined) return { FileSystem: existing };
+    }
+  }
   const fileSystemType = stringOrUndefined(input["FileSystemType"]);
   if (fileSystemType === undefined) {
     throw awsError("BadRequest", "FileSystemType is required.", 400);
@@ -384,6 +401,9 @@ const CreateFileSystem: OperationHandler = (input, ctx) => {
     Tags: tagsFromInput(input["Tags"]),
   };
   ctx.store.set(fileSystemKey(fileSystemId), fileSystem);
+  if (clientRequestToken !== undefined) {
+    ctx.store.set(idempotencyKey("fs", clientRequestToken), fileSystemId);
+  }
   return { FileSystem: fileSystem };
 };
 
@@ -425,12 +445,70 @@ const DeleteFileSystem: OperationHandler = (input, ctx) => {
     throw awsError("BadRequest", "FileSystemId is required.", 400);
   }
   const fileSystem = requireFileSystem(ctx, fileSystemId);
+  const activeSvms = ctx.store
+    .list<StoredStorageVirtualMachine>()
+    .filter((e) => e.key.startsWith("svm/"))
+    .map((e) => e.value)
+    .filter(
+      (svm) =>
+        svm.FileSystemId === fileSystemId &&
+        !TERMINAL_LIFECYCLES.has(svm.Lifecycle),
+    );
+  if (activeSvms.length > 0) {
+    throw awsError(
+      "IncompatibleParameterError",
+      "File system has active storage virtual machines.",
+      400,
+    );
+  }
+  const activeVolumes = ctx.store
+    .list<StoredVolume>()
+    .filter((e) => e.key.startsWith("volume/"))
+    .map((e) => e.value)
+    .filter(
+      (v) =>
+        v.FileSystemId === fileSystemId && !TERMINAL_LIFECYCLES.has(v.Lifecycle),
+    );
+  if (activeVolumes.length > 0) {
+    throw awsError(
+      "IncompatibleParameterError",
+      "File system has active volumes.",
+      400,
+    );
+  }
+  const activeDras = ctx.store
+    .list<StoredDataRepositoryAssociation>()
+    .filter((e) => e.key.startsWith("dra/"))
+    .map((e) => e.value)
+    .filter(
+      (dra) =>
+        dra.FileSystemId === fileSystemId &&
+        !TERMINAL_LIFECYCLES.has(dra.Lifecycle),
+    );
+  if (activeDras.length > 0) {
+    throw awsError(
+      "IncompatibleParameterError",
+      "File system has active data repository associations.",
+      400,
+    );
+  }
+  ctx.store.delete(tagsKey(fileSystem.ResourceARN));
   const updated = { ...fileSystem, Lifecycle: "DELETING" };
   ctx.store.set(fileSystemKey(fileSystemId), updated);
   return { FileSystemId: fileSystemId, Lifecycle: "DELETING" };
 };
 
 const CreateBackup: OperationHandler = (input, ctx) => {
+  const clientRequestToken = stringOrUndefined(input["ClientRequestToken"]);
+  if (clientRequestToken !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("backup", clientRequestToken),
+    );
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredBackup>(backupKey(existingId));
+      if (existing !== undefined) return { Backup: existing };
+    }
+  }
   const fileSystemId = stringOrUndefined(input["FileSystemId"]);
   if (fileSystemId === undefined) {
     throw awsError("BadRequest", "FileSystemId is required.", 400);
@@ -449,6 +527,9 @@ const CreateBackup: OperationHandler = (input, ctx) => {
     OwnerId: ctx.account,
   };
   ctx.store.set(backupKey(backupId), backup);
+  if (clientRequestToken !== undefined) {
+    ctx.store.set(idempotencyKey("backup", clientRequestToken), backupId);
+  }
   return { Backup: backup };
 };
 
@@ -774,17 +855,20 @@ const CreateVolume: OperationHandler = (input, ctx) => {
       ? (input["OntapConfiguration"] as Record<string, unknown>)
       : undefined;
   let fileSystemId: string | undefined;
+  let storedSvmId: string | undefined;
   if (ontapConfig !== undefined) {
     const svmId = stringOrUndefined(ontapConfig["StorageVirtualMachineId"]);
     if (svmId !== undefined) {
       const svm = ctx.store.get<StoredStorageVirtualMachine>(svmKey(svmId));
       fileSystemId = svm?.FileSystemId;
+      storedSvmId = svmId;
     }
   }
   const volumeId = `fsvol-${hex(8)}`;
   const volume: StoredVolume = {
     VolumeId: volumeId,
     FileSystemId: fileSystemId,
+    StorageVirtualMachineId: storedSvmId,
     Name: name,
     VolumeType: volumeType,
     Lifecycle: "CREATING",
@@ -827,6 +911,7 @@ const DeleteBackup: OperationHandler = (input, ctx) => {
     throw awsError("BadRequest", "BackupId is required.", 400);
   }
   const backup = requireBackup(ctx, backupId);
+  ctx.store.delete(tagsKey(backup.ResourceARN));
   const updated = { ...backup, Lifecycle: "DELETED" };
   ctx.store.set(backupKey(backupId), updated);
   return { BackupId: backupId, Lifecycle: "DELETED" };
@@ -837,8 +922,10 @@ const DeleteDataRepositoryAssociation: OperationHandler = (input, ctx) => {
   if (associationId === undefined) {
     throw awsError("BadRequest", "AssociationId is required.", 400);
   }
-  requireDataRepositoryAssociation(ctx, associationId);
-  ctx.store.delete(draKey(associationId));
+  const dra = requireDataRepositoryAssociation(ctx, associationId);
+  ctx.store.delete(tagsKey(dra.ResourceARN));
+  const updated = { ...dra, Lifecycle: "DELETING" };
+  ctx.store.set(draKey(associationId), updated);
   return {
     AssociationId: associationId,
     Lifecycle: "DELETING",
@@ -852,6 +939,7 @@ const DeleteFileCache: OperationHandler = (input, ctx) => {
     throw awsError("BadRequest", "FileCacheId is required.", 400);
   }
   const fc = requireFileCache(ctx, fileCacheId);
+  ctx.store.delete(tagsKey(fc.ResourceARN));
   const updated = { ...fc, Lifecycle: "DELETING" };
   ctx.store.set(fileCacheKey(fileCacheId), updated);
   return { FileCacheId: fileCacheId, Lifecycle: "DELETING" };
@@ -863,6 +951,7 @@ const DeleteSnapshot: OperationHandler = (input, ctx) => {
     throw awsError("BadRequest", "SnapshotId is required.", 400);
   }
   const snapshot = requireSnapshot(ctx, snapshotId);
+  ctx.store.delete(tagsKey(snapshot.ResourceARN));
   const updated = { ...snapshot, Lifecycle: "DELETING" };
   ctx.store.set(snapshotKey(snapshotId), updated);
   return { SnapshotId: snapshotId, Lifecycle: "DELETING" };
@@ -874,6 +963,23 @@ const DeleteStorageVirtualMachine: OperationHandler = (input, ctx) => {
     throw awsError("BadRequest", "StorageVirtualMachineId is required.", 400);
   }
   const svm = requireStorageVirtualMachine(ctx, svmId);
+  const activeVolumes = ctx.store
+    .list<StoredVolume>()
+    .filter((e) => e.key.startsWith("volume/"))
+    .map((e) => e.value)
+    .filter(
+      (v) =>
+        v.StorageVirtualMachineId === svmId &&
+        !TERMINAL_LIFECYCLES.has(v.Lifecycle),
+    );
+  if (activeVolumes.length > 0) {
+    throw awsError(
+      "IncompatibleParameterError",
+      "Storage virtual machine has active volumes.",
+      400,
+    );
+  }
+  ctx.store.delete(tagsKey(svm.ResourceARN));
   const updated = { ...svm, Lifecycle: "DELETING" };
   ctx.store.set(svmKey(svmId), updated);
   return { StorageVirtualMachineId: svmId, Lifecycle: "DELETING" };
@@ -885,6 +991,22 @@ const DeleteVolume: OperationHandler = (input, ctx) => {
     throw awsError("BadRequest", "VolumeId is required.", 400);
   }
   const volume = requireVolume(ctx, volumeId);
+  const activeSnapshots = ctx.store
+    .list<StoredSnapshot>()
+    .filter((e) => e.key.startsWith("snapshot/"))
+    .map((e) => e.value)
+    .filter(
+      (s) =>
+        s.VolumeId === volumeId && !TERMINAL_LIFECYCLES.has(s.Lifecycle),
+    );
+  if (activeSnapshots.length > 0) {
+    throw awsError(
+      "BadRequest",
+      "Volume has active snapshots.",
+      400,
+    );
+  }
+  ctx.store.delete(tagsKey(volume.ResourceARN));
   const updated = { ...volume, Lifecycle: "DELETING" };
   ctx.store.set(volumeKey(volumeId), updated);
   return { VolumeId: volumeId, Lifecycle: "DELETING" };
@@ -1097,6 +1219,10 @@ const DetachAndDeleteS3AccessPoint: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["Name"]);
   if (name === undefined) {
     throw awsError("BadRequest", "Name is required.", 400);
+  }
+  const s3ap = ctx.store.get<StoredS3AccessPoint>(s3apKey(name));
+  if (s3ap !== undefined) {
+    ctx.store.delete(tagsKey(s3ap.ResourceARN));
   }
   ctx.store.delete(s3apKey(name));
   return { Lifecycle: "DELETING", Name: name };

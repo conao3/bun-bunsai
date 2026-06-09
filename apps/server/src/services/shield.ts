@@ -144,6 +144,99 @@ const getOrCreateTags = (ctx: ServiceContext, arn: string): StoredTags => {
   return existing ?? { Tags: [] };
 };
 
+const validateShieldResourceArn = (
+  ctx: ServiceContext,
+  resourceArn: string,
+): void => {
+  const match = resourceArn.match(
+    /^arn:aws:shield::[^:]*:(protection|protection-group)\/(.+)$/,
+  );
+  if (match === null) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Shield resource not found: ${resourceArn}`,
+      400,
+    );
+  }
+  const resourceType = match[1] as string;
+  const id = match[2] as string;
+  const key =
+    resourceType === "protection" ? protectionKey(id) : protectionGroupKey(id);
+  if (ctx.store.get(key) === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Shield resource not found: ${resourceArn}`,
+      400,
+    );
+  }
+};
+
+const validateProtectionGroupPattern = (
+  pattern: string,
+  members: string[],
+  resourceType: string | undefined,
+): void => {
+  if (
+    pattern !== "ARBITRARY" &&
+    pattern !== "ALL" &&
+    pattern !== "BY_RESOURCE_TYPE"
+  ) {
+    throw awsError(
+      "InvalidParameterException",
+      `Invalid Pattern: ${pattern}. Must be one of ARBITRARY, ALL, BY_RESOURCE_TYPE.`,
+      400,
+    );
+  }
+  if (pattern === "ARBITRARY") {
+    if (members.length === 0) {
+      throw awsError(
+        "InvalidParameterException",
+        `Members must be non-empty when Pattern is ARBITRARY.`,
+        400,
+      );
+    }
+    if (resourceType !== undefined) {
+      throw awsError(
+        "InvalidParameterException",
+        `ResourceType must not be provided when Pattern is ARBITRARY.`,
+        400,
+      );
+    }
+    return;
+  }
+  if (pattern === "ALL") {
+    if (members.length > 0) {
+      throw awsError(
+        "InvalidParameterException",
+        `Members must be empty when Pattern is ALL.`,
+        400,
+      );
+    }
+    if (resourceType !== undefined) {
+      throw awsError(
+        "InvalidParameterException",
+        `ResourceType must not be provided when Pattern is ALL.`,
+        400,
+      );
+    }
+    return;
+  }
+  if (resourceType === undefined) {
+    throw awsError(
+      "InvalidParameterException",
+      `ResourceType is required when Pattern is BY_RESOURCE_TYPE.`,
+      400,
+    );
+  }
+  if (members.length > 0) {
+    throw awsError(
+      "InvalidParameterException",
+      `Members must be empty when Pattern is BY_RESOURCE_TYPE.`,
+      400,
+    );
+  }
+};
+
 const encodeCursor = (offset: number): string => btoa(String(offset));
 
 const decodeCursor = (token: string): number => {
@@ -346,6 +439,7 @@ const CreateProtectionGroup: OperationHandler = (input, ctx) => {
   const members = Array.isArray(input["Members"])
     ? (input["Members"] as string[])
     : [];
+  validateProtectionGroupPattern(pattern, members, resourceType);
   const group: StoredProtectionGroup = {
     ProtectionGroupId: groupId,
     Aggregation: aggregation,
@@ -646,17 +740,27 @@ const ListResourcesInProtectionGroup: OperationHandler = (input, ctx) => {
       )
       .map((p) => p.ResourceArn);
   }
-  return { ResourceArns: resourceArns };
+  const { items, NextToken } = paginate(
+    resourceArns,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return {
+    ResourceArns: items,
+    ...(NextToken !== undefined ? { NextToken } : {}),
+  };
 };
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceARN");
+  validateShieldResourceArn(ctx, resourceArn);
   const stored = getOrCreateTags(ctx, resourceArn);
   return { Tags: stored.Tags };
 };
 
 const TagResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceARN");
+  validateShieldResourceArn(ctx, resourceArn);
   const newTags = Array.isArray(input["Tags"])
     ? (input["Tags"] as { Key: string; Value: string }[])
     : [];
@@ -675,6 +779,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceARN");
+  validateShieldResourceArn(ctx, resourceArn);
   const tagKeys = Array.isArray(input["TagKeys"])
     ? (input["TagKeys"] as string[])
     : [];
@@ -723,17 +828,21 @@ const UpdateEmergencyContactSettings: OperationHandler = (input, ctx) => {
 const UpdateProtectionGroup: OperationHandler = (input, ctx) => {
   const groupId = requireString(input, "ProtectionGroupId");
   const group = requireProtectionGroup(ctx, groupId);
-  group.Aggregation = requireString(input, "Aggregation");
-  group.Pattern = requireString(input, "Pattern");
+  const aggregation = requireString(input, "Aggregation");
+  const pattern = requireString(input, "Pattern");
   const resourceType = stringOrUndefined(input["ResourceType"]);
+  const members = Array.isArray(input["Members"])
+    ? (input["Members"] as string[])
+    : [];
+  validateProtectionGroupPattern(pattern, members, resourceType);
+  group.Aggregation = aggregation;
+  group.Pattern = pattern;
   if (resourceType !== undefined) {
     group.ResourceType = resourceType;
   } else {
     delete group.ResourceType;
   }
-  group.Members = Array.isArray(input["Members"])
-    ? (input["Members"] as string[])
-    : [];
+  group.Members = members;
   ctx.store.set(protectionGroupKey(groupId), group);
   return {};
 };

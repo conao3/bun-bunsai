@@ -547,8 +547,140 @@ test("Shield DeleteProtection clears tags", async () => {
     new DeleteProtectionCommand({ ProtectionId: protectionId }),
   );
 
-  const after = await client.send(
-    new ListTagsForResourceCommand({ ResourceARN: protectionArn }),
+  await expect(
+    client.send(new ListTagsForResourceCommand({ ResourceARN: protectionArn })),
+  ).rejects.toThrow(/Shield resource not found/);
+});
+
+test("Shield CreateProtectionGroup rejects invalid Pattern/Members/ResourceType combinations", async () => {
+  const client = shield();
+
+  await expect(
+    client.send(
+      new CreateProtectionGroupCommand({
+        ProtectionGroupId: "bad-arbitrary-empty",
+        Aggregation: "SUM",
+        Pattern: "ARBITRARY",
+      }),
+    ),
+  ).rejects.toThrow(/Pattern|Members|ResourceType/);
+
+  await expect(
+    client.send(
+      new CreateProtectionGroupCommand({
+        ProtectionGroupId: "bad-by-resource-type",
+        Aggregation: "SUM",
+        Pattern: "BY_RESOURCE_TYPE",
+      }),
+    ),
+  ).rejects.toThrow(/Pattern|Members|ResourceType/);
+
+  await expect(
+    client.send(
+      new CreateProtectionGroupCommand({
+        ProtectionGroupId: "bad-all-members",
+        Aggregation: "SUM",
+        Pattern: "ALL",
+        Members: ["arn:aws:cloudfront::000000000000:distribution/EAAA"],
+      }),
+    ),
+  ).rejects.toThrow(/Pattern|Members|ResourceType/);
+
+  await client.send(
+    new CreateProtectionGroupCommand({
+      ProtectionGroupId: "good-by-resource-type",
+      Aggregation: "MEAN",
+      Pattern: "BY_RESOURCE_TYPE",
+      ResourceType: "CLOUDFRONT_DISTRIBUTION",
+    }),
   );
-  expect((after.Tags ?? []).length).toBe(0);
+
+  await expect(
+    client.send(
+      new UpdateProtectionGroupCommand({
+        ProtectionGroupId: "good-by-resource-type",
+        Aggregation: "MEAN",
+        Pattern: "ARBITRARY",
+        Members: [],
+      }),
+    ),
+  ).rejects.toThrow(/Pattern|Members|ResourceType/);
+
+  await client.send(
+    new DeleteProtectionGroupCommand({
+      ProtectionGroupId: "good-by-resource-type",
+    }),
+  );
+});
+
+test("Shield ListResourcesInProtectionGroup paginates with MaxResults and NextToken", async () => {
+  const client = shield();
+  const members = Array.from(
+    { length: 5 },
+    (_, i) => `arn:aws:cloudfront::000000000000:distribution/EPG${i}`,
+  );
+
+  await client.send(
+    new CreateProtectionGroupCommand({
+      ProtectionGroupId: "page-group",
+      Aggregation: "SUM",
+      Pattern: "ARBITRARY",
+      Members: members,
+    }),
+  );
+
+  const page1 = await client.send(
+    new ListResourcesInProtectionGroupCommand({
+      ProtectionGroupId: "page-group",
+      MaxResults: 2,
+    }),
+  );
+  expect((page1.ResourceArns ?? []).length).toBe(2);
+  expect(typeof page1.NextToken).toBe("string");
+
+  const page2 = await client.send(
+    new ListResourcesInProtectionGroupCommand({
+      ProtectionGroupId: "page-group",
+      MaxResults: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.ResourceArns ?? []).length).toBe(2);
+
+  await client.send(
+    new DeleteProtectionGroupCommand({ ProtectionGroupId: "page-group" }),
+  );
+});
+
+test("Shield tag operations reject unknown resource ARN", async () => {
+  const client = shield();
+  const bogusArn = "arn:aws:shield::000000000000:protection/does-not-exist";
+
+  await expect(
+    client.send(
+      new TagResourceCommand({
+        ResourceARN: bogusArn,
+        Tags: [{ Key: "k", Value: "v" }],
+      }),
+    ),
+  ).rejects.toThrow(/Shield resource not found/);
+
+  await expect(
+    client.send(new ListTagsForResourceCommand({ ResourceARN: bogusArn })),
+  ).rejects.toThrow(/Shield resource not found/);
+
+  await expect(
+    client.send(
+      new UntagResourceCommand({ ResourceARN: bogusArn, TagKeys: ["k"] }),
+    ),
+  ).rejects.toThrow(/Shield resource not found/);
+
+  await expect(
+    client.send(
+      new TagResourceCommand({
+        ResourceARN: "not-an-arn",
+        Tags: [{ Key: "k", Value: "v" }],
+      }),
+    ),
+  ).rejects.toThrow(/Shield resource not found/);
 });

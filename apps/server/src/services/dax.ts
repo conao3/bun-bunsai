@@ -167,6 +167,14 @@ const CreateCluster: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const subnetGroupName = stringOrUndefined(input["SubnetGroupName"]);
+  if (subnetGroupName !== undefined) {
+    requireSubnetGroup(ctx, subnetGroupName);
+  }
+  const pgName = stringOrUndefined(input["ParameterGroupName"]);
+  if (pgName !== undefined) {
+    requireParameterGroup(ctx, pgName);
+  }
   const replicationFactor =
     typeof input["ReplicationFactor"] === "number"
       ? input["ReplicationFactor"]
@@ -184,10 +192,22 @@ const CreateCluster: OperationHandler = (input, ctx) => {
       Port: 8111,
     },
     IamRoleArn: iamRoleArn,
-    SubnetGroup: stringOrUndefined(input["SubnetGroupName"]),
-    ParameterGroupName: stringOrUndefined(input["ParameterGroupName"]),
+    SubnetGroup: subnetGroupName,
+    ParameterGroupName: pgName,
   };
   ctx.store.set(clusterKey(name), cluster);
+  const inputTags = Array.isArray(input["Tags"])
+    ? (input["Tags"] as { Key?: unknown; Value?: unknown }[])
+    : [];
+  if (inputTags.length > 0) {
+    const tagStore: StoredTags = {};
+    for (const tag of inputTags) {
+      if (typeof tag.Key === "string") {
+        tagStore[tag.Key] = typeof tag.Value === "string" ? tag.Value : "";
+      }
+    }
+    ctx.store.set(tagKey(cluster.ClusterArn), tagStore);
+  }
   return { Cluster: { ...cluster, Status: "creating" } };
 };
 
@@ -212,6 +232,7 @@ const DeleteCluster: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ClusterName");
   const cluster = requireCluster(ctx, name);
   ctx.store.delete(clusterKey(name));
+  ctx.store.delete(tagKey(cluster.ClusterArn));
   return { Cluster: { ...cluster, Status: "deleting" } };
 };
 
@@ -327,7 +348,20 @@ const UpdateSubnetGroup: OperationHandler = (input, ctx) => {
 const DeleteSubnetGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "SubnetGroupName");
   requireSubnetGroup(ctx, name);
+  const inUse = ctx.store
+    .list<StoredCluster>()
+    .filter((e) => e.key.startsWith("cluster/"))
+    .some((e) => e.value.SubnetGroup === name);
+  if (inUse) {
+    throw awsError(
+      "SubnetGroupInUseFault",
+      `Subnet group ${name} is currently in use by a cluster.`,
+      400,
+    );
+  }
+  const arn = `arn:aws:dax:${ctx.region}:${ctx.account}:subnetgroup/${name}`;
   ctx.store.delete(subnetGroupKey(name));
+  ctx.store.delete(tagKey(arn));
   return { DeletionMessage: `SubnetGroup ${name} has been deleted.` };
 };
 
@@ -373,7 +407,20 @@ const UpdateParameterGroup: OperationHandler = (input, ctx) => {
 const DeleteParameterGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ParameterGroupName");
   requireParameterGroup(ctx, name);
+  const inUse = ctx.store
+    .list<StoredCluster>()
+    .filter((e) => e.key.startsWith("cluster/"))
+    .some((e) => e.value.ParameterGroupName === name);
+  if (inUse) {
+    throw awsError(
+      "InvalidParameterGroupStateFault",
+      `Parameter group ${name} is currently in use by a cluster.`,
+      400,
+    );
+  }
+  const arn = `arn:aws:dax:${ctx.region}:${ctx.account}:parametergroup/${name}`;
   ctx.store.delete(paramGroupKey(name));
+  ctx.store.delete(tagKey(arn));
   return { DeletionMessage: `ParameterGroup ${name} has been deleted.` };
 };
 

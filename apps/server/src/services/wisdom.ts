@@ -164,6 +164,44 @@ const tagKey = (arn: string): string => `${tagPrefix}${arn}`;
 
 const nowSeconds = (): number => Date.now() / 1000;
 
+const encodeNextToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodeNextToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: number,
+  nextToken: unknown,
+): { page: T[]; nextToken: string | undefined } => {
+  const offset = decodeNextToken(nextToken);
+  const page = items.slice(offset, offset + maxResults);
+  const nextOffset = offset + maxResults;
+  return {
+    page,
+    nextToken:
+      nextOffset < items.length ? encodeNextToken(nextOffset) : undefined,
+  };
+};
+
+const syncTags = (
+  arn: string,
+  tags: Record<string, unknown> | undefined,
+  ctx: ServiceContext,
+): void => {
+  if (tags === undefined) return;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(tags)) {
+    if (typeof v === "string") out[k] = v;
+  }
+  ctx.store.set(tagKey(arn), out);
+};
+
 const requireKnowledgeBase = (
   ctx: ServiceContext,
   id: string,
@@ -466,26 +504,46 @@ const importJobSummaryView = (j: StoredImportJob): Record<string, unknown> => ({
 const CreateKnowledgeBase: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const knowledgeBaseType = requireString(input, "knowledgeBaseType");
+  const duplicate = ctx.store
+    .list<StoredKnowledgeBase>()
+    .find(
+      (e) => e.key.startsWith(knowledgeBasePrefix) && e.value.name === name,
+    );
+  if (duplicate !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `KnowledgeBase with name ${name} already exists.`,
+      409,
+    );
+  }
   const id = crypto.randomUUID();
   const arn = `arn:aws:wisdom:${ctx.region}:${ctx.account}:knowledge-base/${id}`;
+  const tags = recordOrUndefined(input["tags"]);
   const knowledgeBase: StoredKnowledgeBase = {
     knowledgeBaseId: id,
     knowledgeBaseArn: arn,
     knowledgeBaseType,
     name,
-    status: "ACTIVE",
+    status: "CREATE_IN_PROGRESS",
     description: stringOrUndefined(input["description"]),
     lastContentModificationTime: nowSeconds(),
-    tags: recordOrUndefined(input["tags"]),
+    tags,
     templateUri: undefined,
   };
   ctx.store.set(knowledgeBaseKey(id), knowledgeBase);
+  syncTags(arn, tags, ctx);
   return { knowledgeBase: knowledgeBaseView(knowledgeBase) };
 };
 
 const GetKnowledgeBase: OperationHandler = (input, ctx) => {
   const id = requireString(input, "knowledgeBaseId");
-  return { knowledgeBase: knowledgeBaseView(requireKnowledgeBase(ctx, id)) };
+  const stored = requireKnowledgeBase(ctx, id);
+  if (stored.status === "CREATE_IN_PROGRESS") {
+    const updated: StoredKnowledgeBase = { ...stored, status: "ACTIVE" };
+    ctx.store.set(knowledgeBaseKey(id), updated);
+    return { knowledgeBase: knowledgeBaseView(updated) };
+  }
+  return { knowledgeBase: knowledgeBaseView(stored) };
 };
 
 const ListKnowledgeBases: OperationHandler = (input, ctx) => {
@@ -495,17 +553,29 @@ const ListKnowledgeBases: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(knowledgeBasePrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const { page, nextToken } = paginate(knowledgeBases, max, input["nextToken"]);
   return {
-    knowledgeBaseSummaries: knowledgeBases
-      .slice(0, max)
-      .map(knowledgeBaseSummary),
+    knowledgeBaseSummaries: page.map(knowledgeBaseSummary),
+    nextToken,
   };
 };
 
 const DeleteKnowledgeBase: OperationHandler = (input, ctx) => {
   const id = requireString(input, "knowledgeBaseId");
-  requireKnowledgeBase(ctx, id);
+  const kb = requireKnowledgeBase(ctx, id);
+  const kbContentPrefix = contentKey(id, "");
+  const hasContents = ctx.store
+    .list<StoredContent>()
+    .some((e) => e.key.startsWith(kbContentPrefix));
+  if (hasContents) {
+    throw awsError(
+      "ConflictException",
+      `KnowledgeBase ${id} has contents. Delete all contents before deleting the knowledge base.`,
+      409,
+    );
+  }
   ctx.store.delete(knowledgeBaseKey(id));
+  ctx.store.delete(tagKey(kb.knowledgeBaseArn));
   return {};
 };
 
@@ -529,24 +599,42 @@ const RemoveKnowledgeBaseTemplateUri: OperationHandler = (input, ctx) => {
 const CreateAssistant: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const type = requireString(input, "type");
+  const duplicate = ctx.store
+    .list<StoredAssistant>()
+    .find((e) => e.key.startsWith(assistantPrefix) && e.value.name === name);
+  if (duplicate !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `Assistant with name ${name} already exists.`,
+      409,
+    );
+  }
   const id = crypto.randomUUID();
   const arn = `arn:aws:wisdom:${ctx.region}:${ctx.account}:assistant/${id}`;
+  const tags = recordOrUndefined(input["tags"]);
   const assistant: StoredAssistant = {
     assistantId: id,
     assistantArn: arn,
     name,
     type,
-    status: "ACTIVE",
+    status: "CREATE_IN_PROGRESS",
     description: stringOrUndefined(input["description"]),
-    tags: recordOrUndefined(input["tags"]),
+    tags,
   };
   ctx.store.set(assistantKey(id), assistant);
+  syncTags(arn, tags, ctx);
   return { assistant: assistantView(assistant) };
 };
 
 const GetAssistant: OperationHandler = (input, ctx) => {
   const id = requireString(input, "assistantId");
-  return { assistant: assistantView(requireAssistant(ctx, id)) };
+  const stored = requireAssistant(ctx, id);
+  if (stored.status === "CREATE_IN_PROGRESS") {
+    const updated: StoredAssistant = { ...stored, status: "ACTIVE" };
+    ctx.store.set(assistantKey(id), updated);
+    return { assistant: assistantView(updated) };
+  }
+  return { assistant: assistantView(stored) };
 };
 
 const ListAssistants: OperationHandler = (input, ctx) => {
@@ -556,15 +644,18 @@ const ListAssistants: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(assistantPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const { page, nextToken } = paginate(assistants, max, input["nextToken"]);
   return {
-    assistantSummaries: assistants.slice(0, max).map(assistantSummary),
+    assistantSummaries: page.map(assistantSummary),
+    nextToken,
   };
 };
 
 const DeleteAssistant: OperationHandler = (input, ctx) => {
   const id = requireString(input, "assistantId");
-  requireAssistant(ctx, id);
+  const stored = requireAssistant(ctx, id);
   ctx.store.delete(assistantKey(id));
+  ctx.store.delete(tagKey(stored.assistantArn));
   return {};
 };
 
@@ -617,10 +708,10 @@ const ListAssistantAssociations: OperationHandler = (input, ctx) => {
     .list<StoredAssistantAssociation>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value);
+  const { page, nextToken } = paginate(associations, max, input["nextToken"]);
   return {
-    assistantAssociationSummaries: associations
-      .slice(0, max)
-      .map(associationView),
+    assistantAssociationSummaries: page.map(associationView),
+    nextToken,
   };
 };
 
@@ -666,8 +757,10 @@ const SearchSessions: OperationHandler = (input, ctx) => {
     .list<StoredSession>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value);
+  const { page, nextToken } = paginate(sessions, max, input["nextToken"]);
   return {
-    sessionSummaries: sessions.slice(0, max).map(sessionSummaryView),
+    sessionSummaries: page.map(sessionSummaryView),
+    nextToken,
   };
 };
 
@@ -698,9 +791,21 @@ const CreateContent: OperationHandler = (input, ctx) => {
   const kbId = requireString(input, "knowledgeBaseId");
   const kb = requireKnowledgeBase(ctx, kbId);
   const name = requireString(input, "name");
+  const kbContentPrefix = contentKey(kbId, "");
+  const duplicate = ctx.store
+    .list<StoredContent>()
+    .find((e) => e.key.startsWith(kbContentPrefix) && e.value.name === name);
+  if (duplicate !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `Content with name ${name} already exists in knowledge base ${kbId}.`,
+      409,
+    );
+  }
   const uploadId = requireString(input, "uploadId");
   const contentId = crypto.randomUUID();
   const contentArn = `arn:aws:wisdom:${ctx.region}:${ctx.account}:content/${kbId}/${contentId}`;
+  const tags = recordOrUndefined(input["tags"]);
   const stored: StoredContent = {
     contentId,
     contentArn,
@@ -715,9 +820,10 @@ const CreateContent: OperationHandler = (input, ctx) => {
     url: `https://example.com/content/${uploadId}`,
     urlExpiry: nowSeconds() + 3600,
     linkOutUri: stringOrUndefined(input["overrideLinkOutUri"]),
-    tags: recordOrUndefined(input["tags"]),
+    tags,
   };
   ctx.store.set(contentKey(kbId, contentId), stored);
+  syncTags(contentArn, tags, ctx);
   return { content: contentView(stored) };
 };
 
@@ -744,8 +850,10 @@ const ListContents: OperationHandler = (input, ctx) => {
     .list<StoredContent>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value);
+  const { page, nextToken } = paginate(contents, max, input["nextToken"]);
   return {
-    contentSummaries: contents.slice(0, max).map(contentSummaryView),
+    contentSummaries: page.map(contentSummaryView),
+    nextToken,
   };
 };
 
@@ -771,8 +879,9 @@ const UpdateContent: OperationHandler = (input, ctx) => {
 const DeleteContent: OperationHandler = (input, ctx) => {
   const kbId = requireString(input, "knowledgeBaseId");
   const contentId = requireString(input, "contentId");
-  requireContent(ctx, kbId, contentId);
+  const stored = requireContent(ctx, kbId, contentId);
   ctx.store.delete(contentKey(kbId, contentId));
+  ctx.store.delete(tagKey(stored.contentArn));
   return {};
 };
 
@@ -785,8 +894,10 @@ const SearchContent: OperationHandler = (input, ctx) => {
     .list<StoredContent>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value);
+  const { page, nextToken } = paginate(contents, max, input["nextToken"]);
   return {
-    contentSummaries: contents.slice(0, max).map(contentSummaryView),
+    contentSummaries: page.map(contentSummaryView),
+    nextToken,
   };
 };
 
@@ -806,6 +917,17 @@ const CreateQuickResponse: OperationHandler = (input, ctx) => {
   const kbId = requireString(input, "knowledgeBaseId");
   const kb = requireKnowledgeBase(ctx, kbId);
   const name = requireString(input, "name");
+  const qrPrefix = quickResponseKey(kbId, "");
+  const duplicate = ctx.store
+    .list<StoredQuickResponse>()
+    .find((e) => e.key.startsWith(qrPrefix) && e.value.name === name);
+  if (duplicate !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `QuickResponse with name ${name} already exists in knowledge base ${kbId}.`,
+      409,
+    );
+  }
   const content = recordOrUndefined(input["content"]);
   const plainTextContent =
     content !== undefined ? stringOrUndefined(content["plainText"]) : undefined;
@@ -814,6 +936,7 @@ const CreateQuickResponse: OperationHandler = (input, ctx) => {
   const qrId = crypto.randomUUID();
   const qrArn = `arn:aws:wisdom:${ctx.region}:${ctx.account}:quick-response/${kbId}/${qrId}`;
   const now = nowSeconds();
+  const tags = recordOrUndefined(input["tags"]);
   const stored: StoredQuickResponse = {
     quickResponseId: qrId,
     quickResponseArn: qrArn,
@@ -832,9 +955,10 @@ const CreateQuickResponse: OperationHandler = (input, ctx) => {
     isActive: input["isActive"] === true,
     language: stringOrUndefined(input["language"]),
     shortcutKey: stringOrUndefined(input["shortcutKey"]),
-    tags: recordOrUndefined(input["tags"]),
+    tags,
   };
   ctx.store.set(quickResponseKey(kbId, qrId), stored);
+  syncTags(qrArn, tags, ctx);
   return { quickResponse: quickResponseView(stored) };
 };
 
@@ -855,8 +979,10 @@ const ListQuickResponses: OperationHandler = (input, ctx) => {
     .list<StoredQuickResponse>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value);
+  const { page, nextToken } = paginate(qrs, max, input["nextToken"]);
   return {
-    quickResponseSummaries: qrs.slice(0, max).map(quickResponseSummaryView),
+    quickResponseSummaries: page.map(quickResponseSummaryView),
+    nextToken,
   };
 };
 
@@ -900,8 +1026,9 @@ const UpdateQuickResponse: OperationHandler = (input, ctx) => {
 const DeleteQuickResponse: OperationHandler = (input, ctx) => {
   const kbId = requireString(input, "knowledgeBaseId");
   const qrId = requireString(input, "quickResponseId");
-  requireQuickResponse(ctx, kbId, qrId);
+  const stored = requireQuickResponse(ctx, kbId, qrId);
   ctx.store.delete(quickResponseKey(kbId, qrId));
+  ctx.store.delete(tagKey(stored.quickResponseArn));
   return {};
 };
 
@@ -914,7 +1041,8 @@ const SearchQuickResponses: OperationHandler = (input, ctx) => {
     .list<StoredQuickResponse>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value);
-  const results = qrs.slice(0, max).map((qr) => ({
+  const { page, nextToken } = paginate(qrs, max, input["nextToken"]);
+  const results = page.map((qr) => ({
     quickResponseId: qr.quickResponseId,
     quickResponseArn: qr.quickResponseArn,
     knowledgeBaseId: qr.knowledgeBaseId,
@@ -940,7 +1068,7 @@ const SearchQuickResponses: OperationHandler = (input, ctx) => {
     shortcutKey: qr.shortcutKey,
     tags: qr.tags,
   }));
-  return { results };
+  return { results, nextToken };
 };
 
 const StartImportJob: OperationHandler = (input, ctx) => {
@@ -970,7 +1098,13 @@ const StartImportJob: OperationHandler = (input, ctx) => {
 const GetImportJob: OperationHandler = (input, ctx) => {
   const kbId = requireString(input, "knowledgeBaseId");
   const jobId = requireString(input, "importJobId");
-  return { importJob: importJobView(requireImportJob(ctx, kbId, jobId)) };
+  const stored = requireImportJob(ctx, kbId, jobId);
+  if (stored.status === "START_IN_PROGRESS") {
+    const updated: StoredImportJob = { ...stored, status: "COMPLETE" };
+    ctx.store.set(importJobKey(kbId, jobId), updated);
+    return { importJob: importJobView(updated) };
+  }
+  return { importJob: importJobView(stored) };
 };
 
 const ListImportJobs: OperationHandler = (input, ctx) => {
@@ -982,8 +1116,10 @@ const ListImportJobs: OperationHandler = (input, ctx) => {
     .list<StoredImportJob>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value);
+  const { page, nextToken } = paginate(jobs, max, input["nextToken"]);
   return {
-    importJobSummaries: jobs.slice(0, max).map(importJobSummaryView),
+    importJobSummaries: page.map(importJobSummaryView),
+    nextToken,
   };
 };
 

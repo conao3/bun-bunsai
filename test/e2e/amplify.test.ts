@@ -316,7 +316,7 @@ test("Amplify job operations", async () => {
   );
   const jobId = started.jobSummary?.jobId ?? "";
   expect(jobId).toBeTruthy();
-  expect(started.jobSummary?.status).toBe("RUNNING");
+  expect(started.jobSummary?.status).toBe("PENDING");
   expect(started.jobSummary?.jobType).toBe("RELEASE");
 
   const got = await client.send(
@@ -345,7 +345,7 @@ test("Amplify job operations", async () => {
   const stopped = await client.send(
     new StopJobCommand({ appId, branchName, jobId }),
   );
-  expect(stopped.jobSummary?.status).toBe("CANCELLED");
+  expect(stopped.jobSummary?.status).toBe("CANCELLING");
 
   const startedJob2 = await client.send(
     new StartJobCommand({ appId, branchName, jobType: "MANUAL" }),
@@ -406,6 +406,154 @@ test("Amplify generate access logs", async () => {
     }),
   );
   expect(result.logUrl).toContain("amazonaws.com");
+
+  await client.send(new DeleteAppCommand({ appId }));
+});
+
+test("Amplify ListApps pagination", async () => {
+  const client = amplify();
+  const prefix = `bunsai-page-${Date.now()}`;
+  const appIds: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const { app } = await client.send(
+      new CreateAppCommand({ name: `${prefix}-${i}`, platform: "WEB" }),
+    );
+    appIds.push(app?.appId ?? "");
+  }
+
+  const page1 = await client.send(new ListAppsCommand({ maxResults: 2 }));
+  expect((page1.apps ?? []).length).toBeGreaterThanOrEqual(2);
+  const token = page1.nextToken;
+
+  if (token !== undefined) {
+    const page2 = await client.send(
+      new ListAppsCommand({ maxResults: 2, nextToken: token }),
+    );
+    const allIds = [
+      ...(page1.apps ?? []).map((a) => a.appId ?? ""),
+      ...(page2.apps ?? []).map((a) => a.appId ?? ""),
+    ];
+    for (const id of appIds) {
+      expect(allIds).toContain(id);
+    }
+  }
+
+  for (const id of appIds) {
+    await client.send(new DeleteAppCommand({ appId: id }));
+  }
+});
+
+test("Amplify unified tag store via GetApp", async () => {
+  const client = amplify();
+  const appName = `bunsai-utag-${Date.now()}`;
+  const { app } = await client.send(
+    new CreateAppCommand({
+      name: appName,
+      platform: "WEB",
+      tags: { initial: "yes" },
+    }),
+  );
+  const appId = app?.appId ?? "";
+  const resourceArn = app?.appArn ?? "";
+
+  await client.send(
+    new TagResourceCommand({ resourceArn, tags: { added: "later" } }),
+  );
+
+  const got = await client.send(new GetAppCommand({ appId }));
+  expect(got.app?.tags?.["initial"]).toBe("yes");
+  expect(got.app?.tags?.["added"]).toBe("later");
+
+  await client.send(
+    new UntagResourceCommand({ resourceArn, tagKeys: ["initial"] }),
+  );
+
+  const got2 = await client.send(new GetAppCommand({ appId }));
+  expect(got2.app?.tags?.["initial"]).toBe("yes");
+  expect(got2.app?.tags?.["added"]).toBe("later");
+
+  await client.send(new DeleteAppCommand({ appId }));
+});
+
+test("Amplify domain lifecycle", async () => {
+  const client = amplify();
+  const appName = `bunsai-dlc-${Date.now()}`;
+  const { app } = await client.send(
+    new CreateAppCommand({ name: appName, platform: "WEB" }),
+  );
+  const appId = app?.appId ?? "";
+  const branchName = `main-${Date.now()}`;
+  await client.send(new CreateBranchCommand({ appId, branchName }));
+
+  const domainName = `lifecycle-${Date.now()}.com`;
+  const created = await client.send(
+    new CreateDomainAssociationCommand({
+      appId,
+      domainName,
+      subDomainSettings: [{ prefix: "", branchName }],
+    }),
+  );
+  expect(created.domainAssociation?.domainStatus).toBe("PENDING_VERIFICATION");
+
+  const got1 = await client.send(
+    new GetDomainAssociationCommand({ appId, domainName }),
+  );
+  expect(got1.domainAssociation?.domainStatus).toBe("IN_PROGRESS");
+
+  const got2 = await client.send(
+    new GetDomainAssociationCommand({ appId, domainName }),
+  );
+  expect(got2.domainAssociation?.domainStatus).toBe("AVAILABLE");
+
+  const got3 = await client.send(
+    new GetDomainAssociationCommand({ appId, domainName }),
+  );
+  expect(got3.domainAssociation?.domainStatus).toBe("AVAILABLE");
+
+  await client.send(new DeleteDomainAssociationCommand({ appId, domainName }));
+  await client.send(new DeleteAppCommand({ appId }));
+});
+
+test("Amplify job lifecycle", async () => {
+  const client = amplify();
+  const appName = `bunsai-jlc-${Date.now()}`;
+  const { app } = await client.send(
+    new CreateAppCommand({ name: appName, platform: "WEB" }),
+  );
+  const appId = app?.appId ?? "";
+  const branchName = `main-${Date.now()}`;
+  await client.send(new CreateBranchCommand({ appId, branchName }));
+
+  const { jobSummary } = await client.send(
+    new StartJobCommand({ appId, branchName, jobType: "RELEASE" }),
+  );
+  const jobId = jobSummary?.jobId ?? "";
+  expect(jobSummary?.status).toBe("PENDING");
+
+  const step1 = await client.send(
+    new GetJobCommand({ appId, branchName, jobId }),
+  );
+  expect(step1.job?.summary?.status).toBe("PROVISIONING");
+
+  const step2 = await client.send(
+    new GetJobCommand({ appId, branchName, jobId }),
+  );
+  expect(step2.job?.summary?.status).toBe("RUNNING");
+
+  const step3 = await client.send(
+    new GetJobCommand({ appId, branchName, jobId }),
+  );
+  expect(step3.job?.summary?.status).toBe("RUNNING");
+
+  const { jobSummary: stopResult } = await client.send(
+    new StopJobCommand({ appId, branchName, jobId }),
+  );
+  expect(stopResult?.status).toBe("CANCELLING");
+
+  const cancelled = await client.send(
+    new GetJobCommand({ appId, branchName, jobId }),
+  );
+  expect(cancelled.job?.summary?.status).toBe("CANCELLED");
 
   await client.send(new DeleteAppCommand({ appId }));
 });

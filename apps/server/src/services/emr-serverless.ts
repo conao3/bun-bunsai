@@ -44,6 +44,7 @@ type StoredJobRun = {
   releaseLabel: string;
   jobDriver: Record<string, unknown>;
   tags: Record<string, unknown>;
+  mode: string | undefined;
 };
 
 type StoredSession = {
@@ -92,6 +93,29 @@ const newId = (): string =>
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
+const encodeCursor = (offset: number): string => btoa(String(offset));
+
+const decodeCursor = (token: string): number => {
+  const n = parseInt(atob(token), 10);
+  return isNaN(n) ? 0 : n;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const offset = typeof nextToken === "string" ? decodeCursor(nextToken) : 0;
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : items.length;
+  const page = items.slice(offset, offset + max);
+  const token =
+    offset + max < items.length ? encodeCursor(offset + max) : undefined;
+  return { items: page, nextToken: token };
+};
+
 const requireApplication = (
   ctx: ServiceContext,
   id: string,
@@ -139,6 +163,41 @@ const requireSession = (
   return stored;
 };
 
+const validateResourceArn = (ctx: ServiceContext, arn: string): void => {
+  const arnParts = arn.split(":");
+  if (arnParts.length < 6) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${arn}`,
+      404,
+    );
+  }
+  const parts = arnParts[5].split("/").filter((p) => p !== "");
+  if (parts[0] !== "applications" || !parts[1]) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${arn}`,
+      404,
+    );
+  }
+  const appId = parts[1];
+  requireApplication(ctx, appId);
+  if (parts.length === 2) return;
+  if (parts[2] === "jobruns" && parts[3]) {
+    requireJobRun(ctx, appId, parts[3]);
+    return;
+  }
+  if (parts[2] === "sessions" && parts[3]) {
+    requireSession(ctx, appId, parts[3]);
+    return;
+  }
+  throw awsError(
+    "ResourceNotFoundException",
+    `Resource not found: ${arn}`,
+    404,
+  );
+};
+
 const applicationView = (
   application: StoredApplication,
 ): Record<string, unknown> => ({
@@ -184,6 +243,7 @@ const jobRunView = (run: StoredJobRun): Record<string, unknown> => ({
   releaseLabel: run.releaseLabel,
   jobDriver: run.jobDriver,
   tags: run.tags,
+  mode: run.mode,
 });
 
 const jobRunSummary = (run: StoredJobRun): Record<string, unknown> => ({
@@ -198,6 +258,7 @@ const jobRunSummary = (run: StoredJobRun): Record<string, unknown> => ({
   state: run.state,
   stateDetails: run.stateDetails,
   releaseLabel: run.releaseLabel,
+  mode: run.mode,
 });
 
 const jobRunAttemptSummary = (run: StoredJobRun): Record<string, unknown> => ({
@@ -214,6 +275,7 @@ const jobRunAttemptSummary = (run: StoredJobRun): Record<string, unknown> => ({
   stateDetails: run.stateDetails,
   releaseLabel: run.releaseLabel,
   attempt: 1,
+  mode: run.mode,
 });
 
 const sessionView = (session: StoredSession): Record<string, unknown> => ({
@@ -276,11 +338,17 @@ const GetApplication: OperationHandler = (input, ctx) => {
   return { application: applicationView(requireApplication(ctx, id)) };
 };
 
-const ListApplications: OperationHandler = (_input, ctx) => {
+const ListApplications: OperationHandler = (input, ctx) => {
+  const statesFilter = Array.isArray(input["states"])
+    ? (input["states"] as string[])
+    : undefined;
   const applications = ctx.store
     .list<StoredApplication>()
     .filter((entry) => entry.key.startsWith(applicationPrefix))
     .map((entry) => entry.value)
+    .filter(
+      (app) => statesFilter === undefined || statesFilter.includes(app.state),
+    )
     .sort((a, b) =>
       a.applicationId < b.applicationId
         ? -1
@@ -288,7 +356,12 @@ const ListApplications: OperationHandler = (_input, ctx) => {
           ? 1
           : 0,
     );
-  return { applications: applications.map(applicationSummary) };
+  const { items, nextToken } = paginate(
+    applications,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return { applications: items.map(applicationSummary), nextToken };
 };
 
 const DeleteApplication: OperationHandler = (input, ctx) => {
@@ -301,6 +374,13 @@ const DeleteApplication: OperationHandler = (input, ctx) => {
 const StartApplication: OperationHandler = (input, ctx) => {
   const id = requireString(input, "applicationId");
   const app = requireApplication(ctx, id);
+  if (app.state !== "CREATED" && app.state !== "STOPPED") {
+    throw awsError(
+      "ValidationException",
+      `Application ${id} cannot be started from state ${app.state}.`,
+      400,
+    );
+  }
   ctx.store.set(applicationKey(id), {
     ...app,
     state: "STARTED",
@@ -312,6 +392,13 @@ const StartApplication: OperationHandler = (input, ctx) => {
 const StopApplication: OperationHandler = (input, ctx) => {
   const id = requireString(input, "applicationId");
   const app = requireApplication(ctx, id);
+  if (app.state !== "STARTED") {
+    throw awsError(
+      "ValidationException",
+      `Application ${id} cannot be stopped from state ${app.state}.`,
+      400,
+    );
+  }
   ctx.store.set(applicationKey(id), {
     ...app,
     state: "STOPPED",
@@ -323,6 +410,13 @@ const StopApplication: OperationHandler = (input, ctx) => {
 const UpdateApplication: OperationHandler = (input, ctx) => {
   const id = requireString(input, "applicationId");
   const app = requireApplication(ctx, id);
+  if (app.state !== "CREATED" && app.state !== "STARTED") {
+    throw awsError(
+      "ValidationException",
+      `Application ${id} cannot be updated from state ${app.state}.`,
+      400,
+    );
+  }
   const updated: StoredApplication = {
     ...app,
     architecture: stringOrUndefined(input["architecture"]) ?? app.architecture,
@@ -336,6 +430,18 @@ const StartJobRun: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "applicationId");
   const app = requireApplication(ctx, appId);
   const executionRole = requireString(input, "executionRoleArn");
+  const modeInput = stringOrUndefined(input["mode"] as unknown);
+  if (
+    modeInput !== undefined &&
+    modeInput !== "BATCH" &&
+    modeInput !== "STREAMING"
+  ) {
+    throw awsError(
+      "ValidationException",
+      `Invalid mode: ${modeInput}. Valid values are BATCH and STREAMING.`,
+      400,
+    );
+  }
   const id = newId();
   const now = nowSeconds();
   const arn = `arn:aws:emr-serverless:${ctx.region}:${ctx.account}:/applications/${appId}/jobruns/${id}`;
@@ -353,6 +459,7 @@ const StartJobRun: OperationHandler = (input, ctx) => {
     releaseLabel: app.releaseLabel,
     jobDriver: recordOrEmpty(input["jobDriver"]),
     tags: recordOrEmpty(input["tags"]),
+    mode: modeInput,
   };
   ctx.store.set(jobRunKey(appId, id), jobRun);
   return {
@@ -374,9 +481,24 @@ const CancelJobRun: OperationHandler = (input, ctx) => {
   const runId = requireString(input, "jobRunId");
   requireApplication(ctx, appId);
   const run = requireJobRun(ctx, appId, runId);
+  const cancellableStates = [
+    "SUBMITTED",
+    "PENDING",
+    "QUEUED",
+    "RUNNING",
+  ] as const;
+  if (
+    !cancellableStates.includes(run.state as (typeof cancellableStates)[number])
+  ) {
+    throw awsError(
+      "ValidationException",
+      `Job run ${runId} cannot be cancelled from state ${run.state}.`,
+      400,
+    );
+  }
   ctx.store.set(jobRunKey(appId, runId), {
     ...run,
-    state: "CANCELLED",
+    state: "CANCELLING",
     updatedAt: nowSeconds(),
   });
   return { applicationId: appId, jobRunId: runId };
@@ -386,14 +508,43 @@ const ListJobRuns: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "applicationId");
   requireApplication(ctx, appId);
   const prefix = `${jobRunPrefix}${appId}:`;
+  const statesFilter = Array.isArray(input["states"])
+    ? (input["states"] as string[])
+    : undefined;
+  const createdAtAfter =
+    typeof input["createdAtAfter"] === "number"
+      ? input["createdAtAfter"]
+      : undefined;
+  const createdAtBefore =
+    typeof input["createdAtBefore"] === "number"
+      ? input["createdAtBefore"]
+      : undefined;
+  const modeFilter =
+    typeof input["mode"] === "string" ? input["mode"] : undefined;
   const jobRuns = ctx.store
     .list<StoredJobRun>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value)
+    .filter(
+      (run) => statesFilter === undefined || statesFilter.includes(run.state),
+    )
+    .filter(
+      (run) => createdAtAfter === undefined || run.createdAt >= createdAtAfter,
+    )
+    .filter(
+      (run) =>
+        createdAtBefore === undefined || run.createdAt <= createdAtBefore,
+    )
+    .filter((run) => modeFilter === undefined || run.mode === modeFilter)
     .sort((a, b) =>
       a.jobRunId < b.jobRunId ? -1 : a.jobRunId > b.jobRunId ? 1 : 0,
     );
-  return { jobRuns: jobRuns.map(jobRunSummary) };
+  const { items, nextToken } = paginate(
+    jobRuns,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return { jobRuns: items.map(jobRunSummary), nextToken };
 };
 
 const ListJobRunAttempts: OperationHandler = (input, ctx) => {
@@ -458,14 +609,37 @@ const ListSessions: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "applicationId");
   requireApplication(ctx, appId);
   const prefix = `${sessionPrefix}${appId}:`;
+  const statesFilter = Array.isArray(input["states"])
+    ? (input["states"] as string[])
+    : undefined;
+  const createdAtAfter =
+    typeof input["createdAtAfter"] === "number"
+      ? input["createdAtAfter"]
+      : undefined;
+  const createdAtBefore =
+    typeof input["createdAtBefore"] === "number"
+      ? input["createdAtBefore"]
+      : undefined;
   const sessions = ctx.store
     .list<StoredSession>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value)
+    .filter((s) => statesFilter === undefined || statesFilter.includes(s.state))
+    .filter(
+      (s) => createdAtAfter === undefined || s.createdAt >= createdAtAfter,
+    )
+    .filter(
+      (s) => createdAtBefore === undefined || s.createdAt <= createdAtBefore,
+    )
     .sort((a, b) =>
       a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0,
     );
-  return { sessions: sessions.map(sessionSummary) };
+  const { items, nextToken } = paginate(
+    sessions,
+    input["maxResults"],
+    input["nextToken"],
+  );
+  return { sessions: items.map(sessionSummary), nextToken };
 };
 
 const TerminateSession: OperationHandler = (input, ctx) => {
@@ -498,6 +672,7 @@ const GetSessionEndpoint: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
+  validateResourceArn(ctx, arn);
   const newTags = recordOrEmpty(input["tags"]);
   const key = tagsKey(arn);
   const existing = ctx.store.get<Record<string, unknown>>(key) ?? {};
@@ -507,6 +682,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx, req) => {
   const arn = requireString(input, "resourceArn");
+  validateResourceArn(ctx, arn);
   const key = tagsKey(arn);
   const existing = ctx.store.get<Record<string, unknown>>(key) ?? {};
   const tagKeys = req.url.searchParams.getAll("tagKeys");
@@ -520,6 +696,7 @@ const UntagResource: OperationHandler = (input, ctx, req) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
+  validateResourceArn(ctx, arn);
   const tags = ctx.store.get<Record<string, unknown>>(tagsKey(arn)) ?? {};
   return { tags };
 };

@@ -25,7 +25,11 @@ import {
   UntagResourceCommand,
   UpdateApplicationCommand,
 } from "@aws-sdk/client-emr-serverless";
-import type { SessionState } from "@aws-sdk/client-emr-serverless";
+import type {
+  ApplicationState,
+  JobRunMode,
+  SessionState,
+} from "@aws-sdk/client-emr-serverless";
 
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
@@ -179,7 +183,7 @@ test("EMR Serverless job run lifecycle", async () => {
   const cancelledRun = await client.send(
     new GetJobRunCommand({ applicationId, jobRunId }),
   );
-  expect(cancelledRun.jobRun?.state).toBe("CANCELLED");
+  expect(cancelledRun.jobRun?.state).toBe("CANCELLING");
 
   await client.send(new DeleteApplicationCommand({ applicationId }));
 });
@@ -312,4 +316,112 @@ test("EMR Serverless tag operations", async () => {
 
   const applicationId = app.applicationId ?? "";
   await client.send(new DeleteApplicationCommand({ applicationId }));
+});
+
+test("EMR Serverless StartApplication invalid-state error", async () => {
+  const client = emr();
+  const app = await client.send(
+    new CreateApplicationCommand({
+      name: `invalid-state-${Date.now()}`,
+      releaseLabel: "emr-7.1.0",
+      type: "SPARK",
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  const applicationId = app.applicationId ?? "";
+
+  await client.send(new StartApplicationCommand({ applicationId }));
+  const started = await client.send(
+    new GetApplicationCommand({ applicationId }),
+  );
+  expect(started.application?.state).toBe("STARTED" as ApplicationState);
+
+  await expect(
+    client.send(new StartApplicationCommand({ applicationId })),
+  ).rejects.toThrow();
+
+  await client.send(new StopApplicationCommand({ applicationId }));
+  await client.send(new DeleteApplicationCommand({ applicationId }));
+});
+
+test("EMR Serverless ListJobRuns filter and paginate", async () => {
+  const client = emr();
+  const app = await client.send(
+    new CreateApplicationCommand({
+      name: `list-filter-${Date.now()}`,
+      releaseLabel: "emr-7.1.0",
+      type: "SPARK",
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  const applicationId = app.applicationId ?? "";
+
+  const run1 = await client.send(
+    new StartJobRunCommand({
+      applicationId,
+      clientToken: crypto.randomUUID(),
+      executionRoleArn: "arn:aws:iam::123456789012:role/EMRServerlessRole",
+      name: "batch-job",
+      mode: "BATCH" as JobRunMode,
+    }),
+  );
+  const run2 = await client.send(
+    new StartJobRunCommand({
+      applicationId,
+      clientToken: crypto.randomUUID(),
+      executionRoleArn: "arn:aws:iam::123456789012:role/EMRServerlessRole",
+      name: "streaming-job",
+      mode: "STREAMING" as JobRunMode,
+    }),
+  );
+  const jobRunId1 = run1.jobRunId ?? "";
+  const jobRunId2 = run2.jobRunId ?? "";
+
+  const allRuns = await client.send(new ListJobRunsCommand({ applicationId }));
+  expect((allRuns.jobRuns ?? []).length).toBeGreaterThanOrEqual(2);
+
+  const batchRuns = await client.send(
+    new ListJobRunsCommand({ applicationId, mode: "BATCH" as JobRunMode }),
+  );
+  expect((batchRuns.jobRuns ?? []).map((r) => r.id)).toContain(jobRunId1);
+  expect((batchRuns.jobRuns ?? []).map((r) => r.id)).not.toContain(jobRunId2);
+
+  const page1 = await client.send(
+    new ListJobRunsCommand({ applicationId, maxResults: 1 }),
+  );
+  expect((page1.jobRuns ?? []).length).toBe(1);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListJobRunsCommand({
+      applicationId,
+      maxResults: 1,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect((page2.jobRuns ?? []).length).toBe(1);
+  const page1Id = page1.jobRuns?.[0]?.id;
+  const page2Id = page2.jobRuns?.[0]?.id;
+  expect(page1Id).not.toBe(page2Id);
+
+  await client.send(new DeleteApplicationCommand({ applicationId }));
+});
+
+test("EMR Serverless tag on non-existent ARN throws ResourceNotFoundException", async () => {
+  const client = emr();
+  const fakeArn =
+    "arn:aws:emr-serverless:us-east-1:123456789012:/applications/doesnotexist";
+
+  await expect(
+    client.send(
+      new TagResourceCommand({
+        resourceArn: fakeArn,
+        tags: { key: "value" },
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(new ListTagsForResourceCommand({ resourceArn: fakeArn })),
+  ).rejects.toThrow();
 });

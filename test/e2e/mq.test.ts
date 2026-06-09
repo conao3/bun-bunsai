@@ -307,6 +307,9 @@ test("MQ reboot and promote", async () => {
   );
   const brokerId = created.BrokerId as string;
 
+  await client.send(new DescribeBrokerCommand({ BrokerId: brokerId }));
+  await client.send(new DescribeBrokerCommand({ BrokerId: brokerId }));
+
   await client.send(new RebootBrokerCommand({ BrokerId: brokerId }));
 
   const promoted = await client.send(
@@ -498,4 +501,139 @@ test("MQ ListBrokers: MaxResults and NextToken pagination", async () => {
   for (const id of brokerIds) {
     await client.send(new DeleteBrokerCommand({ BrokerId: id }));
   }
+});
+
+test("MQ CreateBroker is idempotent with same CreatorRequestId", async () => {
+  const client = mq();
+  const brokerName = `bunsai-idem-${Date.now()}`;
+  const requestId = `req-${Date.now()}`;
+
+  const first = await client.send(
+    new CreateBrokerCommand({
+      BrokerName: brokerName,
+      EngineType: "ACTIVEMQ",
+      EngineVersion: "5.18.0",
+      DeploymentMode: "SINGLE_INSTANCE",
+      HostInstanceType: "mq.m5.large",
+      PubliclyAccessible: false,
+      AutoMinorVersionUpgrade: false,
+      Users: [],
+      CreatorRequestId: requestId,
+    }),
+  );
+
+  const second = await client.send(
+    new CreateBrokerCommand({
+      BrokerName: brokerName,
+      EngineType: "ACTIVEMQ",
+      EngineVersion: "5.18.0",
+      DeploymentMode: "SINGLE_INSTANCE",
+      HostInstanceType: "mq.m5.large",
+      PubliclyAccessible: false,
+      AutoMinorVersionUpgrade: false,
+      Users: [],
+      CreatorRequestId: requestId,
+    }),
+  );
+
+  expect(second.BrokerId).toBe(first.BrokerId);
+  expect(second.BrokerArn).toBe(first.BrokerArn);
+
+  await client.send(
+    new DeleteBrokerCommand({ BrokerId: first.BrokerId as string }),
+  );
+});
+
+test("MQ tags from CreateBroker visible via ListTags", async () => {
+  const client = mq();
+  const brokerName = `bunsai-tags-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateBrokerCommand({
+      BrokerName: brokerName,
+      EngineType: "ACTIVEMQ",
+      EngineVersion: "5.18.0",
+      DeploymentMode: "SINGLE_INSTANCE",
+      HostInstanceType: "mq.m5.large",
+      PubliclyAccessible: false,
+      AutoMinorVersionUpgrade: false,
+      Users: [],
+      Tags: { env: "test", team: "bunsai" },
+    }),
+  );
+  const brokerId = created.BrokerId as string;
+  const brokerArn = created.BrokerArn as string;
+
+  const listed = await client.send(
+    new ListTagsCommand({ ResourceArn: brokerArn }),
+  );
+  expect(listed.Tags?.env).toBe("test");
+  expect(listed.Tags?.team).toBe("bunsai");
+
+  await client.send(new DeleteBrokerCommand({ BrokerId: brokerId }));
+  await client.send(new DescribeBrokerCommand({ BrokerId: brokerId }));
+  await expect(
+    client.send(new DescribeBrokerCommand({ BrokerId: brokerId })),
+  ).rejects.toThrow();
+
+  const listedAfter = await client.send(
+    new ListTagsCommand({ ResourceArn: brokerArn }),
+  );
+  expect(listedAfter.Tags ?? {}).toEqual({});
+});
+
+test("MQ broker lifecycle CREATION_IN_PROGRESS → RUNNING", async () => {
+  const client = mq();
+  const brokerName = `bunsai-lifecycle-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateBrokerCommand({
+      BrokerName: brokerName,
+      EngineType: "ACTIVEMQ",
+      EngineVersion: "5.18.0",
+      DeploymentMode: "SINGLE_INSTANCE",
+      HostInstanceType: "mq.m5.large",
+      PubliclyAccessible: false,
+      AutoMinorVersionUpgrade: false,
+      Users: [],
+    }),
+  );
+  const brokerId = created.BrokerId as string;
+
+  const first = await client.send(
+    new DescribeBrokerCommand({ BrokerId: brokerId }),
+  );
+  expect(first.BrokerState).toBe("CREATION_IN_PROGRESS");
+
+  const second = await client.send(
+    new DescribeBrokerCommand({ BrokerId: brokerId }),
+  );
+  expect(second.BrokerState).toBe("RUNNING");
+
+  await client.send(new DeleteBrokerCommand({ BrokerId: brokerId }));
+});
+
+test("MQ RebootBroker rejects when broker is not RUNNING", async () => {
+  const client = mq();
+  const brokerName = `bunsai-no-reboot-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateBrokerCommand({
+      BrokerName: brokerName,
+      EngineType: "ACTIVEMQ",
+      EngineVersion: "5.18.0",
+      DeploymentMode: "SINGLE_INSTANCE",
+      HostInstanceType: "mq.m5.large",
+      PubliclyAccessible: false,
+      AutoMinorVersionUpgrade: false,
+      Users: [],
+    }),
+  );
+  const brokerId = created.BrokerId as string;
+
+  await expect(
+    client.send(new RebootBrokerCommand({ BrokerId: brokerId })),
+  ).rejects.toThrow(/not RUNNING/);
+
+  await client.send(new DeleteBrokerCommand({ BrokerId: brokerId }));
 });

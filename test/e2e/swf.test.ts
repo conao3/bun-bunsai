@@ -729,3 +729,369 @@ test("SWF poll returns empty when no tasks queued", async () => {
   );
   expect(at.taskToken).toBe("");
 });
+
+test("SWF PollForDecisionTask creates DecisionTaskStarted history event", async () => {
+  const client = swf();
+  const domain = "bunsai-dts-domain";
+  const taskList = { name: "dts-list" };
+
+  await client.send(
+    new RegisterDomainCommand({
+      name: domain,
+      workflowExecutionRetentionPeriodInDays: "7",
+    }),
+  );
+  await client.send(
+    new RegisterWorkflowTypeCommand({
+      domain,
+      name: "DtsFlow",
+      version: "1.0",
+      defaultChildPolicy: "TERMINATE",
+    }),
+  );
+
+  const started = await client.send(
+    new StartWorkflowExecutionCommand({
+      domain,
+      workflowId: "wf-dts-1",
+      workflowType: { name: "DtsFlow", version: "1.0" },
+      taskList,
+    }),
+  );
+  const runId = started.runId!;
+
+  const dt = await client.send(
+    new PollForDecisionTaskCommand({ domain, taskList }),
+  );
+  expect(dt.taskToken).toBeTruthy();
+  expect(dt.startedEventId).toBeGreaterThan(0);
+
+  const history = await client.send(
+    new GetWorkflowExecutionHistoryCommand({
+      domain,
+      execution: { workflowId: "wf-dts-1", runId },
+    }),
+  );
+  const eventTypes = (history.events ?? []).map((e) => e.eventType);
+  expect(eventTypes).toContain("DecisionTaskStarted");
+
+  const startedEvent = (history.events ?? []).find(
+    (e) => e.eventType === "DecisionTaskStarted",
+  );
+  expect(startedEvent?.eventId).toBe(dt.startedEventId);
+});
+
+test("SWF PollForActivityTask creates ActivityTaskStarted history event", async () => {
+  const client = swf();
+  const domain = "bunsai-ats-domain";
+  const taskList = { name: "ats-list" };
+
+  await client.send(
+    new RegisterDomainCommand({
+      name: domain,
+      workflowExecutionRetentionPeriodInDays: "7",
+    }),
+  );
+  await client.send(
+    new RegisterWorkflowTypeCommand({
+      domain,
+      name: "AtsFlow",
+      version: "1.0",
+      defaultChildPolicy: "TERMINATE",
+    }),
+  );
+  await client.send(
+    new RegisterActivityTypeCommand({
+      domain,
+      name: "AtsTask",
+      version: "1.0",
+    }),
+  );
+
+  const started = await client.send(
+    new StartWorkflowExecutionCommand({
+      domain,
+      workflowId: "wf-ats-1",
+      workflowType: { name: "AtsFlow", version: "1.0" },
+      taskList,
+    }),
+  );
+  const runId = started.runId!;
+
+  const dt = await client.send(
+    new PollForDecisionTaskCommand({ domain, taskList }),
+  );
+  await client.send(
+    new RespondDecisionTaskCompletedCommand({
+      taskToken: dt.taskToken!,
+      decisions: [
+        {
+          decisionType: "ScheduleActivityTask",
+          scheduleActivityTaskDecisionAttributes: {
+            activityType: { name: "AtsTask", version: "1.0" },
+            activityId: "ats-act-1",
+            taskList,
+          },
+        },
+      ],
+    }),
+  );
+
+  const at = await client.send(
+    new PollForActivityTaskCommand({ domain, taskList }),
+  );
+  expect(at.taskToken).toBeTruthy();
+  expect(at.startedEventId).toBeGreaterThan(0);
+
+  const history = await client.send(
+    new GetWorkflowExecutionHistoryCommand({
+      domain,
+      execution: { workflowId: "wf-ats-1", runId },
+    }),
+  );
+  const eventTypes = (history.events ?? []).map((e) => e.eventType);
+  expect(eventTypes).toContain("ActivityTaskStarted");
+
+  const startedEvent = (history.events ?? []).find(
+    (e) => e.eventType === "ActivityTaskStarted",
+  );
+  expect(startedEvent?.eventId).toBe(at.startedEventId);
+});
+
+test("SWF ListWorkflowExecutions pagination with maximumPageSize", async () => {
+  const client = swf();
+  const domain = "bunsai-page-domain";
+
+  await client.send(
+    new RegisterDomainCommand({
+      name: domain,
+      workflowExecutionRetentionPeriodInDays: "7",
+    }),
+  );
+  await client.send(
+    new RegisterWorkflowTypeCommand({
+      domain,
+      name: "PageFlow",
+      version: "1.0",
+      defaultChildPolicy: "TERMINATE",
+    }),
+  );
+
+  for (let i = 0; i < 3; i++) {
+    await client.send(
+      new StartWorkflowExecutionCommand({
+        domain,
+        workflowId: `wf-page-${i}`,
+        workflowType: { name: "PageFlow", version: "1.0" },
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListOpenWorkflowExecutionsCommand({
+      domain,
+      startTimeFilter: { oldestDate: new Date(0) },
+      maximumPageSize: 2,
+    }),
+  );
+  expect((page1.executionInfos ?? []).length).toBe(2);
+  expect(page1.nextPageToken).toBeTruthy();
+
+  const page2 = await client.send(
+    new ListOpenWorkflowExecutionsCommand({
+      domain,
+      startTimeFilter: { oldestDate: new Date(0) },
+      maximumPageSize: 2,
+      nextPageToken: page1.nextPageToken,
+    }),
+  );
+  expect((page2.executionInfos ?? []).length).toBeGreaterThanOrEqual(1);
+
+  const allIds = [
+    ...(page1.executionInfos ?? []).map((e) => e.execution?.workflowId),
+    ...(page2.executionInfos ?? []).map((e) => e.execution?.workflowId),
+  ];
+  for (let i = 0; i < 3; i++) {
+    expect(allIds).toContain(`wf-page-${i}`);
+  }
+});
+
+test("SWF ListDomains pagination", async () => {
+  const client = swf();
+
+  for (let i = 0; i < 3; i++) {
+    await client.send(
+      new RegisterDomainCommand({
+        name: `bunsai-pagdomain-${i}`,
+        workflowExecutionRetentionPeriodInDays: "7",
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListDomainsCommand({
+      registrationStatus: "REGISTERED",
+      maximumPageSize: 2,
+    }),
+  );
+  expect((page1.domainInfos ?? []).length).toBe(2);
+  expect(page1.nextPageToken).toBeTruthy();
+
+  const page2 = await client.send(
+    new ListDomainsCommand({
+      registrationStatus: "REGISTERED",
+      maximumPageSize: 2,
+      nextPageToken: page1.nextPageToken,
+    }),
+  );
+  expect((page2.domainInfos ?? []).length).toBeGreaterThanOrEqual(1);
+});
+
+test("SWF RespondDecisionTaskCompleted ScheduleActivityTaskFailed for deprecated type", async () => {
+  const client = swf();
+  const domain = "bunsai-satf-domain";
+  const taskList = { name: "satf-list" };
+
+  await client.send(
+    new RegisterDomainCommand({
+      name: domain,
+      workflowExecutionRetentionPeriodInDays: "7",
+    }),
+  );
+  await client.send(
+    new RegisterWorkflowTypeCommand({
+      domain,
+      name: "SatfFlow",
+      version: "1.0",
+      defaultChildPolicy: "TERMINATE",
+    }),
+  );
+  await client.send(
+    new RegisterActivityTypeCommand({
+      domain,
+      name: "SatfTask",
+      version: "1.0",
+    }),
+  );
+  await client.send(
+    new DeprecateActivityTypeCommand({
+      domain,
+      activityType: { name: "SatfTask", version: "1.0" },
+    }),
+  );
+
+  const started = await client.send(
+    new StartWorkflowExecutionCommand({
+      domain,
+      workflowId: "wf-satf-1",
+      workflowType: { name: "SatfFlow", version: "1.0" },
+      taskList,
+    }),
+  );
+  const runId = started.runId!;
+
+  const dt = await client.send(
+    new PollForDecisionTaskCommand({ domain, taskList }),
+  );
+  await client.send(
+    new RespondDecisionTaskCompletedCommand({
+      taskToken: dt.taskToken!,
+      decisions: [
+        {
+          decisionType: "ScheduleActivityTask",
+          scheduleActivityTaskDecisionAttributes: {
+            activityType: { name: "SatfTask", version: "1.0" },
+            activityId: "satf-act-1",
+            taskList,
+          },
+        },
+      ],
+    }),
+  );
+
+  const history = await client.send(
+    new GetWorkflowExecutionHistoryCommand({
+      domain,
+      execution: { workflowId: "wf-satf-1", runId },
+    }),
+  );
+  const eventTypes = (history.events ?? []).map((e) => e.eventType);
+  expect(eventTypes).toContain("ScheduleActivityTaskFailed");
+  expect(eventTypes).not.toContain("ActivityTaskScheduled");
+});
+
+test("SWF GetWorkflowExecutionHistory pagination", async () => {
+  const client = swf();
+  const domain = "bunsai-hist-domain";
+  const taskList = { name: "hist-list" };
+
+  await client.send(
+    new RegisterDomainCommand({
+      name: domain,
+      workflowExecutionRetentionPeriodInDays: "7",
+    }),
+  );
+  await client.send(
+    new RegisterWorkflowTypeCommand({
+      domain,
+      name: "HistFlow",
+      version: "1.0",
+      defaultChildPolicy: "TERMINATE",
+    }),
+  );
+
+  const started = await client.send(
+    new StartWorkflowExecutionCommand({
+      domain,
+      workflowId: "wf-hist-1",
+      workflowType: { name: "HistFlow", version: "1.0" },
+      taskList,
+    }),
+  );
+  const runId = started.runId!;
+
+  const dt = await client.send(
+    new PollForDecisionTaskCommand({ domain, taskList }),
+  );
+  await client.send(
+    new RespondDecisionTaskCompletedCommand({
+      taskToken: dt.taskToken!,
+      decisions: [
+        {
+          decisionType: "CompleteWorkflowExecution",
+          completeWorkflowExecutionDecisionAttributes: { result: "done" },
+        },
+      ],
+    }),
+  );
+
+  const page1 = await client.send(
+    new GetWorkflowExecutionHistoryCommand({
+      domain,
+      execution: { workflowId: "wf-hist-1", runId },
+      maximumPageSize: 2,
+    }),
+  );
+  expect((page1.events ?? []).length).toBe(2);
+  expect(page1.nextPageToken).toBeTruthy();
+
+  const allEvents = [...(page1.events ?? [])];
+  let token = page1.nextPageToken;
+  while (token) {
+    const page = await client.send(
+      new GetWorkflowExecutionHistoryCommand({
+        domain,
+        execution: { workflowId: "wf-hist-1", runId },
+        maximumPageSize: 2,
+        nextPageToken: token,
+      }),
+    );
+    allEvents.push(...(page.events ?? []));
+    token = page.nextPageToken;
+  }
+
+  const allTypes = allEvents.map((e) => e.eventType);
+  expect(allTypes).toContain("WorkflowExecutionStarted");
+  expect(allTypes).toContain("DecisionTaskStarted");
+  expect(allTypes).toContain("WorkflowExecutionCompleted");
+});

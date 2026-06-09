@@ -71,7 +71,7 @@ test("Lex v2 bot lifecycle", async () => {
   expect(created.botName).toBe(botName);
   expect(created.roleArn).toBe("arn:aws:iam::000000000000:role/bunsai-lex");
   expect(created.idleSessionTTLInSeconds).toBe(300);
-  expect(created.botStatus).toBe("Available");
+  expect(created.botStatus).toBe("Creating");
 
   const described = await client.send(new DescribeBotCommand({ botId }));
   expect(described.botId).toBe(botId);
@@ -86,9 +86,8 @@ test("Lex v2 bot lifecycle", async () => {
   expect(deleted.botId).toBe(botId);
   expect(deleted.botStatus).toBe("Deleting");
 
-  await expect(
-    client.send(new DescribeBotCommand({ botId })),
-  ).rejects.toThrow();
+  const afterDelete = await client.send(new DescribeBotCommand({ botId }));
+  expect(afterDelete.botStatus).toBe("Deleting");
 });
 
 test("Lex v2 bot alias lifecycle", async () => {
@@ -113,7 +112,7 @@ test("Lex v2 bot alias lifecycle", async () => {
   const botAliasId = aliasCreated.botAliasId;
   expect(botAliasId).toBeDefined();
   expect(aliasCreated.botAliasName).toBe("test-alias");
-  expect(aliasCreated.botAliasStatus).toBe("Available");
+  expect(aliasCreated.botAliasStatus).toBe("Creating");
 
   const aliasDescribed = await client.send(
     new DescribeBotAliasCommand({ botId, botAliasId }),
@@ -160,7 +159,7 @@ test("Lex v2 bot locale + build lifecycle", async () => {
     }),
   );
   expect(localeCreated.localeId).toBe("en_US");
-  expect(localeCreated.botLocaleStatus).toBe("NotBuilt");
+  expect(localeCreated.botLocaleStatus).toBe("Creating");
 
   const localeDescribed = await client.send(
     new DescribeBotLocaleCommand({
@@ -188,7 +187,16 @@ test("Lex v2 bot locale + build lifecycle", async () => {
       localeId: "en_US",
     }),
   );
-  expect(built.botLocaleStatus).toBeDefined();
+  expect(built.botLocaleStatus).toBe("Building");
+
+  const builtDescribed = await client.send(
+    new DescribeBotLocaleCommand({
+      botId,
+      botVersion: "DRAFT",
+      localeId: "en_US",
+    }),
+  );
+  expect(builtDescribed.botLocaleStatus).toBe("Built");
 
   const locales = await client.send(
     new ListBotLocalesCommand({ botId, botVersion: "DRAFT" }),
@@ -501,7 +509,7 @@ test("Lex v2 export lifecycle", async () => {
   );
   const exportId = exported.exportId;
   expect(exportId).toBeDefined();
-  expect(exported.exportStatus).toBe("Completed");
+  expect(exported.exportStatus).toBe("InProgress");
 
   const exportsList = await client.send(new ListExportsCommand({}));
   expect((exportsList.exportSummaries ?? []).map((e) => e.exportId)).toContain(
@@ -586,4 +594,69 @@ test("Lex v2 built-in intents and slot types", async () => {
     new ListBuiltInSlotTypesCommand({ localeId: "en_US" }),
   );
   expect((slotTypes.builtInSlotTypeSummaries ?? []).length).toBeGreaterThan(0);
+});
+
+test("Lex v2 async status: CreateBot Creating→Available + DeleteBot Deleting", async () => {
+  const client = lex();
+  const botName = `bunsai-async-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateBotCommand({
+      botName,
+      roleArn: "arn:aws:iam::000000000000:role/bunsai-lex",
+      dataPrivacy: { childDirected: false },
+      idleSessionTTLInSeconds: 300,
+    }),
+  );
+  expect(created.botStatus).toBe("Creating");
+
+  const described = await client.send(
+    new DescribeBotCommand({ botId: created.botId }),
+  );
+  expect(described.botStatus).toBe("Available");
+
+  const deleted = await client.send(
+    new DeleteBotCommand({ botId: created.botId }),
+  );
+  expect(deleted.botStatus).toBe("Deleting");
+
+  const afterDelete = await client.send(
+    new DescribeBotCommand({ botId: created.botId }),
+  );
+  expect(afterDelete.botStatus).toBe("Deleting");
+});
+
+test("Lex v2 ListBots pagination", async () => {
+  const client = lex();
+  const prefix = `bunsai-page-${Date.now()}`;
+  const createdIds: string[] = [];
+
+  for (let i = 0; i < 3; i += 1) {
+    const r = await client.send(
+      new CreateBotCommand({
+        botName: `${prefix}-${i}`,
+        roleArn: "arn:aws:iam::000000000000:role/bunsai-lex",
+        dataPrivacy: { childDirected: false },
+        idleSessionTTLInSeconds: 300,
+      }),
+    );
+    createdIds.push(r.botId!);
+  }
+
+  const page1 = await client.send(new ListBotsCommand({ maxResults: 2 }));
+  expect((page1.botSummaries ?? []).length).toBeGreaterThanOrEqual(2);
+
+  if (page1.nextToken !== undefined) {
+    const page2 = await client.send(
+      new ListBotsCommand({ nextToken: page1.nextToken }),
+    );
+    expect((page2.botSummaries ?? []).length).toBeGreaterThanOrEqual(1);
+    const allIds = [
+      ...(page1.botSummaries ?? []).map((b) => b.botId),
+      ...(page2.botSummaries ?? []).map((b) => b.botId),
+    ];
+    for (const id of createdIds) {
+      expect(allIds).toContain(id);
+    }
+  }
 });

@@ -173,10 +173,49 @@ const requireDomain = (
     throw awsError(
       "ResourceNotFoundException",
       `Domain not found: ${domainName}`,
-      409,
+      404,
     );
   }
   return domain;
+};
+
+const requireDomainByArn = (
+  ctx: ServiceContext,
+  domainArn: string,
+): StoredDomain => {
+  const found = ctx.store
+    .list<StoredDomain>()
+    .filter((entry) => entry.key.startsWith("domain/"))
+    .find((entry) => entry.value.arn === domainArn);
+  if (found === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Domain not found for ARN: ${domainArn}`,
+      404,
+    );
+  }
+  return found.value;
+};
+
+const paginateList = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const limit =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : items.length;
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(offset, offset + limit);
+  const newOffset = offset + limit;
+  return {
+    items: page,
+    nextToken: newOffset < items.length ? String(newOffset) : undefined,
+  };
 };
 
 const packageDetailsView = (pkg: StoredPackage): Record<string, unknown> => ({
@@ -307,8 +346,8 @@ const DescribeDomains: OperationHandler = (input, ctx) => {
   return { DomainStatusList: statuses };
 };
 
-const ListDomainNames: OperationHandler = (_input, ctx) => {
-  const names = ctx.store
+const ListDomainNames: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredDomain>()
     .filter((entry) => entry.key.startsWith("domain/"))
     .map((entry) => ({
@@ -317,7 +356,12 @@ const ListDomainNames: OperationHandler = (_input, ctx) => {
         ? "Elasticsearch"
         : "OpenSearch",
     }));
-  return { DomainNames: names };
+  const { items, nextToken } = paginateList(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { DomainNames: items, NextToken: nextToken };
 };
 
 const DeleteDomain: OperationHandler = (input, ctx) => {
@@ -590,16 +634,21 @@ const GetUpgradeStatus: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListVersions: OperationHandler = (_input, _ctx) => ({
-  Versions: [
+const ListVersions: OperationHandler = (input, _ctx) => {
+  const all = [
     "OpenSearch_2.15",
     "OpenSearch_2.13",
     "OpenSearch_2.11",
     "OpenSearch_2.9",
     "Elasticsearch_7.10",
-  ],
-  NextToken: undefined,
-});
+  ];
+  const { items, nextToken } = paginateList(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Versions: items, NextToken: nextToken };
+};
 
 const UpgradeDomain: OperationHandler = (input, ctx) => {
   const domainName = stringOrUndefined(input["DomainName"]);
@@ -769,7 +818,7 @@ const GetApplication: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Application not found: ${id}`,
-      409,
+      404,
     );
   }
   return {
@@ -794,7 +843,7 @@ const UpdateApplication: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Application not found: ${id}`,
-      409,
+      404,
     );
   }
   if (input["dataSources"] !== undefined) {
@@ -834,7 +883,7 @@ const DeleteApplication: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Application not found: ${id}`,
-      409,
+      404,
     );
   }
   ctx.store.delete(appKey(id));
@@ -865,7 +914,7 @@ const GetCapability: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Capability not found: ${capabilityName}`,
-      409,
+      404,
     );
   }
   return { Capability: cap };
@@ -930,7 +979,7 @@ const DeletePackage: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Package not found: ${packageId}`,
-      409,
+      404,
     );
   }
   ctx.store.delete(pkgKey(packageId));
@@ -946,7 +995,7 @@ const UpdatePackage: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Package not found: ${packageId}`,
-      409,
+      404,
     );
   }
   if (input["PackageDescription"] !== undefined) {
@@ -965,7 +1014,7 @@ const UpdatePackageScope: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Package not found: ${packageId}`,
-      409,
+      404,
     );
   }
   return {
@@ -983,23 +1032,31 @@ const DescribePackages: OperationHandler = (input, ctx) => {
     .list<StoredPackage>()
     .filter((entry) => entry.key.startsWith("package/"))
     .map((entry) => entry.value);
-  if (filters.length === 0) {
-    return {
-      PackageDetailsList: packages.map(packageDetailsView),
-      NextToken: undefined,
-    };
-  }
   for (const filter of filters) {
     const f = filter as Record<string, unknown>;
     const name = stringOrUndefined(f["Name"]);
     const values = Array.isArray(f["Value"]) ? (f["Value"] as string[]) : [];
-    if (name === "PackageID" && values.length > 0) {
+    if (values.length === 0) continue;
+    if (name === "PackageID") {
       packages = packages.filter((p) => values.includes(p.packageId));
+    } else if (name === "PackageStatus") {
+      packages = packages.filter((p) => values.includes(p.packageStatus));
+    } else if (name === "EngineVersion") {
+      packages = packages.filter((p) => values.includes(p.engineVersion));
+    } else if (name === "PackageName") {
+      packages = packages.filter((p) => values.includes(p.packageName));
+    } else if (name === "PackageType") {
+      packages = packages.filter((p) => values.includes(p.packageType));
     }
   }
+  const { items, nextToken } = paginateList(
+    packages,
+    input["MaxResults"],
+    input["NextToken"],
+  );
   return {
-    PackageDetailsList: packages.map(packageDetailsView),
-    NextToken: undefined,
+    PackageDetailsList: items.map(packageDetailsView),
+    NextToken: nextToken,
   };
 };
 
@@ -1011,7 +1068,7 @@ const AssociatePackage: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Package not found: ${packageId}`,
-      409,
+      404,
     );
   }
   requireDomain(ctx, domainName);
@@ -1052,7 +1109,7 @@ const DissociatePackage: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Package not found: ${packageId}`,
-      409,
+      404,
     );
   }
   requireDomain(ctx, domainName);
@@ -1090,7 +1147,7 @@ const GetPackageVersionHistory: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Package not found: ${packageId}`,
-      409,
+      404,
     );
   }
   return {
@@ -1115,7 +1172,7 @@ const ListDomainsForPackage: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Package not found: ${packageId}`,
-      409,
+      404,
     );
   }
   return {
@@ -1141,17 +1198,19 @@ const ListPackagesForDomain: OperationHandler = (input, ctx) => {
 };
 
 const CreateVpcEndpoint: OperationHandler = (input, ctx) => {
+  const domainArn = stringOrUndefined(input["DomainArn"]) ?? "";
+  requireDomainByArn(ctx, domainArn);
   const vpcEndpointId = `aos-${hex(8)}`;
   const ep: StoredVpcEndpoint = {
     vpcEndpointId,
     vpcEndpointOwner: ctx.account,
-    domainArn: stringOrUndefined(input["DomainArn"]) ?? "",
+    domainArn,
     vpcOptions: recordOrEmpty(input["VpcOptions"]),
-    status: "CREATING",
+    status: "ACTIVE",
     endpoint: `${vpcEndpointId}.${ctx.region}.aoss.amazonaws.com`,
   };
   ctx.store.set(vpcKey(vpcEndpointId), ep);
-  return { VpcEndpoint: vpcEndpointView(ep) };
+  return { VpcEndpoint: vpcEndpointView({ ...ep, status: "CREATING" }) };
 };
 
 const DeleteVpcEndpoint: OperationHandler = (input, ctx) => {
@@ -1161,15 +1220,13 @@ const DeleteVpcEndpoint: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `VPC endpoint not found: ${vpcEndpointId}`,
-      409,
+      404,
     );
   }
-  ctx.store.delete(vpcKey(vpcEndpointId));
+  ep.status = "DELETING";
+  ctx.store.set(vpcKey(vpcEndpointId), ep);
   return {
-    VpcEndpointSummary: vpcEndpointSummaryView({
-      ...ep,
-      status: "DELETING",
-    }),
+    VpcEndpointSummary: vpcEndpointSummaryView(ep),
   };
 };
 
@@ -1184,12 +1241,17 @@ const DescribeVpcEndpoints: OperationHandler = (input, ctx) => {
   return { VpcEndpoints: endpoints, VpcEndpointErrors: [] };
 };
 
-const ListVpcEndpoints: OperationHandler = (_input, ctx) => {
-  const summaries = ctx.store
+const ListVpcEndpoints: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredVpcEndpoint>()
     .filter((entry) => entry.key.startsWith("vpcEndpoint/"))
     .map((entry) => vpcEndpointSummaryView(entry.value));
-  return { VpcEndpointSummaryList: summaries, NextToken: undefined };
+  const { items, nextToken } = paginateList(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { VpcEndpointSummaryList: items, NextToken: nextToken };
 };
 
 const ListVpcEndpointsForDomain: OperationHandler = (input, ctx) => {
@@ -1214,7 +1276,7 @@ const UpdateVpcEndpoint: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `VPC endpoint not found: ${vpcEndpointId}`,
-      409,
+      404,
     );
   }
   if (input["VpcOptions"] !== undefined) {
@@ -1309,7 +1371,7 @@ const DeleteOutboundConnection: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Outbound connection not found: ${connectionId}`,
-      409,
+      404,
     );
   }
   ctx.store.delete(outboundKey(connectionId));
@@ -1354,7 +1416,7 @@ const AcceptInboundConnection: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Inbound connection not found: ${connectionId}`,
-      409,
+      404,
     );
   }
   conn.connectionStatus = { StatusCode: "ACTIVE", Message: "Active" };
@@ -1369,7 +1431,7 @@ const RejectInboundConnection: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Inbound connection not found: ${connectionId}`,
-      409,
+      404,
     );
   }
   conn.connectionStatus = { StatusCode: "REJECTED", Message: "Rejected" };
@@ -1384,7 +1446,7 @@ const DeleteInboundConnection: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Inbound connection not found: ${connectionId}`,
-      409,
+      404,
     );
   }
   ctx.store.delete(inboundKey(connectionId));
@@ -1444,7 +1506,7 @@ const GetDataSource: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Data source not found: ${name}`,
-      409,
+      404,
     );
   }
   return {
@@ -1459,7 +1521,7 @@ const ListDataSources: OperationHandler = (input, ctx) => {
   const domainName = stringOrUndefined(input["DomainName"]) ?? "";
   requireDomain(ctx, domainName);
   const prefix = `dataSource/${domainName}/`;
-  const sources = ctx.store
+  const all = ctx.store
     .list<StoredDataSource>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => ({
@@ -1468,7 +1530,12 @@ const ListDataSources: OperationHandler = (input, ctx) => {
       Description: entry.value.description,
       Status: "ACTIVE",
     }));
-  return { DataSources: sources };
+  const { items, nextToken } = paginateList(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { DataSources: items, NextToken: nextToken };
 };
 
 const UpdateDataSource: OperationHandler = (input, ctx) => {
@@ -1480,7 +1547,7 @@ const UpdateDataSource: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Data source not found: ${name}`,
-      409,
+      404,
     );
   }
   if (input["DataSourceType"] !== undefined) {
@@ -1501,7 +1568,7 @@ const DeleteDataSource: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Data source not found: ${name}`,
-      409,
+      404,
     );
   }
   ctx.store.delete(dataSourceKey(domainName, name));
@@ -1533,7 +1600,7 @@ const GetDirectQueryDataSource: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Direct query data source not found: ${dataSourceName}`,
-      409,
+      404,
     );
   }
   return {
@@ -1569,7 +1636,7 @@ const UpdateDirectQueryDataSource: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Direct query data source not found: ${dataSourceName}`,
-      409,
+      404,
     );
   }
   if (input["Description"] !== undefined) {
@@ -1592,7 +1659,7 @@ const DeleteDirectQueryDataSource: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Direct query data source not found: ${dataSourceName}`,
-      409,
+      404,
     );
   }
   ctx.store.delete(directQueryKey(dataSourceName));
@@ -1606,10 +1673,10 @@ const CreateIndex: OperationHandler = (input, ctx) => {
   const idx: StoredIndex = {
     indexName,
     indexSchema: recordOrEmpty(input["IndexSchema"]),
-    status: "CREATING",
+    status: "CREATED",
   };
   ctx.store.set(indexKey(domainName, indexName), idx);
-  return { Status: "CREATING" };
+  return { Status: "CREATED" };
 };
 
 const GetIndex: OperationHandler = (input, ctx) => {
@@ -1621,10 +1688,10 @@ const GetIndex: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Index not found: ${indexName}`,
-      409,
+      404,
     );
   }
-  return { IndexSchema: idx.indexSchema };
+  return { Status: idx.status, IndexSchema: idx.indexSchema };
 };
 
 const UpdateIndex: OperationHandler = (input, ctx) => {
@@ -1636,15 +1703,15 @@ const UpdateIndex: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Index not found: ${indexName}`,
-      409,
+      404,
     );
   }
   if (input["IndexSchema"] !== undefined) {
     idx.indexSchema = recordOrEmpty(input["IndexSchema"]);
   }
-  idx.status = "UPDATING";
+  idx.status = "UPDATED";
   ctx.store.set(indexKey(domainName, indexName), idx);
-  return { Status: "UPDATING" };
+  return { Status: "UPDATED" };
 };
 
 const DeleteIndex: OperationHandler = (input, ctx) => {
@@ -1655,11 +1722,11 @@ const DeleteIndex: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Index not found: ${indexName}`,
-      409,
+      404,
     );
   }
   ctx.store.delete(indexKey(domainName, indexName));
-  return { Status: "DELETING" };
+  return { Status: "DELETED" };
 };
 
 const AddTags: OperationHandler = (input, ctx) => {

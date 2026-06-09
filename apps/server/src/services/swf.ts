@@ -82,6 +82,7 @@ type StoredWorkflowExecution = {
 type StoredActivityTask = {
   taskToken: string;
   activityId: string;
+  scheduledEventId: number;
   startedEventId: number;
   workflowExecution: { workflowId: string; runId: string };
   activityType: { name: string; version: string };
@@ -94,6 +95,7 @@ type StoredActivityTask = {
 
 type StoredDecisionTask = {
   taskToken: string;
+  scheduledEventId: number;
   startedEventId: number;
   previousStartedEventId: number;
   workflowExecution: { workflowId: string; runId: string };
@@ -304,6 +306,23 @@ const addEvent = (
   return event;
 };
 
+const applyPageToken = <T>(
+  items: T[],
+  maximumPageSize: number | undefined,
+  nextPageToken: string | undefined,
+): { items: T[]; nextPageToken: string | undefined } => {
+  const start =
+    nextPageToken !== undefined ? parseInt(atob(nextPageToken), 10) : 0;
+  const limit =
+    maximumPageSize !== undefined && maximumPageSize > 0
+      ? maximumPageSize
+      : items.length;
+  const sliced = items.slice(start, start + limit);
+  const newNextToken =
+    start + limit < items.length ? btoa(String(start + limit)) : undefined;
+  return { items: sliced, nextPageToken: newNextToken };
+};
+
 const scheduleDecisionTask = (
   ctx: ServiceContext,
   ex: StoredWorkflowExecution,
@@ -318,7 +337,8 @@ const scheduleDecisionTask = (
   const taskToken = `dt-${nextId(ctx, "taskToken")}`;
   const task: StoredDecisionTask = {
     taskToken,
-    startedEventId: schedEvent.eventId,
+    scheduledEventId: schedEvent.eventId,
+    startedEventId: 0,
     previousStartedEventId,
     workflowExecution: { workflowId: ex.workflowId, runId: ex.runId },
     workflowType: ex.workflowType,
@@ -355,7 +375,12 @@ const RegisterDomain: OperationHandler = (input, ctx) => {
 
 const ListDomains: OperationHandler = (input, ctx) => {
   const registrationStatus = requireString(input, "registrationStatus");
-  const domainInfos = ctx.store
+  const maximumPageSize =
+    typeof input["maximumPageSize"] === "number"
+      ? (input["maximumPageSize"] as number)
+      : undefined;
+  const nextPageToken = stringOrUndefined(input["nextPageToken"]);
+  const allInfos = ctx.store
     .list<StoredDomain>()
     .map((entry) => entry.value)
     .filter((domain) => domain.status === registrationStatus)
@@ -365,7 +390,12 @@ const ListDomains: OperationHandler = (input, ctx) => {
       description: domain.description,
       arn: domain.arn,
     }));
-  return { domainInfos };
+  const { items: domainInfos, nextPageToken: newToken } = applyPageToken(
+    allInfos,
+    maximumPageSize,
+    nextPageToken,
+  );
+  return { domainInfos, nextPageToken: newToken };
 };
 
 const DescribeDomain: OperationHandler = (input, ctx) => {
@@ -477,7 +507,12 @@ const ListActivityTypes: OperationHandler = (input, ctx) => {
   requireDomain(ctx, domain);
   const registrationStatus = requireString(input, "registrationStatus");
   const nameFilter = stringOrUndefined(input["name"]);
-  const typeInfos = ctx.store
+  const maximumPageSize =
+    typeof input["maximumPageSize"] === "number"
+      ? (input["maximumPageSize"] as number)
+      : undefined;
+  const nextPageToken = stringOrUndefined(input["nextPageToken"]);
+  const allInfos = ctx.store
     .list<StoredActivityType>()
     .map((e) => e.value)
     .filter(
@@ -493,7 +528,12 @@ const ListActivityTypes: OperationHandler = (input, ctx) => {
       creationDate: at.creationDate,
       deprecationDate: at.deprecationDate,
     }));
-  return { typeInfos };
+  const { items: typeInfos, nextPageToken: newToken } = applyPageToken(
+    allInfos,
+    maximumPageSize,
+    nextPageToken,
+  );
+  return { typeInfos, nextPageToken: newToken };
 };
 
 const DeprecateActivityType: OperationHandler = (input, ctx) => {
@@ -601,7 +641,12 @@ const ListWorkflowTypes: OperationHandler = (input, ctx) => {
   requireDomain(ctx, domain);
   const registrationStatus = requireString(input, "registrationStatus");
   const nameFilter = stringOrUndefined(input["name"]);
-  const typeInfos = ctx.store
+  const maximumPageSize =
+    typeof input["maximumPageSize"] === "number"
+      ? (input["maximumPageSize"] as number)
+      : undefined;
+  const nextPageToken = stringOrUndefined(input["nextPageToken"]);
+  const allInfos = ctx.store
     .list<StoredWorkflowType>()
     .map((e) => e.value)
     .filter(
@@ -617,7 +662,12 @@ const ListWorkflowTypes: OperationHandler = (input, ctx) => {
       creationDate: wt.creationDate,
       deprecationDate: wt.deprecationDate,
     }));
-  return { typeInfos };
+  const { items: typeInfos, nextPageToken: newToken } = applyPageToken(
+    allInfos,
+    maximumPageSize,
+    nextPageToken,
+  );
+  return { typeInfos, nextPageToken: newToken };
 };
 
 const DeprecateWorkflowType: OperationHandler = (input, ctx) => {
@@ -782,8 +832,18 @@ const GetWorkflowExecutionHistory: OperationHandler = (input, ctx) => {
   const { workflowId, runId } = getExecutionFromInput(input);
   const ex = requireExecution(ctx, domain, workflowId, runId);
   const reverseOrder = input["reverseOrder"] === true;
-  const events = reverseOrder ? [...ex.events].reverse() : [...ex.events];
-  return { events };
+  const maximumPageSize =
+    typeof input["maximumPageSize"] === "number"
+      ? (input["maximumPageSize"] as number)
+      : undefined;
+  const nextPageToken = stringOrUndefined(input["nextPageToken"]);
+  const ordered = reverseOrder ? [...ex.events].reverse() : [...ex.events];
+  const { items: events, nextPageToken: newToken } = applyPageToken(
+    ordered,
+    maximumPageSize,
+    nextPageToken,
+  );
+  return { events, nextPageToken: newToken };
 };
 
 const ListOpenWorkflowExecutions: OperationHandler = (input, ctx) => {
@@ -794,7 +854,12 @@ const ListOpenWorkflowExecutions: OperationHandler = (input, ctx) => {
   const executionFilter = input["executionFilter"] as
     | Record<string, unknown>
     | undefined;
-  const executionInfos = ctx.store
+  const maximumPageSize =
+    typeof input["maximumPageSize"] === "number"
+      ? (input["maximumPageSize"] as number)
+      : undefined;
+  const nextPageToken = stringOrUndefined(input["nextPageToken"]);
+  const allInfos = ctx.store
     .list<StoredWorkflowExecution>()
     .map((e) => e.value)
     .filter((ex) => ex.domain === domain && ex.executionStatus === "OPEN")
@@ -823,7 +888,12 @@ const ListOpenWorkflowExecutions: OperationHandler = (input, ctx) => {
       tagList: ex.tagList,
       cancelRequested: ex.cancelRequested,
     }));
-  return { executionInfos };
+  const { items: executionInfos, nextPageToken: newToken } = applyPageToken(
+    allInfos,
+    maximumPageSize,
+    nextPageToken,
+  );
+  return { executionInfos, nextPageToken: newToken };
 };
 
 const ListClosedWorkflowExecutions: OperationHandler = (input, ctx) => {
@@ -837,7 +907,12 @@ const ListClosedWorkflowExecutions: OperationHandler = (input, ctx) => {
   const closeStatusFilter = input["closeStatusFilter"] as
     | Record<string, unknown>
     | undefined;
-  const executionInfos = ctx.store
+  const maximumPageSize =
+    typeof input["maximumPageSize"] === "number"
+      ? (input["maximumPageSize"] as number)
+      : undefined;
+  const nextPageToken = stringOrUndefined(input["nextPageToken"]);
+  const allInfos = ctx.store
     .list<StoredWorkflowExecution>()
     .map((e) => e.value)
     .filter((ex) => ex.domain === domain && ex.executionStatus === "CLOSED")
@@ -872,7 +947,12 @@ const ListClosedWorkflowExecutions: OperationHandler = (input, ctx) => {
       tagList: ex.tagList,
       cancelRequested: ex.cancelRequested,
     }));
-  return { executionInfos };
+  const { items: executionInfos, nextPageToken: newToken } = applyPageToken(
+    allInfos,
+    maximumPageSize,
+    nextPageToken,
+  );
+  return { executionInfos, nextPageToken: newToken };
 };
 
 const CountOpenWorkflowExecutions: OperationHandler = (input, ctx) => {
@@ -994,6 +1074,13 @@ const PollForDecisionTask: OperationHandler = (input, ctx) => {
   const domain = requireString(input, "domain");
   requireDomain(ctx, domain);
   const taskListName = getTaskListName(input);
+  const reverseOrder = input["reverseOrder"] === true;
+  const startAtPrev = input["startAtPreviousStartedEventId"] === true;
+  const maximumPageSize =
+    typeof input["maximumPageSize"] === "number"
+      ? (input["maximumPageSize"] as number)
+      : undefined;
+  const nextPageToken = stringOrUndefined(input["nextPageToken"]);
 
   const pending = ctx.store
     .list<StoredDecisionTask>()
@@ -1015,8 +1102,45 @@ const PollForDecisionTask: OperationHandler = (input, ctx) => {
     };
   }
 
+  const ex = ctx.store.get<StoredWorkflowExecution>(
+    executionKey(
+      pending.domain,
+      pending.workflowExecution.workflowId,
+      pending.workflowExecution.runId,
+    ),
+  );
+  if (ex) {
+    const startedEvent = addEvent(ex, "DecisionTaskStarted", {
+      decisionTaskStartedEventAttributes: {
+        scheduledEventId: pending.scheduledEventId,
+        identity: stringOrUndefined(input["identity"]),
+      },
+    });
+    pending.startedEventId = startedEvent.eventId;
+    pending.events = [...ex.events];
+    ctx.store.set(executionKey(ex.domain, ex.workflowId, ex.runId), ex);
+  }
+
   pending.status = "CLAIMED";
   ctx.store.set(decisionTaskKey(pending.taskToken), pending);
+
+  let events = [...pending.events];
+  if (startAtPrev && pending.previousStartedEventId > 0) {
+    const startIdx = events.findIndex(
+      (e) => e.eventId >= pending.previousStartedEventId,
+    );
+    if (startIdx >= 0) {
+      events = events.slice(startIdx);
+    }
+  }
+  if (reverseOrder) {
+    events = [...events].reverse();
+  }
+  const { items: pagedEvents, nextPageToken: newToken } = applyPageToken(
+    events,
+    maximumPageSize,
+    nextPageToken,
+  );
 
   return {
     taskToken: pending.taskToken,
@@ -1024,7 +1148,8 @@ const PollForDecisionTask: OperationHandler = (input, ctx) => {
     previousStartedEventId: pending.previousStartedEventId,
     workflowExecution: pending.workflowExecution,
     workflowType: pending.workflowType,
-    events: pending.events,
+    events: pagedEvents,
+    nextPageToken: newToken,
   };
 };
 
@@ -1052,7 +1177,7 @@ const RespondDecisionTaskCompleted: OperationHandler = (input, ctx) => {
   const completedEventId = ex.nextEventId;
   addEvent(ex, "DecisionTaskCompleted", {
     decisionTaskCompletedEventAttributes: {
-      scheduledEventId: task.startedEventId,
+      scheduledEventId: task.scheduledEventId,
       startedEventId: task.startedEventId,
       executionContext: stringOrUndefined(input["executionContext"]),
     },
@@ -1060,7 +1185,6 @@ const RespondDecisionTaskCompleted: OperationHandler = (input, ctx) => {
 
   const decisions =
     (input["decisions"] as Record<string, unknown>[] | undefined) ?? [];
-  let previousStartedEventId = completedEventId;
 
   for (const decision of decisions) {
     const decisionType = decision["decisionType"] as string;
@@ -1073,6 +1197,27 @@ const RespondDecisionTaskCompleted: OperationHandler = (input, ctx) => {
         | Record<string, unknown>
         | undefined;
       const activityId = attrs["activityId"] as string;
+      const atName = activityType?.["name"] as string | undefined;
+      const atVersion = activityType?.["version"] as string | undefined;
+      const storedAt =
+        atName && atVersion
+          ? ctx.store.get<StoredActivityType>(
+              activityTypeKey(task.domain, atName, atVersion),
+            )
+          : undefined;
+      if (!storedAt || storedAt.status !== "REGISTERED") {
+        addEvent(ex, "ScheduleActivityTaskFailed", {
+          scheduleActivityTaskFailedEventAttributes: {
+            activityType,
+            activityId,
+            cause: storedAt
+              ? "ACTIVITY_TYPE_DEPRECATED"
+              : "ACTIVITY_TYPE_DOES_NOT_EXIST",
+            decisionTaskCompletedEventId: completedEventId,
+          },
+        });
+        continue;
+      }
       const schedEvent = addEvent(ex, "ActivityTaskScheduled", {
         activityTaskScheduledEventAttributes: {
           activityType,
@@ -1091,7 +1236,8 @@ const RespondDecisionTaskCompleted: OperationHandler = (input, ctx) => {
       const atTask: StoredActivityTask = {
         taskToken: activityTaskToken,
         activityId,
-        startedEventId: schedEvent.eventId,
+        scheduledEventId: schedEvent.eventId,
+        startedEventId: 0,
         workflowExecution: {
           workflowId: ex.workflowId,
           runId: ex.runId,
@@ -1145,11 +1291,10 @@ const RespondDecisionTaskCompleted: OperationHandler = (input, ctx) => {
       ex.closeStatus = "CANCELED";
       ex.closeTimestamp = nowSeconds();
     }
-    previousStartedEventId = completedEventId;
   }
 
   if (ex.executionStatus === "OPEN") {
-    scheduleDecisionTask(ctx, ex, previousStartedEventId);
+    scheduleDecisionTask(ctx, ex, task.startedEventId);
   }
 
   ctx.store.set(executionKey(ex.domain, ex.workflowId, ex.runId), ex);
@@ -1179,6 +1324,24 @@ const PollForActivityTask: OperationHandler = (input, ctx) => {
       workflowExecution: { workflowId: "", runId: "" },
       activityType: { name: "", version: "" },
     };
+  }
+
+  const ex = ctx.store.get<StoredWorkflowExecution>(
+    executionKey(
+      pending.domain,
+      pending.workflowExecution.workflowId,
+      pending.workflowExecution.runId,
+    ),
+  );
+  if (ex) {
+    const startedEvent = addEvent(ex, "ActivityTaskStarted", {
+      activityTaskStartedEventAttributes: {
+        scheduledEventId: pending.scheduledEventId,
+        identity: stringOrUndefined(input["identity"]),
+      },
+    });
+    pending.startedEventId = startedEvent.eventId;
+    ctx.store.set(executionKey(ex.domain, ex.workflowId, ex.runId), ex);
   }
 
   pending.status = "CLAIMED";
@@ -1229,7 +1392,7 @@ const RespondActivityTaskCompleted: OperationHandler = (input, ctx) => {
   addEvent(ex, "ActivityTaskCompleted", {
     activityTaskCompletedEventAttributes: {
       result: stringOrUndefined(input["result"]),
-      scheduledEventId: task.startedEventId,
+      scheduledEventId: task.scheduledEventId,
       startedEventId: task.startedEventId,
     },
   });
@@ -1261,7 +1424,7 @@ const RespondActivityTaskFailed: OperationHandler = (input, ctx) => {
     activityTaskFailedEventAttributes: {
       reason: stringOrUndefined(input["reason"]),
       details: stringOrUndefined(input["details"]),
-      scheduledEventId: task.startedEventId,
+      scheduledEventId: task.scheduledEventId,
       startedEventId: task.startedEventId,
     },
   });
@@ -1292,7 +1455,7 @@ const RespondActivityTaskCanceled: OperationHandler = (input, ctx) => {
   addEvent(ex, "ActivityTaskCanceled", {
     activityTaskCanceledEventAttributes: {
       details: stringOrUndefined(input["details"]),
-      scheduledEventId: task.startedEventId,
+      scheduledEventId: task.scheduledEventId,
       startedEventId: task.startedEventId,
     },
   });

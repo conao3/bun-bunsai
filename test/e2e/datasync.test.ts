@@ -532,6 +532,154 @@ test("datasync UpdateTask", async () => {
   expect(described.Name).toBe("updated-name");
 });
 
+test("datasync ListTasks pagination", async () => {
+  const datasync = client();
+
+  const srcLoc = await datasync.send(
+    new CreateLocationS3Command({
+      S3BucketArn: "arn:aws:s3:::pagination-src",
+      S3Config: {
+        BucketAccessRoleArn: "arn:aws:iam::000000000000:role/r",
+      },
+    }),
+  );
+  const dstLoc = await datasync.send(
+    new CreateLocationS3Command({
+      S3BucketArn: "arn:aws:s3:::pagination-dst",
+      S3Config: {
+        BucketAccessRoleArn: "arn:aws:iam::000000000000:role/r",
+      },
+    }),
+  );
+
+  const createdArns: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const t = await datasync.send(
+      new CreateTaskCommand({
+        SourceLocationArn: srcLoc.LocationArn,
+        DestinationLocationArn: dstLoc.LocationArn,
+        Name: `page-task-${i}`,
+      }),
+    );
+    createdArns.push(t.TaskArn!);
+  }
+
+  const page1 = await datasync.send(new ListTasksCommand({ MaxResults: 2 }));
+  expect((page1.Tasks ?? []).length).toBeGreaterThanOrEqual(1);
+  expect(page1.NextToken).toBeDefined();
+
+  const allArns: (string | undefined)[] = (page1.Tasks ?? []).map(
+    (t) => t.TaskArn,
+  );
+  let nextToken: string | undefined = page1.NextToken;
+  while (nextToken !== undefined) {
+    const page = await datasync.send(
+      new ListTasksCommand({ MaxResults: 2, NextToken: nextToken }),
+    );
+    allArns.push(...(page.Tasks ?? []).map((t) => t.TaskArn));
+    nextToken = page.NextToken;
+  }
+
+  for (const arn of createdArns) {
+    expect(allArns).toContain(arn);
+  }
+});
+
+test("datasync ListTasks filter by LocationId", async () => {
+  const datasync = client();
+
+  const srcLoc = await datasync.send(
+    new CreateLocationS3Command({
+      S3BucketArn: "arn:aws:s3:::filter-src-unique",
+      S3Config: {
+        BucketAccessRoleArn: "arn:aws:iam::000000000000:role/r",
+      },
+    }),
+  );
+  const dstLoc = await datasync.send(
+    new CreateLocationS3Command({
+      S3BucketArn: "arn:aws:s3:::filter-dst-unique",
+      S3Config: {
+        BucketAccessRoleArn: "arn:aws:iam::000000000000:role/r",
+      },
+    }),
+  );
+  const otherSrc = await datasync.send(
+    new CreateLocationS3Command({
+      S3BucketArn: "arn:aws:s3:::filter-other-src",
+      S3Config: {
+        BucketAccessRoleArn: "arn:aws:iam::000000000000:role/r",
+      },
+    }),
+  );
+
+  const targetTask = await datasync.send(
+    new CreateTaskCommand({
+      SourceLocationArn: srcLoc.LocationArn,
+      DestinationLocationArn: dstLoc.LocationArn,
+      Name: "filter-target-task",
+    }),
+  );
+  await datasync.send(
+    new CreateTaskCommand({
+      SourceLocationArn: otherSrc.LocationArn,
+      DestinationLocationArn: dstLoc.LocationArn,
+      Name: "filter-other-task",
+    }),
+  );
+
+  const filtered = await datasync.send(
+    new ListTasksCommand({
+      Filters: [
+        {
+          Name: "LocationId",
+          Values: [srcLoc.LocationArn!],
+          Operator: "Equals",
+        },
+      ],
+    }),
+  );
+  const filteredArns = (filtered.Tasks ?? []).map((t) => t.TaskArn);
+  expect(filteredArns).toContain(targetTask.TaskArn);
+  for (const arn of filteredArns) {
+    expect(arn).not.toBeUndefined();
+  }
+});
+
+test("datasync CreateTask missing location error", async () => {
+  const datasync = client();
+
+  const fakeArn =
+    "arn:aws:datasync:us-east-1:000000000000:location/loc-nonexistent";
+
+  const srcLoc = await datasync.send(
+    new CreateLocationS3Command({
+      S3BucketArn: "arn:aws:s3:::missing-loc-src",
+      S3Config: {
+        BucketAccessRoleArn: "arn:aws:iam::000000000000:role/r",
+      },
+    }),
+  );
+
+  await expect(
+    datasync.send(
+      new CreateTaskCommand({
+        SourceLocationArn: fakeArn,
+        DestinationLocationArn: srcLoc.LocationArn,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    datasync.send(
+      new CreateTaskCommand({
+        SourceLocationArn: srcLoc.LocationArn,
+        DestinationLocationArn: fakeArn,
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
 test("datasync tag operations", async () => {
   const datasync = client();
 

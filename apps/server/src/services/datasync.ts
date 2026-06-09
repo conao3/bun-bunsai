@@ -201,6 +201,93 @@ const requireTaskExecution = (
   return execution;
 };
 
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const applyOperator = (
+  fieldVal: string,
+  operator: string,
+  values: string[],
+): boolean => {
+  switch (operator) {
+    case "Equals":
+      return values.includes(fieldVal);
+    case "NotEquals":
+      return !values.includes(fieldVal);
+    case "In":
+      return values.includes(fieldVal);
+    case "Contains":
+      return values.some((v) => fieldVal.includes(v));
+    case "NotContains":
+      return values.every((v) => !fieldVal.includes(v));
+    case "BeginsWith":
+      return values.some((v) => fieldVal.startsWith(v));
+    default:
+      return true;
+  }
+};
+
+const applyLocationFilters = (
+  locations: StoredLocation[],
+  filters: unknown,
+): StoredLocation[] => {
+  if (!Array.isArray(filters) || filters.length === 0) return locations;
+  return locations.filter((loc) =>
+    (filters as unknown[]).every((f) => {
+      if (typeof f !== "object" || f === null) return true;
+      const filter = f as Record<string, unknown>;
+      const name = filter["Name"];
+      const values = Array.isArray(filter["Values"])
+        ? (filter["Values"] as unknown[]).map(String)
+        : [];
+      const operator =
+        typeof filter["Operator"] === "string" ? filter["Operator"] : "Equals";
+      if (name === "LocationUri")
+        return applyOperator(loc.LocationUri, operator, values);
+      if (name === "LocationType")
+        return applyOperator(loc.LocationType, operator, values);
+      if (name === "CreationTime")
+        return applyOperator(String(loc.CreationTime), operator, values);
+      return true;
+    }),
+  );
+};
+
+const applyTaskFilters = (
+  tasks: StoredTask[],
+  filters: unknown,
+): StoredTask[] => {
+  if (!Array.isArray(filters) || filters.length === 0) return tasks;
+  return tasks.filter((task) =>
+    (filters as unknown[]).every((f) => {
+      if (typeof f !== "object" || f === null) return true;
+      const filter = f as Record<string, unknown>;
+      const name = filter["Name"];
+      const values = Array.isArray(filter["Values"])
+        ? (filter["Values"] as unknown[]).map(String)
+        : [];
+      const operator =
+        typeof filter["Operator"] === "string" ? filter["Operator"] : "Equals";
+      if (name === "LocationId") {
+        return (
+          applyOperator(task.SourceLocationArn, operator, values) ||
+          applyOperator(task.DestinationLocationArn, operator, values)
+        );
+      }
+      if (name === "CreationTime")
+        return applyOperator(String(task.CreationTime), operator, values);
+      return true;
+    }),
+  );
+};
+
 const buildLocationUri = (
   locationType: string,
   input: Record<string, unknown>,
@@ -369,8 +456,12 @@ const DescribeAgent: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListAgents: OperationHandler = (_input, ctx) => {
-  const agents = ctx.store
+const ListAgents: OperationHandler = (input, ctx) => {
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredAgent>()
     .filter((entry) => entry.key.startsWith("agent/"))
     .map((entry) => ({
@@ -378,7 +469,13 @@ const ListAgents: OperationHandler = (_input, ctx) => {
       Name: entry.value.Name,
       Status: entry.value.Status,
     }));
-  return { Agents: agents };
+  const pageSize = maxResults ?? all.length;
+  const page = all.slice(offset, offset + pageSize);
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { Agents: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { Agents: page };
 };
 
 const UpdateAgent: OperationHandler = (input, ctx) => {
@@ -875,15 +972,28 @@ const UpdateLocationObjectStorage: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const ListLocations: OperationHandler = (_input, ctx) => {
-  const locations = ctx.store
-    .list<StoredLocation>()
-    .filter((entry) => entry.key.startsWith("location/"))
-    .map((entry) => ({
-      LocationArn: entry.value.LocationArn,
-      LocationUri: entry.value.LocationUri,
-    }));
-  return { Locations: locations };
+const ListLocations: OperationHandler = (input, ctx) => {
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = applyLocationFilters(
+    ctx.store
+      .list<StoredLocation>()
+      .filter((entry) => entry.key.startsWith("location/"))
+      .map((entry) => entry.value),
+    input["Filters"],
+  ).map((loc) => ({
+    LocationArn: loc.LocationArn,
+    LocationUri: loc.LocationUri,
+  }));
+  const pageSize = maxResults ?? all.length;
+  const page = all.slice(offset, offset + pageSize);
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { Locations: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { Locations: page };
 };
 
 const DeleteLocation: OperationHandler = (input, ctx) => {
@@ -896,12 +1006,14 @@ const DeleteLocation: OperationHandler = (input, ctx) => {
 const CreateTask: OperationHandler = (input, ctx) => {
   const sourceLocationArn = requireString(input, "SourceLocationArn");
   const destinationLocationArn = requireString(input, "DestinationLocationArn");
+  requireLocation(ctx, sourceLocationArn);
+  requireLocation(ctx, destinationLocationArn);
   const id = hex17();
   const arn = taskArn(ctx, id);
   const task: StoredTask = {
     TaskArn: arn,
     Name: stringOrUndefined(input["Name"]),
-    Status: "AVAILABLE",
+    Status: "CREATING",
     SourceLocationArn: sourceLocationArn,
     DestinationLocationArn: destinationLocationArn,
     CloudWatchLogGroupArn: stringOrUndefined(input["CloudWatchLogGroupArn"]),
@@ -920,7 +1032,15 @@ const CreateTask: OperationHandler = (input, ctx) => {
 };
 
 const DescribeTask: OperationHandler = (input, ctx) => {
-  const task = requireTask(ctx, requireString(input, "TaskArn"));
+  const arn = requireString(input, "TaskArn");
+  let task = requireTask(ctx, arn);
+  if (task.Status === "CREATING") {
+    task = { ...task, Status: "AVAILABLE" };
+    ctx.store.set(taskKey(arn), task);
+  } else if (task.Status === "QUEUED") {
+    task = { ...task, Status: "RUNNING" };
+    ctx.store.set(taskKey(arn), task);
+  }
   return {
     TaskArn: task.TaskArn,
     Status: task.Status,
@@ -940,17 +1060,30 @@ const DescribeTask: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListTasks: OperationHandler = (_input, ctx) => {
-  const tasks = ctx.store
-    .list<StoredTask>()
-    .filter((entry) => entry.key.startsWith("task/"))
-    .map((entry) => ({
-      TaskArn: entry.value.TaskArn,
-      Status: entry.value.Status,
-      Name: entry.value.Name,
-      TaskMode: entry.value.TaskMode,
-    }));
-  return { Tasks: tasks };
+const ListTasks: OperationHandler = (input, ctx) => {
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = applyTaskFilters(
+    ctx.store
+      .list<StoredTask>()
+      .filter((entry) => entry.key.startsWith("task/"))
+      .map((entry) => entry.value),
+    input["Filters"],
+  ).map((task) => ({
+    TaskArn: task.TaskArn,
+    Status: task.Status,
+    Name: task.Name,
+    TaskMode: task.TaskMode,
+  }));
+  const pageSize = maxResults ?? all.length;
+  const page = all.slice(offset, offset + pageSize);
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { Tasks: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { Tasks: page };
 };
 
 const DeleteTask: OperationHandler = (input, ctx) => {
@@ -1012,7 +1145,7 @@ const StartTaskExecution: OperationHandler = (input, ctx) => {
   ctx.store.set(executionKey(executionArn), execution);
   task.executions.push(executionArn);
   task.CurrentTaskExecutionArn = executionArn;
-  task.Status = "RUNNING";
+  task.Status = "QUEUED";
   ctx.store.set(taskKey(arn), task);
   return { TaskExecutionArn: executionArn };
 };
@@ -1022,16 +1155,18 @@ const CancelTaskExecution: OperationHandler = (input, ctx) => {
   const execution = requireTaskExecution(ctx, executionArn);
   ctx.store.set(executionKey(executionArn), {
     ...execution,
-    Status: "ERROR",
+    Status: "CANCELLING",
   });
   return {};
 };
 
 const DescribeTaskExecution: OperationHandler = (input, ctx) => {
-  const execution = requireTaskExecution(
-    ctx,
-    requireString(input, "TaskExecutionArn"),
-  );
+  const arn = requireString(input, "TaskExecutionArn");
+  let execution = requireTaskExecution(ctx, arn);
+  if (execution.Status === "CANCELLING") {
+    execution = { ...execution, Status: "ERROR" };
+    ctx.store.set(executionKey(arn), execution);
+  }
   return {
     TaskExecutionArn: execution.TaskExecutionArn,
     Status: execution.Status,
@@ -1051,7 +1186,11 @@ const DescribeTaskExecution: OperationHandler = (input, ctx) => {
 
 const ListTaskExecutions: OperationHandler = (input, ctx) => {
   const filterTaskArn = stringOrUndefined(input["TaskArn"]);
-  const executions = ctx.store
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredTaskExecution>()
     .filter((entry) => entry.key.startsWith("execution/"))
     .filter(
@@ -1063,7 +1202,13 @@ const ListTaskExecutions: OperationHandler = (input, ctx) => {
       TaskExecutionArn: entry.value.TaskExecutionArn,
       Status: entry.value.Status,
     }));
-  return { TaskExecutions: executions };
+  const pageSize = maxResults ?? all.length;
+  const page = all.slice(offset, offset + pageSize);
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { TaskExecutions: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { TaskExecutions: page };
 };
 
 const UpdateTaskExecution: OperationHandler = (input, ctx) => {

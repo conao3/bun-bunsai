@@ -174,6 +174,18 @@ type StoredEvent = {
   entities: unknown[];
 };
 
+type StoredPrediction = {
+  eventId: string;
+  eventTypeName: string;
+  detectorId: string;
+  detectorVersionId: string;
+  predictionTimestamp: string;
+  entityId: string;
+  entityType: string;
+  ruleResults: { ruleId: string; outcomes: string[] }[];
+  modelVersions: unknown[];
+};
+
 type StoredTags = Record<string, string>;
 
 const detectorKey = (id: string): string => `detector/${id}`;
@@ -204,6 +216,14 @@ const batchPredictionKey = (jobId: string): string =>
   `batchPrediction/${jobId}`;
 const eventKey = (eventId: string, eventTypeName: string): string =>
   `event/${eventId}/${eventTypeName}`;
+const predictionKey = (
+  eventId: string,
+  eventTypeName: string,
+  detectorId: string,
+  detectorVersionId: string,
+  predictionTimestamp: string,
+): string =>
+  `prediction/${eventId}/${eventTypeName}/${detectorId}/${detectorVersionId}/${predictionTimestamp}`;
 const tagsKey = (resourceArn: string): string => `tags/${resourceArn}`;
 const kmsKeyStoreKey = "kmsKey";
 
@@ -452,6 +472,25 @@ const setTags = (ctx: ServiceContext, arn: string, tags: StoredTags): void => {
 const tagsToList = (tags: StoredTags): { key: string; value: string }[] =>
   Object.entries(tags).map(([key, value]) => ({ key, value }));
 
+const paginate = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { page: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { page, nextToken: newNextToken };
+};
+
 const PutDetector: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "detectorId");
   const eventTypeName = requireString(input, "eventTypeName");
@@ -479,8 +518,7 @@ const PutDetector: OperationHandler = (input, ctx) => {
 
 const GetDetectors: OperationHandler = (input, ctx) => {
   const detectorId = stringOrUndefined(input["detectorId"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const detectors = ctx.store
+  const all = ctx.store
     .list<StoredDetector>()
     .filter((entry) => entry.key.startsWith("detector/"))
     .map((entry) => entry.value)
@@ -490,9 +528,13 @@ const GetDetectors: OperationHandler = (input, ctx) => {
     )
     .sort((a, b) =>
       a.detectorId < b.detectorId ? -1 : a.detectorId > b.detectorId ? 1 : 0,
-    )
-    .slice(0, max);
-  return { detectors };
+    );
+  const { page: detectors, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { detectors, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const DeleteDetector: OperationHandler = (input, ctx) => {
@@ -559,22 +601,26 @@ const GetDetectorVersion: OperationHandler = (input, ctx) => {
 const DescribeDetector: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "detectorId");
   const det = requireDetector(ctx, detectorId);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const versions = ctx.store
+  const allVersions = ctx.store
     .list<StoredDetectorVersion>()
     .filter((e) => e.key.startsWith(`detectorVersion/${detectorId}/`))
     .map((e) => e.value)
-    .slice(0, max)
     .map((dv) => ({
       detectorVersionId: dv.detectorVersionId,
       status: dv.status,
       description: dv.description,
       lastUpdatedTime: dv.lastUpdatedTime,
     }));
+  const { page: detectorVersionSummaries, nextToken } = paginate(
+    allVersions,
+    input["nextToken"],
+    input["maxResults"],
+  );
   return {
     detectorId,
-    detectorVersionSummaries: versions,
+    detectorVersionSummaries,
     arn: det.arn,
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -689,15 +735,18 @@ const UpdateVariable: OperationHandler = (input, ctx) => {
 
 const GetVariables: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["name"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const variables = ctx.store
+  const all = ctx.store
     .list<StoredVariable>()
     .filter((e) => e.key.startsWith("variable/"))
     .map((e) => e.value)
     .filter((v) => name === undefined || v.name === name)
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .slice(0, max);
-  return { variables };
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const { page: variables, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { variables, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const DeleteVariable: OperationHandler = (input, ctx) => {
@@ -783,15 +832,18 @@ const PutEntityType: OperationHandler = (input, ctx) => {
 
 const GetEntityTypes: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["name"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const entityTypes = ctx.store
+  const all = ctx.store
     .list<StoredEntityType>()
     .filter((e) => e.key.startsWith("entityType/"))
     .map((e) => e.value)
     .filter((et) => name === undefined || et.name === name)
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .slice(0, max);
-  return { entityTypes };
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const { page: entityTypes, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { entityTypes, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const DeleteEntityType: OperationHandler = (input, ctx) => {
@@ -834,15 +886,18 @@ const PutEventType: OperationHandler = (input, ctx) => {
 
 const GetEventTypes: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["name"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const eventTypes = ctx.store
+  const all = ctx.store
     .list<StoredEventType>()
     .filter((e) => e.key.startsWith("eventType/"))
     .map((e) => e.value)
     .filter((et) => name === undefined || et.name === name)
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .slice(0, max);
-  return { eventTypes };
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const { page: eventTypes, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { eventTypes, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const DeleteEventType: OperationHandler = (input, ctx) => {
@@ -878,15 +933,18 @@ const PutLabel: OperationHandler = (input, ctx) => {
 
 const GetLabels: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["name"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const labels = ctx.store
+  const all = ctx.store
     .list<StoredLabel>()
     .filter((e) => e.key.startsWith("label/"))
     .map((e) => e.value)
     .filter((lbl) => name === undefined || lbl.name === name)
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .slice(0, max);
-  return { labels };
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const { page: labels, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { labels, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const DeleteLabel: OperationHandler = (input, ctx) => {
@@ -922,15 +980,18 @@ const PutOutcome: OperationHandler = (input, ctx) => {
 
 const GetOutcomes: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["name"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const outcomes = ctx.store
+  const all = ctx.store
     .list<StoredOutcome>()
     .filter((e) => e.key.startsWith("outcome/"))
     .map((e) => e.value)
     .filter((o) => name === undefined || o.name === name)
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .slice(0, max);
-  return { outcomes };
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const { page: outcomes, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { outcomes, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const DeleteOutcome: OperationHandler = (input, ctx) => {
@@ -980,8 +1041,7 @@ const PutExternalModel: OperationHandler = (input, ctx) => {
 
 const GetExternalModels: OperationHandler = (input, ctx) => {
   const modelEndpoint = stringOrUndefined(input["modelEndpoint"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const externalModels = ctx.store
+  const all = ctx.store
     .list<StoredExternalModel>()
     .filter((e) => e.key.startsWith("externalModel/"))
     .map((e) => e.value)
@@ -994,9 +1054,13 @@ const GetExternalModels: OperationHandler = (input, ctx) => {
         : a.modelEndpoint > b.modelEndpoint
           ? 1
           : 0,
-    )
-    .slice(0, max);
-  return { externalModels };
+    );
+  const { page: externalModels, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { externalModels, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const DeleteExternalModel: OperationHandler = (input, ctx) => {
@@ -1049,8 +1113,7 @@ const UpdateModel: OperationHandler = (input, ctx) => {
 const GetModels: OperationHandler = (input, ctx) => {
   const modelId = stringOrUndefined(input["modelId"]);
   const modelType = stringOrUndefined(input["modelType"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const models = ctx.store
+  const all = ctx.store
     .list<StoredModel>()
     .filter((e) => e.key.startsWith("model/"))
     .map((e) => e.value)
@@ -1061,9 +1124,13 @@ const GetModels: OperationHandler = (input, ctx) => {
     )
     .sort((a, b) =>
       a.modelId < b.modelId ? -1 : a.modelId > b.modelId ? 1 : 0,
-    )
-    .slice(0, max);
-  return { models };
+    );
+  const { page: models, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { models, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const DeleteModel: OperationHandler = (input, ctx) => {
@@ -1203,8 +1270,7 @@ const DescribeModelVersions: OperationHandler = (input, ctx) => {
   const modelId = stringOrUndefined(input["modelId"]);
   const modelType = stringOrUndefined(input["modelType"]);
   const modelVersionNumber = stringOrUndefined(input["modelVersionNumber"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const modelVersionDetails = ctx.store
+  const all = ctx.store
     .list<StoredModelVersion>()
     .filter((e) => e.key.startsWith("modelVersion/"))
     .map((e) => e.value)
@@ -1214,9 +1280,16 @@ const DescribeModelVersions: OperationHandler = (input, ctx) => {
         (modelType === undefined || mv.modelType === modelType) &&
         (modelVersionNumber === undefined ||
           mv.modelVersionNumber === modelVersionNumber),
-    )
-    .slice(0, max);
-  return { modelVersionDetails };
+    );
+  const { page: modelVersionDetails, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    modelVersionDetails,
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 let _ruleVersionCounter = 1;
@@ -1265,8 +1338,7 @@ const GetRules: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "detectorId");
   const ruleId = stringOrUndefined(input["ruleId"]);
   const ruleVersion = stringOrUndefined(input["ruleVersion"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const ruleDetails = ctx.store
+  const all = ctx.store
     .list<StoredRule>()
     .filter((e) => e.key.startsWith(`rule/${detectorId}/`))
     .map((e) => e.value)
@@ -1274,9 +1346,13 @@ const GetRules: OperationHandler = (input, ctx) => {
       (r) =>
         (ruleId === undefined || r.ruleId === ruleId) &&
         (ruleVersion === undefined || r.ruleVersion === ruleVersion),
-    )
-    .slice(0, max);
-  return { ruleDetails };
+    );
+  const { page: ruleDetails, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { ruleDetails, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const UpdateRuleMetadata: OperationHandler = (input, ctx) => {
@@ -1407,14 +1483,12 @@ const UpdateList: OperationHandler = (input, ctx) => {
 
 const GetListsMetadata: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["name"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const lists = ctx.store
+  const allLists = ctx.store
     .list<StoredList>()
     .filter((e) => e.key.startsWith("list/"))
     .map((e) => e.value)
     .filter((lst) => name === undefined || lst.name === name)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .slice(0, max)
     .map((lst) => ({
       name: lst.name,
       description: lst.description,
@@ -1423,15 +1497,23 @@ const GetListsMetadata: OperationHandler = (input, ctx) => {
       updatedTime: lst.updatedTime,
       arn: lst.arn,
     }));
-  return { lists };
+  const { page: lists, nextToken } = paginate(
+    allLists,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { lists, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const GetListElements: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const lst = requireList(ctx, name);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const elements = lst.elements.slice(0, max);
-  return { elements };
+  const { page: elements, nextToken } = paginate(
+    lst.elements,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { elements, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const DeleteList: OperationHandler = (input, ctx) => {
@@ -1486,14 +1568,17 @@ const CancelBatchImportJob: OperationHandler = (input, ctx) => {
 
 const GetBatchImportJobs: OperationHandler = (input, ctx) => {
   const jobId = stringOrUndefined(input["jobId"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const batchImports = ctx.store
+  const all = ctx.store
     .list<StoredBatchImportJob>()
     .filter((e) => e.key.startsWith("batchImport/"))
     .map((e) => e.value)
-    .filter((j) => jobId === undefined || j.jobId === jobId)
-    .slice(0, max);
-  return { batchImports };
+    .filter((j) => jobId === undefined || j.jobId === jobId);
+  const { page: batchImports, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { batchImports, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const DeleteBatchImportJob: OperationHandler = (input, ctx) => {
@@ -1551,14 +1636,20 @@ const CancelBatchPredictionJob: OperationHandler = (input, ctx) => {
 
 const GetBatchPredictionJobs: OperationHandler = (input, ctx) => {
   const jobId = stringOrUndefined(input["jobId"]);
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const batchPredictions = ctx.store
+  const all = ctx.store
     .list<StoredBatchPredictionJob>()
     .filter((e) => e.key.startsWith("batchPrediction/"))
     .map((e) => e.value)
-    .filter((j) => jobId === undefined || j.jobId === jobId)
-    .slice(0, max);
-  return { batchPredictions };
+    .filter((j) => jobId === undefined || j.jobId === jobId);
+  const { page: batchPredictions, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    batchPredictions,
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteBatchPredictionJob: OperationHandler = (input, ctx) => {
@@ -1617,6 +1708,15 @@ const GetEvent: OperationHandler = (input, ctx) => {
 const DeleteEvent: OperationHandler = (input, ctx) => {
   const eventId = requireString(input, "eventId");
   const eventTypeName = requireString(input, "eventTypeName");
+  if (
+    ctx.store.get<StoredEvent>(eventKey(eventId, eventTypeName)) === undefined
+  ) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Event not found: ${eventId}`,
+      400,
+    );
+  }
   ctx.store.delete(eventKey(eventId, eventTypeName));
   return {};
 };
@@ -1666,51 +1766,243 @@ const UpdateEventLabel: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const GetEventPrediction: OperationHandler = (input, _ctx) => {
+const GetEventPrediction: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "detectorId");
+  const detectorVersionId = stringOrUndefined(input["detectorVersionId"]);
   const eventId = requireString(input, "eventId");
-  void detectorId;
-  void eventId;
+  const eventTypeName = requireString(input, "eventTypeName");
+  const entities = arrayOrEmpty(input["entities"]) as {
+    entityId?: string;
+    entityType?: string;
+  }[];
+
+  let dv: StoredDetectorVersion | undefined;
+  if (detectorVersionId !== undefined) {
+    dv = ctx.store.get<StoredDetectorVersion>(
+      detectorVersionKey(detectorId, detectorVersionId),
+    );
+    if (dv === undefined) {
+      throw awsError(
+        "ResourceNotFoundException",
+        `Detector version not found: ${detectorId}/${detectorVersionId}`,
+        400,
+      );
+    }
+  } else {
+    dv = ctx.store
+      .list<StoredDetectorVersion>()
+      .filter((e) => e.key.startsWith(`detectorVersion/${detectorId}/`))
+      .map((e) => e.value)
+      .find((v) => v.status === "ACTIVE");
+    if (dv === undefined) {
+      throw awsError(
+        "ResourceNotFoundException",
+        `No ACTIVE detector version for: ${detectorId}`,
+        400,
+      );
+    }
+  }
+
+  const ruleRefs = arrayOrEmpty(dv.rules) as {
+    ruleId?: string;
+    ruleVersion?: string;
+  }[];
+  const ruleResults: { ruleId: string; outcomes: string[] }[] = [];
+  for (const ref of ruleRefs) {
+    const rId = typeof ref.ruleId === "string" ? ref.ruleId : undefined;
+    const rVer =
+      typeof ref.ruleVersion === "string" ? ref.ruleVersion : undefined;
+    if (rId === undefined) continue;
+    const rule =
+      rVer !== undefined
+        ? ctx.store.get<StoredRule>(ruleKey(detectorId, rId, rVer))
+        : ctx.store
+            .list<StoredRule>()
+            .filter((e) => e.key.startsWith(`rule/${detectorId}/${rId}/`))
+            .map((e) => e.value)[0];
+    if (rule !== undefined) {
+      ruleResults.push({ ruleId: rule.ruleId, outcomes: rule.outcomes });
+    }
+  }
+
+  const now = new Date().toISOString();
+  const firstEntity = entities[0];
+  const entityId = firstEntity?.entityId ?? "UNKNOWN";
+  const entityType = firstEntity?.entityType ?? "unknown";
+
+  const prediction: StoredPrediction = {
+    eventId,
+    eventTypeName,
+    detectorId,
+    detectorVersionId: dv.detectorVersionId,
+    predictionTimestamp: now,
+    entityId,
+    entityType,
+    ruleResults,
+    modelVersions: arrayOrEmpty(dv.modelVersions),
+  };
+  ctx.store.set(
+    predictionKey(
+      eventId,
+      eventTypeName,
+      detectorId,
+      dv.detectorVersionId,
+      now,
+    ),
+    prediction,
+  );
+
   return {
     modelScores: [],
-    ruleResults: [
-      {
-        ruleId: "synthetic-rule",
-        outcomes: ["approve"],
-      },
-    ],
+    ruleResults,
     externalModelOutputs: [],
   };
 };
 
-const GetEventPredictionMetadata: OperationHandler = (input, _ctx) => {
+const GetEventPredictionMetadata: OperationHandler = (input, ctx) => {
   const eventId = requireString(input, "eventId");
   const eventTypeName = requireString(input, "eventTypeName");
   const detectorId = requireString(input, "detectorId");
   const detectorVersionId = requireString(input, "detectorVersionId");
   const predictionTimestamp = requireString(input, "predictionTimestamp");
+
+  const dv = requireDetectorVersion(ctx, detectorId, detectorVersionId);
+
+  const stored = ctx.store.get<StoredEvent>(eventKey(eventId, eventTypeName));
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Event not found: ${eventId}`,
+      400,
+    );
+  }
+
+  const firstEntity = (
+    stored.entities as { entityId?: string; entityType?: string }[]
+  )[0];
+  const entityId = firstEntity?.entityId ?? "UNKNOWN";
+  const entityType = firstEntity?.entityType ?? "unknown";
+
+  const ruleRefs = arrayOrEmpty(dv.rules) as {
+    ruleId?: string;
+    ruleVersion?: string;
+  }[];
+  const evaluatedRules: {
+    ruleId: string;
+    ruleVersion: string;
+    expression: string;
+    matched: boolean;
+    outcomes: string[];
+  }[] = [];
+  for (const ref of ruleRefs) {
+    const rId = typeof ref.ruleId === "string" ? ref.ruleId : undefined;
+    const rVer =
+      typeof ref.ruleVersion === "string" ? ref.ruleVersion : undefined;
+    if (rId === undefined) continue;
+    const rule =
+      rVer !== undefined
+        ? ctx.store.get<StoredRule>(ruleKey(detectorId, rId, rVer))
+        : ctx.store
+            .list<StoredRule>()
+            .filter((e) => e.key.startsWith(`rule/${detectorId}/${rId}/`))
+            .map((e) => e.value)[0];
+    if (rule !== undefined) {
+      evaluatedRules.push({
+        ruleId: rule.ruleId,
+        ruleVersion: rule.ruleVersion,
+        expression: rule.expression,
+        matched: true,
+        outcomes: rule.outcomes,
+      });
+    }
+  }
+
+  const outcomes = evaluatedRules.flatMap((r) => r.outcomes);
+
   return {
     eventId,
     eventTypeName,
-    entityId: "synthetic-entity",
-    entityType: "customer",
-    eventTimestamp: predictionTimestamp,
+    entityId,
+    entityType,
+    eventTimestamp: stored.eventTimestamp,
     detectorId,
     detectorVersionId,
-    detectorVersionStatus: "ACTIVE",
-    eventVariables: [],
-    rules: [],
-    ruleExecutionMode: "FIRST_MATCHED",
-    outcomes: [],
-    evaluatedModelVersions: [],
+    detectorVersionStatus: dv.status,
+    eventVariables: Object.entries(stored.eventVariables).map(
+      ([name, value]) => ({
+        name,
+        value,
+        source: "EVENT",
+      }),
+    ),
+    rules: evaluatedRules,
+    ruleExecutionMode: dv.ruleExecutionMode ?? "FIRST_MATCHED",
+    outcomes,
+    evaluatedModelVersions: (
+      arrayOrEmpty(dv.modelVersions) as {
+        modelId?: string;
+        modelType?: string;
+        modelVersionNumber?: string;
+      }[]
+    ).map((mv) => ({
+      modelId: mv.modelId ?? "",
+      modelType: mv.modelType ?? "",
+      modelVersionNumber: mv.modelVersionNumber ?? "",
+      status: "ACTIVE",
+    })),
     evaluatedExternalModels: [],
     predictionTimestamp,
   };
 };
 
-const ListEventPredictions: OperationHandler = (_input, _ctx) => {
+const ListEventPredictions: OperationHandler = (input, ctx) => {
+  const eventIdFilter = (input["eventId"] as { value?: string } | undefined)
+    ?.value;
+  const eventTypeFilter = (input["eventType"] as { value?: string } | undefined)
+    ?.value;
+  const detectorIdFilter = (
+    input["detectorId"] as { value?: string } | undefined
+  )?.value;
+  const detectorVersionIdFilter = (
+    input["detectorVersionId"] as { value?: string } | undefined
+  )?.value;
+  const timeRange = input["predictionTimeRange"] as
+    | { startTime?: string; endTime?: string }
+    | undefined;
+
+  const all = ctx.store
+    .list<StoredPrediction>()
+    .filter((e) => e.key.startsWith("prediction/"))
+    .map((e) => e.value)
+    .filter(
+      (p) =>
+        (eventIdFilter === undefined || p.eventId === eventIdFilter) &&
+        (eventTypeFilter === undefined ||
+          p.eventTypeName === eventTypeFilter) &&
+        (detectorIdFilter === undefined || p.detectorId === detectorIdFilter) &&
+        (detectorVersionIdFilter === undefined ||
+          p.detectorVersionId === detectorVersionIdFilter) &&
+        (timeRange?.startTime === undefined ||
+          p.predictionTimestamp >= timeRange.startTime) &&
+        (timeRange?.endTime === undefined ||
+          p.predictionTimestamp <= timeRange.endTime),
+    )
+    .map((p) => ({
+      eventId: p.eventId,
+      eventTypeName: p.eventTypeName,
+      detectorId: p.detectorId,
+      detectorVersionId: p.detectorVersionId,
+      predictionTimestamp: p.predictionTimestamp,
+    }));
+
+  const { page: eventPredictionSummaries, nextToken } = paginate(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
   return {
-    eventPredictionSummaries: [],
+    eventPredictionSummaries,
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1753,9 +2045,13 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const resourceARN = requireString(input, "resourceARN");
-  const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  const tags = tagsToList(getTags(ctx, resourceARN)).slice(0, max);
-  return { tags };
+  const allTags = tagsToList(getTags(ctx, resourceARN));
+  const { page: tags, nextToken } = paginate(
+    allTags,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { tags, ...(nextToken !== undefined ? { nextToken } : {}) };
 };
 
 const frauddetector = {

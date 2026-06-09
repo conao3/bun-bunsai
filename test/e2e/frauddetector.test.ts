@@ -18,6 +18,7 @@ import {
   DeleteDetectorCommand,
   DeleteDetectorVersionCommand,
   DeleteEntityTypeCommand,
+  DeleteEventCommand,
   DeleteEventTypeCommand,
   DeleteLabelCommand,
   DeleteListCommand,
@@ -33,6 +34,7 @@ import {
   GetDetectorVersionCommand,
   GetDetectorsCommand,
   GetEntityTypesCommand,
+  GetEventPredictionCommand,
   GetEventTypesCommand,
   GetKMSEncryptionKeyCommand,
   GetLabelsCommand,
@@ -43,6 +45,7 @@ import {
   GetOutcomesCommand,
   GetRulesCommand,
   GetVariablesCommand,
+  ListEventPredictionsCommand,
   ListTagsForResourceCommand,
   PutDetectorCommand,
   PutEntityTypeCommand,
@@ -50,6 +53,7 @@ import {
   PutKMSEncryptionKeyCommand,
   PutLabelCommand,
   PutOutcomeCommand,
+  SendEventCommand,
   TagResourceCommand,
   UntagResourceCommand,
   UpdateDetectorVersionMetadataCommand,
@@ -492,4 +496,204 @@ test("FraudDetector batch import/prediction job lifecycle", async () => {
   await client.send(
     new DeleteBatchPredictionJobCommand({ jobId: "e2e-pred-job" }),
   );
+});
+
+test("FraudDetector GetDetectors pagination", async () => {
+  const client = frauddetector();
+  const ids = [
+    "pg-det-a",
+    "pg-det-b",
+    "pg-det-c",
+    "pg-det-d",
+    "pg-det-e",
+    "pg-det-f",
+  ];
+
+  for (const id of ids) {
+    await client.send(
+      new PutDetectorCommand({ detectorId: id, eventTypeName: "pg-ev" }),
+    );
+  }
+
+  const page1 = await client.send(new GetDetectorsCommand({ maxResults: 5 }));
+  expect((page1.detectors ?? []).length).toBe(5);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new GetDetectorsCommand({ maxResults: 5, nextToken: page1.nextToken }),
+  );
+  expect((page2.detectors ?? []).length).toBeGreaterThanOrEqual(1);
+  expect(page2.nextToken).toBeUndefined();
+
+  const allIds = [
+    ...(page1.detectors ?? []).map((d) => d.detectorId),
+    ...(page2.detectors ?? []).map((d) => d.detectorId),
+  ];
+  for (const id of ids) {
+    expect(allIds).toContain(id);
+  }
+
+  for (const id of ids) {
+    await client.send(new DeleteDetectorCommand({ detectorId: id }));
+  }
+});
+
+test("FraudDetector GetEventPrediction evaluates rules", async () => {
+  const client = frauddetector();
+  const detectorId = "pred-eval-detector";
+  const eventTypeName = "pred-eval-ev";
+  const ruleId = "approve-rule";
+
+  await client.send(new PutDetectorCommand({ detectorId, eventTypeName }));
+
+  const ruleResult = await client.send(
+    new CreateRuleCommand({
+      detectorId,
+      ruleId,
+      expression: "$amount < 1000",
+      language: "DETECTORPL",
+      outcomes: ["approve"],
+    }),
+  );
+  const ruleVersion = ruleResult.rule?.ruleVersion ?? "1";
+
+  const dvResult = await client.send(
+    new CreateDetectorVersionCommand({
+      detectorId,
+      rules: [{ detectorId, ruleId, ruleVersion }],
+    }),
+  );
+  const detectorVersionId = dvResult.detectorVersionId ?? "1";
+  await client.send(
+    new UpdateDetectorVersionStatusCommand({
+      detectorId,
+      detectorVersionId,
+      status: "ACTIVE",
+    }),
+  );
+
+  const prediction = await client.send(
+    new GetEventPredictionCommand({
+      detectorId,
+      detectorVersionId,
+      eventId: "ev-001",
+      eventTypeName,
+      entities: [{ entityId: "user-123", entityType: "customer" }],
+      eventTimestamp: new Date().toISOString(),
+      eventVariables: { amount: "500" },
+    }),
+  );
+
+  expect((prediction.ruleResults ?? []).some((r) => r.ruleId === ruleId)).toBe(
+    true,
+  );
+  expect(
+    (prediction.ruleResults ?? []).find((r) => r.ruleId === ruleId)?.outcomes,
+  ).toContain("approve");
+
+  const listed = await client.send(
+    new ListEventPredictionsCommand({
+      detectorId: { value: detectorId },
+      eventId: { value: "ev-001" },
+    }),
+  );
+  expect(
+    (listed.eventPredictionSummaries ?? []).some(
+      (p) => p.eventId === "ev-001" && p.detectorId === detectorId,
+    ),
+  ).toBe(true);
+
+  await client.send(
+    new DeleteDetectorVersionCommand({ detectorId, detectorVersionId }),
+  );
+  await client.send(new DeleteDetectorCommand({ detectorId }));
+});
+
+test("FraudDetector DeleteEvent not-found", async () => {
+  const client = frauddetector();
+
+  await expect(
+    client.send(
+      new DeleteEventCommand({
+        eventId: "nonexistent-event",
+        eventTypeName: "some-type",
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("FraudDetector GetEventPredictionMetadata", async () => {
+  const client = frauddetector();
+  const detectorId = "meta-detector";
+  const eventTypeName = "meta-ev";
+  const ruleId = "meta-rule";
+  const eventId = "meta-event-001";
+
+  await client.send(new PutDetectorCommand({ detectorId, eventTypeName }));
+
+  const ruleResult = await client.send(
+    new CreateRuleCommand({
+      detectorId,
+      ruleId,
+      expression: "$score > 0",
+      language: "DETECTORPL",
+      outcomes: ["review"],
+    }),
+  );
+  const ruleVersion = ruleResult.rule?.ruleVersion ?? "1";
+
+  const dvResult = await client.send(
+    new CreateDetectorVersionCommand({
+      detectorId,
+      rules: [{ detectorId, ruleId, ruleVersion }],
+    }),
+  );
+  const detectorVersionId = dvResult.detectorVersionId ?? "1";
+  await client.send(
+    new UpdateDetectorVersionStatusCommand({
+      detectorId,
+      detectorVersionId,
+      status: "ACTIVE",
+    }),
+  );
+
+  const eventTimestamp = new Date().toISOString();
+  await client.send(
+    new SendEventCommand({
+      eventId,
+      eventTypeName,
+      eventTimestamp,
+      entities: [{ entityId: "cust-456", entityType: "customer" }],
+      eventVariables: { score: "80" },
+    }),
+  );
+
+  const predResult = await client.send(
+    new GetEventPredictionCommand({
+      detectorId,
+      detectorVersionId,
+      eventId,
+      eventTypeName,
+      entities: [{ entityId: "cust-456", entityType: "customer" }],
+      eventTimestamp,
+      eventVariables: { score: "80" },
+    }),
+  );
+  expect((predResult.ruleResults ?? []).length).toBeGreaterThan(0);
+
+  const meta = await client.send(
+    new ListEventPredictionsCommand({
+      eventId: { value: eventId },
+      detectorId: { value: detectorId },
+    }),
+  );
+  expect((meta.eventPredictionSummaries ?? []).length).toBeGreaterThan(0);
+  const summary = (meta.eventPredictionSummaries ?? [])[0];
+  expect(summary?.eventId).toBe(eventId);
+  expect(summary?.detectorId).toBe(detectorId);
+
+  await client.send(
+    new DeleteDetectorVersionCommand({ detectorId, detectorVersionId }),
+  );
+  await client.send(new DeleteDetectorCommand({ detectorId }));
 });

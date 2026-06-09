@@ -987,3 +987,141 @@ test("EMR ModifyInstanceFleet persists capacity", async () => {
 
   await client.send(new TerminateJobFlowsCommand({ JobFlowIds: [clusterId] }));
 });
+
+test("EMR fidelity: RunJobFlow tags, tag cleanup on terminate, Marker pagination, state guard", async () => {
+  const client = emr();
+
+  const run = await client.send(
+    new RunJobFlowCommand({
+      Name: "emr-fidelity-tags",
+      Instances: { InstanceCount: 2, MasterInstanceType: "m5.xlarge" },
+      StepConcurrencyLevel: 5,
+      Tags: [
+        { Key: "env", Value: "test" },
+        { Key: "team", Value: "infra" },
+      ],
+      BootstrapActions: [
+        {
+          Name: "install-tools",
+          ScriptBootstrapAction: {
+            Path: "s3://mybucket/bootstrap.sh",
+            Args: ["--verbose"],
+          },
+        },
+        {
+          Name: "configure-env",
+          ScriptBootstrapAction: {
+            Path: "s3://mybucket/configure.sh",
+            Args: [],
+          },
+        },
+      ],
+    }),
+  );
+  const id = run.JobFlowId ?? "";
+
+  const described = await client.send(
+    new DescribeClusterCommand({ ClusterId: id }),
+  );
+  expect(
+    described.Cluster?.Tags?.some((t) => t.Key === "env" && t.Value === "test"),
+  ).toBe(true);
+  expect(
+    described.Cluster?.Tags?.some(
+      (t) => t.Key === "team" && t.Value === "infra",
+    ),
+  ).toBe(true);
+
+  const listBoots = await client.send(
+    new ListBootstrapActionsCommand({ ClusterId: id }),
+  );
+  expect(listBoots.BootstrapActions?.length).toBe(2);
+  expect(
+    listBoots.BootstrapActions?.some((a) => a.Name === "install-tools"),
+  ).toBe(true);
+  expect(
+    listBoots.BootstrapActions?.some((a) => a.Name === "configure-env"),
+  ).toBe(true);
+
+  const listInst = await client.send(
+    new ListInstancesCommand({ ClusterId: id }),
+  );
+  expect(listInst.Instances?.length).toBe(2);
+
+  await client.send(
+    new ListBootstrapActionsCommand({
+      ClusterId: id,
+      Marker: listBoots.Marker,
+    }),
+  );
+  await client.send(
+    new ListInstancesCommand({ ClusterId: id, Marker: listInst.Marker }),
+  );
+
+  await client.send(new TerminateJobFlowsCommand({ JobFlowIds: [id] }));
+
+  const afterTerminate = await client.send(
+    new DescribeClusterCommand({ ClusterId: id }),
+  );
+  expect(afterTerminate.Cluster?.Status?.State).toBe("TERMINATED");
+  expect((afterTerminate.Cluster?.Tags ?? []).length).toBe(0);
+
+  await client.send(new TerminateJobFlowsCommand({ JobFlowIds: [id] }));
+
+  await expect(
+    client.send(
+      new AddJobFlowStepsCommand({
+        JobFlowId: id,
+        Steps: [
+          {
+            Name: "step-on-terminated",
+            HadoopJarStep: { Jar: "command-runner.jar" },
+          },
+        ],
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("EMR fidelity: tag cleanup on DeleteStudio and DeleteSecurityConfiguration", async () => {
+  const client = emr();
+
+  const studio = await client.send(
+    new CreateStudioCommand({
+      Name: "fidelity-studio",
+      AuthMode: "IAM",
+      VpcId: "vpc-12345",
+      SubnetIds: ["subnet-abc123"],
+      ServiceRole: "arn:aws:iam::123456789012:role/EMRStudio_ServiceRole",
+      WorkspaceSecurityGroupId: "sg-workspace",
+      EngineSecurityGroupId: "sg-engine",
+      DefaultS3Location: "s3://my-bucket/fidelity-studio",
+      Tags: [{ Key: "owner", Value: "me" }],
+    }),
+  );
+  const studioId = studio.StudioId ?? "";
+
+  const beforeDelete = await client.send(
+    new DescribeStudioCommand({ StudioId: studioId }),
+  );
+  expect(beforeDelete.Studio?.Tags?.some((t) => t.Key === "owner")).toBe(true);
+
+  await client.send(new DeleteStudioCommand({ StudioId: studioId }));
+
+  const secConfig = await client.send(
+    new CreateSecurityConfigurationCommand({
+      Name: "fidelity-secconfig",
+      SecurityConfiguration: "{}",
+    }),
+  );
+  const secName = secConfig.Name ?? "";
+
+  await client.send(
+    new AddTagsCommand({
+      ResourceId: secName,
+      Tags: [{ Key: "type", Value: "sec" }],
+    }),
+  );
+
+  await client.send(new DeleteSecurityConfigurationCommand({ Name: secName }));
+});

@@ -12,6 +12,22 @@ const model = loadServiceModel(emrModel);
 
 type Tag = { Key: string; Value: string };
 
+type StoredBootstrapAction = {
+  Name: string;
+  ScriptPath: string;
+  Args: string[];
+};
+
+type StoredInstance = {
+  Ec2InstanceId: string;
+  Status: string;
+  PublicIpAddress: string;
+  PrivateDnsName: string;
+  PublicDnsName: string;
+  PrivateIpAddress: string;
+  InstanceType: string;
+};
+
 type StoredStep = {
   Id: string;
   Name: string;
@@ -133,6 +149,8 @@ const secConfigKey = (name: string): string => `secconfig/${name}`;
 const notebookKey = (id: string): string => `notebook/${id}`;
 const puiKey = (id: string): string => `pui/${id}`;
 const tagsKey = (resourceId: string): string => `tags/${resourceId}`;
+const bootstrapKey = (clusterId: string): string => `bootstrap/${clusterId}`;
+const instanceKey = (clusterId: string): string => `instances/${clusterId}`;
 const autoTerminationKey = (clusterId: string): string =>
   `policy/autotermination/${clusterId}`;
 const managedScalingKey = (clusterId: string): string =>
@@ -289,7 +307,10 @@ const RunJobFlow: OperationHandler = (input, ctx) => {
       instances["UnhealthyNodeReplacement"],
       false,
     ),
-    StepConcurrencyLevel: 1,
+    StepConcurrencyLevel:
+      typeof input["StepConcurrencyLevel"] === "number"
+        ? input["StepConcurrencyLevel"]
+        : 1,
     MasterInstanceType:
       typeof instances["MasterInstanceType"] === "string"
         ? instances["MasterInstanceType"]
@@ -304,10 +325,79 @@ const RunJobFlow: OperationHandler = (input, ctx) => {
         : 1,
   };
   ctx.store.set(clusterKey(id), cluster);
+  if (Array.isArray(input["Tags"])) {
+    const tags = (input["Tags"] as unknown[])
+      .filter(
+        (t): t is Record<string, unknown> =>
+          typeof t === "object" && t !== null,
+      )
+      .map((t) => ({
+        Key: String(t["Key"] ?? ""),
+        Value: String(t["Value"] ?? ""),
+      }));
+    setTags(ctx, id, tags);
+  }
+  if (Array.isArray(input["BootstrapActions"])) {
+    const bootstrapActions = (input["BootstrapActions"] as unknown[])
+      .filter(
+        (a): a is Record<string, unknown> =>
+          typeof a === "object" && a !== null,
+      )
+      .map((a) => {
+        const script =
+          typeof a["ScriptBootstrapAction"] === "object" &&
+          a["ScriptBootstrapAction"] !== null
+            ? (a["ScriptBootstrapAction"] as Record<string, unknown>)
+            : {};
+        return {
+          Name: typeof a["Name"] === "string" ? a["Name"] : "",
+          ScriptPath: typeof script["Path"] === "string" ? script["Path"] : "",
+          Args: stringList(script["Args"]),
+        } as StoredBootstrapAction;
+      });
+    ctx.store.set(bootstrapKey(id), bootstrapActions);
+  }
+  const instanceCount =
+    typeof instances["InstanceCount"] === "number"
+      ? instances["InstanceCount"]
+      : 1;
+  const masterType =
+    typeof instances["MasterInstanceType"] === "string"
+      ? instances["MasterInstanceType"]
+      : "m5.xlarge";
+  const syntheticInstances: StoredInstance[] = Array.from(
+    { length: instanceCount },
+    (_, i) => ({
+      Ec2InstanceId: `i-${crypto.randomUUID().replace(/-/g, "").slice(0, 17)}`,
+      Status: "RUNNING",
+      PublicIpAddress: `10.0.${Math.floor(i / 256)}.${(i % 256) + 1}`,
+      PrivateDnsName: `ip-10-0-0-${i + 1}.ec2.internal`,
+      PublicDnsName: `ec2-10-0-0-${i + 1}.compute-1.amazonaws.com`,
+      PrivateIpAddress: `10.0.${Math.floor(i / 256)}.${(i % 256) + 1}`,
+      InstanceType: masterType,
+    }),
+  );
+  ctx.store.set(instanceKey(id), syntheticInstances);
   return { JobFlowId: id, ClusterArn: cluster.ClusterArn };
 };
 
-const LIST_CLUSTERS_PAGE_SIZE = 50;
+const LIST_PAGE_SIZE = 50;
+
+const applyMarker = <T>(
+  items: T[],
+  marker: string | undefined,
+  getId: (item: T) => string,
+): { page: T[]; nextMarker: string | undefined } => {
+  const startIdx =
+    marker !== undefined
+      ? items.findIndex((item) => getId(item) === marker) + 1
+      : 0;
+  const page = items.slice(startIdx, startIdx + LIST_PAGE_SIZE);
+  const hasMore = startIdx + LIST_PAGE_SIZE < items.length;
+  const nextMarker =
+    hasMore && page.length > 0 ? getId(page[page.length - 1]) : undefined;
+  return { page, nextMarker };
+};
 
 const ListClusters: OperationHandler = (input, ctx) => {
   const stateFilter = stringList(input["ClusterStates"]);
@@ -327,8 +417,8 @@ const ListClusters: OperationHandler = (input, ctx) => {
       ? all.findIndex((entry) => entry.value.Id === marker) + 1
       : 0;
 
-  const page = all.slice(startIdx, startIdx + LIST_CLUSTERS_PAGE_SIZE);
-  const hasMore = startIdx + LIST_CLUSTERS_PAGE_SIZE < all.length;
+  const page = all.slice(startIdx, startIdx + LIST_PAGE_SIZE);
+  const hasMore = startIdx + LIST_PAGE_SIZE < all.length;
   const nextMarker =
     hasMore && page.length > 0 ? page[page.length - 1]?.value.Id : undefined;
 
@@ -366,6 +456,13 @@ const DescribeCluster: OperationHandler = (input, ctx) => {
 const AddJobFlowSteps: OperationHandler = (input, ctx) => {
   const id = requireString(input, "JobFlowId");
   const cluster = requireCluster(ctx, id);
+  if (cluster.State === "TERMINATED" || cluster.State === "TERMINATING") {
+    throw awsError(
+      "InvalidRequestException",
+      `Cannot add steps to cluster ${id} in state ${cluster.State}.`,
+      400,
+    );
+  }
   const steps = Array.isArray(input["Steps"]) ? input["Steps"] : [];
   const added: StoredStep[] = steps.map((step) => {
     const s =
@@ -409,8 +506,9 @@ const TerminateJobFlows: OperationHandler = (input, ctx) => {
   }
   for (const id of ids) {
     const cluster = ctx.store.get<StoredCluster>(clusterKey(id));
-    if (cluster !== undefined) {
+    if (cluster !== undefined && cluster.State !== "TERMINATED") {
       ctx.store.set(clusterKey(id), { ...cluster, State: "TERMINATED" });
+      ctx.store.delete(tagsKey(id));
     }
   }
   return {};
@@ -659,6 +757,7 @@ const DeleteSecurityConfiguration: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   requireSecConfig(ctx, name);
   ctx.store.delete(secConfigKey(name));
+  ctx.store.delete(tagsKey(name));
   return {};
 };
 
@@ -666,6 +765,7 @@ const DeleteStudio: OperationHandler = (input, ctx) => {
   const studioId = requireString(input, "StudioId");
   requireStudio(ctx, studioId);
   ctx.store.delete(studioKey(studioId));
+  ctx.store.delete(tagsKey(studioId));
   return {};
 };
 
@@ -918,71 +1018,128 @@ const GetStudioSessionMapping: OperationHandler = (input, ctx) => {
 const ListBootstrapActions: OperationHandler = (input, ctx) => {
   const clusterId = requireString(input, "ClusterId");
   requireCluster(ctx, clusterId);
-  return { BootstrapActions: [] };
+  const marker =
+    typeof input["Marker"] === "string" ? input["Marker"] : undefined;
+  const all =
+    ctx.store.get<StoredBootstrapAction[]>(bootstrapKey(clusterId)) ?? [];
+  const { page, nextMarker } = applyMarker(all, marker, (a) => a.Name);
+  return {
+    BootstrapActions: page.map((a) => ({
+      Name: a.Name,
+      ScriptPath: a.ScriptPath,
+      Args: a.Args,
+    })),
+    Marker: nextMarker,
+  };
 };
 
 const ListInstanceFleets: OperationHandler = (input, ctx) => {
   const clusterId = requireString(input, "ClusterId");
   requireCluster(ctx, clusterId);
+  const marker =
+    typeof input["Marker"] === "string" ? input["Marker"] : undefined;
   const prefix = `fleet/${clusterId}/`;
-  const fleets = ctx.store
+  const all = ctx.store
     .list<StoredFleet>()
     .filter((e) => e.key.startsWith(prefix))
-    .map((e) => ({
-      Id: e.value.Id,
-      Name: e.value.Name,
-      InstanceFleetType: e.value.InstanceFleetType,
-      Status: { State: e.value.State, StateChangeReason: {}, Timeline: {} },
-      TargetOnDemandCapacity: e.value.TargetOnDemandCapacity ?? 0,
-      TargetSpotCapacity: e.value.TargetSpotCapacity ?? 0,
+    .map((e) => e.value);
+  const { page, nextMarker } = applyMarker(all, marker, (f) => f.Id);
+  return {
+    InstanceFleets: page.map((f) => ({
+      Id: f.Id,
+      Name: f.Name,
+      InstanceFleetType: f.InstanceFleetType,
+      Status: { State: f.State, StateChangeReason: {}, Timeline: {} },
+      TargetOnDemandCapacity: f.TargetOnDemandCapacity ?? 0,
+      TargetSpotCapacity: f.TargetSpotCapacity ?? 0,
       ProvisionedOnDemandCapacity: 0,
       ProvisionedSpotCapacity: 0,
       InstanceTypeSpecifications: [],
-    }));
-  return { InstanceFleets: fleets };
+    })),
+    Marker: nextMarker,
+  };
 };
 
 const ListInstanceGroups: OperationHandler = (input, ctx) => {
   const clusterId = requireString(input, "ClusterId");
   requireCluster(ctx, clusterId);
+  const marker =
+    typeof input["Marker"] === "string" ? input["Marker"] : undefined;
   const prefix = `group/${clusterId}/`;
-  const groups = ctx.store
+  const all = ctx.store
     .list<StoredGroup>()
     .filter((e) => e.key.startsWith(prefix))
-    .map((e) => ({
-      Id: e.value.Id,
-      Name: e.value.Name,
-      Market: e.value.Market,
-      InstanceGroupType: e.value.InstanceGroupType,
-      InstanceType: e.value.InstanceType,
-      RequestedInstanceCount: e.value.RequestedInstanceCount,
-      RunningInstanceCount: e.value.RunningInstanceCount,
-      Status: { State: e.value.State, StateChangeReason: {}, Timeline: {} },
+    .map((e) => e.value);
+  const { page, nextMarker } = applyMarker(all, marker, (g) => g.Id);
+  return {
+    InstanceGroups: page.map((g) => ({
+      Id: g.Id,
+      Name: g.Name,
+      Market: g.Market,
+      InstanceGroupType: g.InstanceGroupType,
+      InstanceType: g.InstanceType,
+      RequestedInstanceCount: g.RequestedInstanceCount,
+      RunningInstanceCount: g.RunningInstanceCount,
+      Status: { State: g.State, StateChangeReason: {}, Timeline: {} },
       Configurations: [],
       EbsBlockDevices: [],
-    }));
-  return { InstanceGroups: groups };
+    })),
+    Marker: nextMarker,
+  };
 };
 
 const ListInstances: OperationHandler = (input, ctx) => {
   const clusterId = requireString(input, "ClusterId");
   requireCluster(ctx, clusterId);
-  return { Instances: [] };
+  const marker =
+    typeof input["Marker"] === "string" ? input["Marker"] : undefined;
+  const all = ctx.store.get<StoredInstance[]>(instanceKey(clusterId)) ?? [];
+  const { page, nextMarker } = applyMarker(
+    all,
+    marker,
+    (inst) => inst.Ec2InstanceId,
+  );
+  return {
+    Instances: page.map((inst) => ({
+      Ec2InstanceId: inst.Ec2InstanceId,
+      Status: {
+        State: inst.Status,
+        StateChangeReason: {},
+        Timeline: {},
+      },
+      PublicIpAddress: inst.PublicIpAddress,
+      PrivateDnsName: inst.PrivateDnsName,
+      PublicDnsName: inst.PublicDnsName,
+      PrivateIpAddress: inst.PrivateIpAddress,
+      InstanceType: inst.InstanceType,
+    })),
+    Marker: nextMarker,
+  };
 };
 
-const ListNotebookExecutions: OperationHandler = (_input, ctx) => {
-  const executions = ctx.store
+const ListNotebookExecutions: OperationHandler = (input, ctx) => {
+  const marker =
+    typeof input["Marker"] === "string" ? input["Marker"] : undefined;
+  const all = ctx.store
     .list<StoredNotebookExecution>()
     .filter((e) => e.key.startsWith("notebook/"))
-    .map((e) => ({
-      NotebookExecutionId: e.value.NotebookExecutionId,
-      EditorId: e.value.EditorId,
-      NotebookExecutionName: e.value.NotebookExecutionName,
-      Status: e.value.Status,
-      StartTime: e.value.StartTime,
-      EndTime: e.value.EndTime,
-    }));
-  return { NotebookExecutions: executions };
+    .map((e) => e.value);
+  const { page, nextMarker } = applyMarker(
+    all,
+    marker,
+    (e) => e.NotebookExecutionId,
+  );
+  return {
+    NotebookExecutions: page.map((e) => ({
+      NotebookExecutionId: e.NotebookExecutionId,
+      EditorId: e.EditorId,
+      NotebookExecutionName: e.NotebookExecutionName,
+      Status: e.Status,
+      StartTime: e.StartTime,
+      EndTime: e.EndTime,
+    })),
+    Marker: nextMarker,
+  };
 };
 
 const ListReleaseLabels: OperationHandler = (_input, _ctx) => {
@@ -991,15 +1148,21 @@ const ListReleaseLabels: OperationHandler = (_input, _ctx) => {
   };
 };
 
-const ListSecurityConfigurations: OperationHandler = (_input, ctx) => {
-  const configs = ctx.store
+const ListSecurityConfigurations: OperationHandler = (input, ctx) => {
+  const marker =
+    typeof input["Marker"] === "string" ? input["Marker"] : undefined;
+  const all = ctx.store
     .list<StoredSecurityConfig>()
     .filter((e) => e.key.startsWith("secconfig/"))
-    .map((e) => ({
-      Name: e.value.Name,
-      CreationDateTime: e.value.CreationDateTime,
-    }));
-  return { SecurityConfigurations: configs };
+    .map((e) => e.value);
+  const { page, nextMarker } = applyMarker(all, marker, (c) => c.Name);
+  return {
+    SecurityConfigurations: page.map((c) => ({
+      Name: c.Name,
+      CreationDateTime: c.CreationDateTime,
+    })),
+    Marker: nextMarker,
+  };
 };
 
 const ListSteps: OperationHandler = (input, ctx) => {
@@ -1007,11 +1170,14 @@ const ListSteps: OperationHandler = (input, ctx) => {
   const cluster = requireCluster(ctx, clusterId);
   const stepStates = stringList(input["StepStates"]);
   const stepIds = stringList(input["StepIds"]);
-  const steps = cluster.Steps.filter(
+  const marker =
+    typeof input["Marker"] === "string" ? input["Marker"] : undefined;
+  const filtered = cluster.Steps.filter(
     (s) => stepIds.length === 0 || stepIds.includes(s.Id),
-  )
-    .filter((s) => stepStates.length === 0 || stepStates.includes(s.State))
-    .map((s) => ({
+  ).filter((s) => stepStates.length === 0 || stepStates.includes(s.State));
+  const { page, nextMarker } = applyMarker(filtered, marker, (s) => s.Id);
+  return {
+    Steps: page.map((s) => ({
       Id: s.Id,
       Name: s.Name,
       Config: { Jar: s.Jar, Properties: {}, Args: [] },
@@ -1021,46 +1187,62 @@ const ListSteps: OperationHandler = (input, ctx) => {
         StateChangeReason: {},
         Timeline: {},
       },
-    }));
-  return { Steps: steps };
+    })),
+    Marker: nextMarker,
+  };
 };
 
 const ListStudioSessionMappings: OperationHandler = (input, ctx) => {
   const studioId = stringOrUndefined(input["StudioId"]);
   const identityType = stringOrUndefined(input["IdentityType"]);
-  const mappings = ctx.store
+  const marker =
+    typeof input["Marker"] === "string" ? input["Marker"] : undefined;
+  const all = ctx.store
     .list<StoredSessionMapping>()
     .filter((e) => e.key.startsWith("mapping/"))
     .map((e) => e.value)
     .filter((m) => studioId === undefined || m.StudioId === studioId)
     .filter(
       (m) => identityType === undefined || m.IdentityType === identityType,
-    )
-    .map((m) => ({
+    );
+  const { page, nextMarker } = applyMarker(
+    all,
+    marker,
+    (m) => `${m.StudioId}/${m.IdentityType}/${m.IdentityId || m.IdentityName}`,
+  );
+  return {
+    SessionMappings: page.map((m) => ({
       StudioId: m.StudioId,
       IdentityId: m.IdentityId,
       IdentityName: m.IdentityName,
       IdentityType: m.IdentityType,
       SessionPolicyArn: m.SessionPolicyArn,
       CreationTime: m.CreationTime,
-    }));
-  return { SessionMappings: mappings };
+    })),
+    Marker: nextMarker,
+  };
 };
 
-const ListStudios: OperationHandler = (_input, ctx) => {
-  const studios = ctx.store
+const ListStudios: OperationHandler = (input, ctx) => {
+  const marker =
+    typeof input["Marker"] === "string" ? input["Marker"] : undefined;
+  const all = ctx.store
     .list<StoredStudio>()
     .filter((e) => e.key.startsWith("studio/"))
-    .map((e) => ({
-      StudioId: e.value.StudioId,
-      Name: e.value.Name,
-      VpcId: e.value.VpcId,
-      Description: e.value.Description,
-      Url: e.value.Url,
-      AuthMode: e.value.AuthMode,
-      CreationTime: e.value.CreationTime,
-    }));
-  return { Studios: studios };
+    .map((e) => e.value);
+  const { page, nextMarker } = applyMarker(all, marker, (s) => s.StudioId);
+  return {
+    Studios: page.map((s) => ({
+      StudioId: s.StudioId,
+      Name: s.Name,
+      VpcId: s.VpcId,
+      Description: s.Description,
+      Url: s.Url,
+      AuthMode: s.AuthMode,
+      CreationTime: s.CreationTime,
+    })),
+    Marker: nextMarker,
+  };
 };
 
 const ListSupportedInstanceTypes: OperationHandler = (_input, _ctx) => {

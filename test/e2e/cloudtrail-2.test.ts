@@ -218,10 +218,10 @@ test("CloudTrail EventDataStore lifecycle", async () => {
   await client.send(
     new DeleteEventDataStoreCommand({ EventDataStore: edsArn }),
   );
-  const afterDelete = await client.send(new ListEventDataStoresCommand({}));
-  expect(
-    (afterDelete.EventDataStores ?? []).map((eds) => eds.EventDataStoreArn),
-  ).not.toContain(edsArn);
+  const afterDelete = await client.send(
+    new GetEventDataStoreCommand({ EventDataStore: edsArn }),
+  );
+  expect(afterDelete.Status).toBe("PENDING_DELETION");
 });
 
 test("CloudTrail Channel lifecycle", async () => {

@@ -358,6 +358,10 @@ const CreateTrail: OperationHandler = (input, ctx) => {
     isLogging: false,
   };
   ctx.store.set(trailKey(name), trail);
+  const tags = normalizeTags(input["TagsList"]);
+  if (tags.length > 0) {
+    ctx.store.set(tagsKey(trail.TrailARN), tags);
+  }
   return {
     Name: trail.Name,
     S3BucketName: trail.S3BucketName,
@@ -415,8 +419,9 @@ const DescribeTrails: OperationHandler = (input, ctx) => {
 
 const DeleteTrail: OperationHandler = (input, ctx) => {
   const name = resolveName(input);
-  requireTrail(ctx, name);
+  const trail = requireTrail(ctx, name);
   ctx.store.delete(trailKey(name));
+  ctx.store.delete(tagsKey(trail.TrailARN));
   return {};
 };
 
@@ -749,7 +754,28 @@ const DeleteEventDataStore: OperationHandler = (input, ctx) => {
       409,
     );
   }
-  ctx.store.delete(edsKey(arn));
+  if (eds.FederationStatus === "ENABLED") {
+    throw awsError(
+      "EventDataStoreFederationEnabledException",
+      `EventDataStore ${arn} has federation enabled.`,
+      409,
+    );
+  }
+  const inUse = listChannels(ctx).some((ch) =>
+    (ch.Destinations as Array<{ Type?: string; Location?: string }>).some(
+      (d) => d.Type === "EVENT_DATA_STORE" && d.Location === arn,
+    ),
+  );
+  if (inUse) {
+    throw awsError(
+      "ChannelExistsForEDSException",
+      `A channel exists for EventDataStore ${arn}.`,
+      409,
+    );
+  }
+  eds.Status = "PENDING_DELETION";
+  ctx.store.set(edsKey(arn), eds);
+  ctx.store.delete(tagsKey(arn));
   return {};
 };
 
@@ -904,6 +930,7 @@ const DeleteChannel: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "Channel");
   requireChannel(ctx, arn);
   ctx.store.delete(channelKey(arn));
+  ctx.store.delete(tagsKey(arn));
   return {};
 };
 
@@ -1025,6 +1052,7 @@ const DeleteDashboard: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(dashboardKey(arn));
+  ctx.store.delete(tagsKey(arn));
   return {};
 };
 

@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  AllocateConnectionOnInterconnectCommand,
+  AllocateHostedConnectionCommand,
   AllocatePrivateVirtualInterfaceCommand,
+  AssociateConnectionWithLagCommand,
   ConfirmConnectionCommand,
   ConfirmPrivateVirtualInterfaceCommand,
   CreateBGPPeerCommand,
@@ -672,4 +675,178 @@ test("DirectConnect BGP failover test", async () => {
   expect(Array.isArray(history.virtualInterfaceTestHistory)).toBe(true);
 
   await client.send(new DeleteConnectionCommand({ connectionId }));
+});
+
+test("DirectConnect DescribeHostedConnections filters by parent connection and paginates", async () => {
+  const client = directconnect();
+
+  const parentA = await client.send(
+    new CreateConnectionCommand({
+      location: "EqDC2",
+      bandwidth: "10Gbps",
+      connectionName: "e2e-host-parent-a",
+    }),
+  );
+  const parentB = await client.send(
+    new CreateConnectionCommand({
+      location: "EqDC2",
+      bandwidth: "10Gbps",
+      connectionName: "e2e-host-parent-b",
+    }),
+  );
+  const parentAId = parentA.connectionId!;
+  const parentBId = parentB.connectionId!;
+
+  const allocated: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const alloc = await client.send(
+      new AllocateHostedConnectionCommand({
+        connectionId: parentAId,
+        ownerAccount: "000000000001",
+        bandwidth: "500Mbps",
+        connectionName: `e2e-host-a-${i}`,
+        vlan: 100 + i,
+      }),
+    );
+    allocated.push(alloc.connectionId!);
+  }
+  await client.send(
+    new AllocateHostedConnectionCommand({
+      connectionId: parentBId,
+      ownerAccount: "000000000001",
+      bandwidth: "500Mbps",
+      connectionName: "e2e-host-b-0",
+      vlan: 200,
+    }),
+  );
+
+  const onA = await client.send(
+    new DescribeHostedConnectionsCommand({ connectionId: parentAId }),
+  );
+  expect((onA.connections ?? []).length).toBe(3);
+  for (const c of onA.connections ?? []) {
+    expect(allocated).toContain(c.connectionId ?? "");
+  }
+
+  const onB = await client.send(
+    new DescribeHostedConnectionsCommand({ connectionId: parentBId }),
+  );
+  expect((onB.connections ?? []).length).toBe(1);
+
+  const page1 = await client.send(
+    new DescribeHostedConnectionsCommand({ connectionId: parentAId }),
+  );
+  expect((page1.connections ?? []).length).toBe(3);
+
+  for (const id of allocated) {
+    await client.send(new DeleteConnectionCommand({ connectionId: id }));
+  }
+  await client.send(new DeleteConnectionCommand({ connectionId: parentAId }));
+  await client.send(new DeleteConnectionCommand({ connectionId: parentBId }));
+});
+
+test("DirectConnect DescribeConnectionsOnInterconnect filters by interconnect", async () => {
+  const client = directconnect();
+
+  const ix = await client.send(
+    new CreateInterconnectCommand({
+      bandwidth: "10Gbps",
+      location: "EqDC2",
+      interconnectName: "e2e-ix-filter",
+    }),
+  );
+  const interconnectId = ix.interconnectId!;
+
+  await client.send(
+    new CreateConnectionCommand({
+      location: "EqDC2",
+      bandwidth: "1Gbps",
+      connectionName: "unrelated-conn",
+    }),
+  );
+
+  const allocated = await client.send(
+    new AllocateConnectionOnInterconnectCommand({
+      bandwidth: "500Mbps",
+      connectionName: "e2e-on-ix",
+      ownerAccount: "000000000001",
+      interconnectId,
+      vlan: 300,
+    }),
+  );
+
+  const listed = await client.send(
+    new DescribeConnectionsOnInterconnectCommand({ interconnectId }),
+  );
+  expect((listed.connections ?? []).length).toBe(1);
+  expect((listed.connections ?? [])[0].connectionId).toBe(
+    allocated.connectionId,
+  );
+});
+
+test("DirectConnect DescribeDirectConnectGateways paginates with maxResults+nextToken", async () => {
+  const client = directconnect();
+  const ids: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    const gw = await client.send(
+      new CreateDirectConnectGatewayCommand({
+        directConnectGatewayName: `e2e-page-gw-${i}`,
+      }),
+    );
+    ids.push(gw.directConnectGateway?.directConnectGatewayId ?? "");
+  }
+
+  const page1 = await client.send(
+    new DescribeDirectConnectGatewaysCommand({ maxResults: 2 }),
+  );
+  expect((page1.directConnectGateways ?? []).length).toBe(2);
+  expect(typeof page1.nextToken).toBe("string");
+
+  const page2 = await client.send(
+    new DescribeDirectConnectGatewaysCommand({
+      maxResults: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect((page2.directConnectGateways ?? []).length).toBeGreaterThanOrEqual(1);
+
+  for (const id of ids) {
+    await client.send(
+      new DeleteDirectConnectGatewayCommand({ directConnectGatewayId: id }),
+    );
+  }
+});
+
+test("DirectConnect DeleteLag rejects when child connections remain", async () => {
+  const client = directconnect();
+
+  const lag = await client.send(
+    new CreateLagCommand({
+      numberOfConnections: 1,
+      location: "EqDC2",
+      connectionsBandwidth: "1Gbps",
+      lagName: "e2e-lag-with-child",
+    }),
+  );
+  const lagId = lag.lagId!;
+
+  const conn = await client.send(
+    new CreateConnectionCommand({
+      location: "EqDC2",
+      bandwidth: "1Gbps",
+      connectionName: "e2e-conn-in-lag",
+    }),
+  );
+  const connectionId = conn.connectionId!;
+  await client.send(
+    new AssociateConnectionWithLagCommand({ connectionId, lagId }),
+  );
+
+  await expect(client.send(new DeleteLagCommand({ lagId }))).rejects.toThrow(
+    /active connection/,
+  );
+
+  await client.send(new DeleteConnectionCommand({ connectionId }));
+  const deleted = await client.send(new DeleteLagCommand({ lagId }));
+  expect(deleted.lagState).toBe("deleted");
 });

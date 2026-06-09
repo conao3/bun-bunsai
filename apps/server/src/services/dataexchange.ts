@@ -117,6 +117,29 @@ const objectOrEmpty = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
+const encodeCursor = (offset: number): string => btoa(String(offset));
+
+const decodeCursor = (token: string): number => {
+  const n = parseInt(atob(token), 10);
+  return isNaN(n) ? 0 : n;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; NextToken: string | undefined } => {
+  const offset = typeof nextToken === "string" ? decodeCursor(nextToken) : 0;
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : items.length;
+  const page = items.slice(offset, offset + max);
+  const token =
+    offset + max < items.length ? encodeCursor(offset + max) : undefined;
+  return { items: page, NextToken: token };
+};
+
 const requireString = (
   input: Record<string, unknown>,
   field: string,
@@ -382,13 +405,27 @@ const GetDataSet: OperationHandler = (input, ctx) => {
 };
 
 const ListDataSets: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
-  const dataSets = ctx.store
+  const originFilter = stringOrUndefined(input["Origin"]);
+  let dataSets = ctx.store
     .list<StoredDataSet>()
     .filter((entry) => entry.key.startsWith(dataSetPrefix))
-    .map((entry) => entry.value)
-    .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
-  return { DataSets: dataSets.slice(0, max).map(dataSetView) };
+    .map((entry) => entry.value);
+  if (originFilter !== undefined) {
+    dataSets = dataSets.filter((ds) => ds.Origin === originFilter);
+  }
+  if (originFilter === "OWNED") {
+    dataSets = dataSets.sort((a, b) => b.CreatedAt - a.CreatedAt);
+  } else {
+    dataSets = dataSets.sort((a, b) =>
+      a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0,
+    );
+  }
+  const { items, NextToken } = paginate(
+    dataSets,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { DataSets: items.map(dataSetView), NextToken };
 };
 
 const UpdateDataSet: OperationHandler = (input, ctx) => {
@@ -448,14 +485,18 @@ const GetRevision: OperationHandler = (input, ctx) => {
 const ListDataSetRevisions: OperationHandler = (input, ctx) => {
   const dataSetId = requireString(input, "DataSetId");
   requireDataSet(ctx, dataSetId);
-  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
   const prefix = `${revisionPrefix}${dataSetId}:`;
   const revisions = ctx.store
     .list<StoredRevision>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
     .sort((a, b) => a.CreatedAt - b.CreatedAt);
-  return { Revisions: revisions.slice(0, max).map(revisionView) };
+  const { items, NextToken } = paginate(
+    revisions,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Revisions: items.map(revisionView), NextToken };
 };
 
 const UpdateRevision: OperationHandler = (input, ctx) => {
@@ -532,14 +573,18 @@ const ListRevisionAssets: OperationHandler = (input, ctx) => {
   const dataSetId = requireString(input, "DataSetId");
   const revisionId = requireString(input, "RevisionId");
   requireRevision(ctx, dataSetId, revisionId);
-  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
   const prefix = `${assetPrefix}${dataSetId}:${revisionId}:`;
   const assets = ctx.store
     .list<StoredAsset>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
     .sort((a, b) => a.CreatedAt - b.CreatedAt);
-  return { Assets: assets.slice(0, max).map(assetView) };
+  const { items, NextToken } = paginate(
+    assets,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Assets: items.map(assetView), NextToken };
 };
 
 const CreateJob: OperationHandler = (input, ctx) => {
@@ -570,18 +615,29 @@ const GetJob: OperationHandler = (input, ctx) => {
 };
 
 const ListJobs: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
   const jobs = ctx.store
     .list<StoredJob>()
     .filter((e) => e.key.startsWith(jobPrefix))
     .map((e) => e.value)
     .sort((a, b) => a.CreatedAt - b.CreatedAt);
-  return { Jobs: jobs.slice(0, max).map(jobView) };
+  const { items, NextToken } = paginate(
+    jobs,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Jobs: items.map(jobView), NextToken };
 };
 
 const StartJob: OperationHandler = (input, ctx) => {
   const id = requireString(input, "JobId");
   const existing = requireJob(ctx, id);
+  if (existing.State !== "WAITING") {
+    throw awsError(
+      "ConflictException",
+      `Job ${id} is not in a startable state.`,
+      409,
+    );
+  }
   const job: StoredJob = {
     ...existing,
     State: "IN_PROGRESS",
@@ -594,6 +650,13 @@ const StartJob: OperationHandler = (input, ctx) => {
 const CancelJob: OperationHandler = (input, ctx) => {
   const id = requireString(input, "JobId");
   const existing = requireJob(ctx, id);
+  if (existing.State !== "WAITING" && existing.State !== "IN_PROGRESS") {
+    throw awsError(
+      "ConflictException",
+      `Job ${id} cannot be cancelled in state ${existing.State}.`,
+      409,
+    );
+  }
   const job: StoredJob = {
     ...existing,
     State: "CANCELLED",
@@ -625,13 +688,17 @@ const GetEventAction: OperationHandler = (input, ctx) => {
 };
 
 const ListEventActions: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
   const eventActions = ctx.store
     .list<StoredEventAction>()
     .filter((e) => e.key.startsWith(eventActionPrefix))
     .map((e) => e.value)
     .sort((a, b) => a.CreatedAt - b.CreatedAt);
-  return { EventActions: eventActions.slice(0, max).map(eventActionView) };
+  const { items, NextToken } = paginate(
+    eventActions,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { EventActions: items.map(eventActionView), NextToken };
 };
 
 const UpdateEventAction: OperationHandler = (input, ctx) => {
@@ -738,23 +805,35 @@ const GetReceivedDataGrant: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  if (grant.ReceiverPrincipal !== ctx.account) {
+    throw awsError(
+      "AccessDeniedException",
+      `Access denied to data grant ${arn}.`,
+      403,
+    );
+  }
   return dataGrantView(grant);
 };
 
 const ListReceivedDataGrants: OperationHandler = (input, ctx) => {
-  const max = numberOrUndefined(input["MaxResults"]) ?? 50;
   const acceptanceStateFilter = stringOrUndefined(input["AcceptanceState"]);
   const grants = ctx.store
     .list<StoredDataGrant>()
     .filter((e) => e.key.startsWith(dataGrantPrefix))
     .map((e) => e.value)
+    .filter((g) => g.ReceiverPrincipal === ctx.account)
     .filter(
       (g) =>
         acceptanceStateFilter === undefined ||
         g.AcceptanceState === acceptanceStateFilter,
     )
     .sort((a, b) => a.CreatedAt - b.CreatedAt);
-  return { DataGrantSummaries: grants.slice(0, max).map(dataGrantView) };
+  const { items, NextToken } = paginate(
+    grants,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { DataGrantSummaries: items.map(dataGrantView), NextToken };
 };
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
@@ -785,10 +864,22 @@ const UntagResource: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const SendApiAsset: OperationHandler = (_input, _ctx) => ({
-  Body: "",
-  ResponseHeaders: {},
-});
+const SendApiAsset: OperationHandler = (input, ctx) => {
+  const dataSetId = requireString(input, "DataSetId");
+  const revisionId = requireString(input, "RevisionId");
+  const assetId = requireString(input, "AssetId");
+  const dataSet = requireDataSet(ctx, dataSetId);
+  if (dataSet.AssetType !== "API_GATEWAY_API") {
+    throw awsError(
+      "ValidationException",
+      `DataSet ${dataSetId} is not of API_GATEWAY_API type.`,
+      400,
+    );
+  }
+  requireRevision(ctx, dataSetId, revisionId);
+  requireAsset(ctx, dataSetId, revisionId, assetId);
+  return { Body: "", ResponseHeaders: {} };
+};
 
 const SendDataSetNotification: OperationHandler = (input, ctx) => {
   const dataSetId = requireString(input, "DataSetId");

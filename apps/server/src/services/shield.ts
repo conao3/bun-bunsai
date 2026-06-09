@@ -144,6 +144,29 @@ const getOrCreateTags = (ctx: ServiceContext, arn: string): StoredTags => {
   return existing ?? { Tags: [] };
 };
 
+const encodeCursor = (offset: number): string => btoa(String(offset));
+
+const decodeCursor = (token: string): number => {
+  const n = parseInt(atob(token), 10);
+  return Number.isNaN(n) ? 0 : n;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; NextToken: string | undefined } => {
+  const offset = typeof nextToken === "string" ? decodeCursor(nextToken) : 0;
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : items.length;
+  const page = items.slice(offset, offset + max);
+  const token =
+    offset + max < items.length ? encodeCursor(offset + max) : undefined;
+  return { items: page, NextToken: token };
+};
+
 const subscriptionLimits = () => ({
   ProtectionLimits: {
     ProtectedResourceTypeLimits: [
@@ -212,18 +235,55 @@ const DescribeProtection: OperationHandler = (input, ctx) => {
   );
 };
 
-const ListProtections: OperationHandler = (_input, ctx) => {
-  const protections = ctx.store
+const ListProtections: OperationHandler = (input, ctx) => {
+  const filters =
+    typeof input["InclusionFilters"] === "object" &&
+    input["InclusionFilters"] !== null
+      ? (input["InclusionFilters"] as Record<string, unknown>)
+      : undefined;
+  const filterNames = Array.isArray(filters?.["ProtectionNames"])
+    ? (filters["ProtectionNames"] as string[])
+    : undefined;
+  const filterArns = Array.isArray(filters?.["ResourceArns"])
+    ? (filters["ResourceArns"] as string[])
+    : undefined;
+  const filterTypes = Array.isArray(filters?.["ResourceTypes"])
+    ? (filters["ResourceTypes"] as string[])
+    : undefined;
+
+  let all = ctx.store
     .list<StoredProtection>()
     .filter((entry) => entry.key.startsWith("protection/"))
     .map((entry) => entry.value);
-  return { Protections: protections };
+
+  if (filterNames !== undefined) {
+    all = all.filter((p) => filterNames.includes(p.Name));
+  }
+  if (filterArns !== undefined) {
+    all = all.filter((p) => filterArns.includes(p.ResourceArn));
+  }
+  if (filterTypes !== undefined) {
+    all = all.filter((p) =>
+      filterTypes.some((t) => p.ResourceArn.includes(t.toLowerCase())),
+    );
+  }
+
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return {
+    Protections: items,
+    ...(NextToken !== undefined ? { NextToken } : {}),
+  };
 };
 
 const DeleteProtection: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ProtectionId");
-  requireProtection(ctx, id);
+  const protection = requireProtection(ctx, id);
   ctx.store.delete(protectionKey(id));
+  ctx.store.delete(tagKey(protection.ProtectionArn));
   return {};
 };
 
@@ -324,8 +384,9 @@ const CreateSubscription: OperationHandler = (_input, ctx) => {
 
 const DeleteProtectionGroup: OperationHandler = (input, ctx) => {
   const groupId = requireString(input, "ProtectionGroupId");
-  requireProtectionGroup(ctx, groupId);
+  const group = requireProtectionGroup(ctx, groupId);
   ctx.store.delete(protectionGroupKey(groupId));
+  ctx.store.delete(tagKey(group.ProtectionGroupArn));
   return {};
 };
 
@@ -340,6 +401,8 @@ const DescribeAttack: OperationHandler = (input, _ctx) => {
   return {
     Attack: {
       AttackId: attackId,
+      StartTime: 0,
+      EndTime: 0,
       SubResources: [],
       AttackCounters: [],
       AttackProperties: [],
@@ -349,7 +412,7 @@ const DescribeAttack: OperationHandler = (input, _ctx) => {
 };
 
 const DescribeAttackStatistics: OperationHandler = (_input, _ctx) => ({
-  TimeRange: {},
+  TimeRange: { FromInclusive: 0, ToExclusive: 0 },
   DataItems: [{ AttackCount: 0 }],
 });
 
@@ -476,16 +539,88 @@ const GetSubscriptionState: OperationHandler = (_input, ctx) => {
   };
 };
 
-const ListAttacks: OperationHandler = (_input, _ctx) => ({
-  AttackSummaries: [],
-});
+const ListAttacks: OperationHandler = (input, _ctx) => {
+  const filterArns = Array.isArray(input["ResourceArns"])
+    ? (input["ResourceArns"] as string[])
+    : undefined;
+  const startTime =
+    typeof input["StartTime"] === "object" && input["StartTime"] !== null
+      ? (input["StartTime"] as Record<string, unknown>)
+      : undefined;
+  const endTime =
+    typeof input["EndTime"] === "object" && input["EndTime"] !== null
+      ? (input["EndTime"] as Record<string, unknown>)
+      : undefined;
 
-const ListProtectionGroups: OperationHandler = (_input, ctx) => {
-  const groups = ctx.store
+  let all: unknown[] = [];
+
+  if (filterArns !== undefined && filterArns.length === 0) {
+    all = [];
+  }
+  if (startTime !== undefined || endTime !== undefined) {
+    all = [];
+  }
+
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return {
+    AttackSummaries: items,
+    ...(NextToken !== undefined ? { NextToken } : {}),
+  };
+};
+
+const ListProtectionGroups: OperationHandler = (input, ctx) => {
+  const filters =
+    typeof input["InclusionFilters"] === "object" &&
+    input["InclusionFilters"] !== null
+      ? (input["InclusionFilters"] as Record<string, unknown>)
+      : undefined;
+  const filterIds = Array.isArray(filters?.["ProtectionGroupIds"])
+    ? (filters["ProtectionGroupIds"] as string[])
+    : undefined;
+  const filterPatterns = Array.isArray(filters?.["Patterns"])
+    ? (filters["Patterns"] as string[])
+    : undefined;
+  const filterAggregations = Array.isArray(filters?.["Aggregations"])
+    ? (filters["Aggregations"] as string[])
+    : undefined;
+  const filterTypes = Array.isArray(filters?.["ResourceTypes"])
+    ? (filters["ResourceTypes"] as string[])
+    : undefined;
+
+  let all = ctx.store
     .list<StoredProtectionGroup>()
     .filter((entry) => entry.key.startsWith("protection-group/"))
     .map((entry) => entry.value);
-  return { ProtectionGroups: groups };
+
+  if (filterIds !== undefined) {
+    all = all.filter((g) => filterIds.includes(g.ProtectionGroupId));
+  }
+  if (filterPatterns !== undefined) {
+    all = all.filter((g) => filterPatterns.includes(g.Pattern));
+  }
+  if (filterAggregations !== undefined) {
+    all = all.filter((g) => filterAggregations.includes(g.Aggregation));
+  }
+  if (filterTypes !== undefined) {
+    all = all.filter(
+      (g) =>
+        g.ResourceType !== undefined && filterTypes.includes(g.ResourceType),
+    );
+  }
+
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return {
+    ProtectionGroups: items,
+    ...(NextToken !== undefined ? { NextToken } : {}),
+  };
 };
 
 const ListResourcesInProtectionGroup: OperationHandler = (input, ctx) => {

@@ -145,8 +145,20 @@ describe("S3 fidelity gaps e2e", () => {
     );
     expect((page2.Versions ?? []).length).toBeGreaterThan(0);
 
-    for (const key of ["a", "b", "c"]) {
-      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    const allVersions = await client.send(
+      new ListObjectVersionsCommand({ Bucket: bucket }),
+    );
+    for (const v of [
+      ...(allVersions.Versions ?? []),
+      ...(allVersions.DeleteMarkers ?? []),
+    ]) {
+      await client.send(
+        new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: v.Key,
+          VersionId: v.VersionId,
+        }),
+      );
     }
     await client.send(new DeleteBucketCommand({ Bucket: bucket }));
   });

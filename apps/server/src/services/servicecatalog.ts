@@ -612,8 +612,7 @@ const DescribePortfolioShares: OperationHandler = (input, ctx) => {
 const AcceptPortfolioShare: OperationHandler = (input, ctx) => {
   const portfolioId = requireString(input, "PortfolioId");
   requirePortfolio(ctx, portfolioId);
-  const shareType =
-    optionalString(input, "PortfolioShareType") ?? "IMPORTED";
+  const shareType = optionalString(input, "PortfolioShareType") ?? "IMPORTED";
   ctx.store.set(acceptedShareKey(portfolioId), shareType);
   return {};
 };
@@ -914,8 +913,7 @@ const CopyProduct: OperationHandler = (input, ctx) => {
   const sourceProduct = ctx.store
     .list<StoredProduct>()
     .find(
-      (e) =>
-        e.key.startsWith("product/") && e.value.ARN === sourceProductArn,
+      (e) => e.key.startsWith("product/") && e.value.ARN === sourceProductArn,
     )?.value;
   if (sourceProduct === undefined) {
     throw awsError(
@@ -1266,7 +1264,13 @@ const ProvisionProduct: OperationHandler = (input, ctx) => {
   requirePA(ctx, paId);
   const ppId = `pp-${randomChars(13)}`;
   const now = nowSeconds();
-  const record = createRecord(ctx, ppId, ppName, "PROVISION_PRODUCT", "CREATED");
+  const record = createRecord(
+    ctx,
+    ppId,
+    ppName,
+    "PROVISION_PRODUCT",
+    "CREATED",
+  );
   const pp: StoredProvisionedProduct = {
     Id: ppId,
     ARN: `arn:aws:servicecatalog:${ctx.region}:${ctx.account}:stack/${ppName}/${ppId}`,

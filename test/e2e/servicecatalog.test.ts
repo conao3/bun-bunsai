@@ -412,9 +412,7 @@ test("ServiceCatalog SearchProducts pagination", async () => {
     ids.push(p.ProductViewDetail?.ProductViewSummary?.Id ?? "");
   }
 
-  const page1 = await client.send(
-    new SearchProductsCommand({ PageSize: 2 }),
-  );
+  const page1 = await client.send(new SearchProductsCommand({ PageSize: 2 }));
   expect((page1.ProductViewSummaries ?? []).length).toBe(2);
   expect(page1.NextPageToken).toBeDefined();
 
@@ -444,8 +442,7 @@ test("ServiceCatalog CopyProduct + DescribeCopyProductStatus", async () => {
       },
     }),
   );
-  const srcProductArn =
-    created.ProductViewDetail?.ProductARN ?? "";
+  const srcProductArn = created.ProductViewDetail?.ProductARN ?? "";
   expect(srcProductArn).toContain("product/");
 
   const copied = await client.send(

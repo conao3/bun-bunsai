@@ -715,3 +715,85 @@ test("datasync tag operations", async () => {
   );
   expect((afterUntag.Tags ?? []).some((t) => t.Key === "env")).toBe(false);
 });
+
+test("datasync fidelity: create-time tags, dedup, cleanup, in-use guard", async () => {
+  const datasync = client();
+
+  const loc = await datasync.send(
+    new CreateLocationS3Command({
+      S3BucketArn: "arn:aws:s3:::fidelity-src-bucket",
+      S3Config: {
+        BucketAccessRoleArn: "arn:aws:iam::000000000000:role/fidelity-role",
+      },
+      Tags: [{ Key: "tier", Value: "12" }],
+    }),
+  );
+  const locArn = loc.LocationArn!;
+
+  const afterCreate = await datasync.send(
+    new ListTagsForResourceCommand({ ResourceArn: locArn }),
+  );
+  expect(
+    (afterCreate.Tags ?? []).some((t) => t.Key === "tier" && t.Value === "12"),
+  ).toBe(true);
+
+  await datasync.send(
+    new TagResourceCommand({
+      ResourceArn: locArn,
+      Tags: [{ Key: "tier", Value: "updated" }],
+    }),
+  );
+  const afterDedup = await datasync.send(
+    new ListTagsForResourceCommand({ ResourceArn: locArn }),
+  );
+  const tierTags = (afterDedup.Tags ?? []).filter((t) => t.Key === "tier");
+  expect(tierTags.length).toBe(1);
+  expect(tierTags[0]?.Value).toBe("updated");
+
+  const dstLoc = await datasync.send(
+    new CreateLocationS3Command({
+      S3BucketArn: "arn:aws:s3:::fidelity-dst-bucket",
+      S3Config: {
+        BucketAccessRoleArn: "arn:aws:iam::000000000000:role/fidelity-role",
+      },
+    }),
+  );
+  const dstArn = dstLoc.LocationArn!;
+
+  const task = await datasync.send(
+    new CreateTaskCommand({
+      SourceLocationArn: locArn,
+      DestinationLocationArn: dstArn,
+      Name: "fidelity-task",
+      Tags: [{ Key: "task-tag", Value: "yes" }],
+    }),
+  );
+  const taskArn = task.TaskArn!;
+
+  const taskTags = await datasync.send(
+    new ListTagsForResourceCommand({ ResourceArn: taskArn }),
+  );
+  expect(
+    (taskTags.Tags ?? []).some(
+      (t) => t.Key === "task-tag" && t.Value === "yes",
+    ),
+  ).toBe(true);
+
+  await expect(
+    datasync.send(new DeleteLocationCommand({ LocationArn: locArn })),
+  ).rejects.toThrow();
+
+  await datasync.send(new DeleteTaskCommand({ TaskArn: taskArn }));
+
+  const afterTaskDelete = await datasync.send(
+    new ListTagsForResourceCommand({ ResourceArn: taskArn }),
+  );
+  expect((afterTaskDelete.Tags ?? []).length).toBe(0);
+
+  await datasync.send(new DeleteLocationCommand({ LocationArn: locArn }));
+
+  const afterLocDelete = await datasync.send(
+    new ListTagsForResourceCommand({ ResourceArn: locArn }),
+  );
+  expect((afterLocDelete.Tags ?? []).length).toBe(0);
+});

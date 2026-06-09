@@ -161,6 +161,31 @@ const siteArn = (ctx: ServiceContext, id: string): string =>
 
 const nowIso = (): string => new Date().toISOString();
 
+const encodeCursor = (offset: number): string => btoa(String(offset));
+const decodeCursor = (token: string): number => {
+  const n = Number(atob(token));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+};
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; NextToken: string | undefined } => {
+  const offset = typeof nextToken === "string" ? decodeCursor(nextToken) : 0;
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : items.length;
+  const page = items.slice(offset, offset + max);
+  const token =
+    offset + max < items.length ? encodeCursor(offset + max) : undefined;
+  return { items: page, NextToken: token };
+};
+const stringArrayFrom = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value.filter((v): v is string => typeof v === "string");
+};
+
 const resolveOutpost = (
   ctx: ServiceContext,
   identifier: string,
@@ -189,7 +214,10 @@ const resolveSite = (
   return ctx.store.get<StoredSite>(siteKey(identifier));
 };
 
-const outpostView = (outpost: StoredOutpost): Record<string, unknown> => ({
+const outpostView = (
+  outpost: StoredOutpost,
+  tags?: Record<string, string>,
+): Record<string, unknown> => ({
   OutpostId: outpost.OutpostId,
   OwnerId: outpost.OwnerId,
   OutpostArn: outpost.OutpostArn,
@@ -199,18 +227,21 @@ const outpostView = (outpost: StoredOutpost): Record<string, unknown> => ({
   LifeCycleStatus: outpost.LifeCycleStatus,
   AvailabilityZone: outpost.AvailabilityZone,
   AvailabilityZoneId: outpost.AvailabilityZoneId,
-  Tags: outpost.Tags,
+  Tags: tags ?? outpost.Tags,
   SupportedHardwareType: outpost.SupportedHardwareType,
 });
 
-const siteView = (site: StoredSite): Record<string, unknown> => ({
+const siteView = (
+  site: StoredSite,
+  tags?: Record<string, string>,
+): Record<string, unknown> => ({
   SiteId: site.SiteId,
   AccountId: site.AccountId,
   Name: site.Name,
   SiteArn: site.SiteArn,
   Description: site.Description,
   Notes: site.Notes,
-  Tags: site.Tags,
+  Tags: tags ?? site.Tags,
   OperatingAddressCountryCode: site.OperatingAddressCountryCode,
   OperatingAddressStateOrRegion: site.OperatingAddressStateOrRegion,
   OperatingAddressCity: site.OperatingAddressCity,
@@ -336,6 +367,7 @@ const CreateOutpost: OperationHandler = (input, ctx) => {
     SupportedHardwareType: stringOrUndefined(input["SupportedHardwareType"]),
   };
   ctx.store.set(outpostKey(id), outpost);
+  ctx.store.set(tagsKey(outpost.OutpostArn), outpost.Tags);
   return { Outpost: outpostView(outpost) };
 };
 
@@ -345,25 +377,52 @@ const GetOutpost: OperationHandler = (input, ctx) => {
   if (outpost === undefined) {
     throw awsError("NotFoundException", `Outpost ${id} not found.`, 404);
   }
-  return { Outpost: outpostView(outpost) };
+  return { Outpost: outpostView(outpost, getTags(ctx, outpost.OutpostArn)) };
 };
 
-const ListOutposts: OperationHandler = (_input, ctx) => {
-  const outposts = ctx.store
+const ListOutposts: OperationHandler = (input, ctx) => {
+  const lcFilter = stringArrayFrom(input["LifeCycleStatusFilter"]);
+  const azFilter = stringArrayFrom(input["AvailabilityZoneFilter"]);
+  const azIdFilter = stringArrayFrom(input["AvailabilityZoneIdFilter"]);
+  let outposts = ctx.store
     .list<StoredOutpost>()
     .filter((entry) => entry.key.startsWith(outpostPrefix))
     .map((entry) => entry.value)
     .sort((a, b) =>
       a.OutpostId < b.OutpostId ? -1 : a.OutpostId > b.OutpostId ? 1 : 0,
     );
-  return { Outposts: outposts.map(outpostView) };
+  if (lcFilter.length > 0)
+    outposts = outposts.filter((o) => lcFilter.includes(o.LifeCycleStatus));
+  if (azFilter.length > 0)
+    outposts = outposts.filter(
+      (o) =>
+        o.AvailabilityZone !== undefined &&
+        azFilter.includes(o.AvailabilityZone),
+    );
+  if (azIdFilter.length > 0)
+    outposts = outposts.filter(
+      (o) =>
+        o.AvailabilityZoneId !== undefined &&
+        azIdFilter.includes(o.AvailabilityZoneId),
+    );
+  const { items, NextToken } = paginate(
+    outposts,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return {
+    Outposts: items.map((o) => outpostView(o, getTags(ctx, o.OutpostArn))),
+    NextToken,
+  };
 };
 
 const DeleteOutpost: OperationHandler = (input, ctx) => {
   const id = requireString(input, "OutpostId");
-  if (resolveOutpost(ctx, id) === undefined) {
+  const outpost = resolveOutpost(ctx, id);
+  if (outpost === undefined) {
     throw awsError("NotFoundException", `Outpost ${id} not found.`, 404);
   }
+  ctx.store.delete(tagsKey(outpost.OutpostArn));
   ctx.store.delete(outpostKey(id));
   return {};
 };
@@ -387,7 +446,7 @@ const UpdateOutpost: OperationHandler = (input, ctx) => {
         : outpost.SupportedHardwareType,
   };
   ctx.store.set(outpostKey(outpost.OutpostId), updated);
-  return { Outpost: outpostView(updated) };
+  return { Outpost: outpostView(updated, getTags(ctx, updated.OutpostArn)) };
 };
 
 const CreateSite: OperationHandler = (input, ctx) => {
@@ -412,6 +471,7 @@ const CreateSite: OperationHandler = (input, ctx) => {
     site.OperatingAddressCountryCode = site.OperatingAddress.CountryCode;
   }
   ctx.store.set(siteKey(id), site);
+  ctx.store.set(tagsKey(site.SiteArn), site.Tags);
   return { Site: siteView(site) };
 };
 
@@ -421,7 +481,7 @@ const GetSite: OperationHandler = (input, ctx) => {
   if (site === undefined) {
     throw awsError("NotFoundException", `Site ${id} not found.`, 404);
   }
-  return { Site: siteView(site) };
+  return { Site: siteView(site, getTags(ctx, site.SiteArn)) };
 };
 
 const UpdateSite: OperationHandler = (input, ctx) => {
@@ -443,25 +503,60 @@ const UpdateSite: OperationHandler = (input, ctx) => {
         : site.Notes,
   };
   ctx.store.set(siteKey(site.SiteId), updated);
-  return { Site: siteView(updated) };
+  return { Site: siteView(updated, getTags(ctx, updated.SiteArn)) };
 };
 
 const DeleteSite: OperationHandler = (input, ctx) => {
   const id = requireString(input, "SiteId");
-  if (resolveSite(ctx, id) === undefined) {
+  const site = resolveSite(ctx, id);
+  if (site === undefined) {
     throw awsError("NotFoundException", `Site ${id} not found.`, 404);
   }
+  ctx.store.delete(tagsKey(site.SiteArn));
   ctx.store.delete(siteKey(id));
   return {};
 };
 
-const ListSites: OperationHandler = (_input, ctx) => {
-  const sites = ctx.store
+const ListSites: OperationHandler = (input, ctx) => {
+  const countryFilter = stringArrayFrom(
+    input["OperatingAddressCountryCodeFilter"],
+  );
+  const stateFilter = stringArrayFrom(
+    input["OperatingAddressStateOrRegionFilter"],
+  );
+  const cityFilter = stringArrayFrom(input["OperatingAddressCityFilter"]);
+  let sites = ctx.store
     .list<StoredSite>()
     .filter((e) => e.key.startsWith(sitePrefix))
     .map((e) => e.value)
     .sort((a, b) => (a.SiteId < b.SiteId ? -1 : a.SiteId > b.SiteId ? 1 : 0));
-  return { Sites: sites.map(siteView) };
+  if (countryFilter.length > 0)
+    sites = sites.filter(
+      (s) =>
+        s.OperatingAddressCountryCode !== undefined &&
+        countryFilter.includes(s.OperatingAddressCountryCode),
+    );
+  if (stateFilter.length > 0)
+    sites = sites.filter(
+      (s) =>
+        s.OperatingAddressStateOrRegion !== undefined &&
+        stateFilter.includes(s.OperatingAddressStateOrRegion),
+    );
+  if (cityFilter.length > 0)
+    sites = sites.filter(
+      (s) =>
+        s.OperatingAddressCity !== undefined &&
+        cityFilter.includes(s.OperatingAddressCity),
+    );
+  const { items, NextToken } = paginate(
+    sites,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return {
+    Sites: items.map((s) => siteView(s, getTags(ctx, s.SiteArn))),
+    NextToken,
+  };
 };
 
 const GetSiteAddress: OperationHandler = (input, ctx) => {
@@ -534,7 +629,7 @@ const UpdateSiteRackPhysicalProperties: OperationHandler = (input, ctx) => {
   }
   const updated: StoredSite = { ...site, RackPhysicalProperties: rack };
   ctx.store.set(siteKey(site.SiteId), updated);
-  return { Site: siteView(updated) };
+  return { Site: siteView(updated, getTags(ctx, updated.SiteArn)) };
 };
 
 const CreateOrder: OperationHandler = (input, ctx) => {
@@ -591,15 +686,27 @@ const CancelOrder: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const ListOrders: OperationHandler = (_input, ctx) => {
-  const orders = ctx.store
+const ListOrders: OperationHandler = (input, ctx) => {
+  const outpostFilter = stringOrUndefined(input["OutpostIdentifierFilter"]);
+  const outpostIdFilter =
+    outpostFilter !== undefined
+      ? resolveOutpost(ctx, outpostFilter)?.OutpostId
+      : undefined;
+  let orders = ctx.store
     .list<StoredOrder>()
     .filter((e) => e.key.startsWith(orderPrefix))
     .map((e) => e.value)
     .sort((a, b) =>
       a.OrderId < b.OrderId ? -1 : a.OrderId > b.OrderId ? 1 : 0,
     );
-  return { Orders: orders.map(orderSummaryView) };
+  if (outpostIdFilter !== undefined)
+    orders = orders.filter((o) => o.OutpostId === outpostIdFilter);
+  const { items, NextToken } = paginate(
+    orders,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Orders: items.map(orderSummaryView), NextToken };
 };
 
 const CreateRenewal: OperationHandler = (input, ctx) => {
@@ -647,8 +754,9 @@ const StartCapacityTask: OperationHandler = (input, ctx) => {
     RequestedInstancePools: instancePools,
     InstancesToExclude: input["InstancesToExclude"],
     DryRun: input["DryRun"] === true,
-    CapacityTaskStatus: "REQUESTED",
+    CapacityTaskStatus: "COMPLETED",
     CreationDate: now,
+    CompletionDate: now,
     LastModifiedDate: now,
     TaskActionOnBlockingInstances: stringOrUndefined(
       input["TaskActionOnBlockingInstances"],
@@ -683,14 +791,21 @@ const CancelCapacityTask: OperationHandler = (input, ctx) => {
   }
   ctx.store.set(capacityTaskKey(taskId), {
     ...task,
-    CapacityTaskStatus: "CANCELLATION_IN_PROGRESS",
+    CapacityTaskStatus: "CANCELLED",
+    CompletionDate: nowIso(),
     LastModifiedDate: nowIso(),
   });
   return {};
 };
 
-const ListCapacityTasks: OperationHandler = (_input, ctx) => {
-  const tasks = ctx.store
+const ListCapacityTasks: OperationHandler = (input, ctx) => {
+  const outpostFilter = stringOrUndefined(input["OutpostIdentifierFilter"]);
+  const outpostIdFilter =
+    outpostFilter !== undefined
+      ? resolveOutpost(ctx, outpostFilter)?.OutpostId
+      : undefined;
+  const statusFilter = stringArrayFrom(input["CapacityTaskStatusFilter"]);
+  let tasks = ctx.store
     .list<StoredCapacityTask>()
     .filter((e) => e.key.startsWith(capacityTaskPrefix))
     .map((e) => e.value)
@@ -701,7 +816,16 @@ const ListCapacityTasks: OperationHandler = (_input, ctx) => {
           ? 1
           : 0,
     );
-  return { CapacityTasks: tasks.map(capacityTaskSummaryView) };
+  if (outpostIdFilter !== undefined)
+    tasks = tasks.filter((t) => t.OutpostId === outpostIdFilter);
+  if (statusFilter.length > 0)
+    tasks = tasks.filter((t) => statusFilter.includes(t.CapacityTaskStatus));
+  const { items, NextToken } = paginate(
+    tasks,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { CapacityTasks: items.map(capacityTaskSummaryView), NextToken };
 };
 
 const ListBlockingInstancesForCapacityTask: OperationHandler = (input, ctx) => {

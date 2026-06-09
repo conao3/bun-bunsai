@@ -632,6 +632,28 @@ const PutParameter: OperationHandler = (input, ctx) => {
     ],
   };
   ctx.store.set(name, stored);
+  const inputTags = Array.isArray(input["Tags"]) ? input["Tags"] : [];
+  if (inputTags.length > 0) {
+    const tagKey = tagsKey("Parameter", name);
+    const existingTagEntry = ctx.store.get<StoredTags>(tagKey);
+    const mergedTags: Record<string, string> = {
+      ...(existingTagEntry?.Tags ?? {}),
+    };
+    for (const tag of inputTags) {
+      if (typeof tag !== "object" || tag === null) continue;
+      const record = tag as Record<string, unknown>;
+      const k = record["Key"];
+      const v = record["Value"];
+      if (typeof k === "string") {
+        mergedTags[k] = typeof v === "string" ? v : "";
+      }
+    }
+    ctx.store.set(tagKey, {
+      ResourceType: "Parameter",
+      ResourceId: name,
+      Tags: mergedTags,
+    });
+  }
   return { Version: version, Tier: "Standard" };
 };
 
@@ -723,20 +745,56 @@ const DeleteParameters: OperationHandler = (input, ctx) => {
   return { DeletedParameters: deleted, InvalidParameters: invalid };
 };
 
+const applyLegacyFilters = (
+  parameters: StoredParameter[],
+  filters: unknown,
+): StoredParameter[] => {
+  if (!Array.isArray(filters) || filters.length === 0) return parameters;
+  return parameters.filter((p) =>
+    (filters as unknown[]).every((f) => {
+      if (typeof f !== "object" || f === null) return true;
+      const filter = f as Record<string, unknown>;
+      const key = filter["Key"];
+      const values = Array.isArray(filter["Values"])
+        ? (filter["Values"] as unknown[]).map((v) => String(v))
+        : [];
+      if (key === "Type") return values.includes(p.Type);
+      if (key === "Name") return values.includes(p.Name);
+      if (key === "KeyId") return true;
+      return true;
+    }),
+  );
+};
+
 const DescribeParameters: OperationHandler = (input, ctx) => {
-  void input;
-  const parameters = ctx.store
-    .list<StoredParameter>()
-    .filter((entry) => !entry.key.startsWith("__"))
-    .map((entry) => ({
-      Name: entry.value.Name,
-      Type: entry.value.Type,
-      Version: entry.value.Version,
-      LastModifiedDate: entry.value.LastModifiedDate,
-      ARN: entry.value.ARN,
-      Tier: "Standard",
-    }));
-  return { Parameters: parameters };
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = applyParameterFilters(
+    applyLegacyFilters(
+      ctx.store
+        .list<StoredParameter>()
+        .filter((entry) => !entry.key.startsWith("__"))
+        .map((entry) => entry.value),
+      input["Filters"],
+    ),
+    input["ParameterFilters"],
+  );
+  const pageSize = maxResults ?? all.length;
+  const page = all.slice(offset, offset + pageSize).map((p) => ({
+    Name: p.Name,
+    Type: p.Type,
+    Version: p.Version,
+    LastModifiedDate: p.LastModifiedDate,
+    ARN: p.ARN,
+    Tier: "Standard",
+  }));
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { Parameters: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { Parameters: page };
 };
 
 const requireResourceTarget = (
@@ -897,17 +955,31 @@ const GetParameterHistory: OperationHandler = (input, ctx) => {
   if (stored === undefined) {
     throw awsError("ParameterNotFound", `Parameter ${name} not found.`, 400);
   }
+  const withDecryption = input["WithDecryption"] === true;
   const labelsByVersion = stored.Labels ?? {};
   const history = stored.History ?? [];
-  const parameters = history.map((entry) => ({
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const pageSize = maxResults ?? history.length;
+  const page = history.slice(offset, offset + pageSize);
+  const parameters = page.map((entry) => ({
     Name: entry.Name,
     Type: entry.Type,
-    Value: entry.Value,
+    Value:
+      !withDecryption && entry.Type === "SecureString"
+        ? `kms:ssm:${Buffer.from(entry.Value).toString("base64")}`
+        : entry.Value,
     Version: entry.Version,
     LastModifiedDate: entry.LastModifiedDate,
     Labels: labelsByVersion[String(entry.Version)] ?? [],
     Tier: "Standard",
   }));
+  const nextOffset = offset + pageSize;
+  if (nextOffset < history.length) {
+    return { Parameters: parameters, NextToken: encodePageToken(nextOffset) };
+  }
   return { Parameters: parameters };
 };
 

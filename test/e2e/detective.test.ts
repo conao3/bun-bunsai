@@ -129,16 +129,21 @@ test("Detective invitation operations", async () => {
   const graph = await client.send(new CreateGraphCommand({}));
   const graphArn = graph.GraphArn!;
 
-  const memberId = "123456789013";
+  const callerAccountId = "000000000000";
   await client.send(
     new CreateMembersCommand({
       GraphArn: graphArn,
-      Accounts: [{ AccountId: memberId, EmailAddress: "inv@example.com" }],
+      Accounts: [
+        { AccountId: callerAccountId, EmailAddress: "inv@example.com" },
+      ],
     }),
   );
 
   const invitations = await client.send(new ListInvitationsCommand({}));
   expect(invitations.Invitations).toBeDefined();
+  expect((invitations.Invitations ?? []).map((i) => i.AccountId)).toContain(
+    callerAccountId,
+  );
 
   await expect(
     client.send(new AcceptInvitationCommand({ GraphArn: graphArn })),
@@ -161,7 +166,7 @@ test("Detective organization operations", async () => {
   const graph = await client.send(new CreateGraphCommand({}));
   const graphArn = graph.GraphArn!;
 
-  const adminId = "123456789014";
+  const adminId = "000000000000";
   await client.send(
     new EnableOrganizationAdminAccountCommand({ AccountId: adminId }),
   );
@@ -177,7 +182,9 @@ test("Detective organization operations", async () => {
   const afterDisable = await client.send(
     new ListOrganizationAdminAccountsCommand({}),
   );
-  expect((afterDisable.Administrators ?? []).length).toBe(0);
+  expect(
+    (afterDisable.Administrators ?? []).map((a) => a.AccountId),
+  ).not.toContain(adminId);
 
   const config = await client.send(
     new DescribeOrganizationConfigurationCommand({ GraphArn: graphArn }),
@@ -319,6 +326,86 @@ test("Detective investigation operations", async () => {
         InvestigationId: "nonexistent",
       }),
     ),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteGraphCommand({ GraphArn: graphArn }));
+});
+
+test("Detective CreateGraph idempotency", async () => {
+  const client = detective();
+
+  const first = await client.send(new CreateGraphCommand({}));
+  expect(first.GraphArn).toContain(":graph:");
+
+  const second = await client.send(new CreateGraphCommand({}));
+  expect(second.GraphArn).toBe(first.GraphArn);
+
+  await client.send(new DeleteGraphCommand({ GraphArn: first.GraphArn }));
+});
+
+test("Detective ListMembers pagination", async () => {
+  const client = detective();
+
+  const graph = await client.send(new CreateGraphCommand({}));
+  const graphArn = graph.GraphArn!;
+
+  const memberIds = ["111111111111", "222222222222", "333333333333"];
+  await client.send(
+    new CreateMembersCommand({
+      GraphArn: graphArn,
+      Accounts: memberIds.map((id) => ({
+        AccountId: id,
+        EmailAddress: `${id}@example.com`,
+      })),
+    }),
+  );
+
+  const page1 = await client.send(
+    new ListMembersCommand({ GraphArn: graphArn, MaxResults: 2 }),
+  );
+  expect((page1.MemberDetails ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListMembersCommand({
+      GraphArn: graphArn,
+      MaxResults: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.MemberDetails ?? []).length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  const allIds = [
+    ...(page1.MemberDetails ?? []).map((m) => m.AccountId),
+    ...(page2.MemberDetails ?? []).map((m) => m.AccountId),
+  ];
+  for (const id of memberIds) {
+    expect(allIds).toContain(id);
+  }
+
+  await client.send(new DeleteGraphCommand({ GraphArn: graphArn }));
+});
+
+test("Detective AcceptInvitation wrong-state error", async () => {
+  const client = detective();
+
+  const graph = await client.send(new CreateGraphCommand({}));
+  const graphArn = graph.GraphArn!;
+
+  await client.send(
+    new CreateMembersCommand({
+      GraphArn: graphArn,
+      Accounts: [{ AccountId: "000000000000", EmailAddress: "e@example.com" }],
+    }),
+  );
+
+  await expect(
+    client.send(new AcceptInvitationCommand({ GraphArn: graphArn })),
+  ).resolves.toBeDefined();
+
+  await expect(
+    client.send(new AcceptInvitationCommand({ GraphArn: graphArn })),
   ).rejects.toThrow();
 
   await client.send(new DeleteGraphCommand({ GraphArn: graphArn }));

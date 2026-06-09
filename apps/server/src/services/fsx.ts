@@ -467,7 +467,8 @@ const DeleteFileSystem: OperationHandler = (input, ctx) => {
     .map((e) => e.value)
     .filter(
       (v) =>
-        v.FileSystemId === fileSystemId && !TERMINAL_LIFECYCLES.has(v.Lifecycle),
+        v.FileSystemId === fileSystemId &&
+        !TERMINAL_LIFECYCLES.has(v.Lifecycle),
     );
   if (activeVolumes.length > 0) {
     throw awsError(
@@ -997,15 +998,10 @@ const DeleteVolume: OperationHandler = (input, ctx) => {
     .filter((e) => e.key.startsWith("snapshot/"))
     .map((e) => e.value)
     .filter(
-      (s) =>
-        s.VolumeId === volumeId && !TERMINAL_LIFECYCLES.has(s.Lifecycle),
+      (s) => s.VolumeId === volumeId && !TERMINAL_LIFECYCLES.has(s.Lifecycle),
     );
   if (activeSnapshots.length > 0) {
-    throw awsError(
-      "BadRequest",
-      "Volume has active snapshots.",
-      400,
-    );
+    throw awsError("BadRequest", "Volume has active snapshots.", 400);
   }
   ctx.store.delete(tagsKey(volume.ResourceARN));
   const updated = { ...volume, Lifecycle: "DELETING" };

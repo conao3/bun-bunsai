@@ -742,7 +742,11 @@ test("fsx HIGH-3: in-use guards prevent deletion of parent with active children"
   ).rejects.toThrow();
 
   await expect(
-    fsx.send(new DeleteStorageVirtualMachineCommand({ StorageVirtualMachineId: svmId })),
+    fsx.send(
+      new DeleteStorageVirtualMachineCommand({
+        StorageVirtualMachineId: svmId,
+      }),
+    ),
   ).rejects.toThrow();
 
   await expect(
@@ -751,7 +755,9 @@ test("fsx HIGH-3: in-use guards prevent deletion of parent with active children"
 
   await fsx.send(new DeleteSnapshotCommand({ SnapshotId: snapId }));
   await fsx.send(new DeleteVolumeCommand({ VolumeId: volId }));
-  await fsx.send(new DeleteStorageVirtualMachineCommand({ StorageVirtualMachineId: svmId }));
+  await fsx.send(
+    new DeleteStorageVirtualMachineCommand({ StorageVirtualMachineId: svmId }),
+  );
   await fsx.send(new DeleteFileSystemCommand({ FileSystemId: fsId }));
 });
 
@@ -778,7 +784,9 @@ test("fsx HIGH-4: DeleteDataRepositoryAssociation is soft-delete — Lifecycle=D
   expect(associationId).toMatch(/^dra-/);
 
   const deleteResult = await fsx.send(
-    new DeleteDataRepositoryAssociationCommand({ AssociationId: associationId }),
+    new DeleteDataRepositoryAssociationCommand({
+      AssociationId: associationId,
+    }),
   );
   expect(deleteResult.Lifecycle).toBe("DELETING");
 

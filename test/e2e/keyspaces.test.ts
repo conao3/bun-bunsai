@@ -320,6 +320,74 @@ test("Keyspaces UpdateTable reflects in GetTable", async () => {
   await client.send(new DeleteKeyspaceCommand({ keyspaceName: ks }));
 });
 
+test("Keyspaces tier-11 fidelity: tag persistence, delete cleanup, in-use guard", async () => {
+  const client = keyspaces();
+  const ks = "bunsai_e2e_fidelity_ks";
+  const tbl = "bunsai_e2e_fidelity_tbl";
+
+  const created = await client.send(
+    new CreateKeyspaceCommand({
+      keyspaceName: ks,
+      tags: [{ key: "env", value: "prod" }],
+    }),
+  );
+  const arn = created.resourceArn!;
+
+  const tags1 = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: arn }),
+  );
+  const tagMap1 = Object.fromEntries(
+    (tags1.tags ?? []).map((t) => [t.key!, t.value!]),
+  );
+  expect(tagMap1["env"]).toBe("prod");
+
+  await client.send(
+    new CreateTableCommand({
+      keyspaceName: ks,
+      tableName: tbl,
+      schemaDefinition: {
+        allColumns: [{ name: "id", type: "text" }],
+        partitionKeys: [{ name: "id" }],
+      },
+    }),
+  );
+
+  await expect(
+    client.send(new DeleteKeyspaceCommand({ keyspaceName: ks })),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteTableCommand({ keyspaceName: ks, tableName: tbl }),
+  );
+  await client.send(new DeleteKeyspaceCommand({ keyspaceName: ks }));
+
+  await client.send(new CreateKeyspaceCommand({ keyspaceName: ks }));
+  const tags2 = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: arn }),
+  );
+  expect((tags2.tags ?? []).length).toBe(0);
+
+  await client.send(new DeleteKeyspaceCommand({ keyspaceName: ks }));
+});
+
+test("Keyspaces malformed nextToken → ValidationException", async () => {
+  const client = keyspaces();
+  const ks = "bunsai_e2e_maltoken_ks";
+
+  await client.send(new CreateKeyspaceCommand({ keyspaceName: ks }));
+
+  await expect(
+    client.send(
+      new ListTablesCommand({
+        keyspaceName: ks,
+        nextToken: btoa("not-a-number"),
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteKeyspaceCommand({ keyspaceName: ks }));
+});
+
 test("Keyspaces tagging operations", async () => {
   const client = keyspaces();
   const ks = "bunsai_e2e_tags_ks";

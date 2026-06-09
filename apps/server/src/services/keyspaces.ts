@@ -34,6 +34,7 @@ type StoredType = {
   keyspaceName: string;
   typeName: string;
   keyspaceArn: string;
+  resourceArn: string;
   fieldDefinitions: unknown;
   lastModifiedTimestamp: number;
   status: string;
@@ -46,7 +47,20 @@ const paginate = <T>(
   maxResults: number | undefined,
   nextToken: string | undefined,
 ): { items: T[]; nextToken: string | undefined } => {
-  const start = nextToken !== undefined ? parseInt(atob(nextToken), 10) : 0;
+  let start = 0;
+  if (nextToken !== undefined) {
+    let decoded: string;
+    try {
+      decoded = atob(nextToken);
+    } catch {
+      throw awsError("ValidationException", "Invalid nextToken.", 400);
+    }
+    const parsed = parseInt(decoded, 10);
+    if (isNaN(parsed) || parsed < 0) {
+      throw awsError("ValidationException", "Invalid nextToken.", 400);
+    }
+    start = parsed;
+  }
   const limit =
     maxResults !== undefined && maxResults > 0 ? maxResults : items.length;
   const sliced = items.slice(start, start + limit);
@@ -79,6 +93,9 @@ const tableArn = (
   table: string,
 ): string =>
   `arn:aws:cassandra:${ctx.region}:${ctx.account}:/keyspace/${keyspace}/table/${table}/`;
+
+const typeArn = (ctx: ServiceContext, keyspace: string, type: string): string =>
+  `arn:aws:cassandra:${ctx.region}:${ctx.account}:/keyspace/${keyspace}/type/${type}/`;
 
 const requireKeyspace = (ctx: ServiceContext, name: string): StoredKeyspace => {
   const keyspace = ctx.store.get<StoredKeyspace>(keyspaceKey(name));
@@ -139,6 +156,10 @@ const CreateKeyspace: OperationHandler = (input, ctx) => {
     replicationStrategy: "SINGLE_REGION",
   };
   ctx.store.set(keyspaceKey(name), keyspace);
+  const tags = input["tags"] as StoredTag[] | undefined;
+  if (tags && tags.length > 0) {
+    ctx.store.set(tagsKey(keyspace.resourceArn), tags);
+  }
   return { resourceArn: keyspace.resourceArn };
 };
 
@@ -174,8 +195,18 @@ const ListKeyspaces: OperationHandler = (input, ctx) => {
 
 const DeleteKeyspace: OperationHandler = (input, ctx) => {
   const name = requireString(input, "keyspaceName");
-  requireKeyspace(ctx, name);
+  const keyspace = requireKeyspace(ctx, name);
+  const tables = ctx.store
+    .list<StoredTable>()
+    .filter((entry) => entry.key.startsWith(`table/${name}/`));
+  const types = ctx.store
+    .list<StoredType>()
+    .filter((entry) => entry.key.startsWith(`type/${name}/`));
+  if (tables.length > 0 || types.length > 0) {
+    throw awsError("ConflictException", `Keyspace ${name} is not empty.`, 400);
+  }
   ctx.store.delete(keyspaceKey(name));
+  ctx.store.delete(tagsKey(keyspace.resourceArn));
   return {};
 };
 
@@ -201,6 +232,10 @@ const CreateTable: OperationHandler = (input, ctx) => {
     schemaDefinition: input["schemaDefinition"],
   };
   ctx.store.set(tableKey(keyspaceName, tableName), table);
+  const tags = input["tags"] as StoredTag[] | undefined;
+  if (tags && tags.length > 0) {
+    ctx.store.set(tagsKey(table.resourceArn), tags);
+  }
   return { resourceArn: table.resourceArn };
 };
 
@@ -262,8 +297,9 @@ const ListTables: OperationHandler = (input, ctx) => {
 const DeleteTable: OperationHandler = (input, ctx) => {
   const keyspaceName = requireString(input, "keyspaceName");
   const tableName = requireString(input, "tableName");
-  requireTable(ctx, keyspaceName, tableName);
+  const table = requireTable(ctx, keyspaceName, tableName);
   ctx.store.delete(tableKey(keyspaceName, tableName));
+  ctx.store.delete(tagsKey(table.resourceArn));
   return {};
 };
 
@@ -327,6 +363,10 @@ const RestoreTable: OperationHandler = (input, ctx) => {
     schemaDefinition: source.schemaDefinition,
   };
   ctx.store.set(tableKey(targetKeyspaceName, targetTableName), restored);
+  const tags = input["tagsOverride"] as StoredTag[] | undefined;
+  if (tags && tags.length > 0) {
+    ctx.store.set(tagsKey(restored.resourceArn), tags);
+  }
   return { restoredTableARN: restored.resourceArn };
 };
 
@@ -360,6 +400,7 @@ const CreateType: OperationHandler = (input, ctx) => {
     keyspaceName,
     typeName,
     keyspaceArn: ksArn,
+    resourceArn: typeArn(ctx, keyspaceName, typeName),
     fieldDefinitions: input["fieldDefinitions"],
     lastModifiedTimestamp: Date.now(),
     status: "ACTIVE",
@@ -408,6 +449,7 @@ const DeleteType: OperationHandler = (input, ctx) => {
   const typeName = requireString(input, "typeName");
   const stored = requireType(ctx, keyspaceName, typeName);
   ctx.store.delete(typeKey(keyspaceName, typeName));
+  ctx.store.delete(tagsKey(stored.resourceArn));
   return { keyspaceArn: stored.keyspaceArn, typeName };
 };
 

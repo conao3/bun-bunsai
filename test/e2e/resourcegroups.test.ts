@@ -138,6 +138,7 @@ test("ResourceGroups GetGroupConfiguration and PutGroupConfiguration", async () 
     new GetGroupConfigurationCommand({ Group: name }),
   );
   expect(initial.GroupConfiguration).toBeDefined();
+  expect(initial.GroupConfiguration?.Status).toBe("UPDATE_COMPLETE");
 
   await client.send(
     new PutGroupConfigurationCommand({
@@ -155,6 +156,7 @@ test("ResourceGroups GetGroupConfiguration and PutGroupConfiguration", async () 
   expect(afterPut.GroupConfiguration?.Configuration?.[0]?.Type).toBe(
     "AWS::EC2::HostManagement",
   );
+  expect(afterPut.GroupConfiguration?.Status).toBe("UPDATE_COMPLETE");
 
   await client.send(new DeleteGroupCommand({ GroupName: name }));
 });
@@ -198,22 +200,133 @@ test("ResourceGroups GroupResources, UngroupResources, ListGroupResources", asyn
   await client.send(new DeleteGroupCommand({ GroupName: name }));
 });
 
-test("ResourceGroups ListGroupingStatuses", async () => {
+test("ResourceGroups ListGroupResources pagination", async () => {
+  const client = resourcegroups();
+  const name = `bunsai-e2e-lgr-page-${Date.now()}`;
+
+  await client.send(new CreateGroupCommand({ Name: name }));
+
+  const arns = Array.from(
+    { length: 5 },
+    (_, i) =>
+      `arn:aws:ec2:us-east-1:000000000000:instance/i-page${String(i).padStart(16, "0")}`,
+  );
+  await client.send(
+    new GroupResourcesCommand({ Group: name, ResourceArns: arns }),
+  );
+
+  const page1 = await client.send(
+    new ListGroupResourcesCommand({ Group: name, MaxResults: 3 }),
+  );
+  expect((page1.ResourceIdentifiers ?? []).length).toBe(3);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListGroupResourcesCommand({
+      Group: name,
+      MaxResults: 3,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.ResourceIdentifiers ?? []).length).toBe(2);
+  expect(page2.NextToken).toBeUndefined();
+
+  await client.send(new DeleteGroupCommand({ GroupName: name }));
+});
+
+test("ResourceGroups ListGroupingStatuses after GroupResources and UngroupResources", async () => {
   const client = resourcegroups();
   const name = `bunsai-e2e-grouping-${Date.now()}`;
 
   await client.send(new CreateGroupCommand({ Name: name }));
 
+  const arn1 = "arn:aws:ec2:us-east-1:000000000000:instance/i-gs000000000001";
+  const arn2 = "arn:aws:ec2:us-east-1:000000000000:instance/i-gs000000000002";
+
+  await client.send(
+    new GroupResourcesCommand({ Group: name, ResourceArns: [arn1, arn2] }),
+  );
+  await client.send(
+    new UngroupResourcesCommand({ Group: name, ResourceArns: [arn1] }),
+  );
+
   const result = await client.send(
     new ListGroupingStatusesCommand({ Group: name }),
   );
-  expect(result.GroupingStatuses).toBeDefined();
+  expect((result.GroupingStatuses ?? []).length).toBe(3);
+
+  const groupActions = (result.GroupingStatuses ?? []).filter(
+    (s) => s.Action === "GROUP",
+  );
+  const ungroupActions = (result.GroupingStatuses ?? []).filter(
+    (s) => s.Action === "UNGROUP",
+  );
+  expect(groupActions.length).toBe(2);
+  expect(ungroupActions.length).toBe(1);
+
+  for (const s of result.GroupingStatuses ?? []) {
+    expect(s.Status).toBe("SUCCESS");
+    expect(s.ResourceArn).toBeDefined();
+    expect(s.UpdatedAt).toBeDefined();
+  }
+
+  const statusFiltered = await client.send(
+    new ListGroupingStatusesCommand({
+      Group: name,
+      Filters: [{ Name: "status", Values: ["SUCCESS"] }],
+    }),
+  );
+  expect((statusFiltered.GroupingStatuses ?? []).length).toBe(3);
+
+  const arnFiltered = await client.send(
+    new ListGroupingStatusesCommand({
+      Group: name,
+      Filters: [{ Name: "resource-arn", Values: [arn1] }],
+    }),
+  );
+  expect((arnFiltered.GroupingStatuses ?? []).length).toBe(2);
+
+  const page1 = await client.send(
+    new ListGroupingStatusesCommand({ Group: name, MaxResults: 2 }),
+  );
+  expect((page1.GroupingStatuses ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListGroupingStatusesCommand({
+      Group: name,
+      MaxResults: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.GroupingStatuses ?? []).length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
 
   await client.send(new DeleteGroupCommand({ GroupName: name }));
 });
 
 test("ResourceGroups SearchResources", async () => {
   const client = resourcegroups();
+  const name = `bunsai-e2e-search-${Date.now()}`;
+
+  await client.send(
+    new CreateGroupCommand({
+      Name: name,
+      ResourceQuery: {
+        Type: "TAG_FILTERS_1_0",
+        Query: JSON.stringify({
+          ResourceTypeFilters: ["AWS::AllSupported"],
+          TagFilters: [{ Key: "env", Values: ["test"] }],
+        }),
+      },
+    }),
+  );
+
+  const arn1 = "arn:aws:ec2:us-east-1:000000000000:instance/i-search0000001";
+  const arn2 = "arn:aws:s3:us-east-1:000000000000:bucket/search-bucket-001";
+  await client.send(
+    new GroupResourcesCommand({ Group: name, ResourceArns: [arn1, arn2] }),
+  );
 
   const result = await client.send(
     new SearchResourcesCommand({
@@ -228,6 +341,87 @@ test("ResourceGroups SearchResources", async () => {
   );
   expect(result.ResourceIdentifiers).toBeDefined();
   expect(result.QueryErrors).toBeDefined();
+  const foundArns = (result.ResourceIdentifiers ?? []).map(
+    (r) => r.ResourceArn,
+  );
+  expect(foundArns).toContain(arn1);
+  expect(foundArns).toContain(arn2);
+
+  const page1 = await client.send(
+    new SearchResourcesCommand({
+      ResourceQuery: {
+        Type: "TAG_FILTERS_1_0",
+        Query: JSON.stringify({
+          ResourceTypeFilters: ["AWS::AllSupported"],
+          TagFilters: [],
+        }),
+      },
+      MaxResults: 1,
+    }),
+  );
+  expect((page1.ResourceIdentifiers ?? []).length).toBe(1);
+  expect(page1.NextToken).toBeDefined();
+
+  await client.send(new DeleteGroupCommand({ GroupName: name }));
+});
+
+test("ResourceGroups ListGroups filters and pagination", async () => {
+  const client = resourcegroups();
+  const suffix = `${Date.now()}`;
+  const nameOwned = `bunsai-e2e-owned-${suffix}`;
+  const nameOther = `bunsai-e2e-other-${suffix}`;
+
+  await client.send(
+    new CreateGroupCommand({
+      Name: nameOwned,
+      Owner: "alice",
+      DisplayName: "Alice Group",
+    }),
+  );
+  await client.send(
+    new CreateGroupCommand({
+      Name: nameOther,
+      Owner: "bob",
+      DisplayName: "Bob Group",
+    }),
+  );
+
+  const ownerFiltered = await client.send(
+    new ListGroupsCommand({
+      Filters: [{ Name: "owner", Values: ["alice"] }],
+    }),
+  );
+  const ownerNames = (ownerFiltered.GroupIdentifiers ?? []).map(
+    (g) => g.GroupName,
+  );
+  expect(ownerNames).toContain(nameOwned);
+  expect(ownerNames).not.toContain(nameOther);
+
+  const displayFiltered = await client.send(
+    new ListGroupsCommand({
+      Filters: [{ Name: "display-name", Values: ["Bob Group"] }],
+    }),
+  );
+  const displayNames = (displayFiltered.GroupIdentifiers ?? []).map(
+    (g) => g.GroupName,
+  );
+  expect(displayNames).toContain(nameOther);
+  expect(displayNames).not.toContain(nameOwned);
+
+  const all = await client.send(new ListGroupsCommand({}));
+  const allNames = (all.GroupIdentifiers ?? []).map((g) => g.GroupName);
+  const totalCount = allNames.filter(
+    (n) => n === nameOwned || n === nameOther,
+  ).length;
+  expect(totalCount).toBe(2);
+
+  if (totalCount >= 2) {
+    const page1 = await client.send(new ListGroupsCommand({ MaxResults: 1 }));
+    expect((page1.GroupIdentifiers ?? []).length).toBe(1);
+  }
+
+  await client.send(new DeleteGroupCommand({ GroupName: nameOwned }));
+  await client.send(new DeleteGroupCommand({ GroupName: nameOther }));
 });
 
 test("ResourceGroups GetTags, Tag, Untag", async () => {
@@ -322,6 +516,24 @@ test("ResourceGroups StartTagSyncTask, GetTagSyncTask, ListTagSyncTasks, CancelT
   const listed = await client.send(new ListTagSyncTasksCommand({}));
   const arns = (listed.TagSyncTasks ?? []).map((t) => t.TaskArn);
   expect(arns).toContain(taskArn);
+
+  const groupArn = started.GroupArn ?? "";
+  const filteredByArn = await client.send(
+    new ListTagSyncTasksCommand({
+      Filters: [{ GroupArn: groupArn }],
+    }),
+  );
+  const filteredArns = (filteredByArn.TagSyncTasks ?? []).map((t) => t.TaskArn);
+  expect(filteredArns).toContain(taskArn);
+
+  const filteredByName = await client.send(
+    new ListTagSyncTasksCommand({
+      Filters: [{ GroupName: name }],
+    }),
+  );
+  expect((filteredByName.TagSyncTasks ?? []).map((t) => t.TaskArn)).toContain(
+    taskArn,
+  );
 
   await client.send(new CancelTagSyncTaskCommand({ TaskArn: taskArn }));
 

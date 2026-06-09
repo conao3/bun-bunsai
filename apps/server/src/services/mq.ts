@@ -27,6 +27,7 @@ type StoredBroker = {
   subnetIds: string[];
   tags: Record<string, string>;
   created: number;
+  configuration?: { id: string; revision: number };
 };
 
 type StoredConfiguration = {
@@ -48,6 +49,11 @@ type StoredUser = {
   consoleAccess: boolean;
   groups: string[];
   replicationUser: boolean;
+  pending?: {
+    ConsoleAccess?: boolean;
+    Groups?: string[];
+    PendingChange: string;
+  };
 };
 
 type StoredConfigurationRevision = {
@@ -133,25 +139,103 @@ const requireConfiguration = (
 const isoTimestamp = (epochSeconds: number): string =>
   new Date(epochSeconds * 1000).toISOString();
 
+const validatePassword = (password: unknown): void => {
+  if (typeof password !== "string" || password === "") {
+    throw awsError("BadRequestException", "Password is required.", 400);
+  }
+  if (password.length < 12) {
+    throw awsError(
+      "BadRequestException",
+      "Invalid Password: must be at least 12 characters.",
+      400,
+    );
+  }
+  if (new Set(password.split("")).size < 4) {
+    throw awsError(
+      "BadRequestException",
+      "Invalid Password: must contain at least 4 unique characters.",
+      400,
+    );
+  }
+  if (/[,=:]/.test(password)) {
+    throw awsError(
+      "BadRequestException",
+      "Invalid Password: must not contain comma, colon, or equals sign.",
+      400,
+    );
+  }
+};
+
+const resolveMaxResults = (value: unknown): number => {
+  if (value === undefined || value === null) return 100;
+  const n =
+    typeof value === "number" ? Math.floor(value) : parseInt(String(value), 10);
+  if (isNaN(n) || n < 5 || n > 100) {
+    throw awsError(
+      "BadRequestException",
+      "MaxResults must be between 5 and 100.",
+      400,
+    );
+  }
+  return n;
+};
+
+const encodeToken = (offset: number): string => btoa(String(offset));
+
+const decodeToken = (token: string | undefined): number => {
+  if (!token) return 0;
+  try {
+    const n = parseInt(atob(token), 10);
+    return isNaN(n) ? 0 : n;
+  } catch {
+    return 0;
+  }
+};
+
 const CreateBroker: OperationHandler = (input, ctx) => {
   const brokerName = requireString(input, "BrokerName");
+
+  const duplicate = ctx.store
+    .list<StoredBroker>()
+    .find(
+      (entry) =>
+        entry.key.startsWith("broker/") &&
+        entry.value.brokerName === brokerName,
+    );
+  if (duplicate !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `Broker with name ${brokerName} already exists.`,
+      409,
+    );
+  }
+
+  const engineType = requireString(input, "EngineType");
+  const deploymentMode = requireString(input, "DeploymentMode");
+  const hostInstanceType = requireString(input, "HostInstanceType");
+  if (typeof input["PubliclyAccessible"] !== "boolean") {
+    throw awsError(
+      "BadRequestException",
+      "PubliclyAccessible is required.",
+      400,
+    );
+  }
+
   const brokerId = `b-${hex(8)}`;
   const brokerArn = `arn:aws:mq:${ctx.region}:${ctx.account}:broker:${brokerName}:${brokerId}`;
   const broker: StoredBroker = {
     brokerId,
     brokerArn,
     brokerName,
-    brokerState: "RUNNING",
-    engineType: stringOrUndefined(input["EngineType"]) ?? "ACTIVEMQ",
+    brokerState: "CREATION_IN_PROGRESS",
+    engineType,
     engineVersion: stringOrUndefined(input["EngineVersion"]) ?? "5.18.0",
-    deploymentMode:
-      stringOrUndefined(input["DeploymentMode"]) ?? "SINGLE_INSTANCE",
-    hostInstanceType:
-      stringOrUndefined(input["HostInstanceType"]) ?? "mq.m5.large",
+    deploymentMode,
+    hostInstanceType,
     authenticationStrategy:
       stringOrUndefined(input["AuthenticationStrategy"]) ?? "SIMPLE",
     autoMinorVersionUpgrade: input["AutoMinorVersionUpgrade"] === true,
-    publiclyAccessible: input["PubliclyAccessible"] === true,
+    publiclyAccessible: input["PubliclyAccessible"] as boolean,
     storageType: stringOrUndefined(input["StorageType"]) ?? "EFS",
     securityGroups: stringList(input["SecurityGroups"]),
     subnetIds: stringList(input["SubnetIds"]),
@@ -159,42 +243,95 @@ const CreateBroker: OperationHandler = (input, ctx) => {
     created: Math.floor(Date.now() / 1000),
   };
   ctx.store.set(brokerKey(brokerId), broker);
+
+  const usersInput = Array.isArray(input["Users"]) ? input["Users"] : [];
+  for (const u of usersInput) {
+    if (typeof u !== "object" || u === null) continue;
+    const userInput = u as Record<string, unknown>;
+    const username =
+      typeof userInput["Username"] === "string" ? userInput["Username"] : "";
+    if (!username) continue;
+    validatePassword(userInput["Password"]);
+    const user: StoredUser = {
+      brokerId,
+      username,
+      consoleAccess: userInput["ConsoleAccess"] === true,
+      groups: stringList(userInput["Groups"]),
+      replicationUser: userInput["ReplicationUser"] === true,
+    };
+    ctx.store.set(userKey(brokerId, username), user);
+  }
+
   return { BrokerArn: brokerArn, BrokerId: brokerId };
 };
 
-const brokerView = (broker: StoredBroker): Record<string, unknown> => ({
-  BrokerArn: broker.brokerArn,
-  BrokerId: broker.brokerId,
-  BrokerName: broker.brokerName,
-  BrokerState: broker.brokerState,
-  EngineType: broker.engineType,
-  EngineVersion: broker.engineVersion,
-  DeploymentMode: broker.deploymentMode,
-  HostInstanceType: broker.hostInstanceType,
-  AuthenticationStrategy: broker.authenticationStrategy,
-  AutoMinorVersionUpgrade: broker.autoMinorVersionUpgrade,
-  PubliclyAccessible: broker.publiclyAccessible,
-  StorageType: broker.storageType,
-  SecurityGroups: broker.securityGroups,
-  SubnetIds: broker.subnetIds,
-  Tags: broker.tags,
-  Created: isoTimestamp(broker.created),
-});
+const brokerView = (
+  broker: StoredBroker,
+  ctx: ServiceContext,
+): Record<string, unknown> => {
+  const prefix = `user/${broker.brokerId}/`;
+  const users = ctx.store
+    .list<StoredUser>()
+    .filter((entry) => entry.key.startsWith(prefix))
+    .map((entry) => entry.value);
+  const result: Record<string, unknown> = {
+    BrokerArn: broker.brokerArn,
+    BrokerId: broker.brokerId,
+    BrokerName: broker.brokerName,
+    BrokerState: broker.brokerState,
+    BrokerInstances: [
+      {
+        ConsoleURL: `https://${broker.brokerId}.mq.${ctx.region}.amazonaws.com:8162`,
+        Endpoints: [
+          `ssl://${broker.brokerId}.mq.${ctx.region}.amazonaws.com:61617`,
+        ],
+        IpAddress: "10.0.0.1",
+      },
+    ],
+    Users: users.map((u) => ({ Username: u.username })),
+    EngineType: broker.engineType,
+    EngineVersion: broker.engineVersion,
+    DeploymentMode: broker.deploymentMode,
+    HostInstanceType: broker.hostInstanceType,
+    AuthenticationStrategy: broker.authenticationStrategy,
+    AutoMinorVersionUpgrade: broker.autoMinorVersionUpgrade,
+    PubliclyAccessible: broker.publiclyAccessible,
+    StorageType: broker.storageType,
+    SecurityGroups: broker.securityGroups,
+    SubnetIds: broker.subnetIds,
+    Tags: broker.tags,
+    Created: isoTimestamp(broker.created),
+  };
+  if (broker.configuration !== undefined) {
+    result["Configuration"] = {
+      Id: broker.configuration.id,
+      Revision: broker.configuration.revision,
+    };
+  }
+  return result;
+};
 
 const DescribeBroker: OperationHandler = (input, ctx) => {
   const brokerId = requireString(input, "BrokerId");
   const broker = requireBroker(ctx, brokerId);
-  return brokerView(broker);
+  return brokerView(broker, ctx);
 };
 
-const ListBrokers: OperationHandler = (_input, ctx) => {
+const ListBrokers: OperationHandler = (input, ctx) => {
+  const maxResults = resolveMaxResults(input["MaxResults"]);
+  const start = decodeToken(stringOrUndefined(input["NextToken"]));
   const brokers = ctx.store
     .list<StoredBroker>()
     .filter((entry) => entry.key.startsWith("broker/"))
     .map((entry) => entry.value)
     .sort((a, b) => a.brokerId.localeCompare(b.brokerId));
-  return {
-    BrokerSummaries: brokers.map((broker) => ({
+  const page = brokers.slice(start, start + maxResults);
+  const nextTokenValue =
+    start + maxResults < brokers.length
+      ? encodeToken(start + maxResults)
+      : undefined;
+  const result: Record<string, unknown> = {
+    BrokerSummaries: page.map((broker) => ({
       BrokerArn: broker.brokerArn,
       BrokerId: broker.brokerId,
       BrokerName: broker.brokerName,
@@ -205,13 +342,15 @@ const ListBrokers: OperationHandler = (_input, ctx) => {
       Created: isoTimestamp(broker.created),
     })),
   };
+  if (nextTokenValue !== undefined) result["NextToken"] = nextTokenValue;
+  return result;
 };
 
 const DeleteBroker: OperationHandler = (input, ctx) => {
   const brokerId = requireString(input, "BrokerId");
   const broker = requireBroker(ctx, brokerId);
   broker.brokerState = "DELETION_IN_PROGRESS";
-  ctx.store.delete(brokerKey(brokerId));
+  ctx.store.set(brokerKey(brokerId), broker);
   return { BrokerId: brokerId };
 };
 
@@ -236,8 +375,19 @@ const UpdateBroker: OperationHandler = (input, ctx) => {
   if (Array.isArray(securityGroups)) {
     broker.securityGroups = stringList(securityGroups);
   }
+  const configInput = input["Configuration"];
+  if (typeof configInput === "object" && configInput !== null) {
+    const cfg = configInput as Record<string, unknown>;
+    const configId = typeof cfg["Id"] === "string" ? cfg["Id"] : undefined;
+    if (configId !== undefined) {
+      requireConfiguration(ctx, configId);
+      const configRevision =
+        typeof cfg["Revision"] === "number" ? cfg["Revision"] : 1;
+      broker.configuration = { id: configId, revision: configRevision };
+    }
+  }
   ctx.store.set(brokerKey(brokerId), broker);
-  return {
+  const response: Record<string, unknown> = {
     BrokerId: broker.brokerId,
     AuthenticationStrategy: broker.authenticationStrategy,
     AutoMinorVersionUpgrade: broker.autoMinorVersionUpgrade,
@@ -245,6 +395,13 @@ const UpdateBroker: OperationHandler = (input, ctx) => {
     HostInstanceType: broker.hostInstanceType,
     SecurityGroups: broker.securityGroups,
   };
+  if (broker.configuration !== undefined) {
+    response["Configuration"] = {
+      Id: broker.configuration.id,
+      Revision: broker.configuration.revision,
+    };
+  }
+  return response;
 };
 
 const RebootBroker: OperationHandler = (input, ctx) => {
@@ -263,6 +420,7 @@ const CreateUser: OperationHandler = (input, ctx) => {
   const brokerId = requireString(input, "BrokerId");
   const username = requireString(input, "Username");
   requireBroker(ctx, brokerId);
+  validatePassword(input["Password"]);
   const user: StoredUser = {
     brokerId,
     username,
@@ -286,13 +444,17 @@ const DescribeUser: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  return {
+  const result: Record<string, unknown> = {
     BrokerId: brokerId,
     Username: user.username,
     ConsoleAccess: user.consoleAccess,
     Groups: user.groups,
     ReplicationUser: user.replicationUser,
   };
+  if (user.pending !== undefined) {
+    result["Pending"] = user.pending;
+  }
+  return result;
 };
 
 const UpdateUser: OperationHandler = (input, ctx) => {
@@ -307,15 +469,22 @@ const UpdateUser: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  if (input["Password"] !== undefined) {
+    validatePassword(input["Password"]);
+  }
+  const pending: StoredUser["pending"] = { PendingChange: "UPDATE" };
   if (typeof input["ConsoleAccess"] === "boolean") {
     user.consoleAccess = input["ConsoleAccess"];
+    pending.ConsoleAccess = input["ConsoleAccess"];
   }
   if (Array.isArray(input["Groups"])) {
     user.groups = stringList(input["Groups"]);
+    pending.Groups = user.groups;
   }
   if (typeof input["ReplicationUser"] === "boolean") {
     user.replicationUser = input["ReplicationUser"];
   }
+  user.pending = pending;
   ctx.store.set(userKey(brokerId, username), user);
   return {};
 };
@@ -339,16 +508,25 @@ const DeleteUser: OperationHandler = (input, ctx) => {
 const ListUsers: OperationHandler = (input, ctx) => {
   const brokerId = requireString(input, "BrokerId");
   requireBroker(ctx, brokerId);
+  const maxResults = resolveMaxResults(input["MaxResults"]);
+  const start = decodeToken(stringOrUndefined(input["NextToken"]));
   const prefix = `user/${brokerId}/`;
   const users = ctx.store
     .list<StoredUser>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.username.localeCompare(b.username));
-  return {
+  const page = users.slice(start, start + maxResults);
+  const nextTokenValue =
+    start + maxResults < users.length
+      ? encodeToken(start + maxResults)
+      : undefined;
+  const result: Record<string, unknown> = {
     BrokerId: brokerId,
-    Users: users.map((u) => ({ Username: u.username })),
+    Users: page.map((u) => ({ Username: u.username })),
   };
+  if (nextTokenValue !== undefined) result["NextToken"] = nextTokenValue;
+  return result;
 };
 
 const CreateConfiguration: OperationHandler = (input, ctx) => {
@@ -447,14 +625,21 @@ const DeleteConfiguration: OperationHandler = (input, ctx) => {
   return { ConfigurationId: configId };
 };
 
-const ListConfigurations: OperationHandler = (_input, ctx) => {
+const ListConfigurations: OperationHandler = (input, ctx) => {
+  const maxResults = resolveMaxResults(input["MaxResults"]);
+  const start = decodeToken(stringOrUndefined(input["NextToken"]));
   const configs = ctx.store
     .list<StoredConfiguration>()
     .filter((entry) => entry.key.startsWith("configuration/"))
     .map((entry) => entry.value)
     .sort((a, b) => a.id.localeCompare(b.id));
-  return {
-    Configurations: configs.map((c) => ({
+  const page = configs.slice(start, start + maxResults);
+  const nextTokenValue =
+    start + maxResults < configs.length
+      ? encodeToken(start + maxResults)
+      : undefined;
+  const result: Record<string, unknown> = {
+    Configurations: page.map((c) => ({
       Arn: c.arn,
       AuthenticationStrategy: c.authenticationStrategy,
       Created: isoTimestamp(c.created),
@@ -470,6 +655,8 @@ const ListConfigurations: OperationHandler = (_input, ctx) => {
       Tags: c.tags,
     })),
   };
+  if (nextTokenValue !== undefined) result["NextToken"] = nextTokenValue;
+  return result;
 };
 
 const DescribeConfigurationRevision: OperationHandler = (input, ctx) => {
@@ -509,22 +696,30 @@ const DescribeConfigurationRevision: OperationHandler = (input, ctx) => {
 
 const ListConfigurationRevisions: OperationHandler = (input, ctx) => {
   const configId = requireString(input, "ConfigurationId");
-  const config = requireConfiguration(ctx, configId);
+  requireConfiguration(ctx, configId);
+  const maxResults = resolveMaxResults(input["MaxResults"]);
+  const start = decodeToken(stringOrUndefined(input["NextToken"]));
   const prefix = `config-revision/${configId}/`;
   const revisions = ctx.store
     .list<StoredConfigurationRevision>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.revision - b.revision);
-  return {
+  const page = revisions.slice(start, start + maxResults);
+  const nextTokenValue =
+    start + maxResults < revisions.length
+      ? encodeToken(start + maxResults)
+      : undefined;
+  const result: Record<string, unknown> = {
     ConfigurationId: configId,
-    MaxResults: config.latestRevision,
-    Revisions: revisions.map((r) => ({
+    Revisions: page.map((r) => ({
       Created: isoTimestamp(r.created),
       Description: r.description,
       Revision: r.revision,
     })),
   };
+  if (nextTokenValue !== undefined) result["NextToken"] = nextTokenValue;
+  return result;
 };
 
 const CreateTags: OperationHandler = (input, ctx) => {

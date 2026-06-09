@@ -60,8 +60,12 @@ test("MQ broker and configuration roundtrip", async () => {
   );
   expect(described.BrokerId).toBe(brokerId);
   expect(described.BrokerName).toBe(brokerName);
-  expect(described.BrokerState).toBe("RUNNING");
+  expect(described.BrokerState).toBe("CREATION_IN_PROGRESS");
   expect(described.EngineType).toBe("ACTIVEMQ");
+  expect(described.BrokerInstances).toBeDefined();
+  expect((described.BrokerInstances ?? []).length).toBeGreaterThan(0);
+  expect(described.Users).toBeDefined();
+  expect((described.Users ?? []).map((u) => u.Username)).toContain("admin");
 
   const listed = await client.send(new ListBrokersCommand({}));
   expect(
@@ -95,9 +99,10 @@ test("MQ broker and configuration roundtrip", async () => {
   );
   expect(deleted.BrokerId).toBe(brokerId);
 
-  await expect(
-    client.send(new DescribeBrokerCommand({ BrokerId: brokerId })),
-  ).rejects.toThrow();
+  const afterDelete = await client.send(
+    new DescribeBrokerCommand({ BrokerId: brokerId }),
+  );
+  expect(afterDelete.BrokerState).toBe("DELETION_IN_PROGRESS");
 });
 
 test("MQ user operations", async () => {
@@ -150,6 +155,7 @@ test("MQ user operations", async () => {
   );
   expect(updated.ConsoleAccess).toBe(false);
   expect(updated.Groups).toEqual(["ops"]);
+  expect(updated.Pending).toBeDefined();
 
   const listed = await client.send(
     new ListUsersCommand({ BrokerId: brokerId }),
@@ -196,15 +202,15 @@ test("MQ configuration operations", async () => {
     '<?xml version="1.0"?><broker></broker>',
   ).toString("base64");
 
-  const updated = await client.send(
+  const updatedConfig = await client.send(
     new UpdateConfigurationCommand({
       ConfigurationId: configId,
       Data: configXml,
       Description: "updated config",
     }),
   );
-  expect(updated.Id).toBe(configId);
-  expect(updated.LatestRevision?.Revision).toBe(2);
+  expect(updatedConfig.Id).toBe(configId);
+  expect(updatedConfig.LatestRevision?.Revision).toBe(2);
 
   const listedConfigs = await client.send(new ListConfigurationsCommand({}));
   expect((listedConfigs.Configurations ?? []).map((c) => c.Id)).toContain(
@@ -346,4 +352,150 @@ test("MQ broker engine types and instance options", async () => {
       (o) => o.EngineType === "ACTIVEMQ",
     ),
   ).toBe(true);
+});
+
+test("MQ CreateBroker: duplicate name returns ConflictException", async () => {
+  const client = mq();
+  const brokerName = `bunsai-dup-${Date.now()}`;
+  const base = {
+    BrokerName: brokerName,
+    EngineType: "ACTIVEMQ" as const,
+    EngineVersion: "5.18.0",
+    DeploymentMode: "SINGLE_INSTANCE" as const,
+    HostInstanceType: "mq.m5.large",
+    PubliclyAccessible: false,
+    AutoMinorVersionUpgrade: false,
+    Users: [],
+  };
+
+  const first = await client.send(new CreateBrokerCommand(base));
+  expect(first.BrokerId).toMatch(/^b-/);
+
+  await expect(
+    client.send(new CreateBrokerCommand(base)),
+  ).rejects.toMatchObject({ name: "ConflictException" });
+
+  await client.send(new DeleteBrokerCommand({ BrokerId: first.BrokerId }));
+});
+
+test("MQ CreateBroker: missing required fields return BadRequestException", async () => {
+  const client = mq();
+  const ts = Date.now();
+
+  await expect(
+    client.send(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new CreateBrokerCommand({
+        BrokerName: `bunsai-notype-${ts}`,
+        DeploymentMode: "SINGLE_INSTANCE",
+        HostInstanceType: "mq.m5.large",
+        PubliclyAccessible: false,
+        AutoMinorVersionUpgrade: false,
+        Users: [],
+      } as any),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new CreateBrokerCommand({
+        BrokerName: `bunsai-nomode-${ts}`,
+        EngineType: "ACTIVEMQ",
+        HostInstanceType: "mq.m5.large",
+        PubliclyAccessible: false,
+        AutoMinorVersionUpgrade: false,
+        Users: [],
+      } as any),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new CreateBrokerCommand({
+        BrokerName: `bunsai-nohost-${ts}`,
+        EngineType: "ACTIVEMQ",
+        DeploymentMode: "SINGLE_INSTANCE",
+        PubliclyAccessible: false,
+        AutoMinorVersionUpgrade: false,
+        Users: [],
+      } as any),
+    ),
+  ).rejects.toThrow();
+});
+
+test("MQ DeleteBroker: broker remains queryable with DELETION_IN_PROGRESS", async () => {
+  const client = mq();
+  const brokerName = `bunsai-softdel-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateBrokerCommand({
+      BrokerName: brokerName,
+      EngineType: "ACTIVEMQ",
+      EngineVersion: "5.18.0",
+      DeploymentMode: "SINGLE_INSTANCE",
+      HostInstanceType: "mq.m5.large",
+      PubliclyAccessible: false,
+      AutoMinorVersionUpgrade: false,
+      Users: [],
+    }),
+  );
+  const brokerId = created.BrokerId as string;
+
+  const del = await client.send(
+    new DeleteBrokerCommand({ BrokerId: brokerId }),
+  );
+  expect(del.BrokerId).toBe(brokerId);
+
+  const afterDelete = await client.send(
+    new DescribeBrokerCommand({ BrokerId: brokerId }),
+  );
+  expect(afterDelete.BrokerId).toBe(brokerId);
+  expect(afterDelete.BrokerState).toBe("DELETION_IN_PROGRESS");
+});
+
+test("MQ ListBrokers: MaxResults and NextToken pagination", async () => {
+  const client = mq();
+  const ts = Date.now();
+  const brokerIds: string[] = [];
+
+  for (let i = 0; i < 7; i++) {
+    const r = await client.send(
+      new CreateBrokerCommand({
+        BrokerName: `bunsai-page-${ts}-${i}`,
+        EngineType: "ACTIVEMQ",
+        EngineVersion: "5.18.0",
+        DeploymentMode: "SINGLE_INSTANCE",
+        HostInstanceType: "mq.m5.large",
+        PubliclyAccessible: false,
+        AutoMinorVersionUpgrade: false,
+        Users: [],
+      }),
+    );
+    brokerIds.push(r.BrokerId as string);
+  }
+
+  const page1 = await client.send(new ListBrokersCommand({ MaxResults: 5 }));
+  expect((page1.BrokerSummaries ?? []).length).toBeLessThanOrEqual(5);
+  expect(page1.NextToken).toBeDefined();
+
+  const allIds: (string | undefined)[] = [
+    ...(page1.BrokerSummaries ?? []).map((b) => b.BrokerId),
+  ];
+  let nextToken: string | undefined = page1.NextToken;
+  while (nextToken !== undefined) {
+    const page = await client.send(
+      new ListBrokersCommand({ MaxResults: 5, NextToken: nextToken }),
+    );
+    allIds.push(...(page.BrokerSummaries ?? []).map((b) => b.BrokerId));
+    nextToken = page.NextToken;
+  }
+  for (const id of brokerIds) {
+    expect(allIds).toContain(id);
+  }
+
+  for (const id of brokerIds) {
+    await client.send(new DeleteBrokerCommand({ BrokerId: id }));
+  }
 });

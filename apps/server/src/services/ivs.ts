@@ -263,6 +263,23 @@ const requireAdConfig = (
   return stored;
 };
 
+const requireResource = (ctx: ServiceContext, arn: string): void => {
+  const exists =
+    ctx.store.get(channelKey(arn)) !== undefined ||
+    ctx.store.get(streamKeyKey(arn)) !== undefined ||
+    ctx.store.get(recConfigKey(arn)) !== undefined ||
+    ctx.store.get(playbackKeyPairKey(arn)) !== undefined ||
+    ctx.store.get(playbackRestrictionPolicyKey(arn)) !== undefined ||
+    ctx.store.get(adConfigKey(arn)) !== undefined;
+  if (!exists) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found for ARN ${arn}.`,
+      404,
+    );
+  }
+};
+
 const channelView = (channel: StoredChannel): Record<string, unknown> => ({
   arn: channel.arn,
   name: channel.name,
@@ -419,22 +436,27 @@ const CreateChannel: OperationHandler = (input, ctx) => {
   const arn = channelArn(ctx, id);
   const name = stringOrUndefined(input["name"]) ?? `channel-${id}`;
   const tags = tagsOrEmpty(input["tags"]);
+  const rcArnInput = stringOrUndefined(input["recordingConfigurationArn"]);
+  if (rcArnInput !== undefined) requireRecConfig(ctx, rcArnInput);
+  const prpArnInput = stringOrUndefined(input["playbackRestrictionPolicyArn"]);
+  if (prpArnInput !== undefined)
+    requirePlaybackRestrictionPolicy(ctx, prpArnInput);
+  const acArnInput = stringOrUndefined(input["adConfigurationArn"]);
+  if (acArnInput !== undefined) requireAdConfig(ctx, acArnInput);
   const channel: StoredChannel = {
     arn,
     name,
     latencyMode: stringOrUndefined(input["latencyMode"]) ?? "LOW",
     type: stringOrUndefined(input["type"]) ?? "STANDARD",
-    recordingConfigurationArn:
-      stringOrUndefined(input["recordingConfigurationArn"]) ?? "",
+    recordingConfigurationArn: rcArnInput ?? "",
     ingestEndpoint: `${id}.global-contribute.live-video.net`,
     playbackUrl: `https://${id}.${ctx.region}.playback.live-video.net/api/video/v1/${arn}.m3u8`,
     authorized: booleanOrFalse(input["authorized"]),
     tags,
     insecureIngest: booleanOrFalse(input["insecureIngest"]),
     preset: stringOrUndefined(input["preset"]) ?? "",
-    playbackRestrictionPolicyArn:
-      stringOrUndefined(input["playbackRestrictionPolicyArn"]) ?? "",
-    adConfigurationArn: stringOrUndefined(input["adConfigurationArn"]) ?? "",
+    playbackRestrictionPolicyArn: prpArnInput ?? "",
+    adConfigurationArn: acArnInput ?? "",
   };
   ctx.store.set(channelKey(arn), channel);
   ctx.store.set(tagsKey(arn), tags as Record<string, string>);
@@ -515,6 +537,17 @@ const ListChannels: OperationHandler = (input, ctx) => {
 const DeleteChannel: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
   requireChannel(ctx, arn);
+  ctx.store
+    .list<StoredStreamKey>()
+    .filter(
+      (e) => e.key.startsWith(streamKeyPrefix) && e.value.channelArn === arn,
+    )
+    .forEach((e) => ctx.store.delete(e.key));
+  ctx.store.delete(streamKey(arn));
+  ctx.store
+    .list<StoredStreamSession>()
+    .filter((e) => e.key.startsWith(`${streamSessionPrefix}${arn}:`))
+    .forEach((e) => ctx.store.delete(e.key));
   ctx.store.delete(channelKey(arn));
   return {};
 };
@@ -522,6 +555,23 @@ const DeleteChannel: OperationHandler = (input, ctx) => {
 const UpdateChannel: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
   const channel = requireChannel(ctx, arn);
+  const newRcArn =
+    typeof input["recordingConfigurationArn"] === "string"
+      ? input["recordingConfigurationArn"]
+      : undefined;
+  if (newRcArn !== undefined && newRcArn !== "")
+    requireRecConfig(ctx, newRcArn);
+  const newPrpArn =
+    typeof input["playbackRestrictionPolicyArn"] === "string"
+      ? input["playbackRestrictionPolicyArn"]
+      : undefined;
+  if (newPrpArn !== undefined && newPrpArn !== "")
+    requirePlaybackRestrictionPolicy(ctx, newPrpArn);
+  const newAcArn =
+    typeof input["adConfigurationArn"] === "string"
+      ? input["adConfigurationArn"]
+      : undefined;
+  if (newAcArn !== undefined && newAcArn !== "") requireAdConfig(ctx, newAcArn);
   const updated: StoredChannel = {
     ...channel,
     name: stringOrUndefined(input["name"]) ?? channel.name,
@@ -532,22 +582,18 @@ const UpdateChannel: OperationHandler = (input, ctx) => {
         ? input["authorized"]
         : channel.authorized,
     recordingConfigurationArn:
-      typeof input["recordingConfigurationArn"] === "string"
-        ? input["recordingConfigurationArn"]
-        : channel.recordingConfigurationArn,
+      newRcArn !== undefined ? newRcArn : channel.recordingConfigurationArn,
     insecureIngest:
       typeof input["insecureIngest"] === "boolean"
         ? input["insecureIngest"]
         : channel.insecureIngest,
     preset: stringOrUndefined(input["preset"]) ?? channel.preset,
     playbackRestrictionPolicyArn:
-      typeof input["playbackRestrictionPolicyArn"] === "string"
-        ? input["playbackRestrictionPolicyArn"]
+      newPrpArn !== undefined
+        ? newPrpArn
         : channel.playbackRestrictionPolicyArn,
     adConfigurationArn:
-      typeof input["adConfigurationArn"] === "string"
-        ? input["adConfigurationArn"]
-        : channel.adConfigurationArn,
+      newAcArn !== undefined ? newAcArn : channel.adConfigurationArn,
   };
   ctx.store.set(channelKey(arn), updated);
   return { channel: channelView(updated) };
@@ -681,6 +727,17 @@ const GetRecordingConfiguration: OperationHandler = (input, ctx) => {
 const DeleteRecordingConfiguration: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
   requireRecConfig(ctx, arn);
+  const inUse = ctx.store
+    .list<StoredChannel>()
+    .filter((e) => e.key.startsWith(channelPrefix))
+    .some((e) => e.value.recordingConfigurationArn === arn);
+  if (inUse) {
+    throw awsError(
+      "ConflictException",
+      `RecordingConfiguration ${arn} is in use by a channel.`,
+      409,
+    );
+  }
   ctx.store.delete(recConfigKey(arn));
   return {};
 };
@@ -791,6 +848,17 @@ const GetPlaybackRestrictionPolicy: OperationHandler = (input, ctx) => {
 const DeletePlaybackRestrictionPolicy: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
   requirePlaybackRestrictionPolicy(ctx, arn);
+  const inUse = ctx.store
+    .list<StoredChannel>()
+    .filter((e) => e.key.startsWith(channelPrefix))
+    .some((e) => e.value.playbackRestrictionPolicyArn === arn);
+  if (inUse) {
+    throw awsError(
+      "ConflictException",
+      `PlaybackRestrictionPolicy ${arn} is in use by a channel.`,
+      409,
+    );
+  }
   ctx.store.delete(playbackRestrictionPolicyKey(arn));
   return {};
 };
@@ -826,14 +894,18 @@ const UpdatePlaybackRestrictionPolicy: OperationHandler = (input, ctx) => {
 
 const ListPlaybackRestrictionPolicies: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const token = stringOrUndefined(input["nextToken"]);
+  const start = token !== undefined ? decodeNextToken(token) : 0;
   const policies = ctx.store
     .list<StoredPlaybackRestrictionPolicy>()
     .filter((entry) => entry.key.startsWith(playbackRestrictionPolicyPrefix))
     .map((entry) => entry.value);
+  const slice = policies.slice(start, start + max);
+  const nextToken =
+    start + max < policies.length ? encodeNextToken(start + max) : undefined;
   return {
-    playbackRestrictionPolicies: policies
-      .slice(0, max)
-      .map(playbackRestrictionPolicyView),
+    playbackRestrictionPolicies: slice.map(playbackRestrictionPolicyView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -874,17 +946,36 @@ const GetAdConfiguration: OperationHandler = (input, ctx) => {
 const DeleteAdConfiguration: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
   requireAdConfig(ctx, arn);
+  const inUse = ctx.store
+    .list<StoredChannel>()
+    .filter((e) => e.key.startsWith(channelPrefix))
+    .some((e) => e.value.adConfigurationArn === arn);
+  if (inUse) {
+    throw awsError(
+      "ConflictException",
+      `AdConfiguration ${arn} is in use by a channel.`,
+      409,
+    );
+  }
   ctx.store.delete(adConfigKey(arn));
   return {};
 };
 
 const ListAdConfigurations: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const token = stringOrUndefined(input["nextToken"]);
+  const start = token !== undefined ? decodeNextToken(token) : 0;
   const configs = ctx.store
     .list<StoredAdConfiguration>()
     .filter((entry) => entry.key.startsWith(adConfigPrefix))
     .map((entry) => entry.value);
-  return { adConfigurations: configs.slice(0, max).map(adConfigView) };
+  const slice = configs.slice(start, start + max);
+  const nextToken =
+    start + max < configs.length ? encodeNextToken(start + max) : undefined;
+  return {
+    adConfigurations: slice.map(adConfigView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const GetStream: OperationHandler = (input, ctx) => {
@@ -925,18 +1016,23 @@ const StopStream: OperationHandler = (input, ctx) => {
   const chArn = requireString(input, "channelArn");
   requireChannel(ctx, chArn);
   const liveStream = ctx.store.get<StoredStream>(streamKey(chArn));
-  if (liveStream !== undefined) {
-    const endTime = new Date().toISOString();
-    const session: StoredStreamSession = {
-      streamId: liveStream.streamId,
-      startTime: liveStream.startTime,
-      endTime,
-      channelArn: chArn,
-      hasErrorEvent: false,
-    };
-    ctx.store.set(streamSessionKey(chArn, liveStream.streamId), session);
-    ctx.store.delete(streamKey(chArn));
+  if (liveStream === undefined) {
+    throw awsError(
+      "ChannelNotBroadcasting",
+      `Channel ${chArn} is not broadcasting.`,
+      404,
+    );
   }
+  const endTime = new Date().toISOString();
+  const session: StoredStreamSession = {
+    streamId: liveStream.streamId,
+    startTime: liveStream.startTime,
+    endTime,
+    channelArn: chArn,
+    hasErrorEvent: false,
+  };
+  ctx.store.set(streamSessionKey(chArn, liveStream.streamId), session);
+  ctx.store.delete(streamKey(chArn));
   return {};
 };
 
@@ -1018,12 +1114,18 @@ const ListStreamSessions: OperationHandler = (input, ctx) => {
   const chArn = requireString(input, "channelArn");
   requireChannel(ctx, chArn);
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const token = stringOrUndefined(input["nextToken"]);
+  const start = token !== undefined ? decodeNextToken(token) : 0;
   const sessions = ctx.store
     .list<StoredStreamSession>()
     .filter((entry) => entry.key.startsWith(`${streamSessionPrefix}${chArn}:`))
     .map((entry) => entry.value);
+  const slice = sessions.slice(start, start + max);
+  const nextToken =
+    start + max < sessions.length ? encodeNextToken(start + max) : undefined;
   return {
-    streamSessions: sessions.slice(0, max).map(streamSessionSummaryView),
+    streamSessions: slice.map(streamSessionSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
   };
 };
 
@@ -1046,6 +1148,7 @@ const BatchStartViewerSessionRevocation: OperationHandler = (_input, _ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const resourceArnVal = requireString(input, "resourceArn");
+  requireResource(ctx, resourceArnVal);
   const tags =
     ctx.store.get<Record<string, string>>(tagsKey(resourceArnVal)) ?? {};
   return { tags };
@@ -1053,6 +1156,7 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const resourceArnVal = requireString(input, "resourceArn");
+  requireResource(ctx, resourceArnVal);
   const newTags = tagsOrEmpty(input["tags"]) as Record<string, string>;
   const existing =
     ctx.store.get<Record<string, string>>(tagsKey(resourceArnVal)) ?? {};
@@ -1062,6 +1166,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const resourceArnVal = requireString(input, "resourceArn");
+  requireResource(ctx, resourceArnVal);
   const tagKeys = arrayOrEmpty(input["tagKeys"]).filter(
     (k): k is string => typeof k === "string",
   );

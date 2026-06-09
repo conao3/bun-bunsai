@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  AddTagsToResourceCommand,
   CancelCommandCommand,
   CreateActivationCommand,
   CreateAssociationCommand,
@@ -16,6 +17,7 @@ import {
   DeleteMaintenanceWindowCommand,
   DeleteOpsMetadataCommand,
   DeleteParameterCommand,
+  DeleteParametersCommand,
   DeletePatchBaselineCommand,
   DeleteResourceDataSyncCommand,
   DescribeActivationsCommand,
@@ -36,6 +38,7 @@ import {
   ListCommandInvocationsCommand,
   ListCommandsCommand,
   ListResourceDataSyncCommand,
+  ListTagsForResourceCommand,
   PutParameterCommand,
   RegisterTargetWithMaintenanceWindowCommand,
   RegisterTaskWithMaintenanceWindowCommand,
@@ -535,6 +538,272 @@ describe("ssm e2e", () => {
     const nameResults = (filterByName.Parameters ?? []).map((p) => p.Name);
     expect(nameResults).toContain(pSec);
     expect(nameResults).not.toContain(pStr);
+
+    await client.send(new DeleteParameterCommand({ Name: pStr }));
+    await client.send(new DeleteParameterCommand({ Name: pSec }));
+  });
+
+  test("SecureString round-trip and version increment on overwrite", async () => {
+    const client = ssm();
+    const name = `/bunsai/e2e/secure-overwrite/${Date.now()}`;
+    const plain1 = "secret-v1";
+    const plain2 = "secret-v2";
+
+    const put1 = await client.send(
+      new PutParameterCommand({
+        Name: name,
+        Value: plain1,
+        Type: "SecureString",
+      }),
+    );
+    expect(put1.Version).toBe(1);
+
+    const put2 = await client.send(
+      new PutParameterCommand({
+        Name: name,
+        Value: plain2,
+        Type: "SecureString",
+        Overwrite: true,
+      }),
+    );
+    expect(put2.Version).toBe(2);
+
+    const decrypted = await client.send(
+      new GetParameterCommand({ Name: name, WithDecryption: true }),
+    );
+    expect(decrypted.Parameter?.Value).toBe(plain2);
+
+    const encrypted = await client.send(
+      new GetParameterCommand({ Name: name, WithDecryption: false }),
+    );
+    expect(encrypted.Parameter?.Value).not.toBe(plain2);
+    expect(encrypted.Parameter?.Type).toBe("SecureString");
+
+    const histDecrypted = await client.send(
+      new GetParameterHistoryCommand({ Name: name, WithDecryption: true }),
+    );
+    expect(histDecrypted.Parameters?.length).toBe(2);
+    const hdV1 = histDecrypted.Parameters?.find((p) => p.Version === 1);
+    const hdV2 = histDecrypted.Parameters?.find((p) => p.Version === 2);
+    expect(hdV1?.Value).toBe(plain1);
+    expect(hdV2?.Value).toBe(plain2);
+
+    const histEncrypted = await client.send(
+      new GetParameterHistoryCommand({ Name: name, WithDecryption: false }),
+    );
+    const heV1 = histEncrypted.Parameters?.find((p) => p.Version === 1);
+    expect(heV1?.Value).not.toBe(plain1);
+    expect(heV1?.Type).toBe("SecureString");
+
+    await client.send(new DeleteParameterCommand({ Name: name }));
+  });
+
+  test("GetParameterHistory multi-version values", async () => {
+    const client = ssm();
+    const name = `/bunsai/e2e/hist-multi/${Date.now()}`;
+
+    await client.send(
+      new PutParameterCommand({ Name: name, Value: "val-v1", Type: "String" }),
+    );
+    await client.send(
+      new PutParameterCommand({
+        Name: name,
+        Value: "val-v2",
+        Type: "String",
+        Overwrite: true,
+      }),
+    );
+    await client.send(
+      new PutParameterCommand({
+        Name: name,
+        Value: "val-v3",
+        Type: "String",
+        Overwrite: true,
+      }),
+    );
+
+    const history = await client.send(
+      new GetParameterHistoryCommand({ Name: name }),
+    );
+    expect(history.Parameters?.length).toBe(3);
+    const hv1 = history.Parameters?.find((p) => p.Version === 1);
+    const hv2 = history.Parameters?.find((p) => p.Version === 2);
+    const hv3 = history.Parameters?.find((p) => p.Version === 3);
+    expect(hv1?.Value).toBe("val-v1");
+    expect(hv2?.Value).toBe("val-v2");
+    expect(hv3?.Value).toBe("val-v3");
+
+    const page1 = await client.send(
+      new GetParameterHistoryCommand({ Name: name, MaxResults: 2 }),
+    );
+    expect(page1.Parameters?.length).toBe(2);
+    expect(typeof page1.NextToken).toBe("string");
+
+    const page2 = await client.send(
+      new GetParameterHistoryCommand({
+        Name: name,
+        MaxResults: 2,
+        NextToken: page1.NextToken,
+      }),
+    );
+    expect(page2.Parameters?.length).toBe(1);
+    expect(page2.NextToken).toBeUndefined();
+
+    await client.send(new DeleteParameterCommand({ Name: name }));
+  });
+
+  test("LabelParameterVersion resolves via GetParameter name:label", async () => {
+    const client = ssm();
+    const name = `/bunsai/e2e/label-resolve/${Date.now()}`;
+
+    await client.send(
+      new PutParameterCommand({ Name: name, Value: "v1", Type: "String" }),
+    );
+    await client.send(
+      new PutParameterCommand({
+        Name: name,
+        Value: "v2",
+        Type: "String",
+        Overwrite: true,
+      }),
+    );
+
+    await client.send(
+      new LabelParameterVersionCommand({
+        Name: name,
+        ParameterVersion: 1,
+        Labels: ["prod"],
+      }),
+    );
+
+    const byLabel = await client.send(
+      new GetParameterCommand({ Name: `${name}:prod` }),
+    );
+    expect(byLabel.Parameter?.Version).toBe(1);
+    expect(byLabel.Parameter?.Value).toBe("v1");
+
+    const hist = await client.send(
+      new GetParameterHistoryCommand({ Name: name }),
+    );
+    const hv1 = hist.Parameters?.find((p) => p.Version === 1);
+    expect(hv1?.Labels).toContain("prod");
+
+    await client.send(new DeleteParameterCommand({ Name: name }));
+  });
+
+  test("Parameter tag round-trip via PutParameter and AddTagsToResource", async () => {
+    const client = ssm();
+    const name = `/bunsai/e2e/tagged/${Date.now()}`;
+
+    await client.send(
+      new PutParameterCommand({
+        Name: name,
+        Value: "v",
+        Type: "String",
+        Tags: [{ Key: "Env", Value: "test" }],
+      }),
+    );
+
+    const tags1 = await client.send(
+      new ListTagsForResourceCommand({
+        ResourceType: "Parameter",
+        ResourceId: name,
+      }),
+    );
+    const envTag = tags1.TagList?.find((t) => t.Key === "Env");
+    expect(envTag?.Value).toBe("test");
+
+    await client.send(
+      new AddTagsToResourceCommand({
+        ResourceType: "Parameter",
+        ResourceId: name,
+        Tags: [{ Key: "Owner", Value: "bunsai" }],
+      }),
+    );
+
+    const tags2 = await client.send(
+      new ListTagsForResourceCommand({
+        ResourceType: "Parameter",
+        ResourceId: name,
+      }),
+    );
+    expect(tags2.TagList?.find((t) => t.Key === "Env")?.Value).toBe("test");
+    expect(tags2.TagList?.find((t) => t.Key === "Owner")?.Value).toBe("bunsai");
+
+    await client.send(new DeleteParameterCommand({ Name: name }));
+  });
+
+  test("DeleteParameters returns invalid list for missing names", async () => {
+    const client = ssm();
+    const name = `/bunsai/e2e/del-batch/${Date.now()}`;
+
+    await client.send(
+      new PutParameterCommand({ Name: name, Value: "x", Type: "String" }),
+    );
+
+    const result = await client.send(
+      new DeleteParametersCommand({
+        Names: [name, "/bunsai/e2e/nonexistent-abc"],
+      }),
+    );
+    expect(result.DeletedParameters).toContain(name);
+    expect(result.InvalidParameters).toContain("/bunsai/e2e/nonexistent-abc");
+  });
+
+  test("DescribeParameters ParameterFilters and pagination", async () => {
+    const client = ssm();
+    const prefix = `/bunsai/e2e/desc-filter/${Date.now()}`;
+    const pStr = `${prefix}/str`;
+    const pSec = `${prefix}/sec`;
+
+    await client.send(
+      new PutParameterCommand({ Name: pStr, Value: "v", Type: "String" }),
+    );
+    await client.send(
+      new PutParameterCommand({ Name: pSec, Value: "v", Type: "SecureString" }),
+    );
+
+    const byType = await client.send(
+      new DescribeParametersCommand({
+        ParameterFilters: [
+          { Key: "Type", Option: "Equals", Values: ["SecureString"] },
+        ],
+      }),
+    );
+    const typeNames = (byType.Parameters ?? []).map((p) => p.Name);
+    expect(typeNames).toContain(pSec);
+    expect(typeNames).not.toContain(pStr);
+
+    const byName = await client.send(
+      new DescribeParametersCommand({
+        ParameterFilters: [{ Key: "Name", Option: "Equals", Values: [pStr] }],
+      }),
+    );
+    expect(byName.Parameters?.length).toBe(1);
+    expect(byName.Parameters?.[0]?.Name).toBe(pStr);
+
+    const page1 = await client.send(
+      new DescribeParametersCommand({
+        ParameterFilters: [
+          { Key: "Name", Option: "BeginsWith", Values: [prefix] },
+        ],
+        MaxResults: 1,
+      }),
+    );
+    expect(page1.Parameters?.length).toBe(1);
+    expect(typeof page1.NextToken).toBe("string");
+
+    const page2 = await client.send(
+      new DescribeParametersCommand({
+        ParameterFilters: [
+          { Key: "Name", Option: "BeginsWith", Values: [prefix] },
+        ],
+        MaxResults: 1,
+        NextToken: page1.NextToken,
+      }),
+    );
+    expect(page2.Parameters?.length).toBe(1);
+    expect(page2.NextToken).toBeUndefined();
 
     await client.send(new DeleteParameterCommand({ Name: pStr }));
     await client.send(new DeleteParameterCommand({ Name: pSec }));

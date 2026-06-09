@@ -330,12 +330,15 @@ const getHierarchyPath = (ctx: ServiceContext, targetId: string): string[] => {
     if (root !== undefined && current === root.Id) {
       break;
     }
-    const account: StoredAccount | undefined = ctx.store.get<StoredAccount>(accountKey(current));
+    const account: StoredAccount | undefined = ctx.store.get<StoredAccount>(
+      accountKey(current),
+    );
     if (account !== undefined) {
       current = account.ParentId;
       continue;
     }
-    const ou: StoredOrganizationalUnit | undefined = ctx.store.get<StoredOrganizationalUnit>(ouKey(current));
+    const ou: StoredOrganizationalUnit | undefined =
+      ctx.store.get<StoredOrganizationalUnit>(ouKey(current));
     if (ou !== undefined) {
       current = ou.ParentId;
       continue;

@@ -26,6 +26,7 @@ import {
   GetImportCommand,
   GetInsightSelectorsCommand,
   GetQueryResultsCommand,
+  GetTrailStatusCommand,
   GetResourcePolicyCommand,
   ListChannelsCommand,
   ListDashboardsCommand,
@@ -48,9 +49,11 @@ import {
   StartDashboardRefreshCommand,
   StartEventDataStoreIngestionCommand,
   StartImportCommand,
+  StartLoggingCommand,
   StartQueryCommand,
   StopEventDataStoreIngestionCommand,
   StopImportCommand,
+  StopLoggingCommand,
   UpdateChannelCommand,
   UpdateDashboardCommand,
   UpdateEventDataStoreCommand,
@@ -564,4 +567,109 @@ test("CloudTrail organization delegated admin", async () => {
       }),
     ),
   ).resolves.toBeDefined();
+});
+
+test("CloudTrail query status lifecycle and DescribeQuery validation", async () => {
+  const client = cloudtrail();
+
+  const started = await client.send(
+    new StartQueryCommand({ QueryStatement: "SELECT * FROM events LIMIT 5" }),
+  );
+  expect(started.QueryId).toBeDefined();
+  const queryId = started.QueryId ?? "";
+
+  const described = await client.send(
+    new DescribeQueryCommand({ QueryId: queryId }),
+  );
+  expect(described.QueryId).toBe(queryId);
+  expect(described.QueryStatus).toBe("QUEUED");
+  expect(described.QueryStatistics?.ExecutionTimeInMillis).toBe(0);
+
+  const results = await client.send(
+    new GetQueryResultsCommand({ QueryId: queryId }),
+  );
+  expect(results.QueryStatus).toBe("FINISHED");
+
+  const describedAfter = await client.send(
+    new DescribeQueryCommand({ QueryId: queryId }),
+  );
+  expect(describedAfter.QueryStatus).toBe("FINISHED");
+  expect(describedAfter.QueryStatistics?.ExecutionTimeInMillis).toBe(100);
+
+  await expect(
+    client.send(new DescribeQueryCommand({ QueryId: "nonexistent-query-id" })),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(new DescribeQueryCommand({ QueryId: "" })),
+  ).rejects.toThrow();
+});
+
+test("CloudTrail GetTrailStatus delivery timestamps", async () => {
+  const client = cloudtrail();
+  const trailName = "bunsai-e2e-trail-status-detail";
+
+  await client.send(
+    new CreateTrailCommand({
+      Name: trailName,
+      S3BucketName: "bunsai-e2e-status-bucket",
+    }),
+  );
+
+  const beforeLogging = await client.send(
+    new GetTrailStatusCommand({ Name: trailName }),
+  );
+  expect(beforeLogging.IsLogging).toBe(false);
+  expect(beforeLogging.LatestDeliveryTime).toBeUndefined();
+  expect(beforeLogging.LatestDigestDeliveryTime).toBeUndefined();
+
+  await client.send(new StartLoggingCommand({ Name: trailName }));
+  const afterLogging = await client.send(
+    new GetTrailStatusCommand({ Name: trailName }),
+  );
+  expect(afterLogging.IsLogging).toBe(true);
+  expect(afterLogging.LatestDeliveryTime).toBeInstanceOf(Date);
+  expect(afterLogging.LatestDigestDeliveryTime).toBeInstanceOf(Date);
+  expect(typeof afterLogging.LatestDeliveryAttemptTime).toBe("string");
+  expect(afterLogging.LatestDeliveryAttemptSucceeded).toBe("Success");
+
+  await client.send(new StopLoggingCommand({ Name: trailName }));
+  await client.send(new DeleteTrailCommand({ Name: trailName }));
+});
+
+test("CloudTrail StartImport rejects terminal import restart", async () => {
+  const client = cloudtrail();
+  const edsName = "bunsai-e2e-eds-import-restart";
+
+  const eds = await client.send(
+    new CreateEventDataStoreCommand({
+      Name: edsName,
+      TerminationProtectionEnabled: false,
+    }),
+  );
+  const edsArn = eds.EventDataStoreArn ?? "";
+
+  const started = await client.send(
+    new StartImportCommand({
+      Destinations: [edsArn],
+      ImportSource: {
+        S3: {
+          S3LocationUri: "s3://bunsai-restart-bucket/",
+          S3BucketRegion: "us-east-1",
+          S3BucketAccessRoleArn: "arn:aws:iam::123456789012:role/test-role",
+        },
+      },
+    }),
+  );
+  const importId = started.ImportId ?? "";
+
+  await client.send(new StopImportCommand({ ImportId: importId }));
+
+  await expect(
+    client.send(new StartImportCommand({ ImportId: importId })),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteEventDataStoreCommand({ EventDataStore: edsArn }),
+  );
 });

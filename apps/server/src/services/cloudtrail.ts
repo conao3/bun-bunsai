@@ -29,6 +29,8 @@ type StoredTrail = {
   isLogging: boolean;
   startLoggingTime?: number;
   stopLoggingTime?: number;
+  latestDeliveryTime?: number;
+  latestDigestDeliveryTime?: number;
 };
 
 type StoredEventDataStore = {
@@ -423,6 +425,8 @@ const StartLogging: OperationHandler = (input, ctx) => {
   const trail = requireTrail(ctx, name);
   trail.isLogging = true;
   trail.startLoggingTime = Math.floor(Date.now() / 1000);
+  trail.latestDeliveryTime = trail.startLoggingTime;
+  trail.latestDigestDeliveryTime = trail.startLoggingTime;
   ctx.store.set(trailKey(name), trail);
   return {};
 };
@@ -451,6 +455,20 @@ const GetTrailStatus: OperationHandler = (input, ctx) => {
       trail.stopLoggingTime === undefined
         ? undefined
         : new Date(trail.stopLoggingTime * 1000).toISOString(),
+    LatestDeliveryTime:
+      trail.latestDeliveryTime === undefined
+        ? undefined
+        : new Date(trail.latestDeliveryTime * 1000),
+    LatestDigestDeliveryTime:
+      trail.latestDigestDeliveryTime === undefined
+        ? undefined
+        : new Date(trail.latestDigestDeliveryTime * 1000),
+    LatestDeliveryAttemptTime:
+      trail.latestDeliveryTime === undefined
+        ? undefined
+        : new Date(trail.latestDeliveryTime * 1000).toISOString(),
+    LatestDeliveryAttemptSucceeded:
+      trail.latestDeliveryTime === undefined ? undefined : "Success",
   };
 };
 
@@ -1066,25 +1084,23 @@ const CancelQuery: OperationHandler = (input, ctx) => {
   };
 };
 
+const terminalQueryStatuses = new Set([
+  "FINISHED",
+  "CANCELLED",
+  "FAILED",
+  "TIMED_OUT",
+] as const);
+
 const DescribeQuery: OperationHandler = (input, ctx) => {
   const queryId =
     typeof input["QueryId"] === "string" ? (input["QueryId"] as string) : "";
   if (queryId === "") {
-    return {
-      QueryId: "",
-      QueryString: "",
-      QueryStatus: "FINISHED",
-      QueryStatistics: {
-        EventsMatched: 0,
-        EventsScanned: 0,
-        ExecutionTimeInMillis: 0,
-        TotalResultsCount: 0,
-        BytesScanned: 0,
-      },
-      EventDataStoreOwnerAccountId: ctx.account,
-    };
+    throw awsError("QueryIdNotFoundException", "QueryId is required.", 400);
   }
   const query = requireQuery(ctx, queryId);
+  const isTerminal = terminalQueryStatuses.has(
+    query.QueryStatus as "FINISHED" | "CANCELLED" | "FAILED" | "TIMED_OUT",
+  );
   return {
     QueryId: query.QueryId,
     QueryString: query.QueryString,
@@ -1092,7 +1108,7 @@ const DescribeQuery: OperationHandler = (input, ctx) => {
     QueryStatistics: {
       EventsMatched: 0,
       EventsScanned: 0,
-      ExecutionTimeInMillis: 100,
+      ExecutionTimeInMillis: isTerminal ? 100 : 0,
       TotalResultsCount: 0,
       BytesScanned: 0,
     },
@@ -1102,9 +1118,17 @@ const DescribeQuery: OperationHandler = (input, ctx) => {
 
 const GetQueryResults: OperationHandler = (input, ctx) => {
   const queryId = requireString(input, "QueryId");
-  requireQuery(ctx, queryId);
+  const query = requireQuery(ctx, queryId);
+  if (
+    !terminalQueryStatuses.has(
+      query.QueryStatus as "FINISHED" | "CANCELLED" | "FAILED" | "TIMED_OUT",
+    )
+  ) {
+    query.QueryStatus = "FINISHED";
+    ctx.store.set(queryKey(queryId), query);
+  }
   return {
-    QueryStatus: "FINISHED",
+    QueryStatus: query.QueryStatus,
     QueryStatistics: {
       ResultsCount: 0,
       TotalResultsCount: 0,
@@ -1152,13 +1176,32 @@ const SearchSampleQueries: OperationHandler = (_input, _ctx) => {
   };
 };
 
+const terminalImportStatuses = new Set([
+  "COMPLETED",
+  "STOPPED",
+  "FAILED",
+] as const);
+
 const StartImport: OperationHandler = (input, ctx) => {
   const now = nowSec();
-  const importId =
-    typeof input["ImportId"] === "string"
-      ? (input["ImportId"] as string)
-      : generateId("import");
+  const providedImportId = typeof input["ImportId"] === "string";
+  const importId = providedImportId
+    ? (input["ImportId"] as string)
+    : generateId("import");
   const existing = ctx.store.get<StoredImport>(importKey(importId));
+  if (
+    existing &&
+    providedImportId &&
+    terminalImportStatuses.has(
+      existing.ImportStatus as "COMPLETED" | "STOPPED" | "FAILED",
+    )
+  ) {
+    throw awsError(
+      "InvalidParameterException",
+      `Import ${importId} cannot be restarted.`,
+      400,
+    );
+  }
   const imp: StoredImport = existing ?? {
     ImportId: importId,
     Destinations: Array.isArray(input["Destinations"])

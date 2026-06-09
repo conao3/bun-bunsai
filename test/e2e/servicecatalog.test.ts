@@ -6,6 +6,7 @@ import {
   AssociateProductWithPortfolioCommand,
   AssociateTagOptionWithResourceCommand,
   BatchAssociateServiceActionWithProvisioningArtifactCommand,
+  CopyProductCommand,
   CreateConstraintCommand,
   CreatePortfolioCommand,
   CreateProductCommand,
@@ -19,6 +20,7 @@ import {
   DeleteServiceActionCommand,
   DeleteTagOptionCommand,
   DescribeConstraintCommand,
+  DescribeCopyProductStatusCommand,
   DescribePortfolioCommand,
   DescribeProductAsAdminCommand,
   DescribeProductCommand,
@@ -30,13 +32,17 @@ import {
   DisassociateTagOptionFromResourceCommand,
   EnableAWSOrganizationsAccessCommand,
   GetAWSOrganizationsAccessStatusCommand,
+  ListAcceptedPortfolioSharesCommand,
   ListPortfoliosCommand,
   ListPrincipalsForPortfolioCommand,
   ListProvisioningArtifactsCommand,
   ListRecordHistoryCommand,
   ListServiceActionsCommand,
   ListTagOptionsCommand,
+  NotifyProvisionProductEngineWorkflowResultCommand,
+  NotifyTerminateProvisionedProductEngineWorkflowResultCommand,
   ProvisionProductCommand,
+  RejectPortfolioShareCommand,
   SearchProductsCommand,
   ServiceCatalogClient,
   TerminateProvisionedProductCommand,
@@ -236,26 +242,65 @@ test("ServiceCatalog product + provisioning-artifact lifecycle", async () => {
   );
   const ppId = provisioned.RecordDetail?.ProvisionedProductId ?? "";
   expect(ppId).toMatch(/^pp-/);
-  const recordId = provisioned.RecordDetail?.RecordId ?? "";
+  const provRecordId = provisioned.RecordDetail?.RecordId ?? "";
 
-  const descPP = await client.send(
+  const underChange = await client.send(
     new DescribeProvisionedProductCommand({ Id: ppId }),
   );
-  expect(descPP.ProvisionedProductDetail?.Id).toBe(ppId);
-  expect(descPP.ProvisionedProductDetail?.Status).toBe("AVAILABLE");
+  expect(underChange.ProvisionedProductDetail?.Status).toBe("UNDER_CHANGE");
 
-  const record = await client.send(new DescribeRecordCommand({ Id: recordId }));
-  expect(record.RecordDetail?.RecordId).toBe(recordId);
+  await client.send(
+    new NotifyProvisionProductEngineWorkflowResultCommand({
+      WorkflowToken: "e2e-wf-token",
+      RecordId: provRecordId,
+      Status: "SUCCEEDED",
+      IdempotencyToken: "e2e-notify-prov-tok",
+    }),
+  );
+
+  const available = await client.send(
+    new DescribeProvisionedProductCommand({ Id: ppId }),
+  );
+  expect(available.ProvisionedProductDetail?.Id).toBe(ppId);
+  expect(available.ProvisionedProductDetail?.Status).toBe("AVAILABLE");
+
+  const record = await client.send(
+    new DescribeRecordCommand({ Id: provRecordId }),
+  );
+  expect(record.RecordDetail?.RecordId).toBe(provRecordId);
+  expect(record.RecordDetail?.Status).toBe("SUCCEEDED");
 
   const history = await client.send(new ListRecordHistoryCommand({}));
   expect((history.RecordDetails ?? []).length).toBeGreaterThan(0);
 
-  await client.send(
+  const terminated = await client.send(
     new TerminateProvisionedProductCommand({
       ProvisionedProductId: ppId,
       TerminateToken: "e2e-term-tok",
     }),
   );
+  const termRecordId = terminated.RecordDetail?.RecordId ?? "";
+
+  const underChangeAfterTerm = await client.send(
+    new DescribeProvisionedProductCommand({ Id: ppId }),
+  );
+  expect(underChangeAfterTerm.ProvisionedProductDetail?.Status).toBe(
+    "UNDER_CHANGE",
+  );
+
+  await client.send(
+    new NotifyTerminateProvisionedProductEngineWorkflowResultCommand({
+      WorkflowToken: "e2e-wf-term-token",
+      RecordId: termRecordId,
+      Status: "SUCCEEDED",
+      IdempotencyToken: "e2e-notify-term-tok",
+    }),
+  );
+
+  const terminatedPP = await client.send(
+    new DescribeProvisionedProductCommand({ Id: ppId }),
+  );
+  expect(terminatedPP.ProvisionedProductDetail?.Status).toBe("TERMINATED");
 
   const sa = await client.send(
     new CreateServiceActionCommand({
@@ -341,5 +386,136 @@ test("ServiceCatalog product + provisioning-artifact lifecycle", async () => {
     }),
   );
   await client.send(new DeleteProductCommand({ Id: productId }));
+  await client.send(new DeletePortfolioCommand({ Id: portfolioId }));
+});
+
+test("ServiceCatalog SearchProducts pagination", async () => {
+  const client = catalog();
+
+  const ids: string[] = [];
+  for (let i = 0; i < 3; i += 1) {
+    const p = await client.send(
+      new CreateProductCommand({
+        Name: `e2e-page-product-${i}`,
+        Owner: "e2e",
+        ProductType: "CLOUD_FORMATION_TEMPLATE",
+        IdempotencyToken: `e2e-page-prod-tok-${i}`,
+        ProvisioningArtifactParameters: {
+          Name: "v1",
+          Type: "CLOUD_FORMATION_TEMPLATE",
+          Info: { LoadTemplateFromURL: "https://s3.amazonaws.com/x/t.json" },
+        },
+      }),
+    );
+    ids.push(p.ProductViewDetail?.ProductViewSummary?.Id ?? "");
+  }
+
+  const page1 = await client.send(
+    new SearchProductsCommand({ PageSize: 2 }),
+  );
+  expect((page1.ProductViewSummaries ?? []).length).toBe(2);
+  expect(page1.NextPageToken).toBeDefined();
+
+  const page2 = await client.send(
+    new SearchProductsCommand({ PageSize: 2, PageToken: page1.NextPageToken }),
+  );
+  expect((page2.ProductViewSummaries ?? []).length).toBeGreaterThanOrEqual(1);
+
+  for (const id of ids) {
+    await client.send(new DeleteProductCommand({ Id: id }));
+  }
+});
+
+test("ServiceCatalog CopyProduct + DescribeCopyProductStatus", async () => {
+  const client = catalog();
+
+  const created = await client.send(
+    new CreateProductCommand({
+      Name: "e2e-copy-src",
+      Owner: "e2e",
+      ProductType: "CLOUD_FORMATION_TEMPLATE",
+      IdempotencyToken: "e2e-copy-src-tok",
+      ProvisioningArtifactParameters: {
+        Name: "v1",
+        Type: "CLOUD_FORMATION_TEMPLATE",
+        Info: { LoadTemplateFromURL: "https://s3.amazonaws.com/x/t.json" },
+      },
+    }),
+  );
+  const srcProductArn =
+    created.ProductViewDetail?.ProductARN ?? "";
+  expect(srcProductArn).toContain("product/");
+
+  const copied = await client.send(
+    new CopyProductCommand({
+      SourceProductArn: srcProductArn,
+      TargetProductName: "e2e-copy-dst",
+      IdempotencyToken: "e2e-copy-tok",
+    }),
+  );
+  const token = copied.CopyProductToken ?? "";
+  expect(token).toMatch(/^copy-/);
+
+  const status = await client.send(
+    new DescribeCopyProductStatusCommand({ CopyProductToken: token }),
+  );
+  expect(status.CopyProductStatus).toBe("SUCCEEDED");
+  expect(status.TargetProductId).toMatch(/^prod-/);
+
+  const srcId = created.ProductViewDetail?.ProductViewSummary?.Id ?? "";
+  await client.send(new DeleteProductCommand({ Id: srcId }));
+  await client.send(
+    new DeleteProductCommand({ Id: status.TargetProductId ?? "" }),
+  );
+});
+
+test("ServiceCatalog AcceptPortfolioShare + ListAcceptedPortfolioShares", async () => {
+  const client = catalog();
+
+  const port = await client.send(
+    new CreatePortfolioCommand({
+      DisplayName: "e2e-shared-portfolio",
+      ProviderName: "e2e",
+      IdempotencyToken: "e2e-shared-port-tok",
+    }),
+  );
+  const portfolioId = port.PortfolioDetail?.Id ?? "";
+  expect(portfolioId).toMatch(/^port-/);
+
+  const beforeAccept = await client.send(
+    new ListAcceptedPortfolioSharesCommand({}),
+  );
+  const countBefore = (beforeAccept.PortfolioDetails ?? []).filter(
+    (p) => p.Id === portfolioId,
+  ).length;
+  expect(countBefore).toBe(0);
+
+  await client.send(
+    new AcceptPortfolioShareCommand({
+      PortfolioId: portfolioId,
+      PortfolioShareType: "IMPORTED",
+    }),
+  );
+
+  const afterAccept = await client.send(
+    new ListAcceptedPortfolioSharesCommand({
+      PortfolioShareType: "IMPORTED",
+    }),
+  );
+  expect(
+    (afterAccept.PortfolioDetails ?? []).some((p) => p.Id === portfolioId),
+  ).toBe(true);
+
+  await client.send(
+    new RejectPortfolioShareCommand({ PortfolioId: portfolioId }),
+  );
+
+  const afterReject = await client.send(
+    new ListAcceptedPortfolioSharesCommand({}),
+  );
+  expect(
+    (afterReject.PortfolioDetails ?? []).some((p) => p.Id === portfolioId),
+  ).toBe(false);
+
   await client.send(new DeletePortfolioCommand({ Id: portfolioId }));
 });

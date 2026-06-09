@@ -28,6 +28,8 @@ type StoredBroker = {
   tags: Record<string, string>;
   created: number;
   configuration?: { id: string; revision: number };
+  creatorRequestId?: string;
+  describeCount: number;
 };
 
 type StoredConfiguration = {
@@ -194,6 +196,7 @@ const decodeToken = (token: string | undefined): number => {
 
 const CreateBroker: OperationHandler = (input, ctx) => {
   const brokerName = requireString(input, "BrokerName");
+  const creatorRequestId = stringOrUndefined(input["CreatorRequestId"]);
 
   const duplicate = ctx.store
     .list<StoredBroker>()
@@ -203,6 +206,15 @@ const CreateBroker: OperationHandler = (input, ctx) => {
         entry.value.brokerName === brokerName,
     );
   if (duplicate !== undefined) {
+    if (
+      creatorRequestId !== undefined &&
+      duplicate.value.creatorRequestId === creatorRequestId
+    ) {
+      return {
+        BrokerArn: duplicate.value.brokerArn,
+        BrokerId: duplicate.value.brokerId,
+      };
+    }
     throw awsError(
       "ConflictException",
       `Broker with name ${brokerName} already exists.`,
@@ -223,6 +235,7 @@ const CreateBroker: OperationHandler = (input, ctx) => {
 
   const brokerId = `b-${hex(8)}`;
   const brokerArn = `arn:aws:mq:${ctx.region}:${ctx.account}:broker:${brokerName}:${brokerId}`;
+  const tags = stringMap(input["Tags"]);
   const broker: StoredBroker = {
     brokerId,
     brokerArn,
@@ -239,10 +252,15 @@ const CreateBroker: OperationHandler = (input, ctx) => {
     storageType: stringOrUndefined(input["StorageType"]) ?? "EFS",
     securityGroups: stringList(input["SecurityGroups"]),
     subnetIds: stringList(input["SubnetIds"]),
-    tags: stringMap(input["Tags"]),
+    tags,
     created: Math.floor(Date.now() / 1000),
+    ...(creatorRequestId !== undefined ? { creatorRequestId } : {}),
+    describeCount: 0,
   };
   ctx.store.set(brokerKey(brokerId), broker);
+  if (Object.keys(tags).length > 0) {
+    ctx.store.set(tagKey(brokerArn), { ...tags });
+  }
 
   const usersInput = Array.isArray(input["Users"]) ? input["Users"] : [];
   for (const u of usersInput) {
@@ -299,7 +317,9 @@ const brokerView = (
     StorageType: broker.storageType,
     SecurityGroups: broker.securityGroups,
     SubnetIds: broker.subnetIds,
-    Tags: broker.tags,
+    Tags:
+      ctx.store.get<Record<string, string>>(tagKey(broker.brokerArn)) ??
+      broker.tags,
     Created: isoTimestamp(broker.created),
   };
   if (broker.configuration !== undefined) {
@@ -314,7 +334,28 @@ const brokerView = (
 const DescribeBroker: OperationHandler = (input, ctx) => {
   const brokerId = requireString(input, "BrokerId");
   const broker = requireBroker(ctx, brokerId);
-  return brokerView(broker, ctx);
+  let current = broker;
+  if (
+    current.brokerState === "CREATION_IN_PROGRESS" &&
+    current.describeCount >= 1
+  ) {
+    current = { ...current, brokerState: "RUNNING" };
+    ctx.store.set(brokerKey(brokerId), current);
+  } else if (current.brokerState === "CREATION_IN_PROGRESS") {
+    current = { ...current, describeCount: current.describeCount + 1 };
+    ctx.store.set(brokerKey(brokerId), current);
+  } else if (
+    current.brokerState === "DELETION_IN_PROGRESS" &&
+    current.describeCount >= 1
+  ) {
+    ctx.store.delete(brokerKey(brokerId));
+    ctx.store.delete(tagKey(current.brokerArn));
+    throw awsError("NotFoundException", `Broker not found: ${brokerId}`, 404);
+  } else if (current.brokerState === "DELETION_IN_PROGRESS") {
+    current = { ...current, describeCount: current.describeCount + 1 };
+    ctx.store.set(brokerKey(brokerId), current);
+  }
+  return brokerView(current, ctx);
 };
 
 const ListBrokers: OperationHandler = (input, ctx) => {
@@ -350,6 +391,7 @@ const DeleteBroker: OperationHandler = (input, ctx) => {
   const brokerId = requireString(input, "BrokerId");
   const broker = requireBroker(ctx, brokerId);
   broker.brokerState = "DELETION_IN_PROGRESS";
+  broker.describeCount = 0;
   ctx.store.set(brokerKey(brokerId), broker);
   return { BrokerId: brokerId };
 };
@@ -406,7 +448,14 @@ const UpdateBroker: OperationHandler = (input, ctx) => {
 
 const RebootBroker: OperationHandler = (input, ctx) => {
   const brokerId = requireString(input, "BrokerId");
-  requireBroker(ctx, brokerId);
+  const broker = requireBroker(ctx, brokerId);
+  if (broker.brokerState !== "RUNNING") {
+    throw awsError(
+      "BadRequestException",
+      `Broker ${brokerId} is not RUNNING (current state: ${broker.brokerState}).`,
+      400,
+    );
+  }
   return {};
 };
 

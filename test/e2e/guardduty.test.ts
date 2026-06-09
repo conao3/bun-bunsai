@@ -18,11 +18,14 @@ import {
   DeletePublishingDestinationCommand,
   DeleteThreatIntelSetCommand,
   DescribePublishingDestinationCommand,
+  GetAdministratorAccountCommand,
   GetDetectorCommand,
   GetFilterCommand,
   GetFindingsCommand,
+  GetFindingsStatisticsCommand,
   GetIPSetCommand,
   GetMalwareProtectionPlanCommand,
+  GetMasterAccountCommand,
   GetThreatIntelSetCommand,
   GuardDutyClient,
   ListDetectorsCommand,
@@ -437,6 +440,161 @@ test("GuardDuty findings get and archive", async () => {
       FindingIds: findingIds,
     }),
   );
+
+  await client.send(new DeleteDetectorCommand({ DetectorId: detectorId }));
+});
+
+test("GuardDuty findings stored — GetFindings throws for missing, statistics computed", async () => {
+  const client = guardduty();
+  const { DetectorId } = await client.send(
+    new CreateDetectorCommand({ Enable: true }),
+  );
+  const detectorId = DetectorId as string;
+
+  await client.send(
+    new CreateSampleFindingsCommand({
+      DetectorId: detectorId,
+      FindingTypes: [
+        "Recon:EC2/PortProbeUnprotectedPort",
+        "Backdoor:EC2/XORDDOS",
+      ],
+    }),
+  );
+
+  const listed = await client.send(
+    new ListFindingsCommand({ DetectorId: detectorId }),
+  );
+  const ids = listed.FindingIds as string[];
+  expect(ids.length).toBe(2);
+
+  const got = await client.send(
+    new GetFindingsCommand({ DetectorId: detectorId, FindingIds: ids }),
+  );
+  expect(got.Findings?.length).toBe(2);
+  expect(got.Findings?.every((f) => ids.includes(f.Id as string))).toBe(true);
+
+  await expect(
+    client.send(
+      new GetFindingsCommand({
+        DetectorId: detectorId,
+        FindingIds: ["nonexistentfindingid123456789012"],
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const stats = await client.send(
+    new GetFindingsStatisticsCommand({
+      DetectorId: detectorId,
+      FindingStatisticTypes: ["COUNT_BY_SEVERITY"],
+    }),
+  );
+  const bySeverity = stats.FindingStatistics?.CountBySeverity ?? {};
+  const total = Object.values(bySeverity).reduce((a, b) => a + b, 0);
+  expect(total).toBe(2);
+
+  await client.send(new DeleteDetectorCommand({ DetectorId: detectorId }));
+});
+
+test("GuardDuty ListFindings FindingCriteria filter and pagination", async () => {
+  const client = guardduty();
+  const { DetectorId } = await client.send(
+    new CreateDetectorCommand({ Enable: true }),
+  );
+  const detectorId = DetectorId as string;
+
+  await client.send(
+    new CreateSampleFindingsCommand({
+      DetectorId: detectorId,
+      FindingTypes: [
+        "Recon:EC2/PortProbeUnprotectedPort",
+        "Backdoor:EC2/XORDDOS",
+        "Trojan:EC2/BlackholeTraffic",
+      ],
+    }),
+  );
+
+  const all = await client.send(
+    new ListFindingsCommand({ DetectorId: detectorId }),
+  );
+  expect((all.FindingIds ?? []).length).toBe(3);
+
+  const filtered = await client.send(
+    new ListFindingsCommand({
+      DetectorId: detectorId,
+      FindingCriteria: {
+        Criterion: {
+          type: { Eq: ["Recon:EC2/PortProbeUnprotectedPort"] },
+        },
+      },
+    }),
+  );
+  expect((filtered.FindingIds ?? []).length).toBe(1);
+
+  const page1 = await client.send(
+    new ListFindingsCommand({ DetectorId: detectorId, MaxResults: 2 }),
+  );
+  expect((page1.FindingIds ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListFindingsCommand({
+      DetectorId: detectorId,
+      MaxResults: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.FindingIds ?? []).length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  await client.send(new DeleteDetectorCommand({ DetectorId: detectorId }));
+});
+
+test("GuardDuty ListDetectors pagination", async () => {
+  const client = guardduty();
+
+  const d1 = (await client.send(new CreateDetectorCommand({ Enable: true })))
+    .DetectorId as string;
+  const d2 = (await client.send(new CreateDetectorCommand({ Enable: true })))
+    .DetectorId as string;
+  const d3 = (await client.send(new CreateDetectorCommand({ Enable: true })))
+    .DetectorId as string;
+
+  const page1 = await client.send(new ListDetectorsCommand({ MaxResults: 2 }));
+  expect((page1.DetectorIds ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListDetectorsCommand({ MaxResults: 2, NextToken: page1.NextToken }),
+  );
+  expect((page2.DetectorIds ?? []).length).toBeGreaterThanOrEqual(1);
+
+  await client.send(new DeleteDetectorCommand({ DetectorId: d1 }));
+  await client.send(new DeleteDetectorCommand({ DetectorId: d2 }));
+  await client.send(new DeleteDetectorCommand({ DetectorId: d3 }));
+});
+
+test("GuardDuty administrator account relationship stored or throws", async () => {
+  const client = guardduty();
+  const { DetectorId } = await client.send(
+    new CreateDetectorCommand({ Enable: true }),
+  );
+  const detectorId = DetectorId as string;
+
+  const noAdmin = await client
+    .send(new GetAdministratorAccountCommand({ DetectorId: detectorId }))
+    .catch((e: { $metadata?: { httpStatusCode?: number } }) => e);
+  expect(
+    (noAdmin as { $metadata?: { httpStatusCode?: number } }).$metadata
+      ?.httpStatusCode,
+  ).toBe(400);
+
+  const noMaster = await client
+    .send(new GetMasterAccountCommand({ DetectorId: detectorId }))
+    .catch((e: { $metadata?: { httpStatusCode?: number } }) => e);
+  expect(
+    (noMaster as { $metadata?: { httpStatusCode?: number } }).$metadata
+      ?.httpStatusCode,
+  ).toBe(400);
 
   await client.send(new DeleteDetectorCommand({ DetectorId: detectorId }));
 });

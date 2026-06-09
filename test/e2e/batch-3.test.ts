@@ -63,14 +63,26 @@ test("Job lifecycle SUBMITTED -> SUCCEEDED via DescribeJobs advance-on-read", as
 
   const jobId = submitted.jobId ?? "";
 
-  for (let i = 0; i < 3; i++) {
-    await client.send(new DescribeJobsCommand({ jobs: [jobId] }));
+  const statuses: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const r = await client.send(new DescribeJobsCommand({ jobs: [jobId] }));
+    statuses.push((r.jobs ?? [])[0]?.status ?? "");
   }
+  const [s1, s2, s3, s4, s5] = statuses;
+  expect(s1).toBe("PENDING");
+  expect(s2).toBe("RUNNABLE");
+  expect(s3).toBe("STARTING");
+  expect(s4).toBe("RUNNING");
+  expect(s5).toBe("SUCCEEDED");
   const terminal = await client.send(
     new DescribeJobsCommand({ jobs: [jobId] }),
   );
   const succeededJob = (terminal.jobs ?? [])[0];
   expect(succeededJob?.status).toBe("SUCCEEDED");
+  expect(succeededJob?.stoppedAt).toBeDefined();
+  expect((succeededJob?.attempts ?? []).length).toBeGreaterThan(0);
+  expect(succeededJob?.isCancelled).toBe(false);
+  expect(succeededJob?.isTerminated).toBe(false);
 
   const listed = await client.send(
     new ListJobsCommand({ jobQueue: jobQueueName, jobStatus: "SUCCEEDED" }),
@@ -97,6 +109,9 @@ test("Job lifecycle SUBMITTED -> SUCCEEDED via DescribeJobs advance-on-read", as
   const cancelledJob = (afterCancel.jobs ?? [])[0];
   expect(cancelledJob?.status).toBe("FAILED");
   expect(cancelledJob?.statusReason).toBe("test-cancel-reason");
+  expect(cancelledJob?.isCancelled).toBe(true);
+  expect(cancelledJob?.isTerminated).toBe(false);
+  expect(cancelledJob?.stoppedAt).toBeDefined();
 
   const terminateTarget = await client.send(
     new SubmitJobCommand({
@@ -120,4 +135,95 @@ test("Job lifecycle SUBMITTED -> SUCCEEDED via DescribeJobs advance-on-read", as
   const terminatedJob = (afterTerminate.jobs ?? [])[0];
   expect(terminatedJob?.status).toBe("FAILED");
   expect(terminatedJob?.statusReason).toBe("test-terminate-reason");
+  expect(terminatedJob?.isTerminated).toBe(true);
+  expect(terminatedJob?.isCancelled).toBe(false);
+  expect(terminatedJob?.stoppedAt).toBeDefined();
+});
+
+test("CancelJob and TerminateJob throw ClientException for unknown job", async () => {
+  const client = batch();
+
+  await expect(
+    client.send(
+      new CancelJobCommand({
+        jobId: "00000000-0000-0000-0000-000000000000",
+        reason: "no such job",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new TerminateJobCommand({
+        jobId: "00000000-0000-0000-0000-000000000001",
+        reason: "no such job",
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("ListJobs pagination and filters", async () => {
+  const client = batch();
+  const jqName = "bunsai-e2e3-pag-jq";
+  const jdName = "bunsai-e2e3-pag-jd";
+
+  await client.send(
+    new CreateJobQueueCommand({
+      jobQueueName: jqName,
+      priority: 1,
+      computeEnvironmentOrder: [],
+    }),
+  );
+
+  await client.send(
+    new RegisterJobDefinitionCommand({
+      jobDefinitionName: jdName,
+      type: "container",
+      containerProperties: { image: "busybox", resourceRequirements: [] },
+    }),
+  );
+
+  const jobNames = ["alpha-job", "alpha-two", "beta-job"];
+  const jobIds: string[] = [];
+  for (const name of jobNames) {
+    const r = await client.send(
+      new SubmitJobCommand({
+        jobName: name,
+        jobQueue: jqName,
+        jobDefinition: `${jdName}:1`,
+      }),
+    );
+    jobIds.push(r.jobId ?? "");
+  }
+
+  const page1 = await client.send(
+    new ListJobsCommand({ jobQueue: jqName, maxResults: 2 }),
+  );
+  expect((page1.jobSummaryList ?? []).length).toBe(2);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListJobsCommand({ jobQueue: jqName, nextToken: page1.nextToken }),
+  );
+  expect((page2.jobSummaryList ?? []).length).toBeGreaterThanOrEqual(1);
+  expect(page2.nextToken).toBeUndefined();
+
+  const filtered = await client.send(
+    new ListJobsCommand({
+      jobQueue: jqName,
+      filters: [{ name: "JOB_NAME", values: ["alpha*"] }],
+    }),
+  );
+  const filteredNames = (filtered.jobSummaryList ?? []).map((j) => j.jobName);
+  expect(filteredNames).toContain("alpha-job");
+  expect(filteredNames).toContain("alpha-two");
+  expect(filteredNames).not.toContain("beta-job");
+
+  const byDef = await client.send(
+    new ListJobsCommand({
+      jobQueue: jqName,
+      filters: [{ name: "JOB_DEFINITION", values: [`${jdName}:1`] }],
+    }),
+  );
+  expect((byDef.jobSummaryList ?? []).length).toBe(3);
 });

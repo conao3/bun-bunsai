@@ -123,7 +123,7 @@ test("Batch compute environment, job queue, job definition and job lifecycle", a
   expect(job?.jobName).toBe("bunsai-e2e-job");
   expect(job?.jobQueue).toBe(jobQueueName);
 
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
     await client.send(
       new DescribeJobsCommand({ jobs: [submitted.jobId ?? ""] }),
     );

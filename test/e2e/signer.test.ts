@@ -183,7 +183,7 @@ test("RevokeSignature", async () => {
   expect(desc.revocationRecord).toBeDefined();
 });
 
-test("RevokeSigningProfile", async () => {
+test("RevokeSigningProfile stores revocationRecord", async () => {
   const client = signer();
   const profileName = `bunsai_revokeprofile_${Date.now()}`;
   const put = await client.send(
@@ -204,6 +204,128 @@ test("RevokeSigningProfile", async () => {
 
   const got = await client.send(new GetSigningProfileCommand({ profileName }));
   expect(got.status).toBe("Revoked");
+  expect(got.revocationRecord).toBeDefined();
+  expect(got.revocationRecord?.revocationEffectiveFrom).toBeDefined();
+  expect(got.revocationRecord?.revokedAt).toBeDefined();
+  expect(got.revocationRecord?.revokedBy).toBeDefined();
+});
+
+test("ListSigningProfiles statuses filter and pagination", async () => {
+  const client = signer();
+  const suffix = Date.now();
+  const activeName = `bunsai_listfilt_active_${suffix}`;
+  const revokedName = `bunsai_listfilt_revoked_${suffix}`;
+
+  const putActive = await client.send(
+    new PutSigningProfileCommand({
+      profileName: activeName,
+      platformId: "AWSLambda-SHA384-ECDSA",
+    }),
+  );
+  const putRevoked = await client.send(
+    new PutSigningProfileCommand({
+      profileName: revokedName,
+      platformId: "AWSLambda-SHA384-ECDSA",
+    }),
+  );
+
+  await client.send(
+    new RevokeSigningProfileCommand({
+      profileName: revokedName,
+      profileVersion: putRevoked.profileVersion!,
+      reason: "pagination test revocation",
+      effectiveTime: new Date(),
+    }),
+  );
+
+  const revokedOnly = await client.send(
+    new ListSigningProfilesCommand({ statuses: ["Revoked"] }),
+  );
+  const revokedNames = (revokedOnly.profiles ?? []).map((p) => p.profileName);
+  expect(revokedNames).toContain(revokedName);
+  expect(revokedNames).not.toContain(activeName);
+  for (const p of revokedOnly.profiles ?? []) {
+    expect(p.status).toBe("Revoked");
+  }
+
+  const all = await client.send(new ListSigningProfilesCommand({}));
+  const total = (all.profiles ?? []).length;
+
+  if (total >= 2) {
+    const page1 = await client.send(
+      new ListSigningProfilesCommand({ maxResults: 1 }),
+    );
+    expect((page1.profiles ?? []).length).toBe(1);
+    expect(page1.nextToken).toBeDefined();
+
+    const page2 = await client.send(
+      new ListSigningProfilesCommand({
+        maxResults: 1,
+        nextToken: page1.nextToken,
+      }),
+    );
+    expect((page2.profiles ?? []).length).toBeGreaterThanOrEqual(1);
+    expect(page1.profiles![0].profileName).not.toBe(
+      page2.profiles![0].profileName,
+    );
+  }
+
+  void putActive;
+});
+
+test("ListSigningJobs jobInvoker filter and pagination", async () => {
+  const client = signer();
+  const profileName = `bunsai_jobfilt_${Date.now()}`;
+  await client.send(
+    new PutSigningProfileCommand({
+      profileName,
+      platformId: "AWSLambda-SHA384-ECDSA",
+    }),
+  );
+
+  const job1 = await client.send(
+    new StartSigningJobCommand({
+      profileName,
+      source: { s3: { bucketName: "src", key: "k1", version: "1" } },
+      destination: { s3: { bucketName: "dst", prefix: "" } },
+      clientRequestToken: `token-${Date.now()}-1`,
+    }),
+  );
+  const job2 = await client.send(
+    new StartSigningJobCommand({
+      profileName,
+      source: { s3: { bucketName: "src", key: "k2", version: "1" } },
+      destination: { s3: { bucketName: "dst", prefix: "" } },
+      clientRequestToken: `token-${Date.now()}-2`,
+    }),
+  );
+
+  const allJobs = await client.send(new ListSigningJobsCommand({}));
+  const allIds = (allJobs.jobs ?? []).map((j) => j.jobId);
+  expect(allIds).toContain(job1.jobId);
+  expect(allIds).toContain(job2.jobId);
+
+  const invokerFiltered = await client.send(
+    new ListSigningJobsCommand({ jobInvoker: "000000000000" }),
+  );
+  expect((invokerFiltered.jobs ?? []).map((j) => j.jobId)).toContain(
+    job1.jobId,
+  );
+
+  const total = (allJobs.jobs ?? []).length;
+  if (total >= 2) {
+    const page1 = await client.send(
+      new ListSigningJobsCommand({ maxResults: 1 }),
+    );
+    expect((page1.jobs ?? []).length).toBe(1);
+    expect(page1.nextToken).toBeDefined();
+
+    const page2 = await client.send(
+      new ListSigningJobsCommand({ maxResults: 1, nextToken: page1.nextToken }),
+    );
+    expect((page2.jobs ?? []).length).toBeGreaterThanOrEqual(1);
+    expect(page1.jobs![0].jobId).not.toBe(page2.jobs![0].jobId);
+  }
 });
 
 test("GetSigningPlatform and ListSigningPlatforms", async () => {

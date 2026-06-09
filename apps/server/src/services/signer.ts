@@ -29,6 +29,7 @@ type StoredProfile = {
   signingParameters: Record<string, unknown> | undefined;
   status: string;
   tags: Record<string, unknown> | undefined;
+  revocationRecord: Record<string, unknown> | undefined;
 };
 
 type StoredJob = {
@@ -101,6 +102,17 @@ const jobArn = (ctx: ServiceContext, id: string): string =>
 const newId = (): string =>
   `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`.toUpperCase();
 
+const encodeToken = (offset: number): string => btoa(String(offset));
+
+const decodeToken = (token: string): number => {
+  try {
+    const n = Number(atob(token));
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+  } catch {
+    return 0;
+  }
+};
+
 const profileView = (profile: StoredProfile): Record<string, unknown> => ({
   profileName: profile.profileName,
   profileVersion: profile.profileVersion,
@@ -114,6 +126,7 @@ const profileView = (profile: StoredProfile): Record<string, unknown> => ({
   signingParameters: profile.signingParameters,
   status: profile.status,
   tags: profile.tags,
+  revocationRecord: profile.revocationRecord,
 });
 
 const profileSummary = (profile: StoredProfile): Record<string, unknown> => ({
@@ -128,6 +141,7 @@ const profileSummary = (profile: StoredProfile): Record<string, unknown> => ({
   signingParameters: profile.signingParameters,
   status: profile.status,
   tags: profile.tags,
+  revocationRecord: profile.revocationRecord,
 });
 
 const requireProfile = (ctx: ServiceContext, name: string): StoredProfile => {
@@ -224,6 +238,7 @@ const PutSigningProfile: OperationHandler = (input, ctx) => {
     signingParameters: recordOrUndefined(input["signingParameters"]),
     status: "Active",
     tags: recordOrUndefined(input["tags"]),
+    revocationRecord: undefined,
   };
   ctx.store.set(profileKey(name), profile);
   return {
@@ -241,6 +256,12 @@ const GetSigningProfile: OperationHandler = (input, ctx) => {
 const ListSigningProfiles: OperationHandler = (input, ctx) => {
   const includeCanceled = input["includeCanceled"] === true;
   const platformId = stringOrUndefined(input["platformId"]);
+  const statuses = Array.isArray(input["statuses"])
+    ? (input["statuses"] as string[])
+    : undefined;
+  const maxResults =
+    typeof input["maxResults"] === "number" ? input["maxResults"] : undefined;
+  const nextTokenInput = stringOrUndefined(input["nextToken"]);
   const profiles = ctx.store
     .list<StoredProfile>()
     .filter((entry) => entry.key.startsWith(profilePrefix))
@@ -250,6 +271,9 @@ const ListSigningProfiles: OperationHandler = (input, ctx) => {
       (profile) =>
         platformId === undefined || profile.platformId === platformId,
     )
+    .filter(
+      (profile) => statuses === undefined || statuses.includes(profile.status),
+    )
     .sort((a, b) =>
       a.profileName < b.profileName
         ? -1
@@ -257,7 +281,17 @@ const ListSigningProfiles: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
-  return { profiles: profiles.map(profileSummary) };
+  const offset = nextTokenInput !== undefined ? decodeToken(nextTokenInput) : 0;
+  const page =
+    maxResults !== undefined
+      ? profiles.slice(offset, offset + maxResults)
+      : profiles.slice(offset);
+  const hasMore =
+    maxResults !== undefined && offset + maxResults < profiles.length;
+  return {
+    profiles: page.map(profileSummary),
+    nextToken: hasMore ? encodeToken(offset + maxResults) : undefined,
+  };
 };
 
 const CancelSigningProfile: OperationHandler = (input, ctx) => {
@@ -329,9 +363,21 @@ const ListSigningJobs: OperationHandler = (input, ctx) => {
   const statusFilter = stringOrUndefined(input["status"]);
   const platformFilter = stringOrUndefined(input["platformId"]);
   const requestedByFilter = stringOrUndefined(input["requestedBy"]);
+  const jobInvokerFilter = stringOrUndefined(input["jobInvoker"]);
   const isRevokedFilter =
     input["isRevoked"] === true || input["isRevoked"] === "true";
   const hasIsRevokedFilter = input["isRevoked"] !== undefined;
+  const signatureExpiresAfter =
+    typeof input["signatureExpiresAfter"] === "number"
+      ? input["signatureExpiresAfter"]
+      : undefined;
+  const signatureExpiresBefore =
+    typeof input["signatureExpiresBefore"] === "number"
+      ? input["signatureExpiresBefore"]
+      : undefined;
+  const maxResults =
+    typeof input["maxResults"] === "number" ? input["maxResults"] : undefined;
+  const nextTokenInput = stringOrUndefined(input["nextToken"]);
 
   const jobs = ctx.store
     .list<StoredJob>()
@@ -347,10 +393,28 @@ const ListSigningJobs: OperationHandler = (input, ctx) => {
         requestedByFilter === undefined ||
         job.requestedBy === requestedByFilter,
     )
+    .filter(
+      (job) =>
+        jobInvokerFilter === undefined || job.jobInvoker === jobInvokerFilter,
+    )
     .filter((job) => {
       if (!hasIsRevokedFilter) return true;
       const revoked = job.revocationRecord !== undefined;
       return isRevokedFilter ? revoked : !revoked;
+    })
+    .filter((job) => {
+      if (signatureExpiresAfter === undefined) return true;
+      return (
+        job.signatureExpiresAt !== undefined &&
+        job.signatureExpiresAt > signatureExpiresAfter
+      );
+    })
+    .filter((job) => {
+      if (signatureExpiresBefore === undefined) return true;
+      return (
+        job.signatureExpiresAt !== undefined &&
+        job.signatureExpiresAt < signatureExpiresBefore
+      );
     })
     .sort((a, b) => b.createdAt - a.createdAt)
     .map((job) => ({
@@ -370,7 +434,17 @@ const ListSigningJobs: OperationHandler = (input, ctx) => {
       jobInvoker: job.jobInvoker,
     }));
 
-  return { jobs };
+  const offset = nextTokenInput !== undefined ? decodeToken(nextTokenInput) : 0;
+  const page =
+    maxResults !== undefined
+      ? jobs.slice(offset, offset + maxResults)
+      : jobs.slice(offset);
+  const hasMore = maxResults !== undefined && offset + maxResults < jobs.length;
+
+  return {
+    jobs: page,
+    nextToken: hasMore ? encodeToken(offset + maxResults) : undefined,
+  };
 };
 
 const SignPayload: OperationHandler = (input, ctx) => {
@@ -433,12 +507,20 @@ const RevokeSigningProfile: OperationHandler = (input, ctx) => {
   const name = requireString(input, "profileName");
   const profile = requireProfile(ctx, name);
   const reason = stringOrUndefined(input["reason"]) ?? "Profile revoked";
+  const effectiveTime = input["effectiveTime"];
+  const revocationEffectiveFrom =
+    typeof effectiveTime === "number"
+      ? effectiveTime
+      : typeof effectiveTime === "string"
+        ? Number(effectiveTime)
+        : Date.now() / 1000;
   ctx.store.set(profileKey(name), {
     ...profile,
     status: "Revoked",
     revocationRecord: {
       reason,
-      revokedAt: Date.now(),
+      revocationEffectiveFrom,
+      revokedAt: Date.now() / 1000,
       revokedBy: ctx.account,
     },
   });

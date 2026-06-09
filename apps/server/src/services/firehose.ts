@@ -268,6 +268,13 @@ const ListDeliveryStreams: OperationHandler = (input, ctx) => {
       : undefined;
   const limit =
     typeof input["Limit"] === "number" ? (input["Limit"] as number) : 10;
+  if (input["Limit"] !== undefined && (limit < 1 || limit > 10000)) {
+    throw awsError(
+      "InvalidArgumentException",
+      "Limit must be between 1 and 10000.",
+      400,
+    );
+  }
   const names = ctx.store
     .list<StoredDeliveryStream>()
     .filter((entry) => entry.key.startsWith(streamPrefix))
@@ -357,10 +364,19 @@ const PutRecordBatch: OperationHandler = (input, ctx) => {
   };
 };
 
+const tagKeyPattern = /^(?!aws:)[\p{L}\p{Z}\p{N}_.:\/=+\-@%]*$/u;
+
 const TagDeliveryStream: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DeliveryStreamName");
   const stream = requireStream(ctx, name);
   const tags = Array.isArray(input["Tags"]) ? (input["Tags"] as unknown[]) : [];
+  if (tags.length < 1 || tags.length > 50) {
+    throw awsError(
+      "InvalidArgumentException",
+      "Tags must contain between 1 and 50 items.",
+      400,
+    );
+  }
   const merged = new Map<string, StoredTag>();
   for (const tag of stream.Tags) {
     merged.set(tag.Key, tag);
@@ -371,7 +387,28 @@ const TagDeliveryStream: OperationHandler = (input, ctx) => {
     if (key === undefined || key === "") {
       throw awsError("InvalidArgumentException", "Tag Key is required.", 400);
     }
+    if (key.length > 128) {
+      throw awsError(
+        "InvalidArgumentException",
+        `Tag Key exceeds maximum length of 128.`,
+        400,
+      );
+    }
+    if (!tagKeyPattern.test(key)) {
+      throw awsError(
+        "InvalidArgumentException",
+        `Tag Key "${key}" contains invalid characters or uses reserved prefix.`,
+        400,
+      );
+    }
     const value = typeof tag["Value"] === "string" ? tag["Value"] : undefined;
+    if (value !== undefined && value.length > 256) {
+      throw awsError(
+        "InvalidArgumentException",
+        `Tag Value for key "${key}" exceeds maximum length of 256.`,
+        400,
+      );
+    }
     merged.set(key, { Key: key, Value: value });
   }
   ctx.store.set(`${streamPrefix}${name}`, {
@@ -391,6 +428,13 @@ const ListTagsForDeliveryStream: OperationHandler = (input, ctx) => {
       : undefined;
   const limit =
     typeof input["Limit"] === "number" ? (input["Limit"] as number) : 50;
+  if (input["Limit"] !== undefined && (limit < 1 || limit > 50)) {
+    throw awsError(
+      "InvalidArgumentException",
+      "Limit must be between 1 and 50.",
+      400,
+    );
+  }
   const sorted = [...stream.Tags]
     .sort((a, b) => (a.Key < b.Key ? -1 : a.Key > b.Key ? 1 : 0))
     .filter((tag) => exclusiveStart === undefined || tag.Key > exclusiveStart);
@@ -409,6 +453,13 @@ const UntagDeliveryStream: OperationHandler = (input, ctx) => {
         (key): key is string => typeof key === "string",
       )
     : [];
+  if (keys.length < 1 || keys.length > 50) {
+    throw awsError(
+      "InvalidArgumentException",
+      "TagKeys must contain between 1 and 50 items.",
+      400,
+    );
+  }
   const removed = new Set(keys);
   ctx.store.set(`${streamPrefix}${name}`, {
     ...stream,

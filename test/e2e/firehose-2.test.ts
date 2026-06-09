@@ -5,6 +5,7 @@ import {
   DeleteDeliveryStreamCommand,
   DescribeDeliveryStreamCommand,
   FirehoseClient,
+  ListDeliveryStreamsCommand,
   ListTagsForDeliveryStreamCommand,
   StartDeliveryStreamEncryptionCommand,
   StopDeliveryStreamEncryptionCommand,
@@ -116,6 +117,67 @@ describe("firehose tagging and encryption e2e", () => {
       disabled.DeliveryStreamDescription?.DeliveryStreamEncryptionConfiguration
         ?.Status,
     ).toBe("DISABLED");
+
+    await client.send(
+      new DeleteDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+  });
+
+  test("tag/list/untag validation boundaries", async () => {
+    const client = firehose();
+    const name = `bunsai-val-${Date.now()}`;
+
+    await client.send(
+      new CreateDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+
+    await client.send(
+      new DescribeDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+
+    await expect(
+      client.send(
+        new TagDeliveryStreamCommand({
+          DeliveryStreamName: name,
+          Tags: [],
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "InvalidArgumentException" });
+
+    await expect(
+      client.send(
+        new TagDeliveryStreamCommand({
+          DeliveryStreamName: name,
+          Tags: [{ Key: "aws:foo", Value: "bar" }],
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "InvalidArgumentException" });
+
+    await expect(
+      client.send(
+        new UntagDeliveryStreamCommand({
+          DeliveryStreamName: name,
+          TagKeys: [],
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "InvalidArgumentException" });
+
+    await expect(
+      client.send(new ListDeliveryStreamsCommand({ Limit: 10001 })),
+    ).rejects.toThrow();
+
+    await expect(
+      client.send(new ListDeliveryStreamsCommand({ Limit: 0 })),
+    ).rejects.toThrow();
+
+    await expect(
+      client.send(
+        new ListTagsForDeliveryStreamCommand({
+          DeliveryStreamName: name,
+          Limit: 51,
+        }),
+      ),
+    ).rejects.toThrow();
 
     await client.send(
       new DeleteDeliveryStreamCommand({ DeliveryStreamName: name }),

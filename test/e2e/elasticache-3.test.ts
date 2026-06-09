@@ -139,7 +139,7 @@ test("ElastiCache serverless cache round-trip", async () => {
     }),
   );
   expect(created.ServerlessCache?.ServerlessCacheName).toBe(name);
-  expect(created.ServerlessCache?.Status).toBe("available");
+  expect(created.ServerlessCache?.Status).toBe("creating");
   expect(created.ServerlessCache?.Engine).toBe("redis");
 
   const described = await client.send(
@@ -207,6 +207,11 @@ test("ElastiCache serverless cache round-trip", async () => {
     new DeleteServerlessCacheCommand({ ServerlessCacheName: name }),
   );
   expect(deletedCache.ServerlessCache?.Status).toBe("deleting");
+
+  const describedDeleting = await client.send(
+    new DescribeServerlessCachesCommand({ ServerlessCacheName: name }),
+  );
+  expect(describedDeleting.ServerlessCaches?.[0]?.Status).toBe("deleting");
 
   await expect(
     client.send(

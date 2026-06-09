@@ -41,6 +41,7 @@ type StoredReplicationGroup = {
   MultiAZ: string;
   CacheNodeType: string | undefined;
   ClusterEnabled: boolean;
+  NumNodeGroups: number;
   Engine: string;
   ReplicationGroupCreateTime: string;
   ConfigurationEndpoint: { Address: string; Port: number };
@@ -458,6 +459,31 @@ const requireGlobalReplicationGroup = (
   return group;
 };
 
+const applyMarkerPagination = <T>(
+  items: T[],
+  getId: (item: T) => string,
+  input: Record<string, unknown>,
+  maxKey = "MaxRecords",
+  markerKey = "Marker",
+  defaultMax = 100,
+): { items: T[]; marker: string | undefined } => {
+  const maxRecords = numberOr(input, maxKey, defaultMax);
+  const marker = optionalString(input, markerKey);
+  let startIdx = 0;
+  if (marker !== undefined) {
+    const idx = items.findIndex((item) => getId(item) === marker);
+    if (idx !== -1) {
+      startIdx = idx + 1;
+    }
+  }
+  const page = items.slice(startIdx, startIdx + maxRecords);
+  const nextMarker =
+    startIdx + maxRecords < items.length
+      ? getId(page[page.length - 1])
+      : undefined;
+  return { items: page, marker: nextMarker };
+};
+
 const presentCluster = (cluster: StoredCacheCluster) => ({
   CacheClusterId: cluster.CacheClusterId,
   CacheNodeType: cluster.CacheNodeType,
@@ -649,7 +675,7 @@ const CreateCacheCluster: OperationHandler = (input, ctx) => {
     CacheNodeType: optionalString(input, "CacheNodeType") ?? "cache.t3.micro",
     Engine: optionalString(input, "Engine") ?? "redis",
     EngineVersion: optionalString(input, "EngineVersion"),
-    CacheClusterStatus: "available",
+    CacheClusterStatus: "creating",
     NumCacheNodes: numNodes,
     PreferredAvailabilityZone: availabilityZone,
     CacheClusterCreateTime: new Date().toISOString(),
@@ -666,21 +692,41 @@ const DescribeCacheClusters: OperationHandler = (input, ctx) => {
   const id = optionalString(input, "CacheClusterId");
   if (id !== undefined) {
     const cluster = requireCluster(ctx, id);
+    if (cluster.CacheClusterStatus === "deleting") {
+      ctx.store.delete(clusterKey(id));
+      return { CacheClusters: [presentCluster(cluster)] };
+    }
+    if (cluster.CacheClusterStatus === "creating") {
+      const updated: StoredCacheCluster = {
+        ...cluster,
+        CacheClusterStatus: "available",
+      };
+      ctx.store.set(clusterKey(id), updated);
+      return { CacheClusters: [presentCluster(updated)] };
+    }
     return { CacheClusters: [presentCluster(cluster)] };
   }
-  const clusters = ctx.store
+  const allClusters = ctx.store
     .list<StoredCacheCluster>()
     .filter((entry) => entry.key.startsWith("cluster/"))
     .map((entry) => presentCluster(entry.value));
-  return { CacheClusters: clusters };
+  const paginated = applyMarkerPagination(
+    allClusters,
+    (c) => c.CacheClusterId,
+    input,
+  );
+  return { CacheClusters: paginated.items, Marker: paginated.marker };
 };
 
 const DeleteCacheCluster: OperationHandler = (input, ctx) => {
   const id = requireString(input, "CacheClusterId");
   const cluster = requireCluster(ctx, id);
-  const presented = presentCluster(cluster);
-  ctx.store.delete(clusterKey(id));
-  return { CacheCluster: { ...presented, CacheClusterStatus: "deleting" } };
+  const updated: StoredCacheCluster = {
+    ...cluster,
+    CacheClusterStatus: "deleting",
+  };
+  ctx.store.set(clusterKey(id), updated);
+  return { CacheCluster: presentCluster(updated) };
 };
 
 const ModifyCacheCluster: OperationHandler = (input, ctx) => {
@@ -726,12 +772,13 @@ const CreateReplicationGroup: OperationHandler = (input, ctx) => {
   const group: StoredReplicationGroup = {
     ReplicationGroupId: id,
     Description: description,
-    Status: "available",
+    Status: "creating",
     MemberClusters: memberClusters,
     AutomaticFailover: automaticFailover ? "enabled" : "disabled",
     MultiAZ: multiAZ ? "enabled" : "disabled",
     CacheNodeType: optionalString(input, "CacheNodeType"),
     ClusterEnabled: false,
+    NumNodeGroups: 1,
     Engine: optionalString(input, "Engine") ?? "redis",
     ReplicationGroupCreateTime: new Date().toISOString(),
     ConfigurationEndpoint: {
@@ -747,29 +794,39 @@ const CreateReplicationGroup: OperationHandler = (input, ctx) => {
 const DescribeReplicationGroups: OperationHandler = (input, ctx) => {
   const id = optionalString(input, "ReplicationGroupId");
   if (id !== undefined) {
-    const group = ctx.store.get<StoredReplicationGroup>(groupKey(id));
-    if (group === undefined) {
-      throw awsError(
-        "ReplicationGroupNotFoundFault",
-        `ReplicationGroup ${id} not found.`,
-        404,
-      );
+    const group = requireReplicationGroup(ctx, id);
+    if (group.Status === "deleting") {
+      ctx.store.delete(groupKey(id));
+      return { ReplicationGroups: [presentGroup(group)] };
+    }
+    if (group.Status === "creating") {
+      const updated: StoredReplicationGroup = {
+        ...group,
+        Status: "available",
+      };
+      ctx.store.set(groupKey(id), updated);
+      return { ReplicationGroups: [presentGroup(updated)] };
     }
     return { ReplicationGroups: [presentGroup(group)] };
   }
-  const groups = ctx.store
+  const allGroups = ctx.store
     .list<StoredReplicationGroup>()
     .filter((entry) => entry.key.startsWith("group/"))
     .map((entry) => presentGroup(entry.value));
-  return { ReplicationGroups: groups };
+  const paginated = applyMarkerPagination(
+    allGroups,
+    (g) => g.ReplicationGroupId,
+    input,
+  );
+  return { ReplicationGroups: paginated.items, Marker: paginated.marker };
 };
 
 const DeleteReplicationGroup: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ReplicationGroupId");
   const group = requireReplicationGroup(ctx, id);
-  const presented = presentGroup(group);
-  ctx.store.delete(groupKey(id));
-  return { ReplicationGroup: { ...presented, Status: "deleting" } };
+  const updated: StoredReplicationGroup = { ...group, Status: "deleting" };
+  ctx.store.set(groupKey(id), updated);
+  return { ReplicationGroup: presentGroup(updated) };
 };
 
 const ModifyReplicationGroup: OperationHandler = (input, ctx) => {
@@ -799,19 +856,66 @@ const ModifyReplicationGroupShardConfiguration: OperationHandler = (
 ) => {
   const id = requireString(input, "ReplicationGroupId");
   const group = requireReplicationGroup(ctx, id);
-  return { ReplicationGroup: presentGroup(group) };
+  const nodeGroupCount = numberOr(input, "NodeGroupCount", group.NumNodeGroups);
+  const replicasPerShard =
+    group.MemberClusters.length > group.NumNodeGroups
+      ? Math.floor(
+          (group.MemberClusters.length - group.NumNodeGroups) /
+            group.NumNodeGroups,
+        )
+      : 0;
+  const newTotalClusters = nodeGroupCount * (1 + replicasPerShard);
+  const newMemberClusters: string[] = [];
+  for (let i = 0; i < newTotalClusters; i += 1) {
+    newMemberClusters.push(`${id}-${String(i + 1).padStart(3, "0")}`);
+  }
+  const updated: StoredReplicationGroup = {
+    ...group,
+    NumNodeGroups: nodeGroupCount,
+    ClusterEnabled: nodeGroupCount > 1,
+    MemberClusters: newMemberClusters,
+  };
+  ctx.store.set(groupKey(id), updated);
+  return { ReplicationGroup: presentGroup(updated) };
 };
 
 const IncreaseReplicaCount: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ReplicationGroupId");
   const group = requireReplicationGroup(ctx, id);
-  return { ReplicationGroup: presentGroup(group) };
+  const newReplicaCount = numberOr(
+    input,
+    "NewReplicaCount",
+    group.MemberClusters.length - group.NumNodeGroups,
+  );
+  const newTotalClusters = group.NumNodeGroups * (1 + newReplicaCount);
+  const newMemberClusters: string[] = [];
+  for (let i = 0; i < newTotalClusters; i += 1) {
+    newMemberClusters.push(`${id}-${String(i + 1).padStart(3, "0")}`);
+  }
+  const updated: StoredReplicationGroup = {
+    ...group,
+    MemberClusters: newMemberClusters,
+  };
+  ctx.store.set(groupKey(id), updated);
+  return { ReplicationGroup: presentGroup(updated) };
 };
 
 const DecreaseReplicaCount: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ReplicationGroupId");
   const group = requireReplicationGroup(ctx, id);
-  return { ReplicationGroup: presentGroup(group) };
+  const newReplicaCount = numberOr(
+    input,
+    "NewReplicaCount",
+    group.MemberClusters.length - group.NumNodeGroups,
+  );
+  const newTotalClusters = group.NumNodeGroups * (1 + newReplicaCount);
+  const newMemberClusters = group.MemberClusters.slice(0, newTotalClusters);
+  const updated: StoredReplicationGroup = {
+    ...group,
+    MemberClusters: newMemberClusters,
+  };
+  ctx.store.set(groupKey(id), updated);
+  return { ReplicationGroup: presentGroup(updated) };
 };
 
 const TestFailover: OperationHandler = (input, ctx) => {
@@ -1132,7 +1236,7 @@ const DescribeSnapshots: OperationHandler = (input, ctx) => {
   }
   const replicationGroupId = optionalString(input, "ReplicationGroupId");
   const cacheClusterId = optionalString(input, "CacheClusterId");
-  const snapshots = ctx.store
+  const allSnapshots = ctx.store
     .list<StoredSnapshot>()
     .filter((entry) => entry.key.startsWith("snapshot/"))
     .filter((entry) => {
@@ -1151,7 +1255,12 @@ const DescribeSnapshots: OperationHandler = (input, ctx) => {
       return true;
     })
     .map((entry) => presentSnapshot(entry.value));
-  return { Snapshots: snapshots };
+  const paginated = applyMarkerPagination(
+    allSnapshots,
+    (s) => s.SnapshotName,
+    input,
+  );
+  return { Snapshots: paginated.items, Marker: paginated.marker };
 };
 
 const DeleteSnapshot: OperationHandler = (input, ctx) => {
@@ -1178,7 +1287,7 @@ const CreateServerlessCache: OperationHandler = (input, ctx) => {
   const cache: StoredServerlessCache = {
     ServerlessCacheName: name,
     Description: optionalString(input, "Description"),
-    Status: "available",
+    Status: "creating",
     Engine: engine,
     MajorEngineVersion: optionalString(input, "MajorEngineVersion"),
     FullEngineVersion: optionalString(input, "MajorEngineVersion") ?? "7.0.7",
@@ -1202,21 +1311,38 @@ const DescribeServerlessCaches: OperationHandler = (input, ctx) => {
   const name = optionalString(input, "ServerlessCacheName");
   if (name !== undefined) {
     const cache = requireServerlessCache(ctx, name);
+    if (cache.Status === "deleting") {
+      ctx.store.delete(serverlessCacheKey(name));
+      return { ServerlessCaches: [presentServerlessCache(cache)] };
+    }
+    if (cache.Status === "creating") {
+      const updated: StoredServerlessCache = { ...cache, Status: "available" };
+      ctx.store.set(serverlessCacheKey(name), updated);
+      return { ServerlessCaches: [presentServerlessCache(updated)] };
+    }
     return { ServerlessCaches: [presentServerlessCache(cache)] };
   }
-  const caches = ctx.store
+  const allCaches = ctx.store
     .list<StoredServerlessCache>()
     .filter((entry) => entry.key.startsWith("serverlesscache/"))
     .map((entry) => presentServerlessCache(entry.value));
-  return { ServerlessCaches: caches };
+  const paginated = applyMarkerPagination(
+    allCaches,
+    (c) => c.ServerlessCacheName,
+    input,
+    "MaxResults",
+    "NextToken",
+    50,
+  );
+  return { ServerlessCaches: paginated.items, NextToken: paginated.marker };
 };
 
 const DeleteServerlessCache: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ServerlessCacheName");
   const cache = requireServerlessCache(ctx, name);
-  const presented = presentServerlessCache(cache);
-  ctx.store.delete(serverlessCacheKey(name));
-  return { ServerlessCache: { ...presented, Status: "deleting" } };
+  const updated: StoredServerlessCache = { ...cache, Status: "deleting" };
+  ctx.store.set(serverlessCacheKey(name), updated);
+  return { ServerlessCache: presentServerlessCache(updated) };
 };
 
 const ModifyServerlessCache: OperationHandler = (input, ctx) => {
@@ -1324,7 +1450,7 @@ const DescribeServerlessCacheSnapshots: OperationHandler = (input, ctx) => {
     return { ServerlessCacheSnapshots: [presentServerlessCacheSnapshot(snap)] };
   }
   const cacheName = optionalString(input, "ServerlessCacheName");
-  const snapshots = ctx.store
+  const allSnapshots = ctx.store
     .list<StoredServerlessCacheSnapshot>()
     .filter((entry) => entry.key.startsWith("serverlesscachesnapshot/"))
     .filter((entry) => {
@@ -1338,7 +1464,18 @@ const DescribeServerlessCacheSnapshots: OperationHandler = (input, ctx) => {
       return true;
     })
     .map((entry) => presentServerlessCacheSnapshot(entry.value));
-  return { ServerlessCacheSnapshots: snapshots };
+  const paginated = applyMarkerPagination(
+    allSnapshots,
+    (s) => s.ServerlessCacheSnapshotName,
+    input,
+    "MaxResults",
+    "NextToken",
+    50,
+  );
+  return {
+    ServerlessCacheSnapshots: paginated.items,
+    NextToken: paginated.marker,
+  };
 };
 
 const CreateUser: OperationHandler = (input, ctx) => {
@@ -1525,11 +1662,16 @@ const AuthorizeCacheSecurityGroupIngress: OperationHandler = (input, ctx) => {
 const RevokeCacheSecurityGroupIngress: OperationHandler = (input, ctx) => {
   const name = requireString(input, "CacheSecurityGroupName");
   const ec2GroupName = requireString(input, "EC2SecurityGroupName");
+  const ec2GroupOwner = requireString(input, "EC2SecurityGroupOwnerId");
   const group = requireCacheSecurityGroup(ctx, name);
   const updated: StoredCacheSecurityGroup = {
     ...group,
     EC2SecurityGroups: group.EC2SecurityGroups.filter(
-      (g) => g.EC2SecurityGroupName !== ec2GroupName,
+      (g) =>
+        !(
+          g.EC2SecurityGroupName === ec2GroupName &&
+          g.EC2SecurityGroupOwnerId === ec2GroupOwner
+        ),
     ),
   };
   ctx.store.set(cacheSecurityGroupKey(name), updated);

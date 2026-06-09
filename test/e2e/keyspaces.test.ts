@@ -208,6 +208,118 @@ test("Keyspaces type lifecycle", async () => {
   await client.send(new DeleteKeyspaceCommand({ keyspaceName: ks }));
 });
 
+test("Keyspaces ListTables pagination", async () => {
+  const client = keyspaces();
+  const ks = "bunsai_e2e_page_ks";
+
+  await client.send(new CreateKeyspaceCommand({ keyspaceName: ks }));
+
+  const schema = {
+    allColumns: [{ name: "id", type: "text" }],
+    partitionKeys: [{ name: "id" }],
+  };
+  await client.send(
+    new CreateTableCommand({
+      keyspaceName: ks,
+      tableName: "tbl_a",
+      schemaDefinition: schema,
+    }),
+  );
+  await client.send(
+    new CreateTableCommand({
+      keyspaceName: ks,
+      tableName: "tbl_b",
+      schemaDefinition: schema,
+    }),
+  );
+  await client.send(
+    new CreateTableCommand({
+      keyspaceName: ks,
+      tableName: "tbl_c",
+      schemaDefinition: schema,
+    }),
+  );
+
+  const page1 = await client.send(
+    new ListTablesCommand({ keyspaceName: ks, maxResults: 2 }),
+  );
+  expect((page1.tables ?? []).length).toBe(2);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListTablesCommand({ keyspaceName: ks, nextToken: page1.nextToken }),
+  );
+  expect((page2.tables ?? []).length).toBe(1);
+  expect(page2.nextToken).toBeUndefined();
+
+  await client.send(
+    new DeleteTableCommand({ keyspaceName: ks, tableName: "tbl_a" }),
+  );
+  await client.send(
+    new DeleteTableCommand({ keyspaceName: ks, tableName: "tbl_b" }),
+  );
+  await client.send(
+    new DeleteTableCommand({ keyspaceName: ks, tableName: "tbl_c" }),
+  );
+  await client.send(new DeleteKeyspaceCommand({ keyspaceName: ks }));
+});
+
+test("Keyspaces DeleteTable missing table throws ResourceNotFoundException", async () => {
+  const client = keyspaces();
+  const ks = "bunsai_e2e_del_err_ks";
+  await client.send(new CreateKeyspaceCommand({ keyspaceName: ks }));
+
+  await expect(
+    client.send(
+      new DeleteTableCommand({ keyspaceName: ks, tableName: "no_such_table" }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteKeyspaceCommand({ keyspaceName: ks }));
+});
+
+test("Keyspaces UpdateTable reflects in GetTable", async () => {
+  const client = keyspaces();
+  const ks = "bunsai_e2e_upd_reflect_ks";
+  const tbl = "bunsai_e2e_upd_reflect_tbl";
+
+  await client.send(new CreateKeyspaceCommand({ keyspaceName: ks }));
+  await client.send(
+    new CreateTableCommand({
+      keyspaceName: ks,
+      tableName: tbl,
+      schemaDefinition: {
+        allColumns: [{ name: "id", type: "text" }],
+        partitionKeys: [{ name: "id" }],
+      },
+    }),
+  );
+
+  await client.send(
+    new UpdateTableCommand({
+      keyspaceName: ks,
+      tableName: tbl,
+      capacitySpecification: {
+        throughputMode: "PROVISIONED",
+        readCapacityUnits: 10,
+        writeCapacityUnits: 5,
+      },
+      ttl: { status: "ENABLED" },
+    }),
+  );
+
+  const fetched = await client.send(
+    new GetTableCommand({ keyspaceName: ks, tableName: tbl }),
+  );
+  expect(fetched.capacitySpecification).toBeDefined();
+  expect(fetched.ttl).toBeDefined();
+
+  await client.send(
+    new DeleteTableCommand({ keyspaceName: ks, tableName: tbl }),
+  );
+  await client.send(new DeleteKeyspaceCommand({ keyspaceName: ks }));
+});
+
 test("Keyspaces tagging operations", async () => {
   const client = keyspaces();
   const ks = "bunsai_e2e_tags_ks";

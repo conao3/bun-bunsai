@@ -570,7 +570,9 @@ test("AppMesh ResourceInUseException guards", async () => {
     }),
   );
   await expect(
-    client.send(new DeleteVirtualNodeCommand({ meshName, virtualNodeName: vnName })),
+    client.send(
+      new DeleteVirtualNodeCommand({ meshName, virtualNodeName: vnName }),
+    ),
   ).rejects.toThrow();
 
   await client.send(
@@ -591,7 +593,9 @@ test("AppMesh ResourceInUseException guards", async () => {
     }),
   );
   await expect(
-    client.send(new DeleteVirtualRouterCommand({ meshName, virtualRouterName: vrName })),
+    client.send(
+      new DeleteVirtualRouterCommand({ meshName, virtualRouterName: vrName }),
+    ),
   ).rejects.toThrow();
 
   await client.send(
@@ -609,7 +613,9 @@ test("AppMesh ResourceInUseException guards", async () => {
       spec: {
         httpRoute: {
           match: { prefix: "/" },
-          action: { target: { virtualService: { virtualServiceName: vsName } } },
+          action: {
+            target: { virtualService: { virtualServiceName: vsName } },
+          },
         },
       },
     }),
@@ -621,7 +627,11 @@ test("AppMesh ResourceInUseException guards", async () => {
   ).rejects.toThrow();
 
   await client.send(
-    new DeleteGatewayRouteCommand({ meshName, virtualGatewayName: vgName, gatewayRouteName: gwRouteName }),
+    new DeleteGatewayRouteCommand({
+      meshName,
+      virtualGatewayName: vgName,
+      gatewayRouteName: gwRouteName,
+    }),
   );
   await client.send(
     new DeleteVirtualGatewayCommand({ meshName, virtualGatewayName: vgName }),

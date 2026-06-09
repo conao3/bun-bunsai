@@ -442,3 +442,104 @@ test("security policy lifecycle", async () => {
     "TransferSecurityPolicy-2018-11",
   );
 });
+
+test("CreateAgreement rejects missing profile IDs", async () => {
+  const { endpoint: ep, requestHandler: rh } = startApp();
+  const transfer = new TransferClient({
+    endpoint: ep,
+    region,
+    credentials,
+    requestHandler: rh,
+  });
+
+  const { ServerId } = await transfer.send(new CreateServerCommand({}));
+
+  await expect(
+    transfer.send(
+      new CreateAgreementCommand({
+        ServerId,
+        LocalProfileId: "p-nonexistentlocal00",
+        PartnerProfileId: "p-nonexistentpartner0",
+        AccessRole: "arn:aws:iam::000000000000:role/role",
+        BaseDirectory: "/",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const { ProfileId: localProfileId } = await transfer.send(
+    new CreateProfileCommand({ As2Id: "LOCAL-AS2", ProfileType: "LOCAL" }),
+  );
+
+  await expect(
+    transfer.send(
+      new CreateAgreementCommand({
+        ServerId,
+        LocalProfileId: localProfileId!,
+        PartnerProfileId: "p-nonexistentpartner0",
+        AccessRole: "arn:aws:iam::000000000000:role/role",
+        BaseDirectory: "/",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await transfer.send(new DeleteProfileCommand({ ProfileId: localProfileId! }));
+  await transfer.send(new DeleteServerCommand({ ServerId }));
+});
+
+test("CreateServer CREATING to ONLINE lifecycle", async () => {
+  const { endpoint: ep, requestHandler: rh } = startApp();
+  const transfer = new TransferClient({
+    endpoint: ep,
+    region,
+    credentials,
+    requestHandler: rh,
+  });
+
+  const { ServerId } = await transfer.send(new CreateServerCommand({}));
+  expect(ServerId).toMatch(/^s-[0-9a-f]{17}$/);
+
+  const described = await transfer.send(
+    new DescribeServerCommand({ ServerId }),
+  );
+  expect(described.Server?.State).toBe("ONLINE");
+
+  await transfer.send(new DeleteServerCommand({ ServerId }));
+});
+
+test("ListServers MaxResults and NextToken pagination", async () => {
+  const { endpoint: ep, requestHandler: rh } = startApp();
+  const transfer = new TransferClient({
+    endpoint: ep,
+    region,
+    credentials,
+    requestHandler: rh,
+  });
+
+  const ids = await Promise.all(
+    Array.from({ length: 3 }, () =>
+      transfer.send(new CreateServerCommand({})).then((r) => r.ServerId!),
+    ),
+  );
+
+  const page1 = await transfer.send(new ListServersCommand({ MaxResults: 2 }));
+  expect((page1.Servers ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await transfer.send(
+    new ListServersCommand({ MaxResults: 2, NextToken: page1.NextToken }),
+  );
+  expect((page2.Servers ?? []).length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  const allIds = [
+    ...(page1.Servers ?? []).map((s) => s.ServerId),
+    ...(page2.Servers ?? []).map((s) => s.ServerId),
+  ];
+  for (const id of ids) {
+    expect(allIds).toContain(id);
+  }
+
+  await Promise.all(
+    ids.map((id) => transfer.send(new DeleteServerCommand({ ServerId: id }))),
+  );
+});

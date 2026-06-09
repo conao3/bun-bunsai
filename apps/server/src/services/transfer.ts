@@ -82,6 +82,7 @@ type StoredConnector = {
   SecurityPolicyName: string | undefined;
   EgressConfig: unknown | undefined;
   IpAddressType: string | undefined;
+  Status: string;
 };
 
 type StoredProfile = {
@@ -118,6 +119,22 @@ type StoredWorkflow = {
   Steps: unknown[];
   OnExceptionSteps: unknown[];
   Tags: unknown[];
+};
+
+type StoredExecution = {
+  ExecutionId: string;
+  WorkflowId: string;
+  Status: string;
+  InitialFileLocation: unknown;
+  ServiceMetadata: unknown;
+  Results: unknown;
+};
+
+type StoredTransfer = {
+  ConnectorId: string;
+  TransferId: string;
+  SendFilePaths: string[];
+  RetrieveFilePaths: string[];
 };
 
 type StoredCertificate = {
@@ -228,7 +245,23 @@ const workflowKey = (workflowId: string): string => `workflow/${workflowId}`;
 
 const certKey = (certId: string): string => `certificate/${certId}`;
 
+const executionKey = (workflowId: string, executionId: string): string =>
+  `execution/${workflowId}/${executionId}`;
+
+const transferResultKey = (connectorId: string, transferId: string): string =>
+  `file-transfer/${connectorId}/${transferId}`;
+
 const tagKey = (arn: string): string => `tag/${arn}`;
+
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
 
 const requireConnector = (
   ctx: ServiceContext,
@@ -285,6 +318,24 @@ const requireWorkflow = (
     );
   }
   return w;
+};
+
+const requireExecution = (
+  ctx: ServiceContext,
+  workflowId: string,
+  executionId: string,
+): StoredExecution => {
+  const e = ctx.store.get<StoredExecution>(
+    executionKey(workflowId, executionId),
+  );
+  if (e === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Unknown execution ${executionId}.`,
+      400,
+    );
+  }
+  return e;
 };
 
 const requireCert = (
@@ -364,7 +415,7 @@ const CreateServer: OperationHandler = (input, ctx) => {
   const server: StoredServer = {
     Arn: serverArn(ctx, serverId),
     ServerId: serverId,
-    State: "ONLINE",
+    State: "CREATING",
     Domain: stringOrUndefined(input["Domain"]) ?? "S3",
     EndpointType: stringOrUndefined(input["EndpointType"]) ?? "PUBLIC",
     IdentityProviderType:
@@ -389,6 +440,10 @@ const CreateServer: OperationHandler = (input, ctx) => {
 
 const DescribeServer: OperationHandler = (input, ctx) => {
   const server = requireServer(ctx, serverIdFromInput(input));
+  if (server.State === "CREATING") {
+    server.State = "ONLINE";
+    ctx.store.set(server.ServerId, server);
+  }
   return {
     Server: {
       Arn: server.Arn,
@@ -407,8 +462,11 @@ const DescribeServer: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListServers: OperationHandler = (_input, ctx) => {
-  const servers = ctx.store
+const ListServers: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredServer>()
     .filter((e) => !e.key.includes("/"))
     .map((entry) => ({
@@ -421,7 +479,15 @@ const ListServers: OperationHandler = (_input, ctx) => {
       State: entry.value.State,
       UserCount: Object.keys(entry.value.users).length,
     }));
-  return { Servers: servers };
+  if (maxResults === undefined) return { Servers: all };
+  const page = all.slice(offset, offset + maxResults);
+  const nextOffset =
+    offset + maxResults < all.length ? offset + maxResults : undefined;
+  return {
+    Servers: page,
+    NextToken:
+      nextOffset !== undefined ? encodePageToken(nextOffset) : undefined,
+  };
 };
 
 const DeleteServer: OperationHandler = (input, ctx) => {
@@ -545,7 +611,10 @@ const DescribeUser: OperationHandler = (input, ctx) => {
 const ListUsers: OperationHandler = (input, ctx) => {
   const serverId = serverIdFromInput(input);
   const server = requireServer(ctx, serverId);
-  const users = Object.values(server.users).map((user) => ({
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = Object.values(server.users).map((user) => ({
     Arn: user.Arn,
     HomeDirectory: user.HomeDirectory,
     HomeDirectoryType: user.HomeDirectoryType,
@@ -553,7 +622,16 @@ const ListUsers: OperationHandler = (input, ctx) => {
     SshPublicKeyCount: user.SshPublicKeys.length,
     UserName: user.UserName,
   }));
-  return { ServerId: serverId, Users: users };
+  if (maxResults === undefined) return { ServerId: serverId, Users: all };
+  const page = all.slice(offset, offset + maxResults);
+  const nextOffset =
+    offset + maxResults < all.length ? offset + maxResults : undefined;
+  return {
+    ServerId: serverId,
+    Users: page,
+    NextToken:
+      nextOffset !== undefined ? encodePageToken(nextOffset) : undefined,
+  };
 };
 
 const UpdateUser: OperationHandler = (input, ctx) => {
@@ -780,13 +858,25 @@ const DescribeAccess: OperationHandler = (input, ctx) => {
 const ListAccesses: OperationHandler = (input, ctx) => {
   const serverId = serverIdFromInput(input);
   const server = requireServer(ctx, serverId);
-  const accesses = Object.values(server.accesses).map((a) => ({
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = Object.values(server.accesses).map((a) => ({
     HomeDirectory: a.HomeDirectory,
     HomeDirectoryType: a.HomeDirectoryType,
     Role: a.Role,
     ExternalId: a.ExternalId,
   }));
-  return { ServerId: serverId, Accesses: accesses };
+  if (maxResults === undefined) return { ServerId: serverId, Accesses: all };
+  const page = all.slice(offset, offset + maxResults);
+  const nextOffset =
+    offset + maxResults < all.length ? offset + maxResults : undefined;
+  return {
+    ServerId: serverId,
+    Accesses: page,
+    NextToken:
+      nextOffset !== undefined ? encodePageToken(nextOffset) : undefined,
+  };
 };
 
 const UpdateAccess: OperationHandler = (input, ctx) => {
@@ -844,6 +934,7 @@ const CreateAgreement: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  requireProfile(ctx, localProfileId);
   const partnerProfileId = input["PartnerProfileId"];
   if (typeof partnerProfileId !== "string" || partnerProfileId === "") {
     throw awsError(
@@ -852,6 +943,7 @@ const CreateAgreement: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  requireProfile(ctx, partnerProfileId);
   const accessRole = input["AccessRole"];
   if (typeof accessRole !== "string" || accessRole === "") {
     throw awsError("InvalidRequestException", "AccessRole is required.", 400);
@@ -981,6 +1073,7 @@ const CreateConnector: OperationHandler = (input, ctx) => {
     SecurityPolicyName: stringOrUndefined(input["SecurityPolicyName"]),
     EgressConfig: input["EgressConfig"],
     IpAddressType: stringOrUndefined(input["IpAddressType"]),
+    Status: "CREATING",
   };
   ctx.store.set(connectorKey(connectorId), connector);
   return { ConnectorId: connectorId };
@@ -992,6 +1085,10 @@ const DescribeConnector: OperationHandler = (input, ctx) => {
     throw awsError("InvalidRequestException", "ConnectorId is required.", 400);
   }
   const connector = requireConnector(ctx, connectorId);
+  if (connector.Status === "CREATING") {
+    connector.Status = "ONLINE";
+    ctx.store.set(connectorKey(connectorId), connector);
+  }
   return {
     Connector: {
       Arn: connector.Arn,
@@ -1006,14 +1103,17 @@ const DescribeConnector: OperationHandler = (input, ctx) => {
       SecurityPolicyName: connector.SecurityPolicyName,
       EgressConfig: connector.EgressConfig,
       EgressType: "PUBLIC",
-      Status: "ONLINE",
+      Status: connector.Status,
       IpAddressType: connector.IpAddressType,
     },
   };
 };
 
-const ListConnectors: OperationHandler = (_input, ctx) => {
-  const connectors = ctx.store
+const ListConnectors: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredConnector>()
     .filter((e) => e.key.startsWith("connector/"))
     .map((e) => ({
@@ -1021,7 +1121,15 @@ const ListConnectors: OperationHandler = (_input, ctx) => {
       ConnectorId: e.value.ConnectorId,
       Url: e.value.Url,
     }));
-  return { Connectors: connectors };
+  if (maxResults === undefined) return { Connectors: all };
+  const page = all.slice(offset, offset + maxResults);
+  const nextOffset =
+    offset + maxResults < all.length ? offset + maxResults : undefined;
+  return {
+    Connectors: page,
+    NextToken:
+      nextOffset !== undefined ? encodePageToken(nextOffset) : undefined,
+  };
 };
 
 const UpdateConnector: OperationHandler = (input, ctx) => {
@@ -1083,7 +1191,19 @@ const StartFileTransfer: OperationHandler = (input, ctx) => {
     throw awsError("InvalidRequestException", "ConnectorId is required.", 400);
   }
   requireConnector(ctx, connectorId);
-  return { TransferId: `transfer-${hex17()}` };
+  const transferId = `transfer-${hex17()}`;
+  const transfer: StoredTransfer = {
+    ConnectorId: connectorId,
+    TransferId: transferId,
+    SendFilePaths: Array.isArray(input["SendFilePaths"])
+      ? (input["SendFilePaths"] as string[])
+      : [],
+    RetrieveFilePaths: Array.isArray(input["RetrieveFilePaths"])
+      ? (input["RetrieveFilePaths"] as string[])
+      : [],
+  };
+  ctx.store.set(transferResultKey(connectorId, transferId), transfer);
+  return { TransferId: transferId };
 };
 
 const StartDirectoryListing: OperationHandler = (input, ctx) => {
@@ -1093,6 +1213,10 @@ const StartDirectoryListing: OperationHandler = (input, ctx) => {
   }
   requireConnector(ctx, connectorId);
   const listingId = `listing-${hex17()}`;
+  ctx.store.set(`directory-listing/${connectorId}/${listingId}`, {
+    ConnectorId: connectorId,
+    ListingId: listingId,
+  });
   return {
     ListingId: listingId,
     OutputFileName: `${listingId}.json`,
@@ -1105,7 +1229,12 @@ const StartRemoteDelete: OperationHandler = (input, ctx) => {
     throw awsError("InvalidRequestException", "ConnectorId is required.", 400);
   }
   requireConnector(ctx, connectorId);
-  return { DeleteId: `delete-${hex17()}` };
+  const deleteId = `delete-${hex17()}`;
+  ctx.store.set(`remote-delete/${connectorId}/${deleteId}`, {
+    ConnectorId: connectorId,
+    DeleteId: deleteId,
+  });
+  return { DeleteId: deleteId };
 };
 
 const StartRemoteMove: OperationHandler = (input, ctx) => {
@@ -1114,11 +1243,45 @@ const StartRemoteMove: OperationHandler = (input, ctx) => {
     throw awsError("InvalidRequestException", "ConnectorId is required.", 400);
   }
   requireConnector(ctx, connectorId);
-  return { MoveId: `move-${hex17()}` };
+  const moveId = `move-${hex17()}`;
+  ctx.store.set(`remote-move/${connectorId}/${moveId}`, {
+    ConnectorId: connectorId,
+    MoveId: moveId,
+  });
+  return { MoveId: moveId };
 };
 
-const ListFileTransferResults: OperationHandler = (_input, _ctx) => {
-  return { FileTransferResults: [] };
+const ListFileTransferResults: OperationHandler = (input, ctx) => {
+  const connectorId = input["ConnectorId"];
+  if (typeof connectorId !== "string" || connectorId === "") {
+    throw awsError("InvalidRequestException", "ConnectorId is required.", 400);
+  }
+  requireConnector(ctx, connectorId);
+  const transferId = input["TransferId"];
+  if (typeof transferId !== "string" || transferId === "") {
+    throw awsError("InvalidRequestException", "TransferId is required.", 400);
+  }
+  const stored = ctx.store.get<StoredTransfer>(
+    transferResultKey(connectorId, transferId),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Unknown transfer ${transferId}.`,
+      400,
+    );
+  }
+  const results = [
+    ...stored.SendFilePaths.map((p) => ({
+      FilePath: p,
+      StatusCode: "COMPLETED",
+    })),
+    ...stored.RetrieveFilePaths.map((p) => ({
+      FilePath: p,
+      StatusCode: "COMPLETED",
+    })),
+  ];
+  return { FileTransferResults: results };
 };
 
 const CreateProfile: OperationHandler = (input, ctx) => {
@@ -1163,8 +1326,11 @@ const DescribeProfile: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListProfiles: OperationHandler = (_input, ctx) => {
-  const profiles = ctx.store
+const ListProfiles: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredProfile>()
     .filter((e) => e.key.startsWith("profile/"))
     .map((e) => ({
@@ -1173,7 +1339,15 @@ const ListProfiles: OperationHandler = (_input, ctx) => {
       As2Id: e.value.As2Id,
       ProfileType: e.value.ProfileType,
     }));
-  return { Profiles: profiles };
+  if (maxResults === undefined) return { Profiles: all };
+  const page = all.slice(offset, offset + maxResults);
+  const nextOffset =
+    offset + maxResults < all.length ? offset + maxResults : undefined;
+  return {
+    Profiles: page,
+    NextToken:
+      nextOffset !== undefined ? encodePageToken(nextOffset) : undefined,
+  };
 };
 
 const UpdateProfile: OperationHandler = (input, ctx) => {
@@ -1409,18 +1583,15 @@ const DescribeExecution: OperationHandler = (input, ctx) => {
   if (typeof executionId !== "string" || executionId === "") {
     throw awsError("InvalidRequestException", "ExecutionId is required.", 400);
   }
+  const execution = requireExecution(ctx, workflowId, executionId);
   return {
     WorkflowId: workflowId,
     Execution: {
-      ExecutionId: executionId,
-      Status: "COMPLETED",
-      InitialFileLocation: {
-        S3FileLocation: { Bucket: "example", Key: "file.txt" },
-      },
-      ServiceMetadata: {
-        UserDetails: { UserName: "user", ServerId: "s-example" },
-      },
-      Results: { OnPartialFailure: "CONTINUE" },
+      ExecutionId: execution.ExecutionId,
+      Status: execution.Status,
+      InitialFileLocation: execution.InitialFileLocation,
+      ServiceMetadata: execution.ServiceMetadata,
+      Results: execution.Results,
     },
   };
 };
@@ -1431,7 +1602,16 @@ const ListExecutions: OperationHandler = (input, ctx) => {
     throw awsError("InvalidRequestException", "WorkflowId is required.", 400);
   }
   requireWorkflow(ctx, workflowId);
-  return { WorkflowId: workflowId, Executions: [] };
+  const executions = ctx.store
+    .list<StoredExecution>()
+    .filter((e) => e.key.startsWith(`execution/${workflowId}/`))
+    .map((e) => ({
+      ExecutionId: e.value.ExecutionId,
+      Status: e.value.Status,
+      InitialFileLocation: e.value.InitialFileLocation,
+      ServiceMetadata: e.value.ServiceMetadata,
+    }));
+  return { WorkflowId: workflowId, Executions: executions };
 };
 
 const ImportCertificate: OperationHandler = (input, ctx) => {
@@ -1493,8 +1673,11 @@ const DescribeCertificate: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListCertificates: OperationHandler = (_input, ctx) => {
-  const certificates = ctx.store
+const ListCertificates: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredCertificate>()
     .filter((e) => e.key.startsWith("certificate/"))
     .map((e) => ({
@@ -1507,7 +1690,15 @@ const ListCertificates: OperationHandler = (_input, ctx) => {
       Type: e.value.Type,
       Description: e.value.Description,
     }));
-  return { Certificates: certificates };
+  if (maxResults === undefined) return { Certificates: all };
+  const page = all.slice(offset, offset + maxResults);
+  const nextOffset =
+    offset + maxResults < all.length ? offset + maxResults : undefined;
+  return {
+    Certificates: page,
+    NextToken:
+      nextOffset !== undefined ? encodePageToken(nextOffset) : undefined,
+  };
 };
 
 const UpdateCertificate: OperationHandler = (input, ctx) => {

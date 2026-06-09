@@ -445,9 +445,62 @@ test("Budgets action CRUD and execute", async () => {
   );
 });
 
+test("Budgets DescribeBudgets pagination", async () => {
+  const client = budgets();
+  const prefix = `bunsai-page-${Date.now()}`;
+  const names = [`${prefix}-a`, `${prefix}-b`, `${prefix}-c`];
+
+  for (const name of names) {
+    await client.send(
+      new CreateBudgetCommand({
+        AccountId: accountId,
+        Budget: {
+          BudgetName: name,
+          TimeUnit: "MONTHLY",
+          BudgetType: "COST",
+          BudgetLimit: { Amount: "100.0", Unit: "USD" },
+        },
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new DescribeBudgetsCommand({ AccountId: accountId, MaxResults: 2 }),
+  );
+  expect((page1.Budgets ?? []).length).toBeLessThanOrEqual(2);
+
+  if (page1.NextToken !== undefined) {
+    const page2 = await client.send(
+      new DescribeBudgetsCommand({
+        AccountId: accountId,
+        MaxResults: 2,
+        NextToken: page1.NextToken,
+      }),
+    );
+    expect(page2.Budgets).toBeDefined();
+  }
+
+  const allBudgets = await client.send(
+    new DescribeBudgetsCommand({ AccountId: accountId }),
+  );
+  const allNames = (allBudgets.Budgets ?? []).map((b) => b.BudgetName);
+  for (const name of names) {
+    expect(allNames).toContain(name);
+  }
+
+  for (const name of names) {
+    await client.send(
+      new DeleteBudgetCommand({ AccountId: accountId, BudgetName: name }),
+    );
+  }
+});
+
 test("Budgets DescribeBudgetPerformanceHistory", async () => {
   const client = budgets();
   const budgetName = `bunsai-perf-${Date.now()}`;
+  const now = Math.floor(Date.now() / 1000);
+  const start = now - 30 * 24 * 3600;
+  const end = now + 30 * 24 * 3600;
 
   await client.send(
     new CreateBudgetCommand({
@@ -457,6 +510,13 @@ test("Budgets DescribeBudgetPerformanceHistory", async () => {
         TimeUnit: "MONTHLY",
         BudgetType: "COST",
         BudgetLimit: { Amount: "100.0", Unit: "USD" },
+        TimePeriod: {
+          Start: new Date(start * 1000),
+          End: new Date(end * 1000),
+        },
+        CalculatedSpend: {
+          ActualSpend: { Amount: "42.00", Unit: "USD" },
+        },
       },
     }),
   );
@@ -469,6 +529,28 @@ test("Budgets DescribeBudgetPerformanceHistory", async () => {
   );
   expect(resp.BudgetPerformanceHistory?.BudgetName).toBe(budgetName);
   expect(resp.BudgetPerformanceHistory?.BudgetType).toBe("COST");
+  expect(
+    (resp.BudgetPerformanceHistory?.BudgetedAndActualAmountsList ?? []).length,
+  ).toBeGreaterThan(0);
+  const entry =
+    resp.BudgetPerformanceHistory?.BudgetedAndActualAmountsList?.[0];
+  expect(entry?.BudgetedAmount?.Amount).toBe("100.0");
+  expect(entry?.ActualAmount?.Amount).toBe("42.00");
+
+  const filtered = await client.send(
+    new DescribeBudgetPerformanceHistoryCommand({
+      AccountId: accountId,
+      BudgetName: budgetName,
+      TimePeriod: {
+        Start: new Date((now - 365 * 24 * 3600) * 1000),
+        End: new Date((now - 60 * 24 * 3600) * 1000),
+      },
+    }),
+  );
+  expect(
+    (filtered.BudgetPerformanceHistory?.BudgetedAndActualAmountsList ?? [])
+      .length,
+  ).toBe(0);
 
   await client.send(
     new DeleteBudgetCommand({ AccountId: accountId, BudgetName: budgetName }),

@@ -90,6 +90,26 @@ const actionHistoryKey = (
 
 const tagKey = (arn: string): string => `tag/${arn}`;
 
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+  defaultMax = 100,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : defaultMax;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
+
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
   if (typeof value !== "string" || value === "") {
@@ -228,14 +248,22 @@ const DescribeBudget: OperationHandler = (input, ctx) => {
 
 const DescribeBudgets: OperationHandler = (input, ctx) => {
   requireString(input, "AccountId");
-  const budgets = ctx.store
+  const all = ctx.store
     .list<StoredBudget>()
     .filter((entry) => entry.key.startsWith("budget/"))
     .map((entry) => entry.value)
     .sort((a, b) =>
       a.BudgetName < b.BudgetName ? -1 : a.BudgetName > b.BudgetName ? 1 : 0,
     );
-  return { Budgets: budgets };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Budgets: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const DeleteBudget: OperationHandler = (input, ctx) => {
@@ -347,11 +375,19 @@ const DescribeNotificationsForBudget: OperationHandler = (input, ctx) => {
   requireString(input, "AccountId");
   const budgetName = requireString(input, "BudgetName");
   requireBudget(ctx, budgetName);
-  const notifications = ctx.store
+  const all = ctx.store
     .list<StoredNotification>()
     .filter((entry) => entry.key.startsWith(`notification/${budgetName}/`))
     .map((entry) => entry.value);
-  return { Notifications: notifications };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Notifications: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const DescribeBudgetNotificationsForAccount: OperationHandler = (
@@ -359,7 +395,7 @@ const DescribeBudgetNotificationsForAccount: OperationHandler = (
   ctx,
 ) => {
   requireString(input, "AccountId");
-  const result = ctx.store
+  const all = ctx.store
     .list<StoredBudget>()
     .filter((entry) => entry.key.startsWith("budget/"))
     .map((entry) => {
@@ -370,7 +406,16 @@ const DescribeBudgetNotificationsForAccount: OperationHandler = (
         .map((n) => n.value);
       return { BudgetName: bname, Notifications: notifications };
     });
-  return { BudgetNotificationsForAccount: result };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+    50,
+  );
+  return {
+    BudgetNotificationsForAccount: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const CreateSubscriber: OperationHandler = (input, ctx) => {
@@ -464,13 +509,21 @@ const DescribeSubscribersForNotification: OperationHandler = (input, ctx) => {
   const notif = requireNotifInput(input, "Notification");
   const storedNotif = requireNotification(ctx, budgetName, notif);
   const notifId = `${storedNotif.NotificationType}|${storedNotif.ComparisonOperator}|${storedNotif.Threshold}`;
-  const subscribers = ctx.store
+  const all = ctx.store
     .list<StoredSubscriber>()
     .filter((entry) =>
       entry.key.startsWith(`subscriber/${budgetName}/${notifId}/`),
     )
     .map((entry) => entry.value);
-  return { Subscribers: subscribers };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Subscribers: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const CreateBudgetAction: OperationHandler = (input, ctx) => {
@@ -570,22 +623,38 @@ const DescribeBudgetAction: OperationHandler = (input, ctx) => {
 
 const DescribeBudgetActionsForAccount: OperationHandler = (input, ctx) => {
   requireString(input, "AccountId");
-  const actions = ctx.store
+  const all = ctx.store
     .list<StoredAction>()
     .filter((entry) => entry.key.startsWith("action/"))
     .map((entry) => entry.value);
-  return { Actions: actions };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Actions: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const DescribeBudgetActionsForBudget: OperationHandler = (input, ctx) => {
   requireString(input, "AccountId");
   const budgetName = requireString(input, "BudgetName");
   requireBudget(ctx, budgetName);
-  const actions = ctx.store
+  const all = ctx.store
     .list<StoredAction>()
     .filter((entry) => entry.key.startsWith(`action/${budgetName}/`))
     .map((entry) => entry.value);
-  return { Actions: actions };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Actions: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const DescribeBudgetActionHistories: OperationHandler = (input, ctx) => {
@@ -594,15 +663,38 @@ const DescribeBudgetActionHistories: OperationHandler = (input, ctx) => {
   requireBudget(ctx, budgetName);
   const actionId = requireString(input, "ActionId");
   requireAction(ctx, budgetName, actionId);
-  const histories = ctx.store
+  const all = ctx.store
     .list<StoredActionHistory>()
     .filter((entry) =>
       entry.key.startsWith(`actionhistory/${budgetName}/${actionId}/`),
     )
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
     .map((entry) => entry.value);
-  return { ActionHistories: histories };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    ActionHistories: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
+
+const validSourceStatuses: Record<string, readonly string[]> = {
+  APPROVE_BUDGET_ACTION: ["STANDBY", "PENDING"] as const,
+  REVERSE_BUDGET_ACTION: [
+    "EXECUTION_IN_PROGRESS",
+    "EXECUTION_SUCCESS",
+  ] as const,
+  RESET_BUDGET_ACTION: [
+    "EXECUTION_SUCCESS",
+    "EXECUTION_FAILURE",
+    "REVERSE_SUCCESS",
+    "REVERSE_FAILURE",
+    "RESET_FAILURE",
+  ] as const,
+} as const;
 
 const ExecuteBudgetAction: OperationHandler = (input, ctx) => {
   const accountId = requireString(input, "AccountId");
@@ -611,6 +703,14 @@ const ExecuteBudgetAction: OperationHandler = (input, ctx) => {
   const actionId = requireString(input, "ActionId");
   const executionType = requireString(input, "ExecutionType");
   const action = requireAction(ctx, budgetName, actionId);
+  const allowed = validSourceStatuses[executionType] ?? [];
+  if (!allowed.includes(action.Status)) {
+    throw awsError(
+      "ResourceLockedException",
+      `Unable to execute budget action: ${actionId} - the action is currently in ${action.Status} status.`,
+      400,
+    );
+  }
   const newStatus =
     executionType === "REVERSE_BUDGET_ACTION"
       ? "REVERSE_IN_PROGRESS"
@@ -646,13 +746,87 @@ const DescribeBudgetPerformanceHistory: OperationHandler = (input, ctx) => {
   requireString(input, "AccountId");
   const budgetName = requireString(input, "BudgetName");
   const budget = requireBudget(ctx, budgetName);
+
+  const budgetTimePeriod =
+    typeof budget["TimePeriod"] === "object" && budget["TimePeriod"] !== null
+      ? (budget["TimePeriod"] as Record<string, unknown>)
+      : undefined;
+
+  type AmountsEntry = {
+    BudgetedAmount: unknown;
+    ActualAmount: unknown;
+    TimePeriod: Record<string, unknown>;
+  };
+
+  const entries: AmountsEntry[] = [];
+  if (budgetTimePeriod !== undefined) {
+    const calculatedSpend =
+      typeof budget["CalculatedSpend"] === "object" &&
+      budget["CalculatedSpend"] !== null
+        ? (budget["CalculatedSpend"] as Record<string, unknown>)
+        : {};
+    entries.push({
+      BudgetedAmount: budget["BudgetLimit"] ?? { Amount: "0.00", Unit: "USD" },
+      ActualAmount: calculatedSpend["ActualSpend"] ?? {
+        Amount: "0.00",
+        Unit: "USD",
+      },
+      TimePeriod: budgetTimePeriod,
+    });
+  }
+
+  const filterPeriod =
+    typeof input["TimePeriod"] === "object" && input["TimePeriod"] !== null
+      ? (input["TimePeriod"] as Record<string, unknown>)
+      : undefined;
+
+  let filtered = entries;
+  if (filterPeriod !== undefined) {
+    const filterStart =
+      typeof filterPeriod["Start"] === "number"
+        ? filterPeriod["Start"]
+        : undefined;
+    const filterEnd =
+      typeof filterPeriod["End"] === "number" ? filterPeriod["End"] : undefined;
+    filtered = entries.filter((e) => {
+      const entryStart =
+        typeof e.TimePeriod["Start"] === "number"
+          ? e.TimePeriod["Start"]
+          : undefined;
+      const entryEnd =
+        typeof e.TimePeriod["End"] === "number"
+          ? e.TimePeriod["End"]
+          : undefined;
+      if (
+        filterEnd !== undefined &&
+        entryStart !== undefined &&
+        entryStart > filterEnd
+      )
+        return false;
+      if (
+        filterStart !== undefined &&
+        entryEnd !== undefined &&
+        entryEnd < filterStart
+      )
+        return false;
+      return true;
+    });
+  }
+
+  const { items, nextToken } = paginateList(
+    filtered,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+
   return {
     BudgetPerformanceHistory: {
       BudgetName: budgetName,
       BudgetType: budget.BudgetType,
       TimeUnit: budget.TimeUnit,
-      BudgetedAndActualAmountsList: [],
+      BudgetedAndActualAmountsList: items,
     },
+    ...(nextToken !== undefined && { NextToken: nextToken }),
   };
 };
 

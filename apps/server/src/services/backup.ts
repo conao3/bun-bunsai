@@ -33,6 +33,7 @@ const gsKey = "gs" as const;
 const rsKey = "rs" as const;
 const lagvPrefix = "lagv:" as const;
 const ravPrefix = "rav:" as const;
+const planvPrefix = "planv:" as const;
 
 type StoredVault = {
   BackupVaultName: string;
@@ -259,8 +260,62 @@ const requireString = (
 
 const nowSeconds = (): number => Date.now() / 1000;
 
+const vaultNameFromArn = (arnOrName: string): string => {
+  if (!arnOrName.startsWith("arn:")) return arnOrName;
+  return arnOrName.split(":").pop() ?? arnOrName;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: number | undefined,
+  nextToken: string | undefined,
+): { items: T[]; nextToken: string | undefined } => {
+  const start = nextToken !== undefined ? parseInt(atob(nextToken), 10) : 0;
+  const limit =
+    maxResults !== undefined && maxResults > 0 ? maxResults : items.length;
+  const sliced = items.slice(start, start + limit);
+  const newNextToken =
+    start + limit < items.length ? btoa(String(start + limit)) : undefined;
+  return { items: sliced, nextToken: newNextToken };
+};
+
+const restoreMetadataFor = (
+  rp: StoredRecoveryPoint,
+): Record<string, string> => {
+  const resourceArn = rp.ResourceArn ?? "";
+  switch (rp.ResourceType) {
+    case "EC2":
+      return {
+        imageId: "ami-00000000",
+        instanceType: "t3.medium",
+        subnetId: "subnet-00000000",
+        securityGroupIds: "sg-00000000",
+      };
+    case "EBS":
+      return {
+        volumeId: resourceArn.split("/").pop() ?? "",
+        availabilityZone: "us-east-1a",
+        volumeType: "gp3",
+      };
+    case "RDS":
+      return {
+        DBInstanceIdentifier: resourceArn.split(":").pop() ?? "",
+        DBInstanceClass: "db.t3.medium",
+        Engine: "mysql",
+      };
+    case "S3":
+      return {
+        DestinationBucketName: resourceArn.split(":::").pop() ?? "",
+        S3DataTransfer: "false",
+      };
+    default:
+      return {};
+  }
+};
+
 const vaultKey = (name: string): string => `${vaultPrefix}${name}`;
 const planKey = (id: string): string => `${planPrefix}${id}`;
+const planvKey = (id: string): string => `${planvPrefix}${id}`;
 const selKey = (planId: string, selId: string): string =>
   `${selPrefix}${planId}:${selId}`;
 const selKeyPrefix = (planId: string): string => `${selPrefix}${planId}:`;
@@ -875,7 +930,7 @@ const GetRecoveryPointRestoreMetadata: OperationHandler = (input, ctx) => {
   return {
     BackupVaultArn: rp.BackupVaultArn,
     RecoveryPointArn: rp.RecoveryPointArn,
-    RestoreMetadata: {},
+    RestoreMetadata: restoreMetadataFor(rp),
     ResourceType: rp.ResourceType,
   };
 };
@@ -945,6 +1000,7 @@ const CreateBackupPlan: OperationHandler = (input, ctx) => {
     CreationDate: nowSeconds(),
   };
   ctx.store.set(planKey(id), stored);
+  ctx.store.set(planvKey(id), [stored]);
   return {
     BackupPlanId: stored.BackupPlanId,
     BackupPlanArn: stored.BackupPlanArn,
@@ -1016,6 +1072,8 @@ const UpdateBackupPlan: OperationHandler = (input, ctx) => {
       : plan.AdvancedBackupSettings,
   };
   ctx.store.set(planKey(id), updated);
+  const versions = ctx.store.get<StoredPlan[]>(planvKey(id)) ?? [plan];
+  ctx.store.set(planvKey(id), [updated, ...versions]);
   return {
     BackupPlanId: updated.BackupPlanId,
     BackupPlanArn: updated.BackupPlanArn,
@@ -1038,8 +1096,9 @@ const ExportBackupPlanTemplate: OperationHandler = (input, ctx) => {
 
 const ListBackupPlanVersions: OperationHandler = (input, ctx) => {
   const id = requireString(input, "BackupPlanId");
-  const plan = requirePlan(ctx, id);
-  return { BackupPlanVersionsList: [planListMember(plan)] };
+  requirePlan(ctx, id);
+  const versions = ctx.store.get<StoredPlan[]>(planvKey(id)) ?? [];
+  return { BackupPlanVersionsList: versions.map(planListMember) };
 };
 
 const CreateBackupSelection: OperationHandler = (input, ctx) => {
@@ -1736,9 +1795,9 @@ const StartBackupJob: OperationHandler = (input, ctx) => {
     BackupVaultArn: vault.BackupVaultArn,
     ResourceArn: resourceArn,
     ResourceType: stringOrUndefined(input["ResourceType"]) ?? "EC2",
-    Status: "COMPLETED",
+    Status: "CREATING",
     CreationDate: now,
-    CompletionDate: now,
+    CompletionDate: undefined,
     BackupSizeInBytes: 1024,
     Lifecycle: recordOrUndefined(input["Lifecycle"]) ?? {},
     EncryptionKeyArn: vault.EncryptionKeyArn,
@@ -1759,12 +1818,12 @@ const StartBackupJob: OperationHandler = (input, ctx) => {
     RecoveryPointArn: rpArn,
     ResourceArn: resourceArn,
     ResourceType: stringOrUndefined(input["ResourceType"]) ?? "EC2",
-    State: "COMPLETED",
-    PercentDone: "100.0",
+    State: "CREATED",
+    PercentDone: "0.0",
     BackupSizeInBytes: 1024,
     IamRoleArn: iamRoleArn,
     CreationDate: now,
-    CompletionDate: now,
+    CompletionDate: undefined,
   };
   ctx.store.set(bjKey(jobId), job);
   return {
@@ -1777,7 +1836,27 @@ const StartBackupJob: OperationHandler = (input, ctx) => {
 
 const DescribeBackupJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "BackupJobId");
-  const job = requireBackupJob(ctx, jobId);
+  let job = requireBackupJob(ctx, jobId);
+  if (job.State === "CREATED" || job.State === "RUNNING") {
+    const completedAt = nowSeconds();
+    job = {
+      ...job,
+      State: "COMPLETED",
+      PercentDone: "100.0",
+      CompletionDate: completedAt,
+    };
+    ctx.store.set(bjKey(jobId), job);
+    const rp = ctx.store.get<StoredRecoveryPoint>(
+      recvptKey(job.BackupVaultName, job.RecoveryPointArn),
+    );
+    if (rp !== undefined && rp.Status === "CREATING") {
+      ctx.store.set(recvptKey(job.BackupVaultName, job.RecoveryPointArn), {
+        ...rp,
+        Status: "COMPLETED",
+        CompletionDate: completedAt,
+      });
+    }
+  }
   return {
     ...bjView(job),
     AccountId: ctx.account,
@@ -1787,12 +1866,32 @@ const DescribeBackupJob: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListBackupJobs: OperationHandler = (_input, ctx) => {
-  const jobs = ctx.store
+const ListBackupJobs: OperationHandler = (input, ctx) => {
+  const byState = stringOrUndefined(input["ByState"]);
+  const byCreatedBefore =
+    typeof input["ByCreatedBefore"] === "number"
+      ? (input["ByCreatedBefore"] as number)
+      : undefined;
+  const byCreatedAfter =
+    typeof input["ByCreatedAfter"] === "number"
+      ? (input["ByCreatedAfter"] as number)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  let jobs = ctx.store
     .list<StoredBackupJob>()
     .filter((e) => e.key.startsWith(bjPrefix))
     .map((e) => e.value);
-  return { BackupJobs: jobs.map(bjView) };
+  if (byState !== undefined) jobs = jobs.filter((j) => j.State === byState);
+  if (byCreatedBefore !== undefined)
+    jobs = jobs.filter((j) => j.CreationDate < byCreatedBefore);
+  if (byCreatedAfter !== undefined)
+    jobs = jobs.filter((j) => j.CreationDate > byCreatedAfter);
+  const paged = paginate(jobs, maxResults, nextToken);
+  return { BackupJobs: paged.items.map(bjView), NextToken: paged.nextToken };
 };
 
 const StopBackupJob: OperationHandler = (input, ctx) => {
@@ -1803,12 +1902,21 @@ const StopBackupJob: OperationHandler = (input, ctx) => {
 };
 
 const StartCopyJob: OperationHandler = (input, ctx) => {
+  const iamRoleArn = stringOrUndefined(input["IamRoleArn"]);
+  if (iamRoleArn === undefined) {
+    throw awsError(
+      "InvalidParameterValueException",
+      "IamRoleArn is required.",
+      400,
+    );
+  }
   const srcArn = requireString(input, "RecoveryPointArn");
   const srcVaultArn = requireString(input, "SourceBackupVaultName");
   const dstVaultArn = requireString(input, "DestinationBackupVaultArn");
-  const iamRoleArn = stringOrUndefined(input["IamRoleArn"]);
+  const dstVaultName = vaultNameFromArn(dstVaultArn);
+  requireVault(ctx, dstVaultName);
   const jobId = crypto.randomUUID();
-  const dstRpArn = recvptArnFor(ctx, dstVaultArn, jobId);
+  const dstRpArn = recvptArnFor(ctx, dstVaultName, jobId);
   const now = nowSeconds();
   const job: StoredCopyJob = {
     CopyJobId: jobId,
@@ -1818,9 +1926,9 @@ const StartCopyJob: OperationHandler = (input, ctx) => {
     DestinationRecoveryPointArn: dstRpArn,
     ResourceArn: stringOrUndefined(input["ResourceArn"]),
     ResourceType: "EC2",
-    State: "COMPLETED",
+    State: "CREATED",
     CreationDate: now,
-    CompletionDate: now,
+    CompletionDate: undefined,
     BackupSizeInBytes: 1024,
     IamRoleArn: iamRoleArn,
   };
@@ -1830,16 +1938,40 @@ const StartCopyJob: OperationHandler = (input, ctx) => {
 
 const DescribeCopyJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "CopyJobId");
-  const job = requireCopyJob(ctx, jobId);
+  let job = requireCopyJob(ctx, jobId);
+  if (job.State === "CREATED" || job.State === "RUNNING") {
+    job = { ...job, State: "COMPLETED", CompletionDate: nowSeconds() };
+    ctx.store.set(cjKey(jobId), job);
+  }
   return { CopyJob: cjView(job) };
 };
 
-const ListCopyJobs: OperationHandler = (_input, ctx) => {
-  const jobs = ctx.store
+const ListCopyJobs: OperationHandler = (input, ctx) => {
+  const byState = stringOrUndefined(input["ByState"]);
+  const byCreatedBefore =
+    typeof input["ByCreatedBefore"] === "number"
+      ? (input["ByCreatedBefore"] as number)
+      : undefined;
+  const byCreatedAfter =
+    typeof input["ByCreatedAfter"] === "number"
+      ? (input["ByCreatedAfter"] as number)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  let jobs = ctx.store
     .list<StoredCopyJob>()
     .filter((e) => e.key.startsWith(cjPrefix))
     .map((e) => e.value);
-  return { CopyJobs: jobs.map(cjView) };
+  if (byState !== undefined) jobs = jobs.filter((j) => j.State === byState);
+  if (byCreatedBefore !== undefined)
+    jobs = jobs.filter((j) => j.CreationDate < byCreatedBefore);
+  if (byCreatedAfter !== undefined)
+    jobs = jobs.filter((j) => j.CreationDate > byCreatedAfter);
+  const paged = paginate(jobs, maxResults, nextToken);
+  return { CopyJobs: paged.items.map(cjView), NextToken: paged.nextToken };
 };
 
 const StartRestoreJob: OperationHandler = (input, ctx) => {
@@ -1851,9 +1983,9 @@ const StartRestoreJob: OperationHandler = (input, ctx) => {
     RestoreJobId: jobId,
     RecoveryPointArn: rpArn,
     CreationDate: now,
-    CompletionDate: now,
-    Status: "COMPLETED",
-    PercentDone: "100.0",
+    CompletionDate: undefined,
+    Status: "PENDING",
+    PercentDone: "0.0",
     BackupSizeInBytes: 1024,
     IamRoleArn: iamRoleArn,
     ExpectedCompletionTimeMinutes: 0,
@@ -1866,7 +1998,16 @@ const StartRestoreJob: OperationHandler = (input, ctx) => {
 
 const DescribeRestoreJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "RestoreJobId");
-  const job = requireRestoreJob(ctx, jobId);
+  let job = requireRestoreJob(ctx, jobId);
+  if (job.Status === "PENDING" || job.Status === "RUNNING") {
+    job = {
+      ...job,
+      Status: "COMPLETED",
+      PercentDone: "100.0",
+      CompletionDate: nowSeconds(),
+    };
+    ctx.store.set(rjKey(jobId), job);
+  }
   return {
     AccountId: ctx.account,
     RestoreJobId: job.RestoreJobId,
@@ -1883,12 +2024,32 @@ const DescribeRestoreJob: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListRestoreJobs: OperationHandler = (_input, ctx) => {
-  const jobs = ctx.store
+const ListRestoreJobs: OperationHandler = (input, ctx) => {
+  const byStatus = stringOrUndefined(input["ByStatus"]);
+  const byCreatedBefore =
+    typeof input["ByCreatedBefore"] === "number"
+      ? (input["ByCreatedBefore"] as number)
+      : undefined;
+  const byCreatedAfter =
+    typeof input["ByCreatedAfter"] === "number"
+      ? (input["ByCreatedAfter"] as number)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  let jobs = ctx.store
     .list<StoredRestoreJob>()
     .filter((e) => e.key.startsWith(rjPrefix))
     .map((e) => e.value);
-  return { RestoreJobs: jobs.map(rjView) };
+  if (byStatus !== undefined) jobs = jobs.filter((j) => j.Status === byStatus);
+  if (byCreatedBefore !== undefined)
+    jobs = jobs.filter((j) => j.CreationDate < byCreatedBefore);
+  if (byCreatedAfter !== undefined)
+    jobs = jobs.filter((j) => j.CreationDate > byCreatedAfter);
+  const paged = paginate(jobs, maxResults, nextToken);
+  return { RestoreJobs: paged.items.map(rjView), NextToken: paged.nextToken };
 };
 
 const GetRestoreJobMetadata: OperationHandler = (input, ctx) => {
@@ -1921,9 +2082,9 @@ const StartScanJob: OperationHandler = (input, ctx) => {
     BackupVaultName: stringOrUndefined(input["BackupVaultName"]),
     RecoveryPointArn: stringOrUndefined(input["RecoveryPointArn"]),
     ResourceArn: stringOrUndefined(input["ResourceArn"]),
-    State: "COMPLETED",
+    State: "CREATED",
     CreationDate: now,
-    CompletionDate: now,
+    CompletionDate: undefined,
   };
   ctx.store.set(sjKey(jobId), job);
   return { CreationDate: now, ScanJobId: jobId };
@@ -1931,7 +2092,11 @@ const StartScanJob: OperationHandler = (input, ctx) => {
 
 const DescribeScanJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "ScanJobId");
-  const job = requireScanJob(ctx, jobId);
+  let job = requireScanJob(ctx, jobId);
+  if (job.State === "CREATED" || job.State === "RUNNING") {
+    job = { ...job, State: "COMPLETED", CompletionDate: nowSeconds() };
+    ctx.store.set(sjKey(jobId), job);
+  }
   return {
     ScanJobId: job.ScanJobId,
     BackupVaultName: job.BackupVaultName,
@@ -1944,18 +2109,39 @@ const DescribeScanJob: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListScanJobs: OperationHandler = (_input, ctx) => {
-  const jobs = ctx.store
+const ListScanJobs: OperationHandler = (input, ctx) => {
+  const byState = stringOrUndefined(input["ByState"]);
+  const byCreatedBefore =
+    typeof input["ByCreatedBefore"] === "number"
+      ? (input["ByCreatedBefore"] as number)
+      : undefined;
+  const byCreatedAfter =
+    typeof input["ByCreatedAfter"] === "number"
+      ? (input["ByCreatedAfter"] as number)
+      : undefined;
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  let jobs = ctx.store
     .list<StoredScanJob>()
     .filter((e) => e.key.startsWith(sjPrefix))
     .map((e) => e.value);
+  if (byState !== undefined) jobs = jobs.filter((j) => j.State === byState);
+  if (byCreatedBefore !== undefined)
+    jobs = jobs.filter((j) => j.CreationDate < byCreatedBefore);
+  if (byCreatedAfter !== undefined)
+    jobs = jobs.filter((j) => j.CreationDate > byCreatedAfter);
+  const paged = paginate(jobs, maxResults, nextToken);
   return {
-    ScanJobs: jobs.map((j) => ({
+    ScanJobs: paged.items.map((j) => ({
       ScanJobId: j.ScanJobId,
       State: j.State,
       CreationDate: j.CreationDate,
       CompletionDate: j.CompletionDate,
     })),
+    NextToken: paged.nextToken,
   };
 };
 

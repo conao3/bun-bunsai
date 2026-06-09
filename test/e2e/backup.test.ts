@@ -21,35 +21,47 @@ import {
   DeleteRestoreTestingSelectionCommand,
   DescribeBackupJobCommand,
   DescribeBackupVaultCommand,
+  DescribeCopyJobCommand,
   DescribeFrameworkCommand,
   DescribeGlobalSettingsCommand,
   DescribeRecoveryPointCommand,
   DescribeRegionSettingsCommand,
   DescribeReportPlanCommand,
+  DescribeRestoreJobCommand,
+  DescribeScanJobCommand,
   GetBackupPlanCommand,
   GetBackupSelectionCommand,
   GetBackupVaultAccessPolicyCommand,
   GetBackupVaultNotificationsCommand,
   GetLegalHoldCommand,
+  GetRecoveryPointRestoreMetadataCommand,
   GetRestoreTestingPlanCommand,
   GetRestoreTestingSelectionCommand,
   GetSupportedResourceTypesCommand,
   ListBackupJobsCommand,
+  ListBackupPlanVersionsCommand,
   ListBackupPlansCommand,
   ListBackupSelectionsCommand,
   ListBackupVaultsCommand,
+  ListCopyJobsCommand,
   ListFrameworksCommand,
   ListLegalHoldsCommand,
   ListRecoveryPointsByBackupVaultCommand,
   ListReportPlansCommand,
+  ListRestoreJobsCommand,
   ListRestoreTestingPlansCommand,
   ListRestoreTestingSelectionsCommand,
+  ListScanJobsCommand,
   ListTagsCommand,
   PutBackupVaultAccessPolicyCommand,
   PutBackupVaultNotificationsCommand,
   StartBackupJobCommand,
+  StartCopyJobCommand,
+  StartRestoreJobCommand,
+  StartScanJobCommand,
   TagResourceCommand,
   UntagResourceCommand,
+  UpdateBackupPlanCommand,
   UpdateGlobalSettingsCommand,
   UpdateRegionSettingsCommand,
 } from "@aws-sdk/client-backup";
@@ -500,4 +512,270 @@ test("GetSupportedResourceTypes returns list", async () => {
   const client = backup();
   const result = await client.send(new GetSupportedResourceTypesCommand({}));
   expect((result.ResourceTypes ?? []).length).toBeGreaterThan(0);
+});
+
+test("BackupJob lifecycle: CREATED → complete on describe", async () => {
+  const client = backup();
+  const vaultName = `vault-jlc-${Date.now()}`;
+
+  await client.send(
+    new CreateBackupVaultCommand({ BackupVaultName: vaultName }),
+  );
+
+  const started = await client.send(
+    new StartBackupJobCommand({
+      BackupVaultName: vaultName,
+      ResourceArn: "arn:aws:ec2:us-east-1:123456789012:instance/i-lifecycle",
+      IamRoleArn: "arn:aws:iam::123456789012:role/BackupRole",
+    }),
+  );
+  const jobId = started.BackupJobId!;
+  const rpArn = started.RecoveryPointArn!;
+  expect(jobId).toBeDefined();
+
+  const listed = await client.send(new ListBackupJobsCommand({}));
+  const found = (listed.BackupJobs ?? []).find((j) => j.BackupJobId === jobId);
+  expect(found?.State).toBe("CREATED");
+
+  const described = await client.send(
+    new DescribeBackupJobCommand({ BackupJobId: jobId }),
+  );
+  expect(described.State).toBe("COMPLETED");
+  expect(described.CompletionDate).toBeDefined();
+
+  const rp = await client.send(
+    new DescribeRecoveryPointCommand({
+      BackupVaultName: vaultName,
+      RecoveryPointArn: rpArn,
+    }),
+  );
+  expect(rp.Status).toBe("COMPLETED");
+
+  const meta = await client.send(
+    new GetRecoveryPointRestoreMetadataCommand({
+      BackupVaultName: vaultName,
+      RecoveryPointArn: rpArn,
+    }),
+  );
+  expect(meta.RestoreMetadata).toBeDefined();
+  expect(Object.keys(meta.RestoreMetadata ?? {}).length).toBeGreaterThan(0);
+
+  await client.send(
+    new DeleteBackupVaultCommand({ BackupVaultName: vaultName }),
+  );
+});
+
+test("StartCopyJob: IamRoleArn required", async () => {
+  const client = backup();
+  const srcVault = `vault-cj-src-${Date.now()}`;
+  const dstVault = `vault-cj-dst-${Date.now()}`;
+
+  await client.send(
+    new CreateBackupVaultCommand({ BackupVaultName: srcVault }),
+  );
+  await client.send(
+    new CreateBackupVaultCommand({ BackupVaultName: dstVault }),
+  );
+
+  const started = await client.send(
+    new StartBackupJobCommand({
+      BackupVaultName: srcVault,
+      ResourceArn: "arn:aws:ec2:us-east-1:123456789012:instance/i-copysrc",
+      IamRoleArn: "arn:aws:iam::123456789012:role/BackupRole",
+    }),
+  );
+  await client.send(
+    new DescribeBackupJobCommand({ BackupJobId: started.BackupJobId! }),
+  );
+
+  await expect(
+    client.send(
+      new StartCopyJobCommand({
+        RecoveryPointArn: started.RecoveryPointArn!,
+        SourceBackupVaultName: srcVault,
+        DestinationBackupVaultArn: `arn:aws:backup:us-east-1:123456789012:backup-vault:${dstVault}`,
+        IamRoleArn: undefined as unknown as string,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const copyJob = await client.send(
+    new StartCopyJobCommand({
+      RecoveryPointArn: started.RecoveryPointArn!,
+      SourceBackupVaultName: srcVault,
+      DestinationBackupVaultArn: `arn:aws:backup:us-east-1:123456789012:backup-vault:${dstVault}`,
+      IamRoleArn: "arn:aws:iam::123456789012:role/BackupRole",
+    }),
+  );
+  expect(copyJob.CopyJobId).toBeDefined();
+
+  const describedCopy = await client.send(
+    new DescribeCopyJobCommand({ CopyJobId: copyJob.CopyJobId! }),
+  );
+  expect(describedCopy.CopyJob?.State).toBe("COMPLETED");
+
+  const listedCopy = await client.send(new ListCopyJobsCommand({}));
+  expect((listedCopy.CopyJobs ?? []).map((j) => j.CopyJobId)).toContain(
+    copyJob.CopyJobId,
+  );
+
+  await client.send(
+    new DeleteBackupVaultCommand({ BackupVaultName: srcVault }),
+  );
+  await client.send(
+    new DeleteBackupVaultCommand({ BackupVaultName: dstVault }),
+  );
+});
+
+test("ListBackupJobs filters and pagination", async () => {
+  const client = backup();
+  const vaultName = `vault-ljf-${Date.now()}`;
+
+  await client.send(
+    new CreateBackupVaultCommand({ BackupVaultName: vaultName }),
+  );
+
+  const j1 = await client.send(
+    new StartBackupJobCommand({
+      BackupVaultName: vaultName,
+      ResourceArn: "arn:aws:ec2:us-east-1:123456789012:instance/i-f1",
+      IamRoleArn: "arn:aws:iam::123456789012:role/BackupRole",
+    }),
+  );
+  const j2 = await client.send(
+    new StartBackupJobCommand({
+      BackupVaultName: vaultName,
+      ResourceArn: "arn:aws:ec2:us-east-1:123456789012:instance/i-f2",
+      IamRoleArn: "arn:aws:iam::123456789012:role/BackupRole",
+    }),
+  );
+
+  await client.send(
+    new DescribeBackupJobCommand({ BackupJobId: j1.BackupJobId! }),
+  );
+
+  const createdOnly = await client.send(
+    new ListBackupJobsCommand({ ByState: "CREATED" }),
+  );
+  const completedOnly = await client.send(
+    new ListBackupJobsCommand({ ByState: "COMPLETED" }),
+  );
+  expect((createdOnly.BackupJobs ?? []).map((j) => j.BackupJobId)).toContain(
+    j2.BackupJobId,
+  );
+  expect((completedOnly.BackupJobs ?? []).map((j) => j.BackupJobId)).toContain(
+    j1.BackupJobId,
+  );
+
+  const page1 = await client.send(new ListBackupJobsCommand({ MaxResults: 1 }));
+  expect((page1.BackupJobs ?? []).length).toBe(1);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListBackupJobsCommand({ MaxResults: 1, NextToken: page1.NextToken }),
+  );
+  expect((page2.BackupJobs ?? []).length).toBe(1);
+  expect(page1.BackupJobs![0].BackupJobId).not.toBe(
+    page2.BackupJobs![0].BackupJobId,
+  );
+
+  await client.send(
+    new DeleteBackupVaultCommand({ BackupVaultName: vaultName }),
+  );
+});
+
+test("RestoreJob lifecycle: PENDING → complete on describe", async () => {
+  const client = backup();
+  const vaultName = `vault-rjlc-${Date.now()}`;
+
+  await client.send(
+    new CreateBackupVaultCommand({ BackupVaultName: vaultName }),
+  );
+  const bj = await client.send(
+    new StartBackupJobCommand({
+      BackupVaultName: vaultName,
+      ResourceArn: "arn:aws:ec2:us-east-1:123456789012:instance/i-rjsrc",
+      IamRoleArn: "arn:aws:iam::123456789012:role/BackupRole",
+    }),
+  );
+  await client.send(
+    new DescribeBackupJobCommand({ BackupJobId: bj.BackupJobId! }),
+  );
+
+  const rj = await client.send(
+    new StartRestoreJobCommand({
+      RecoveryPointArn: bj.RecoveryPointArn!,
+      Metadata: {},
+      IamRoleArn: "arn:aws:iam::123456789012:role/BackupRole",
+    }),
+  );
+  expect(rj.RestoreJobId).toBeDefined();
+
+  const listedPending = await client.send(
+    new ListRestoreJobsCommand({ ByStatus: "PENDING" }),
+  );
+  expect(
+    (listedPending.RestoreJobs ?? []).map((j) => j.RestoreJobId),
+  ).toContain(rj.RestoreJobId);
+
+  const described = await client.send(
+    new DescribeRestoreJobCommand({ RestoreJobId: rj.RestoreJobId! }),
+  );
+  expect(described.Status).toBe("COMPLETED");
+  expect(described.CompletionDate).toBeDefined();
+
+  await client.send(
+    new DeleteBackupVaultCommand({ BackupVaultName: vaultName }),
+  );
+});
+
+test("ListBackupPlanVersions returns history after updates", async () => {
+  const client = backup();
+  const planName = `plan-ver-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateBackupPlanCommand({
+      BackupPlan: {
+        BackupPlanName: planName,
+        Rules: [
+          {
+            RuleName: "daily",
+            TargetBackupVaultName: "Default",
+            ScheduleExpression: "cron(0 12 * * ? *)",
+          },
+        ],
+      },
+    }),
+  );
+  const planId = created.BackupPlanId!;
+
+  const v1 = await client.send(
+    new ListBackupPlanVersionsCommand({ BackupPlanId: planId }),
+  );
+  expect((v1.BackupPlanVersionsList ?? []).length).toBe(1);
+
+  await client.send(
+    new UpdateBackupPlanCommand({
+      BackupPlanId: planId,
+      BackupPlan: {
+        BackupPlanName: `${planName}-v2`,
+        Rules: [
+          {
+            RuleName: "weekly",
+            TargetBackupVaultName: "Default",
+            ScheduleExpression: "cron(0 12 ? * SUN *)",
+          },
+        ],
+      },
+    }),
+  );
+
+  const v2 = await client.send(
+    new ListBackupPlanVersionsCommand({ BackupPlanId: planId }),
+  );
+  expect((v2.BackupPlanVersionsList ?? []).length).toBe(2);
+  const versionIds = (v2.BackupPlanVersionsList ?? []).map((v) => v.VersionId);
+  expect(new Set(versionIds).size).toBe(2);
+
+  await client.send(new DeleteBackupPlanCommand({ BackupPlanId: planId }));
 });

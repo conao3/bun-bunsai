@@ -190,6 +190,25 @@ const randomHex = (length: number): string => {
 const newUuid = (): string =>
   `${randomHex(8)}-${randomHex(4)}-${randomHex(4)}-${randomHex(4)}-${randomHex(12)}`;
 
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
+
 const syntheticLoa = (): { loaContent: string; loaContentType: string } => ({
   loaContent: Buffer.from("LOA-CFA").toString("base64"),
   loaContentType: "application/pdf",
@@ -312,6 +331,7 @@ const buildVirtualInterface = (
   connectionId: string,
   viType: string,
   spec: Record<string, unknown>,
+  state = "pending",
 ): StoredVirtualInterface => {
   const virtualInterfaceId = `dxvif-${randomHex(8)}`;
   const bgpPeer: StoredBGPPeer = {
@@ -338,7 +358,7 @@ const buildVirtualInterface = (
     amazonAddress: optionalString(spec, "amazonAddress"),
     customerAddress: optionalString(spec, "customerAddress"),
     addressFamily: optionalString(spec, "addressFamily"),
-    virtualInterfaceState: "pending",
+    virtualInterfaceState: state,
     mtu: optionalNumber(spec, "mtu") ?? 1500,
     jumboFrameCapable: false,
     virtualGatewayId: optionalString(spec, "virtualGatewayId"),
@@ -364,7 +384,7 @@ const CreateConnection: OperationHandler = (input, ctx) => {
     ownerAccount: ctx.account,
     connectionId,
     connectionName,
-    connectionState: "available",
+    connectionState: "requested",
     region: ctx.region,
     location,
     bandwidth,
@@ -383,11 +403,16 @@ const DescribeConnections: OperationHandler = (input, ctx) => {
     const connection = requireConnection(ctx, connectionId);
     return { connections: [connection] };
   }
-  const connections = ctx.store
+  const all = ctx.store
     .list<StoredConnection>()
     .filter((entry) => entry.key.startsWith("connection/"))
     .map((entry) => entry.value);
-  return { connections };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { connections: items, nextToken };
 };
 
 const DeleteConnection: OperationHandler = (input, ctx) => {
@@ -575,7 +600,13 @@ const AllocatePrivateVirtualInterface: OperationHandler = (input, ctx) => {
       string,
       unknown
     >) ?? {};
-  return buildVirtualInterface(ctx, connectionId, "private", spec);
+  return buildVirtualInterface(
+    ctx,
+    connectionId,
+    "private",
+    spec,
+    "confirming",
+  );
 };
 
 const AllocatePublicVirtualInterface: OperationHandler = (input, ctx) => {
@@ -584,7 +615,7 @@ const AllocatePublicVirtualInterface: OperationHandler = (input, ctx) => {
   const spec =
     (input["newPublicVirtualInterfaceAllocation"] as Record<string, unknown>) ??
     {};
-  return buildVirtualInterface(ctx, connectionId, "public", spec);
+  return buildVirtualInterface(ctx, connectionId, "public", spec, "confirming");
 };
 
 const AllocateTransitVirtualInterface: OperationHandler = (input, ctx) => {
@@ -595,15 +626,22 @@ const AllocateTransitVirtualInterface: OperationHandler = (input, ctx) => {
       string,
       unknown
     >) ?? {};
-  const vi = buildVirtualInterface(ctx, connectionId, "transit", spec);
+  const vi = buildVirtualInterface(
+    ctx,
+    connectionId,
+    "transit",
+    spec,
+    "confirming",
+  );
   return { virtualInterface: vi };
 };
 
 const DeleteVirtualInterface: OperationHandler = (input, ctx) => {
   const virtualInterfaceId = requireString(input, "virtualInterfaceId");
   const vi = requireVirtualInterface(ctx, virtualInterfaceId);
-  ctx.store.delete(virtualInterfaceKey(virtualInterfaceId));
-  return { virtualInterfaceState: vi.virtualInterfaceState };
+  const deleted = { ...vi, virtualInterfaceState: "deleted" };
+  ctx.store.set(virtualInterfaceKey(virtualInterfaceId), deleted);
+  return { virtualInterfaceState: "deleted" };
 };
 
 const DescribeVirtualInterfaces: OperationHandler = (input, ctx) => {
@@ -623,7 +661,12 @@ const DescribeVirtualInterfaces: OperationHandler = (input, ctx) => {
       (vi) => vi.virtualInterfaceId === virtualInterfaceId,
     );
   }
-  return { virtualInterfaces };
+  const { items, nextToken } = paginateList(
+    virtualInterfaces,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { virtualInterfaces: items, nextToken };
 };
 
 const ConfirmPrivateVirtualInterface: OperationHandler = (input, ctx) => {
@@ -800,8 +843,9 @@ const CreateInterconnect: OperationHandler = (input, ctx) => {
 
 const DeleteInterconnect: OperationHandler = (input, ctx) => {
   const interconnectId = requireString(input, "interconnectId");
-  requireInterconnect(ctx, interconnectId);
-  ctx.store.delete(interconnectKey(interconnectId));
+  const interconnect = requireInterconnect(ctx, interconnectId);
+  const deleted = { ...interconnect, interconnectState: "deleted" };
+  ctx.store.set(interconnectKey(interconnectId), deleted);
   return { interconnectState: "deleted" };
 };
 
@@ -811,11 +855,16 @@ const DescribeInterconnects: OperationHandler = (input, ctx) => {
     const interconnect = requireInterconnect(ctx, interconnectId);
     return { interconnects: [interconnect] };
   }
-  const interconnects = ctx.store
+  const all = ctx.store
     .list<StoredInterconnect>()
     .filter((entry) => entry.key.startsWith("interconnect/"))
     .map((entry) => entry.value);
-  return { interconnects };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { interconnects: items, nextToken };
 };
 
 const DescribeInterconnectLoa: OperationHandler = (input, ctx) => {
@@ -856,8 +905,9 @@ const CreateLag: OperationHandler = (input, ctx) => {
 const DeleteLag: OperationHandler = (input, ctx) => {
   const lagId = requireString(input, "lagId");
   const lag = requireLag(ctx, lagId);
-  ctx.store.delete(lagKey(lagId));
-  return { ...lag, lagState: "deleted", connections: [] };
+  const deleted = { ...lag, lagState: "deleted" };
+  ctx.store.set(lagKey(lagId), deleted);
+  return { ...deleted, connections: [] };
 };
 
 const DescribeLags: OperationHandler = (input, ctx) => {
@@ -866,11 +916,16 @@ const DescribeLags: OperationHandler = (input, ctx) => {
     const lag = requireLag(ctx, lagId);
     return { lags: [{ ...lag, connections: [] }] };
   }
-  const lags = ctx.store
+  const all = ctx.store
     .list<StoredLag>()
     .filter((entry) => entry.key.startsWith("lag/"))
     .map((entry) => ({ ...entry.value, connections: [] }));
-  return { lags };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return { lags: items, nextToken };
 };
 
 const UpdateLag: OperationHandler = (input, ctx) => {
@@ -909,13 +964,9 @@ const CreateDirectConnectGateway: OperationHandler = (input, ctx) => {
 const DeleteDirectConnectGateway: OperationHandler = (input, ctx) => {
   const directConnectGatewayId = requireString(input, "directConnectGatewayId");
   const gw = requireGateway(ctx, directConnectGatewayId);
-  ctx.store.delete(gatewayKey(directConnectGatewayId));
-  return {
-    directConnectGateway: {
-      ...gw,
-      directConnectGatewayState: "deleted",
-    },
-  };
+  const deleted = { ...gw, directConnectGatewayState: "deleted" };
+  ctx.store.set(gatewayKey(directConnectGatewayId), deleted);
+  return { directConnectGateway: deleted };
 };
 
 const DescribeDirectConnectGateways: OperationHandler = (input, ctx) => {

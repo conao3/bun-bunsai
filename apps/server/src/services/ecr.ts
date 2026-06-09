@@ -340,6 +340,14 @@ const DeleteRepository: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(name);
+  for (const entry of ctx.store.list()) {
+    if (
+      entry.key.startsWith(`_upload:${name}:`) ||
+      entry.key.startsWith(`_layer:${name}:`)
+    ) {
+      ctx.store.delete(entry.key);
+    }
+  }
   return { repository: repositoryView(repository) };
 };
 
@@ -553,7 +561,21 @@ const DescribeImages: OperationHandler = (input, ctx) => {
         : {}),
     };
   });
-  return { imageDetails };
+  const offset =
+    typeof input["nextToken"] === "string" && input["nextToken"] !== ""
+      ? parseInt(atob(input["nextToken"] as string), 10) || 0
+      : 0;
+  const max =
+    typeof input["maxResults"] === "number" &&
+    (input["maxResults"] as number) > 0
+      ? (input["maxResults"] as number)
+      : imageDetails.length;
+  const page = imageDetails.slice(offset, offset + max);
+  const result: Record<string, unknown> = { imageDetails: page };
+  if (offset + max < imageDetails.length) {
+    result["nextToken"] = btoa(String(offset + max));
+  }
+  return result;
 };
 
 const BatchDeleteImage: OperationHandler = (input, ctx) => {

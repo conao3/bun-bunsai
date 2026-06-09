@@ -5,6 +5,7 @@ import {
   AddTagsToResourceCommand,
   AssignTapePoolCommand,
   AssociateFileSystemCommand,
+  CancelRetrievalCommand,
   CreateCachediSCSIVolumeCommand,
   CreateNFSFileShareCommand,
   CreateSMBFileShareCommand,
@@ -13,6 +14,7 @@ import {
   CreateTapesCommand,
   DeleteFileShareCommand,
   DeleteGatewayCommand,
+  DeleteTapeArchiveCommand,
   DeleteTapePoolCommand,
   DeleteVolumeCommand,
   DescribeCachediSCSIVolumesCommand,
@@ -28,8 +30,10 @@ import {
   ListGatewaysCommand,
   ListTagsForResourceCommand,
   ListTapePoolsCommand,
+  ListTapesCommand,
   ListVolumesCommand,
   RemoveTagsFromResourceCommand,
+  RetrieveTapeArchiveCommand,
   ShutdownGatewayCommand,
   StartGatewayCommand,
   StorageGatewayClient,
@@ -458,4 +462,105 @@ test("storagegateway cache reports list", async () => {
   const sgw = client();
   const result = await sgw.send(new ListCacheReportsCommand({}));
   expect(result.CacheReportList).toBeDefined();
+});
+
+test("storagegateway tape retrieve and cancel retrieval state transitions", async () => {
+  const sgw = client();
+
+  const activated = await sgw.send(
+    new ActivateGatewayCommand({
+      ActivationKey: "RETR-TEST-KEY-12345",
+      GatewayName: "retr-gateway",
+      GatewayTimezone: "GMT",
+      GatewayRegion: region,
+      GatewayType: "VTL",
+    }),
+  );
+  const gatewayArn = activated.GatewayARN!;
+
+  const created = await sgw.send(
+    new CreateTapeWithBarcodeCommand({
+      GatewayARN: gatewayArn,
+      TapeBarcode: "RETR001234",
+      TapeSizeInBytes: 107374182400,
+    }),
+  );
+  const tapeArn = created.TapeARN!;
+
+  await expect(
+    sgw.send(new DeleteTapeArchiveCommand({ TapeARN: tapeArn })),
+  ).rejects.toThrow();
+
+  await sgw.send(
+    new RetrieveTapeArchiveCommand({
+      TapeARN: tapeArn,
+      GatewayARN: gatewayArn,
+    }),
+  );
+  const afterRetrieve = await sgw.send(
+    new DescribeTapesCommand({ GatewayARN: gatewayArn, TapeARNs: [tapeArn] }),
+  );
+  expect(afterRetrieve.Tapes![0].TapeStatus).toBe("RETRIEVING");
+
+  await sgw.send(
+    new CancelRetrievalCommand({ TapeARN: tapeArn, GatewayARN: gatewayArn }),
+  );
+  const afterCancel = await sgw.send(
+    new DescribeTapesCommand({ GatewayARN: gatewayArn, TapeARNs: [tapeArn] }),
+  );
+  expect(afterCancel.Tapes![0].TapeStatus).toBe("ARCHIVED");
+
+  await sgw.send(new DeleteTapeArchiveCommand({ TapeARN: tapeArn }));
+
+  const afterDelete = await sgw.send(
+    new DescribeTapesCommand({ GatewayARN: gatewayArn, TapeARNs: [tapeArn] }),
+  );
+  expect(afterDelete.Tapes).toHaveLength(0);
+
+  await sgw.send(new DeleteGatewayCommand({ GatewayARN: gatewayArn }));
+});
+
+test("storagegateway ListTapes pagination", async () => {
+  const sgw = client();
+
+  const activated = await sgw.send(
+    new ActivateGatewayCommand({
+      ActivationKey: "PGTN-TEST-KEY-12345",
+      GatewayName: "pgtn-gateway",
+      GatewayTimezone: "GMT",
+      GatewayRegion: region,
+      GatewayType: "VTL",
+    }),
+  );
+  const gatewayArn = activated.GatewayARN!;
+
+  const barcodes = ["PGTN000001", "PGTN000002", "PGTN000003"];
+  const tapeArns: string[] = [];
+  for (const barcode of barcodes) {
+    const t = await sgw.send(
+      new CreateTapeWithBarcodeCommand({
+        GatewayARN: gatewayArn,
+        TapeBarcode: barcode,
+        TapeSizeInBytes: 107374182400,
+      }),
+    );
+    tapeArns.push(t.TapeARN!);
+  }
+
+  const page1 = await sgw.send(new ListTapesCommand({ Limit: 2 }));
+  const page1Arns = (page1.TapeInfos ?? []).map((t) => t.TapeARN);
+  expect(page1Arns.length).toBe(2);
+  expect(page1.Marker).toBeDefined();
+
+  const page2 = await sgw.send(new ListTapesCommand({ Marker: page1.Marker }));
+  const page2Arns = (page2.TapeInfos ?? []).map((t) => t.TapeARN);
+  expect(page2Arns.length).toBeGreaterThanOrEqual(1);
+  expect(page2.Marker).toBeUndefined();
+
+  const allArns = [...page1Arns, ...page2Arns];
+  for (const arn of tapeArns) {
+    expect(allArns).toContain(arn);
+  }
+
+  await sgw.send(new DeleteGatewayCommand({ GatewayARN: gatewayArn }));
 });

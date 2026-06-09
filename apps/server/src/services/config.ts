@@ -181,6 +181,13 @@ const DeleteConfigRule: OperationHandler = (input, ctx) => {
 const PutConfigurationRecorder: OperationHandler = (input, ctx) => {
   const recorder = asObject(input["ConfigurationRecorder"]);
   const name = stringOrUndefined(recorder["name"]) ?? "default";
+  if (stringOrUndefined(recorder["roleARN"]) === undefined) {
+    throw awsError(
+      "InvalidRoleException",
+      "You have provided a null or empty Amazon Resource Name (ARN) for the IAM role assumed by Config.",
+      400,
+    );
+  }
   const stored: StoredRecorder = {
     ...recorder,
     name,
@@ -381,6 +388,17 @@ const PutConfigurationAggregator: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const accountSources = Array.isArray(input["AccountAggregationSources"])
+    ? (input["AccountAggregationSources"] as unknown[])
+    : [];
+  const orgSource = input["OrganizationAggregationSource"];
+  if (accountSources.length === 0 && orgSource === undefined) {
+    throw awsError(
+      "InvalidParameterValueException",
+      "At least one of AccountAggregationSources or OrganizationAggregationSource must be provided.",
+      400,
+    );
+  }
   const existing = ctx.store.get<StoredAggregator>(aggregatorKey(name));
   const arn =
     stringOrUndefined(existing?.["ConfigurationAggregatorArn"]) ??
@@ -459,15 +477,26 @@ const PutConformancePack: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const templateS3Uri = stringOrUndefined(input["TemplateS3Uri"]);
+  const templateBody = stringOrUndefined(input["TemplateBody"]);
+  if (templateS3Uri === undefined && templateBody === undefined) {
+    throw awsError(
+      "InvalidParameterValueException",
+      "You must provide either TemplateS3Uri or TemplateBody.",
+      400,
+    );
+  }
   const existing = ctx.store.get<StoredConformancePack>(
     conformancePackKey(name),
   );
   const arn =
     stringOrUndefined(existing?.["ConformancePackArn"]) ??
     conformancePackArn(ctx, name);
+  const conformancePackState = "CREATE_COMPLETE" as const;
   const stored: StoredConformancePack = {
     ConformancePackName: name,
     ConformancePackArn: arn,
+    ConformancePackState: conformancePackState,
     DeliveryS3Bucket: input["DeliveryS3Bucket"] ?? null,
     DeliveryS3KeyPrefix: input["DeliveryS3KeyPrefix"] ?? null,
     ConformancePackInputParameters:
@@ -528,7 +557,7 @@ const DescribeConformancePackStatus: OperationHandler = (input, ctx) => {
   const statuses = packs.map((p) => ({
     ConformancePackName: p.ConformancePackName,
     ConformancePackArn: p.ConformancePackArn,
-    ConformancePackState: "CREATE_COMPLETE",
+    ConformancePackState: p.ConformancePackState ?? "CREATE_COMPLETE",
     LastUpdateRequestedTime: p.LastUpdateRequestedTime ?? 0,
   }));
   return { ConformancePackStatusDetails: statuses };
@@ -850,6 +879,15 @@ const DeleteAggregationAuthorization: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  if (
+    ctx.store.get<StoredAggAuth>(aggAuthKey(accountId, region)) === undefined
+  ) {
+    throw awsError(
+      "NoSuchAggregationAuthorizationException",
+      `Aggregation authorization for account ${accountId} in region ${region} does not exist.`,
+      400,
+    );
+  }
   ctx.store.delete(aggAuthKey(accountId, region));
   return {};
 };
@@ -869,6 +907,16 @@ const DeletePendingAggregationRequest: OperationHandler = (input, ctx) => {
     throw awsError(
       "InvalidParameterValueException",
       "RequesterAccountId and RequesterAwsRegion are required.",
+      400,
+    );
+  }
+  if (
+    ctx.store.get<StoredPendingAgg>(pendingAggKey(accountId, region)) ===
+    undefined
+  ) {
+    throw awsError(
+      "InvalidParameterValueException",
+      `Pending aggregation request from account ${accountId} in region ${region} does not exist.`,
       400,
     );
   }
@@ -908,6 +956,15 @@ const DeleteRemediationConfiguration: OperationHandler = (input, ctx) => {
     throw awsError(
       "InvalidParameterValueException",
       "ConfigRuleName is required.",
+      400,
+    );
+  }
+  if (
+    ctx.store.get<StoredRemediationConfig>(remediationKey(name)) === undefined
+  ) {
+    throw awsError(
+      "NoSuchRemediationConfigurationException",
+      `You specified an Config rule without a remediation configuration. Verify that the ConfigRuleName ${name} is correct.`,
       400,
     );
   }
@@ -998,9 +1055,13 @@ const PutOrganizationConfigRule: OperationHandler = (input, ctx) => {
     );
   }
   const arn = orgRuleArn(ctx, name);
+  const existing = ctx.store.get<StoredOrgConfigRule>(orgRuleKey(name));
+  const organizationRuleStatus =
+    existing !== undefined ? "UPDATE_SUCCESSFUL" : "CREATE_SUCCESSFUL";
   const stored: StoredOrgConfigRule = {
     OrganizationConfigRuleName: name,
     OrganizationConfigRuleArn: arn,
+    OrganizationRuleStatus: organizationRuleStatus,
     OrganizationManagedRuleMetadata:
       input["OrganizationManagedRuleMetadata"] ?? null,
     OrganizationCustomRuleMetadata:
@@ -1066,7 +1127,7 @@ const DescribeOrganizationConfigRuleStatuses: OperationHandler = (
     );
   const statuses = rules.map((r) => ({
     OrganizationConfigRuleName: r.OrganizationConfigRuleName,
-    OrganizationRuleStatus: "CREATE_SUCCESSFUL",
+    OrganizationRuleStatus: r.OrganizationRuleStatus ?? "CREATE_SUCCESSFUL",
     LastUpdateTime: r.LastUpdateTime ?? 0,
   }));
   return { OrganizationConfigRuleStatuses: statuses };
@@ -1123,9 +1184,15 @@ const PutOrganizationConformancePack: OperationHandler = (input, ctx) => {
     );
   }
   const arn = orgConformancePackArn(ctx, name);
+  const existing = ctx.store.get<StoredOrgConformancePack>(
+    orgConformancePackKey(name),
+  );
+  const orgPackStatus =
+    existing !== undefined ? "UPDATE_SUCCESSFUL" : "CREATE_SUCCESSFUL";
   const stored: StoredOrgConformancePack = {
     OrganizationConformancePackName: name,
     OrganizationConformancePackArn: arn,
+    Status: orgPackStatus,
     DeliveryS3Bucket: input["DeliveryS3Bucket"] ?? null,
     DeliveryS3KeyPrefix: input["DeliveryS3KeyPrefix"] ?? null,
     ConformancePackInputParameters:
@@ -1198,7 +1265,7 @@ const DescribeOrganizationConformancePackStatuses: OperationHandler = (
     );
   const statuses = packs.map((p) => ({
     OrganizationConformancePackName: p.OrganizationConformancePackName,
-    Status: "CREATE_SUCCESSFUL",
+    Status: p.Status ?? "CREATE_SUCCESSFUL",
     LastUpdateTime: p.LastUpdateTime ?? 0,
   }));
   return { OrganizationConformancePackStatuses: statuses };
@@ -1429,8 +1496,32 @@ const DescribeComplianceByConfigRule: OperationHandler = (input, ctx) => {
   return { ComplianceByConfigRules: complianceByRules };
 };
 
-const DescribeComplianceByResource: OperationHandler = (_input, _ctx) => {
-  return { ComplianceByResources: [] };
+const DescribeComplianceByResource: OperationHandler = (input, ctx) => {
+  const resourceType = stringOrUndefined(input["ResourceType"]);
+  const resourceId = stringOrUndefined(input["ResourceId"]);
+  const complianceTypes = Array.isArray(input["ComplianceTypes"])
+    ? (input["ComplianceTypes"] as unknown[]).map((v) => String(v))
+    : undefined;
+  const resources = ctx.store
+    .list<StoredResourceConfig>()
+    .filter((e) => e.key.startsWith("resource:"))
+    .map((e) => e.value)
+    .filter(
+      (r) => resourceType === undefined || r.ResourceType === resourceType,
+    )
+    .filter((r) => resourceId === undefined || r.ResourceId === resourceId);
+  const complianceByResources = resources
+    .map((r) => ({
+      ResourceType: r.ResourceType,
+      ResourceId: r.ResourceId,
+      Compliance: { ComplianceType: "COMPLIANT" },
+    }))
+    .filter(
+      (r) =>
+        complianceTypes === undefined ||
+        complianceTypes.includes(r.Compliance.ComplianceType),
+    );
+  return { ComplianceByResources: complianceByResources };
 };
 
 const GetComplianceDetailsByConfigRule: OperationHandler = (input, ctx) => {
@@ -1445,7 +1536,20 @@ const GetComplianceDetailsByConfigRule: OperationHandler = (input, ctx) => {
   return { EvaluationResults: [] };
 };
 
-const GetComplianceDetailsByResource: OperationHandler = (_input, _ctx) => {
+const GetComplianceDetailsByResource: OperationHandler = (input, _ctx) => {
+  const resourceType = stringOrUndefined(input["ResourceType"]);
+  const resourceId = stringOrUndefined(input["ResourceId"]);
+  const resourceEvalId = stringOrUndefined(input["ResourceEvaluationId"]);
+  if (
+    resourceEvalId === undefined &&
+    (resourceType === undefined || resourceId === undefined)
+  ) {
+    throw awsError(
+      "InvalidParameterValueException",
+      "Either ResourceEvaluationId or both ResourceType and ResourceId are required.",
+      400,
+    );
+  }
   return { EvaluationResults: [] };
 };
 
@@ -1459,8 +1563,24 @@ const GetComplianceSummaryByConfigRule: OperationHandler = (_input, _ctx) => {
   };
 };
 
-const GetComplianceSummaryByResourceType: OperationHandler = (_input, _ctx) => {
-  return { ComplianceSummariesByResourceType: [] };
+const GetComplianceSummaryByResourceType: OperationHandler = (_input, ctx) => {
+  const resources = ctx.store
+    .list<StoredResourceConfig>()
+    .filter((e) => e.key.startsWith("resource:"))
+    .map((e) => e.value);
+  const counts: Record<string, number> = {};
+  for (const r of resources) {
+    counts[r.ResourceType] = (counts[r.ResourceType] ?? 0) + 1;
+  }
+  const summaries = Object.entries(counts).map(([type, count]) => ({
+    ResourceType: type,
+    ComplianceSummary: {
+      CompliantResourceCount: { CappedCount: count, CapExceeded: false },
+      NonCompliantResourceCount: { CappedCount: 0, CapExceeded: false },
+      ComplianceSummaryTimestamp: 0,
+    },
+  }));
+  return { ComplianceSummariesByResourceType: summaries };
 };
 
 const DescribeConfigRuleEvaluationStatus: OperationHandler = (input, ctx) => {
@@ -1609,11 +1729,41 @@ const ListResourceEvaluations: OperationHandler = (_input, ctx) => {
   return { ResourceEvaluations: evals };
 };
 
-const SelectResourceConfig: OperationHandler = (_input, _ctx) => {
+const SelectResourceConfig: OperationHandler = (input, _ctx) => {
+  const expression = stringOrUndefined(input["Expression"]);
+  if (expression === undefined) {
+    throw awsError(
+      "InvalidExpressionException",
+      "Expression is required.",
+      400,
+    );
+  }
+  if (!/^SELECT\s/i.test(expression)) {
+    throw awsError(
+      "InvalidExpressionException",
+      "Expression must be a valid SELECT query.",
+      400,
+    );
+  }
   return { Results: [], QueryInfo: { SelectFields: [] }, NextToken: null };
 };
 
-const SelectAggregateResourceConfig: OperationHandler = (_input, _ctx) => {
+const SelectAggregateResourceConfig: OperationHandler = (input, _ctx) => {
+  const expression = stringOrUndefined(input["Expression"]);
+  if (expression === undefined) {
+    throw awsError(
+      "InvalidExpressionException",
+      "Expression is required.",
+      400,
+    );
+  }
+  if (!/^SELECT\s/i.test(expression)) {
+    throw awsError(
+      "InvalidExpressionException",
+      "Expression must be a valid SELECT query.",
+      400,
+    );
+  }
   return { Results: [], QueryInfo: { SelectFields: [] }, NextToken: null };
 };
 

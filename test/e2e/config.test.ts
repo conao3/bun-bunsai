@@ -10,12 +10,14 @@ import {
   DeleteDeliveryChannelCommand,
   DeleteOrganizationConfigRuleCommand,
   DeleteOrganizationConformancePackCommand,
+  DeletePendingAggregationRequestCommand,
   DeleteRemediationConfigurationCommand,
   DeleteRetentionConfigurationCommand,
   DeleteStoredQueryCommand,
   DeliverConfigSnapshotCommand,
   DescribeAggregationAuthorizationsCommand,
   DescribeComplianceByConfigRuleCommand,
+  DescribeComplianceByResourceCommand,
   DescribeConfigRulesCommand,
   DescribeConfigurationAggregatorSourcesStatusCommand,
   DescribeConfigurationAggregatorsCommand,
@@ -31,7 +33,9 @@ import {
   DescribeOrganizationConformancePacksCommand,
   DescribeRemediationConfigurationsCommand,
   DescribeRetentionConfigurationsCommand,
+  GetComplianceDetailsByResourceCommand,
   GetComplianceSummaryByConfigRuleCommand,
+  GetComplianceSummaryByResourceTypeCommand,
   GetStoredQueryCommand,
   ListStoredQueriesCommand,
   ListTagsForResourceCommand,
@@ -44,8 +48,11 @@ import {
   PutOrganizationConfigRuleCommand,
   PutOrganizationConformancePackCommand,
   PutRemediationConfigurationsCommand,
+  PutResourceConfigCommand,
   PutRetentionConfigurationCommand,
   PutStoredQueryCommand,
+  SelectAggregateResourceConfigCommand,
+  SelectResourceConfigCommand,
   StartConfigurationRecorderCommand,
   StopConfigurationRecorderCommand,
   TagResourceCommand,
@@ -577,4 +584,313 @@ test("tag resource lifecycle", async () => {
   expect(afterUntag.Tags?.find((t) => t.Key === "env")).toBeUndefined();
 
   await client.send(new DeleteConfigRuleCommand({ ConfigRuleName: ruleName }));
+});
+
+test("delete-missing → error: DeleteAggregationAuthorization", async () => {
+  const client = config();
+  await expect(
+    client.send(
+      new DeleteAggregationAuthorizationCommand({
+        AuthorizedAccountId: "999999999999",
+        AuthorizedAwsRegion: "ap-southeast-1",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "NoSuchAggregationAuthorizationException" });
+});
+
+test("delete-missing → error: DeleteRemediationConfiguration", async () => {
+  const client = config();
+  await expect(
+    client.send(
+      new DeleteRemediationConfigurationCommand({
+        ConfigRuleName: "nonexistent-rule",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "NoSuchRemediationConfigurationException" });
+});
+
+test("delete-missing → error: DeletePendingAggregationRequest", async () => {
+  const client = config();
+  await expect(
+    client.send(
+      new DeletePendingAggregationRequestCommand({
+        RequesterAccountId: "999999999999",
+        RequesterAwsRegion: "ap-southeast-1",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidParameterValueException" });
+});
+
+test("required-field validation: PutConfigurationRecorder roleARN", async () => {
+  const client = config();
+  await expect(
+    client.send(
+      new PutConfigurationRecorderCommand({
+        ConfigurationRecorder: { name: "no-role-recorder" },
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidRoleException" });
+});
+
+test("required-field validation: PutConformancePack template", async () => {
+  const client = config();
+  await expect(
+    client.send(
+      new PutConformancePackCommand({
+        ConformancePackName: "no-template-pack",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidParameterValueException" });
+});
+
+test("required-field validation: PutConfigurationAggregator sources", async () => {
+  const client = config();
+  await expect(
+    client.send(
+      new PutConfigurationAggregatorCommand({
+        ConfigurationAggregatorName: "no-source-aggregator",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidParameterValueException" });
+});
+
+test("compliance filter: DescribeComplianceByResource and GetComplianceSummaryByResourceType", async () => {
+  const client = config();
+
+  await client.send(
+    new PutResourceConfigCommand({
+      ResourceType: "AWS::EC2::Instance",
+      ResourceId: "i-abc123",
+      SchemaVersionId: "00000000",
+      Configuration: "{}",
+    }),
+  );
+  await client.send(
+    new PutResourceConfigCommand({
+      ResourceType: "AWS::S3::Bucket",
+      ResourceId: "my-bucket",
+      SchemaVersionId: "00000000",
+      Configuration: "{}",
+    }),
+  );
+
+  const all = await client.send(new DescribeComplianceByResourceCommand({}));
+  expect(
+    (all.ComplianceByResources ?? []).some(
+      (r) => r.ResourceType === "AWS::EC2::Instance",
+    ),
+  ).toBe(true);
+
+  const filtered = await client.send(
+    new DescribeComplianceByResourceCommand({
+      ResourceType: "AWS::EC2::Instance",
+    }),
+  );
+  expect(
+    (filtered.ComplianceByResources ?? []).every(
+      (r) => r.ResourceType === "AWS::EC2::Instance",
+    ),
+  ).toBe(true);
+
+  const compliantOnly = await client.send(
+    new DescribeComplianceByResourceCommand({
+      ComplianceTypes: ["COMPLIANT"],
+    }),
+  );
+  expect(
+    (compliantOnly.ComplianceByResources ?? []).every(
+      (r) => r.Compliance?.ComplianceType === "COMPLIANT",
+    ),
+  ).toBe(true);
+
+  const nonCompliantOnly = await client.send(
+    new DescribeComplianceByResourceCommand({
+      ComplianceTypes: ["NON_COMPLIANT"],
+    }),
+  );
+  expect(nonCompliantOnly.ComplianceByResources).toHaveLength(0);
+
+  const summary = await client.send(
+    new GetComplianceSummaryByResourceTypeCommand({}),
+  );
+  const ec2Summary = (summary.ComplianceSummariesByResourceType ?? []).find(
+    (s) => s.ResourceType === "AWS::EC2::Instance",
+  );
+  expect(
+    ec2Summary?.ComplianceSummary?.CompliantResourceCount?.CappedCount,
+  ).toBe(1);
+});
+
+test("GetComplianceDetailsByResource requires ResourceType+ResourceId", async () => {
+  const client = config();
+  await expect(
+    client.send(new GetComplianceDetailsByResourceCommand({})),
+  ).rejects.toMatchObject({ name: "InvalidParameterValueException" });
+
+  const result = await client.send(
+    new GetComplianceDetailsByResourceCommand({
+      ResourceType: "AWS::EC2::Instance",
+      ResourceId: "i-abc123",
+    }),
+  );
+  expect(result.EvaluationResults).toBeDefined();
+});
+
+test("SelectResourceConfig/SelectAggregateResourceConfig validates Expression", async () => {
+  const client = config();
+
+  await expect(
+    client.send(new SelectResourceConfigCommand({ Expression: "" })),
+  ).rejects.toMatchObject({ name: "InvalidExpressionException" });
+
+  await expect(
+    client.send(
+      new SelectResourceConfigCommand({
+        Expression: "FROM AWS::EC2::Instance",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidExpressionException" });
+
+  const valid = await client.send(
+    new SelectResourceConfigCommand({
+      Expression: "SELECT resourceId WHERE resourceType = 'AWS::EC2::Instance'",
+    }),
+  );
+  expect(valid.Results).toBeDefined();
+
+  await expect(
+    client.send(
+      new SelectAggregateResourceConfigCommand({
+        ConfigurationAggregatorName: "agg",
+        Expression: "INVALID",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidExpressionException" });
+});
+
+test("status lifecycle: ConformancePack CREATE then UPDATE", async () => {
+  const client = config();
+  const packName = "bunsai-e2e-status-lifecycle-pack";
+
+  await client.send(
+    new PutConformancePackCommand({
+      ConformancePackName: packName,
+      TemplateBody: "{}",
+    }),
+  );
+  const afterCreate = await client.send(
+    new DescribeConformancePackStatusCommand({
+      ConformancePackNames: [packName],
+    }),
+  );
+  const createStatus = (afterCreate.ConformancePackStatusDetails ?? []).find(
+    (s) => s.ConformancePackName === packName,
+  );
+  expect(createStatus?.ConformancePackState).toBe("CREATE_COMPLETE");
+
+  await client.send(
+    new PutConformancePackCommand({
+      ConformancePackName: packName,
+      TemplateBody: "{}",
+    }),
+  );
+  const afterUpdate = await client.send(
+    new DescribeConformancePackStatusCommand({
+      ConformancePackNames: [packName],
+    }),
+  );
+  const updateStatus = (afterUpdate.ConformancePackStatusDetails ?? []).find(
+    (s) => s.ConformancePackName === packName,
+  );
+  expect(updateStatus?.ConformancePackState).toBe("CREATE_COMPLETE");
+
+  await client.send(
+    new DeleteConformancePackCommand({ ConformancePackName: packName }),
+  );
+});
+
+test("status lifecycle: OrgConfigRule CREATE then UPDATE", async () => {
+  const client = config();
+  const ruleName = "bunsai-e2e-status-org-rule";
+
+  await client.send(
+    new PutOrganizationConfigRuleCommand({
+      OrganizationConfigRuleName: ruleName,
+      OrganizationManagedRuleMetadata: { RuleIdentifier: "REQUIRED_TAGS" },
+    }),
+  );
+  const afterCreate = await client.send(
+    new DescribeOrganizationConfigRuleStatusesCommand({
+      OrganizationConfigRuleNames: [ruleName],
+    }),
+  );
+  const createStatus = (afterCreate.OrganizationConfigRuleStatuses ?? []).find(
+    (s) => s.OrganizationConfigRuleName === ruleName,
+  );
+  expect(createStatus?.OrganizationRuleStatus).toBe("CREATE_SUCCESSFUL");
+
+  await client.send(
+    new PutOrganizationConfigRuleCommand({
+      OrganizationConfigRuleName: ruleName,
+      OrganizationManagedRuleMetadata: { RuleIdentifier: "REQUIRED_TAGS" },
+    }),
+  );
+  const afterUpdate = await client.send(
+    new DescribeOrganizationConfigRuleStatusesCommand({
+      OrganizationConfigRuleNames: [ruleName],
+    }),
+  );
+  const updateStatus = (afterUpdate.OrganizationConfigRuleStatuses ?? []).find(
+    (s) => s.OrganizationConfigRuleName === ruleName,
+  );
+  expect(updateStatus?.OrganizationRuleStatus).toBe("UPDATE_SUCCESSFUL");
+
+  await client.send(
+    new DeleteOrganizationConfigRuleCommand({
+      OrganizationConfigRuleName: ruleName,
+    }),
+  );
+});
+
+test("status lifecycle: OrgConformancePack CREATE then UPDATE", async () => {
+  const client = config();
+  const packName = "bunsai-e2e-status-org-pack";
+
+  await client.send(
+    new PutOrganizationConformancePackCommand({
+      OrganizationConformancePackName: packName,
+      TemplateBody: "{}",
+    }),
+  );
+  const afterCreate = await client.send(
+    new DescribeOrganizationConformancePackStatusesCommand({
+      OrganizationConformancePackNames: [packName],
+    }),
+  );
+  const createStatus = (
+    afterCreate.OrganizationConformancePackStatuses ?? []
+  ).find((s) => s.OrganizationConformancePackName === packName);
+  expect(createStatus?.Status).toBe("CREATE_SUCCESSFUL");
+
+  await client.send(
+    new PutOrganizationConformancePackCommand({
+      OrganizationConformancePackName: packName,
+      TemplateBody: "{}",
+    }),
+  );
+  const afterUpdate = await client.send(
+    new DescribeOrganizationConformancePackStatusesCommand({
+      OrganizationConformancePackNames: [packName],
+    }),
+  );
+  const updateStatus = (
+    afterUpdate.OrganizationConformancePackStatuses ?? []
+  ).find((s) => s.OrganizationConformancePackName === packName);
+  expect(updateStatus?.Status).toBe("UPDATE_SUCCESSFUL");
+
+  await client.send(
+    new DeleteOrganizationConformancePackCommand({
+      OrganizationConformancePackName: packName,
+    }),
+  );
 });

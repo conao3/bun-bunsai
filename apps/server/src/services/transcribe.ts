@@ -17,9 +17,10 @@ type StoredJob = {
   MediaFormat: string | undefined;
   Media: Record<string, unknown>;
   Transcript: { TranscriptFileUri: string };
+  Tags: { Key: string; Value: string }[];
   StartTime: Date;
   CreationTime: Date;
-  CompletionTime: Date;
+  CompletionTime: Date | undefined;
 };
 
 type StoredVocabulary = {
@@ -63,7 +64,7 @@ type StoredCallAnalyticsJob = {
   Transcript: { TranscriptFileUri: string };
   StartTime: Date;
   CreationTime: Date;
-  CompletionTime: Date;
+  CompletionTime: Date | undefined;
 };
 
 type StoredMedicalVocabulary = {
@@ -84,7 +85,7 @@ type StoredMedicalTranscriptionJob = {
   Transcript: { TranscriptFileUri: string };
   StartTime: Date;
   CreationTime: Date;
-  CompletionTime: Date;
+  CompletionTime: Date | undefined;
   Specialty: string;
   Type: string;
 };
@@ -100,7 +101,7 @@ type StoredMedicalScribeJob = {
   };
   StartTime: Date;
   CreationTime: Date;
-  CompletionTime: Date;
+  CompletionTime: Date | undefined;
 };
 
 const jobKey = (name: string): string => `job/${name}`;
@@ -268,6 +269,80 @@ const parseTags = (raw: unknown): { Key: string; Value: string }[] => {
   );
 };
 
+const applyPagination = <T>(
+  items: T[],
+  maxResults: number | undefined,
+  nextToken: string | undefined,
+): { items: T[]; nextToken: string | undefined } => {
+  const start = nextToken !== undefined ? parseInt(atob(nextToken), 10) : 0;
+  const limit =
+    maxResults !== undefined && maxResults > 0 ? maxResults : items.length;
+  const sliced = items.slice(start, start + limit);
+  const newNextToken =
+    start + limit < items.length ? btoa(String(start + limit)) : undefined;
+  return { items: sliced, nextToken: newNextToken };
+};
+
+const matchesNameFilter = (name: string, contains: unknown): boolean =>
+  typeof contains !== "string" ||
+  name.toLowerCase().includes(contains.toLowerCase());
+
+const resolveTranscriptionJob = (
+  ctx: ServiceContext,
+  job: StoredJob,
+): StoredJob => {
+  if (job.TranscriptionJobStatus !== "IN_PROGRESS") return job;
+  const completed: StoredJob = {
+    ...job,
+    TranscriptionJobStatus: "COMPLETED",
+    CompletionTime: new Date(),
+  };
+  ctx.store.set(jobKey(job.TranscriptionJobName), completed);
+  return completed;
+};
+
+const resolveCallAnalyticsJob = (
+  ctx: ServiceContext,
+  job: StoredCallAnalyticsJob,
+): StoredCallAnalyticsJob => {
+  if (job.CallAnalyticsJobStatus !== "IN_PROGRESS") return job;
+  const completed: StoredCallAnalyticsJob = {
+    ...job,
+    CallAnalyticsJobStatus: "COMPLETED",
+    CompletionTime: new Date(),
+  };
+  ctx.store.set(caJobKey(job.CallAnalyticsJobName), completed);
+  return completed;
+};
+
+const resolveMedicalJob = (
+  ctx: ServiceContext,
+  job: StoredMedicalTranscriptionJob,
+): StoredMedicalTranscriptionJob => {
+  if (job.TranscriptionJobStatus !== "IN_PROGRESS") return job;
+  const completed: StoredMedicalTranscriptionJob = {
+    ...job,
+    TranscriptionJobStatus: "COMPLETED",
+    CompletionTime: new Date(),
+  };
+  ctx.store.set(medJobKey(job.MedicalTranscriptionJobName), completed);
+  return completed;
+};
+
+const resolveMedicalScribeJob = (
+  ctx: ServiceContext,
+  job: StoredMedicalScribeJob,
+): StoredMedicalScribeJob => {
+  if (job.MedicalScribeJobStatus !== "IN_PROGRESS") return job;
+  const completed: StoredMedicalScribeJob = {
+    ...job,
+    MedicalScribeJobStatus: "COMPLETED",
+    CompletionTime: new Date(),
+  };
+  ctx.store.set(medScribeKey(job.MedicalScribeJobName), completed);
+  return completed;
+};
+
 const StartTranscriptionJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TranscriptionJobName");
   const media = input["Media"];
@@ -281,20 +356,25 @@ const StartTranscriptionJob: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const outputBucket = stringOrUndefined(input["OutputBucketName"]);
+  const outputKey = stringOrUndefined(input["OutputKey"]);
+  const transcriptUri =
+    outputBucket !== undefined
+      ? `https://s3.${ctx.region}.amazonaws.com/${outputBucket}/${outputKey ?? `${name}.json`}`
+      : `https://s3.${ctx.region}.amazonaws.com/bunsai-transcribe/${name}.json`;
   const now = new Date();
   const job: StoredJob = {
     TranscriptionJobName: name,
-    TranscriptionJobStatus: "COMPLETED",
+    TranscriptionJobStatus: "IN_PROGRESS",
     LanguageCode: stringOrUndefined(input["LanguageCode"]),
     MediaSampleRateHertz: numberOrUndefined(input["MediaSampleRateHertz"]),
     MediaFormat: stringOrUndefined(input["MediaFormat"]),
     Media: media as Record<string, unknown>,
-    Transcript: {
-      TranscriptFileUri: `https://s3.${ctx.region}.amazonaws.com/bunsai-transcribe/${name}.json`,
-    },
+    Transcript: { TranscriptFileUri: transcriptUri },
+    Tags: parseTags(input["Tags"]),
     StartTime: now,
     CreationTime: now,
-    CompletionTime: now,
+    CompletionTime: undefined,
   };
   ctx.store.set(jobKey(name), job);
   return { TranscriptionJob: job };
@@ -302,18 +382,24 @@ const StartTranscriptionJob: OperationHandler = (input, ctx) => {
 
 const GetTranscriptionJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TranscriptionJobName");
-  const job = requireJob(ctx, name);
+  const job = resolveTranscriptionJob(ctx, requireJob(ctx, name));
   return { TranscriptionJob: job };
 };
 
 const ListTranscriptionJobs: OperationHandler = (input, ctx) => {
   const status = stringOrUndefined(input["Status"]);
-  const summaries = ctx.store
+  const jobNameContains = input["JobNameContains"];
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const all = ctx.store
     .list<StoredJob>()
     .filter((entry) => entry.key.startsWith("job/"))
-    .map((entry) => entry.value)
+    .map((entry) => resolveTranscriptionJob(ctx, entry.value))
     .filter(
       (job) => status === undefined || job.TranscriptionJobStatus === status,
+    )
+    .filter((job) =>
+      matchesNameFilter(job.TranscriptionJobName, jobNameContains),
     )
     .map((job) => ({
       TranscriptionJobName: job.TranscriptionJobName,
@@ -324,17 +410,30 @@ const ListTranscriptionJobs: OperationHandler = (input, ctx) => {
       TranscriptionJobStatus: job.TranscriptionJobStatus,
       OutputLocationType: "SERVICE_BUCKET",
     }));
-  return { TranscriptionJobSummaries: summaries };
+  const { items, nextToken: newNextToken } = applyPagination(
+    all,
+    maxResults,
+    nextToken,
+  );
+  return { TranscriptionJobSummaries: items, NextToken: newNextToken };
 };
 
 const DeleteTranscriptionJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TranscriptionJobName");
+  requireJob(ctx, name);
   ctx.store.delete(jobKey(name));
   return {};
 };
 
 const CreateVocabulary: OperationHandler = (input, ctx) => {
   const name = requireString(input, "VocabularyName");
+  if (ctx.store.get<StoredVocabulary>(vocabKey(name)) !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `A vocabulary with the name ${name} already exists.`,
+      400,
+    );
+  }
   const languageCode = requireString(input, "LanguageCode");
   const now = new Date();
   const vocab: StoredVocabulary = {
@@ -367,20 +466,29 @@ const GetVocabulary: OperationHandler = (input, ctx) => {
 
 const ListVocabularies: OperationHandler = (input, ctx) => {
   const stateEquals = stringOrUndefined(input["StateEquals"]);
-  const vocabs = ctx.store
+  const nameContains = input["NameContains"];
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const all = ctx.store
     .list<StoredVocabulary>()
     .filter((entry) => entry.key.startsWith("vocab/"))
     .map((entry) => entry.value)
     .filter(
       (v) => stateEquals === undefined || v.VocabularyState === stateEquals,
     )
+    .filter((v) => matchesNameFilter(v.VocabularyName, nameContains))
     .map((v) => ({
       VocabularyName: v.VocabularyName,
       LanguageCode: v.LanguageCode,
       LastModifiedTime: v.LastModifiedTime,
       VocabularyState: v.VocabularyState,
     }));
-  return { Vocabularies: vocabs };
+  const { items, nextToken: newNextToken } = applyPagination(
+    all,
+    maxResults,
+    nextToken,
+  );
+  return { Vocabularies: items, NextToken: newNextToken };
 };
 
 const DeleteVocabulary: OperationHandler = (input, ctx) => {
@@ -414,6 +522,15 @@ const UpdateVocabulary: OperationHandler = (input, ctx) => {
 
 const CreateVocabularyFilter: OperationHandler = (input, ctx) => {
   const name = requireString(input, "VocabularyFilterName");
+  if (
+    ctx.store.get<StoredVocabularyFilter>(vocabFilterKey(name)) !== undefined
+  ) {
+    throw awsError(
+      "ConflictException",
+      `A vocabulary filter with the name ${name} already exists.`,
+      400,
+    );
+  }
   const languageCode = requireString(input, "LanguageCode");
   const now = new Date();
   const filter: StoredVocabularyFilter = {
@@ -441,16 +558,25 @@ const GetVocabularyFilter: OperationHandler = (input, ctx) => {
 };
 
 const ListVocabularyFilters: OperationHandler = (input, ctx) => {
-  const filters = ctx.store
+  const nameContains = input["NameContains"];
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const all = ctx.store
     .list<StoredVocabularyFilter>()
     .filter((entry) => entry.key.startsWith("vocab-filter/"))
     .map((entry) => entry.value)
+    .filter((f) => matchesNameFilter(f.VocabularyFilterName, nameContains))
     .map((f) => ({
       VocabularyFilterName: f.VocabularyFilterName,
       LanguageCode: f.LanguageCode,
       LastModifiedTime: f.LastModifiedTime,
     }));
-  return { VocabularyFilters: filters };
+  const { items, nextToken: newNextToken } = applyPagination(
+    all,
+    maxResults,
+    nextToken,
+  );
+  return { VocabularyFilters: items, NextToken: newNextToken };
 };
 
 const DeleteVocabularyFilter: OperationHandler = (input, ctx) => {
@@ -478,6 +604,15 @@ const UpdateVocabularyFilter: OperationHandler = (input, ctx) => {
 
 const CreateLanguageModel: OperationHandler = (input, ctx) => {
   const modelName = requireString(input, "ModelName");
+  if (
+    ctx.store.get<StoredLanguageModel>(langModelKey(modelName)) !== undefined
+  ) {
+    throw awsError(
+      "ConflictException",
+      `A language model with the name ${modelName} already exists.`,
+      400,
+    );
+  }
   const languageCode = requireString(input, "LanguageCode");
   const baseModelName = requireString(input, "BaseModelName");
   const inputDataConfig = input["InputDataConfig"];
@@ -522,11 +657,15 @@ const DescribeLanguageModel: OperationHandler = (input, ctx) => {
 
 const ListLanguageModels: OperationHandler = (input, ctx) => {
   const statusEquals = stringOrUndefined(input["StatusEquals"]);
-  const models = ctx.store
+  const nameContains = input["NameContains"];
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const all = ctx.store
     .list<StoredLanguageModel>()
     .filter((entry) => entry.key.startsWith("model/"))
     .map((entry) => entry.value)
     .filter((m) => statusEquals === undefined || m.ModelStatus === statusEquals)
+    .filter((m) => matchesNameFilter(m.ModelName, nameContains))
     .map((m) => ({
       ModelName: m.ModelName,
       CreateTime: m.CreateTime,
@@ -536,11 +675,17 @@ const ListLanguageModels: OperationHandler = (input, ctx) => {
       ModelStatus: m.ModelStatus,
       InputDataConfig: m.InputDataConfig,
     }));
-  return { Models: models };
+  const { items, nextToken: newNextToken } = applyPagination(
+    all,
+    maxResults,
+    nextToken,
+  );
+  return { Models: items, NextToken: newNextToken };
 };
 
 const DeleteLanguageModel: OperationHandler = (input, ctx) => {
   const modelName = requireString(input, "ModelName");
+  requireLanguageModel(ctx, modelName);
   ctx.store.delete(langModelKey(modelName));
   return {};
 };
@@ -586,7 +731,9 @@ const GetCallAnalyticsCategory: OperationHandler = (input, ctx) => {
 };
 
 const ListCallAnalyticsCategories: OperationHandler = (input, ctx) => {
-  const categories = ctx.store
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const all = ctx.store
     .list<StoredCallAnalyticsCategory>()
     .filter((entry) => entry.key.startsWith("ca-category/"))
     .map((entry) => entry.value)
@@ -598,7 +745,12 @@ const ListCallAnalyticsCategories: OperationHandler = (input, ctx) => {
       Tags: cat.Tags,
       InputType: cat.InputType,
     }));
-  return { Categories: categories };
+  const { items, nextToken: newNextToken } = applyPagination(
+    all,
+    maxResults,
+    nextToken,
+  );
+  return { Categories: items, NextToken: newNextToken };
 };
 
 const DeleteCallAnalyticsCategory: OperationHandler = (input, ctx) => {
@@ -638,10 +790,17 @@ const StartCallAnalyticsJob: OperationHandler = (input, ctx) => {
   if (media === null || typeof media !== "object") {
     throw awsError("BadRequestException", "Media is required.", 400);
   }
+  if (ctx.store.get<StoredCallAnalyticsJob>(caJobKey(name)) !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `A job with the name ${name} already exists.`,
+      400,
+    );
+  }
   const now = new Date();
   const job: StoredCallAnalyticsJob = {
     CallAnalyticsJobName: name,
-    CallAnalyticsJobStatus: "COMPLETED",
+    CallAnalyticsJobStatus: "IN_PROGRESS",
     LanguageCode: stringOrUndefined(input["LanguageCode"]),
     Media: media as Record<string, unknown>,
     Transcript: {
@@ -649,7 +808,7 @@ const StartCallAnalyticsJob: OperationHandler = (input, ctx) => {
     },
     StartTime: now,
     CreationTime: now,
-    CompletionTime: now,
+    CompletionTime: undefined,
   };
   ctx.store.set(caJobKey(name), job);
   return { CallAnalyticsJob: job };
@@ -657,17 +816,21 @@ const StartCallAnalyticsJob: OperationHandler = (input, ctx) => {
 
 const GetCallAnalyticsJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "CallAnalyticsJobName");
-  const job = requireCallAnalyticsJob(ctx, name);
+  const job = resolveCallAnalyticsJob(ctx, requireCallAnalyticsJob(ctx, name));
   return { CallAnalyticsJob: job };
 };
 
 const ListCallAnalyticsJobs: OperationHandler = (input, ctx) => {
   const status = stringOrUndefined(input["Status"]);
-  const summaries = ctx.store
+  const jobNameContains = input["JobNameContains"];
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const all = ctx.store
     .list<StoredCallAnalyticsJob>()
     .filter((entry) => entry.key.startsWith("ca-job/"))
-    .map((entry) => entry.value)
+    .map((entry) => resolveCallAnalyticsJob(ctx, entry.value))
     .filter((j) => status === undefined || j.CallAnalyticsJobStatus === status)
+    .filter((j) => matchesNameFilter(j.CallAnalyticsJobName, jobNameContains))
     .map((j) => ({
       CallAnalyticsJobName: j.CallAnalyticsJobName,
       CreationTime: j.CreationTime,
@@ -676,17 +839,30 @@ const ListCallAnalyticsJobs: OperationHandler = (input, ctx) => {
       LanguageCode: j.LanguageCode,
       CallAnalyticsJobStatus: j.CallAnalyticsJobStatus,
     }));
-  return { CallAnalyticsJobSummaries: summaries };
+  const { items, nextToken: newNextToken } = applyPagination(
+    all,
+    maxResults,
+    nextToken,
+  );
+  return { CallAnalyticsJobSummaries: items, NextToken: newNextToken };
 };
 
 const DeleteCallAnalyticsJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "CallAnalyticsJobName");
+  requireCallAnalyticsJob(ctx, name);
   ctx.store.delete(caJobKey(name));
   return {};
 };
 
 const CreateMedicalVocabulary: OperationHandler = (input, ctx) => {
   const name = requireString(input, "VocabularyName");
+  if (ctx.store.get<StoredMedicalVocabulary>(medVocabKey(name)) !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `A medical vocabulary with the name ${name} already exists.`,
+      400,
+    );
+  }
   const languageCode = requireString(input, "LanguageCode");
   const now = new Date();
   const vocab: StoredMedicalVocabulary = {
@@ -719,20 +895,29 @@ const GetMedicalVocabulary: OperationHandler = (input, ctx) => {
 
 const ListMedicalVocabularies: OperationHandler = (input, ctx) => {
   const stateEquals = stringOrUndefined(input["StateEquals"]);
-  const vocabs = ctx.store
+  const nameContains = input["NameContains"];
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const all = ctx.store
     .list<StoredMedicalVocabulary>()
     .filter((entry) => entry.key.startsWith("med-vocab/"))
     .map((entry) => entry.value)
     .filter(
       (v) => stateEquals === undefined || v.VocabularyState === stateEquals,
     )
+    .filter((v) => matchesNameFilter(v.VocabularyName, nameContains))
     .map((v) => ({
       VocabularyName: v.VocabularyName,
       LanguageCode: v.LanguageCode,
       LastModifiedTime: v.LastModifiedTime,
       VocabularyState: v.VocabularyState,
     }));
-  return { Vocabularies: vocabs };
+  const { items, nextToken: newNextToken } = applyPagination(
+    all,
+    maxResults,
+    nextToken,
+  );
+  return { Vocabularies: items, NextToken: newNextToken };
 };
 
 const DeleteMedicalVocabulary: OperationHandler = (input, ctx) => {
@@ -773,21 +958,31 @@ const StartMedicalTranscriptionJob: OperationHandler = (input, ctx) => {
   if (media === null || typeof media !== "object") {
     throw awsError("BadRequestException", "Media is required.", 400);
   }
+  if (
+    ctx.store.get<StoredMedicalTranscriptionJob>(medJobKey(name)) !== undefined
+  ) {
+    throw awsError(
+      "ConflictException",
+      `A medical transcription job with the name ${name} already exists.`,
+      400,
+    );
+  }
   const outputBucket = requireString(input, "OutputBucketName");
+  const outputKey = stringOrUndefined(input["OutputKey"]);
   const now = new Date();
   const job: StoredMedicalTranscriptionJob = {
     MedicalTranscriptionJobName: name,
-    TranscriptionJobStatus: "COMPLETED",
+    TranscriptionJobStatus: "IN_PROGRESS",
     LanguageCode: languageCode,
     MediaSampleRateHertz: numberOrUndefined(input["MediaSampleRateHertz"]),
     MediaFormat: stringOrUndefined(input["MediaFormat"]),
     Media: media as Record<string, unknown>,
     Transcript: {
-      TranscriptFileUri: `https://s3.${ctx.region}.amazonaws.com/${outputBucket}/med-${name}.json`,
+      TranscriptFileUri: `https://s3.${ctx.region}.amazonaws.com/${outputBucket}/${outputKey ?? `med-${name}.json`}`,
     },
     StartTime: now,
     CreationTime: now,
-    CompletionTime: now,
+    CompletionTime: undefined,
     Specialty: specialty,
     Type: type,
   };
@@ -797,17 +992,23 @@ const StartMedicalTranscriptionJob: OperationHandler = (input, ctx) => {
 
 const GetMedicalTranscriptionJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "MedicalTranscriptionJobName");
-  const job = requireMedicalJob(ctx, name);
+  const job = resolveMedicalJob(ctx, requireMedicalJob(ctx, name));
   return { MedicalTranscriptionJob: job };
 };
 
 const ListMedicalTranscriptionJobs: OperationHandler = (input, ctx) => {
   const status = stringOrUndefined(input["Status"]);
-  const summaries = ctx.store
+  const jobNameContains = input["JobNameContains"];
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const all = ctx.store
     .list<StoredMedicalTranscriptionJob>()
     .filter((entry) => entry.key.startsWith("med-job/"))
-    .map((entry) => entry.value)
+    .map((entry) => resolveMedicalJob(ctx, entry.value))
     .filter((j) => status === undefined || j.TranscriptionJobStatus === status)
+    .filter((j) =>
+      matchesNameFilter(j.MedicalTranscriptionJobName, jobNameContains),
+    )
     .map((j) => ({
       MedicalTranscriptionJobName: j.MedicalTranscriptionJobName,
       CreationTime: j.CreationTime,
@@ -819,11 +1020,17 @@ const ListMedicalTranscriptionJobs: OperationHandler = (input, ctx) => {
       Specialty: j.Specialty,
       Type: j.Type,
     }));
-  return { MedicalTranscriptionJobSummaries: summaries };
+  const { items, nextToken: newNextToken } = applyPagination(
+    all,
+    maxResults,
+    nextToken,
+  );
+  return { MedicalTranscriptionJobSummaries: items, NextToken: newNextToken };
 };
 
 const DeleteMedicalTranscriptionJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "MedicalTranscriptionJobName");
+  requireMedicalJob(ctx, name);
   ctx.store.delete(medJobKey(name));
   return {};
 };
@@ -834,11 +1041,18 @@ const StartMedicalScribeJob: OperationHandler = (input, ctx) => {
   if (media === null || typeof media !== "object") {
     throw awsError("BadRequestException", "Media is required.", 400);
   }
+  if (ctx.store.get<StoredMedicalScribeJob>(medScribeKey(name)) !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `A Medical Scribe job with the name ${name} already exists.`,
+      400,
+    );
+  }
   const outputBucket = requireString(input, "OutputBucketName");
   const now = new Date();
   const job: StoredMedicalScribeJob = {
     MedicalScribeJobName: name,
-    MedicalScribeJobStatus: "COMPLETED",
+    MedicalScribeJobStatus: "IN_PROGRESS",
     LanguageCode: "en-US",
     Media: media as Record<string, unknown>,
     MedicalScribeOutput: {
@@ -847,7 +1061,7 @@ const StartMedicalScribeJob: OperationHandler = (input, ctx) => {
     },
     StartTime: now,
     CreationTime: now,
-    CompletionTime: now,
+    CompletionTime: undefined,
   };
   ctx.store.set(medScribeKey(name), job);
   return { MedicalScribeJob: job };
@@ -855,17 +1069,21 @@ const StartMedicalScribeJob: OperationHandler = (input, ctx) => {
 
 const GetMedicalScribeJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "MedicalScribeJobName");
-  const job = requireMedicalScribeJob(ctx, name);
+  const job = resolveMedicalScribeJob(ctx, requireMedicalScribeJob(ctx, name));
   return { MedicalScribeJob: job };
 };
 
 const ListMedicalScribeJobs: OperationHandler = (input, ctx) => {
   const status = stringOrUndefined(input["Status"]);
-  const summaries = ctx.store
+  const jobNameContains = input["JobNameContains"];
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const all = ctx.store
     .list<StoredMedicalScribeJob>()
     .filter((entry) => entry.key.startsWith("med-scribe/"))
-    .map((entry) => entry.value)
+    .map((entry) => resolveMedicalScribeJob(ctx, entry.value))
     .filter((j) => status === undefined || j.MedicalScribeJobStatus === status)
+    .filter((j) => matchesNameFilter(j.MedicalScribeJobName, jobNameContains))
     .map((j) => ({
       MedicalScribeJobName: j.MedicalScribeJobName,
       CreationTime: j.CreationTime,
@@ -874,11 +1092,17 @@ const ListMedicalScribeJobs: OperationHandler = (input, ctx) => {
       LanguageCode: j.LanguageCode,
       MedicalScribeJobStatus: j.MedicalScribeJobStatus,
     }));
-  return { MedicalScribeJobSummaries: summaries };
+  const { items, nextToken: newNextToken } = applyPagination(
+    all,
+    maxResults,
+    nextToken,
+  );
+  return { MedicalScribeJobSummaries: items, NextToken: newNextToken };
 };
 
 const DeleteMedicalScribeJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "MedicalScribeJobName");
+  requireMedicalScribeJob(ctx, name);
   ctx.store.delete(medScribeKey(name));
   return {};
 };

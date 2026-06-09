@@ -20,6 +20,8 @@ const dlsPrefix = "dls:" as const;
 const iccPrefix = "icc:" as const;
 const optinPrefix = "optin:" as const;
 const queryPrefix = "query:" as const;
+const resTagPrefix = "restag:" as const;
+const tobjPrefix = "tobj:" as const;
 
 type StoredResource = {
   resourceArn: string;
@@ -93,6 +95,29 @@ type StoredOptIn = {
   resource: unknown;
   condition?: unknown;
   lastModified: number;
+};
+
+type LFTagAssignment = {
+  tagKey: string;
+  tagValues: string[];
+  catalogId: string;
+};
+
+type StoredResourceLFTagAssignment = {
+  resource: unknown;
+  catalogId: string;
+  lfTags: LFTagAssignment[];
+};
+
+type StoredTableObject = {
+  uri: string;
+  eTag: string;
+  size?: number;
+  partitionValues: string[];
+};
+
+type StoredGoverningTable = {
+  objects: StoredTableObject[];
 };
 
 type StoredQuery = {
@@ -209,6 +234,75 @@ const syntheticCredentials = () => ({
 const generateId = (): string =>
   Math.random().toString(36).slice(2, 18).padEnd(16, "0");
 
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
+
+const resTagKey = (resource: unknown, catalogId: string): string => {
+  const r = asRecord(resource);
+  if (r.Database !== undefined) {
+    const db = asRecord(r.Database);
+    const cid = stringOrUndefined(db.CatalogId) ?? catalogId;
+    return `${resTagPrefix}db:${cid}:${String(db.Name ?? "")}`;
+  }
+  if (r.Table !== undefined) {
+    const t = asRecord(r.Table);
+    const cid = stringOrUndefined(t.CatalogId) ?? catalogId;
+    return `${resTagPrefix}table:${cid}:${String(t.DatabaseName ?? "")}:${String(t.Name ?? "")}`;
+  }
+  if (r.TableWithColumns !== undefined) {
+    const t = asRecord(r.TableWithColumns);
+    const cid = stringOrUndefined(t.CatalogId) ?? catalogId;
+    return `${resTagPrefix}twc:${cid}:${String(t.DatabaseName ?? "")}:${String(t.Name ?? "")}`;
+  }
+  if (r.DataLocation !== undefined) {
+    const dl = asRecord(r.DataLocation);
+    const cid = stringOrUndefined(dl.CatalogId) ?? catalogId;
+    return `${resTagPrefix}dataloc:${cid}:${String(dl.ResourceArn ?? "")}`;
+  }
+  return `${resTagPrefix}catalog:${catalogId}`;
+};
+
+const matchesExpression = (
+  lfTags: LFTagAssignment[],
+  expression: unknown[],
+): boolean => {
+  for (const cond of expression) {
+    const c = asRecord(cond);
+    const tagKey = String(c.TagKey ?? "");
+    const tagValues = asArray(c.TagValues).map(String);
+    const tag = lfTags.find((t) => t.tagKey === tagKey);
+    if (tag === undefined) return false;
+    if (
+      tagValues.length > 0 &&
+      !tagValues.some((v) => tag.tagValues.includes(v))
+    )
+      return false;
+  }
+  return true;
+};
+
+const tobjKey = (
+  catalogId: string,
+  databaseName: string,
+  tableName: string,
+): string => `${tobjPrefix}${catalogId}:${databaseName}:${tableName}`;
+
 const RegisterResource: OperationHandler = (rawInput, ctx) => {
   const input = asRecord(rawInput);
   const resourceArn = requireString(input, "ResourceArn");
@@ -248,13 +342,18 @@ const DescribeResource: OperationHandler = (rawInput, ctx) => {
   return { ResourceInfo: resourceInfo(resource) };
 };
 
-const ListResources: OperationHandler = (_rawInput, ctx) => {
+const ListResources: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
   const entries = ctx.store.list<StoredResource>();
-  return {
-    ResourceInfoList: entries
-      .filter((e) => e.key.startsWith(resourcePrefix))
-      .map((entry) => resourceInfo(entry.value)),
-  };
+  const all = entries
+    .filter((e) => e.key.startsWith(resourcePrefix))
+    .map((entry) => resourceInfo(entry.value));
+  const { items, nextToken } = paginateList(
+    all,
+    input.NextToken,
+    input.MaxResults,
+  );
+  return { ResourceInfoList: items, NextToken: nextToken };
 };
 
 const DeregisterResource: OperationHandler = (rawInput, ctx) => {
@@ -331,7 +430,7 @@ const GetLFTag: OperationHandler = (rawInput, ctx) => {
     throw awsError(
       "EntityNotFoundException",
       `LF tag ${tagKey} not found.`,
-      400,
+      404,
     );
   }
   return lftagInfo(tag);
@@ -345,7 +444,7 @@ const DeleteLFTag: OperationHandler = (rawInput, ctx) => {
     throw awsError(
       "EntityNotFoundException",
       `LF tag ${tagKey} not found.`,
-      400,
+      404,
     );
   }
   ctx.store.delete(lftagKey(catalogId, tagKey));
@@ -377,13 +476,18 @@ const UpdateLFTag: OperationHandler = (rawInput, ctx) => {
   return {};
 };
 
-const ListLFTags: OperationHandler = (_rawInput, ctx) => {
+const ListLFTags: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
   const entries = ctx.store.list<StoredLFTag>();
-  return {
-    LFTags: entries
-      .filter((e) => e.key.startsWith(lftagPrefix))
-      .map((e) => lftagInfo(e.value)),
-  };
+  const all = entries
+    .filter((e) => e.key.startsWith(lftagPrefix))
+    .map((e) => lftagInfo(e.value));
+  const { items, nextToken } = paginateList(
+    all,
+    input.NextToken,
+    input.MaxResults,
+  );
+  return { LFTags: items, NextToken: nextToken };
 };
 
 const CreateLFTagExpression: OperationHandler = (rawInput, ctx) => {
@@ -418,7 +522,7 @@ const GetLFTagExpression: OperationHandler = (rawInput, ctx) => {
     throw awsError(
       "EntityNotFoundException",
       `LF tag expression ${name} not found.`,
-      400,
+      404,
     );
   }
   return lftagExprInfo(expr);
@@ -465,29 +569,95 @@ const UpdateLFTagExpression: OperationHandler = (rawInput, ctx) => {
   return {};
 };
 
-const ListLFTagExpressions: OperationHandler = (_rawInput, ctx) => {
+const ListLFTagExpressions: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
   const entries = ctx.store.list<StoredLFTagExpression>();
-  return {
-    LFTagExpressions: entries
-      .filter((e) => e.key.startsWith(lftagExprPrefix))
-      .map((e) => lftagExprInfo(e.value)),
-  };
+  const all = entries
+    .filter((e) => e.key.startsWith(lftagExprPrefix))
+    .map((e) => lftagExprInfo(e.value));
+  const { items, nextToken } = paginateList(
+    all,
+    input.NextToken,
+    input.MaxResults,
+  );
+  return { LFTagExpressions: items, NextToken: nextToken };
 };
 
-const AddLFTagsToResource: OperationHandler = (_rawInput, _ctx) => {
+const AddLFTagsToResource: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
+  const catalogId = stringOrUndefined(input.CatalogId) ?? ctx.account;
+  const resource = input.Resource;
+  const key = resTagKey(resource, catalogId);
+  const existing = ctx.store.get<StoredResourceLFTagAssignment>(key) ?? {
+    resource,
+    catalogId,
+    lfTags: [],
+  };
+  const newTags: LFTagAssignment[] = asArray(input.LFTags).map((tag) => {
+    const t = asRecord(tag);
+    return {
+      tagKey: requireString(t, "TagKey"),
+      tagValues: asArray(t.TagValues).map(String),
+      catalogId: stringOrUndefined(t.CatalogId) ?? catalogId,
+    };
+  });
+  const merged: LFTagAssignment[] = [
+    ...existing.lfTags.filter(
+      (t) => !newTags.some((n) => n.tagKey === t.tagKey),
+    ),
+    ...newTags,
+  ];
+  ctx.store.set(key, { resource, catalogId, lfTags: merged });
   return { Failures: [] };
 };
 
-const RemoveLFTagsFromResource: OperationHandler = (_rawInput, _ctx) => {
+const RemoveLFTagsFromResource: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
+  const catalogId = stringOrUndefined(input.CatalogId) ?? ctx.account;
+  const resource = input.Resource;
+  const key = resTagKey(resource, catalogId);
+  const existing = ctx.store.get<StoredResourceLFTagAssignment>(key);
+  if (existing === undefined) {
+    return { Failures: [] };
+  }
+  const toRemove = new Set(
+    asArray(input.LFTags).map((tag) => requireString(asRecord(tag), "TagKey")),
+  );
+  const updated: StoredResourceLFTagAssignment = {
+    ...existing,
+    lfTags: existing.lfTags.filter((t) => !toRemove.has(t.tagKey)),
+  };
+  ctx.store.set(key, updated);
   return { Failures: [] };
 };
 
-const GetResourceLFTags: OperationHandler = (_rawInput, _ctx) => {
-  return {
-    LFTagOnDatabase: [],
-    LFTagsOnTable: [],
-    LFTagsOnColumns: [],
-  };
+const GetResourceLFTags: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
+  const catalogId = stringOrUndefined(input.CatalogId) ?? ctx.account;
+  const resource = asRecord(input.Resource);
+  const key = resTagKey(input.Resource, catalogId);
+  const assignment = ctx.store.get<StoredResourceLFTagAssignment>(key);
+  const lfTags = assignment?.lfTags ?? [];
+  const tagPairs = lfTags.map((t) => ({
+    CatalogId: t.catalogId,
+    TagKey: t.tagKey,
+    TagValues: t.tagValues,
+  }));
+  if (resource.Database !== undefined) {
+    return {
+      LFTagOnDatabase: tagPairs,
+      LFTagsOnTable: [],
+      LFTagsOnColumns: [],
+    };
+  }
+  if (resource.Table !== undefined || resource.TableWithColumns !== undefined) {
+    return {
+      LFTagOnDatabase: [],
+      LFTagsOnTable: tagPairs,
+      LFTagsOnColumns: [],
+    };
+  }
+  return { LFTagOnDatabase: tagPairs, LFTagsOnTable: [], LFTagsOnColumns: [] };
 };
 
 const CreateDataCellsFilter: OperationHandler = (rawInput, ctx) => {
@@ -532,7 +702,7 @@ const GetDataCellsFilter: OperationHandler = (rawInput, ctx) => {
     throw awsError(
       "EntityNotFoundException",
       `Data cells filter ${name} not found.`,
-      400,
+      404,
     );
   }
   return { DataCellsFilter: dcfInfo(filter) };
@@ -587,13 +757,18 @@ const UpdateDataCellsFilter: OperationHandler = (rawInput, ctx) => {
   return {};
 };
 
-const ListDataCellsFilter: OperationHandler = (_rawInput, ctx) => {
+const ListDataCellsFilter: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
   const entries = ctx.store.list<StoredDataCellsFilter>();
-  return {
-    DataCellsFilters: entries
-      .filter((e) => e.key.startsWith(dcfPrefix))
-      .map((e) => dcfInfo(e.value)),
-  };
+  const all = entries
+    .filter((e) => e.key.startsWith(dcfPrefix))
+    .map((e) => dcfInfo(e.value));
+  const { items, nextToken } = paginateList(
+    all,
+    input.NextToken,
+    input.MaxResults,
+  );
+  return { DataCellsFilters: items, NextToken: nextToken };
 };
 
 const GrantPermissions: OperationHandler = (rawInput, ctx) => {
@@ -704,13 +879,18 @@ const BatchRevokePermissions: OperationHandler = (rawInput, ctx) => {
   return { Failures: [] };
 };
 
-const ListPermissions: OperationHandler = (_rawInput, ctx) => {
+const ListPermissions: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
   const entries = ctx.store.list<StoredPermission>();
-  return {
-    PrincipalResourcePermissions: entries
-      .filter((e) => e.key.startsWith(permPrefix))
-      .map((e) => permInfo(e.value)),
-  };
+  const all = entries
+    .filter((e) => e.key.startsWith(permPrefix))
+    .map((e) => permInfo(e.value));
+  const { items, nextToken } = paginateList(
+    all,
+    input.NextToken,
+    input.MaxResults,
+  );
+  return { PrincipalResourcePermissions: items, NextToken: nextToken };
 };
 
 const GetEffectivePermissionsForPath: OperationHandler = (rawInput, ctx) => {
@@ -997,21 +1177,60 @@ const ListLakeFormationOptIns: OperationHandler = (_rawInput, ctx) => {
   };
 };
 
-const GetTableObjects: OperationHandler = (_rawInput, _ctx) => {
-  return { Objects: [] };
+const GetTableObjects: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
+  const catalogId = stringOrUndefined(input.CatalogId) ?? ctx.account;
+  const databaseName = requireString(input, "DatabaseName");
+  const tableName = requireString(input, "TableName");
+  const key = tobjKey(catalogId, databaseName, tableName);
+  const stored = ctx.store.get<StoredGoverningTable>(key);
+  if (stored === undefined) {
+    return { Objects: [] };
+  }
+  const objects = stored.objects.map((o) => ({
+    PartitionValues: o.partitionValues,
+    Objects: [{ Uri: o.uri, ETag: o.eTag, Size: o.size }],
+  }));
+  return { Objects: objects };
 };
 
 const UpdateTableObjects: OperationHandler = (rawInput, ctx) => {
   const input = asRecord(rawInput);
-  const transactionId = requireString(input, "TransactionId");
-  const tx = ctx.store.get<StoredTransaction>(`${txPrefix}${transactionId}`);
-  if (tx === undefined) {
-    throw awsError(
-      "EntityNotFoundException",
-      `Transaction ${transactionId} not found.`,
-      400,
-    );
+  const transactionId = stringOrUndefined(input.TransactionId);
+  if (transactionId !== undefined) {
+    const tx = ctx.store.get<StoredTransaction>(`${txPrefix}${transactionId}`);
+    if (tx === undefined) {
+      throw awsError(
+        "EntityNotFoundException",
+        `Transaction ${transactionId} not found.`,
+        404,
+      );
+    }
   }
+  const catalogId = stringOrUndefined(input.CatalogId) ?? ctx.account;
+  const databaseName = requireString(input, "DatabaseName");
+  const tableName = requireString(input, "TableName");
+  const key = tobjKey(catalogId, databaseName, tableName);
+  const existing = ctx.store.get<StoredGoverningTable>(key) ?? { objects: [] };
+  let objects = [...existing.objects];
+  for (const op of asArray(input.WriteOperations)) {
+    const operation = asRecord(op);
+    if (operation.AddObject !== undefined) {
+      const add = asRecord(operation.AddObject);
+      objects.push({
+        uri: requireString(add, "Uri"),
+        eTag: requireString(add, "ETag"),
+        size: typeof add.Size === "number" ? add.Size : undefined,
+        partitionValues: asArray(add.PartitionValues).map(String),
+      });
+    } else if (operation.DeleteObject !== undefined) {
+      const del = asRecord(operation.DeleteObject);
+      const uri = requireString(del, "Uri");
+      const eTag = requireString(del, "ETag");
+      objects = objects.filter((o) => !(o.uri === uri && o.eTag === eTag));
+    }
+  }
+  ctx.store.set(key, { objects });
   return {};
 };
 
@@ -1156,12 +1375,49 @@ const GetWorkUnitResults: OperationHandler = (rawInput, ctx) => {
   return { ResultStream: null };
 };
 
-const SearchDatabasesByLFTags: OperationHandler = (_rawInput, _ctx) => {
-  return { DatabaseList: [] };
+const SearchDatabasesByLFTags: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
+  const expression = asArray(input.Expression);
+  const entries = ctx.store.list<StoredResourceLFTagAssignment>();
+  const results = entries
+    .filter((e) => e.key.startsWith(`${resTagPrefix}db:`))
+    .filter((e) => matchesExpression(e.value.lfTags, expression))
+    .map((e) => ({
+      Database: asRecord(e.value.resource).Database,
+      LFTags: e.value.lfTags.map((t) => ({
+        CatalogId: t.catalogId,
+        TagKey: t.tagKey,
+        TagValues: t.tagValues,
+      })),
+    }));
+  return { DatabaseList: results };
 };
 
-const SearchTablesByLFTags: OperationHandler = (_rawInput, _ctx) => {
-  return { TableList: [] };
+const SearchTablesByLFTags: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
+  const expression = asArray(input.Expression);
+  const entries = ctx.store.list<StoredResourceLFTagAssignment>();
+  const results = entries
+    .filter(
+      (e) =>
+        e.key.startsWith(`${resTagPrefix}table:`) ||
+        e.key.startsWith(`${resTagPrefix}twc:`),
+    )
+    .filter((e) => matchesExpression(e.value.lfTags, expression))
+    .map((e) => {
+      const r = asRecord(e.value.resource);
+      return {
+        Table: r.Table ?? r.TableWithColumns,
+        LFTagsOnTable: e.value.lfTags.map((t) => ({
+          CatalogId: t.catalogId,
+          TagKey: t.tagKey,
+          TagValues: t.tagValues,
+        })),
+        LFTagOnDatabase: [],
+        LFTagsOnColumns: [],
+      };
+    });
+  return { TableList: results };
 };
 
 const pathSegments = (path: string): string[] =>

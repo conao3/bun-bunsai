@@ -309,7 +309,7 @@ test("schemas code binding round trip", async () => {
       Language: "Java8",
     }),
   );
-  expect(putResult.Status).toBe("CREATE_COMPLETE");
+  expect(putResult.Status).toBe("CREATE_IN_PROGRESS");
 
   const descResult = await client.send(
     new DescribeCodeBindingCommand({
@@ -329,6 +329,8 @@ test("schemas code binding round trip", async () => {
     }),
   );
   expect(srcResult.Body).toBeDefined();
+  expect(srcResult.Body).toBeInstanceOf(Uint8Array);
+  expect((srcResult.Body as Uint8Array).length).toBeGreaterThan(0);
 
   await client.send(
     new DeleteSchemaCommand({ RegistryName: regName, SchemaName: schName }),
@@ -359,6 +361,163 @@ test("schemas resource policy round trip", async () => {
     client.send(new GetResourcePolicyCommand({ RegistryName: regName })),
   ).rejects.toThrow();
 
+  await client.send(new DeleteRegistryCommand({ RegistryName: regName }));
+});
+
+test("schemas ListSchemas pagination", async () => {
+  const client = schemas();
+  const regName = `bunsai-pg-reg-${Date.now()}`;
+  await client.send(new CreateRegistryCommand({ RegistryName: regName }));
+  const content = JSON.stringify({
+    openapi: "3.0.0",
+    info: { title: "T", version: "1" },
+    paths: {},
+  });
+  for (let i = 0; i < 3; i++) {
+    await client.send(
+      new CreateSchemaCommand({
+        RegistryName: regName,
+        SchemaName: `${regName}-sch-${i}`,
+        Content: content,
+        Type: "OpenApi3",
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListSchemasCommand({ RegistryName: regName, Limit: 2 }),
+  );
+  expect(page1.Schemas?.length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListSchemasCommand({
+      RegistryName: regName,
+      Limit: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect(page2.Schemas?.length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  for (let i = 0; i < 3; i++) {
+    await client.send(
+      new DeleteSchemaCommand({
+        RegistryName: regName,
+        SchemaName: `${regName}-sch-${i}`,
+      }),
+    );
+  }
+  await client.send(new DeleteRegistryCommand({ RegistryName: regName }));
+});
+
+test("schemas ListRegistries Scope filter", async () => {
+  const client = schemas();
+  const localName = `bunsai-scope-local-${Date.now()}`;
+  const awsName = `aws.bunsai-scope-test-${Date.now()}`;
+
+  await client.send(new CreateRegistryCommand({ RegistryName: localName }));
+  await client.send(new CreateRegistryCommand({ RegistryName: awsName }));
+
+  const localResult = await client.send(
+    new ListRegistriesCommand({ Scope: "LOCAL" }),
+  );
+  const localNames = (localResult.Registries ?? []).map((r) => r.RegistryName);
+  expect(localNames).toContain(localName);
+  expect(localNames).not.toContain(awsName);
+
+  const awsResult = await client.send(
+    new ListRegistriesCommand({ Scope: "AWS" }),
+  );
+  const awsNames = (awsResult.Registries ?? []).map((r) => r.RegistryName);
+  expect(awsNames).toContain(awsName);
+  expect(awsNames).not.toContain(localName);
+
+  await client.send(new DeleteRegistryCommand({ RegistryName: localName }));
+  await client.send(new DeleteRegistryCommand({ RegistryName: awsName }));
+});
+
+test("schemas ListDiscoverers SourceArnPrefix filter", async () => {
+  const client = schemas();
+  const prefix = `arn:aws:events:us-east-1:123456789012:event-bus/bunsai-srcfilter-${Date.now()}`;
+  const sourceArn1 = `${prefix}-a`;
+  const sourceArn2 = `arn:aws:events:us-east-1:123456789012:event-bus/other-${Date.now()}`;
+
+  const d1 = await client.send(
+    new CreateDiscovererCommand({ SourceArn: sourceArn1 }),
+  );
+  const d2 = await client.send(
+    new CreateDiscovererCommand({ SourceArn: sourceArn2 }),
+  );
+
+  const filtered = await client.send(
+    new ListDiscoverersCommand({ SourceArnPrefix: prefix }),
+  );
+  const ids = (filtered.Discoverers ?? []).map((d) => d.DiscovererId);
+  expect(ids).toContain(d1.DiscovererId);
+  expect(ids).not.toContain(d2.DiscovererId);
+
+  await client.send(
+    new DeleteDiscovererCommand({ DiscovererId: d1.DiscovererId! }),
+  );
+  await client.send(
+    new DeleteDiscovererCommand({ DiscovererId: d2.DiscovererId! }),
+  );
+});
+
+test("schemas UpdateSchema ClientTokenId idempotency", async () => {
+  const client = schemas();
+  const regName = `bunsai-cti-reg-${Date.now()}`;
+  const schName = `bunsai-cti-sch-${Date.now()}`;
+  const content = JSON.stringify({
+    openapi: "3.0.0",
+    info: { title: "T", version: "1" },
+    paths: {},
+  });
+
+  await client.send(new CreateRegistryCommand({ RegistryName: regName }));
+  await client.send(
+    new CreateSchemaCommand({
+      RegistryName: regName,
+      SchemaName: schName,
+      Content: content,
+      Type: "OpenApi3",
+    }),
+  );
+
+  const update1 = await client.send(
+    new UpdateSchemaCommand({
+      RegistryName: regName,
+      SchemaName: schName,
+      Content: content,
+      Type: "OpenApi3",
+      ClientTokenId: "token-abc",
+    }),
+  );
+  expect(update1.SchemaVersion).toBe("2");
+
+  const update2 = await client.send(
+    new UpdateSchemaCommand({
+      RegistryName: regName,
+      SchemaName: schName,
+      Content: content,
+      Type: "OpenApi3",
+      ClientTokenId: "token-abc",
+    }),
+  );
+  expect(update2.SchemaVersion).toBe("2");
+
+  const versions = await client.send(
+    new ListSchemaVersionsCommand({
+      RegistryName: regName,
+      SchemaName: schName,
+    }),
+  );
+  expect(versions.SchemaVersions?.length).toBe(2);
+
+  await client.send(
+    new DeleteSchemaCommand({ RegistryName: regName, SchemaName: schName }),
+  );
   await client.send(new DeleteRegistryCommand({ RegistryName: regName }));
 });
 

@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
+import { createBunsaiApp } from "../../apps/server/src/server.ts";
 import {
+  AcknowledgeJobCommand,
   CodePipelineClient,
   CreateCustomActionTypeCommand,
   CreatePipelineCommand,
@@ -549,6 +551,143 @@ test("CodePipeline ListRuleTypes and ListDeployActionExecutionTargets", async ()
     }),
   );
   expect(Array.isArray(targets.targets)).toBe(true);
+
+  await client.send(new DeletePipelineCommand({ name }));
+});
+
+test("CodePipeline ListPipelines pagination", async () => {
+  const client = codepipeline();
+  const prefix = `bunsai-e2e-pg-${Date.now()}`;
+  const names = [`${prefix}-a`, `${prefix}-b`, `${prefix}-c`];
+
+  for (const n of names) {
+    await client.send(new CreatePipelineCommand({ pipeline: makePipeline(n) }));
+  }
+
+  const page1 = await client.send(new ListPipelinesCommand({ maxResults: 1 }));
+  expect(Array.isArray(page1.pipelines)).toBe(true);
+  expect(page1.pipelines!.length).toBe(1);
+  expect(typeof page1.nextToken).toBe("string");
+
+  const page2 = await client.send(
+    new ListPipelinesCommand({ maxResults: 1, nextToken: page1.nextToken }),
+  );
+  expect(Array.isArray(page2.pipelines)).toBe(true);
+  expect(page2.pipelines!.length).toBe(1);
+
+  for (const n of names) {
+    await client.send(new DeletePipelineCommand({ name: n }));
+  }
+});
+
+test("CodePipeline AcknowledgeJob nonce validation", async () => {
+  const app = createBunsaiApp();
+  const origin = "http://bunsai.test";
+  const rh = {
+    async handle(request: {
+      method: string;
+      protocol: string;
+      hostname: string;
+      port?: number;
+      path: string;
+      query?: Record<string, string | string[] | null>;
+      headers: Record<string, string>;
+      body?: RequestInit["body"];
+    }) {
+      const search = new URLSearchParams();
+      for (const [k, v] of Object.entries(request.query ?? {})) {
+        if (Array.isArray(v)) {
+          v.forEach((s) => search.append(k, s));
+        } else if (v !== null) {
+          search.append(k, v);
+        }
+      }
+      const qs = search.size ? `?${search}` : "";
+      const res = await app.gatewayFetch(
+        new Request(`${origin}${request.path}${qs}`, {
+          method: request.method,
+          headers: { ...request.headers, host: request.hostname },
+          body: request.body,
+        }),
+      );
+      return {
+        response: {
+          statusCode: res.status,
+          headers: Object.fromEntries(res.headers),
+          body:
+            res.body ??
+            new ReadableStream({
+              start(c) {
+                c.close();
+              },
+            }),
+        },
+      };
+    },
+    updateHttpClientConfig() {},
+    httpHandlerConfigs(): Record<string, never> {
+      return {};
+    },
+  };
+
+  const client = new CodePipelineClient({
+    endpoint: origin,
+    region,
+    credentials,
+    requestHandler: rh,
+  });
+
+  const jobId = "e2e-nonce-job";
+  const validNonce = "nonce-valid-xyz";
+  const scopeKey = "000000000000/us-east-1/codepipeline";
+  if (!app.store.data.has(scopeKey)) {
+    app.store.data.set(scopeKey, new Map());
+  }
+  app.store.data.get(scopeKey)!.set(`job:${jobId}`, {
+    id: jobId,
+    nonce: validNonce,
+    data: {},
+    accountId: "000000000000",
+    status: "Queued",
+    actionTypeId: { category: "Build", provider: "TestProvider", version: "1" },
+  });
+
+  await expect(
+    client.send(new AcknowledgeJobCommand({ jobId, nonce: "wrong-nonce" })),
+  ).rejects.toMatchObject({ name: "InvalidNonceException" });
+
+  const ack = await client.send(
+    new AcknowledgeJobCommand({ jobId, nonce: validNonce }),
+  );
+  expect(ack.status).toBe("InProgress");
+});
+
+test("CodePipeline GetPipeline version history", async () => {
+  const client = codepipeline();
+  const name = `bunsai-e2e-ver-${Date.now()}`;
+
+  await client.send(
+    new CreatePipelineCommand({ pipeline: makePipeline(name) }),
+  );
+
+  const v1 = await client.send(new GetPipelineCommand({ name, version: 1 }));
+  expect(v1.pipeline?.version).toBe(1);
+
+  await client.send(
+    new UpdatePipelineCommand({ pipeline: makePipeline(name) }),
+  );
+
+  const current = await client.send(new GetPipelineCommand({ name }));
+  expect(current.pipeline?.version).toBe(2);
+
+  const historical = await client.send(
+    new GetPipelineCommand({ name, version: 1 }),
+  );
+  expect(historical.pipeline?.version).toBe(1);
+
+  await expect(
+    client.send(new GetPipelineCommand({ name, version: 99 })),
+  ).rejects.toMatchObject({ name: "PipelineVersionNotFoundException" });
 
   await client.send(new DeletePipelineCommand({ name }));
 });

@@ -67,12 +67,48 @@ const toSummary = (policy: StoredPolicy): Record<string, unknown> => {
   };
 };
 
+const paginateItems = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+  maxCap = 100,
+): { page: T[]; nextToken: string | undefined } => {
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? Math.min(maxResults, maxCap)
+      : maxCap;
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(atob(nextToken), 10) || 0
+      : 0;
+  const page = items.slice(offset, offset + max);
+  const next =
+    offset + max < items.length ? btoa(String(offset + max)) : undefined;
+  return { page, nextToken: next };
+};
+
 const PutPolicy: OperationHandler = (input, ctx) => {
   const requested = requirePolicy(input as Record<string, unknown>);
   const existingId =
     typeof requested["PolicyId"] === "string" && requested["PolicyId"] !== ""
       ? (requested["PolicyId"] as string)
       : crypto.randomUUID();
+  if (
+    typeof requested["PolicyId"] === "string" &&
+    requested["PolicyId"] !== ""
+  ) {
+    const existing = ctx.store.get<StoredPolicy>(policyKey(existingId));
+    if (existing !== undefined) {
+      const provided = requested["PolicyUpdateToken"];
+      if (provided !== existing.PolicyUpdateToken) {
+        throw awsError(
+          "InvalidOperationException",
+          "PolicyUpdateToken mismatch.",
+          400,
+        );
+      }
+    }
+  }
   const updateToken = crypto.randomUUID();
   const policy: StoredPolicy = {
     ...requested,
@@ -91,12 +127,21 @@ const GetPolicy: OperationHandler = (input, ctx) => {
   return { Policy: policy, PolicyArn: policyArn(ctx, policyId) };
 };
 
-const ListPolicies: OperationHandler = (_input, ctx) => {
+const ListPolicies: OperationHandler = (input, ctx) => {
+  const inp = input as Record<string, unknown>;
   const policies = ctx.store
     .list<StoredPolicy>()
     .filter((entry) => entry.key.startsWith("policy/"))
     .map((entry) => toSummary(entry.value));
-  return { PolicyList: policies };
+  const { page, nextToken } = paginateItems(
+    policies,
+    inp["MaxResults"],
+    inp["NextToken"],
+  );
+  return {
+    PolicyList: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeletePolicy: OperationHandler = (input, ctx) => {
@@ -155,7 +200,11 @@ const GetAppsList: OperationHandler = (input, ctx) => {
   return { AppsList: list, AppsListArn: appsListArn(ctx, listId) };
 };
 
-const ListAppsLists: OperationHandler = (_input, ctx) => {
+const ListAppsLists: OperationHandler = (input, ctx) => {
+  const inp = input as Record<string, unknown>;
+  if (typeof inp["MaxResults"] !== "number") {
+    throw awsError("InvalidInputException", "MaxResults is required.", 400);
+  }
   const lists = ctx.store
     .list<StoredAppsList>()
     .filter((e) => e.key.startsWith("appslist/"))
@@ -165,7 +214,15 @@ const ListAppsLists: OperationHandler = (_input, ctx) => {
       ListArn: appsListArn(ctx, e.value.ListId),
       AppsList: (e.value["AppsList"] as unknown[]) ?? [],
     }));
-  return { AppsLists: lists };
+  const { page, nextToken } = paginateItems(
+    lists,
+    inp["MaxResults"],
+    inp["NextToken"],
+  );
+  return {
+    AppsLists: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeleteAppsList: OperationHandler = (input, ctx) => {
@@ -233,7 +290,11 @@ const GetProtocolsList: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListProtocolsLists: OperationHandler = (_input, ctx) => {
+const ListProtocolsLists: OperationHandler = (input, ctx) => {
+  const inp = input as Record<string, unknown>;
+  if (typeof inp["MaxResults"] !== "number") {
+    throw awsError("InvalidInputException", "MaxResults is required.", 400);
+  }
   const lists = ctx.store
     .list<StoredProtocolsList>()
     .filter((e) => e.key.startsWith("protocolslist/"))
@@ -243,7 +304,15 @@ const ListProtocolsLists: OperationHandler = (_input, ctx) => {
       ListArn: protocolsListArn(ctx, e.value.ListId),
       ProtocolsList: (e.value["ProtocolsList"] as unknown[]) ?? [],
     }));
-  return { ProtocolsLists: lists };
+  const { page, nextToken } = paginateItems(
+    lists,
+    inp["MaxResults"],
+    inp["NextToken"],
+  );
+  return {
+    ProtocolsLists: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeleteProtocolsList: OperationHandler = (input, ctx) => {
@@ -308,7 +377,8 @@ const GetResourceSet: OperationHandler = (input, ctx) => {
   return { ResourceSet: rs, ResourceSetArn: resourceSetArn(ctx, id) };
 };
 
-const ListResourceSets: OperationHandler = (_input, ctx) => {
+const ListResourceSets: OperationHandler = (input, ctx) => {
+  const inp = input as Record<string, unknown>;
   const sets = ctx.store
     .list<StoredResourceSet>()
     .filter((e) => e.key.startsWith("resourceset/"))
@@ -317,7 +387,15 @@ const ListResourceSets: OperationHandler = (_input, ctx) => {
       Name: e.value.Name,
       ResourceSetStatus: e.value["ResourceSetStatus"] ?? "ACTIVE",
     }));
-  return { ResourceSets: sets };
+  const { page, nextToken } = paginateItems(
+    sets,
+    inp["MaxResults"],
+    inp["NextToken"],
+  );
+  return {
+    ResourceSets: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeleteResourceSet: OperationHandler = (input, ctx) => {
@@ -355,11 +433,19 @@ const BatchDisassociateResource: OperationHandler = (input, ctx) => {
 };
 
 const ListResourceSetResources: OperationHandler = (input, ctx) => {
-  const id = requireString(input as Record<string, unknown>, "Identifier");
+  const inp = input as Record<string, unknown>;
+  const id = requireString(inp, "Identifier");
   loadResourceSet(ctx, id);
   const resources = ctx.store.get<string[]>(resourceSetResourcesKey(id)) ?? [];
+  const items = resources.map((r) => ({ URI: r }));
+  const { page, nextToken } = paginateItems(
+    items,
+    inp["MaxResults"],
+    inp["NextToken"],
+  );
   return {
-    Items: resources.map((r) => ({ URI: r })),
+    Items: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
   };
 };
 
@@ -429,9 +515,16 @@ const GetAdminScope: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const status = stored["Status"] as string | undefined;
+  if (status === "ONBOARDING") {
+    ctx.store.set(adminAccountsKey(account), {
+      ...stored,
+      Status: "ONBOARDING_COMPLETE",
+    });
+  }
   return {
     AdminScope: stored["AdminScope"] ?? {},
-    Status: "ONBOARDING_COMPLETE",
+    Status: status ?? "ONBOARDING_COMPLETE",
   };
 };
 
@@ -484,6 +577,9 @@ const GetThirdPartyFirewallAssociationStatus: OperationHandler = (
     "ThirdPartyFirewall",
   );
   const status = ctx.store.get<string>(tpfKey(fw)) ?? "NOT_EXIST";
+  if (status === "ONBOARDING") {
+    ctx.store.set(tpfKey(fw), "ONBOARD_COMPLETE");
+  }
   return {
     ThirdPartyFirewallStatus: status,
     MarketplaceOnboardingStatus: "COMPLETE",
@@ -586,13 +682,16 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
   };
 };
 
-const GetComplianceDetail: OperationHandler = (input, _ctx) => {
+const GetComplianceDetail: OperationHandler = (input, ctx) => {
   const inp = input as Record<string, unknown>;
+  const policyId = requireString(inp, "PolicyId");
+  const memberAccount = requireString(inp, "MemberAccount");
+  loadPolicy(ctx, policyId);
   return {
     PolicyComplianceDetail: {
-      PolicyId: inp["PolicyId"],
-      PolicyOwner: inp["MemberAccount"],
-      MemberAccount: inp["MemberAccount"],
+      PolicyId: policyId,
+      PolicyOwner: ctx.account,
+      MemberAccount: memberAccount,
       Violators: [],
       EvaluationLimitExceeded: false,
     },
@@ -601,36 +700,106 @@ const GetComplianceDetail: OperationHandler = (input, _ctx) => {
 
 const GetProtectionStatus: OperationHandler = (input, ctx) => {
   const policyId = requireString(input as Record<string, unknown>, "PolicyId");
+  const policy = loadPolicy(ctx, policyId);
+  const data = policy["SecurityServicePolicyData"] as
+    | Record<string, unknown>
+    | undefined;
+  const serviceType = (data?.["Type"] as string | undefined) ?? "WAFV2";
   return {
     AdminAccountId: ctx.account,
-    ServiceType: "WAFV2",
+    ServiceType: serviceType,
     Data: `{"policyId":"${policyId}","status":"PROTECTED"}`,
   };
 };
 
-const GetViolationDetails: OperationHandler = (input, _ctx) => {
+const GetViolationDetails: OperationHandler = (input, ctx) => {
   const inp = input as Record<string, unknown>;
+  const policyId = requireString(inp, "PolicyId");
+  const memberAccount = requireString(inp, "MemberAccount");
+  const resourceId = requireString(inp, "ResourceId");
+  const resourceType = requireString(inp, "ResourceType");
+  loadPolicy(ctx, policyId);
   return {
     ViolationDetail: {
-      PolicyId: inp["PolicyId"],
-      MemberAccount: inp["MemberAccount"],
-      ResourceId: inp["ResourceId"],
-      ResourceType: inp["ResourceType"],
+      PolicyId: policyId,
+      MemberAccount: memberAccount,
+      ResourceId: resourceId,
+      ResourceType: resourceType,
       ResourceViolations: [],
     },
   };
 };
 
-const ListComplianceStatus: OperationHandler = (_input, _ctx) => {
-  return { PolicyComplianceStatusList: [] };
+const ListComplianceStatus: OperationHandler = (input, ctx) => {
+  const inp = input as Record<string, unknown>;
+  const policyId = requireString(inp, "PolicyId");
+  loadPolicy(ctx, policyId);
+  const memberAccounts = ctx.store
+    .list<Record<string, unknown>>()
+    .filter((e) => e.key.startsWith("adminaccounts/"))
+    .map((e) => e.value["AdminAccount"] as string);
+  const statuses = memberAccounts.map((account) => ({
+    PolicyId: policyId,
+    PolicyOwner: ctx.account,
+    MemberAccount: account,
+    EvaluationResults: [
+      {
+        EvaluationResult: "COMPLIANT",
+        ViolatorCount: 0,
+        EvaluationLimitExceeded: false,
+      },
+    ],
+    IssueInfoMap: {},
+  }));
+  const { page, nextToken } = paginateItems(
+    statuses,
+    inp["MaxResults"],
+    inp["NextToken"],
+  );
+  return {
+    PolicyComplianceStatusList: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
-const ListDiscoveredResources: OperationHandler = (_input, _ctx) => {
-  return { Items: [] };
+const ListDiscoveredResources: OperationHandler = (input, _ctx) => {
+  const inp = input as Record<string, unknown>;
+  const memberAccountIds =
+    (inp["MemberAccountIds"] as string[] | undefined) ?? [];
+  const resourceType = (inp["ResourceType"] as string | undefined) ?? "";
+  const typeSlug = resourceType.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase();
+  const resources = memberAccountIds.map((accountId) => ({
+    AccountId: accountId,
+    ResourceId: `arn:aws:${typeSlug}:us-east-1:${accountId}:resource/discovered`,
+    ResourceType: resourceType,
+    Name: `discovered-${accountId}`,
+  }));
+  const { page, nextToken } = paginateItems(
+    resources,
+    inp["MaxResults"],
+    inp["NextToken"],
+  );
+  return {
+    Items: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
-const ListMemberAccounts: OperationHandler = (_input, _ctx) => {
-  return { MemberAccounts: [] };
+const ListMemberAccounts: OperationHandler = (input, ctx) => {
+  const inp = input as Record<string, unknown>;
+  const accounts = ctx.store
+    .list<Record<string, unknown>>()
+    .filter((e) => e.key.startsWith("adminaccounts/"))
+    .map((e) => e.value["AdminAccount"] as string);
+  const { page, nextToken } = paginateItems(
+    accounts,
+    inp["MaxResults"],
+    inp["NextToken"],
+  );
+  return {
+    MemberAccounts: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const fms = {

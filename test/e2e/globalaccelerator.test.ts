@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  AddCustomRoutingEndpointsCommand,
   AddEndpointsCommand,
   AdvertiseByoipCidrCommand,
+  AllowCustomRoutingTrafficCommand,
   CreateAcceleratorCommand,
-  DescribeAcceleratorCommand,
-  UpdateAcceleratorCommand,
   CreateCrossAccountAttachmentCommand,
   CreateCustomRoutingAcceleratorCommand,
   CreateCustomRoutingEndpointGroupCommand,
@@ -21,18 +21,21 @@ import {
   DeleteListenerCommand,
   DeprovisionByoipCidrCommand,
   DescribeAcceleratorAttributesCommand,
+  DescribeAcceleratorCommand,
   DescribeCrossAccountAttachmentCommand,
   DescribeCustomRoutingAcceleratorCommand,
   DescribeCustomRoutingEndpointGroupCommand,
   DescribeCustomRoutingListenerCommand,
   DescribeEndpointGroupCommand,
   DescribeListenerCommand,
+  DenyCustomRoutingTrafficCommand,
   GlobalAcceleratorClient,
   ListAcceleratorsCommand,
   ListByoipCidrsCommand,
   ListCrossAccountAttachmentsCommand,
   ListCustomRoutingEndpointGroupsCommand,
   ListCustomRoutingListenersCommand,
+  ListCustomRoutingPortMappingsCommand,
   ListEndpointGroupsCommand,
   ListListenersCommand,
   ListTagsForResourceCommand,
@@ -40,6 +43,7 @@ import {
   TagResourceCommand,
   UntagResourceCommand,
   UpdateAcceleratorAttributesCommand,
+  UpdateAcceleratorCommand,
   UpdateListenerCommand,
   WithdrawByoipCidrCommand,
 } from "@aws-sdk/client-global-accelerator";
@@ -369,4 +373,120 @@ test("GlobalAccelerator tags lifecycle", async () => {
   expect(listed2.Tags?.some((t) => t.Key === "Env")).toBe(true);
 
   await client.send(new DeleteAcceleratorCommand({ AcceleratorArn: arn }));
+});
+
+test("GlobalAccelerator ListAccelerators pagination", async () => {
+  const client = globalaccelerator();
+
+  const arns: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const acc = await client.send(
+      new CreateAcceleratorCommand({
+        Name: `e2e-page-acc-${i}`,
+        IdempotencyToken: crypto.randomUUID(),
+      }),
+    );
+    arns.push(acc.Accelerator?.AcceleratorArn ?? "");
+  }
+
+  const page1 = await client.send(
+    new ListAcceleratorsCommand({ MaxResults: 2 }),
+  );
+  expect((page1.Accelerators ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListAcceleratorsCommand({ NextToken: page1.NextToken }),
+  );
+  expect((page2.Accelerators ?? []).length).toBeGreaterThanOrEqual(1);
+
+  for (const arn of arns) {
+    await client.send(new DeleteAcceleratorCommand({ AcceleratorArn: arn }));
+  }
+});
+
+test("GlobalAccelerator AllowCustomRoutingTraffic persistence", async () => {
+  const client = globalaccelerator();
+
+  const crAcc = await client.send(
+    new CreateCustomRoutingAcceleratorCommand({
+      Name: "e2e-traffic-acc",
+      IdempotencyToken: crypto.randomUUID(),
+    }),
+  );
+  const crAccArn = crAcc.Accelerator?.AcceleratorArn ?? "";
+
+  const crLst = await client.send(
+    new CreateCustomRoutingListenerCommand({
+      AcceleratorArn: crAccArn,
+      PortRanges: [{ FromPort: 6000, ToPort: 6100 }],
+      IdempotencyToken: crypto.randomUUID(),
+    }),
+  );
+  const crLstArn = crLst.Listener?.ListenerArn ?? "";
+
+  const crEg = await client.send(
+    new CreateCustomRoutingEndpointGroupCommand({
+      ListenerArn: crLstArn,
+      EndpointGroupRegion: "us-east-1",
+      DestinationConfigurations: [
+        { FromPort: 6000, ToPort: 6100, Protocols: ["TCP"] },
+      ],
+      IdempotencyToken: crypto.randomUUID(),
+    }),
+  );
+  const crEgArn = crEg.EndpointGroup?.EndpointGroupArn ?? "";
+
+  const endpointId = "192.0.2.10";
+  await client.send(
+    new AddCustomRoutingEndpointsCommand({
+      EndpointGroupArn: crEgArn,
+      EndpointConfigurations: [{ EndpointId: endpointId }],
+    }),
+  );
+
+  await client.send(
+    new AllowCustomRoutingTrafficCommand({
+      EndpointGroupArn: crEgArn,
+      EndpointId: endpointId,
+      DestinationAddresses: ["192.0.2.10"],
+      DestinationPorts: [6000],
+      AllowAllTrafficToEndpoint: false,
+    }),
+  );
+
+  const allowedMappings = await client.send(
+    new ListCustomRoutingPortMappingsCommand({ AcceleratorArn: crAccArn }),
+  );
+  const allowedEntry = (allowedMappings.PortMappings ?? []).find(
+    (m) => m.EndpointId === endpointId,
+  );
+  expect(allowedEntry).toBeDefined();
+  expect(allowedEntry?.DestinationTrafficState).toBe("ALLOW");
+
+  await client.send(
+    new DenyCustomRoutingTrafficCommand({
+      EndpointGroupArn: crEgArn,
+      EndpointId: endpointId,
+      DenyAllTrafficToEndpoint: true,
+    }),
+  );
+
+  const deniedMappings = await client.send(
+    new ListCustomRoutingPortMappingsCommand({ AcceleratorArn: crAccArn }),
+  );
+  const deniedEntry = (deniedMappings.PortMappings ?? []).find(
+    (m) => m.EndpointId === endpointId,
+  );
+  expect(deniedEntry?.DestinationTrafficState).toBe("DENY");
+
+  await client.send(
+    new DeleteCustomRoutingEndpointGroupCommand({ EndpointGroupArn: crEgArn }),
+  );
+  await client.send(
+    new DeleteCustomRoutingListenerCommand({ ListenerArn: crLstArn }),
+  );
+  await client.send(
+    new DeleteCustomRoutingAcceleratorCommand({ AcceleratorArn: crAccArn }),
+  );
 });

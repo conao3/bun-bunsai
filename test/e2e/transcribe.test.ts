@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  BadRequestException,
   ConflictException,
   CreateCallAnalyticsCategoryCommand,
   CreateLanguageModelCommand,
@@ -525,6 +526,73 @@ test("Transcribe StartCallAnalyticsJob persists Tags to job ARN", async () => {
   );
   expect((tags.Tags ?? []).some((t) => t.Key === "env")).toBe(true);
   expect((tags.Tags ?? []).some((t) => t.Key === "owner")).toBe(true);
+});
+
+test("Transcribe malformed NextToken → BadRequestException", async () => {
+  const client = transcribe();
+  await expect(
+    client.send(
+      new ListTranscriptionJobsCommand({ NextToken: "!!!not-base64!!!" }),
+    ),
+  ).rejects.toThrow(BadRequestException);
+});
+
+test("Transcribe StartTranscriptionJob non-existent VocabularyName → BadRequestException", async () => {
+  const client = transcribe();
+  await expect(
+    client.send(
+      new StartTranscriptionJobCommand({
+        TranscriptionJobName: "bunsai-vocab-ref-fail",
+        Media: { MediaFileUri: "s3://bunsai-e2e/sample.flac" },
+        Settings: { VocabularyName: "no-such-vocab" },
+      }),
+    ),
+  ).rejects.toThrow(BadRequestException);
+});
+
+test("Transcribe DeleteTranscriptionJob IN_PROGRESS → BadRequestException", async () => {
+  const client = transcribe();
+  const name = "bunsai-inprogress-delete";
+  await client.send(
+    new StartTranscriptionJobCommand({
+      TranscriptionJobName: name,
+      Media: { MediaFileUri: "s3://bunsai-e2e/sample.flac" },
+    }),
+  );
+  await expect(
+    client.send(
+      new DeleteTranscriptionJobCommand({ TranscriptionJobName: name }),
+    ),
+  ).rejects.toThrow(BadRequestException);
+  await client.send(
+    new GetTranscriptionJobCommand({ TranscriptionJobName: name }),
+  );
+  await client.send(
+    new DeleteTranscriptionJobCommand({ TranscriptionJobName: name }),
+  );
+});
+
+test("Transcribe delete job purges tags", async () => {
+  const client = transcribe();
+  const name = "bunsai-tag-purge";
+  const arn = `arn:aws:transcribe:us-east-1:000000000000:transcription-job/${name}`;
+  await client.send(
+    new StartTranscriptionJobCommand({
+      TranscriptionJobName: name,
+      Media: { MediaFileUri: "s3://bunsai-e2e/sample.flac" },
+      Tags: [{ Key: "env", Value: "test" }],
+    }),
+  );
+  await client.send(
+    new GetTranscriptionJobCommand({ TranscriptionJobName: name }),
+  );
+  await client.send(
+    new DeleteTranscriptionJobCommand({ TranscriptionJobName: name }),
+  );
+  const tags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect((tags.Tags ?? []).length).toBe(0);
 });
 
 test("Transcribe CreateCallAnalyticsCategory rejects duplicate name", async () => {

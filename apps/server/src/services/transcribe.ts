@@ -275,7 +275,19 @@ const applyPagination = <T>(
   maxResults: number | undefined,
   nextToken: string | undefined,
 ): { items: T[]; nextToken: string | undefined } => {
-  const start = nextToken !== undefined ? parseInt(atob(nextToken), 10) : 0;
+  let start = 0;
+  if (nextToken !== undefined) {
+    let decoded: number;
+    try {
+      decoded = parseInt(atob(nextToken), 10);
+    } catch {
+      throw awsError("BadRequestException", "Invalid NextToken.", 400);
+    }
+    if (!Number.isFinite(decoded)) {
+      throw awsError("BadRequestException", "Invalid NextToken.", 400);
+    }
+    start = decoded;
+  }
   const limit =
     maxResults !== undefined && maxResults > 0 ? maxResults : items.length;
   const sliced = items.slice(start, start + limit);
@@ -357,6 +369,47 @@ const StartTranscriptionJob: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const settings = input["Settings"];
+  if (settings !== null && typeof settings === "object") {
+    const s = settings as Record<string, unknown>;
+    const vocabName = stringOrUndefined(s["VocabularyName"]);
+    if (
+      vocabName !== undefined &&
+      ctx.store.get(vocabKey(vocabName)) === undefined
+    ) {
+      throw awsError(
+        "BadRequestException",
+        `The vocabulary ${vocabName} doesn't exist.`,
+        400,
+      );
+    }
+    const vocabFilterName = stringOrUndefined(s["VocabularyFilterName"]);
+    if (
+      vocabFilterName !== undefined &&
+      ctx.store.get(vocabFilterKey(vocabFilterName)) === undefined
+    ) {
+      throw awsError(
+        "BadRequestException",
+        `The vocabulary filter ${vocabFilterName} doesn't exist.`,
+        400,
+      );
+    }
+  }
+  const modelSettings = input["ModelSettings"];
+  if (modelSettings !== null && typeof modelSettings === "object") {
+    const ms = modelSettings as Record<string, unknown>;
+    const langModelName = stringOrUndefined(ms["LanguageModelName"]);
+    if (
+      langModelName !== undefined &&
+      ctx.store.get(langModelKey(langModelName)) === undefined
+    ) {
+      throw awsError(
+        "BadRequestException",
+        `The language model ${langModelName} doesn't exist.`,
+        400,
+      );
+    }
+  }
   const outputBucket = stringOrUndefined(input["OutputBucketName"]);
   const outputKey = stringOrUndefined(input["OutputKey"]);
   const transcriptUri =
@@ -426,8 +479,20 @@ const ListTranscriptionJobs: OperationHandler = (input, ctx) => {
 
 const DeleteTranscriptionJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TranscriptionJobName");
-  requireJob(ctx, name);
+  const job = requireJob(ctx, name);
+  if (job.TranscriptionJobStatus === "IN_PROGRESS") {
+    throw awsError(
+      "BadRequestException",
+      "Can't delete an in-progress transcription job.",
+      400,
+    );
+  }
   ctx.store.delete(jobKey(name));
+  ctx.store.delete(
+    tagsKey(
+      `arn:aws:transcribe:${ctx.region}:${ctx.account}:transcription-job/${name}`,
+    ),
+  );
   return {};
 };
 
@@ -822,6 +887,43 @@ const StartCallAnalyticsJob: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const caSettings = input["Settings"];
+  if (caSettings !== null && typeof caSettings === "object") {
+    const s = caSettings as Record<string, unknown>;
+    const vocabName = stringOrUndefined(s["VocabularyName"]);
+    if (
+      vocabName !== undefined &&
+      ctx.store.get(vocabKey(vocabName)) === undefined
+    ) {
+      throw awsError(
+        "BadRequestException",
+        `The vocabulary ${vocabName} doesn't exist.`,
+        400,
+      );
+    }
+    const vocabFilterName = stringOrUndefined(s["VocabularyFilterName"]);
+    if (
+      vocabFilterName !== undefined &&
+      ctx.store.get(vocabFilterKey(vocabFilterName)) === undefined
+    ) {
+      throw awsError(
+        "BadRequestException",
+        `The vocabulary filter ${vocabFilterName} doesn't exist.`,
+        400,
+      );
+    }
+    const langModelName = stringOrUndefined(s["LanguageModelName"]);
+    if (
+      langModelName !== undefined &&
+      ctx.store.get(langModelKey(langModelName)) === undefined
+    ) {
+      throw awsError(
+        "BadRequestException",
+        `The language model ${langModelName} doesn't exist.`,
+        400,
+      );
+    }
+  }
   const now = new Date();
   const tags = parseTags(input["Tags"]);
   const job: StoredCallAnalyticsJob = {
@@ -879,8 +981,20 @@ const ListCallAnalyticsJobs: OperationHandler = (input, ctx) => {
 
 const DeleteCallAnalyticsJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "CallAnalyticsJobName");
-  requireCallAnalyticsJob(ctx, name);
+  const caJob = requireCallAnalyticsJob(ctx, name);
+  if (caJob.CallAnalyticsJobStatus === "IN_PROGRESS") {
+    throw awsError(
+      "BadRequestException",
+      "Can't delete an in-progress call analytics job.",
+      400,
+    );
+  }
   ctx.store.delete(caJobKey(name));
+  ctx.store.delete(
+    tagsKey(
+      `arn:aws:transcribe:${ctx.region}:${ctx.account}:call-analytics-job/${name}`,
+    ),
+  );
   return {};
 };
 
@@ -997,6 +1111,21 @@ const StartMedicalTranscriptionJob: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const medSettings = input["Settings"];
+  if (medSettings !== null && typeof medSettings === "object") {
+    const s = medSettings as Record<string, unknown>;
+    const medVocabName = stringOrUndefined(s["VocabularyName"]);
+    if (
+      medVocabName !== undefined &&
+      ctx.store.get(medVocabKey(medVocabName)) === undefined
+    ) {
+      throw awsError(
+        "BadRequestException",
+        `The vocabulary ${medVocabName} doesn't exist.`,
+        400,
+      );
+    }
+  }
   const outputBucket = requireString(input, "OutputBucketName");
   const outputKey = stringOrUndefined(input["OutputKey"]);
   const now = new Date();
@@ -1060,8 +1189,20 @@ const ListMedicalTranscriptionJobs: OperationHandler = (input, ctx) => {
 
 const DeleteMedicalTranscriptionJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "MedicalTranscriptionJobName");
-  requireMedicalJob(ctx, name);
+  const medJob = requireMedicalJob(ctx, name);
+  if (medJob.TranscriptionJobStatus === "IN_PROGRESS") {
+    throw awsError(
+      "BadRequestException",
+      "Can't delete an in-progress medical transcription job.",
+      400,
+    );
+  }
   ctx.store.delete(medJobKey(name));
+  ctx.store.delete(
+    tagsKey(
+      `arn:aws:transcribe:${ctx.region}:${ctx.account}:medical-transcription-job/${name}`,
+    ),
+  );
   return {};
 };
 
@@ -1132,8 +1273,20 @@ const ListMedicalScribeJobs: OperationHandler = (input, ctx) => {
 
 const DeleteMedicalScribeJob: OperationHandler = (input, ctx) => {
   const name = requireString(input, "MedicalScribeJobName");
-  requireMedicalScribeJob(ctx, name);
+  const scribeJob = requireMedicalScribeJob(ctx, name);
+  if (scribeJob.MedicalScribeJobStatus === "IN_PROGRESS") {
+    throw awsError(
+      "BadRequestException",
+      "Can't delete an in-progress medical scribe job.",
+      400,
+    );
+  }
   ctx.store.delete(medScribeKey(name));
+  ctx.store.delete(
+    tagsKey(
+      `arn:aws:transcribe:${ctx.region}:${ctx.account}:medical-scribe-job/${name}`,
+    ),
+  );
   return {};
 };
 

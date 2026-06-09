@@ -547,6 +547,133 @@ test("AppRunner custom domain lifecycle with status", async () => {
   await client.send(new DeleteServiceCommand({ ServiceArn: serviceArn }));
 });
 
+test("AppRunner CreateService tag round-trip and no stale tags on recreate", async () => {
+  const client = apprunner();
+  const serviceName = `bunsai-tag-svc-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateServiceCommand({
+      ServiceName: serviceName,
+      SourceConfiguration: {
+        ImageRepository: {
+          ImageIdentifier: "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageRepositoryType: "ECR_PUBLIC",
+        },
+      },
+      Tags: [{ Key: "env", Value: "staging" }],
+    }),
+  );
+  const arn = created.Service?.ServiceArn;
+  expect(arn).toBeDefined();
+
+  const tags = await client.send(new ListTagsForResourceCommand({ ResourceArn: arn }));
+  expect((tags.Tags ?? []).some((t) => t.Key === "env" && t.Value === "staging")).toBe(true);
+
+  await client.send(new DeleteServiceCommand({ ServiceArn: arn }));
+
+  const created2 = await client.send(
+    new CreateServiceCommand({
+      ServiceName: `${serviceName}-v2`,
+      SourceConfiguration: {
+        ImageRepository: {
+          ImageIdentifier: "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageRepositoryType: "ECR_PUBLIC",
+        },
+      },
+    }),
+  );
+  const arn2 = created2.Service?.ServiceArn;
+  expect(arn2).toBeDefined();
+
+  const tags2 = await client.send(new ListTagsForResourceCommand({ ResourceArn: arn2 }));
+  expect(tags2.Tags ?? []).toHaveLength(0);
+
+  await client.send(new DeleteServiceCommand({ ServiceArn: arn2 }));
+});
+
+test("AppRunner AutoScaling in-use lifecycle", async () => {
+  const client = apprunner();
+  const ascName = `bunsai-asc-inuse-${Date.now()}`;
+
+  const asc = await client.send(
+    new CreateAutoScalingConfigurationCommand({
+      AutoScalingConfigurationName: ascName,
+    }),
+  );
+  const ascArn = asc.AutoScalingConfiguration?.AutoScalingConfigurationArn;
+  expect(ascArn).toBeDefined();
+
+  const svc = await client.send(
+    new CreateServiceCommand({
+      ServiceName: `bunsai-asc-svc-${Date.now()}`,
+      SourceConfiguration: {
+        ImageRepository: {
+          ImageIdentifier: "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageRepositoryType: "ECR_PUBLIC",
+        },
+      },
+      AutoScalingConfigurationArn: ascArn,
+    }),
+  );
+  const serviceArn = svc.Service?.ServiceArn;
+  expect(serviceArn).toBeDefined();
+
+  const described = await client.send(
+    new DescribeAutoScalingConfigurationCommand({ AutoScalingConfigurationArn: ascArn }),
+  );
+  expect(described.AutoScalingConfiguration?.HasAssociatedService).toBe(true);
+
+  await expect(
+    client.send(new DeleteAutoScalingConfigurationCommand({ AutoScalingConfigurationArn: ascArn })),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteServiceCommand({ ServiceArn: serviceArn }));
+
+  const described2 = await client.send(
+    new DescribeAutoScalingConfigurationCommand({ AutoScalingConfigurationArn: ascArn }),
+  );
+  expect(described2.AutoScalingConfiguration?.HasAssociatedService).toBe(false);
+
+  const deletedAsc = await client.send(
+    new DeleteAutoScalingConfigurationCommand({ AutoScalingConfigurationArn: ascArn }),
+  );
+  expect(deletedAsc.AutoScalingConfiguration?.Status).toBe("INACTIVE");
+});
+
+test("AppRunner service state transition guards", async () => {
+  const client = apprunner();
+
+  const created = await client.send(
+    new CreateServiceCommand({
+      ServiceName: `bunsai-state-${Date.now()}`,
+      SourceConfiguration: {
+        ImageRepository: {
+          ImageIdentifier: "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageRepositoryType: "ECR_PUBLIC",
+        },
+      },
+    }),
+  );
+  const arn = created.Service?.ServiceArn;
+  expect(arn).toBeDefined();
+
+  const paused = await client.send(new PauseServiceCommand({ ServiceArn: arn }));
+  expect(paused.Service?.Status).toBe("PAUSED");
+
+  await expect(
+    client.send(new PauseServiceCommand({ ServiceArn: arn })),
+  ).rejects.toThrow();
+
+  const resumed = await client.send(new ResumeServiceCommand({ ServiceArn: arn }));
+  expect(resumed.Service?.Status).toBe("RUNNING");
+
+  await expect(
+    client.send(new ResumeServiceCommand({ ServiceArn: arn })),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteServiceCommand({ ServiceArn: arn }));
+});
+
 test("AppRunner tags", async () => {
   const client = apprunner();
   const name = `bunsai-tag-asc-${Date.now()}`;

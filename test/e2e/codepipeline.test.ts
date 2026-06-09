@@ -691,3 +691,68 @@ test("CodePipeline GetPipeline version history", async () => {
 
   await client.send(new DeletePipelineCommand({ name }));
 });
+
+test("CodePipeline fidelity gaps: clientRequestToken idempotency, stop state guard, tag round-trip, ARN validation, malformed nextToken", async () => {
+  const client = codepipeline();
+  const name = `bunsai-e2e-fidelity-${Date.now()}`;
+  const arn = `arn:aws:codepipeline:${region}:000000000000:${name}`;
+
+  await client.send(
+    new CreatePipelineCommand({
+      pipeline: makePipeline(name),
+      tags: [
+        { key: "env", value: "prod" },
+        { key: "project", value: "bunsai" },
+      ],
+    }),
+  );
+
+  const tagsAfterCreate = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: arn }),
+  );
+  expect(
+    tagsAfterCreate.tags?.some((t) => t.key === "env" && t.value === "prod"),
+  ).toBe(true);
+  expect(
+    tagsAfterCreate.tags?.some(
+      (t) => t.key === "project" && t.value === "bunsai",
+    ),
+  ).toBe(true);
+
+  const token = `idem-token-${Date.now()}`;
+  const first = await client.send(
+    new StartPipelineExecutionCommand({ name, clientRequestToken: token }),
+  );
+  const second = await client.send(
+    new StartPipelineExecutionCommand({ name, clientRequestToken: token }),
+  );
+  expect(first.pipelineExecutionId).toBe(second.pipelineExecutionId);
+
+  await expect(
+    client.send(
+      new StopPipelineExecutionCommand({
+        pipelineName: name,
+        pipelineExecutionId: "nonexistent-exec-id",
+        abandon: false,
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "PipelineExecutionNotFoundException" });
+
+  await expect(
+    client.send(
+      new TagResourceCommand({
+        resourceArn:
+          "arn:aws:codepipeline:us-east-1:000000000000:no-such-pipeline",
+        tags: [{ key: "k", value: "v" }],
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
+
+  await expect(
+    client.send(
+      new ListPipelinesCommand({ nextToken: "!!not-valid-base64!!" }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidNextTokenException" });
+
+  await client.send(new DeletePipelineCommand({ name }));
+});

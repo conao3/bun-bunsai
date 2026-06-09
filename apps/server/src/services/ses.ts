@@ -378,15 +378,28 @@ const ListVerifiedEmailAddresses: OperationHandler = (_, ctx) => {
   return { VerifiedEmailAddresses: addresses };
 };
 
+const deleteIdentityCascade = (ctx: ServiceContext, identity: string): void => {
+  ctx.store.delete(identityKey(identity));
+  ctx.store.delete(dkimAttrsKey(identity));
+  ctx.store.delete(notifAttrsKey(identity));
+  ctx.store.delete(mailFromKey(identity));
+  const prefix = `policy/${identity}/`;
+  for (const entry of ctx.store.list()) {
+    if (entry.key.startsWith(prefix)) {
+      ctx.store.delete(entry.key);
+    }
+  }
+};
+
 const DeleteIdentity: OperationHandler = (input, ctx) => {
   const identity = requireString(input, "Identity");
-  ctx.store.delete(identityKey(identity));
+  deleteIdentityCascade(ctx, identity);
   return {};
 };
 
 const DeleteVerifiedEmailAddress: OperationHandler = (input, ctx) => {
   const emailAddress = requireString(input, "EmailAddress");
-  ctx.store.delete(identityKey(emailAddress));
+  deleteIdentityCascade(ctx, emailAddress);
   return {};
 };
 
@@ -1043,6 +1056,14 @@ const CreateReceiptRuleSet: OperationHandler = (input, ctx) => {
 const DeleteReceiptRuleSet: OperationHandler = (input, ctx) => {
   const name = requireString(input, "RuleSetName");
   requireRuleSet(ctx, name);
+  const active = ctx.store.get<{ Name: string }>(activeRuleSetKey());
+  if (active?.Name === name) {
+    throw awsError(
+      "CannotDeleteException",
+      `Cannot delete active rule set ${name}.`,
+      400,
+    );
+  }
   ctx.store.delete(ruleSetKey(name));
   return {};
 };
@@ -1056,6 +1077,8 @@ const DescribeReceiptRuleSet: OperationHandler = (input, ctx) => {
   };
 };
 
+const LIST_RECEIPT_RULE_SETS_PAGE_SIZE = 100;
+
 const ListReceiptRuleSets: OperationHandler = (input, ctx) => {
   const offset = decodePageToken(input["NextToken"]);
   const all = ctx.store
@@ -1065,7 +1088,14 @@ const ListReceiptRuleSets: OperationHandler = (input, ctx) => {
       Name: entry.value.Name,
       CreatedTimestamp: entry.value.CreatedTimestamp,
     }));
-  return { RuleSets: all.slice(offset) };
+  const page = all.slice(offset, offset + LIST_RECEIPT_RULE_SETS_PAGE_SIZE);
+  const nextOffset = offset + page.length;
+  const nextToken =
+    nextOffset < all.length ? encodePageToken(nextOffset) : undefined;
+  return {
+    RuleSets: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const CloneReceiptRuleSet: OperationHandler = (input, ctx) => {

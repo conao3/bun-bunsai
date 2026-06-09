@@ -364,6 +364,8 @@ test("SES receipt rule set + rule + filter lifecycle", async () => {
     new DeleteReceiptFilterCommand({ FilterName: "e2e-filter" }),
   );
 
+  await client.send(new SetActiveReceiptRuleSetCommand({}));
+
   await client.send(
     new DeleteReceiptRuleSetCommand({ RuleSetName: ruleSetName }),
   );
@@ -826,5 +828,114 @@ test("SES identity pagination", async () => {
   expect(pageCount).toBeGreaterThan(1);
   for (const a of addrs) {
     expect(allFromPaged).toContain(a);
+  }
+});
+
+test("SES active ruleset delete guard (HIGH-1)", async () => {
+  const client = ses();
+  const ruleSetName = "guard-test-ruleset";
+
+  await client.send(
+    new CreateReceiptRuleSetCommand({ RuleSetName: ruleSetName }),
+  );
+  await client.send(
+    new SetActiveReceiptRuleSetCommand({ RuleSetName: ruleSetName }),
+  );
+
+  const active = await client.send(new DescribeActiveReceiptRuleSetCommand({}));
+  expect(active.Metadata?.Name).toBe(ruleSetName);
+
+  await expect(
+    client.send(new DeleteReceiptRuleSetCommand({ RuleSetName: ruleSetName })),
+  ).rejects.toMatchObject({ name: "CannotDeleteException" });
+
+  await client.send(new SetActiveReceiptRuleSetCommand({}));
+  await client.send(
+    new DeleteReceiptRuleSetCommand({ RuleSetName: ruleSetName }),
+  );
+});
+
+test("SES identity cascade cleanup (HIGH-2)", async () => {
+  const client = ses();
+  const domain = "cascade-test.bunsai-e2e.example.com";
+
+  await client.send(new VerifyDomainIdentityCommand({ Domain: domain }));
+  await client.send(new VerifyDomainDkimCommand({ Domain: domain }));
+  await client.send(
+    new SetIdentityNotificationTopicCommand({
+      Identity: domain,
+      NotificationType: "Bounce",
+      SnsTopic: "arn:aws:sns:us-east-1:123456789012:bounce-topic",
+    }),
+  );
+  await client.send(
+    new SetIdentityMailFromDomainCommand({
+      Identity: domain,
+      MailFromDomain: `mail.${domain}`,
+    }),
+  );
+  await client.send(
+    new PutIdentityPolicyCommand({
+      Identity: domain,
+      PolicyName: "test-policy",
+      Policy: '{"Version":"2012-10-17","Statement":[]}',
+    }),
+  );
+
+  await client.send(new DeleteIdentityCommand({ Identity: domain }));
+
+  await client.send(new VerifyDomainIdentityCommand({ Domain: domain }));
+
+  const dkim = await client.send(
+    new GetIdentityDkimAttributesCommand({ Identities: [domain] }),
+  );
+  expect(dkim.DkimAttributes?.[domain]?.DkimEnabled).toBe(true);
+  expect(dkim.DkimAttributes?.[domain]?.DkimTokens ?? []).toHaveLength(0);
+
+  const notif = await client.send(
+    new GetIdentityNotificationAttributesCommand({ Identities: [domain] }),
+  );
+  expect(notif.NotificationAttributes?.[domain]?.BounceTopic).toBe("");
+
+  const mailfrom = await client.send(
+    new GetIdentityMailFromDomainAttributesCommand({ Identities: [domain] }),
+  );
+  expect(
+    mailfrom.MailFromDomainAttributes?.[domain]?.MailFromDomain,
+  ).toBeFalsy();
+
+  const policies = await client.send(
+    new ListIdentityPoliciesCommand({ Identity: domain }),
+  );
+  expect(policies.PolicyNames ?? []).toHaveLength(0);
+
+  await client.send(new DeleteIdentityCommand({ Identity: domain }));
+});
+
+test("SES ListReceiptRuleSets pagination (MEDIUM-1)", async () => {
+  const client = ses();
+  const names = Array.from({ length: 3 }, (_, i) => `pagination-rs-${i}`);
+  for (const name of names) {
+    await client.send(new CreateReceiptRuleSetCommand({ RuleSetName: name }));
+  }
+
+  const res1 = await client.send(new ListReceiptRuleSetsCommand({}));
+  expect(res1.RuleSets).toBeDefined();
+  const all = res1.RuleSets ?? [];
+  for (const name of names) {
+    expect(all.some((rs) => rs.Name === name)).toBe(true);
+  }
+
+  if (res1.NextToken !== undefined) {
+    const res2 = await client.send(
+      new ListReceiptRuleSetsCommand({ NextToken: res1.NextToken }),
+    );
+    expect(res2.RuleSets).toBeDefined();
+  }
+
+  for (const name of names) {
+    await client.send(
+      new DeleteReceiptRuleSetCommand({ RuleSetName: name }),
+    );
   }
 });

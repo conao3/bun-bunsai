@@ -218,6 +218,7 @@ test("EMR Serverless GetResourceDashboard", async () => {
   );
   expect(dashboard.url).toBeDefined();
 
+  await client.send(new TerminateSessionCommand({ applicationId, sessionId }));
   await client.send(new DeleteApplicationCommand({ applicationId }));
 });
 
@@ -251,7 +252,7 @@ test("EMR Serverless session lifecycle", async () => {
   );
   expect(got.session?.applicationId).toBe(applicationId);
   expect(got.session?.sessionId).toBe(sessionId);
-  expect(got.session?.state).toBe("CREATING" as SessionState);
+  expect(got.session?.state).toBe("ACTIVE" as SessionState);
 
   const listed = await client.send(new ListSessionsCommand({ applicationId }));
   expect((listed.sessions ?? []).map((s) => s.sessionId)).toContain(sessionId);
@@ -404,6 +405,12 @@ test("EMR Serverless ListJobRuns filter and paginate", async () => {
   const page2Id = page2.jobRuns?.[0]?.id;
   expect(page1Id).not.toBe(page2Id);
 
+  await client.send(
+    new CancelJobRunCommand({ applicationId, jobRunId: jobRunId1 }),
+  );
+  await client.send(
+    new CancelJobRunCommand({ applicationId, jobRunId: jobRunId2 }),
+  );
   await client.send(new DeleteApplicationCommand({ applicationId }));
 });
 
@@ -424,4 +431,111 @@ test("EMR Serverless tag on non-existent ARN throws ResourceNotFoundException", 
   await expect(
     client.send(new ListTagsForResourceCommand({ resourceArn: fakeArn })),
   ).rejects.toThrow();
+});
+
+test("EMR Serverless clientToken idempotency: CreateApplication", async () => {
+  const client = emr();
+  const token = crypto.randomUUID();
+
+  const first = await client.send(
+    new CreateApplicationCommand({
+      name: `idempotent-${Date.now()}`,
+      releaseLabel: "emr-7.1.0",
+      type: "SPARK",
+      clientToken: token,
+    }),
+  );
+  const second = await client.send(
+    new CreateApplicationCommand({
+      name: `idempotent-different-name`,
+      releaseLabel: "emr-7.1.0",
+      type: "SPARK",
+      clientToken: token,
+    }),
+  );
+  expect(second.applicationId).toBe(first.applicationId);
+  expect(second.arn).toBe(first.arn);
+
+  await client.send(
+    new DeleteApplicationCommand({ applicationId: first.applicationId ?? "" }),
+  );
+});
+
+test("EMR Serverless DeleteApplication while STARTED raises ValidationException", async () => {
+  const client = emr();
+  const app = await client.send(
+    new CreateApplicationCommand({
+      name: `del-started-${Date.now()}`,
+      releaseLabel: "emr-7.1.0",
+      type: "SPARK",
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  const applicationId = app.applicationId ?? "";
+
+  await client.send(new StartApplicationCommand({ applicationId }));
+  await expect(
+    client.send(new DeleteApplicationCommand({ applicationId })),
+  ).rejects.toThrow();
+
+  await client.send(new StopApplicationCommand({ applicationId }));
+  await client.send(new DeleteApplicationCommand({ applicationId }));
+});
+
+test("EMR Serverless DeleteApplication with active job run raises ValidationException", async () => {
+  const client = emr();
+  const app = await client.send(
+    new CreateApplicationCommand({
+      name: `del-active-run-${Date.now()}`,
+      releaseLabel: "emr-7.1.0",
+      type: "SPARK",
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  const applicationId = app.applicationId ?? "";
+
+  const run = await client.send(
+    new StartJobRunCommand({
+      applicationId,
+      clientToken: crypto.randomUUID(),
+      executionRoleArn: "arn:aws:iam::123456789012:role/EMRServerlessRole",
+    }),
+  );
+  const jobRunId = run.jobRunId ?? "";
+
+  await expect(
+    client.send(new DeleteApplicationCommand({ applicationId })),
+  ).rejects.toThrow();
+
+  await client.send(new CancelJobRunCommand({ applicationId, jobRunId }));
+  await client.send(new DeleteApplicationCommand({ applicationId }));
+});
+
+test("EMR Serverless TerminateSession twice raises ValidationException", async () => {
+  const client = emr();
+  const app = await client.send(
+    new CreateApplicationCommand({
+      name: `terminate-twice-${Date.now()}`,
+      releaseLabel: "emr-7.1.0",
+      type: "SPARK",
+      clientToken: crypto.randomUUID(),
+    }),
+  );
+  const applicationId = app.applicationId ?? "";
+
+  const session = await client.send(
+    new StartSessionCommand({
+      applicationId,
+      clientToken: crypto.randomUUID(),
+      executionRoleArn: "arn:aws:iam::123456789012:role/EMRServerlessRole",
+    }),
+  );
+  const sessionId = session.sessionId ?? "";
+
+  await client.send(new TerminateSessionCommand({ applicationId, sessionId }));
+  await expect(
+    client.send(new TerminateSessionCommand({ applicationId, sessionId })),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteApplicationCommand({ applicationId }));
 });

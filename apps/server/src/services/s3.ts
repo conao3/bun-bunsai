@@ -365,6 +365,17 @@ const parseTagSet = (tagging: unknown): S3Tag[] => {
   });
 };
 
+const parseTaggingHeader = (tagging: unknown): S3Tag[] => {
+  if (typeof tagging !== "string" || tagging === "") return [];
+  return tagging.split("&").flatMap((pair) => {
+    const eq = pair.indexOf("=");
+    if (eq === -1) return [];
+    const k = decodeURIComponent(pair.slice(0, eq));
+    const v = decodeURIComponent(pair.slice(eq + 1));
+    return [{ Key: k, Value: v }];
+  });
+};
+
 const s3: ServiceDefinition = {
   name: "s3",
   protocol: "rest-xml",
@@ -1083,25 +1094,67 @@ const s3: ServiceDefinition = {
       const target = getBucket(ctx, bucket);
       const prefix = req.query.get("prefix") ?? "";
       const marker = req.query.get("marker") ?? "";
-      const all = Object.values(target.objects)
+      const delimiter = req.query.get("delimiter") ?? "";
+      const maxKeysRaw = Number(req.query.get("max-keys") ?? "1000");
+      const maxKeys = Number.isFinite(maxKeysRaw)
+        ? Math.min(Math.max(0, maxKeysRaw), 1000)
+        : 1000;
+      const candidates = Object.values(target.objects)
         .map((vs) => getCurrentObject(vs))
         .filter((o): o is S3Object => o !== undefined)
         .filter((o) => o.key.startsWith(prefix))
         .filter((o) => o.key > marker)
         .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      const contents: S3Object[] = [];
+      const commonPrefixes: string[] = [];
+      const seenPrefixes = new Set<string>();
+      let isTruncated = false;
+      let nextMarker: string | undefined;
+      for (const object of candidates) {
+        const rest = object.key.slice(prefix.length);
+        const boundary = delimiter === "" ? -1 : rest.indexOf(delimiter);
+        const group =
+          boundary === -1
+            ? undefined
+            : prefix + rest.slice(0, boundary + delimiter.length);
+        if (group !== undefined && seenPrefixes.has(group)) continue;
+        if (contents.length + commonPrefixes.length >= maxKeys) {
+          isTruncated = maxKeys > 0;
+          break;
+        }
+        if (group !== undefined) {
+          seenPrefixes.add(group);
+          commonPrefixes.push(group);
+          nextMarker =
+            group.slice(0, -1) +
+            String.fromCodePoint(
+              (group.codePointAt(group.length - 1) ?? 0) + 1,
+            );
+        } else {
+          contents.push(object);
+          nextMarker = object.key;
+        }
+      }
       return {
         Name: bucket,
         Prefix: prefix,
         Marker: marker,
-        MaxKeys: 1000,
-        IsTruncated: false,
-        Contents: all.map((o) => ({
+        MaxKeys: maxKeys,
+        IsTruncated: isTruncated,
+        ...(delimiter !== "" ? { Delimiter: delimiter } : {}),
+        ...(isTruncated && nextMarker !== undefined
+          ? { NextMarker: nextMarker }
+          : {}),
+        Contents: contents.map((o) => ({
           Key: o.key,
           LastModified: o.lastModified,
           ETag: o.etag,
           Size: o.size,
           StorageClass: o.storageClass,
         })),
+        ...(commonPrefixes.length > 0
+          ? { CommonPrefixes: commonPrefixes.map((p) => ({ Prefix: p })) }
+          : {}),
       };
     },
     CopyObject: (input, ctx, req) => {
@@ -1128,10 +1181,20 @@ const s3: ServiceDefinition = {
       if (source === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
+      evaluateConditional(
+        {
+          IfMatch: input["CopySourceIfMatch"],
+          IfNoneMatch: input["CopySourceIfNoneMatch"],
+          IfModifiedSince: input["CopySourceIfModifiedSince"],
+          IfUnmodifiedSince: input["CopySourceIfUnmodifiedSince"],
+        },
+        source,
+      );
       const versioned = target.versioningStatus === "Enabled";
       const versionId = versioned ? generateVersionId() : undefined;
       const lastModified = nowSeconds();
       const useReplace = input["MetadataDirective"] === "REPLACE";
+      const useTagReplace = input["TaggingDirective"] === "REPLACE";
       const reqStorageClass = input["StorageClass"];
       const reqMetadata = input["Metadata"];
       const object: S3Object = {
@@ -1145,7 +1208,9 @@ const s3: ServiceDefinition = {
         etag: source.etag,
         size: source.size,
         lastModified,
-        tagSet: [],
+        tagSet: useTagReplace
+          ? parseTaggingHeader(input["Tagging"])
+          : source.tagSet,
         userMetadata: useReplace
           ? typeof reqMetadata === "object" && reqMetadata !== null
             ? (reqMetadata as Record<string, string>)
@@ -1212,8 +1277,11 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidBucketName", "bucket name required", 400);
       }
       const target = getBucket(ctx, bucket);
+      if ((target.tagSet ?? []).length === 0) {
+        throw awsError("NoSuchTagSet", "The TagSet does not exist", 404);
+      }
       return {
-        TagSet: (target.tagSet ?? []).map((tag) => ({
+        TagSet: target.tagSet.map((tag) => ({
           Key: tag.Key,
           Value: tag.Value,
         })),
@@ -2151,16 +2219,61 @@ const s3: ServiceDefinition = {
       const target = getBucket(ctx, bucket);
       const prefix = req.query.get("prefix") ?? "";
       const keyMarker = req.query.get("key-marker") ?? "";
+      const versionIdMarker = req.query.get("version-id-marker") ?? "";
+      const delimiter = req.query.get("delimiter") ?? "";
+      const maxKeysRaw = Number(req.query.get("max-keys") ?? "1000");
+      const maxKeys = Number.isFinite(maxKeysRaw)
+        ? Math.min(Math.max(0, maxKeysRaw), 1000)
+        : 1000;
       const toIso = (ts: number): string => new Date(ts * 1000).toISOString();
-      const allVersions = Object.values(target.objects)
+      const candidates = Object.values(target.objects)
         .flatMap((vs) => vs)
         .filter((v) => v.key.startsWith(prefix))
-        .filter((v) => v.key >= keyMarker)
+        .filter((v) => {
+          if (keyMarker === "") return true;
+          if (v.key > keyMarker) return true;
+          if (v.key === keyMarker && versionIdMarker !== "")
+            return (v.versionId ?? "null") < versionIdMarker;
+          return false;
+        })
         .sort((a, b) => {
           if (a.key !== b.key) return a.key < b.key ? -1 : 1;
           return b.lastModified - a.lastModified;
         });
-      const versionXml = allVersions
+      const resultVersions: typeof candidates = [];
+      const commonPrefixes: string[] = [];
+      const seenPrefixes = new Set<string>();
+      let isTruncated = false;
+      let nextKeyMarker: string | undefined;
+      let nextVersionIdMarker: string | undefined;
+      for (const v of candidates) {
+        const rest = v.key.slice(prefix.length);
+        const boundary = delimiter === "" ? -1 : rest.indexOf(delimiter);
+        const group =
+          boundary === -1
+            ? undefined
+            : prefix + rest.slice(0, boundary + delimiter.length);
+        if (group !== undefined && seenPrefixes.has(group)) continue;
+        if (resultVersions.length + commonPrefixes.length >= maxKeys) {
+          isTruncated = maxKeys > 0;
+          break;
+        }
+        if (group !== undefined) {
+          seenPrefixes.add(group);
+          commonPrefixes.push(group);
+          nextKeyMarker =
+            group.slice(0, -1) +
+            String.fromCodePoint(
+              (group.codePointAt(group.length - 1) ?? 0) + 1,
+            );
+          nextVersionIdMarker = undefined;
+        } else {
+          resultVersions.push(v);
+          nextKeyMarker = v.key;
+          nextVersionIdMarker = v.versionId ?? "null";
+        }
+      }
+      const versionXml = resultVersions
         .map((v) => {
           if (v.isDeleteMarker) {
             return [
@@ -2185,15 +2298,36 @@ const s3: ServiceDefinition = {
           ].join("");
         })
         .join("");
+      const commonPrefixXml = commonPrefixes
+        .map(
+          (p) =>
+            `<CommonPrefixes><Prefix>${escapeXml(p)}</Prefix></CommonPrefixes>`,
+        )
+        .join("");
       return {
         __xml: [
           `<?xml version="1.0" encoding="UTF-8"?>`,
           `<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`,
-          `<IsTruncated>false</IsTruncated>`,
+          `<IsTruncated>${isTruncated ? "true" : "false"}</IsTruncated>`,
           `<Name>${escapeXml(bucket)}</Name>`,
           `<Prefix>${escapeXml(prefix)}</Prefix>`,
-          `<MaxKeys>1000</MaxKeys>`,
+          `<MaxKeys>${maxKeys}</MaxKeys>`,
+          ...(keyMarker !== ""
+            ? [`<KeyMarker>${escapeXml(keyMarker)}</KeyMarker>`]
+            : []),
+          ...(delimiter !== ""
+            ? [`<Delimiter>${escapeXml(delimiter)}</Delimiter>`]
+            : []),
+          ...(isTruncated && nextKeyMarker !== undefined
+            ? [`<NextKeyMarker>${escapeXml(nextKeyMarker)}</NextKeyMarker>`]
+            : []),
+          ...(isTruncated && nextVersionIdMarker !== undefined
+            ? [
+                `<NextVersionIdMarker>${escapeXml(nextVersionIdMarker)}</NextVersionIdMarker>`,
+              ]
+            : []),
           versionXml,
+          commonPrefixXml,
           `</ListVersionsResult>`,
         ].join(""),
       };

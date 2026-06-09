@@ -103,10 +103,9 @@ describe("S3 extra ops e2e", () => {
 
     await client.send(new DeleteBucketTaggingCommand({ Bucket: bucket }));
 
-    const taggingAfter = await client.send(
-      new GetBucketTaggingCommand({ Bucket: bucket }),
-    );
-    expect(taggingAfter.TagSet ?? []).toEqual([]);
+    await expect(
+      client.send(new GetBucketTaggingCommand({ Bucket: bucket })),
+    ).rejects.toMatchObject({ name: "NoSuchTagSet" });
 
     const location = await client.send(
       new GetBucketLocationCommand({ Bucket: bucket }),

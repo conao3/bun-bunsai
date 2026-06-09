@@ -299,6 +299,17 @@ type StoredReservedNodeExchangeStatus = {
   TargetReservedNodeCount: number;
 };
 
+type StoredResize = {
+  TargetNodeType: string;
+  TargetNumberOfNodes: number;
+  TargetClusterType: string;
+  Status: string;
+  ImportTablesCompleted: string[];
+  ImportTablesInProgress: string[];
+  ImportTablesNotStarted: string[];
+  ResizeType: string;
+};
+
 type StoredIntegration = {
   IntegrationArn: string;
   IntegrationName: string;
@@ -393,6 +404,7 @@ const hsmConfigKey = (id: string): string => `hsmconfig/${id}`;
 const reservedNodeOfferingKey = (id: string): string =>
   `reservednodeoffering/${id}`;
 const reservedNodeKey = (id: string): string => `reservednode/${id}`;
+const resizeKey = (clusterId: string): string => `resize/${clusterId}`;
 const reservedNodeExchangeKey = (id: string): string =>
   `reservednodeexchange/${id}`;
 const integrationKey = (arn: string): string => `integration/${arn}`;
@@ -945,7 +957,7 @@ const CreateCluster: OperationHandler = (input, ctx) => {
   const cluster: StoredCluster = {
     ClusterIdentifier: id,
     NodeType: nodeType,
-    ClusterStatus: "available",
+    ClusterStatus: "creating",
     ClusterAvailabilityStatus: "Available",
     MasterUsername: masterUsername,
     DBName: optionalString(input, "DBName") ?? "dev",
@@ -982,16 +994,27 @@ const CreateCluster: OperationHandler = (input, ctx) => {
   return { Cluster: presentCluster(cluster) };
 };
 
+const advanceClusterStatus = (
+  cluster: StoredCluster,
+  ctx: ServiceContext,
+): StoredCluster => {
+  if (cluster.ClusterStatus === "creating") {
+    cluster.ClusterStatus = "available";
+    ctx.store.set(clusterKey(cluster.ClusterIdentifier), cluster);
+  }
+  return cluster;
+};
+
 const DescribeClusters: OperationHandler = (input, ctx) => {
   const id = optionalString(input, "ClusterIdentifier");
   if (id !== undefined) {
-    const cluster = requireCluster(ctx, id);
+    const cluster = advanceClusterStatus(requireCluster(ctx, id), ctx);
     return { Clusters: [presentCluster(cluster)] };
   }
   const clusters = ctx.store
     .list<StoredCluster>()
     .filter((entry) => entry.key.startsWith("cluster/"))
-    .map((entry) => presentCluster(entry.value));
+    .map((entry) => presentCluster(advanceClusterStatus(entry.value, ctx)));
   return { Clusters: clusters };
 };
 
@@ -1087,26 +1110,50 @@ const ResizeCluster: OperationHandler = (input, ctx) => {
   const cluster = requireCluster(ctx, id);
   const nodeType = optionalString(input, "NodeType");
   const numberOfNodes = numberOr(input, "NumberOfNodes", cluster.NumberOfNodes);
+  const clusterType =
+    optionalString(input, "ClusterType") ??
+    (numberOfNodes === 1 ? "single-node" : "multi-node");
   if (nodeType !== undefined) {
     cluster.NodeType = nodeType;
   }
   cluster.NumberOfNodes = numberOfNodes;
+  const resize: StoredResize = {
+    TargetNodeType: cluster.NodeType,
+    TargetNumberOfNodes: numberOfNodes,
+    TargetClusterType: clusterType,
+    Status: "IN_PROGRESS",
+    ImportTablesCompleted: [],
+    ImportTablesInProgress: [],
+    ImportTablesNotStarted: [],
+    ResizeType: "ClassicResize",
+  };
   ctx.store.set(clusterKey(id), cluster);
+  ctx.store.set(resizeKey(id), resize);
   return { Cluster: presentCluster(cluster) };
 };
 
 const CancelResize: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ClusterIdentifier");
   requireCluster(ctx, id);
+  const resize = ctx.store.get<StoredResize>(resizeKey(id));
+  if (resize === undefined) {
+    throw awsError(
+      "ResizeNotFoundFault",
+      `No resize in progress for cluster ${id}.`,
+      404,
+    );
+  }
+  resize.Status = "CANCELLED";
+  ctx.store.set(resizeKey(id), resize);
   return {
-    TargetNodeType: "dc2.large",
-    TargetNumberOfNodes: 2,
-    TargetClusterType: "multi-node",
-    Status: "CANCELLED",
-    ImportTablesCompleted: [],
-    ImportTablesInProgress: [],
-    ImportTablesNotStarted: [],
-    ResizeType: "ClassicResize",
+    TargetNodeType: resize.TargetNodeType,
+    TargetNumberOfNodes: resize.TargetNumberOfNodes,
+    TargetClusterType: resize.TargetClusterType,
+    Status: resize.Status,
+    ImportTablesCompleted: resize.ImportTablesCompleted,
+    ImportTablesInProgress: resize.ImportTablesInProgress,
+    ImportTablesNotStarted: resize.ImportTablesNotStarted,
+    ResizeType: resize.ResizeType,
     Message: "Resize cancelled",
   };
 };
@@ -1114,15 +1161,23 @@ const CancelResize: OperationHandler = (input, ctx) => {
 const DescribeResize: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ClusterIdentifier");
   requireCluster(ctx, id);
+  const resize = ctx.store.get<StoredResize>(resizeKey(id));
+  if (resize === undefined) {
+    throw awsError(
+      "ResizeNotFoundFault",
+      `No resize found for cluster ${id}.`,
+      404,
+    );
+  }
   return {
-    TargetNodeType: "dc2.large",
-    TargetNumberOfNodes: 2,
-    TargetClusterType: "multi-node",
-    Status: "SUCCEEDED",
-    ImportTablesCompleted: [],
-    ImportTablesInProgress: [],
-    ImportTablesNotStarted: [],
-    ResizeType: "ClassicResize",
+    TargetNodeType: resize.TargetNodeType,
+    TargetNumberOfNodes: resize.TargetNumberOfNodes,
+    TargetClusterType: resize.TargetClusterType,
+    Status: resize.Status,
+    ImportTablesCompleted: resize.ImportTablesCompleted,
+    ImportTablesInProgress: resize.ImportTablesInProgress,
+    ImportTablesNotStarted: resize.ImportTablesNotStarted,
+    ResizeType: resize.ResizeType,
   };
 };
 
@@ -1232,6 +1287,7 @@ const RestoreTableFromClusterSnapshot: OperationHandler = (input, ctx) => {
   const sourceTable = requireString(input, "SourceTableName");
   const newTableName = requireString(input, "NewTableName");
   requireCluster(ctx, clusterId);
+  requireSnapshot(ctx, snapshotId);
   const requestId = crypto.randomUUID();
   const status: StoredTableRestoreStatus = {
     TableRestoreRequestId: requestId,
@@ -1355,7 +1411,7 @@ const CreateClusterSnapshot: OperationHandler = (input, ctx) => {
     SnapshotIdentifier: snapshotId,
     ClusterIdentifier: clusterId,
     SnapshotCreateTime: new Date().toISOString(),
-    Status: "available",
+    Status: "creating",
     Port: cluster.Endpoint.Port,
     AvailabilityZone: cluster.AvailabilityZone,
     ClusterCreateTime: cluster.ClusterCreateTime,
@@ -1384,10 +1440,24 @@ const DeleteClusterSnapshot: OperationHandler = (input, ctx) => {
   return { Snapshot: { ...presentSnapshot(snapshot), Status: "deleted" } };
 };
 
+const advanceSnapshotStatus = (
+  snapshot: StoredSnapshot,
+  ctx: ServiceContext,
+): StoredSnapshot => {
+  if (snapshot.Status === "creating") {
+    snapshot.Status = "available";
+    ctx.store.set(snapshotKey(snapshot.SnapshotIdentifier), snapshot);
+  }
+  return snapshot;
+};
+
 const DescribeClusterSnapshots: OperationHandler = (input, ctx) => {
   const snapshotId = optionalString(input, "SnapshotIdentifier");
   if (snapshotId !== undefined) {
-    const snapshot = requireSnapshot(ctx, snapshotId);
+    const snapshot = advanceSnapshotStatus(
+      requireSnapshot(ctx, snapshotId),
+      ctx,
+    );
     return { Snapshots: [presentSnapshot(snapshot)] };
   }
   const clusterId = optionalString(input, "ClusterIdentifier");
@@ -1398,7 +1468,7 @@ const DescribeClusterSnapshots: OperationHandler = (input, ctx) => {
       (entry) =>
         clusterId === undefined || entry.value.ClusterIdentifier === clusterId,
     )
-    .map((entry) => presentSnapshot(entry.value));
+    .map((entry) => presentSnapshot(advanceSnapshotStatus(entry.value, ctx)));
   return { Snapshots: snapshots };
 };
 
@@ -1646,12 +1716,16 @@ const ResetClusterParameterGroup: OperationHandler = (input, ctx) => {
             p !== null && typeof p === "object",
         )
       : [];
+    const defaults = defaultParameters(group.ParameterGroupFamily);
     for (const param of params) {
       const paramName = String(param["ParameterName"] ?? "");
       const existing = group.Parameters.find(
         (p) => p.ParameterName === paramName,
       );
       if (existing !== undefined) {
+        const def = defaults.find((d) => d.ParameterName === paramName);
+        existing.ParameterValue =
+          def?.ParameterValue ?? existing.ParameterValue;
         existing.Source = "engine-default";
       }
     }
@@ -3256,21 +3330,6 @@ const PurchaseReservedNodeOffering: OperationHandler = (input, ctx) => {
   const offering = requireReservedNodeOffering(ctx, offeringId);
   const nodeCount = numberOr(input, "NodeCount", 1);
   const reservedNodeId = crypto.randomUUID();
-  const existing = ctx.store
-    .list<StoredReservedNode>()
-    .find(
-      (e) =>
-        e.key.startsWith("reservednode/") &&
-        e.value.ReservedNodeOfferingId === offeringId &&
-        e.value.State === "active",
-    );
-  if (existing !== undefined) {
-    throw awsError(
-      "ReservedNodeAlreadyExistsFault",
-      `Reserved node for offering ${offeringId} already exists.`,
-      400,
-    );
-  }
   const node: StoredReservedNode = {
     ReservedNodeId: reservedNodeId,
     ReservedNodeOfferingId: offeringId,

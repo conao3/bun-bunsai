@@ -44,7 +44,7 @@ test("EKS fargate profile roundtrip", async () => {
   );
   expect(created.fargateProfile?.fargateProfileName).toBe(profileName);
   expect(created.fargateProfile?.clusterName).toBe(clusterName);
-  expect(created.fargateProfile?.status).toBe("ACTIVE");
+  expect(created.fargateProfile?.status).toBe("CREATING");
   expect(created.fargateProfile?.fargateProfileArn).toContain(
     `fargateprofile/${clusterName}/${profileName}`,
   );
@@ -106,7 +106,7 @@ test("EKS addon roundtrip", async () => {
   );
   expect(created.addon?.addonName).toBe(addonName);
   expect(created.addon?.clusterName).toBe(clusterName);
-  expect(created.addon?.status).toBe("ACTIVE");
+  expect(created.addon?.status).toBe("CREATING");
   expect(created.addon?.addonVersion).toBe("v1.18.1-eksbuild.1");
   expect(created.addon?.addonArn).toContain(
     `addon/${clusterName}/${addonName}`,

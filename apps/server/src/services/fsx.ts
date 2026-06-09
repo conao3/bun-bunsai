@@ -894,6 +894,7 @@ const CreateVolumeFromBackup: OperationHandler = (input, ctx) => {
   const volume: StoredVolume = {
     VolumeId: volumeId,
     FileSystemId: backup.FileSystem.FileSystemId,
+    StorageVirtualMachineId: undefined,
     Name: name,
     VolumeType: "ONTAP",
     Lifecycle: "CREATING",

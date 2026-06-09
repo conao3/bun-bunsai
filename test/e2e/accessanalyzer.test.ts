@@ -372,3 +372,252 @@ test("AccessAnalyzer finding recommendation", async () => {
 
   await client.send(new DeleteAnalyzerCommand({ analyzerName: name }));
 });
+
+test("AccessAnalyzer ListAnalyzers pagination", async () => {
+  const client = accessanalyzer();
+  const suffix = Date.now();
+  const names = [
+    `pagtesta_${suffix}`,
+    `pagtestb_${suffix}`,
+    `pagtestc_${suffix}`,
+  ];
+
+  for (const name of names) {
+    await client.send(
+      new CreateAnalyzerCommand({ analyzerName: name, type: "ORGANIZATION" }),
+    );
+  }
+
+  const collected: string[] = [];
+  let nextToken: string | undefined;
+  do {
+    const page = await client.send(
+      new ListAnalyzersCommand({
+        maxResults: 2,
+        type: "ORGANIZATION",
+        nextToken,
+      }),
+    );
+    for (const a of page.analyzers ?? []) {
+      if (a.name?.startsWith(`pagtest`)) collected.push(a.name);
+    }
+    nextToken = page.nextToken;
+  } while (nextToken !== undefined);
+
+  expect(collected).toHaveLength(3);
+
+  for (const name of names) {
+    await client.send(new DeleteAnalyzerCommand({ analyzerName: name }));
+  }
+});
+
+test("AccessAnalyzer ListFindings filter and pagination", async () => {
+  const client = accessanalyzer();
+  const name = `bunsai_filt_${Date.now()}`;
+
+  const created = await client.send(
+    new CreateAnalyzerCommand({ analyzerName: name, type: "ACCOUNT" }),
+  );
+  const analyzerArn = created.arn!;
+
+  const filtered = await client.send(
+    new ListFindingsCommand({
+      analyzerArn,
+      filter: { status: { eq: ["ACTIVE"] } },
+    }),
+  );
+  expect(filtered.findings).toBeDefined();
+  expect(filtered.nextToken).toBeUndefined();
+
+  const filteredV2 = await client.send(
+    new ListFindingsV2Command({
+      analyzerArn,
+      filter: { status: { eq: ["ACTIVE"] } },
+      sort: { attributeName: "createdAt", orderBy: "DESC" },
+    }),
+  );
+  expect(filteredV2.findings).toBeDefined();
+  expect(filteredV2.nextToken).toBeUndefined();
+
+  await client.send(new DeleteAnalyzerCommand({ analyzerName: name }));
+});
+
+test("AccessAnalyzer GetAnalyzedResource infers resourceType", async () => {
+  const client = accessanalyzer();
+  const name = `bunsai_restype_${Date.now()}`;
+
+  const created = await client.send(
+    new CreateAnalyzerCommand({ analyzerName: name, type: "ACCOUNT" }),
+  );
+  const analyzerArn = created.arn!;
+
+  const s3 = await client.send(
+    new GetAnalyzedResourceCommand({
+      analyzerArn,
+      resourceArn: "arn:aws:s3:::my-bucket",
+    }),
+  );
+  expect(s3.resource?.resourceType).toBe("AWS::S3::Bucket");
+
+  const iam = await client.send(
+    new GetAnalyzedResourceCommand({
+      analyzerArn,
+      resourceArn: "arn:aws:iam::123456789012:role/MyRole",
+    }),
+  );
+  expect(iam.resource?.resourceType).toBe("AWS::IAM::Role");
+
+  const lambda = await client.send(
+    new GetAnalyzedResourceCommand({
+      analyzerArn,
+      resourceArn: "arn:aws:lambda:us-east-1:123456789012:function:MyFn",
+    }),
+  );
+  expect(lambda.resource?.resourceType).toBe("AWS::Lambda::Function");
+
+  await client.send(new DeleteAnalyzerCommand({ analyzerName: name }));
+});
+
+test("AccessAnalyzer ValidatePolicy detects issues", async () => {
+  const client = accessanalyzer();
+
+  const identityWithPrincipal = JSON.stringify({
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Principal: "*",
+        Action: "s3:GetObject",
+        Resource: "*",
+      },
+    ],
+  });
+
+  const result = await client.send(
+    new ValidatePolicyCommand({
+      policyDocument: identityWithPrincipal,
+      policyType: "IDENTITY_POLICY",
+    }),
+  );
+  expect((result.findings ?? []).length).toBeGreaterThan(0);
+  expect(
+    (result.findings ?? []).some(
+      (f) => f.issueCode === "IDENTITY_POLICY_WITH_PRINCIPAL",
+    ),
+  ).toBe(true);
+
+  const noVersion = JSON.stringify({
+    Statement: [{ Effect: "Allow", Action: "s3:GetObject", Resource: "*" }],
+  });
+  const noVersionResult = await client.send(
+    new ValidatePolicyCommand({
+      policyDocument: noVersion,
+      policyType: "IDENTITY_POLICY",
+    }),
+  );
+  expect(
+    (noVersionResult.findings ?? []).some(
+      (f) => f.issueCode === "MISSING_VERSION",
+    ),
+  ).toBe(true);
+});
+
+test("AccessAnalyzer CheckNoPublicAccess detects public access", async () => {
+  const client = accessanalyzer();
+
+  const publicPolicy = JSON.stringify({
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Principal: "*",
+        Action: "s3:GetObject",
+        Resource: "*",
+      },
+    ],
+  });
+
+  const result = await client.send(
+    new CheckNoPublicAccessCommand({
+      policyDocument: publicPolicy,
+      resourceType: "AWS::S3::Bucket",
+    }),
+  );
+  expect(result.result).toBe("FAIL");
+  expect((result.reasons ?? []).length).toBeGreaterThan(0);
+});
+
+test("AccessAnalyzer CheckNoNewAccess detects new access", async () => {
+  const client = accessanalyzer();
+
+  const existing = JSON.stringify({
+    Version: "2012-10-17",
+    Statement: [{ Effect: "Allow", Action: "s3:GetObject", Resource: "*" }],
+  });
+
+  const expanded = JSON.stringify({
+    Version: "2012-10-17",
+    Statement: [
+      { Effect: "Allow", Action: "s3:GetObject", Resource: "*" },
+      { Effect: "Allow", Action: "s3:DeleteObject", Resource: "*" },
+    ],
+  });
+
+  const result = await client.send(
+    new CheckNoNewAccessCommand({
+      newPolicyDocument: expanded,
+      existingPolicyDocument: existing,
+      policyType: "IDENTITY_POLICY",
+    }),
+  );
+  expect(result.result).toBe("FAIL");
+});
+
+test("AccessAnalyzer tag unify - creation tags visible via ListTagsForResource", async () => {
+  const client = accessanalyzer();
+  const name = `bunsai_tagunify_${Date.now()}`;
+
+  const created = await client.send(
+    new CreateAnalyzerCommand({
+      analyzerName: name,
+      type: "ACCOUNT",
+      tags: { env: "prod", owner: "team-a" },
+    }),
+  );
+  const resourceArn = created.arn!;
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ resourceArn }),
+  );
+  expect(listed.tags?.env).toBe("prod");
+  expect(listed.tags?.owner).toBe("team-a");
+
+  await client.send(
+    new TagResourceCommand({ resourceArn, tags: { extra: "yes" } }),
+  );
+
+  const listedAfter = await client.send(
+    new ListTagsForResourceCommand({ resourceArn }),
+  );
+  expect(listedAfter.tags?.env).toBe("prod");
+  expect(listedAfter.tags?.extra).toBe("yes");
+
+  await client.send(
+    new UntagResourceCommand({ resourceArn, tagKeys: ["owner"] }),
+  );
+
+  const listedFinal = await client.send(
+    new ListTagsForResourceCommand({ resourceArn }),
+  );
+  expect(listedFinal.tags?.owner).toBeUndefined();
+  expect(listedFinal.tags?.env).toBe("prod");
+
+  const analyzer = await client.send(
+    new GetAnalyzerCommand({ analyzerName: name }),
+  );
+  expect(analyzer.analyzer?.tags?.env).toBe("prod");
+  expect(analyzer.analyzer?.tags?.extra).toBe("yes");
+  expect(analyzer.analyzer?.tags?.owner).toBeUndefined();
+
+  await client.send(new DeleteAnalyzerCommand({ analyzerName: name }));
+});

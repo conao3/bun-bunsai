@@ -43,7 +43,7 @@ type StoredCreateAccountStatus = {
   AccountName: string;
   State: string;
   RequestedTimestamp: number;
-  CompletedTimestamp: number;
+  CompletedTimestamp?: number;
   AccountId: string;
   GovCloudAccountId?: string;
 };
@@ -156,6 +156,33 @@ const randomDigits = (length: number): string => {
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") {
+    return 0;
+  }
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: number,
+  nextToken: unknown,
+): { page: T[]; nextToken: string | undefined } => {
+  const offset = decodePageToken(nextToken);
+  const page = items.slice(offset, offset + maxResults);
+  const nextOffset = offset + maxResults;
+  return {
+    page,
+    nextToken:
+      nextOffset < items.length ? encodePageToken(nextOffset) : undefined,
+  };
+};
+
 const requireOrganization = (ctx: ServiceContext): StoredOrganization => {
   const org = ctx.store.get<StoredOrganization>(orgKey);
   if (org === undefined) {
@@ -267,6 +294,57 @@ const resolveTarget = (
   );
 };
 
+const deepMerge = (
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+): Record<string, unknown> => {
+  const result = { ...target };
+  for (const key of Object.keys(source)) {
+    const sv = source[key];
+    const tv = target[key];
+    if (
+      sv !== null &&
+      typeof sv === "object" &&
+      !Array.isArray(sv) &&
+      tv !== null &&
+      typeof tv === "object" &&
+      !Array.isArray(tv)
+    ) {
+      result[key] = deepMerge(
+        tv as Record<string, unknown>,
+        sv as Record<string, unknown>,
+      );
+    } else {
+      result[key] = sv;
+    }
+  }
+  return result;
+};
+
+const getHierarchyPath = (ctx: ServiceContext, targetId: string): string[] => {
+  const path: string[] = [];
+  let current: string | undefined = targetId;
+  const root = ctx.store.get<StoredRoot>(rootKey);
+  while (current !== undefined) {
+    path.push(current);
+    if (root !== undefined && current === root.Id) {
+      break;
+    }
+    const account: StoredAccount | undefined = ctx.store.get<StoredAccount>(accountKey(current));
+    if (account !== undefined) {
+      current = account.ParentId;
+      continue;
+    }
+    const ou: StoredOrganizationalUnit | undefined = ctx.store.get<StoredOrganizationalUnit>(ouKey(current));
+    if (ou !== undefined) {
+      current = ou.ParentId;
+      continue;
+    }
+    break;
+  }
+  return path;
+};
+
 const CreateOrganization: OperationHandler = (input, ctx) => {
   const existing = ctx.store.get<StoredOrganization>(orgKey);
   if (existing !== undefined) {
@@ -346,9 +424,8 @@ const CreateAccount: OperationHandler = (input, ctx) => {
   const status: StoredCreateAccountStatus = {
     Id: `car-${randomChars(16)}`,
     AccountName: name,
-    State: "SUCCEEDED",
+    State: "IN_PROGRESS",
     RequestedTimestamp: now,
-    CompletedTimestamp: now,
     AccountId: accountId,
   };
   ctx.store.set(casKey(status.Id), status);
@@ -362,13 +439,18 @@ const DescribeAccount: OperationHandler = (input, ctx) => {
   return { Account: account };
 };
 
-const ListAccounts: OperationHandler = (_input, ctx) => {
+const ListAccounts: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
-  const accounts = ctx.store
+  const all = ctx.store
     .list<StoredAccount>()
     .filter((entry) => entry.key.startsWith("account/"))
     .map((entry) => entry.value);
-  return { Accounts: accounts };
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { Accounts: page, NextToken: nextToken };
 };
 
 const CreateOrganizationalUnit: OperationHandler = (input, ctx) => {
@@ -402,13 +484,18 @@ const CreateOrganizationalUnit: OperationHandler = (input, ctx) => {
 const ListOrganizationalUnitsForParent: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const parentId = requireString(input, "ParentId");
-  const units = ctx.store
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
+  const all = ctx.store
     .list<StoredOrganizationalUnit>()
     .filter((entry) => entry.key.startsWith("ou/"))
     .map((entry) => entry.value)
     .filter((ou) => ou.ParentId === parentId)
     .map((ou) => ({ Id: ou.Id, Arn: ou.Arn, Name: ou.Name }));
-  return { OrganizationalUnits: units };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { OrganizationalUnits: page, NextToken: nextToken };
 };
 
 const ListRoots: OperationHandler = (_input, ctx) => {
@@ -437,8 +524,20 @@ const AttachPolicy: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const policyId = requireString(input, "PolicyId");
   const targetId = requireString(input, "TargetId");
-  requirePolicy(ctx, policyId);
+  const policy = requirePolicy(ctx, policyId);
   resolveTarget(ctx, targetId);
+  const root = ctx.store.get<StoredRoot>(rootKey);
+  const policyTypeEnabled =
+    root?.PolicyTypes.some(
+      (pt) => pt.Type === policy.Type && pt.Status === "ENABLED",
+    ) ?? false;
+  if (!policyTypeEnabled) {
+    throw awsError(
+      "PolicyTypeNotEnabledException",
+      "The specified policy type is not currently enabled in this root.",
+      400,
+    );
+  }
   const key = attachmentKey(policyId, targetId);
   if (ctx.store.get(key) !== undefined) {
     throw awsError(
@@ -509,9 +608,8 @@ const CreateGovCloudAccount: OperationHandler = (input, ctx) => {
   const status: StoredCreateAccountStatus = {
     Id: `car-${randomChars(16)}`,
     AccountName: name,
-    State: "SUCCEEDED",
+    State: "IN_PROGRESS",
     RequestedTimestamp: now,
-    CompletedTimestamp: now,
     AccountId: accountId,
     GovCloudAccountId: govCloudAccountId,
   };
@@ -678,6 +776,15 @@ const DescribeCreateAccountStatus: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  if (status.State === "IN_PROGRESS") {
+    const succeeded: StoredCreateAccountStatus = {
+      ...status,
+      State: "SUCCEEDED",
+      CompletedTimestamp: nowSeconds(),
+    };
+    ctx.store.set(casKey(requestId), succeeded);
+    return { CreateAccountStatus: succeeded };
+  }
   return { CreateAccountStatus: status };
 };
 
@@ -685,9 +792,35 @@ const DescribeEffectivePolicy: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const policyType = requireString(input, "PolicyType");
   const targetId = optionalString(input, "TargetId") ?? ctx.account;
+  const hierarchy = getHierarchyPath(ctx, targetId);
+  let merged: Record<string, unknown> = {};
+  for (const nodeId of [...hierarchy].reverse()) {
+    const nodeAttachments = ctx.store
+      .list()
+      .filter(
+        (entry) =>
+          entry.key.startsWith("attachment/") &&
+          entry.key.endsWith(`/${nodeId}`),
+      )
+      .map((entry) => {
+        const parts = entry.key.split("/");
+        return ctx.store.get<StoredPolicy>(policyKey(parts[1] ?? ""));
+      })
+      .filter(
+        (p): p is StoredPolicy => p !== undefined && p.Type === policyType,
+      );
+    for (const policy of nodeAttachments) {
+      try {
+        const parsed = JSON.parse(policy.Content) as Record<string, unknown>;
+        merged = deepMerge(merged, parsed);
+      } catch {
+        // ignore unparseable content
+      }
+    }
+  }
   return {
     EffectivePolicy: {
-      PolicyContent: "{}",
+      PolicyContent: JSON.stringify(merged),
       LastUpdatedTimestamp: nowSeconds(),
       TargetId: targetId,
       PolicyType: policyType,
@@ -698,6 +831,16 @@ const DescribeEffectivePolicy: OperationHandler = (input, ctx) => {
 const DescribeHandshake: OperationHandler = (input, ctx) => {
   const handshakeId = requireString(input, "HandshakeId");
   const handshake = requireHandshake(ctx, handshakeId);
+  const org = ctx.store.get<StoredOrganization>(orgKey);
+  const isManagement = org !== undefined && ctx.account === org.MasterAccountId;
+  const isParty = handshake.Parties.some((p) => p.Id === ctx.account);
+  if (!isManagement && !isParty) {
+    throw awsError(
+      "AccessDeniedException",
+      "You don't have permission to access this handshake.",
+      400,
+    );
+  }
   return { Handshake: handshake };
 };
 
@@ -991,6 +1134,20 @@ const LeaveOrganization: OperationHandler = (_input, ctx) => {
       400,
     );
   }
+  const hasAttached = ctx.store
+    .list()
+    .some(
+      (entry) =>
+        entry.key.startsWith("attachment/") &&
+        entry.key.endsWith(`/${ctx.account}`),
+    );
+  if (hasAttached) {
+    throw awsError(
+      "ConstraintViolationException",
+      "You must detach all policies before leaving the organization.",
+      400,
+    );
+  }
   ctx.store.delete(accountKey(ctx.account));
   return {};
 };
@@ -1010,51 +1167,97 @@ const ListAWSServiceAccessForOrganization: OperationHandler = (_input, ctx) => {
 const ListAccountsForParent: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const parentId = requireString(input, "ParentId");
-  const accounts = ctx.store
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
+  const all = ctx.store
     .list<StoredAccount>()
     .filter((entry) => entry.key.startsWith("account/"))
     .map((entry) => entry.value)
     .filter((a) => a.ParentId === parentId);
-  return { Accounts: accounts };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { Accounts: page, NextToken: nextToken };
 };
 
 const ListAccountsWithInvalidEffectivePolicy: OperationHandler = (
-  _input,
+  input,
   ctx,
 ) => {
   requireOrganization(ctx);
-  return {
-    Accounts: [],
-    PolicyType: (_input as Record<string, unknown>)["PolicyType"] ?? "",
-  };
+  const policyType = requireString(input, "PolicyType");
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
+  const root = ctx.store.get<StoredRoot>(rootKey);
+  const typeEnabled =
+    root?.PolicyTypes.some(
+      (pt) => pt.Type === policyType && pt.Status === "ENABLED",
+    ) ?? false;
+  if (!typeEnabled) {
+    return { Accounts: [], PolicyType: policyType };
+  }
+  const all = ctx.store
+    .list<StoredAccount>()
+    .filter((entry) => entry.key.startsWith("account/"))
+    .map((entry) => entry.value)
+    .filter((account) => {
+      const hierarchy = getHierarchyPath(ctx, account.Id);
+      return !hierarchy.some((nodeId) =>
+        ctx.store.list().some((entry) => {
+          if (
+            !entry.key.startsWith("attachment/") ||
+            !entry.key.endsWith(`/${nodeId}`)
+          ) {
+            return false;
+          }
+          const parts = entry.key.split("/");
+          const p = ctx.store.get<StoredPolicy>(policyKey(parts[1] ?? ""));
+          return p !== undefined && p.Type === policyType;
+        }),
+      );
+    });
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { Accounts: page, PolicyType: policyType, NextToken: nextToken };
 };
 
 const ListChildren: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const parentId = requireString(input, "ParentId");
   const childType = requireString(input, "ChildType");
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
   if (childType === "ACCOUNT") {
-    const children = ctx.store
+    const all = ctx.store
       .list<StoredAccount>()
       .filter((entry) => entry.key.startsWith("account/"))
       .map((entry) => entry.value)
       .filter((a) => a.ParentId === parentId)
       .map((a) => ({ Id: a.Id, Type: "ACCOUNT" as const }));
-    return { Children: children };
+    const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+    return { Children: page, NextToken: nextToken };
   }
-  const children = ctx.store
+  const all = ctx.store
     .list<StoredOrganizationalUnit>()
     .filter((entry) => entry.key.startsWith("ou/"))
     .map((entry) => entry.value)
     .filter((ou) => ou.ParentId === parentId)
     .map((ou) => ({ Id: ou.Id, Type: "ORGANIZATIONAL_UNIT" as const }));
-  return { Children: children };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { Children: page, NextToken: nextToken };
 };
 
 const ListCreateAccountStatus: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const states = input["States"] as string[] | undefined;
-  const statuses = ctx.store
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
+  const all = ctx.store
     .list<StoredCreateAccountStatus>()
     .filter((entry) => entry.key.startsWith("cas/"))
     .map((entry) => entry.value)
@@ -1062,12 +1265,17 @@ const ListCreateAccountStatus: OperationHandler = (input, ctx) => {
       (s) =>
         states === undefined || states.length === 0 || states.includes(s.State),
     );
-  return { CreateAccountStatuses: statuses };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { CreateAccountStatuses: page, NextToken: nextToken };
 };
 
 const ListDelegatedAdministrators: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const filterSp = optionalString(input, "ServicePrincipal");
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
   const delegates = ctx.store
     .list<{
       AccountId: string;
@@ -1077,7 +1285,7 @@ const ListDelegatedAdministrators: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith("delegate/"))
     .map((entry) => entry.value)
     .filter((d) => filterSp === undefined || d.ServicePrincipal === filterSp);
-  const result = delegates.map((d) => {
+  const all = delegates.map((d) => {
     const account = ctx.store.get<StoredAccount>(accountKey(d.AccountId));
     return {
       Id: d.AccountId,
@@ -1091,15 +1299,20 @@ const ListDelegatedAdministrators: OperationHandler = (input, ctx) => {
       DelegationEnabledDate: d.DelegationEnabledDate,
     };
   });
-  return { DelegatedAdministrators: result };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { DelegatedAdministrators: page, NextToken: nextToken };
 };
 
 const ListDelegatedServicesForAccount: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const accountId = requireString(input, "AccountId");
   requireAccount(ctx, accountId);
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
   const prefix = `delegate/${accountId}/`;
-  const services = ctx.store
+  const all = ctx.store
     .list<{
       AccountId: string;
       ServicePrincipal: string;
@@ -1110,19 +1323,52 @@ const ListDelegatedServicesForAccount: OperationHandler = (input, ctx) => {
       ServicePrincipal: entry.value.ServicePrincipal,
       DelegationEnabledDate: entry.value.DelegationEnabledDate,
     }));
-  return { DelegatedServices: services };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { DelegatedServices: page, NextToken: nextToken };
 };
 
 const ListEffectivePolicyValidationErrors: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const accountId = requireString(input, "AccountId");
+  requireAccount(ctx, accountId);
   const policyType = requireString(input, "PolicyType");
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
+  const hierarchy = getHierarchyPath(ctx, accountId);
+  const path = hierarchy
+    .slice()
+    .reverse()
+    .map((nodeId) => {
+      const root = ctx.store.get<StoredRoot>(rootKey);
+      if (root !== undefined && root.Id === nodeId) {
+        return { Id: nodeId, Type: "ROOT" as const };
+      }
+      const ou = ctx.store.get<StoredOrganizationalUnit>(ouKey(nodeId));
+      if (ou !== undefined) {
+        return { Id: nodeId, Type: "ORGANIZATIONAL_UNIT" as const };
+      }
+      return { Id: nodeId, Type: "ACCOUNT" as const };
+    });
+  const allErrors: {
+    PolicyId?: string;
+    PolicyType: string;
+    ErrorCode: string;
+    ErrorMessage: string;
+  }[] = [];
+  const { page, nextToken } = paginate(
+    allErrors,
+    maxResults,
+    input["NextToken"],
+  );
   return {
     AccountId: accountId,
     PolicyType: policyType,
-    Path: [],
+    Path: path,
     EvaluationTimestamp: nowSeconds(),
-    EffectivePolicyValidationErrors: [],
+    EffectivePolicyValidationErrors: page,
+    NextToken: nextToken,
   };
 };
 
@@ -1130,15 +1376,18 @@ const ListHandshakesForAccount: OperationHandler = (input, ctx) => {
   const filter = input["Filter"] as Record<string, unknown> | undefined;
   const actionType =
     filter !== undefined ? optionalString(filter, "ActionType") : undefined;
-  const handshakes = ctx.store
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
+  const all = ctx.store
     .list<StoredHandshake>()
     .filter((entry) => entry.key.startsWith("handshake/"))
     .map((entry) => entry.value)
-    .filter((h) =>
-      h.Parties.some((p) => p.Id === ctx.account || p.Type === "ACCOUNT"),
-    )
+    .filter((h) => h.Parties.some((p) => p.Id === ctx.account))
     .filter((h) => actionType === undefined || h.Action === actionType);
-  return { Handshakes: handshakes };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { Handshakes: page, NextToken: nextToken };
 };
 
 const ListHandshakesForOrganization: OperationHandler = (input, ctx) => {
@@ -1146,12 +1395,17 @@ const ListHandshakesForOrganization: OperationHandler = (input, ctx) => {
   const filter = input["Filter"] as Record<string, unknown> | undefined;
   const actionType =
     filter !== undefined ? optionalString(filter, "ActionType") : undefined;
-  const handshakes = ctx.store
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
+  const all = ctx.store
     .list<StoredHandshake>()
     .filter((entry) => entry.key.startsWith("handshake/"))
     .map((entry) => entry.value)
     .filter((h) => actionType === undefined || h.Action === actionType);
-  return { Handshakes: handshakes };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { Handshakes: page, NextToken: nextToken };
 };
 
 const ListInboundResponsibilityTransfers: OperationHandler = (_input, ctx) => {
@@ -1203,7 +1457,11 @@ const ListParents: OperationHandler = (input, ctx) => {
 const ListPolicies: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const filter = optionalString(input, "Filter");
-  const policies = ctx.store
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
+  const all = ctx.store
     .list<StoredPolicy>()
     .filter((entry) => entry.key.startsWith("policy/"))
     .map((entry) => entry.value)
@@ -1216,14 +1474,19 @@ const ListPolicies: OperationHandler = (input, ctx) => {
       Type: p.Type,
       AwsManaged: p.AwsManaged,
     }));
-  return { Policies: policies };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { Policies: page, NextToken: nextToken };
 };
 
 const ListPoliciesForTarget: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const targetId = requireString(input, "TargetId");
   const filter = optionalString(input, "Filter");
-  const policies = ctx.store
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
+  const all = ctx.store
     .list()
     .filter(
       (entry) =>
@@ -1245,30 +1508,41 @@ const ListPoliciesForTarget: OperationHandler = (input, ctx) => {
       Type: p.Type,
       AwsManaged: p.AwsManaged,
     }));
-  return { Policies: policies };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { Policies: page, NextToken: nextToken };
 };
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const resourceId = requireString(input, "ResourceId");
-  const tags =
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
+  const all =
     ctx.store.get<{ Key: string; Value: string }[]>(tagsKey(resourceId)) ?? [];
-  return { Tags: tags };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { Tags: page, NextToken: nextToken };
 };
 
 const ListTargetsForPolicy: OperationHandler = (input, ctx) => {
   requireOrganization(ctx);
   const policyId = requireString(input, "PolicyId");
   requirePolicy(ctx, policyId);
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : 20;
   const prefix = `attachment/${policyId}/`;
-  const targets = ctx.store
+  const all = ctx.store
     .list<{ PolicyId: string; TargetId: string }>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => {
       const targetId = entry.value.TargetId;
       return resolveTarget(ctx, targetId);
     });
-  return { Targets: targets };
+  const { page, nextToken } = paginate(all, maxResults, input["NextToken"]);
+  return { Targets: page, NextToken: nextToken };
 };
 
 const MoveAccount: OperationHandler = (input, ctx) => {
@@ -1348,6 +1622,20 @@ const RemoveAccountFromOrganization: OperationHandler = (input, ctx) => {
     throw awsError(
       "MasterCannotLeaveOrganizationException",
       "You can't remove a management account from an organization.",
+      400,
+    );
+  }
+  const hasAttached = ctx.store
+    .list()
+    .some(
+      (entry) =>
+        entry.key.startsWith("attachment/") &&
+        entry.key.endsWith(`/${accountId}`),
+    );
+  if (hasAttached) {
+    throw awsError(
+      "ConstraintViolationException",
+      "You must detach all policies before removing an account from the organization.",
       400,
     );
   }

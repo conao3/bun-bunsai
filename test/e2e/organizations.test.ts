@@ -16,6 +16,7 @@ import {
   DeregisterDelegatedAdministratorCommand,
   DescribeAccountCommand,
   DescribeCreateAccountStatusCommand,
+  DescribeEffectivePolicyCommand,
   DescribeHandshakeCommand,
   DescribeOrganizationCommand,
   DescribeOrganizationalUnitCommand,
@@ -34,6 +35,7 @@ import {
   ListCreateAccountStatusCommand,
   ListDelegatedAdministratorsCommand,
   ListDelegatedServicesForAccountCommand,
+  ListHandshakesForAccountCommand,
   ListHandshakesForOrganizationCommand,
   ListOrganizationalUnitsForParentCommand,
   ListParentsCommand,
@@ -82,8 +84,18 @@ test("Organizations org / account / ou lifecycle", async () => {
       Email: "bunsai-e2e@example.com",
     }),
   );
-  expect(account.CreateAccountStatus?.State).toBe("SUCCEEDED");
-  const accountId = account.CreateAccountStatus?.AccountId;
+  expect(account.CreateAccountStatus?.State).toBe("IN_PROGRESS");
+  const requestId = account.CreateAccountStatus?.Id;
+  expect(requestId).toBeDefined();
+
+  const statusResult = await client.send(
+    new DescribeCreateAccountStatusCommand({
+      CreateAccountRequestId: requestId!,
+    }),
+  );
+  expect(statusResult.CreateAccountStatus?.State).toBe("SUCCEEDED");
+  expect(statusResult.CreateAccountStatus?.CompletedTimestamp).toBeDefined();
+  const accountId = statusResult.CreateAccountStatus?.AccountId;
   expect(accountId).toBeDefined();
 
   const describedAccount = await client.send(
@@ -522,4 +534,166 @@ test("Organizations resource policy", async () => {
   } catch (e: unknown) {
     expect((e as Error).name).toBe("ResourcePolicyNotFoundException");
   }
+});
+
+test("Organizations DescribeEffectivePolicy hierarchy merge", async () => {
+  const client = org();
+
+  const roots = await client.send(new ListRootsCommand({}));
+  const rootId = roots.Roots?.[0]?.Id!;
+
+  try {
+    await client.send(
+      new EnablePolicyTypeCommand({ RootId: rootId, PolicyType: "TAG_POLICY" }),
+    );
+  } catch {
+    // already enabled
+  }
+
+  const ouRes = await client.send(
+    new CreateOrganizationalUnitCommand({
+      ParentId: rootId,
+      Name: "effective-policy-ou",
+    }),
+  );
+  const ouId = ouRes.OrganizationalUnit?.Id!;
+
+  const accountRes = await client.send(
+    new CreateAccountCommand({
+      AccountName: "effective-policy-account",
+      Email: "effective-policy@example.com",
+    }),
+  );
+  const accountId = accountRes.CreateAccountStatus?.AccountId!;
+
+  await client.send(
+    new MoveAccountCommand({
+      AccountId: accountId,
+      SourceParentId: rootId,
+      DestinationParentId: ouId,
+    }),
+  );
+
+  const rootPolicyRes = await client.send(
+    new CreatePolicyCommand({
+      Content: '{"tags":{"CostCenter":{"tag_value":{"@@assign":"100"}}}}',
+      Description: "root tag policy for merge test",
+      Name: "merge-test-root-policy",
+      Type: "TAG_POLICY",
+    }),
+  );
+  const rootPolicyId = rootPolicyRes.Policy?.PolicySummary?.Id!;
+  await client.send(
+    new AttachPolicyCommand({ PolicyId: rootPolicyId, TargetId: rootId }),
+  );
+
+  const ouPolicyRes = await client.send(
+    new CreatePolicyCommand({
+      Content: '{"tags":{"Env":{"tag_value":{"@@assign":"prod"}}}}',
+      Description: "ou tag policy for merge test",
+      Name: "merge-test-ou-policy",
+      Type: "TAG_POLICY",
+    }),
+  );
+  const ouPolicyId = ouPolicyRes.Policy?.PolicySummary?.Id!;
+  await client.send(
+    new AttachPolicyCommand({ PolicyId: ouPolicyId, TargetId: ouId }),
+  );
+
+  const effective = await client.send(
+    new DescribeEffectivePolicyCommand({
+      PolicyType: "TAG_POLICY",
+      TargetId: accountId,
+    }),
+  );
+  expect(effective.EffectivePolicy?.PolicyType).toBe("TAG_POLICY");
+  expect(effective.EffectivePolicy?.TargetId).toBe(accountId);
+  const content = JSON.parse(effective.EffectivePolicy?.PolicyContent ?? "{}");
+  expect(content.tags?.CostCenter).toBeDefined();
+  expect(content.tags?.Env).toBeDefined();
+});
+
+test("Organizations List pagination", async () => {
+  const client = org();
+
+  const roots = await client.send(new ListRootsCommand({}));
+  const rootId = roots.Roots?.[0]?.Id!;
+
+  for (let i = 0; i < 5; i++) {
+    await client.send(
+      new CreateAccountCommand({
+        AccountName: `pagination-account-${i}`,
+        Email: `pagination-${i}@example.com`,
+      }),
+    );
+  }
+
+  const page1 = await client.send(new ListAccountsCommand({ MaxResults: 3 }));
+  expect((page1.Accounts ?? []).length).toBe(3);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListAccountsCommand({ MaxResults: 3, NextToken: page1.NextToken }),
+  );
+  expect((page2.Accounts ?? []).length).toBeGreaterThan(0);
+
+  const allIds = [
+    ...(page1.Accounts ?? []).map((a) => a.Id),
+    ...(page2.Accounts ?? []).map((a) => a.Id),
+  ];
+  const uniqueIds = new Set(allIds);
+  expect(uniqueIds.size).toBe(allIds.length);
+
+  try {
+    await client.send(
+      new EnablePolicyTypeCommand({ RootId: rootId, PolicyType: "TAG_POLICY" }),
+    );
+  } catch {
+    // already enabled
+  }
+
+  for (let i = 0; i < 3; i++) {
+    await client.send(
+      new CreatePolicyCommand({
+        Content: `{"tags":{"k${i}":{"tag_value":{"@@assign":"v${i}"}}}}`,
+        Description: `pagination policy ${i}`,
+        Name: `pagination-policy-${i}`,
+        Type: "TAG_POLICY",
+      }),
+    );
+  }
+
+  const polPage1 = await client.send(
+    new ListPoliciesCommand({ Filter: "TAG_POLICY", MaxResults: 2 }),
+  );
+  expect((polPage1.Policies ?? []).length).toBe(2);
+  expect(polPage1.NextToken).toBeDefined();
+
+  const polPage2 = await client.send(
+    new ListPoliciesCommand({
+      Filter: "TAG_POLICY",
+      MaxResults: 2,
+      NextToken: polPage1.NextToken,
+    }),
+  );
+  expect((polPage2.Policies ?? []).length).toBeGreaterThan(0);
+});
+
+test("Organizations ListHandshakesForAccount scoping", async () => {
+  const client = org();
+
+  const invited = await client.send(
+    new InviteAccountToOrganizationCommand({
+      Target: { Id: "222233334444", Type: "ACCOUNT" },
+    }),
+  );
+  const handshakeId = invited.Handshake?.Id!;
+
+  const forAccount = await client.send(new ListHandshakesForAccountCommand({}));
+  expect(forAccount.Handshakes?.some((h) => h.Id === handshakeId)).toBe(false);
+
+  const forOrg = await client.send(
+    new ListHandshakesForOrganizationCommand({}),
+  );
+  expect(forOrg.Handshakes?.some((h) => h.Id === handshakeId)).toBe(true);
 });

@@ -34,6 +34,7 @@ type StoredDeliveryStream = {
   HasMoreDestinations: boolean;
   Tags: StoredTag[];
   EncryptionConfiguration?: StoredEncryptionConfiguration;
+  Source?: Record<string, unknown>;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -78,6 +79,7 @@ const descriptionOf = (stream: StoredDeliveryStream) => ({
   Destinations: stream.Destinations,
   HasMoreDestinations: stream.HasMoreDestinations,
   DeliveryStreamEncryptionConfiguration: stream.EncryptionConfiguration,
+  ...(stream.Source !== undefined ? { Source: stream.Source } : {}),
 });
 
 const bucketNameFromArn = (arn: string): string =>
@@ -170,6 +172,42 @@ const CreateDeliveryStream: OperationHandler = (input, ctx) => {
       ),
     });
   }
+  const inputTags = Array.isArray(input["Tags"])
+    ? (input["Tags"] as Array<{ Key: string; Value?: string }>)
+    : [];
+  const recordIfPresent = (
+    value: unknown,
+  ): Record<string, unknown> | undefined =>
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  const kinesisSrc = recordIfPresent(input["KinesisStreamSourceConfiguration"]);
+  const mskSrc = recordIfPresent(input["MSKSourceConfiguration"]);
+  const dbSrc = recordIfPresent(input["DatabaseSourceConfiguration"]);
+  const directSrc = recordIfPresent(input["DirectPutSourceConfiguration"]);
+  let source: Record<string, unknown> | undefined;
+  if (kinesisSrc !== undefined) {
+    source = {
+      KinesisStreamSourceDescription: {
+        KinesisStreamARN: kinesisSrc["KinesisStreamARN"],
+        RoleARN: kinesisSrc["RoleARN"],
+        DeliveryStartTimestamp: now,
+      },
+    };
+  } else if (mskSrc !== undefined) {
+    source = {
+      MSKSourceDescription: {
+        MSKClusterARN: mskSrc["MSKClusterARN"],
+        TopicName: mskSrc["TopicName"],
+        AuthenticationConfiguration: mskSrc["AuthenticationConfiguration"],
+        DeliveryStartTimestamp: now,
+      },
+    };
+  } else if (dbSrc !== undefined) {
+    source = { DatabaseSourceDescription: { ...dbSrc, SnapshotInfo: [] } };
+  } else if (directSrc !== undefined) {
+    source = { DirectPutSourceDescription: { ...directSrc } };
+  }
   const stream: StoredDeliveryStream = {
     DeliveryStreamName: name,
     DeliveryStreamARN: arn,
@@ -180,7 +218,8 @@ const CreateDeliveryStream: OperationHandler = (input, ctx) => {
     LastUpdateTimestamp: now,
     Destinations: destinations,
     HasMoreDestinations: false,
-    Tags: [],
+    Tags: inputTags,
+    ...(source !== undefined ? { Source: source } : {}),
   };
   ctx.store.set(`${streamPrefix}${name}`, stream);
   return { DeliveryStreamARN: arn };
@@ -382,11 +421,39 @@ const UntagDeliveryStream: OperationHandler = (input, ctx) => {
 const StartDeliveryStreamEncryption: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DeliveryStreamName");
   const stream = requireStream(ctx, name);
-  const config = asRecord(input["DeliveryStreamEncryptionConfigurationInput"]);
-  const keyType =
-    typeof config["KeyType"] === "string"
-      ? (config["KeyType"] as string)
-      : "AWS_OWNED_CMK";
+  if (
+    stream.DeliveryStreamStatus === "CREATING" ||
+    stream.DeliveryStreamStatus === "DELETING"
+  ) {
+    throw awsError(
+      "ResourceInUseException",
+      `Delivery stream ${name} is ${stream.DeliveryStreamStatus}; encryption cannot be modified.`,
+      400,
+    );
+  }
+  const config =
+    typeof input["DeliveryStreamEncryptionConfigurationInput"] === "object" &&
+    input["DeliveryStreamEncryptionConfigurationInput"] !== null
+      ? (input["DeliveryStreamEncryptionConfigurationInput"] as Record<
+          string,
+          unknown
+        >)
+      : undefined;
+  if (config === undefined) {
+    throw awsError(
+      "InvalidArgumentException",
+      "DeliveryStreamEncryptionConfigurationInput is required.",
+      400,
+    );
+  }
+  if (typeof config["KeyType"] !== "string" || config["KeyType"] === "") {
+    throw awsError(
+      "InvalidArgumentException",
+      "DeliveryStreamEncryptionConfigurationInput.KeyType is required.",
+      400,
+    );
+  }
+  const keyType = config["KeyType"] as string;
   const keyArn =
     typeof config["KeyARN"] === "string"
       ? (config["KeyARN"] as string)
@@ -406,12 +473,29 @@ const StartDeliveryStreamEncryption: OperationHandler = (input, ctx) => {
 const StopDeliveryStreamEncryption: OperationHandler = (input, ctx) => {
   const name = requireString(input, "DeliveryStreamName");
   const stream = requireStream(ctx, name);
+  if (
+    stream.DeliveryStreamStatus === "CREATING" ||
+    stream.DeliveryStreamStatus === "DELETING"
+  ) {
+    throw awsError(
+      "ResourceInUseException",
+      `Delivery stream ${name} is ${stream.DeliveryStreamStatus}; encryption cannot be modified.`,
+      400,
+    );
+  }
   const previous = stream.EncryptionConfiguration;
+  if (previous === undefined || previous.Status === "DISABLED") {
+    throw awsError(
+      "ResourceInUseException",
+      `Delivery stream ${name} has no active encryption to stop.`,
+      400,
+    );
+  }
   ctx.store.set(`${streamPrefix}${name}`, {
     ...stream,
     EncryptionConfiguration: {
-      KeyARN: previous?.KeyARN,
-      KeyType: previous?.KeyType,
+      KeyARN: previous.KeyARN,
+      KeyType: previous.KeyType,
       Status: "DISABLING",
     },
     LastUpdateTimestamp: Math.floor(Date.now() / 1000),

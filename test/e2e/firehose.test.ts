@@ -6,6 +6,7 @@ import {
   DescribeDeliveryStreamCommand,
   FirehoseClient,
   ListDeliveryStreamsCommand,
+  ListTagsForDeliveryStreamCommand,
   PutRecordBatchCommand,
   PutRecordCommand,
   StartDeliveryStreamEncryptionCommand,
@@ -186,6 +187,89 @@ describe("firehose e2e", () => {
       disabling.DeliveryStreamDescription?.DeliveryStreamEncryptionConfiguration
         ?.Status,
     ).toBe("DISABLED");
+
+    await client.send(
+      new DeleteDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+  });
+
+  test("CreateDeliveryStream persists Tags and KinesisStreamSource", async () => {
+    const client = firehose();
+    const name = `bunsai-tag-src-${Date.now()}`;
+
+    await client.send(
+      new CreateDeliveryStreamCommand({
+        DeliveryStreamName: name,
+        DeliveryStreamType: "KinesisStreamAsSource",
+        KinesisStreamSourceConfiguration: {
+          KinesisStreamARN: "arn:aws:kinesis:us-east-1:000000000000:stream/src",
+          RoleARN: "arn:aws:iam::000000000000:role/firehose",
+        },
+        Tags: [
+          { Key: "env", Value: "test" },
+          { Key: "team", Value: "bunsai" },
+        ],
+      }),
+    );
+
+    const tags = await client.send(
+      new ListTagsForDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+    expect((tags.Tags ?? []).some((t) => t.Key === "env")).toBe(true);
+    expect((tags.Tags ?? []).some((t) => t.Key === "team")).toBe(true);
+
+    const described = await client.send(
+      new DescribeDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+    expect(
+      described.DeliveryStreamDescription?.Source
+        ?.KinesisStreamSourceDescription?.KinesisStreamARN,
+    ).toBe("arn:aws:kinesis:us-east-1:000000000000:stream/src");
+
+    await client.send(
+      new DeleteDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+  });
+
+  test("StopDeliveryStreamEncryption rejects when no active encryption", async () => {
+    const client = firehose();
+    const name = `bunsai-noenc-${Date.now()}`;
+    await client.send(
+      new CreateDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+    await client.send(
+      new DescribeDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+    await expect(
+      client.send(
+        new StopDeliveryStreamEncryptionCommand({ DeliveryStreamName: name }),
+      ),
+    ).rejects.toThrow(/no active encryption/);
+    await client.send(
+      new DeleteDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+  });
+
+  test("StartDeliveryStreamEncryption requires KeyType", async () => {
+    const client = firehose();
+    const name = `bunsai-keytype-${Date.now()}`;
+    await client.send(
+      new CreateDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+    await client.send(
+      new DescribeDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+
+    await expect(
+      client.send(
+        new StartDeliveryStreamEncryptionCommand({
+          DeliveryStreamName: name,
+          DeliveryStreamEncryptionConfigurationInput: {
+            KeyARN: "arn:aws:kms:us-east-1:000000000000:key/abc",
+          } as unknown as { KeyType: "AWS_OWNED_CMK" },
+        }),
+      ),
+    ).rejects.toThrow(/KeyType/);
 
     await client.send(
       new DeleteDeliveryStreamCommand({ DeliveryStreamName: name }),

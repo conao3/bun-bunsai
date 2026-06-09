@@ -522,3 +522,212 @@ test("RAM TagResource and UntagResource", async () => {
     new DeleteResourceShareCommand({ resourceShareArn: shareArn }),
   );
 });
+
+test("RAM GetResourceShares resourceOwner SELF vs OTHER-ACCOUNTS", async () => {
+  const client = ram();
+  const name = `bunsai_owner_${Date.now()}`;
+
+  const created = await client.send(new CreateResourceShareCommand({ name }));
+  const arn = created.resourceShare?.resourceShareArn!;
+
+  const selfShares = await client.send(
+    new GetResourceSharesCommand({ resourceOwner: "SELF" }),
+  );
+  expect(
+    (selfShares.resourceShares ?? []).map((s) => s.resourceShareArn),
+  ).toContain(arn);
+
+  const otherShares = await client.send(
+    new GetResourceSharesCommand({ resourceOwner: "OTHER-ACCOUNTS" }),
+  );
+  expect(
+    (otherShares.resourceShares ?? []).map((s) => s.resourceShareArn),
+  ).not.toContain(arn);
+
+  await client.send(new DeleteResourceShareCommand({ resourceShareArn: arn }));
+});
+
+test("RAM GetResourceShares pagination", async () => {
+  const client = ram();
+  const prefix = `bunsai_page_${Date.now()}`;
+  const created: string[] = [];
+
+  for (let i = 0; i < 3; i++) {
+    const r = await client.send(
+      new CreateResourceShareCommand({ name: `${prefix}_${i}` }),
+    );
+    created.push(r.resourceShare?.resourceShareArn!);
+  }
+
+  const page1 = await client.send(
+    new GetResourceSharesCommand({ resourceOwner: "SELF", maxResults: 2 }),
+  );
+  expect((page1.resourceShares ?? []).length).toBeGreaterThanOrEqual(1);
+  expect((page1.resourceShares ?? []).length).toBeLessThanOrEqual(2);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new GetResourceSharesCommand({
+      resourceOwner: "SELF",
+      maxResults: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect(page2.resourceShares).toBeDefined();
+
+  const allArns = [
+    ...(page1.resourceShares ?? []).map((s) => s.resourceShareArn),
+    ...(page2.resourceShares ?? []).map((s) => s.resourceShareArn),
+  ];
+  for (const arn of created) {
+    expect(allArns).toContain(arn);
+  }
+
+  for (const arn of created) {
+    await client.send(
+      new DeleteResourceShareCommand({ resourceShareArn: arn }),
+    );
+  }
+});
+
+test("RAM AssociateResourceShare returns ASSOCIATING status", async () => {
+  const client = ram();
+  const name = `bunsai_associating_${Date.now()}`;
+  const resourceArn = "arn:aws:s3:::assoc-status-bucket";
+
+  const created = await client.send(new CreateResourceShareCommand({ name }));
+  const shareArn = created.resourceShare?.resourceShareArn!;
+
+  const assocResult = await client.send(
+    new AssociateResourceShareCommand({
+      resourceShareArn: shareArn,
+      resourceArns: [resourceArn],
+    }),
+  );
+  expect(assocResult.resourceShareAssociations).toBeDefined();
+  const statuses = (assocResult.resourceShareAssociations ?? []).map(
+    (a) => a.status,
+  );
+  expect(statuses).toContain("ASSOCIATING");
+
+  const afterAssoc = await client.send(
+    new GetResourceShareAssociationsCommand({
+      associationType: "RESOURCE",
+      resourceShareArns: [shareArn],
+    }),
+  );
+  const afterStatuses = (afterAssoc.resourceShareAssociations ?? []).map(
+    (a) => a.status,
+  );
+  expect(afterStatuses).toContain("ASSOCIATED");
+
+  const disassocResult = await client.send(
+    new DisassociateResourceShareCommand({
+      resourceShareArn: shareArn,
+      resourceArns: [resourceArn],
+    }),
+  );
+  const disassocStatuses = (disassocResult.resourceShareAssociations ?? []).map(
+    (a) => a.status,
+  );
+  expect(disassocStatuses).toContain("DISASSOCIATING");
+
+  await client.send(
+    new DeleteResourceShareCommand({ resourceShareArn: shareArn }),
+  );
+});
+
+test("RAM GetResourceShares tagFilters filtering", async () => {
+  const client = ram();
+  const name = `bunsai_tagfilter_${Date.now()}`;
+
+  const created = await client.send(
+    new CreateResourceShareCommand({
+      name,
+      tags: [{ key: "project", value: "alpha" }],
+    }),
+  );
+  const arn = created.resourceShare?.resourceShareArn!;
+
+  const filtered = await client.send(
+    new GetResourceSharesCommand({
+      resourceOwner: "SELF",
+      tagFilters: [{ tagKey: "project", tagValues: ["alpha"] }],
+    }),
+  );
+  expect(
+    (filtered.resourceShares ?? []).map((s) => s.resourceShareArn),
+  ).toContain(arn);
+
+  const noMatch = await client.send(
+    new GetResourceSharesCommand({
+      resourceOwner: "SELF",
+      tagFilters: [{ tagKey: "project", tagValues: ["beta"] }],
+    }),
+  );
+  expect(
+    (noMatch.resourceShares ?? []).map((s) => s.resourceShareArn),
+  ).not.toContain(arn);
+
+  await client.send(new DeleteResourceShareCommand({ resourceShareArn: arn }));
+});
+
+test("RAM ReplacePermissionAssociations returns IN_PROGRESS then COMPLETED", async () => {
+  const client = ram();
+  const shareName = `bunsai_inprogress_${Date.now()}`;
+  const permName1 = `bunsai_fromperm_${Date.now()}`;
+  const permName2 = `bunsai_toperm_${Date.now()}`;
+
+  const share = await client.send(
+    new CreateResourceShareCommand({ name: shareName }),
+  );
+  const shareArn = share.resourceShare?.resourceShareArn!;
+
+  const p1 = await client.send(
+    new CreatePermissionCommand({
+      name: permName1,
+      resourceType: "ec2:Instance",
+      policyTemplate: "{}",
+    }),
+  );
+  const p2 = await client.send(
+    new CreatePermissionCommand({
+      name: permName2,
+      resourceType: "ec2:Instance",
+      policyTemplate: "{}",
+    }),
+  );
+  const fromArn = p1.permission?.arn!;
+  const toArn = p2.permission?.arn!;
+
+  await client.send(
+    new AssociateResourceSharePermissionCommand({
+      resourceShareArn: shareArn,
+      permissionArn: fromArn,
+    }),
+  );
+
+  const replaceResult = await client.send(
+    new ReplacePermissionAssociationsCommand({
+      fromPermissionArn: fromArn,
+      toPermissionArn: toArn,
+    }),
+  );
+  expect(replaceResult.replacePermissionAssociationsWork?.status).toBe(
+    "IN_PROGRESS",
+  );
+
+  const workId = replaceResult.replacePermissionAssociationsWork?.id!;
+  const listed = await client.send(
+    new ListReplacePermissionAssociationsWorkCommand({ workIds: [workId] }),
+  );
+  expect(listed.replacePermissionAssociationsWorks?.[0]?.status).toBe(
+    "COMPLETED",
+  );
+
+  await client.send(new DeletePermissionCommand({ permissionArn: fromArn }));
+  await client.send(new DeletePermissionCommand({ permissionArn: toArn }));
+  await client.send(
+    new DeleteResourceShareCommand({ resourceShareArn: shareArn }),
+  );
+});

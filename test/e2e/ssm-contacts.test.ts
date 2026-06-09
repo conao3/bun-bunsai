@@ -598,9 +598,9 @@ test("SSMContacts fidelity gaps — CreateContact Tags, pagination, ActivationCo
 
   await expect(
     client.send(
-      new ActivateContactChannelCommand(
-        { ContactChannelId: channel.ContactChannelArn! } as never,
-      ),
+      new ActivateContactChannelCommand({
+        ContactChannelId: channel.ContactChannelArn!,
+      } as never),
     ),
   ).rejects.toThrow();
 

@@ -295,6 +295,35 @@ const requireString = (input: Record<string, unknown>, key: string): string => {
   return v;
 };
 
+const stringsFrom = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string")
+    : [];
+
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; nextToken?: string } => {
+  const limit =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : undefined;
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(atob(nextToken), 10)
+      : 0;
+  const sliced =
+    limit !== undefined
+      ? items.slice(offset, offset + limit)
+      : items.slice(offset);
+  const nextOffset = offset + sliced.length;
+  return {
+    items: sliced,
+    ...(limit !== undefined && nextOffset < items.length
+      ? { nextToken: btoa(String(nextOffset)) }
+      : {}),
+  };
+};
+
 const nowSec = (): number => Math.floor(Date.now() / 1000);
 
 const shortId = (): string =>
@@ -686,13 +715,20 @@ const CreateSite: OperationHandler = (input, ctx) => {
 const GetSites: OperationHandler = (input, ctx) => {
   const gid = requireString(input, "GlobalNetworkId");
   requireGlobalNetwork(ctx, gid);
+  const siteIds = stringsFrom(input["SiteIds"]);
   const prefix = `site/${gid}/`;
-  const sites = ctx.store
+  const all = ctx.store
     .list<StoredSite>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
+    .filter((s) => siteIds.length === 0 || siteIds.includes(s.SiteId))
     .sort((a, b) => a.SiteId.localeCompare(b.SiteId));
-  return { Sites: sites.map(siteView) };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Sites: items.map(siteView), NextToken: nextToken };
 };
 
 const UpdateSite: OperationHandler = (input, ctx) => {
@@ -743,13 +779,22 @@ const CreateDevice: OperationHandler = (input, ctx) => {
 const GetDevices: OperationHandler = (input, ctx) => {
   const gid = requireString(input, "GlobalNetworkId");
   requireGlobalNetwork(ctx, gid);
+  const deviceIds = stringsFrom(input["DeviceIds"]);
+  const siteId = stringOrUndefined(input["SiteId"]);
   const prefix = `device/${gid}/`;
-  const devices = ctx.store
+  const all = ctx.store
     .list<StoredDevice>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
+    .filter((d) => deviceIds.length === 0 || deviceIds.includes(d.DeviceId))
+    .filter((d) => siteId === undefined || d.SiteId === siteId)
     .sort((a, b) => a.DeviceId.localeCompare(b.DeviceId));
-  return { Devices: devices.map(deviceView) };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Devices: items.map(deviceView), NextToken: nextToken };
 };
 
 const UpdateDevice: OperationHandler = (input, ctx) => {
@@ -804,13 +849,26 @@ const CreateLink: OperationHandler = (input, ctx) => {
 const GetLinks: OperationHandler = (input, ctx) => {
   const gid = requireString(input, "GlobalNetworkId");
   requireGlobalNetwork(ctx, gid);
+  const linkIds = stringsFrom(input["LinkIds"]);
+  const siteId = stringOrUndefined(input["SiteId"]);
+  const type = stringOrUndefined(input["Type"]);
+  const provider = stringOrUndefined(input["Provider"]);
   const prefix = `link/${gid}/`;
-  const links = ctx.store
+  const all = ctx.store
     .list<StoredLink>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
+    .filter((l) => linkIds.length === 0 || linkIds.includes(l.LinkId))
+    .filter((l) => siteId === undefined || l.SiteId === siteId)
+    .filter((l) => type === undefined || l.Type === type)
+    .filter((l) => provider === undefined || l.Provider === provider)
     .sort((a, b) => a.LinkId.localeCompare(b.LinkId));
-  return { Links: links.map(linkView) };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Links: items.map(linkView), NextToken: nextToken };
 };
 
 const UpdateLink: OperationHandler = (input, ctx) => {
@@ -852,12 +910,21 @@ const AssociateLink: OperationHandler = (input, ctx) => {
 
 const GetLinkAssociations: OperationHandler = (input, ctx) => {
   const gid = requireString(input, "GlobalNetworkId");
+  const deviceId = stringOrUndefined(input["DeviceId"]);
+  const linkId = stringOrUndefined(input["LinkId"]);
   const prefix = `link-assoc/${gid}/`;
-  const assocs = ctx.store
+  const all = ctx.store
     .list<StoredLinkAssociation>()
     .filter((e) => e.key.startsWith(prefix))
-    .map((e) => e.value);
-  return { LinkAssociations: assocs };
+    .map((e) => e.value)
+    .filter((a) => deviceId === undefined || a.DeviceId === deviceId)
+    .filter((a) => linkId === undefined || a.LinkId === linkId);
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { LinkAssociations: items, NextToken: nextToken };
 };
 
 const DisassociateLink: OperationHandler = (input, ctx) => {
@@ -903,13 +970,30 @@ const CreateConnection: OperationHandler = (input, ctx) => {
 const GetConnections: OperationHandler = (input, ctx) => {
   const gid = requireString(input, "GlobalNetworkId");
   requireGlobalNetwork(ctx, gid);
+  const connectionIds = stringsFrom(input["ConnectionIds"]);
+  const deviceId = stringOrUndefined(input["DeviceId"]);
   const prefix = `connection/${gid}/`;
-  const connections = ctx.store
+  const all = ctx.store
     .list<StoredConnection>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
+    .filter(
+      (c) =>
+        connectionIds.length === 0 || connectionIds.includes(c.ConnectionId),
+    )
+    .filter(
+      (c) =>
+        deviceId === undefined ||
+        c.DeviceId === deviceId ||
+        c.ConnectedDeviceId === deviceId,
+    )
     .sort((a, b) => a.ConnectionId.localeCompare(b.ConnectionId));
-  return { Connections: connections.map(connectionView) };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Connections: items.map(connectionView), NextToken: nextToken };
 };
 
 const UpdateConnection: OperationHandler = (input, ctx) => {
@@ -951,12 +1035,21 @@ const AssociateCustomerGateway: OperationHandler = (input, ctx) => {
 
 const GetCustomerGatewayAssociations: OperationHandler = (input, ctx) => {
   const gid = requireString(input, "GlobalNetworkId");
+  const cgArns = stringsFrom(input["CustomerGatewayArns"]);
   const prefix = `cgw-assoc/${gid}/`;
-  const assocs = ctx.store
+  const all = ctx.store
     .list<StoredCustomerGatewayAssociation>()
     .filter((e) => e.key.startsWith(prefix))
-    .map((e) => e.value);
-  return { CustomerGatewayAssociations: assocs };
+    .map((e) => e.value)
+    .filter(
+      (a) => cgArns.length === 0 || cgArns.includes(a.CustomerGatewayArn),
+    );
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { CustomerGatewayAssociations: items, NextToken: nextToken };
 };
 
 const DisassociateCustomerGateway: OperationHandler = (input, ctx) => {
@@ -991,12 +1084,21 @@ const RegisterTransitGateway: OperationHandler = (input, ctx) => {
 
 const GetTransitGatewayRegistrations: OperationHandler = (input, ctx) => {
   const gid = requireString(input, "GlobalNetworkId");
+  const tgwArns = stringsFrom(input["TransitGatewayArns"]);
   const prefix = `tgw-reg/${gid}/`;
-  const regs = ctx.store
+  const all = ctx.store
     .list<StoredTransitGatewayRegistration>()
     .filter((e) => e.key.startsWith(prefix))
-    .map((e) => e.value);
-  return { TransitGatewayRegistrations: regs };
+    .map((e) => e.value)
+    .filter(
+      (r) => tgwArns.length === 0 || tgwArns.includes(r.TransitGatewayArn),
+    );
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { TransitGatewayRegistrations: items, NextToken: nextToken };
 };
 
 const DeregisterTransitGateway: OperationHandler = (input, ctx) => {
@@ -1039,12 +1141,23 @@ const GetTransitGatewayConnectPeerAssociations: OperationHandler = (
   ctx,
 ) => {
   const gid = requireString(input, "GlobalNetworkId");
+  const tgcpArns = stringsFrom(input["TransitGatewayConnectPeerArns"]);
   const prefix = `tgwcp-assoc/${gid}/`;
-  const assocs = ctx.store
+  const all = ctx.store
     .list<StoredTransitGatewayConnectPeerAssociation>()
     .filter((e) => e.key.startsWith(prefix))
-    .map((e) => e.value);
-  return { TransitGatewayConnectPeerAssociations: assocs };
+    .map((e) => e.value)
+    .filter(
+      (a) =>
+        tgcpArns.length === 0 ||
+        tgcpArns.includes(a.TransitGatewayConnectPeerArn),
+    );
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { TransitGatewayConnectPeerAssociations: items, NextToken: nextToken };
 };
 
 const DisassociateTransitGatewayConnectPeer: OperationHandler = (
@@ -1084,12 +1197,19 @@ const AssociateConnectPeer: OperationHandler = (input, ctx) => {
 
 const GetConnectPeerAssociations: OperationHandler = (input, ctx) => {
   const gid = requireString(input, "GlobalNetworkId");
+  const cpIds = stringsFrom(input["ConnectPeerIds"]);
   const prefix = `cp-assoc/${gid}/`;
-  const assocs = ctx.store
+  const all = ctx.store
     .list<StoredConnectPeerAssociation>()
     .filter((e) => e.key.startsWith(prefix))
-    .map((e) => e.value);
-  return { ConnectPeerAssociations: assocs };
+    .map((e) => e.value)
+    .filter((a) => cpIds.length === 0 || cpIds.includes(a.ConnectPeerId));
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { ConnectPeerAssociations: items, NextToken: nextToken };
 };
 
 const DisassociateConnectPeer: OperationHandler = (input, ctx) => {
@@ -1220,13 +1340,21 @@ const CreateCoreNetwork: OperationHandler = (input, ctx) => {
   return { CoreNetwork: coreNetworkView(cn) };
 };
 
-const ListCoreNetworks: OperationHandler = (_input, ctx) => {
-  const cns = ctx.store
+const ListCoreNetworks: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredCoreNetwork>()
     .filter((e) => e.key.startsWith("core-network/"))
     .map((e) => e.value)
     .sort((a, b) => a.CoreNetworkId.localeCompare(b.CoreNetworkId));
-  return { CoreNetworks: cns.map(coreNetworkSummaryView) };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return {
+    CoreNetworks: items.map(coreNetworkSummaryView),
+    NextToken: nextToken,
+  };
 };
 
 const GetCoreNetwork: OperationHandler = (input, ctx) => {
@@ -1299,13 +1427,18 @@ const ListCoreNetworkPolicyVersions: OperationHandler = (input, ctx) => {
   const cnId = requireString(input, "CoreNetworkId");
   requireCoreNetwork(ctx, cnId);
   const prefix = `cnpolicy/${cnId}/`;
-  const versions = ctx.store
+  const all = ctx.store
     .list<StoredCoreNetworkPolicy>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
     .sort((a, b) => a.PolicyVersionId - b.PolicyVersionId);
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
   return {
-    CoreNetworkPolicyVersions: versions.map((p) => ({
+    CoreNetworkPolicyVersions: items.map((p) => ({
       CoreNetworkId: p.CoreNetworkId,
       PolicyVersionId: p.PolicyVersionId,
       Alias: p.Alias,
@@ -1313,6 +1446,7 @@ const ListCoreNetworkPolicyVersions: OperationHandler = (input, ctx) => {
       CreatedAt: p.CreatedAt,
       ChangeSetState: p.ChangeSetState,
     })),
+    NextToken: nextToken,
   };
 };
 
@@ -1414,16 +1548,22 @@ const ListCoreNetworkPrefixListAssociations: OperationHandler = (
   const cnId = requireString(input, "CoreNetworkId");
   requireCoreNetwork(ctx, cnId);
   const prefix = `prefix-list/${cnId}/`;
-  const assocs = ctx.store
+  const all = ctx.store
     .list<StoredCoreNetworkPrefixListAssociation>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value);
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
   return {
-    PrefixListAssociations: assocs.map((a) => ({
+    PrefixListAssociations: items.map((a) => ({
       CoreNetworkId: a.CoreNetworkId,
       PrefixListArn: a.PrefixListArn,
       PrefixListAlias: a.PrefixListAlias,
     })),
+    NextToken: nextToken,
   };
 };
 
@@ -1771,13 +1911,27 @@ const UpdateDirectConnectGatewayAttachment: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListAttachments: OperationHandler = (_input, ctx) => {
-  const atts = ctx.store
+const ListAttachments: OperationHandler = (input, ctx) => {
+  const coreNetworkId = stringOrUndefined(input["CoreNetworkId"]);
+  const attachmentType = stringOrUndefined(input["AttachmentType"]);
+  const all = ctx.store
     .list<AttachmentBase>()
     .filter((e) => e.key.startsWith("attachment/"))
     .map((e) => e.value)
+    .filter(
+      (a) => coreNetworkId === undefined || a.CoreNetworkId === coreNetworkId,
+    )
+    .filter(
+      (a) =>
+        attachmentType === undefined || a.AttachmentType === attachmentType,
+    )
     .sort((a, b) => a.AttachmentId.localeCompare(b.AttachmentId));
-  return { Attachments: atts.map(attachmentBaseView) };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Attachments: items.map(attachmentBaseView), NextToken: nextToken };
 };
 
 const DeleteAttachment: OperationHandler = (input, ctx) => {
@@ -1828,13 +1982,31 @@ const CreateConnectPeer: OperationHandler = (input, ctx) => {
   return { ConnectPeer: connectPeerView(cp) };
 };
 
-const ListConnectPeers: OperationHandler = (_input, ctx) => {
-  const cps = ctx.store
+const ListConnectPeers: OperationHandler = (input, ctx) => {
+  const coreNetworkId = stringOrUndefined(input["CoreNetworkId"]);
+  const connectAttachmentId = stringOrUndefined(input["ConnectAttachmentId"]);
+  const all = ctx.store
     .list<StoredConnectPeer>()
     .filter((e) => e.key.startsWith("connect-peer/"))
     .map((e) => e.value)
+    .filter(
+      (c) => coreNetworkId === undefined || c.CoreNetworkId === coreNetworkId,
+    )
+    .filter(
+      (c) =>
+        connectAttachmentId === undefined ||
+        c.ConnectAttachmentId === connectAttachmentId,
+    )
     .sort((a, b) => a.ConnectPeerId.localeCompare(b.ConnectPeerId));
-  return { ConnectPeers: cps.map(connectPeerSummaryView) };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return {
+    ConnectPeers: items.map(connectPeerSummaryView),
+    NextToken: nextToken,
+  };
 };
 
 const GetConnectPeer: OperationHandler = (input, ctx) => {
@@ -1894,13 +2066,24 @@ const GetTransitGatewayPeering: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListPeerings: OperationHandler = (_input, ctx) => {
-  const peerings = ctx.store
+const ListPeerings: OperationHandler = (input, ctx) => {
+  const coreNetworkId = stringOrUndefined(input["CoreNetworkId"]);
+  const peeringType = stringOrUndefined(input["PeeringType"]);
+  const all = ctx.store
     .list<StoredPeering>()
     .filter((e) => e.key.startsWith("peering/"))
     .map((e) => e.value)
+    .filter(
+      (p) => coreNetworkId === undefined || p.CoreNetworkId === coreNetworkId,
+    )
+    .filter((p) => peeringType === undefined || p.PeeringType === peeringType)
     .sort((a, b) => a.PeeringId.localeCompare(b.PeeringId));
-  return { Peerings: peerings.map(peeringView) };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Peerings: items.map(peeringView), NextToken: nextToken };
 };
 
 const DeletePeering: OperationHandler = (input, ctx) => {

@@ -184,7 +184,7 @@ test("connector and test-connection lifecycle", async () => {
     new DescribeConnectorCommand({ ConnectorId: ConnectorId! }),
   );
   expect(described.Connector?.ConnectorId).toBe(ConnectorId);
-  expect(String(described.Connector?.Status)).toBe("ONLINE");
+  expect(String(described.Connector?.Status)).toBe("ACTIVE");
 
   const listed = await transfer.send(new ListConnectorsCommand({}));
   expect(
@@ -541,5 +541,118 @@ test("ListServers MaxResults and NextToken pagination", async () => {
 
   await Promise.all(
     ids.map((id) => transfer.send(new DeleteServerCommand({ ServerId: id }))),
+  );
+});
+
+test("CreateUser idempotency — duplicate returns existing user", async () => {
+  const transfer = client();
+  const { ServerId: serverId } = await transfer.send(
+    new CreateServerCommand({}),
+  );
+
+  const params = {
+    ServerId: serverId!,
+    UserName: "idempotent-user",
+    Role: "arn:aws:iam::000000000000:role/transfer-role",
+  };
+  const first = await transfer.send(new CreateUserCommand(params));
+  expect(first.UserName).toBe("idempotent-user");
+
+  const second = await transfer.send(new CreateUserCommand(params));
+  expect(second.UserName).toBe("idempotent-user");
+  expect(second.ServerId).toBe(serverId);
+
+  await transfer.send(new DeleteServerCommand({ ServerId: serverId! }));
+});
+
+test("Delete idempotency — second delete returns 2xx", async () => {
+  const transfer = client();
+  const { ServerId: serverId } = await transfer.send(
+    new CreateServerCommand({}),
+  );
+
+  await transfer.send(new DeleteServerCommand({ ServerId: serverId! }));
+  await expect(
+    transfer.send(new DeleteServerCommand({ ServerId: serverId! })),
+  ).resolves.toBeDefined();
+});
+
+test("ConnectorStatus enum — PENDING on create, ACTIVE after describe", async () => {
+  const { endpoint: ep, requestHandler: rh } = startApp();
+  const transfer = new TransferClient({
+    endpoint: ep,
+    region,
+    credentials,
+    requestHandler: rh,
+  });
+
+  const { ConnectorId } = await transfer.send(
+    new CreateConnectorCommand({
+      Url: "https://example.com/as2",
+      AccessRole: "arn:aws:iam::000000000000:role/connector-role",
+    }),
+  );
+
+  const described = await transfer.send(
+    new DescribeConnectorCommand({ ConnectorId: ConnectorId! }),
+  );
+  expect(described.Connector?.Status).toBe("ACTIVE");
+
+  await transfer.send(
+    new DeleteConnectorCommand({ ConnectorId: ConnectorId! }),
+  );
+});
+
+test("DeleteProfile in-use guard — ConflictException when agreement references profile", async () => {
+  const { endpoint: ep, requestHandler: rh } = startApp();
+  const transfer = new TransferClient({
+    endpoint: ep,
+    region,
+    credentials,
+    requestHandler: rh,
+  });
+
+  const { ServerId: serverId } = await transfer.send(
+    new CreateServerCommand({}),
+  );
+  const { ProfileId: localProfileId } = await transfer.send(
+    new CreateProfileCommand({
+      As2Id: "LOCAL-AS2",
+      ProfileType: "LOCAL",
+    }),
+  );
+  const { ProfileId: partnerProfileId } = await transfer.send(
+    new CreateProfileCommand({
+      As2Id: "PARTNER-AS2",
+      ProfileType: "PARTNER",
+    }),
+  );
+
+  await transfer.send(
+    new CreateAgreementCommand({
+      ServerId: serverId!,
+      LocalProfileId: localProfileId!,
+      PartnerProfileId: partnerProfileId!,
+      AccessRole: "arn:aws:iam::000000000000:role/agreement-role",
+      BaseDirectory: "/bucket",
+    }),
+  );
+
+  await expect(
+    transfer.send(new DeleteProfileCommand({ ProfileId: localProfileId! })),
+  ).rejects.toThrow();
+
+  await expect(
+    transfer.send(
+      new DeleteProfileCommand({ ProfileId: partnerProfileId! }),
+    ),
+  ).rejects.toThrow();
+
+  await transfer.send(new DeleteServerCommand({ ServerId: serverId! }));
+  await transfer.send(
+    new DeleteProfileCommand({ ProfileId: localProfileId! }),
+  );
+  await transfer.send(
+    new DeleteProfileCommand({ ProfileId: partnerProfileId! }),
   );
 });

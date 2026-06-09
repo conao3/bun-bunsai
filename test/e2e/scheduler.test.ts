@@ -203,6 +203,94 @@ test("Scheduler at() past expression delivers to SQS target", async () => {
   await sqsClient.send(new DeleteQueueCommand({ QueueUrl: queueUrl }));
 });
 
+test("Scheduler ListSchedules pagination via NextToken", async () => {
+  const client = scheduler();
+  const prefix = `bunsai-page-${Date.now()}`;
+  const names = [`${prefix}-a`, `${prefix}-b`, `${prefix}-c`];
+
+  for (const n of names) {
+    await client.send(
+      new CreateScheduleCommand({
+        Name: n,
+        ScheduleExpression: "rate(1 hour)",
+        FlexibleTimeWindow: { Mode: "OFF" },
+        Target: {
+          Arn: "arn:aws:lambda:us-east-1:000000000000:function:demo",
+          RoleArn: "arn:aws:iam::000000000000:role/demo",
+        },
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListSchedulesCommand({ NamePrefix: prefix, MaxResults: 2 }),
+  );
+  expect((page1.Schedules ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListSchedulesCommand({
+      NamePrefix: prefix,
+      MaxResults: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.Schedules ?? []).length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  for (const n of names) {
+    await client.send(new DeleteScheduleCommand({ Name: n }));
+  }
+});
+
+test("Scheduler TagResource ResourceNotFoundException for missing ARN", async () => {
+  const client = scheduler();
+  const fakeArn =
+    "arn:aws:scheduler:us-east-1:000000000000:schedule-group/does-not-exist";
+
+  await expect(
+    client.send(
+      new TagResourceCommand({
+        ResourceArn: fakeArn,
+        Tags: [{ Key: "k", Value: "v" }],
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(new ListTagsForResourceCommand({ ResourceArn: fakeArn })),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new UntagResourceCommand({
+        ResourceArn: fakeArn,
+        TagKeys: ["k"],
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("Scheduler CreateSchedule ResourceNotFoundException for missing group", async () => {
+  const client = scheduler();
+  const missingGroup = `no-such-group-${Date.now()}`;
+
+  await expect(
+    client.send(
+      new CreateScheduleCommand({
+        Name: `sched-${Date.now()}`,
+        GroupName: missingGroup,
+        ScheduleExpression: "rate(1 hour)",
+        FlexibleTimeWindow: { Mode: "OFF" },
+        Target: {
+          Arn: "arn:aws:lambda:us-east-1:000000000000:function:demo",
+          RoleArn: "arn:aws:iam::000000000000:role/demo",
+        },
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
 test("Scheduler DeleteSchedule cancels pending timer", async () => {
   const client = scheduler();
   const sqsClient = new SQSClient({

@@ -808,3 +808,54 @@ test("network lifecycle", async () => {
     client.send(new DescribeNetworkCommand({ NetworkId: networkId })),
   ).rejects.toThrow();
 });
+
+test("ListChannels pagination", async () => {
+  const client = medialive();
+
+  const ids: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const created = await client.send(
+      new CreateChannelCommand({ Name: `e2e-page-channel-${i}` }),
+    );
+    ids.push(created.Channel!.Id!);
+  }
+
+  const page1 = await client.send(new ListChannelsCommand({ MaxResults: 2 }));
+  expect((page1.Channels ?? []).length).toBeGreaterThanOrEqual(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListChannelsCommand({ MaxResults: 2, NextToken: page1.NextToken }),
+  );
+  expect((page2.Channels ?? []).length).toBeGreaterThanOrEqual(1);
+
+  const allIds = [
+    ...(page1.Channels ?? []).map((c) => c.Id),
+    ...(page2.Channels ?? []).map((c) => c.Id),
+  ];
+  for (const id of ids) {
+    expect(allIds).toContain(id);
+  }
+
+  for (const id of ids) {
+    await client.send(new DeleteChannelCommand({ ChannelId: id }));
+  }
+});
+
+test("ListAlerts ChannelId filter and persistence", async () => {
+  const client = medialive();
+
+  const created = await client.send(
+    new CreateChannelCommand({ Name: "e2e-alerts-channel" }),
+  );
+  const channelId = created.Channel!.Id!;
+
+  const alerts = await client.send(
+    new ListAlertsCommand({ ChannelId: channelId }),
+  );
+  expect((alerts.Alerts ?? []).length).toBeGreaterThan(0);
+  const alertTypes = (alerts.Alerts ?? []).map((a) => a.AlertType);
+  expect(alertTypes).toContain("RESOURCE_CREATED");
+
+  await client.send(new DeleteChannelCommand({ ChannelId: channelId }));
+});

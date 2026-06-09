@@ -32,6 +32,9 @@ const channelPlacementGroupPrefix = "channelPlacementGroup:" as const;
 const clusterPrefix = "cluster:" as const;
 const nodePrefix = "node:" as const;
 const networkPrefix = "network:" as const;
+const channelAlertPrefix = "channelAlert:" as const;
+const multiplexAlertPrefix = "multiplexAlert:" as const;
+const clusterAlertPrefix = "clusterAlert:" as const;
 
 type StoredChannel = {
   Id: string;
@@ -263,6 +266,16 @@ type StoredNetwork = {
   State: string;
 };
 
+type StoredAlert = {
+  Id: string;
+  AlertType: string;
+  Message: string;
+  SetTimestamp: string;
+  ClearedTimestamp: string | undefined;
+  State: "SET" | "CLEARED";
+  PipelineId: string;
+};
+
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
@@ -283,6 +296,25 @@ const requireString = (
     throw awsError("BadRequestException", `${field} is required.`, 400);
   }
   return value;
+};
+
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
 };
 
 const channelKey = (id: string): string => `${channelPrefix}${id}`;
@@ -314,6 +346,21 @@ const clusterKey = (id: string): string => `${clusterPrefix}${id}`;
 const nodeKey = (clusterId: string, nodeId: string): string =>
   `${nodePrefix}${clusterId}:${nodeId}`;
 const networkKey = (id: string): string => `${networkPrefix}${id}`;
+const channelAlertKey = (channelId: string): string =>
+  `${channelAlertPrefix}${channelId}`;
+const multiplexAlertKey = (multiplexId: string): string =>
+  `${multiplexAlertPrefix}${multiplexId}`;
+const clusterAlertKey = (clusterId: string): string =>
+  `${clusterAlertPrefix}${clusterId}`;
+
+const appendAlert = (
+  ctx: ServiceContext,
+  key: string,
+  alert: StoredAlert,
+): void => {
+  const existing = ctx.store.get<StoredAlert[]>(key) ?? [];
+  ctx.store.set(key, [...existing, alert]);
+};
 
 const channelArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:medialive:${ctx.region}:${ctx.account}:channel:${id}`;
@@ -724,6 +771,15 @@ const CreateChannel: OperationHandler = (input, ctx) => {
     Tags: recordOrEmpty(input["Tags"]),
   };
   ctx.store.set(channelKey(id), channel);
+  appendAlert(ctx, channelAlertKey(id), {
+    Id: `${id}-created`,
+    AlertType: "RESOURCE_CREATED",
+    Message: `Channel ${id} created`,
+    SetTimestamp: nowIso(),
+    ClearedTimestamp: undefined,
+    State: "SET",
+    PipelineId: "0",
+  });
   return { Channel: channel };
 };
 
@@ -732,18 +788,35 @@ const DescribeChannel: OperationHandler = (input, ctx) => {
   return requireChannel(ctx, id);
 };
 
-const ListChannels: OperationHandler = (_input, ctx) => {
-  const channels = ctx.store
+const ListChannels: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredChannel>()
     .filter((entry) => entry.key.startsWith(channelPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0));
-  return { Channels: channels };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Channels: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeleteChannel: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ChannelId");
   const channel = requireChannel(ctx, id);
+  appendAlert(ctx, channelAlertKey(id), {
+    Id: `${id}-deleted`,
+    AlertType: "RESOURCE_DELETED",
+    Message: `Channel ${id} deleted`,
+    SetTimestamp: nowIso(),
+    ClearedTimestamp: undefined,
+    State: "SET",
+    PipelineId: "0",
+  });
   ctx.store.delete(channelKey(id));
   return { ...channel, State: "DELETING" };
 };
@@ -753,6 +826,15 @@ const StartChannel: OperationHandler = (input, ctx) => {
   const channel = requireChannel(ctx, id);
   const updated = { ...channel, State: "RUNNING" };
   ctx.store.set(channelKey(id), updated);
+  appendAlert(ctx, channelAlertKey(id), {
+    Id: `${id}-start-${nowIso()}`,
+    AlertType: "CHANNEL_STATE_CHANGE",
+    Message: `Channel ${id} started`,
+    SetTimestamp: nowIso(),
+    ClearedTimestamp: undefined,
+    State: "SET",
+    PipelineId: "0",
+  });
   return updated;
 };
 
@@ -761,6 +843,15 @@ const StopChannel: OperationHandler = (input, ctx) => {
   const channel = requireChannel(ctx, id);
   const updated = { ...channel, State: "IDLE" };
   ctx.store.set(channelKey(id), updated);
+  appendAlert(ctx, channelAlertKey(id), {
+    Id: `${id}-stop-${nowIso()}`,
+    AlertType: "CHANNEL_STATE_CHANGE",
+    Message: `Channel ${id} stopped`,
+    SetTimestamp: nowIso(),
+    ClearedTimestamp: undefined,
+    State: "SET",
+    PipelineId: "0",
+  });
   return updated;
 };
 
@@ -858,13 +949,21 @@ const DescribeInput: OperationHandler = (input, ctx) => {
   return requireInput(ctx, id);
 };
 
-const ListInputs: OperationHandler = (_input, ctx) => {
-  const inputs = ctx.store
+const ListInputs: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredInput>()
     .filter((entry) => entry.key.startsWith(inputPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0));
-  return { Inputs: inputs };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Inputs: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateInput: OperationHandler = (input, ctx) => {
@@ -926,13 +1025,21 @@ const DescribeInputSecurityGroup: OperationHandler = (input, ctx) => {
   return requireInputSg(ctx, id);
 };
 
-const ListInputSecurityGroups: OperationHandler = (_input, ctx) => {
-  const groups = ctx.store
+const ListInputSecurityGroups: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredInputSecurityGroup>()
     .filter((entry) => entry.key.startsWith(inputSgPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0));
-  return { InputSecurityGroups: groups };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    InputSecurityGroups: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateInputSecurityGroup: OperationHandler = (input, ctx) => {
@@ -979,6 +1086,15 @@ const CreateMultiplex: OperationHandler = (input, ctx) => {
     ProgramCount: 0,
   };
   ctx.store.set(multiplexKey(id), mx);
+  appendAlert(ctx, multiplexAlertKey(id), {
+    Id: `${id}-created`,
+    AlertType: "RESOURCE_CREATED",
+    Message: `Multiplex ${id} created`,
+    SetTimestamp: nowIso(),
+    ClearedTimestamp: undefined,
+    State: "SET",
+    PipelineId: "0",
+  });
   return { Multiplex: mx };
 };
 
@@ -987,13 +1103,21 @@ const DescribeMultiplex: OperationHandler = (input, ctx) => {
   return requireMultiplex(ctx, id);
 };
 
-const ListMultiplexes: OperationHandler = (_input, ctx) => {
-  const multiplexes = ctx.store
+const ListMultiplexes: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredMultiplex>()
     .filter((entry) => entry.key.startsWith(multiplexPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0));
-  return { Multiplexes: multiplexes };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Multiplexes: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateMultiplex: OperationHandler = (input, ctx) => {
@@ -1010,6 +1134,15 @@ const UpdateMultiplex: OperationHandler = (input, ctx) => {
 const DeleteMultiplex: OperationHandler = (input, ctx) => {
   const id = requireString(input, "MultiplexId");
   const mx = requireMultiplex(ctx, id);
+  appendAlert(ctx, multiplexAlertKey(id), {
+    Id: `${id}-deleted`,
+    AlertType: "RESOURCE_DELETED",
+    Message: `Multiplex ${id} deleted`,
+    SetTimestamp: nowIso(),
+    ClearedTimestamp: undefined,
+    State: "SET",
+    PipelineId: "0",
+  });
   ctx.store.delete(multiplexKey(id));
   return { ...mx, State: "DELETING" };
 };
@@ -1019,6 +1152,15 @@ const StartMultiplex: OperationHandler = (input, ctx) => {
   const mx = requireMultiplex(ctx, id);
   const updated = { ...mx, State: "RUNNING" };
   ctx.store.set(multiplexKey(id), updated);
+  appendAlert(ctx, multiplexAlertKey(id), {
+    Id: `${id}-start-${nowIso()}`,
+    AlertType: "MULTIPLEX_STATE_CHANGE",
+    Message: `Multiplex ${id} started`,
+    SetTimestamp: nowIso(),
+    ClearedTimestamp: undefined,
+    State: "SET",
+    PipelineId: "0",
+  });
   return updated;
 };
 
@@ -1027,6 +1169,15 @@ const StopMultiplex: OperationHandler = (input, ctx) => {
   const mx = requireMultiplex(ctx, id);
   const updated = { ...mx, State: "IDLE" };
   ctx.store.set(multiplexKey(id), updated);
+  appendAlert(ctx, multiplexAlertKey(id), {
+    Id: `${id}-stop-${nowIso()}`,
+    AlertType: "MULTIPLEX_STATE_CHANGE",
+    Message: `Multiplex ${id} stopped`,
+    SetTimestamp: nowIso(),
+    ClearedTimestamp: undefined,
+    State: "SET",
+    PipelineId: "0",
+  });
   return updated;
 };
 
@@ -1058,7 +1209,7 @@ const ListMultiplexPrograms: OperationHandler = (input, ctx) => {
   const mxId = requireString(input, "MultiplexId");
   requireMultiplex(ctx, mxId);
   const prefix = `${mxProgramPrefix}${mxId}:`;
-  const programs = ctx.store
+  const all = ctx.store
     .list<StoredMultiplexProgram>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value)
@@ -1069,7 +1220,15 @@ const ListMultiplexPrograms: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
-  return { MultiplexPrograms: programs };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    MultiplexPrograms: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateMultiplexProgram: OperationHandler = (input, ctx) => {
@@ -1934,16 +2093,100 @@ const UpdateSdiSource: OperationHandler = (input, ctx) => {
   return { SdiSource: updated };
 };
 
-const ListAlerts: OperationHandler = (_input, _ctx) => {
-  return { Alerts: [] };
+const ListAlerts: OperationHandler = (input, ctx) => {
+  const channelId = requireString(input, "ChannelId");
+  requireChannel(ctx, channelId);
+  const stateFilter = stringOrUndefined(input["StateFilter"]);
+  const all = (
+    ctx.store.get<StoredAlert[]>(channelAlertKey(channelId)) ?? []
+  ).filter((a) =>
+    stateFilter === undefined || stateFilter === "ALL"
+      ? true
+      : a.State === stateFilter,
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Alerts: items.map((a) => ({
+      AlertType: a.AlertType,
+      Id: a.Id,
+      Message: a.Message,
+      SetTimestamp: a.SetTimestamp,
+      ...(a.ClearedTimestamp !== undefined
+        ? { ClearedTimestamp: a.ClearedTimestamp }
+        : {}),
+      State: a.State,
+      PipelineId: a.PipelineId,
+    })),
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
-const ListClusterAlerts: OperationHandler = (_input, _ctx) => {
-  return { Alerts: [] };
+const ListClusterAlerts: OperationHandler = (input, ctx) => {
+  const clusterId = requireString(input, "ClusterId");
+  requireCluster(ctx, clusterId);
+  const stateFilter = stringOrUndefined(input["StateFilter"]);
+  const all = (
+    ctx.store.get<StoredAlert[]>(clusterAlertKey(clusterId)) ?? []
+  ).filter((a) =>
+    stateFilter === undefined || stateFilter === "ALL"
+      ? true
+      : a.State === stateFilter,
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Alerts: items.map((a) => ({
+      AlertType: a.AlertType,
+      Id: a.Id,
+      Message: a.Message,
+      SetTimestamp: a.SetTimestamp,
+      ...(a.ClearedTimestamp !== undefined
+        ? { ClearedTimestamp: a.ClearedTimestamp }
+        : {}),
+      State: a.State,
+      PipelineId: a.PipelineId,
+    })),
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
-const ListMultiplexAlerts: OperationHandler = (_input, _ctx) => {
-  return { Alerts: [] };
+const ListMultiplexAlerts: OperationHandler = (input, ctx) => {
+  const multiplexId = requireString(input, "MultiplexId");
+  requireMultiplex(ctx, multiplexId);
+  const stateFilter = stringOrUndefined(input["StateFilter"]);
+  const all = (
+    ctx.store.get<StoredAlert[]>(multiplexAlertKey(multiplexId)) ?? []
+  ).filter((a) =>
+    stateFilter === undefined || stateFilter === "ALL"
+      ? true
+      : a.State === stateFilter,
+  );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Alerts: items.map((a) => ({
+      AlertType: a.AlertType,
+      Id: a.Id,
+      Message: a.Message,
+      SetTimestamp: a.SetTimestamp,
+      ...(a.ClearedTimestamp !== undefined
+        ? { ClearedTimestamp: a.ClearedTimestamp }
+        : {}),
+      State: a.State,
+      PipelineId: a.PipelineId,
+    })),
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const CreateChannelPlacementGroup: OperationHandler = (input, ctx) => {

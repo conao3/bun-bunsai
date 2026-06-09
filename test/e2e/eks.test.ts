@@ -34,7 +34,7 @@ test("EKS cluster and nodegroup roundtrip", async () => {
   );
   expect(created.cluster?.name).toBe(clusterName);
   expect(created.cluster?.arn).toContain(`cluster/${clusterName}`);
-  expect(created.cluster?.status).toBe("ACTIVE");
+  expect(created.cluster?.status).toBe("CREATING");
   expect(created.cluster?.endpoint).toBeDefined();
 
   const described = await client.send(
@@ -59,7 +59,7 @@ test("EKS cluster and nodegroup roundtrip", async () => {
   );
   expect(ng.nodegroup?.nodegroupName).toBe(nodegroupName);
   expect(ng.nodegroup?.clusterName).toBe(clusterName);
-  expect(ng.nodegroup?.status).toBe("ACTIVE");
+  expect(ng.nodegroup?.status).toBe("CREATING");
   expect(ng.nodegroup?.nodegroupArn).toContain(
     `nodegroup/${clusterName}/${nodegroupName}`,
   );

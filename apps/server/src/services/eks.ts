@@ -140,6 +140,29 @@ type StoredUpdate = {
   capabilityName: string | undefined;
 };
 
+type StoredInsight = {
+  id: string;
+  clusterName: string;
+  name: string;
+  category: string;
+  kubernetesVersion: string;
+  lastRefreshTime: number;
+  lastTransitionTime: number;
+  description: string;
+  insightStatus: Record<string, unknown>;
+  recommendation: string;
+  additionalInfo: Record<string, unknown>;
+  resources: unknown[];
+  categorySpecificSummary: Record<string, unknown>;
+};
+
+type StoredInsightsRefresh = {
+  clusterName: string;
+  status: string;
+  startedAt: number;
+  endedAt: number | undefined;
+};
+
 type StoredEksAnywhereSubscription = {
   id: string;
   arn: string;
@@ -199,6 +222,12 @@ const capabilityKey = (cluster: string, capabilityName: string): string =>
 
 const tagsKey = (resourceArn: string): string => `tags/${resourceArn}`;
 
+const insightKey = (clusterName: string, id: string): string =>
+  `insight/${clusterName}/${id}`;
+
+const insightsRefreshKey = (clusterName: string): string =>
+  `insights-refresh/${clusterName}`;
+
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -228,6 +257,27 @@ const stringMapFrom = (value: unknown): Record<string, string> => {
     if (typeof raw === "string") out[key] = raw;
   }
   return out;
+};
+
+const paginateList = <T>(
+  items: T[],
+  maxResults: number | undefined,
+  nextToken: string | undefined,
+  getKey: (item: T) => string,
+): { page: T[]; nextToken: string | undefined } => {
+  let start = 0;
+  if (nextToken !== undefined) {
+    const cursor = atob(nextToken);
+    const idx = items.findIndex((item) => getKey(item) > cursor);
+    start = idx === -1 ? items.length : idx;
+  }
+  const max = maxResults ?? items.length;
+  const page = items.slice(start, start + max);
+  const next =
+    start + max < items.length
+      ? btoa(getKey(page[page.length - 1]))
+      : undefined;
+  return { page, nextToken: next };
 };
 
 const requireString = (
@@ -490,7 +540,7 @@ const CreateCluster: OperationHandler = (input, ctx) => {
     resourcesVpcConfig: asRecord(input["resourcesVpcConfig"]),
     kubernetesNetworkConfig: asRecord(input["kubernetesNetworkConfig"]),
     logging: asRecord(input["logging"]),
-    status: "ACTIVE",
+    status: "CREATING",
     platformVersion: "eks.1",
     tags: stringMapFrom(input["tags"]),
     certificateAuthority: { data: btoa(`bunsai-ca-${name}`) },
@@ -504,16 +554,34 @@ const CreateCluster: OperationHandler = (input, ctx) => {
 const DescribeCluster: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const cluster = requireCluster(ctx, name);
+  if (cluster.status === "CREATING") {
+    const updated = { ...cluster, status: "ACTIVE" };
+    ctx.store.set(clusterKey(name), updated);
+    return { cluster: clusterView(updated) };
+  }
+  if (cluster.status === "UPDATING") {
+    const updated = { ...cluster, status: "ACTIVE" };
+    ctx.store.set(clusterKey(name), updated);
+    return { cluster: clusterView(cluster) };
+  }
   return { cluster: clusterView(cluster) };
 };
 
-const ListClusters: OperationHandler = (_input, ctx) => {
+const ListClusters: OperationHandler = (input, ctx) => {
+  const maxResults = numberOrUndefined(input["maxResults"]);
+  const nextToken = stringOrUndefined(input["nextToken"]);
   const clusters = ctx.store
     .list<StoredCluster>()
     .filter((entry) => entry.key.startsWith("cluster/"))
     .map((entry) => entry.value)
     .sort((a, b) => a.name.localeCompare(b.name));
-  return { clusters: clusters.map((cluster) => cluster.name) };
+  const { page, nextToken: next } = paginateList(
+    clusters,
+    maxResults,
+    nextToken,
+    (c) => c.name,
+  );
+  return { clusters: page.map((c) => c.name), nextToken: next };
 };
 
 const DeleteCluster: OperationHandler = (input, ctx) => {
@@ -547,7 +615,7 @@ const CreateNodegroup: OperationHandler = (input, ctx) => {
     releaseVersion: stringOrUndefined(input["releaseVersion"]) ?? "1.31.0",
     createdAt: at,
     modifiedAt: at,
-    status: "ACTIVE",
+    status: "CREATING",
     capacityType: stringOrUndefined(input["capacityType"]) ?? "ON_DEMAND",
     scalingConfig: asRecord(input["scalingConfig"]) ?? {
       minSize: 1,
@@ -579,18 +647,36 @@ const DescribeNodegroup: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  if (stored.status === "CREATING") {
+    const updated = { ...stored, status: "ACTIVE" };
+    ctx.store.set(nodegroupKey(clusterName, nodegroupName), updated);
+    return { nodegroup: nodegroupView(updated) };
+  }
+  if (stored.status === "UPDATING") {
+    const updated = { ...stored, status: "ACTIVE" };
+    ctx.store.set(nodegroupKey(clusterName, nodegroupName), updated);
+    return { nodegroup: nodegroupView(stored) };
+  }
   return { nodegroup: nodegroupView(stored) };
 };
 
 const ListNodegroups: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   requireCluster(ctx, clusterName);
+  const maxResults = numberOrUndefined(input["maxResults"]);
+  const nextToken = stringOrUndefined(input["nextToken"]);
   const nodegroups = ctx.store
     .list<StoredNodegroup>()
     .filter((entry) => entry.key.startsWith(`nodegroup/${clusterName}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.nodegroupName.localeCompare(b.nodegroupName));
-  return { nodegroups: nodegroups.map((nodegroup) => nodegroup.nodegroupName) };
+  const { page, nextToken: next } = paginateList(
+    nodegroups,
+    maxResults,
+    nextToken,
+    (ng) => ng.nodegroupName,
+  );
+  return { nodegroups: page.map((ng) => ng.nodegroupName), nextToken: next };
 };
 
 const DeleteNodegroup: OperationHandler = (input, ctx) => {
@@ -635,7 +721,18 @@ const fargateProfileView = (
   selectors: profile.selectors,
   status: profile.status,
   tags: profile.tags,
-  health: profile.health,
+  health:
+    profile.status === "ACTIVE"
+      ? profile.health
+      : {
+          issues: [
+            {
+              code: "InternalFailure",
+              message: "Fargate profile is being provisioned",
+              resourceIds: [],
+            },
+          ],
+        },
 });
 
 const addonView = (addon: StoredAddon): Record<string, unknown> => ({
@@ -643,7 +740,18 @@ const addonView = (addon: StoredAddon): Record<string, unknown> => ({
   clusterName: addon.clusterName,
   status: addon.status,
   addonVersion: addon.addonVersion,
-  health: addon.health,
+  health:
+    addon.status === "ACTIVE"
+      ? addon.health
+      : {
+          issues: [
+            {
+              code: "InsufficientNumberOfReplicas",
+              message: "Addon is being provisioned",
+              resourceIds: [],
+            },
+          ],
+        },
   addonArn: addon.addonArn,
   createdAt: addon.createdAt,
   modifiedAt: addon.modifiedAt,
@@ -676,7 +784,7 @@ const CreateFargateProfile: OperationHandler = (input, ctx) => {
     podExecutionRoleArn,
     subnets: stringListFrom(input["subnets"]),
     selectors: recordListFrom(input["selectors"]),
-    status: "ACTIVE",
+    status: "CREATING",
     tags: stringMapFrom(input["tags"]),
     health: { issues: [] },
   };
@@ -697,19 +805,33 @@ const DescribeFargateProfile: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  if (stored.status === "CREATING") {
+    const updated = { ...stored, status: "ACTIVE" };
+    ctx.store.set(fargateKey(clusterName, fargateProfileName), updated);
+    return { fargateProfile: fargateProfileView(updated) };
+  }
   return { fargateProfile: fargateProfileView(stored) };
 };
 
 const ListFargateProfiles: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   requireCluster(ctx, clusterName);
+  const maxResults = numberOrUndefined(input["maxResults"]);
+  const nextToken = stringOrUndefined(input["nextToken"]);
   const profiles = ctx.store
     .list<StoredFargateProfile>()
     .filter((entry) => entry.key.startsWith(`fargate/${clusterName}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.fargateProfileName.localeCompare(b.fargateProfileName));
+  const { page, nextToken: next } = paginateList(
+    profiles,
+    maxResults,
+    nextToken,
+    (p) => p.fargateProfileName,
+  );
   return {
-    fargateProfileNames: profiles.map((profile) => profile.fargateProfileName),
+    fargateProfileNames: page.map((p) => p.fargateProfileName),
+    nextToken: next,
   };
 };
 
@@ -749,7 +871,7 @@ const CreateAddon: OperationHandler = (input, ctx) => {
   const addon: StoredAddon = {
     addonName,
     clusterName,
-    status: "ACTIVE",
+    status: "CREATING",
     addonVersion:
       stringOrUndefined(input["addonVersion"]) ?? "v1.0.0-eksbuild.1",
     health: { issues: [] },
@@ -775,18 +897,31 @@ const DescribeAddon: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  if (stored.status === "CREATING") {
+    const updated = { ...stored, status: "ACTIVE" };
+    ctx.store.set(addonKey(clusterName, addonName), updated);
+    return { addon: addonView(updated) };
+  }
   return { addon: addonView(stored) };
 };
 
 const ListAddons: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   requireCluster(ctx, clusterName);
+  const maxResults = numberOrUndefined(input["maxResults"]);
+  const nextToken = stringOrUndefined(input["nextToken"]);
   const addons = ctx.store
     .list<StoredAddon>()
     .filter((entry) => entry.key.startsWith(`addon/${clusterName}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.addonName.localeCompare(b.addonName));
-  return { addons: addons.map((addon) => addon.addonName) };
+  const { page, nextToken: next } = paginateList(
+    addons,
+    maxResults,
+    nextToken,
+    (a) => a.addonName,
+  );
+  return { addons: page.map((a) => a.addonName), nextToken: next };
 };
 
 const DeleteAddon: OperationHandler = (input, ctx) => {
@@ -954,12 +1089,20 @@ const DescribeAccessEntry: OperationHandler = (input, ctx) => {
 const ListAccessEntries: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   requireCluster(ctx, clusterName);
+  const maxResults = numberOrUndefined(input["maxResults"]);
+  const nextToken = stringOrUndefined(input["nextToken"]);
   const entries = ctx.store
     .list<StoredAccessEntry>()
     .filter((entry) => entry.key.startsWith(`access-entry/${clusterName}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.principalArn.localeCompare(b.principalArn));
-  return { accessEntries: entries.map((e) => e.principalArn) };
+  const { page, nextToken: next } = paginateList(
+    entries,
+    maxResults,
+    nextToken,
+    (e) => e.principalArn,
+  );
+  return { accessEntries: page.map((e) => e.principalArn), nextToken: next };
 };
 
 const DeleteAccessEntry: OperationHandler = (input, ctx) => {
@@ -1328,6 +1471,7 @@ const UpdateClusterConfig: OperationHandler = (input, ctx) => {
   const cluster = requireCluster(ctx, name);
   const updated: StoredCluster = {
     ...cluster,
+    status: "UPDATING",
     resourcesVpcConfig:
       asRecord(input["resourcesVpcConfig"]) ?? cluster.resourcesVpcConfig,
     logging: asRecord(input["logging"]) ?? cluster.logging,
@@ -1343,7 +1487,7 @@ const UpdateClusterVersion: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const version = requireString(input, "version");
   const cluster = requireCluster(ctx, name);
-  ctx.store.set(clusterKey(name), { ...cluster, version });
+  ctx.store.set(clusterKey(name), { ...cluster, version, status: "UPDATING" });
   const update = storeUpdate(ctx, name, "VersionUpdate", [
     { type: "Version", value: version },
   ]);
@@ -1357,6 +1501,7 @@ const UpdateNodegroupConfig: OperationHandler = (input, ctx) => {
   const updated: StoredNodegroup = {
     ...stored,
     modifiedAt: nowSeconds(),
+    status: "UPDATING",
     labels: stringMapFrom(input["labels"]) || stored.labels,
     scalingConfig: asRecord(input["scalingConfig"]) ?? stored.scalingConfig,
   };
@@ -1381,6 +1526,7 @@ const UpdateNodegroupVersion: OperationHandler = (input, ctx) => {
   const updated: StoredNodegroup = {
     ...stored,
     modifiedAt: nowSeconds(),
+    status: "UPDATING",
     version: newVersion,
     releaseVersion: newRelease,
   };
@@ -1700,19 +1846,68 @@ const DescribeClusterVersions: OperationHandler = (_input, _ctx) => {
   };
 };
 
+const ensureInsights = (
+  ctx: ServiceContext,
+  clusterName: string,
+): StoredInsight[] => {
+  const prefix = `insight/${clusterName}/`;
+  const stored = ctx.store
+    .list<StoredInsight>()
+    .filter((e) => e.key.startsWith(prefix))
+    .map((e) => e.value);
+  if (stored.length > 0) return stored;
+  const id = `${clusterName}-upgrade-readiness`;
+  const insight: StoredInsight = {
+    id,
+    clusterName,
+    name: "upgrade-readiness",
+    category: "UPGRADE_READINESS",
+    kubernetesVersion: "1.31",
+    lastRefreshTime: nowSeconds(),
+    lastTransitionTime: nowSeconds(),
+    description: "Upgrade readiness check for EKS cluster",
+    insightStatus: { status: "PASSING", reason: "" },
+    recommendation: "",
+    additionalInfo: {},
+    resources: [],
+    categorySpecificSummary: {},
+  };
+  ctx.store.set(insightKey(clusterName, id), insight);
+  return [insight];
+};
+
 const DescribeInsight: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   requireCluster(ctx, clusterName);
   const id = requireString(input, "id");
+  const stored = ctx.store.get<StoredInsight>(insightKey(clusterName, id));
+  if (stored !== undefined) {
+    return {
+      insight: {
+        id: stored.id,
+        name: stored.name,
+        category: stored.category,
+        kubernetesVersion: stored.kubernetesVersion,
+        lastRefreshTime: stored.lastRefreshTime,
+        lastTransitionTime: stored.lastTransitionTime,
+        description: stored.description,
+        insightStatus: stored.insightStatus,
+        recommendation: stored.recommendation,
+        additionalInfo: stored.additionalInfo,
+        resources: stored.resources,
+        categorySpecificSummary: stored.categorySpecificSummary,
+      },
+    };
+  }
   return {
     insight: {
       id,
-      name: "synthetic-insight",
+      name: "upgrade-readiness",
       category: "UPGRADE_READINESS",
       kubernetesVersion: "1.31",
       lastRefreshTime: nowSeconds(),
       lastTransitionTime: nowSeconds(),
-      description: "Synthetic insight for testing",
+      description: "Upgrade readiness check for EKS cluster",
       insightStatus: { status: "PASSING", reason: "" },
       recommendation: "",
       additionalInfo: {},
@@ -1725,36 +1920,67 @@ const DescribeInsight: OperationHandler = (input, ctx) => {
 const DescribeInsightsRefresh: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   requireCluster(ctx, clusterName);
+  const stored = ctx.store.get<StoredInsightsRefresh>(
+    insightsRefreshKey(clusterName),
+  );
+  if (stored === undefined) {
+    return {
+      message: "No refresh in progress",
+      status: "COMPLETED",
+      startedAt: nowSeconds() - 60,
+      endedAt: nowSeconds(),
+    };
+  }
+  if (stored.status === "IN_PROGRESS") {
+    const completed: StoredInsightsRefresh = {
+      ...stored,
+      status: "COMPLETED",
+      endedAt: nowSeconds(),
+    };
+    ctx.store.set(insightsRefreshKey(clusterName), completed);
+    return {
+      message: "Insights refresh completed",
+      status: "COMPLETED",
+      startedAt: stored.startedAt,
+      endedAt: completed.endedAt,
+    };
+  }
   return {
-    message: "No refresh in progress",
-    status: "COMPLETED",
-    startedAt: nowSeconds() - 60,
-    endedAt: nowSeconds(),
+    message: "Insights refresh completed",
+    status: stored.status,
+    startedAt: stored.startedAt,
+    endedAt: stored.endedAt,
   };
 };
 
 const ListInsights: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   requireCluster(ctx, clusterName);
+  const insights = ensureInsights(ctx, clusterName);
   return {
-    insights: [
-      {
-        id: crypto.randomUUID(),
-        name: "synthetic-insight",
-        category: "UPGRADE_READINESS",
-        kubernetesVersion: "1.31",
-        lastRefreshTime: nowSeconds(),
-        lastTransitionTime: nowSeconds(),
-        description: "Synthetic insight for testing",
-        insightStatus: { status: "PASSING", reason: "" },
-      },
-    ],
+    insights: insights.map((i) => ({
+      id: i.id,
+      name: i.name,
+      category: i.category,
+      kubernetesVersion: i.kubernetesVersion,
+      lastRefreshTime: i.lastRefreshTime,
+      lastTransitionTime: i.lastTransitionTime,
+      description: i.description,
+      insightStatus: i.insightStatus,
+    })),
   };
 };
 
 const StartInsightsRefresh: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   requireCluster(ctx, clusterName);
+  const refresh: StoredInsightsRefresh = {
+    clusterName,
+    status: "IN_PROGRESS",
+    startedAt: nowSeconds(),
+    endedAt: undefined,
+  };
+  ctx.store.set(insightsRefreshKey(clusterName), refresh);
   return {
     message: "Insights refresh started",
     status: "IN_PROGRESS",

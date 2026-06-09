@@ -779,3 +779,66 @@ test("ListBackupPlanVersions returns history after updates", async () => {
 
   await client.send(new DeleteBackupPlanCommand({ BackupPlanId: planId }));
 });
+
+test("ListBackupVaults paginates with MaxResults and NextToken", async () => {
+  const client = backup();
+  const ts = Date.now();
+  const names = [`e2e-page-v1-${ts}`, `e2e-page-v2-${ts}`, `e2e-page-v3-${ts}`];
+  for (const n of names) {
+    await client.send(new CreateBackupVaultCommand({ BackupVaultName: n }));
+  }
+  const page1 = await client.send(
+    new ListBackupVaultsCommand({ MaxResults: 1 }),
+  );
+  expect((page1.BackupVaultList ?? []).length).toBe(1);
+  expect(typeof page1.NextToken).toBe("string");
+
+  const page2 = await client.send(
+    new ListBackupVaultsCommand({
+      MaxResults: 1,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.BackupVaultList ?? []).length).toBe(1);
+
+  for (const n of names) {
+    await client.send(new DeleteBackupVaultCommand({ BackupVaultName: n }));
+  }
+});
+
+test("DeleteBackupVault clears tags from tag store", async () => {
+  const client = backup();
+  const ts = Date.now();
+  const vaultName = `e2e-tag-cleanup-${ts}`;
+  const created = await client.send(
+    new CreateBackupVaultCommand({ BackupVaultName: vaultName }),
+  );
+  const vaultArn = created.BackupVaultArn as string;
+
+  await client.send(
+    new TagResourceCommand({
+      ResourceArn: vaultArn,
+      Tags: { env: "test" },
+    }),
+  );
+  const before = await client.send(
+    new ListTagsCommand({ ResourceArn: vaultArn }),
+  );
+  expect(before.Tags?.env).toBe("test");
+
+  await client.send(
+    new DeleteBackupVaultCommand({ BackupVaultName: vaultName }),
+  );
+
+  await client.send(
+    new CreateBackupVaultCommand({ BackupVaultName: vaultName }),
+  );
+  const after = await client.send(
+    new ListTagsCommand({ ResourceArn: vaultArn }),
+  );
+  expect(after.Tags ?? {}).toEqual({});
+
+  await client.send(
+    new DeleteBackupVaultCommand({ BackupVaultName: vaultName }),
+  );
+});

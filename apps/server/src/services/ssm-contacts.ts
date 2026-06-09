@@ -170,6 +170,26 @@ const receiptKey = (pageArnVal: string): string => `receipt:${pageArnVal}`;
 
 const nowEpoch = (): number => Date.now() / 1000;
 
+const paginateItems = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+  maxCap = 100,
+): { page: T[]; nextToken: string | undefined } => {
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? Math.min(maxResults, maxCap)
+      : maxCap;
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(atob(nextToken), 10) || 0
+      : 0;
+  const page = items.slice(offset, offset + max);
+  const next =
+    offset + max < items.length ? btoa(String(offset + max)) : undefined;
+  return { page, nextToken: next };
+};
+
 const requireTimestamp = (
   input: Record<string, unknown>,
   field: string,
@@ -285,6 +305,10 @@ const CreateContact: OperationHandler = (input, ctx) => {
     Plan: plan,
   };
   ctx.store.set(contactKey(alias), contact);
+  const tags = Array.isArray(input["Tags"]) ? (input["Tags"] as unknown[]) : [];
+  if (tags.length > 0) {
+    ctx.store.set(tagsKey(arn), tags);
+  }
   return { ContactArn: arn };
 };
 
@@ -311,7 +335,7 @@ const GetContact: OperationHandler = (input, ctx) => {
 const ListContacts: OperationHandler = (input, ctx) => {
   const aliasPrefix = stringOrUndefined(input["AliasPrefix"]);
   const type = stringOrUndefined(input["Type"]);
-  const contacts = ctx.store
+  const all = ctx.store
     .list<StoredContact>()
     .filter((entry) => entry.key.startsWith(contactPrefix))
     .map((entry) => entry.value)
@@ -321,20 +345,57 @@ const ListContacts: OperationHandler = (input, ctx) => {
     )
     .filter((contact) => type === undefined || contact.Type === type)
     .sort((a, b) => (a.Alias < b.Alias ? -1 : a.Alias > b.Alias ? 1 : 0));
-  return { Contacts: contacts.map(contactSummary) };
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Contacts: page.map(contactSummary), NextToken: nextToken };
 };
 
 const DeleteContact: OperationHandler = (input, ctx) => {
   const contactId = requireString(input, "ContactId");
   const alias = aliasFromArn(contactId);
-  if (ctx.store.get<StoredContact>(contactKey(alias)) === undefined) {
+  const contact = ctx.store.get<StoredContact>(contactKey(alias));
+  if (contact === undefined) {
     throw awsError(
       "ResourceNotFoundException",
       `Contact ${contactId} not found.`,
       404,
     );
   }
+  const cArn = contact.ContactArn;
+  const referencingRotation = ctx.store
+    .list<StoredRotation>()
+    .find(
+      (entry) =>
+        entry.key.startsWith(rotationPrefix) &&
+        entry.value.ContactIds.includes(cArn),
+    );
+  if (referencingRotation !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `Contact ${contactId} is referenced by a rotation.`,
+      409,
+    );
+  }
+  const activeEngagement = ctx.store
+    .list<StoredEngagement>()
+    .find(
+      (entry) =>
+        entry.key.startsWith(engagementPrefix) &&
+        entry.value.ContactArn === cArn &&
+        entry.value.StopTime === undefined,
+    );
+  if (activeEngagement !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `Contact ${contactId} has active engagements.`,
+      409,
+    );
+  }
   ctx.store.delete(contactKey(alias));
+  ctx.store.delete(tagsKey(cArn));
   return {};
 };
 
@@ -434,16 +495,22 @@ const ListContactChannels: OperationHandler = (input, ctx) => {
     );
   }
   const cArn = contactArn(ctx, alias);
-  const channels = ctx.store
+  const all = ctx.store
     .list<StoredContactChannel>()
     .filter((entry) => entry.key.startsWith(channelPrefix))
     .map((entry) => entry.value)
     .filter((ch) => ch.ContactArn === cArn);
-  return { ContactChannels: channels };
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { ContactChannels: page, NextToken: nextToken };
 };
 
 const ActivateContactChannel: OperationHandler = (input, ctx) => {
   const channelId = requireString(input, "ContactChannelId");
+  requireString(input, "ActivationCode");
   const channel = requireChannel(ctx, channelId);
   ctx.store.set(channelKey(channelId), {
     ...channel,
@@ -509,8 +576,9 @@ const GetRotation: OperationHandler = (input, ctx) => {
 
 const DeleteRotation: OperationHandler = (input, ctx) => {
   const rotationId = requireString(input, "RotationId");
-  requireRotation(ctx, rotationId);
+  const rotation = requireRotation(ctx, rotationId);
   ctx.store.delete(rotationKey(rotationId));
+  ctx.store.delete(tagsKey(rotation.RotationArn));
   return {};
 };
 
@@ -537,21 +605,25 @@ const UpdateRotation: OperationHandler = (input, ctx) => {
 
 const ListRotations: OperationHandler = (input, ctx) => {
   const namePrefix = stringOrUndefined(input["RotationNamePrefix"]);
-  const rotations = ctx.store
+  const all = ctx.store
     .list<StoredRotation>()
     .filter((entry) => entry.key.startsWith(rotationPrefix))
     .map((entry) => entry.value)
-    .filter((r) => namePrefix === undefined || r.Name.startsWith(namePrefix));
-  return {
-    Rotations: rotations.map((r) => ({
+    .filter((r) => namePrefix === undefined || r.Name.startsWith(namePrefix))
+    .map((r) => ({
       RotationArn: r.RotationArn,
       Name: r.Name,
       ContactIds: r.ContactIds,
       StartTime: r.StartTime,
       TimeZoneId: r.TimeZoneId,
       Recurrence: r.Recurrence,
-    })),
-  };
+    }));
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Rotations: page, NextToken: nextToken };
 };
 
 const CreateRotationOverride: OperationHandler = (input, ctx) => {
@@ -618,11 +690,16 @@ const ListRotationOverrides: OperationHandler = (input, ctx) => {
   const rotation = requireRotation(ctx, rotationId);
   const rArn = rotation.RotationArn;
   const prefix = overrideKey(rArn, "");
-  const overrides = ctx.store
+  const all = ctx.store
     .list<StoredRotationOverride>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value);
-  return { RotationOverrides: overrides };
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { RotationOverrides: page, NextToken: nextToken };
 };
 
 const makeShift = (
@@ -721,6 +798,9 @@ const StartEngagement: OperationHandler = (input, ctx) => {
 const StopEngagement: OperationHandler = (input, ctx) => {
   const engagementId = requireString(input, "EngagementId");
   const engagement = requireEngagement(ctx, engagementId);
+  if (engagement.StopTime !== undefined) {
+    return {};
+  }
   ctx.store.set(engagementKey(engagementId), {
     ...engagement,
     StopTime: nowEpoch(),
@@ -747,7 +827,7 @@ const DescribeEngagement: OperationHandler = (input, ctx) => {
 
 const ListEngagements: OperationHandler = (input, ctx) => {
   const incidentId = stringOrUndefined(input["IncidentId"]);
-  const engagements = ctx.store
+  const all = ctx.store
     .list<StoredEngagement>()
     .filter((entry) => entry.key.startsWith(engagementPrefix))
     .map((entry) => entry.value)
@@ -760,7 +840,12 @@ const ListEngagements: OperationHandler = (input, ctx) => {
       StartTime: e.StartTime,
       StopTime: e.StopTime,
     }));
-  return { Engagements: engagements };
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Engagements: page, NextToken: nextToken };
 };
 
 const AcceptPage: OperationHandler = (input, ctx) => {
@@ -809,19 +894,29 @@ const DescribePage: OperationHandler = (input, ctx) => {
 const ListPageReceipts: OperationHandler = (input, ctx) => {
   const pageId = requireString(input, "PageId");
   requirePage(ctx, pageId);
-  const receipts = ctx.store.get<StoredPageReceipt[]>(receiptKey(pageId)) ?? [];
-  return { Receipts: receipts };
+  const all = ctx.store.get<StoredPageReceipt[]>(receiptKey(pageId)) ?? [];
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Receipts: page, NextToken: nextToken };
 };
 
 const ListPageResolutions: OperationHandler = (input, ctx) => {
   const pageId = requireString(input, "PageId");
-  const page = requirePage(ctx, pageId);
-  const alias = aliasFromArn(page.ContactArn);
+  const storedPage = requirePage(ctx, pageId);
+  const alias = aliasFromArn(storedPage.ContactArn);
   const contact = ctx.store.get<StoredContact>(contactKey(alias));
-  const resolutions = contact
+  const all = contact
     ? [{ ContactArn: contact.ContactArn, Type: contact.Type }]
     : [];
-  return { PageResolutions: resolutions };
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { PageResolutions: page, NextToken: nextToken };
 };
 
 const ListPagesByContact: OperationHandler = (input, ctx) => {
@@ -835,7 +930,7 @@ const ListPagesByContact: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  const pages = ctx.store
+  const all = ctx.store
     .list<StoredPage>()
     .filter((entry) => entry.key.startsWith(pagePrefix))
     .map((entry) => entry.value)
@@ -850,13 +945,18 @@ const ListPagesByContact: OperationHandler = (input, ctx) => {
       DeliveryTime: p.DeliveryTime,
       ReadTime: p.ReadTime,
     }));
-  return { Pages: pages };
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Pages: page, NextToken: nextToken };
 };
 
 const ListPagesByEngagement: OperationHandler = (input, ctx) => {
   const engagementId = requireString(input, "EngagementId");
   requireEngagement(ctx, engagementId);
-  const pages = ctx.store
+  const all = ctx.store
     .list<StoredPage>()
     .filter((entry) => entry.key.startsWith(pagePrefix))
     .map((entry) => entry.value)
@@ -871,7 +971,12 @@ const ListPagesByEngagement: OperationHandler = (input, ctx) => {
       DeliveryTime: p.DeliveryTime,
       ReadTime: p.ReadTime,
     }));
-  return { Pages: pages };
+  const { page, nextToken } = paginateItems(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Pages: page, NextToken: nextToken };
 };
 
 const GetContactPolicy: OperationHandler = (input, ctx) => {

@@ -564,3 +564,163 @@ test("SSMContacts tags lifecycle", async () => {
     new DeleteContactCommand({ ContactId: contact.ContactArn! }),
   );
 });
+
+test("SSMContacts fidelity gaps — CreateContact Tags, pagination, ActivationCode, ConflictException, tag cleanup", async () => {
+  const client = ssmContacts();
+  const ts = Date.now();
+  const alias = `bunsai_fid_${ts}`;
+  const alias2 = `bunsai_fid2_${ts}`;
+
+  const contact = await client.send(
+    new CreateContactCommand({
+      Alias: alias,
+      Type: "PERSONAL",
+      Plan: { Stages: [] },
+      Tags: [{ Key: "tier", Value: "7" }],
+    }),
+  );
+  expect(contact.ContactArn).toContain(`contact/${alias}`);
+
+  const tags = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: contact.ContactArn! }),
+  );
+  expect((tags.Tags ?? []).find((t) => t.Key === "tier")?.Value).toBe("7");
+
+  const channel = await client.send(
+    new CreateContactChannelCommand({
+      ContactId: contact.ContactArn!,
+      Name: "fid-email",
+      Type: "EMAIL",
+      DeliveryAddress: { SimpleAddress: "fid@example.com" },
+      DeferActivation: true,
+    }),
+  );
+
+  await expect(
+    client.send(
+      new ActivateContactChannelCommand({
+        ContactChannelId: channel.ContactChannelArn!,
+      } as never),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new ActivateContactChannelCommand({
+      ContactChannelId: channel.ContactChannelArn!,
+      ActivationCode: "123456",
+    }),
+  );
+  const activated = await client.send(
+    new GetContactChannelCommand({
+      ContactChannelId: channel.ContactChannelArn!,
+    }),
+  );
+  expect(activated.ActivationStatus).toBe("ACTIVATED");
+
+  const contact2 = await client.send(
+    new CreateContactCommand({
+      Alias: alias2,
+      Type: "PERSONAL",
+      Plan: { Stages: [] },
+    }),
+  );
+
+  const page1 = await client.send(new ListContactsCommand({ MaxResults: 1 }));
+  expect((page1.Contacts ?? []).length).toBe(1);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListContactsCommand({ MaxResults: 1, NextToken: page1.NextToken }),
+  );
+  expect((page2.Contacts ?? []).length).toBeGreaterThanOrEqual(1);
+
+  const rotation = await client.send(
+    new CreateRotationCommand({
+      Name: `fid-rotation-${ts}`,
+      ContactIds: [contact.ContactArn!],
+      TimeZoneId: "UTC",
+      Recurrence: {
+        NumberOfOnCalls: 1,
+        RecurrenceMultiplier: 1,
+        DailySettings: [{ HourOfDay: 8, MinuteOfHour: 0 }],
+      },
+    }),
+  );
+
+  await expect(
+    client.send(new DeleteContactCommand({ ContactId: contact.ContactArn! })),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteRotationCommand({ RotationId: rotation.RotationArn! }),
+  );
+
+  const tagsAfterRotationDelete = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: rotation.RotationArn! }),
+  );
+  expect((tagsAfterRotationDelete.Tags ?? []).length).toBe(0);
+
+  await client.send(
+    new DeleteContactChannelCommand({
+      ContactChannelId: channel.ContactChannelArn!,
+    }),
+  );
+
+  await client.send(
+    new DeleteContactCommand({ ContactId: contact.ContactArn! }),
+  );
+
+  const tagsAfterContactDelete = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: contact.ContactArn! }),
+  );
+  expect((tagsAfterContactDelete.Tags ?? []).length).toBe(0);
+
+  await client.send(
+    new DeleteContactCommand({ ContactId: contact2.ContactArn! }),
+  );
+});
+
+test("SSMContacts StopEngagement idempotency", async () => {
+  const client = ssmContacts();
+  const alias = `bunsai_stop_${Date.now()}`;
+
+  const contact = await client.send(
+    new CreateContactCommand({
+      Alias: alias,
+      Type: "PERSONAL",
+      Plan: { Stages: [] },
+    }),
+  );
+
+  const engagement = await client.send(
+    new StartEngagementCommand({
+      ContactId: contact.ContactArn!,
+      Sender: "stop-sender",
+      Subject: "Stop Test",
+      Content: "Testing idempotency",
+    }),
+  );
+
+  await client.send(
+    new StopEngagementCommand({ EngagementId: engagement.EngagementArn! }),
+  );
+
+  const firstStop = await client.send(
+    new DescribeEngagementCommand({ EngagementId: engagement.EngagementArn! }),
+  );
+  const firstStopTime = firstStop.StopTime;
+  expect(firstStopTime).toBeDefined();
+
+  await client.send(
+    new StopEngagementCommand({ EngagementId: engagement.EngagementArn! }),
+  );
+
+  const secondStop = await client.send(
+    new DescribeEngagementCommand({ EngagementId: engagement.EngagementArn! }),
+  );
+  expect(secondStop.StopTime).toEqual(firstStopTime);
+
+  await client.send(
+    new DeleteContactCommand({ ContactId: contact.ContactArn! }),
+  );
+});

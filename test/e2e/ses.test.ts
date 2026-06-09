@@ -673,3 +673,158 @@ test("SES account sending + send stats + misc", async () => {
   );
   expect(bounceResult.MessageId).toContain("msg-12345");
 });
+
+test("SES send-pause enforcement", async () => {
+  const client = ses();
+  const addr = "pause-test@bunsai-e2e.example.com";
+  await client.send(new VerifyEmailIdentityCommand({ EmailAddress: addr }));
+  await client.send(
+    new CreateTemplateCommand({
+      Template: {
+        TemplateName: "pause-tmpl",
+        SubjectPart: "Hi",
+        TextPart: "Hello",
+        HtmlPart: "<p>Hello</p>",
+      },
+    }),
+  );
+
+  await client.send(new UpdateAccountSendingEnabledCommand({ Enabled: false }));
+
+  for (const fn of [
+    () =>
+      client.send(
+        new SendEmailCommand({
+          Source: addr,
+          Destination: { ToAddresses: ["r@example.com"] },
+          Message: { Subject: { Data: "s" }, Body: { Text: { Data: "b" } } },
+        }),
+      ),
+    () =>
+      client.send(
+        new SendRawEmailCommand({
+          RawMessage: {
+            Data: new TextEncoder().encode(
+              "From: " + addr + "\r\nTo: r@example.com\r\nSubject: s\r\n\r\nb",
+            ),
+          },
+        }),
+      ),
+    () =>
+      client.send(
+        new SendTemplatedEmailCommand({
+          Source: addr,
+          Destination: { ToAddresses: ["r@example.com"] },
+          Template: "pause-tmpl",
+          TemplateData: "{}",
+        }),
+      ),
+    () =>
+      client.send(
+        new SendBulkTemplatedEmailCommand({
+          Source: addr,
+          Template: "pause-tmpl",
+          DefaultTemplateData: "{}",
+          Destinations: [
+            {
+              Destination: { ToAddresses: ["r@example.com"] },
+              ReplacementTemplateData: "{}",
+            },
+          ],
+        }),
+      ),
+  ]) {
+    await expect(fn()).rejects.toThrow();
+  }
+
+  await client.send(new UpdateAccountSendingEnabledCommand({ Enabled: true }));
+});
+
+test("SES templated send increments stats", async () => {
+  const client = ses();
+  const addr = "stats-test@bunsai-e2e.example.com";
+  await client.send(new VerifyEmailIdentityCommand({ EmailAddress: addr }));
+  await client.send(
+    new CreateTemplateCommand({
+      Template: {
+        TemplateName: "stats-tmpl",
+        SubjectPart: "Hi",
+        TextPart: "Hello",
+        HtmlPart: "<p>Hello</p>",
+      },
+    }),
+  );
+
+  const before = await client.send(new GetSendQuotaCommand({}));
+  const beforeSent = before.SentLast24Hours ?? 0;
+
+  await client.send(
+    new SendTemplatedEmailCommand({
+      Source: addr,
+      Destination: { ToAddresses: ["r@example.com"] },
+      Template: "stats-tmpl",
+      TemplateData: "{}",
+    }),
+  );
+
+  await client.send(
+    new SendBulkTemplatedEmailCommand({
+      Source: addr,
+      Template: "stats-tmpl",
+      DefaultTemplateData: "{}",
+      Destinations: [
+        {
+          Destination: { ToAddresses: ["a@example.com"] },
+          ReplacementTemplateData: "{}",
+        },
+        {
+          Destination: { ToAddresses: ["b@example.com"] },
+          ReplacementTemplateData: "{}",
+        },
+      ],
+    }),
+  );
+
+  const after = await client.send(new GetSendQuotaCommand({}));
+  expect((after.SentLast24Hours ?? 0) - beforeSent).toBe(3);
+
+  const statsResult = await client.send(new GetSendStatisticsCommand({}));
+  const points = statsResult.SendDataPoints ?? [];
+  expect(points.length).toBeGreaterThan(0);
+  const ts = points[0]?.Timestamp;
+  expect(ts).toBeDefined();
+  expect(new Date(ts!).getFullYear()).toBeGreaterThan(1970);
+});
+
+test("SES identity pagination", async () => {
+  const client = ses();
+  const addrs = [
+    "pg1@bunsai-e2e.example.com",
+    "pg2@bunsai-e2e.example.com",
+    "pg3@bunsai-e2e.example.com",
+  ];
+  for (const a of addrs) {
+    await client.send(new VerifyEmailIdentityCommand({ EmailAddress: a }));
+  }
+
+  const pageSize = 2;
+  let nextToken: string | undefined;
+  const allFromPaged: string[] = [];
+  let pageCount = 0;
+
+  do {
+    const res = await client.send(
+      new ListIdentitiesCommand({ MaxItems: pageSize, NextToken: nextToken }),
+    );
+    const items = res.Identities ?? [];
+    expect(items.length).toBeLessThanOrEqual(pageSize);
+    allFromPaged.push(...items);
+    nextToken = res.NextToken;
+    pageCount++;
+  } while (nextToken !== undefined);
+
+  expect(pageCount).toBeGreaterThan(1);
+  for (const a of addrs) {
+    expect(allFromPaged).toContain(a);
+  }
+});

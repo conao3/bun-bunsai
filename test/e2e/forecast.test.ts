@@ -786,3 +786,81 @@ test("Forecast delete resource tree", async () => {
     PredictorArn,
   );
 });
+
+test("Forecast status lifecycle: CREATING→ACTIVE", async () => {
+  const client = forecast();
+
+  const created = await client.send(
+    new CreateDatasetCommand({
+      DatasetName: "bunsai_e2e_lifecycle_ds",
+      Domain: "CUSTOM",
+      DatasetType: "TARGET_TIME_SERIES",
+      Schema: {
+        Attributes: [
+          { AttributeName: "timestamp", AttributeType: "timestamp" },
+          { AttributeName: "target_value", AttributeType: "float" },
+        ],
+      },
+    }),
+  );
+  const DatasetArn = created.DatasetArn as string;
+
+  const described = await client.send(
+    new DescribeDatasetCommand({ DatasetArn }),
+  );
+  expect(described.Status).toBe("ACTIVE");
+
+  await client.send(new DeleteDatasetCommand({ DatasetArn }));
+});
+
+test("Forecast reference validation: missing predictor", async () => {
+  const client = forecast();
+
+  try {
+    await client.send(
+      new CreateForecastCommand({
+        ForecastName: "bunsai_e2e_ref_missing_fc",
+        PredictorArn:
+          "arn:aws:forecast:us-east-1:000000000000:predictor/nonexistent",
+      }),
+    );
+    expect(true).toBe(false);
+  } catch (e) {
+    expect((e as Error).name).toBe("ResourceNotFoundException");
+  }
+});
+
+test("Forecast ListDatasets pagination", async () => {
+  const client = forecast();
+
+  const names = ["bunsai_pg_ds1", "bunsai_pg_ds2", "bunsai_pg_ds3"];
+  const arns: string[] = [];
+  for (const name of names) {
+    const r = await client.send(
+      new CreateDatasetCommand({
+        DatasetName: name,
+        Domain: "CUSTOM",
+        DatasetType: "TARGET_TIME_SERIES",
+        Schema: {
+          Attributes: [
+            { AttributeName: "timestamp", AttributeType: "timestamp" },
+          ],
+        },
+      }),
+    );
+    arns.push(r.DatasetArn as string);
+  }
+
+  const page1 = await client.send(new ListDatasetsCommand({ MaxResults: 2 }));
+  expect((page1.Datasets ?? []).length).toBeLessThanOrEqual(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListDatasetsCommand({ MaxResults: 2, NextToken: page1.NextToken }),
+  );
+  expect((page2.Datasets ?? []).length).toBeGreaterThan(0);
+
+  for (const arn of arns) {
+    await client.send(new DeleteDatasetCommand({ DatasetArn: arn }));
+  }
+});

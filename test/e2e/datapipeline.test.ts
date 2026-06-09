@@ -53,6 +53,14 @@ test("Data Pipeline lifecycle", async () => {
   const listed = await client.send(new ListPipelinesCommand({}));
   const ids = (listed.pipelineIdList ?? []).map((p) => p.id);
   expect(ids).toContain(pipelineId);
+  expect(listed.hasMoreResults).toBe(false);
+
+  await client.send(
+    new AddTagsCommand({
+      pipelineId: pipelineId as string,
+      tags: [{ key: "stage", value: "prod" }],
+    }),
+  );
 
   const described = await client.send(
     new DescribePipelinesCommand({ pipelineIds: [pipelineId as string] }),
@@ -61,6 +69,9 @@ test("Data Pipeline lifecycle", async () => {
   expect(descriptions.length).toBe(1);
   expect(descriptions[0]?.pipelineId).toBe(pipelineId);
   expect(descriptions[0]?.name).toBe(name);
+  const tags = descriptions[0]?.tags ?? [];
+  const stageTag = tags.find((t) => t.key === "stage");
+  expect(stageTag?.value).toBe("prod");
 
   await client.send(
     new DeletePipelineCommand({ pipelineId: pipelineId as string }),
@@ -176,12 +187,30 @@ test("ActivatePipeline and DeactivatePipeline", async () => {
   );
 });
 
-test("SetStatus", async () => {
+test("SetStatus persists status on pipeline objects", async () => {
   const client = datapipeline();
   const { pipelineId } = await client.send(
     new CreatePipelineCommand({
       name: "setstatus-pipeline",
       uniqueId: "setstatus-unique-1",
+    }),
+  );
+
+  await client.send(
+    new PutPipelineDefinitionCommand({
+      pipelineId: pipelineId as string,
+      pipelineObjects: [
+        {
+          id: "obj1",
+          name: "Obj1",
+          fields: [{ key: "type", stringValue: "Task" }],
+        },
+        {
+          id: "obj2",
+          name: "Obj2",
+          fields: [{ key: "type", stringValue: "Task" }],
+        },
+      ],
     }),
   );
 
@@ -193,12 +222,25 @@ test("SetStatus", async () => {
     }),
   );
 
+  const described = await client.send(
+    new DescribeObjectsCommand({
+      pipelineId: pipelineId as string,
+      objectIds: ["obj1", "obj2"],
+    }),
+  );
+  const obj1 = described.pipelineObjects?.find((o) => o.id === "obj1");
+  const obj2 = described.pipelineObjects?.find((o) => o.id === "obj2");
+  const obj1Status = obj1?.fields?.find((f) => f.key === "@status");
+  const obj2Status = obj2?.fields?.find((f) => f.key === "@status");
+  expect(obj1Status?.stringValue).toBe("PAUSED");
+  expect(obj2Status).toBeUndefined();
+
   await client.send(
     new DeletePipelineCommand({ pipelineId: pipelineId as string }),
   );
 });
 
-test("DescribeObjects and QueryObjects", async () => {
+test("DescribeObjects and QueryObjects with filtering and pagination", async () => {
   const client = datapipeline();
   const { pipelineId } = await client.send(
     new CreatePipelineCommand({
@@ -233,6 +275,7 @@ test("DescribeObjects and QueryObjects", async () => {
   );
   expect((described.pipelineObjects ?? []).length).toBe(1);
   expect(described.pipelineObjects?.[0]?.id).toBe("obj1");
+  expect(described.hasMoreResults).toBe(false);
 
   const queried = await client.send(
     new QueryObjectsCommand({
@@ -241,6 +284,43 @@ test("DescribeObjects and QueryObjects", async () => {
     }),
   );
   expect((queried.ids ?? []).length).toBe(2);
+  expect(queried.hasMoreResults).toBe(false);
+
+  const queriedFiltered = await client.send(
+    new QueryObjectsCommand({
+      pipelineId: pipelineId as string,
+      sphere: "INSTANCE",
+      query: {
+        selectors: [
+          { fieldName: "type", operator: { type: "EQ", values: ["Activity"] } },
+        ],
+      },
+    }),
+  );
+  expect((queriedFiltered.ids ?? []).length).toBe(1);
+  expect(queriedFiltered.ids?.[0]).toBe("obj2");
+
+  const queriedPage1 = await client.send(
+    new QueryObjectsCommand({
+      pipelineId: pipelineId as string,
+      sphere: "INSTANCE",
+      limit: 1,
+    }),
+  );
+  expect((queriedPage1.ids ?? []).length).toBe(1);
+  expect(queriedPage1.hasMoreResults).toBe(true);
+  expect(typeof queriedPage1.marker).toBe("string");
+
+  const queriedPage2 = await client.send(
+    new QueryObjectsCommand({
+      pipelineId: pipelineId as string,
+      sphere: "INSTANCE",
+      limit: 1,
+      marker: queriedPage1.marker,
+    }),
+  );
+  expect((queriedPage2.ids ?? []).length).toBe(1);
+  expect(queriedPage2.hasMoreResults).toBe(false);
 
   await client.send(
     new DeletePipelineCommand({ pipelineId: pipelineId as string }),

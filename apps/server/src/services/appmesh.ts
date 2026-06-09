@@ -28,7 +28,6 @@ type StoredMesh = {
   lastUpdatedAt: number;
   owner: string;
   spec: Record<string, unknown>;
-  tags: unknown[];
 };
 
 type StoredVirtualNode = {
@@ -110,9 +109,6 @@ type TagRecord = { key: string; value: string };
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
-const numberOrUndefined = (value: unknown): number | undefined =>
-  typeof value === "number" ? value : undefined;
-
 const arrayOrEmpty = (value: unknown): unknown[] =>
   Array.isArray(value) ? value : [];
 
@@ -120,6 +116,31 @@ const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+
+const asRecordOrUndefined = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  limit: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize = typeof limit === "number" && limit > 0 ? limit : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
 
 const requireString = (
   input: Record<string, unknown>,
@@ -477,9 +498,12 @@ const CreateMesh: OperationHandler = (input, ctx) => {
     lastUpdatedAt: now,
     owner: ctx.account,
     spec: asRecord(input["spec"]),
-    tags: arrayOrEmpty(input["tags"]),
   };
   ctx.store.set(meshKey(meshName), mesh);
+  const initialTags = arrayOrEmpty(input["tags"]) as TagRecord[];
+  if (initialTags.length > 0) {
+    ctx.store.set(tagsKey(mesh.arn), initialTags);
+  }
   return { mesh: meshData(mesh) };
 };
 
@@ -494,7 +518,7 @@ const UpdateMesh: OperationHandler = (input, ctx) => {
   const now = nowSeconds();
   const updated: StoredMesh = {
     ...mesh,
-    spec: asRecord(input["spec"]) ?? mesh.spec,
+    spec: asRecordOrUndefined(input["spec"]) ?? mesh.spec,
     version: mesh.version + 1,
     lastUpdatedAt: now,
   };
@@ -503,21 +527,28 @@ const UpdateMesh: OperationHandler = (input, ctx) => {
 };
 
 const ListMeshes: OperationHandler = (input, ctx) => {
-  const limit = numberOrUndefined(input["limit"]) ?? 100;
-  const meshes = ctx.store
+  const meshOwner = stringOrUndefined(input["meshOwner"]);
+  const all = ctx.store
     .list<StoredMesh>()
     .filter((entry) => entry.key.startsWith(meshPrefix))
     .map((entry) => entry.value)
+    .filter((m) => meshOwner === undefined || m.owner === meshOwner)
     .sort((a, b) =>
       a.meshName < b.meshName ? -1 : a.meshName > b.meshName ? 1 : 0,
     );
-  return { meshes: meshes.slice(0, limit).map(meshRef) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["limit"],
+  );
+  return { meshes: items.map(meshRef), nextToken };
 };
 
 const DeleteMesh: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   const mesh = requireMesh(ctx, meshName);
   ctx.store.delete(meshKey(meshName));
+  ctx.store.delete(tagsKey(mesh.arn));
   return { mesh: meshData(mesh) };
 };
 
@@ -561,7 +592,7 @@ const UpdateVirtualNode: OperationHandler = (input, ctx) => {
   const now = nowSeconds();
   const updated: StoredVirtualNode = {
     ...rec,
-    spec: asRecord(input["spec"]),
+    spec: asRecordOrUndefined(input["spec"]) ?? rec.spec,
     version: rec.version + 1,
     lastUpdatedAt: now,
   };
@@ -572,12 +603,13 @@ const UpdateVirtualNode: OperationHandler = (input, ctx) => {
 const ListVirtualNodes: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   requireMesh(ctx, meshName);
-  const limit = numberOrUndefined(input["limit"]) ?? 100;
+  const meshOwner = stringOrUndefined(input["meshOwner"]);
   const prefix = `${vnPrefix}${meshName}:`;
-  const items = ctx.store
+  const all = ctx.store
     .list<StoredVirtualNode>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
+    .filter((r) => meshOwner === undefined || r.owner === meshOwner)
     .sort((a, b) =>
       a.virtualNodeName < b.virtualNodeName
         ? -1
@@ -585,7 +617,12 @@ const ListVirtualNodes: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
-  return { virtualNodes: items.slice(0, limit).map(vnRef) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["limit"],
+  );
+  return { virtualNodes: items.map(vnRef), nextToken };
 };
 
 const DeleteVirtualNode: OperationHandler = (input, ctx) => {
@@ -593,6 +630,7 @@ const DeleteVirtualNode: OperationHandler = (input, ctx) => {
   const virtualNodeName = requireString(input, "virtualNodeName");
   const rec = requireVn(ctx, meshName, virtualNodeName);
   ctx.store.delete(vnKey(meshName, virtualNodeName));
+  ctx.store.delete(tagsKey(rec.arn));
   return { virtualNode: vnData(rec) };
 };
 
@@ -638,7 +676,7 @@ const UpdateVirtualRouter: OperationHandler = (input, ctx) => {
   const now = nowSeconds();
   const updated: StoredVirtualRouter = {
     ...rec,
-    spec: asRecord(input["spec"]),
+    spec: asRecordOrUndefined(input["spec"]) ?? rec.spec,
     version: rec.version + 1,
     lastUpdatedAt: now,
   };
@@ -649,12 +687,13 @@ const UpdateVirtualRouter: OperationHandler = (input, ctx) => {
 const ListVirtualRouters: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   requireMesh(ctx, meshName);
-  const limit = numberOrUndefined(input["limit"]) ?? 100;
+  const meshOwner = stringOrUndefined(input["meshOwner"]);
   const prefix = `${vrPrefix}${meshName}:`;
-  const items = ctx.store
+  const all = ctx.store
     .list<StoredVirtualRouter>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
+    .filter((r) => meshOwner === undefined || r.owner === meshOwner)
     .sort((a, b) =>
       a.virtualRouterName < b.virtualRouterName
         ? -1
@@ -662,7 +701,12 @@ const ListVirtualRouters: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
-  return { virtualRouters: items.slice(0, limit).map(vrRef) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["limit"],
+  );
+  return { virtualRouters: items.map(vrRef), nextToken };
 };
 
 const DeleteVirtualRouter: OperationHandler = (input, ctx) => {
@@ -670,6 +714,7 @@ const DeleteVirtualRouter: OperationHandler = (input, ctx) => {
   const virtualRouterName = requireString(input, "virtualRouterName");
   const rec = requireVr(ctx, meshName, virtualRouterName);
   ctx.store.delete(vrKey(meshName, virtualRouterName));
+  ctx.store.delete(tagsKey(rec.arn));
   return { virtualRouter: vrData(rec) };
 };
 
@@ -723,7 +768,7 @@ const UpdateRoute: OperationHandler = (input, ctx) => {
   const now = nowSeconds();
   const updated: StoredRoute = {
     ...rec,
-    spec: asRecord(input["spec"]),
+    spec: asRecordOrUndefined(input["spec"]) ?? rec.spec,
     version: rec.version + 1,
     lastUpdatedAt: now,
   };
@@ -736,16 +781,22 @@ const ListRoutes: OperationHandler = (input, ctx) => {
   const virtualRouterName = requireString(input, "virtualRouterName");
   requireMesh(ctx, meshName);
   requireVr(ctx, meshName, virtualRouterName);
-  const limit = numberOrUndefined(input["limit"]) ?? 100;
+  const meshOwner = stringOrUndefined(input["meshOwner"]);
   const prefix = `${routePrefix}${meshName}:${virtualRouterName}:`;
-  const items = ctx.store
+  const all = ctx.store
     .list<StoredRoute>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
+    .filter((r) => meshOwner === undefined || r.owner === meshOwner)
     .sort((a, b) =>
       a.routeName < b.routeName ? -1 : a.routeName > b.routeName ? 1 : 0,
     );
-  return { routes: items.slice(0, limit).map(routeRef) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["limit"],
+  );
+  return { routes: items.map(routeRef), nextToken };
 };
 
 const DeleteRoute: OperationHandler = (input, ctx) => {
@@ -754,6 +805,7 @@ const DeleteRoute: OperationHandler = (input, ctx) => {
   const routeName = requireString(input, "routeName");
   const rec = requireRoute(ctx, meshName, virtualRouterName, routeName);
   ctx.store.delete(routeKey(meshName, virtualRouterName, routeName));
+  ctx.store.delete(tagsKey(rec.arn));
   return { route: routeData(rec) };
 };
 
@@ -799,7 +851,7 @@ const UpdateVirtualService: OperationHandler = (input, ctx) => {
   const now = nowSeconds();
   const updated: StoredVirtualService = {
     ...rec,
-    spec: asRecord(input["spec"]),
+    spec: asRecordOrUndefined(input["spec"]) ?? rec.spec,
     version: rec.version + 1,
     lastUpdatedAt: now,
   };
@@ -810,12 +862,13 @@ const UpdateVirtualService: OperationHandler = (input, ctx) => {
 const ListVirtualServices: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   requireMesh(ctx, meshName);
-  const limit = numberOrUndefined(input["limit"]) ?? 100;
+  const meshOwner = stringOrUndefined(input["meshOwner"]);
   const prefix = `${vsPrefix}${meshName}:`;
-  const items = ctx.store
+  const all = ctx.store
     .list<StoredVirtualService>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
+    .filter((r) => meshOwner === undefined || r.owner === meshOwner)
     .sort((a, b) =>
       a.virtualServiceName < b.virtualServiceName
         ? -1
@@ -823,7 +876,12 @@ const ListVirtualServices: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
-  return { virtualServices: items.slice(0, limit).map(vsRef) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["limit"],
+  );
+  return { virtualServices: items.map(vsRef), nextToken };
 };
 
 const DeleteVirtualService: OperationHandler = (input, ctx) => {
@@ -831,6 +889,7 @@ const DeleteVirtualService: OperationHandler = (input, ctx) => {
   const virtualServiceName = requireString(input, "virtualServiceName");
   const rec = requireVs(ctx, meshName, virtualServiceName);
   ctx.store.delete(vsKey(meshName, virtualServiceName));
+  ctx.store.delete(tagsKey(rec.arn));
   return { virtualService: vsData(rec) };
 };
 
@@ -876,7 +935,7 @@ const UpdateVirtualGateway: OperationHandler = (input, ctx) => {
   const now = nowSeconds();
   const updated: StoredVirtualGateway = {
     ...rec,
-    spec: asRecord(input["spec"]),
+    spec: asRecordOrUndefined(input["spec"]) ?? rec.spec,
     version: rec.version + 1,
     lastUpdatedAt: now,
   };
@@ -887,12 +946,13 @@ const UpdateVirtualGateway: OperationHandler = (input, ctx) => {
 const ListVirtualGateways: OperationHandler = (input, ctx) => {
   const meshName = requireString(input, "meshName");
   requireMesh(ctx, meshName);
-  const limit = numberOrUndefined(input["limit"]) ?? 100;
+  const meshOwner = stringOrUndefined(input["meshOwner"]);
   const prefix = `${vgPrefix}${meshName}:`;
-  const items = ctx.store
+  const all = ctx.store
     .list<StoredVirtualGateway>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
+    .filter((r) => meshOwner === undefined || r.owner === meshOwner)
     .sort((a, b) =>
       a.virtualGatewayName < b.virtualGatewayName
         ? -1
@@ -900,7 +960,12 @@ const ListVirtualGateways: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
-  return { virtualGateways: items.slice(0, limit).map(vgRef) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["limit"],
+  );
+  return { virtualGateways: items.map(vgRef), nextToken };
 };
 
 const DeleteVirtualGateway: OperationHandler = (input, ctx) => {
@@ -908,6 +973,7 @@ const DeleteVirtualGateway: OperationHandler = (input, ctx) => {
   const virtualGatewayName = requireString(input, "virtualGatewayName");
   const rec = requireVg(ctx, meshName, virtualGatewayName);
   ctx.store.delete(vgKey(meshName, virtualGatewayName));
+  ctx.store.delete(tagsKey(rec.arn));
   return { virtualGateway: vgData(rec) };
 };
 
@@ -972,7 +1038,7 @@ const UpdateGatewayRoute: OperationHandler = (input, ctx) => {
   const now = nowSeconds();
   const updated: StoredGatewayRoute = {
     ...rec,
-    spec: asRecord(input["spec"]),
+    spec: asRecordOrUndefined(input["spec"]) ?? rec.spec,
     version: rec.version + 1,
     lastUpdatedAt: now,
   };
@@ -988,12 +1054,13 @@ const ListGatewayRoutes: OperationHandler = (input, ctx) => {
   const virtualGatewayName = requireString(input, "virtualGatewayName");
   requireMesh(ctx, meshName);
   requireVg(ctx, meshName, virtualGatewayName);
-  const limit = numberOrUndefined(input["limit"]) ?? 100;
+  const meshOwner = stringOrUndefined(input["meshOwner"]);
   const prefix = `${gwRoutePrefix}${meshName}:${virtualGatewayName}:`;
-  const items = ctx.store
+  const all = ctx.store
     .list<StoredGatewayRoute>()
     .filter((e) => e.key.startsWith(prefix))
     .map((e) => e.value)
+    .filter((r) => meshOwner === undefined || r.owner === meshOwner)
     .sort((a, b) =>
       a.gatewayRouteName < b.gatewayRouteName
         ? -1
@@ -1001,7 +1068,12 @@ const ListGatewayRoutes: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
-  return { gatewayRoutes: items.slice(0, limit).map(gwRouteRef) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["limit"],
+  );
+  return { gatewayRoutes: items.map(gwRouteRef), nextToken };
 };
 
 const DeleteGatewayRoute: OperationHandler = (input, ctx) => {
@@ -1015,14 +1087,19 @@ const DeleteGatewayRoute: OperationHandler = (input, ctx) => {
     gatewayRouteName,
   );
   ctx.store.delete(gwRouteKey(meshName, virtualGatewayName, gatewayRouteName));
+  ctx.store.delete(tagsKey(rec.arn));
   return { gatewayRoute: gwRouteData(rec) };
 };
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "resourceArn");
-  const limit = numberOrUndefined(input["limit"]) ?? 100;
   const tags = ctx.store.get<TagRecord[]>(tagsKey(resourceArn)) ?? [];
-  return { tags: tags.slice(0, limit) };
+  const { items, nextToken } = paginateList(
+    tags,
+    input["nextToken"],
+    input["limit"],
+  );
+  return { tags: items, nextToken };
 };
 
 const TagResource: OperationHandler = (input, ctx) => {

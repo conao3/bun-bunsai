@@ -354,7 +354,7 @@ test("DataExchange data grant roundtrip", async () => {
     new CreateDataGrantCommand({
       Name: "test-grant",
       GrantDistributionScope: "AWS_ORGANIZATION",
-      ReceiverPrincipal: "123456789012",
+      ReceiverPrincipal: "000000000000",
       SourceDataSetId: dataSetId,
       Description: "test grant description",
     }),
@@ -464,4 +464,96 @@ test("DataExchange SendDataSetNotification", async () => {
   ).resolves.toBeDefined();
 
   await client.send(new DeleteDataSetCommand({ DataSetId: dataSetId }));
+});
+
+test("DataExchange StartJob conflict on double-start", async () => {
+  const client = dataexchange();
+
+  const job = await client.send(
+    new CreateJobCommand({
+      Type: "IMPORT_ASSETS_FROM_S3",
+      Details: {
+        ImportAssetsFromS3: {
+          AssetSources: [{ Bucket: "b", Key: "k" }],
+          DataSetId: "ds",
+          RevisionId: "rv",
+        },
+      },
+    }),
+  );
+  const jobId = job.Id ?? "";
+  expect(job.State).toBe("WAITING");
+
+  await client.send(new StartJobCommand({ JobId: jobId }));
+  const started = await client.send(new GetJobCommand({ JobId: jobId }));
+  expect(started.State).toBe("IN_PROGRESS");
+
+  await expect(
+    client.send(new StartJobCommand({ JobId: jobId })),
+  ).rejects.toThrow();
+});
+
+test("DataExchange ListDataSets Origin filter", async () => {
+  const client = dataexchange();
+  const suffix = Date.now();
+
+  const ds1 = await client.send(
+    new CreateDataSetCommand({
+      AssetType: "S3_SNAPSHOT",
+      Description: "owned ds1",
+      Name: `origin-test-a-${suffix}`,
+    }),
+  );
+  const ds2 = await client.send(
+    new CreateDataSetCommand({
+      AssetType: "S3_SNAPSHOT",
+      Description: "owned ds2",
+      Name: `origin-test-b-${suffix}`,
+    }),
+  );
+  const ds1Id = ds1.Id ?? "";
+  const ds2Id = ds2.Id ?? "";
+
+  const owned = await client.send(new ListDataSetsCommand({ Origin: "OWNED" }));
+  const ownedIds = (owned.DataSets ?? []).map((d) => d.Id);
+  expect(ownedIds).toContain(ds1Id);
+  expect(ownedIds).toContain(ds2Id);
+
+  const entitled = await client.send(
+    new ListDataSetsCommand({ Origin: "ENTITLED" }),
+  );
+  expect((entitled.DataSets ?? []).length).toBe(0);
+
+  await client.send(new DeleteDataSetCommand({ DataSetId: ds1Id }));
+  await client.send(new DeleteDataSetCommand({ DataSetId: ds2Id }));
+});
+
+test("DataExchange ListDataSets pagination", async () => {
+  const client = dataexchange();
+  const suffix = Date.now();
+
+  const ids: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const ds = await client.send(
+      new CreateDataSetCommand({
+        AssetType: "S3_SNAPSHOT",
+        Description: `page test ${i}`,
+        Name: `page-test-${i}-${suffix}`,
+      }),
+    );
+    ids.push(ds.Id ?? "");
+  }
+
+  const page1 = await client.send(new ListDataSetsCommand({ MaxResults: 2 }));
+  expect((page1.DataSets ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListDataSetsCommand({ MaxResults: 2, NextToken: page1.NextToken }),
+  );
+  expect((page2.DataSets ?? []).length).toBeGreaterThanOrEqual(1);
+
+  for (const id of ids) {
+    await client.send(new DeleteDataSetCommand({ DataSetId: id }));
+  }
 });

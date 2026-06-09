@@ -81,6 +81,19 @@ type StoredProxyConfiguration = {
   Description: string | undefined;
   Tags: TagEntry[];
   UpdateToken: string;
+  RuleGroups: {
+    ProxyRuleGroupName: string;
+    ProxyRuleGroupArn: string | undefined;
+    Priority: number | undefined;
+  }[];
+};
+
+type StoredProxyRule = {
+  ProxyRuleName: string;
+  Description: string | undefined;
+  Action: string | undefined;
+  Conditions: unknown[];
+  UpdateToken: string;
 };
 
 type StoredProxyRuleGroup = {
@@ -89,6 +102,7 @@ type StoredProxyRuleGroup = {
   Description: string | undefined;
   Tags: TagEntry[];
   UpdateToken: string;
+  Rules: Record<string, StoredProxyRule>;
 };
 
 type StoredVpcEndpointAssociation = {
@@ -162,6 +176,25 @@ const tagListFrom = (value: unknown): TagEntry[] => {
 const stringArrayFrom = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   return value.filter((v): v is string => typeof v === "string");
+};
+
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
 };
 
 const azMappingsFrom = (
@@ -282,6 +315,7 @@ const proxyConfigView = (
   ProxyConfigurationArn: pc.ProxyConfigurationArn,
   Description: pc.Description,
   Tags: pc.Tags,
+  RuleGroups: pc.RuleGroups,
 });
 
 const proxyRuleGroupView = (
@@ -626,18 +660,31 @@ const DescribeFirewall: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListFirewalls: OperationHandler = (_input, ctx) => {
-  const firewalls = ctx.store
+const ListFirewalls: OperationHandler = (input, ctx) => {
+  const vpcIds = stringArrayFrom(input["VpcIds"]);
+  const all = ctx.store
     .list<StoredFirewall>()
     .filter((entry) => entry.key.startsWith("firewall/"))
     .map((entry) => entry.value)
+    .filter(
+      (fw) =>
+        vpcIds.length === 0 ||
+        (fw.VpcId !== undefined && vpcIds.includes(fw.VpcId)),
+    )
     .sort((a, b) => a.FirewallName.localeCompare(b.FirewallName));
-  return {
-    Firewalls: firewalls.map((firewall) => ({
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  const result: Record<string, unknown> = {
+    Firewalls: items.map((firewall) => ({
       FirewallName: firewall.FirewallName,
       FirewallArn: firewall.FirewallArn,
     })),
   };
+  if (nextToken !== undefined) result["NextToken"] = nextToken;
+  return result;
 };
 
 const DeleteFirewall: OperationHandler = (input, ctx) => {
@@ -983,18 +1030,25 @@ const DescribeFirewallPolicy: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListFirewallPolicies: OperationHandler = (_input, ctx) => {
-  const policies = ctx.store
+const ListFirewallPolicies: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredFirewallPolicy>()
     .filter((entry) => entry.key.startsWith("firewall-policy/"))
     .map((entry) => entry.value)
     .sort((a, b) => a.FirewallPolicyName.localeCompare(b.FirewallPolicyName));
-  return {
-    FirewallPolicies: policies.map((fp) => ({
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  const result: Record<string, unknown> = {
+    FirewallPolicies: items.map((fp) => ({
       Name: fp.FirewallPolicyName,
       Arn: fp.FirewallPolicyArn,
     })),
   };
+  if (nextToken !== undefined) result["NextToken"] = nextToken;
+  return result;
 };
 
 const UpdateFirewallPolicy: OperationHandler = (input, ctx) => {
@@ -1003,6 +1057,14 @@ const UpdateFirewallPolicy: OperationHandler = (input, ctx) => {
     stringOrUndefined(input["FirewallPolicyName"]),
     stringOrUndefined(input["FirewallPolicyArn"]),
   );
+  const inputToken = stringOrUndefined(input["UpdateToken"]);
+  if (inputToken !== fp.UpdateToken) {
+    throw awsError(
+      "InvalidTokenException",
+      "The token you provided is stale or isn't valid for the operation.",
+      400,
+    );
+  }
   if (input["FirewallPolicy"] !== undefined) {
     fp.FirewallPolicy = input["FirewallPolicy"];
   }
@@ -1109,18 +1171,25 @@ const DescribeRuleGroupSummary: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListRuleGroups: OperationHandler = (_input, ctx) => {
-  const groups = ctx.store
+const ListRuleGroups: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredRuleGroup>()
     .filter((entry) => entry.key.startsWith("rule-group/"))
     .map((entry) => entry.value)
     .sort((a, b) => a.RuleGroupName.localeCompare(b.RuleGroupName));
-  return {
-    RuleGroups: groups.map((rg) => ({
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  const result: Record<string, unknown> = {
+    RuleGroups: items.map((rg) => ({
       Name: rg.RuleGroupName,
       Arn: rg.RuleGroupArn,
     })),
   };
+  if (nextToken !== undefined) result["NextToken"] = nextToken;
+  return result;
 };
 
 const UpdateRuleGroup: OperationHandler = (input, ctx) => {
@@ -1129,6 +1198,14 @@ const UpdateRuleGroup: OperationHandler = (input, ctx) => {
     stringOrUndefined(input["RuleGroupName"]),
     stringOrUndefined(input["RuleGroupArn"]),
   );
+  const inputToken = stringOrUndefined(input["UpdateToken"]);
+  if (inputToken !== rg.UpdateToken) {
+    throw awsError(
+      "InvalidTokenException",
+      "The token you provided is stale or isn't valid for the operation.",
+      400,
+    );
+  }
   if (input["RuleGroup"] !== undefined) {
     rg.RuleGroup = input["RuleGroup"];
   }
@@ -1203,8 +1280,8 @@ const DescribeTLSInspectionConfiguration: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListTLSInspectionConfigurations: OperationHandler = (_input, ctx) => {
-  const configs = ctx.store
+const ListTLSInspectionConfigurations: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredTLSConfig>()
     .filter((entry) => entry.key.startsWith("tls-config/"))
     .map((entry) => entry.value)
@@ -1213,12 +1290,19 @@ const ListTLSInspectionConfigurations: OperationHandler = (_input, ctx) => {
         b.TLSInspectionConfigurationName,
       ),
     );
-  return {
-    TLSInspectionConfigurations: configs.map((tc) => ({
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  const result: Record<string, unknown> = {
+    TLSInspectionConfigurations: items.map((tc) => ({
       Name: tc.TLSInspectionConfigurationName,
       Arn: tc.TLSInspectionConfigurationArn,
     })),
   };
+  if (nextToken !== undefined) result["NextToken"] = nextToken;
+  return result;
 };
 
 const UpdateTLSInspectionConfiguration: OperationHandler = (input, ctx) => {
@@ -1227,6 +1311,14 @@ const UpdateTLSInspectionConfiguration: OperationHandler = (input, ctx) => {
     stringOrUndefined(input["TLSInspectionConfigurationName"]),
     stringOrUndefined(input["TLSInspectionConfigurationArn"]),
   );
+  const inputToken = stringOrUndefined(input["UpdateToken"]);
+  if (inputToken !== tc.UpdateToken) {
+    throw awsError(
+      "InvalidTokenException",
+      "The token you provided is stale or isn't valid for the operation.",
+      400,
+    );
+  }
   if (input["TLSInspectionConfiguration"] !== undefined) {
     tc.TLSInspectionConfiguration = input["TLSInspectionConfiguration"];
   }
@@ -1367,6 +1459,7 @@ const CreateProxyConfiguration: OperationHandler = (input, ctx) => {
     Description: stringOrUndefined(input["Description"]),
     Tags: tagListFrom(input["Tags"]),
     UpdateToken: updateToken(),
+    RuleGroups: [],
   };
   ctx.store.set(proxyConfigKey(name), pc);
   return {
@@ -1436,6 +1529,33 @@ const AttachRuleGroupsToProxyConfiguration: OperationHandler = (input, ctx) => {
     stringOrUndefined(input["ProxyConfigurationName"]),
     stringOrUndefined(input["ProxyConfigurationArn"]),
   );
+  const inputToken = stringOrUndefined(input["UpdateToken"]);
+  if (inputToken !== pc.UpdateToken) {
+    throw awsError(
+      "InvalidTokenException",
+      "The token you provided is stale or isn't valid for the operation.",
+      400,
+    );
+  }
+  const newGroups = Array.isArray(input["RuleGroups"])
+    ? input["RuleGroups"]
+    : [];
+  for (const g of newGroups) {
+    const rec = asRecord(g);
+    if (rec === undefined) continue;
+    const groupName = stringOrUndefined(rec["ProxyRuleGroupName"]);
+    if (groupName === undefined) continue;
+    const existing = pc.RuleGroups.find(
+      (r) => r.ProxyRuleGroupName === groupName,
+    );
+    if (existing === undefined) {
+      pc.RuleGroups.push({
+        ProxyRuleGroupName: groupName,
+        ProxyRuleGroupArn: undefined,
+        Priority: undefined,
+      });
+    }
+  }
   pc.UpdateToken = updateToken();
   ctx.store.set(proxyConfigKey(pc.ProxyConfigurationName), pc);
   return {
@@ -1452,6 +1572,22 @@ const DetachRuleGroupsFromProxyConfiguration: OperationHandler = (
     ctx,
     stringOrUndefined(input["ProxyConfigurationName"]),
     stringOrUndefined(input["ProxyConfigurationArn"]),
+  );
+  const inputToken = stringOrUndefined(input["UpdateToken"]);
+  if (inputToken !== pc.UpdateToken) {
+    throw awsError(
+      "InvalidTokenException",
+      "The token you provided is stale or isn't valid for the operation.",
+      400,
+    );
+  }
+  const removeNames = new Set(stringArrayFrom(input["RuleGroupNames"]));
+  const removeArns = new Set(stringArrayFrom(input["RuleGroupArns"]));
+  pc.RuleGroups = pc.RuleGroups.filter(
+    (r) =>
+      !removeNames.has(r.ProxyRuleGroupName) &&
+      (r.ProxyRuleGroupArn === undefined ||
+        !removeArns.has(r.ProxyRuleGroupArn)),
   );
   pc.UpdateToken = updateToken();
   ctx.store.set(proxyConfigKey(pc.ProxyConfigurationName), pc);
@@ -1485,6 +1621,7 @@ const CreateProxyRuleGroup: OperationHandler = (input, ctx) => {
     Description: stringOrUndefined(input["Description"]),
     Tags: tagListFrom(input["Tags"]),
     UpdateToken: updateToken(),
+    Rules: {},
   };
   ctx.store.set(proxyRuleGroupKey(name), prg);
   return {
@@ -1538,6 +1675,25 @@ const CreateProxyRules: OperationHandler = (input, ctx) => {
     stringOrUndefined(input["ProxyRuleGroupName"]),
     stringOrUndefined(input["ProxyRuleGroupArn"]),
   );
+  const rulesInput = asRecord(input["Rules"]);
+  const phases = ["PreDNS", "PreREQUEST", "PostRESPONSE"] as const;
+  for (const phase of phases) {
+    const phaseRules = rulesInput?.[phase];
+    if (!Array.isArray(phaseRules)) continue;
+    for (const ruleEntry of phaseRules) {
+      const rec = asRecord(ruleEntry);
+      if (rec === undefined) continue;
+      const ruleName = stringOrUndefined(rec["ProxyRuleName"]);
+      if (ruleName === undefined) continue;
+      prg.Rules[ruleName] = {
+        ProxyRuleName: ruleName,
+        Description: stringOrUndefined(rec["Description"]),
+        Action: stringOrUndefined(rec["Action"]),
+        Conditions: Array.isArray(rec["Conditions"]) ? rec["Conditions"] : [],
+        UpdateToken: updateToken(),
+      };
+    }
+  }
   prg.UpdateToken = updateToken();
   ctx.store.set(proxyRuleGroupKey(prg.ProxyRuleGroupName), prg);
   return {
@@ -1552,6 +1708,9 @@ const DeleteProxyRules: OperationHandler = (input, ctx) => {
     stringOrUndefined(input["ProxyRuleGroupName"]),
     stringOrUndefined(input["ProxyRuleGroupArn"]),
   );
+  for (const ruleName of stringArrayFrom(input["Rules"])) {
+    delete prg.Rules[ruleName];
+  }
   prg.UpdateToken = updateToken();
   ctx.store.set(proxyRuleGroupKey(prg.ProxyRuleGroupName), prg);
   return {
@@ -1560,38 +1719,82 @@ const DeleteProxyRules: OperationHandler = (input, ctx) => {
 };
 
 const DescribeProxyRule: OperationHandler = (input, ctx) => {
-  requireProxyRuleGroup(
+  const prg = requireProxyRuleGroup(
     ctx,
     stringOrUndefined(input["ProxyRuleGroupName"]),
     stringOrUndefined(input["ProxyRuleGroupArn"]),
   );
   const ruleName = stringOrUndefined(input["ProxyRuleName"]);
+  if (ruleName === undefined || prg.Rules[ruleName] === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      "The proxy rule does not exist.",
+      400,
+    );
+  }
+  const rule = prg.Rules[ruleName];
   return {
     ProxyRule: {
-      ProxyRuleName: ruleName,
-      Description: undefined,
-      Action: "ALLOW",
-      Conditions: [],
+      ProxyRuleName: rule.ProxyRuleName,
+      Description: rule.Description,
+      Action: rule.Action,
+      Conditions: rule.Conditions,
     },
-    UpdateToken: updateToken(),
+    UpdateToken: rule.UpdateToken,
   };
 };
 
 const UpdateProxyRule: OperationHandler = (input, ctx) => {
-  requireProxyRuleGroup(
+  const prg = requireProxyRuleGroup(
     ctx,
     stringOrUndefined(input["ProxyRuleGroupName"]),
     stringOrUndefined(input["ProxyRuleGroupArn"]),
   );
+  const ruleName = stringOrUndefined(input["ProxyRuleName"]);
+  if (ruleName === undefined || prg.Rules[ruleName] === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      "The proxy rule does not exist.",
+      400,
+    );
+  }
+  const rule = prg.Rules[ruleName];
+  const inputToken = stringOrUndefined(input["UpdateToken"]);
+  if (inputToken !== rule.UpdateToken) {
+    throw awsError(
+      "InvalidTokenException",
+      "The token you provided is stale or isn't valid for the operation.",
+      400,
+    );
+  }
+  if (input["Action"] !== undefined) {
+    rule.Action = stringOrUndefined(input["Action"]);
+  }
+  if (input["Description"] !== undefined) {
+    rule.Description = stringOrUndefined(input["Description"]);
+  }
+  const addConditions = Array.isArray(input["AddConditions"])
+    ? input["AddConditions"]
+    : [];
+  const removeConditions: unknown[] = Array.isArray(input["RemoveConditions"])
+    ? input["RemoveConditions"]
+    : [];
+  const removedSet = new Set(removeConditions.map((c) => JSON.stringify(c)));
+  const remaining = rule.Conditions.filter(
+    (c) => !removedSet.has(JSON.stringify(c)),
+  );
+  rule.Conditions = [...remaining, ...addConditions];
+  rule.UpdateToken = updateToken();
+  ctx.store.set(proxyRuleGroupKey(prg.ProxyRuleGroupName), prg);
   return {
     ProxyRule: {
-      ProxyRuleName: stringOrUndefined(input["ProxyRuleName"]),
-      Description: stringOrUndefined(input["Description"]),
-      Action: input["Action"],
-      Conditions: [],
+      ProxyRuleName: rule.ProxyRuleName,
+      Description: rule.Description,
+      Action: rule.Action,
+      Conditions: rule.Conditions,
     },
-    RemovedConditions: [],
-    UpdateToken: updateToken(),
+    RemovedConditions: removeConditions,
+    UpdateToken: rule.UpdateToken,
   };
 };
 
@@ -1662,19 +1865,26 @@ const DescribeVpcEndpointAssociation: OperationHandler = (input, ctx) => {
 
 const ListVpcEndpointAssociations: OperationHandler = (input, ctx) => {
   const firewallArn = stringOrUndefined(input["FirewallArn"]);
-  const assocs = ctx.store
+  const all = ctx.store
     .list<StoredVpcEndpointAssociation>()
     .filter((entry) => entry.key.startsWith("vpc-endpoint-assoc/"))
     .map((entry) => entry.value)
     .filter(
       (assoc) => firewallArn === undefined || assoc.FirewallArn === firewallArn,
     );
-  return {
-    VpcEndpointAssociations: assocs.map((assoc) => ({
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  const result: Record<string, unknown> = {
+    VpcEndpointAssociations: items.map((assoc) => ({
       VpcEndpointAssociationId: assoc.VpcEndpointAssociationId,
       VpcEndpointAssociationArn: assoc.VpcEndpointAssociationArn,
     })),
   };
+  if (nextToken !== undefined) result["NextToken"] = nextToken;
+  return result;
 };
 
 const DeleteVpcEndpointAssociation: OperationHandler = (input, ctx) => {
@@ -1845,9 +2055,10 @@ const ListAnalysisReports: OperationHandler = (input, ctx) => {
     stringOrUndefined(input["FirewallName"]),
     stringOrUndefined(input["FirewallArn"]),
   );
-  return {
+  const result: Record<string, unknown> = {
     AnalysisReports: [],
   };
+  return result;
 };
 
 const GetAnalysisReportResults: OperationHandler = (input, ctx) => {
@@ -1920,9 +2131,10 @@ const ListFlowOperations: OperationHandler = (input, ctx) => {
     throw awsError("InvalidRequestException", "FirewallArn is required.", 400);
   }
   requireFirewall(ctx, undefined, firewallArn);
-  return {
+  const result: Record<string, unknown> = {
     FlowOperations: [],
   };
+  return result;
 };
 
 const ListFlowOperationResults: OperationHandler = (input, ctx) => {

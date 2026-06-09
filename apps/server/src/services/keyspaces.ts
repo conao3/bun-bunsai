@@ -22,6 +22,12 @@ type StoredTable = {
   creationTimestamp: number;
   status: string;
   schemaDefinition: unknown;
+  capacitySpecification?: unknown;
+  encryptionSpecification?: unknown;
+  pointInTimeRecovery?: unknown;
+  ttl?: unknown;
+  defaultTimeToLive?: number;
+  autoScalingSpecification?: unknown;
 };
 
 type StoredType = {
@@ -34,6 +40,20 @@ type StoredType = {
 };
 
 type StoredTag = { key: string; value: string };
+
+const paginate = <T>(
+  items: T[],
+  maxResults: number | undefined,
+  nextToken: string | undefined,
+): { items: T[]; nextToken: string | undefined } => {
+  const start = nextToken !== undefined ? parseInt(atob(nextToken), 10) : 0;
+  const limit =
+    maxResults !== undefined && maxResults > 0 ? maxResults : items.length;
+  const sliced = items.slice(start, start + limit);
+  const newNextToken =
+    start + limit < items.length ? btoa(String(start + limit)) : undefined;
+  return { items: sliced, nextToken: newNextToken };
+};
 
 const keyspaceKey = (name: string): string => `keyspace/${name}`;
 const tableKey = (keyspace: string, table: string): string =>
@@ -132,8 +152,12 @@ const GetKeyspace: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListKeyspaces: OperationHandler = (_input, ctx) => {
-  const keyspaces = ctx.store
+const ListKeyspaces: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["maxResults"] === "number" ? input["maxResults"] : undefined;
+  const nextToken =
+    typeof input["nextToken"] === "string" ? input["nextToken"] : undefined;
+  const all = ctx.store
     .list<StoredKeyspace>()
     .filter((entry) => entry.key.startsWith("keyspace/"))
     .map((entry) => ({
@@ -141,7 +165,11 @@ const ListKeyspaces: OperationHandler = (_input, ctx) => {
       resourceArn: entry.value.resourceArn,
       replicationStrategy: entry.value.replicationStrategy,
     }));
-  return { keyspaces };
+  const paged = paginate(all, maxResults, nextToken);
+  return {
+    keyspaces: paged.items,
+    ...(paged.nextToken !== undefined ? { nextToken: paged.nextToken } : {}),
+  };
 };
 
 const DeleteKeyspace: OperationHandler = (input, ctx) => {
@@ -194,12 +222,29 @@ const GetTable: OperationHandler = (input, ctx) => {
     creationTimestamp: table.creationTimestamp,
     status: table.status,
     schemaDefinition: table.schemaDefinition,
+    ...(table.capacitySpecification !== undefined
+      ? { capacitySpecification: table.capacitySpecification }
+      : {}),
+    ...(table.encryptionSpecification !== undefined
+      ? { encryptionSpecification: table.encryptionSpecification }
+      : {}),
+    ...(table.pointInTimeRecovery !== undefined
+      ? { pointInTimeRecovery: table.pointInTimeRecovery }
+      : {}),
+    ...(table.ttl !== undefined ? { ttl: table.ttl } : {}),
+    ...(table.defaultTimeToLive !== undefined
+      ? { defaultTimeToLive: table.defaultTimeToLive }
+      : {}),
   };
 };
 
 const ListTables: OperationHandler = (input, ctx) => {
   const keyspaceName = requireString(input, "keyspaceName");
-  const tables = ctx.store
+  const maxResults =
+    typeof input["maxResults"] === "number" ? input["maxResults"] : undefined;
+  const nextToken =
+    typeof input["nextToken"] === "string" ? input["nextToken"] : undefined;
+  const all = ctx.store
     .list<StoredTable>()
     .filter((entry) => entry.key.startsWith(`table/${keyspaceName}/`))
     .map((entry) => ({
@@ -207,12 +252,17 @@ const ListTables: OperationHandler = (input, ctx) => {
       tableName: entry.value.tableName,
       resourceArn: entry.value.resourceArn,
     }));
-  return { tables };
+  const paged = paginate(all, maxResults, nextToken);
+  return {
+    tables: paged.items,
+    ...(paged.nextToken !== undefined ? { nextToken: paged.nextToken } : {}),
+  };
 };
 
 const DeleteTable: OperationHandler = (input, ctx) => {
   const keyspaceName = requireString(input, "keyspaceName");
   const tableName = requireString(input, "tableName");
+  requireTable(ctx, keyspaceName, tableName);
   ctx.store.delete(tableKey(keyspaceName, tableName));
   return {};
 };
@@ -238,8 +288,27 @@ const UpdateTable: OperationHandler = (input, ctx) => {
   const keyspaceName = requireString(input, "keyspaceName");
   const tableName = requireString(input, "tableName");
   const table = requireTable(ctx, keyspaceName, tableName);
-  ctx.store.set(tableKey(keyspaceName, tableName), table);
-  return { resourceArn: table.resourceArn };
+  const updated: StoredTable = {
+    ...table,
+    ...(input["capacitySpecification"] !== undefined
+      ? { capacitySpecification: input["capacitySpecification"] }
+      : {}),
+    ...(input["encryptionSpecification"] !== undefined
+      ? { encryptionSpecification: input["encryptionSpecification"] }
+      : {}),
+    ...(input["pointInTimeRecovery"] !== undefined
+      ? { pointInTimeRecovery: input["pointInTimeRecovery"] }
+      : {}),
+    ...(input["ttl"] !== undefined ? { ttl: input["ttl"] } : {}),
+    ...(typeof input["defaultTimeToLive"] === "number"
+      ? { defaultTimeToLive: input["defaultTimeToLive"] }
+      : {}),
+    ...(input["autoScalingSpecification"] !== undefined
+      ? { autoScalingSpecification: input["autoScalingSpecification"] }
+      : {}),
+  };
+  ctx.store.set(tableKey(keyspaceName, tableName), updated);
+  return { resourceArn: updated.resourceArn };
 };
 
 const RestoreTable: OperationHandler = (input, ctx) => {
@@ -254,7 +323,7 @@ const RestoreTable: OperationHandler = (input, ctx) => {
     tableName: targetTableName,
     resourceArn: tableArn(ctx, targetKeyspaceName, targetTableName),
     creationTimestamp: Date.now(),
-    status: "RESTORING",
+    status: "ACTIVE",
     schemaDefinition: source.schemaDefinition,
   };
   ctx.store.set(tableKey(targetKeyspaceName, targetTableName), restored);
@@ -269,6 +338,9 @@ const GetTableAutoScalingSettings: OperationHandler = (input, ctx) => {
     keyspaceName: table.keyspaceName,
     tableName: table.tableName,
     resourceArn: table.resourceArn,
+    ...(table.autoScalingSpecification !== undefined
+      ? { autoScalingSpecification: table.autoScalingSpecification }
+      : {}),
   };
 };
 
@@ -316,11 +388,19 @@ const GetType: OperationHandler = (input, ctx) => {
 const ListTypes: OperationHandler = (input, ctx) => {
   const keyspaceName = requireString(input, "keyspaceName");
   requireKeyspace(ctx, keyspaceName);
-  const types = ctx.store
+  const maxResults =
+    typeof input["maxResults"] === "number" ? input["maxResults"] : undefined;
+  const nextToken =
+    typeof input["nextToken"] === "string" ? input["nextToken"] : undefined;
+  const all = ctx.store
     .list<StoredType>()
     .filter((entry) => entry.key.startsWith(`type/${keyspaceName}/`))
     .map((entry) => entry.value.typeName);
-  return { types };
+  const paged = paginate(all, maxResults, nextToken);
+  return {
+    types: paged.items,
+    ...(paged.nextToken !== undefined ? { nextToken: paged.nextToken } : {}),
+  };
 };
 
 const DeleteType: OperationHandler = (input, ctx) => {

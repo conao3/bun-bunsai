@@ -65,6 +65,10 @@ type StoredJob = {
   jobDefinition: string;
   createdAt: number;
   startedAt: number;
+  stoppedAt?: number;
+  isCancelled?: boolean;
+  isTerminated?: boolean;
+  attempts?: unknown[];
   parameters: Record<string, unknown> | undefined;
   container: Record<string, unknown>;
   tags: Record<string, string>;
@@ -194,6 +198,16 @@ const stringListFromInput = (value: unknown): string[] => {
   return value.filter((entry): entry is string => typeof entry === "string");
 };
 
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
 const computeEnvironmentView = (
   computeEnvironment: StoredComputeEnvironment,
 ): Record<string, unknown> => ({
@@ -245,6 +259,7 @@ const jobDefinitionView = (
 
 const JOB_STATUS_PROGRESSION = [
   "SUBMITTED",
+  "PENDING",
   "RUNNABLE",
   "STARTING",
   "RUNNING",
@@ -258,7 +273,23 @@ const advanceJobStatus = (job: StoredJob, ctx: ServiceContext): StoredJob => {
   );
   const nextIdx =
     idx === -1 ? 0 : Math.min(idx + 1, JOB_STATUS_PROGRESSION.length - 1);
-  const updated = { ...job, status: JOB_STATUS_PROGRESSION[nextIdx] };
+  const nextStatus = JOB_STATUS_PROGRESSION[nextIdx];
+  const now = Date.now();
+  const updated: StoredJob =
+    nextStatus === "SUCCEEDED"
+      ? {
+          ...job,
+          status: nextStatus,
+          stoppedAt: now,
+          attempts: [
+            {
+              startedAt: job.startedAt,
+              stoppedAt: now,
+              container: { exitCode: 0 },
+            },
+          ],
+        }
+      : { ...job, status: nextStatus };
   ctx.store.set(jobKey(job.jobId), updated);
   return updated;
 };
@@ -273,6 +304,10 @@ const jobView = (job: StoredJob): Record<string, unknown> => ({
   jobDefinition: job.jobDefinition,
   createdAt: job.createdAt,
   startedAt: job.startedAt,
+  stoppedAt: job.stoppedAt,
+  isCancelled: job.isCancelled ?? false,
+  isTerminated: job.isTerminated ?? false,
+  attempts: job.attempts ?? [],
   parameters: job.parameters,
   container: job.container,
   tags: job.tags,
@@ -469,15 +504,27 @@ const CreateComputeEnvironment: OperationHandler = (input, ctx) => {
 
 const DescribeComputeEnvironments: OperationHandler = (input, ctx) => {
   const requested = stringListFromInput(input["computeEnvironments"]);
+  const maxResults =
+    typeof input["maxResults"] === "number"
+      ? (input["maxResults"] as number)
+      : undefined;
+  const offset = decodePageToken(input["nextToken"]);
   const matches = (computeEnvironment: StoredComputeEnvironment): boolean =>
     requested.length === 0 ||
     requested.includes(computeEnvironment.computeEnvironmentName) ||
     requested.includes(computeEnvironment.computeEnvironmentArn);
-  return {
-    computeEnvironments: listComputeEnvironments(ctx)
-      .filter(matches)
-      .map(computeEnvironmentView),
+  const all = listComputeEnvironments(ctx).filter(matches);
+  const page =
+    maxResults !== undefined
+      ? all.slice(offset, offset + maxResults)
+      : all.slice(offset);
+  const result: Record<string, unknown> = {
+    computeEnvironments: page.map(computeEnvironmentView),
   };
+  if (maxResults !== undefined && offset + maxResults < all.length) {
+    result["nextToken"] = encodePageToken(offset + maxResults);
+  }
+  return result;
 };
 
 const CreateJobQueue: OperationHandler = (input, ctx) => {
@@ -507,13 +554,27 @@ const CreateJobQueue: OperationHandler = (input, ctx) => {
 
 const DescribeJobQueues: OperationHandler = (input, ctx) => {
   const requested = stringListFromInput(input["jobQueues"]);
+  const maxResults =
+    typeof input["maxResults"] === "number"
+      ? (input["maxResults"] as number)
+      : undefined;
+  const offset = decodePageToken(input["nextToken"]);
   const matches = (jobQueue: StoredJobQueue): boolean =>
     requested.length === 0 ||
     requested.includes(jobQueue.jobQueueName) ||
     requested.includes(jobQueue.jobQueueArn);
-  return {
-    jobQueues: listJobQueues(ctx).filter(matches).map(jobQueueView),
+  const all = listJobQueues(ctx).filter(matches);
+  const page =
+    maxResults !== undefined
+      ? all.slice(offset, offset + maxResults)
+      : all.slice(offset);
+  const result: Record<string, unknown> = {
+    jobQueues: page.map(jobQueueView),
   };
+  if (maxResults !== undefined && offset + maxResults < all.length) {
+    result["nextToken"] = encodePageToken(offset + maxResults);
+  }
+  return result;
 };
 
 const RegisterJobDefinition: OperationHandler = (input, ctx) => {
@@ -564,6 +625,11 @@ const DescribeJobDefinitions: OperationHandler = (input, ctx) => {
   const requested = stringListFromInput(input["jobDefinitions"]);
   const name = stringOrUndefined(input["jobDefinitionName"]);
   const status = stringOrUndefined(input["status"]);
+  const maxResults =
+    typeof input["maxResults"] === "number"
+      ? (input["maxResults"] as number)
+      : undefined;
+  const offset = decodePageToken(input["nextToken"]);
   const matches = (jobDefinition: StoredJobDefinition): boolean => {
     if (
       requested.length > 0 &&
@@ -582,11 +648,18 @@ const DescribeJobDefinitions: OperationHandler = (input, ctx) => {
     }
     return true;
   };
-  return {
-    jobDefinitions: listJobDefinitions(ctx)
-      .filter(matches)
-      .map(jobDefinitionView),
+  const all = listJobDefinitions(ctx).filter(matches);
+  const page =
+    maxResults !== undefined
+      ? all.slice(offset, offset + maxResults)
+      : all.slice(offset);
+  const result: Record<string, unknown> = {
+    jobDefinitions: page.map(jobDefinitionView),
   };
+  if (maxResults !== undefined && offset + maxResults < all.length) {
+    result["nextToken"] = encodePageToken(offset + maxResults);
+  }
+  return result;
 };
 
 const SubmitJob: OperationHandler = (input, ctx) => {
@@ -614,6 +687,20 @@ const SubmitJob: OperationHandler = (input, ctx) => {
       environment: Array.isArray(containerOverrides?.["environment"])
         ? containerOverrides["environment"]
         : [],
+      instanceType: stringOrUndefined(containerOverrides?.["instanceType"]),
+      memory:
+        typeof containerOverrides?.["memory"] === "number"
+          ? (containerOverrides["memory"] as number)
+          : undefined,
+      vcpus:
+        typeof containerOverrides?.["vcpus"] === "number"
+          ? (containerOverrides["vcpus"] as number)
+          : undefined,
+      resourceRequirements: Array.isArray(
+        containerOverrides?.["resourceRequirements"],
+      )
+        ? containerOverrides["resourceRequirements"]
+        : undefined,
     },
     tags: tagsFromInput(input["tags"]),
   };
@@ -635,32 +722,95 @@ const DescribeJobs: OperationHandler = (input, ctx) => {
   };
 };
 
+const jobMatchesFilter = (
+  job: StoredJob,
+  filter: Record<string, unknown>,
+): boolean => {
+  const name = stringOrUndefined(filter["name"]);
+  const values = stringListFromInput(filter["values"]);
+  if (values.length === 0) return true;
+  if (name === "JOB_NAME") {
+    return values.some((pattern) => {
+      const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
+      return regex.test(job.jobName);
+    });
+  }
+  if (name === "JOB_DEFINITION") {
+    return values.includes(job.jobDefinition);
+  }
+  if (name === "BEFORE_CREATED_AT") {
+    const ts = Number.parseInt(values[0] ?? "0", 10);
+    return Number.isFinite(ts) && job.createdAt < ts;
+  }
+  if (name === "AFTER_CREATED_AT") {
+    const ts = Number.parseInt(values[0] ?? "0", 10);
+    return Number.isFinite(ts) && job.createdAt > ts;
+  }
+  return true;
+};
+
 const ListJobs: OperationHandler = (input, ctx) => {
   const jobQueue = stringOrUndefined(input["jobQueue"]);
   const jobStatus = stringOrUndefined(input["jobStatus"]);
+  const filters = Array.isArray(input["filters"])
+    ? (input["filters"] as unknown[])
+    : [];
+  const maxResults =
+    typeof input["maxResults"] === "number"
+      ? (input["maxResults"] as number)
+      : undefined;
+  const offset = decodePageToken(input["nextToken"]);
   const matches = (job: StoredJob): boolean => {
     if (jobQueue !== undefined && job.jobQueue !== jobQueue) return false;
     if (jobStatus !== undefined && job.status !== jobStatus) return false;
+    for (const f of filters) {
+      if (
+        typeof f === "object" &&
+        f !== null &&
+        !jobMatchesFilter(job, f as Record<string, unknown>)
+      ) {
+        return false;
+      }
+    }
     return true;
   };
-  return {
-    jobSummaryList: listJobs(ctx).filter(matches).map(jobSummaryView),
+  const all = listJobs(ctx).filter(matches);
+  const page =
+    maxResults !== undefined
+      ? all.slice(offset, offset + maxResults)
+      : all.slice(offset);
+  const result: Record<string, unknown> = {
+    jobSummaryList: page.map(jobSummaryView),
   };
+  if (maxResults !== undefined && offset + maxResults < all.length) {
+    result["nextToken"] = encodePageToken(offset + maxResults);
+  }
+  return result;
 };
 
 const CancelJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "jobId");
   const reason = requireString(input, "reason");
   const job = ctx.store.get<StoredJob>(jobKey(jobId));
-  if (
-    job !== undefined &&
-    job.status !== "SUCCEEDED" &&
-    job.status !== "FAILED"
-  ) {
+  if (job === undefined) {
+    throw awsError("ClientException", `Job not found: ${jobId}`, 400);
+  }
+  if (job.status !== "SUCCEEDED" && job.status !== "FAILED") {
+    const now = Date.now();
     ctx.store.set(jobKey(jobId), {
       ...job,
       status: "FAILED",
       statusReason: reason,
+      isCancelled: true,
+      stoppedAt: now,
+      attempts: [
+        {
+          startedAt: job.startedAt,
+          stoppedAt: now,
+          container: { exitCode: 1, reason },
+        },
+      ],
     });
   }
   return {};
@@ -670,13 +820,24 @@ const TerminateJob: OperationHandler = (input, ctx) => {
   const jobId = requireString(input, "jobId");
   const reason = requireString(input, "reason");
   const job = ctx.store.get<StoredJob>(jobKey(jobId));
-  if (job !== undefined) {
-    ctx.store.set(jobKey(jobId), {
-      ...job,
-      status: "FAILED",
-      statusReason: reason,
-    });
+  if (job === undefined) {
+    throw awsError("ClientException", `Job not found: ${jobId}`, 400);
   }
+  const now = Date.now();
+  ctx.store.set(jobKey(jobId), {
+    ...job,
+    status: "FAILED",
+    statusReason: reason,
+    isTerminated: true,
+    stoppedAt: now,
+    attempts: [
+      {
+        startedAt: job.startedAt,
+        stoppedAt: now,
+        container: { exitCode: 1, reason },
+      },
+    ],
+  });
   return {};
 };
 
@@ -1230,8 +1391,25 @@ const GetJobQueueSnapshot: OperationHandler = (input, ctx) => {
   };
 };
 
+const resourceExists = (ctx: ServiceContext, arn: string): boolean =>
+  listComputeEnvironments(ctx).some((ce) => ce.computeEnvironmentArn === arn) ||
+  listJobQueues(ctx).some((jq) => jq.jobQueueArn === arn) ||
+  listJobDefinitions(ctx).some((jd) => jd.jobDefinitionArn === arn) ||
+  listSchedulingPolicies(ctx).some((sp) => sp.arn === arn) ||
+  listJobs(ctx).some((job) => job.jobArn === arn) ||
+  listConsumableResources(ctx).some((cr) => cr.consumableResourceArn === arn) ||
+  listServiceEnvironments(ctx).some((se) => se.serviceEnvironmentArn === arn) ||
+  listServiceJobs(ctx).some((sj) => sj.jobArn === arn);
+
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "resourceArn");
+  if (!resourceExists(ctx, resourceArn)) {
+    throw awsError(
+      "ClientException",
+      `Resource not found: ${resourceArn}`,
+      400,
+    );
+  }
   const tags =
     ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
   return { tags };
@@ -1239,6 +1417,13 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "resourceArn");
+  if (!resourceExists(ctx, resourceArn)) {
+    throw awsError(
+      "ClientException",
+      `Resource not found: ${resourceArn}`,
+      400,
+    );
+  }
   const newTags = tagsFromInput(input["tags"]);
   const existing =
     ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
@@ -1248,6 +1433,13 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "resourceArn");
+  if (!resourceExists(ctx, resourceArn)) {
+    throw awsError(
+      "ClientException",
+      `Resource not found: ${resourceArn}`,
+      400,
+    );
+  }
   const tagKeys = stringListFromInput(input["tagKeys"]);
   const existing =
     ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};

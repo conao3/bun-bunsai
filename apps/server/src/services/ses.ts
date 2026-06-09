@@ -136,15 +136,38 @@ const accountSendingKey = (): string => "account_sending";
 
 const sendStatsKey = (): string => "send_stats";
 
-const incrementSendStats = (ctx: ServiceContext): void => {
+const incrementSendStats = (ctx: ServiceContext, count = 1): void => {
   const current = ctx.store.get<StoredSendStats>(sendStatsKey()) ?? {
     SentLast24Hours: 0,
     DeliveryAttempts: 0,
   };
   ctx.store.set(sendStatsKey(), {
-    SentLast24Hours: current.SentLast24Hours + 1,
-    DeliveryAttempts: current.DeliveryAttempts + 1,
+    SentLast24Hours: current.SentLast24Hours + count,
+    DeliveryAttempts: current.DeliveryAttempts + count,
   });
+};
+
+const checkAccountSendingEnabled = (ctx: ServiceContext): void => {
+  const stored = ctx.store.get<StoredAccountSending>(accountSendingKey());
+  if (stored !== undefined && !stored.Enabled) {
+    throw awsError(
+      "AccountSendingPausedException",
+      "Account sending has been disabled.",
+      400,
+    );
+  }
+};
+
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") {
+    return 0;
+  }
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 };
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
@@ -318,7 +341,12 @@ const ListIdentities: OperationHandler = (input, ctx) => {
     typeof input["IdentityType"] === "string"
       ? (input["IdentityType"] as string)
       : undefined;
-  const identities = ctx.store
+  const maxItems =
+    typeof input["MaxItems"] === "number" && input["MaxItems"] > 0
+      ? (input["MaxItems"] as number)
+      : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredIdentity>()
     .filter((entry) => entry.key.startsWith("identity/"))
     .filter(
@@ -326,7 +354,19 @@ const ListIdentities: OperationHandler = (input, ctx) => {
         filterType === undefined || entry.value.IdentityType === filterType,
     )
     .map((entry) => entry.value.Identity);
-  return { Identities: identities };
+  const page =
+    maxItems !== undefined
+      ? all.slice(offset, offset + maxItems)
+      : all.slice(offset);
+  const nextOffset = offset + page.length;
+  const nextToken =
+    maxItems !== undefined && nextOffset < all.length
+      ? encodePageToken(nextOffset)
+      : undefined;
+  return {
+    Identities: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const ListVerifiedEmailAddresses: OperationHandler = (_, ctx) => {
@@ -351,6 +391,7 @@ const DeleteVerifiedEmailAddress: OperationHandler = (input, ctx) => {
 };
 
 const SendEmail: OperationHandler = (input, ctx) => {
+  checkAccountSendingEnabled(ctx);
   const source = requireString(input, "Source");
   const destination = input["Destination"];
   if (typeof destination !== "object" || destination === null) {
@@ -382,6 +423,7 @@ const SendEmail: OperationHandler = (input, ctx) => {
 };
 
 const SendRawEmail: OperationHandler = (input, ctx) => {
+  checkAccountSendingEnabled(ctx);
   const rawMessage = input["RawMessage"];
   if (typeof rawMessage !== "object" || rawMessage === null) {
     throw awsError("InvalidParameterValue", "RawMessage is required.", 400);
@@ -410,6 +452,7 @@ const SendRawEmail: OperationHandler = (input, ctx) => {
 };
 
 const SendTemplatedEmail: OperationHandler = (input, ctx) => {
+  checkAccountSendingEnabled(ctx);
   const source = requireString(input, "Source");
   const templateName = requireString(input, "Template");
   requireTemplate(ctx, templateName);
@@ -421,10 +464,12 @@ const SendTemplatedEmail: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  incrementSendStats(ctx);
   return { MessageId: crypto.randomUUID() };
 };
 
 const SendBulkTemplatedEmail: OperationHandler = (input, ctx) => {
+  checkAccountSendingEnabled(ctx);
   const source = requireString(input, "Source");
   const templateName = requireString(input, "Template");
   requireTemplate(ctx, templateName);
@@ -439,6 +484,7 @@ const SendBulkTemplatedEmail: OperationHandler = (input, ctx) => {
   const destinations = Array.isArray(input["Destinations"])
     ? input["Destinations"]
     : [];
+  incrementSendStats(ctx, destinations.length);
   const statuses = destinations.map(() => ({
     Status: "Success",
     MessageId: crypto.randomUUID(),
@@ -487,7 +533,7 @@ const GetSendStatistics: OperationHandler = (_, ctx) => {
   return {
     SendDataPoints: [
       {
-        Timestamp: new Date(0).toISOString(),
+        Timestamp: new Date().toISOString(),
         DeliveryAttempts: stats.DeliveryAttempts,
         Bounces: 0,
         Complaints: 0,
@@ -736,12 +782,29 @@ const DescribeConfigurationSet: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListConfigurationSets: OperationHandler = (_, ctx) => {
-  const sets = ctx.store
+const ListConfigurationSets: OperationHandler = (input, ctx) => {
+  const maxItems =
+    typeof input["MaxItems"] === "number" && input["MaxItems"] > 0
+      ? (input["MaxItems"] as number)
+      : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredConfigurationSet>()
     .filter((entry) => entry.key.startsWith("configset/"))
     .map((entry) => ({ Name: entry.value.Name }));
-  return { ConfigurationSets: sets };
+  const page =
+    maxItems !== undefined
+      ? all.slice(offset, offset + maxItems)
+      : all.slice(offset);
+  const nextOffset = offset + page.length;
+  const nextToken =
+    maxItems !== undefined && nextOffset < all.length
+      ? encodePageToken(nextOffset)
+      : undefined;
+  return {
+    ConfigurationSets: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const CreateConfigurationSetEventDestination: OperationHandler = (
@@ -993,15 +1056,16 @@ const DescribeReceiptRuleSet: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListReceiptRuleSets: OperationHandler = (_, ctx) => {
-  const sets = ctx.store
+const ListReceiptRuleSets: OperationHandler = (input, ctx) => {
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredReceiptRuleSet>()
     .filter((entry) => entry.key.startsWith("ruleset/"))
     .map((entry) => ({
       Name: entry.value.Name,
       CreatedTimestamp: entry.value.CreatedTimestamp,
     }));
-  return { RuleSets: sets };
+  return { RuleSets: all.slice(offset) };
 };
 
 const CloneReceiptRuleSet: OperationHandler = (input, ctx) => {
@@ -1282,12 +1346,29 @@ const GetTemplate: OperationHandler = (input, ctx) => {
   return { Template: t };
 };
 
-const ListTemplates: OperationHandler = (_, ctx) => {
-  const templates = ctx.store
+const ListTemplates: OperationHandler = (input, ctx) => {
+  const maxItems =
+    typeof input["MaxItems"] === "number" && input["MaxItems"] > 0
+      ? (input["MaxItems"] as number)
+      : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredTemplate>()
     .filter((entry) => entry.key.startsWith("template/"))
     .map((entry) => ({ Name: entry.value.TemplateName }));
-  return { TemplatesMetadata: templates };
+  const page =
+    maxItems !== undefined
+      ? all.slice(offset, offset + maxItems)
+      : all.slice(offset);
+  const nextOffset = offset + page.length;
+  const nextToken =
+    maxItems !== undefined && nextOffset < all.length
+      ? encodePageToken(nextOffset)
+      : undefined;
+  return {
+    TemplatesMetadata: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateTemplate: OperationHandler = (input, ctx) => {
@@ -1391,8 +1472,13 @@ const GetCustomVerificationEmailTemplate: OperationHandler = (input, ctx) => {
   return t;
 };
 
-const ListCustomVerificationEmailTemplates: OperationHandler = (_, ctx) => {
-  const templates = ctx.store
+const ListCustomVerificationEmailTemplates: OperationHandler = (input, ctx) => {
+  const maxItems =
+    typeof input["MaxItems"] === "number" && input["MaxItems"] > 0
+      ? (input["MaxItems"] as number)
+      : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredCustomVerificationEmailTemplate>()
     .filter((entry) => entry.key.startsWith("cvtemplate/"))
     .map((entry) => ({
@@ -1402,7 +1488,19 @@ const ListCustomVerificationEmailTemplates: OperationHandler = (_, ctx) => {
       SuccessRedirectionURL: entry.value.SuccessRedirectionURL,
       FailureRedirectionURL: entry.value.FailureRedirectionURL,
     }));
-  return { CustomVerificationEmailTemplates: templates };
+  const page =
+    maxItems !== undefined
+      ? all.slice(offset, offset + maxItems)
+      : all.slice(offset);
+  const nextOffset = offset + page.length;
+  const nextToken =
+    maxItems !== undefined && nextOffset < all.length
+      ? encodePageToken(nextOffset)
+      : undefined;
+  return {
+    CustomVerificationEmailTemplates: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateCustomVerificationEmailTemplate: OperationHandler = (

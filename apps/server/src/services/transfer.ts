@@ -492,7 +492,7 @@ const ListServers: OperationHandler = (input, ctx) => {
 
 const DeleteServer: OperationHandler = (input, ctx) => {
   const serverId = serverIdFromInput(input);
-  requireServer(ctx, serverId);
+  if (ctx.store.get<StoredServer>(serverId) === undefined) return {};
   ctx.store.delete(serverId);
   return {};
 };
@@ -554,11 +554,7 @@ const CreateUser: OperationHandler = (input, ctx) => {
     throw awsError("InvalidRequestException", "Role is required.", 400);
   }
   if (server.users[userName] !== undefined) {
-    throw awsError(
-      "ResourceExistsException",
-      `User ${userName} already exists.`,
-      400,
-    );
+    return { ServerId: serverId, UserName: userName };
   }
   const sshKeyBody = stringOrUndefined(input["SshPublicKeyBody"]);
   const user: StoredUser = {
@@ -666,7 +662,7 @@ const DeleteUser: OperationHandler = (input, ctx) => {
   const serverId = serverIdFromInput(input);
   const server = requireServer(ctx, serverId);
   const userName = userNameFromInput(input);
-  requireUser(server, userName);
+  if (server.users[userName] === undefined) return {};
   delete server.users[userName];
   ctx.store.set(serverId, server);
   return {};
@@ -1049,7 +1045,7 @@ const DeleteAgreement: OperationHandler = (input, ctx) => {
   if (typeof agreementId !== "string" || agreementId === "") {
     throw awsError("InvalidRequestException", "AgreementId is required.", 400);
   }
-  requireAgreement(server, agreementId);
+  if (server.agreements[agreementId] === undefined) return {};
   delete server.agreements[agreementId];
   ctx.store.set(serverId, server);
   return {};
@@ -1073,7 +1069,7 @@ const CreateConnector: OperationHandler = (input, ctx) => {
     SecurityPolicyName: stringOrUndefined(input["SecurityPolicyName"]),
     EgressConfig: input["EgressConfig"],
     IpAddressType: stringOrUndefined(input["IpAddressType"]),
-    Status: "CREATING",
+    Status: "PENDING",
   };
   ctx.store.set(connectorKey(connectorId), connector);
   return { ConnectorId: connectorId };
@@ -1085,8 +1081,8 @@ const DescribeConnector: OperationHandler = (input, ctx) => {
     throw awsError("InvalidRequestException", "ConnectorId is required.", 400);
   }
   const connector = requireConnector(ctx, connectorId);
-  if (connector.Status === "CREATING") {
-    connector.Status = "ONLINE";
+  if (connector.Status === "PENDING") {
+    connector.Status = "ACTIVE";
     ctx.store.set(connectorKey(connectorId), connector);
   }
   return {
@@ -1167,7 +1163,8 @@ const DeleteConnector: OperationHandler = (input, ctx) => {
   if (typeof connectorId !== "string" || connectorId === "") {
     throw awsError("InvalidRequestException", "ConnectorId is required.", 400);
   }
-  requireConnector(ctx, connectorId);
+  if (ctx.store.get<StoredConnector>(connectorKey(connectorId)) === undefined)
+    return {};
   ctx.store.delete(connectorKey(connectorId));
   return {};
 };
@@ -1368,7 +1365,24 @@ const DeleteProfile: OperationHandler = (input, ctx) => {
   if (typeof profileId !== "string" || profileId === "") {
     throw awsError("InvalidRequestException", "ProfileId is required.", 400);
   }
-  requireProfile(ctx, profileId);
+  if (ctx.store.get<StoredProfile>(profileKey(profileId)) === undefined)
+    return {};
+  const inUse = ctx.store
+    .list<StoredServer>()
+    .filter((e) => !e.key.includes("/"))
+    .some((e) =>
+      Object.values(e.value.agreements).some(
+        (a) =>
+          a.LocalProfileId === profileId || a.PartnerProfileId === profileId,
+      ),
+    );
+  if (inUse) {
+    throw awsError(
+      "ConflictException",
+      `Profile ${profileId} is in use by one or more agreements.`,
+      409,
+    );
+  }
   ctx.store.delete(profileKey(profileId));
   return {};
 };
@@ -1459,7 +1473,7 @@ const DeleteWebApp: OperationHandler = (input, ctx) => {
   if (typeof webAppId !== "string" || webAppId === "") {
     throw awsError("InvalidRequestException", "WebAppId is required.", 400);
   }
-  requireWebApp(ctx, webAppId);
+  if (ctx.store.get<StoredWebApp>(webAppKey(webAppId)) === undefined) return {};
   ctx.store.delete(webAppKey(webAppId));
   return {};
 };
@@ -1559,7 +1573,8 @@ const DeleteWorkflow: OperationHandler = (input, ctx) => {
   if (typeof workflowId !== "string" || workflowId === "") {
     throw awsError("InvalidRequestException", "WorkflowId is required.", 400);
   }
-  requireWorkflow(ctx, workflowId);
+  if (ctx.store.get<StoredWorkflow>(workflowKey(workflowId)) === undefined)
+    return {};
   ctx.store.delete(workflowKey(workflowId));
   return {};
 };
@@ -1733,7 +1748,8 @@ const DeleteCertificate: OperationHandler = (input, ctx) => {
       400,
     );
   }
-  requireCert(ctx, certId);
+  if (ctx.store.get<StoredCertificate>(certKey(certId)) === undefined)
+    return {};
   ctx.store.delete(certKey(certId));
   return {};
 };

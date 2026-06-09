@@ -215,6 +215,20 @@ const requireDef = (
   return def;
 };
 
+const paginate = <T>(
+  items: T[],
+  input: Record<string, unknown>,
+): { items: T[]; nextToken: string | undefined } => {
+  const maxRaw = stringOrUndefined(input["MaxResults"]);
+  const maxResults = maxRaw !== undefined ? parseInt(maxRaw, 10) : undefined;
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const start = nextToken !== undefined ? parseInt(nextToken, 10) : 0;
+  const limit = maxResults ?? items.length;
+  const page = items.slice(start, start + limit);
+  const next = start + limit < items.length ? String(start + limit) : undefined;
+  return { items: page, nextToken: next };
+};
+
 const makeDefOps = (
   urlType: string,
   idField: string,
@@ -264,12 +278,17 @@ const makeDefOps = (
     const def = requireDef(ctx, urlType, defId);
     const verId = randomId();
     const now = new Date().toISOString();
+    const definition = Object.fromEntries(
+      Object.entries(input).filter(
+        ([k]) => k !== idField && k !== "AmznClientToken",
+      ),
+    );
     const ver: StoredDefinitionVersion = {
       id: verId,
       arn: defverArn(ctx, urlType, defId, verId),
       creationTimestamp: now,
       version: verId,
-      definition: input,
+      definition,
     };
     ctx.store.set(defverKey(urlType, defId, verId), ver);
     def.latestVersion = verId;
@@ -302,13 +321,18 @@ const makeDefOps = (
     return defverView(ver, defId);
   };
 
-  const listDefs: OperationHandler = (_input, ctx) => {
+  const listDefs: OperationHandler = (input, ctx) => {
     const defs = ctx.store
       .list<StoredDefinition>()
       .filter((e) => e.key.startsWith(`${defPrefix}${urlType}:`))
       .map((e) => e.value)
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    return { Definitions: defs.map(defView) };
+    const { items, nextToken } = paginate(defs, input);
+    const result: Record<string, unknown> = {
+      Definitions: items.map(defView),
+    };
+    if (nextToken !== undefined) result["NextToken"] = nextToken;
+    return result;
   };
 
   const listDefVersions: OperationHandler = (input, ctx) => {
@@ -319,7 +343,12 @@ const makeDefOps = (
       .filter((e) => e.key.startsWith(`${defverPrefix}${urlType}:${defId}:`))
       .map((e) => e.value)
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    return { Versions: versions.map((v) => defverView(v, defId)) };
+    const { items, nextToken } = paginate(versions, input);
+    const result: Record<string, unknown> = {
+      Versions: items.map((v) => defverView(v, defId)),
+    };
+    if (nextToken !== undefined) result["NextToken"] = nextToken;
+    return result;
   };
 
   const updateDef: OperationHandler = (input, ctx) => {
@@ -466,13 +495,16 @@ const GetGroup: OperationHandler = (input, ctx) => {
   return groupView(requireGroup(ctx, id));
 };
 
-const ListGroups: OperationHandler = (_input, ctx) => {
+const ListGroups: OperationHandler = (input, ctx) => {
   const groups = ctx.store
     .list<StoredGroup>()
     .filter((entry) => entry.key.startsWith(groupPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return { Groups: groups.map(groupView) };
+  const { items, nextToken } = paginate(groups, input);
+  const result: Record<string, unknown> = { Groups: items.map(groupView) };
+  if (nextToken !== undefined) result["NextToken"] = nextToken;
+  return result;
 };
 
 const DeleteGroup: OperationHandler = (input, ctx) => {
@@ -559,12 +591,17 @@ const CreateGroupVersion: OperationHandler = (input, ctx) => {
   const verId = randomId();
   const now = new Date().toISOString();
   const arn = groupverArn(ctx, groupId, verId);
+  const definition = Object.fromEntries(
+    Object.entries(input).filter(
+      ([k]) => k !== "GroupId" && k !== "AmznClientToken",
+    ),
+  );
   const groupVer: StoredGroupVersion = {
     id: verId,
     arn,
     creationTimestamp: now,
     version: verId,
-    definition: input,
+    definition,
   };
   ctx.store.set(groupverKey(groupId, verId), groupVer);
   const group = requireGroup(ctx, groupId);
@@ -604,28 +641,48 @@ const ListGroupVersions: OperationHandler = (input, ctx) => {
     .filter((e) => e.key.startsWith(`${groupverPrefix}${groupId}:`))
     .map((e) => e.value)
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return {
-    Versions: versions.map((v) => ({
+  const { items, nextToken } = paginate(versions, input);
+  const result: Record<string, unknown> = {
+    Versions: items.map((v) => ({
       Arn: v.arn,
       CreationTimestamp: v.creationTimestamp,
       Id: groupId,
       Version: v.version,
     })),
   };
+  if (nextToken !== undefined) result["NextToken"] = nextToken;
+  return result;
 };
+
+const validDeploymentTypes = new Set([
+  "NewDeployment",
+  "Redeployment",
+  "ForceNewDeployment",
+]);
 
 const CreateDeployment: OperationHandler = (input, ctx) => {
   const groupId = requireString(input, "GroupId");
   requireGroup(ctx, groupId);
-  const deploymentId = randomId();
+  const deploymentType = requireString(input, "DeploymentType");
+  if (!validDeploymentTypes.has(deploymentType)) {
+    throw awsError(
+      "BadRequestException",
+      `DeploymentType must be one of NewDeployment, Redeployment, ForceNewDeployment.`,
+      400,
+    );
+  }
+  const providedId = stringOrUndefined(input["DeploymentId"]);
+  const deploymentId =
+    deploymentType === "Redeployment" && providedId !== undefined
+      ? providedId
+      : randomId();
   const now = new Date().toISOString();
   const deployment: StoredDeployment = {
     deploymentId,
     groupId,
     creationTimestamp: now,
     deploymentStatus: "InProgress",
-    deploymentType:
-      (stringOrUndefined(input["DeploymentType"]) as string) ?? "NewDeployment",
+    deploymentType,
     groupArn: groupArn(ctx, groupId),
   };
   ctx.store.set(deployKey(groupId, deploymentId), deployment);
@@ -638,9 +695,8 @@ const CreateDeployment: OperationHandler = (input, ctx) => {
 const GetDeploymentStatus: OperationHandler = (input, ctx) => {
   const groupId = requireString(input, "GroupId");
   const deploymentId = requireString(input, "DeploymentId");
-  const deployment = ctx.store.get<StoredDeployment>(
-    deployKey(groupId, deploymentId),
-  );
+  const key = deployKey(groupId, deploymentId);
+  const deployment = ctx.store.get<StoredDeployment>(key);
   if (deployment === undefined) {
     throw awsError(
       "BadRequestException",
@@ -648,8 +704,13 @@ const GetDeploymentStatus: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const status = deployment.deploymentStatus;
+  if (status === "InProgress") {
+    deployment.deploymentStatus = "Success";
+    ctx.store.set(key, deployment);
+  }
   return {
-    DeploymentStatus: deployment.deploymentStatus,
+    DeploymentStatus: status,
     DeploymentType: deployment.deploymentType,
     UpdatedAt: deployment.creationTimestamp,
   };
@@ -669,8 +730,9 @@ const ListDeployments: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
-  return {
-    Deployments: deployments.map((d) => ({
+  const { items, nextToken } = paginate(deployments, input);
+  const result: Record<string, unknown> = {
+    Deployments: items.map((d) => ({
       CreatedAt: d.creationTimestamp,
       DeploymentArn: `${d.groupArn}/deployments/${d.deploymentId}`,
       DeploymentId: d.deploymentId,
@@ -678,6 +740,8 @@ const ListDeployments: OperationHandler = (input, ctx) => {
       GroupArn: d.groupArn,
     })),
   };
+  if (nextToken !== undefined) result["NextToken"] = nextToken;
+  return result;
 };
 
 const ResetDeployments: OperationHandler = (input, ctx) => {

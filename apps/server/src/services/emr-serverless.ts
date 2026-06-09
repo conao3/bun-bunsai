@@ -15,6 +15,7 @@ const applicationPrefix = "application:" as const;
 const jobRunPrefix = "jobrun:" as const;
 const sessionPrefix = "session:" as const;
 const tagsPrefix = "tags:" as const;
+const clientTokenPrefix = "clienttoken:" as const;
 
 type StoredApplication = {
   applicationId: string;
@@ -87,6 +88,14 @@ const jobRunKey = (appId: string, runId: string): string =>
 const sessionKey = (appId: string, sessionId: string): string =>
   `${sessionPrefix}${appId}:${sessionId}`;
 const tagsKey = (arn: string): string => `${tagsPrefix}${arn}`;
+const clientTokenAppKey = (token: string): string =>
+  `${clientTokenPrefix}app:${token}`;
+const clientTokenJobRunKey = (appId: string, token: string): string =>
+  `${clientTokenPrefix}jobrun:${appId}:${token}`;
+const clientTokenSessionKey = (appId: string, token: string): string =>
+  `${clientTokenPrefix}session:${appId}:${token}`;
+const clientTokenUpdateAppKey = (appId: string, token: string): string =>
+  `${clientTokenPrefix}updateapp:${appId}:${token}`;
 
 const newId = (): string =>
   `00${crypto.randomUUID().replaceAll("-", "")}`.slice(0, 16);
@@ -307,6 +316,15 @@ const sessionSummary = (session: StoredSession): Record<string, unknown> => ({
 });
 
 const CreateApplication: OperationHandler = (input, ctx) => {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const cached = ctx.store.get<{
+      applicationId: string;
+      name: string | undefined;
+      arn: string;
+    }>(clientTokenAppKey(clientToken));
+    if (cached !== undefined) return cached;
+  }
   const releaseLabel = requireString(input, "releaseLabel");
   const type = requireString(input, "type");
   const id = newId();
@@ -326,11 +344,15 @@ const CreateApplication: OperationHandler = (input, ctx) => {
     tags: recordOrEmpty(input["tags"]),
   };
   ctx.store.set(applicationKey(id), application);
-  return {
+  const result = {
     applicationId: application.applicationId,
     name: application.name,
     arn: application.arn,
   };
+  if (clientToken !== undefined) {
+    ctx.store.set(clientTokenAppKey(clientToken), result);
+  }
+  return result;
 };
 
 const GetApplication: OperationHandler = (input, ctx) => {
@@ -366,7 +388,55 @@ const ListApplications: OperationHandler = (input, ctx) => {
 
 const DeleteApplication: OperationHandler = (input, ctx) => {
   const id = requireString(input, "applicationId");
-  requireApplication(ctx, id);
+  const app = requireApplication(ctx, id);
+  if (app.state === "STARTED") {
+    throw awsError(
+      "ValidationException",
+      `Application ${id} cannot be deleted from state ${app.state}.`,
+      400,
+    );
+  }
+  const activeJobRunStates = [
+    "SUBMITTED",
+    "PENDING",
+    "SCHEDULED",
+    "QUEUED",
+    "RUNNING",
+  ] as const;
+  const hasActiveJobRun = ctx.store
+    .list<StoredJobRun>()
+    .filter((entry) => entry.key.startsWith(`${jobRunPrefix}${id}:`))
+    .map((entry) => entry.value)
+    .some((run) =>
+      activeJobRunStates.includes(
+        run.state as (typeof activeJobRunStates)[number],
+      ),
+    );
+  if (hasActiveJobRun) {
+    throw awsError(
+      "ValidationException",
+      `Application ${id} has active job runs.`,
+      400,
+    );
+  }
+  const activeSessionStates = ["CREATING", "ACTIVE"] as const;
+  const hasActiveSession = ctx.store
+    .list<StoredSession>()
+    .filter((entry) => entry.key.startsWith(`${sessionPrefix}${id}:`))
+    .map((entry) => entry.value)
+    .some((s) =>
+      activeSessionStates.includes(
+        s.state as (typeof activeSessionStates)[number],
+      ),
+    );
+  if (hasActiveSession) {
+    throw awsError(
+      "ValidationException",
+      `Application ${id} has active sessions.`,
+      400,
+    );
+  }
+  ctx.store.delete(tagsKey(app.arn));
   ctx.store.delete(applicationKey(id));
   return {};
 };
@@ -409,6 +479,13 @@ const StopApplication: OperationHandler = (input, ctx) => {
 
 const UpdateApplication: OperationHandler = (input, ctx) => {
   const id = requireString(input, "applicationId");
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const cached = ctx.store.get<{ application: Record<string, unknown> }>(
+      clientTokenUpdateAppKey(id, clientToken),
+    );
+    if (cached !== undefined) return cached;
+  }
   const app = requireApplication(ctx, id);
   if (app.state !== "CREATED" && app.state !== "STARTED") {
     throw awsError(
@@ -423,11 +500,24 @@ const UpdateApplication: OperationHandler = (input, ctx) => {
     updatedAt: nowSeconds(),
   };
   ctx.store.set(applicationKey(id), updated);
-  return { application: applicationView(updated) };
+  const result = { application: applicationView(updated) };
+  if (clientToken !== undefined) {
+    ctx.store.set(clientTokenUpdateAppKey(id, clientToken), result);
+  }
+  return result;
 };
 
 const StartJobRun: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "applicationId");
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const cached = ctx.store.get<{
+      applicationId: string;
+      jobRunId: string;
+      arn: string;
+    }>(clientTokenJobRunKey(appId, clientToken));
+    if (cached !== undefined) return cached;
+  }
   const app = requireApplication(ctx, appId);
   const executionRole = requireString(input, "executionRoleArn");
   const modeInput = stringOrUndefined(input["mode"] as unknown);
@@ -462,11 +552,11 @@ const StartJobRun: OperationHandler = (input, ctx) => {
     mode: modeInput,
   };
   ctx.store.set(jobRunKey(appId, id), jobRun);
-  return {
-    applicationId: appId,
-    jobRunId: id,
-    arn,
-  };
+  const result = { applicationId: appId, jobRunId: id, arn };
+  if (clientToken !== undefined) {
+    ctx.store.set(clientTokenJobRunKey(appId, clientToken), result);
+  }
+  return result;
 };
 
 const GetJobRun: OperationHandler = (input, ctx) => {
@@ -575,6 +665,15 @@ const GetResourceDashboard: OperationHandler = (input, ctx) => {
 
 const StartSession: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "applicationId");
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const cached = ctx.store.get<{
+      applicationId: string;
+      sessionId: string;
+      arn: string;
+    }>(clientTokenSessionKey(appId, clientToken));
+    if (cached !== undefined) return cached;
+  }
   const app = requireApplication(ctx, appId);
   const executionRoleArn = requireString(input, "executionRoleArn");
   const id = newId();
@@ -585,7 +684,7 @@ const StartSession: OperationHandler = (input, ctx) => {
     sessionId: id,
     name: stringOrUndefined(input["name"]),
     arn,
-    state: "CREATING",
+    state: "ACTIVE",
     stateDetails: "",
     releaseLabel: app.releaseLabel,
     executionRoleArn,
@@ -595,7 +694,11 @@ const StartSession: OperationHandler = (input, ctx) => {
     tags: recordOrEmpty(input["tags"]),
   };
   ctx.store.set(sessionKey(appId, id), session);
-  return { applicationId: appId, sessionId: id, arn };
+  const result = { applicationId: appId, sessionId: id, arn };
+  if (clientToken !== undefined) {
+    ctx.store.set(clientTokenSessionKey(appId, clientToken), result);
+  }
+  return result;
 };
 
 const GetSession: OperationHandler = (input, ctx) => {
@@ -647,6 +750,22 @@ const TerminateSession: OperationHandler = (input, ctx) => {
   const id = requireString(input, "sessionId");
   requireApplication(ctx, appId);
   const session = requireSession(ctx, appId, id);
+  const nonTerminableStates = [
+    "TERMINATING",
+    "TERMINATED",
+    "TERMINATED_WITH_ERRORS",
+  ] as const;
+  if (
+    nonTerminableStates.includes(
+      session.state as (typeof nonTerminableStates)[number],
+    )
+  ) {
+    throw awsError(
+      "ValidationException",
+      `Session ${id} cannot be terminated from state ${session.state}.`,
+      400,
+    );
+  }
   ctx.store.set(sessionKey(appId, id), {
     ...session,
     state: "TERMINATING",

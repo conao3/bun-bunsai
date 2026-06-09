@@ -173,6 +173,38 @@ const stringMapFrom = (value: unknown): Record<string, string> => {
   return out;
 };
 
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
+
+const advanceDomainStatus = (status: string): string => {
+  if (status === "PENDING_VERIFICATION") return "IN_PROGRESS";
+  if (status === "IN_PROGRESS") return "AVAILABLE";
+  return status;
+};
+
+const advanceJobStatus = (status: string): string => {
+  if (status === "PENDING") return "PROVISIONING";
+  if (status === "PROVISIONING") return "RUNNING";
+  if (status === "CANCELLING") return "CANCELLED";
+  return status;
+};
+
 const requireString = (
   input: Record<string, unknown>,
   field: string,
@@ -493,16 +525,27 @@ const CreateApp: OperationHandler = (input, ctx) => {
 
 const GetApp: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "appId");
-  return { app: appView(requireApp(ctx, appId)) };
+  const app = requireApp(ctx, appId);
+  const extraTags =
+    ctx.store.get<Record<string, string>>(tagKey(app.appArn)) ?? {};
+  return { app: appView({ ...app, tags: { ...app.tags, ...extraTags } }) };
 };
 
-const ListApps: OperationHandler = (_input, ctx) => {
-  const apps = ctx.store
+const ListApps: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredApp>()
     .filter((entry) => entry.key.startsWith("app/"))
     .map((entry) => entry.value)
     .sort((a, b) => a.createTime - b.createTime);
-  return { apps: apps.map((app) => appView(app)) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    apps: items.map((app) => appView(app)),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const UpdateApp: OperationHandler = (input, ctx) => {
@@ -617,18 +660,30 @@ const GetBranch: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  return { branch: branchView(stored) };
+  const extraTags =
+    ctx.store.get<Record<string, string>>(tagKey(stored.branchArn)) ?? {};
+  return {
+    branch: branchView({ ...stored, tags: { ...stored.tags, ...extraTags } }),
+  };
 };
 
 const ListBranches: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "appId");
   requireApp(ctx, appId);
-  const branches = ctx.store
+  const all = ctx.store
     .list<StoredBranch>()
     .filter((entry) => entry.key.startsWith(`branch/${appId}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.branchName.localeCompare(b.branchName));
-  return { branches: branches.map((branch) => branchView(branch)) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    branches: items.map((branch) => branchView(branch)),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteBranch: OperationHandler = (input, ctx) => {
@@ -725,7 +780,7 @@ const ListBackendEnvironments: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "appId");
   requireApp(ctx, appId);
   const envNameFilter = stringOrUndefined(input["environmentName"]);
-  const envs = ctx.store
+  const all = ctx.store
     .list<StoredBackendEnvironment>()
     .filter((entry) => entry.key.startsWith(`backendenvironment/${appId}/`))
     .map((entry) => entry.value)
@@ -734,7 +789,15 @@ const ListBackendEnvironments: OperationHandler = (input, ctx) => {
         envNameFilter === undefined || env.environmentName === envNameFilter,
     )
     .sort((a, b) => a.createTime - b.createTime);
-  return { backendEnvironments: envs.map(backendEnvView) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    backendEnvironments: items.map(backendEnvView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteBackendEnvironment: OperationHandler = (input, ctx) => {
@@ -788,22 +851,35 @@ const CreateDomainAssociation: OperationHandler = (input, ctx) => {
 const GetDomainAssociation: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "appId");
   const domainName = requireString(input, "domainName");
-  return {
-    domainAssociation: domainAssociationView(
-      requireDomain(ctx, appId, domainName),
-    ),
-  };
+  const domain = requireDomain(ctx, appId, domainName);
+  const newStatus = advanceDomainStatus(domain.domainStatus);
+  const advanced: StoredDomainAssociation =
+    newStatus !== domain.domainStatus
+      ? { ...domain, domainStatus: newStatus }
+      : domain;
+  if (newStatus !== domain.domainStatus) {
+    ctx.store.set(domainKey(appId, domainName), advanced);
+  }
+  return { domainAssociation: domainAssociationView(advanced) };
 };
 
 const ListDomainAssociations: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "appId");
   requireApp(ctx, appId);
-  const domains = ctx.store
+  const all = ctx.store
     .list<StoredDomainAssociation>()
     .filter((entry) => entry.key.startsWith(`domain/${appId}/`))
     .map((entry) => entry.value)
     .sort((a, b) => a.createTime - b.createTime);
-  return { domainAssociations: domains.map(domainAssociationView) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    domainAssociations: items.map(domainAssociationView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteDomainAssociation: OperationHandler = (input, ctx) => {
@@ -871,7 +947,7 @@ const GetWebhook: OperationHandler = (input, ctx) => {
 const ListWebhooks: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "appId");
   requireApp(ctx, appId);
-  const webhooks = ctx.store
+  const all = ctx.store
     .list<StoredWebhook>()
     .filter(
       (entry) =>
@@ -879,7 +955,15 @@ const ListWebhooks: OperationHandler = (input, ctx) => {
     )
     .map((entry) => entry.value)
     .sort((a, b) => a.createTime - b.createTime);
-  return { webhooks: webhooks.map(webhookView) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    webhooks: items.map(webhookView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteWebhook: OperationHandler = (input, ctx) => {
@@ -921,7 +1005,7 @@ const StartJob: OperationHandler = (input, ctx) => {
     commitTime:
       typeof input["commitTime"] === "number" ? input["commitTime"] : at,
     startTime: at,
-    status: "RUNNING",
+    status: "PENDING",
     endTime: undefined,
     jobType,
     sourceUrl: stringOrUndefined(input["sourceUrl"]),
@@ -952,7 +1036,23 @@ const GetJob: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "appId");
   const branchName = requireString(input, "branchName");
   const jobId = requireString(input, "jobId");
-  return { job: jobView(requireJob(ctx, appId, branchName, jobId)) };
+  const job = requireJob(ctx, appId, branchName, jobId);
+  const newStatus = advanceJobStatus(job.status);
+  const terminalStatuses = ["CANCELLED", "SUCCEED", "FAILED"] as const;
+  const isTerminal = (s: string): boolean =>
+    (terminalStatuses as readonly string[]).includes(s);
+  const advanced: StoredJob =
+    newStatus !== job.status
+      ? {
+          ...job,
+          status: newStatus,
+          endTime: isTerminal(newStatus) ? nowSeconds() : job.endTime,
+        }
+      : job;
+  if (newStatus !== job.status) {
+    ctx.store.set(jobKey(appId, branchName, jobId), advanced);
+  }
+  return { job: jobView(advanced) };
 };
 
 const ListJobs: OperationHandler = (input, ctx) => {
@@ -961,12 +1061,20 @@ const ListJobs: OperationHandler = (input, ctx) => {
   requireApp(ctx, appId);
   requireBranch(ctx, appId, branchName);
   const prefix = `job/${appId}/${branchName}/`;
-  const jobs = ctx.store
+  const all = ctx.store
     .list<StoredJob>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value)
     .sort((a, b) => b.startTime - a.startTime);
-  return { jobSummaries: jobs.map(jobSummaryView) };
+  const { items, nextToken } = paginateList(
+    all,
+    input["nextToken"],
+    input["maxResults"],
+  );
+  return {
+    jobSummaries: items.map(jobSummaryView),
+    ...(nextToken !== undefined ? { nextToken } : {}),
+  };
 };
 
 const DeleteJob: OperationHandler = (input, ctx) => {
@@ -983,14 +1091,9 @@ const StopJob: OperationHandler = (input, ctx) => {
   const branchName = requireString(input, "branchName");
   const jobId = requireString(input, "jobId");
   const job = requireJob(ctx, appId, branchName, jobId);
-  const at = nowSeconds();
-  const stopped: StoredJob = {
-    ...job,
-    status: "CANCELLED",
-    endTime: at,
-  };
-  ctx.store.set(jobKey(appId, branchName, jobId), stopped);
-  return { jobSummary: jobSummaryView(stopped) };
+  const cancelling: StoredJob = { ...job, status: "CANCELLING" };
+  ctx.store.set(jobKey(appId, branchName, jobId), cancelling);
+  return { jobSummary: jobSummaryView(cancelling) };
 };
 
 const ListArtifacts: OperationHandler = (input, ctx) => {

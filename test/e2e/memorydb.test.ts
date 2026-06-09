@@ -68,7 +68,7 @@ test("MemoryDB cluster and subnet group lifecycle", async () => {
     }),
   );
   expect(created.Cluster?.Name).toBe(name);
-  expect(created.Cluster?.Status).toBe("available");
+  expect(created.Cluster?.Status).toBe("creating");
   expect(created.Cluster?.ARN).toContain(name);
 
   const described = await client.send(new DescribeClustersCommand({}));
@@ -163,7 +163,7 @@ test("MemoryDB snapshot lifecycle", async () => {
     }),
   );
   expect(created.Snapshot?.Name).toBe(snapName);
-  expect(created.Snapshot?.Status).toBe("available");
+  expect(created.Snapshot?.Status).toBe("creating");
   expect(created.Snapshot?.ARN).toContain(snapName);
 
   const described = await client.send(
@@ -271,7 +271,7 @@ test("MemoryDB multi-region cluster lifecycle", async () => {
   );
   const mrcName = created.MultiRegionCluster?.MultiRegionClusterName;
   expect(mrcName).toBeDefined();
-  expect(created.MultiRegionCluster?.Status).toBe("available");
+  expect(created.MultiRegionCluster?.Status).toBe("creating");
   expect(created.MultiRegionCluster?.ARN).toBeDefined();
 
   const described = await client.send(
@@ -448,6 +448,190 @@ test("MemoryDB allowed node type updates and reserved nodes", async () => {
   );
   expect(purchased.ReservedNode?.ReservedNodesOfferingId).toBe(offeringId);
   expect(purchased.ReservedNode?.State).toBe("active");
+
+  await client.send(new DeleteClusterCommand({ ClusterName: clusterName }));
+});
+
+test("MemoryDB pagination", async () => {
+  const client = memorydb();
+  const prefix = "bunsai-pg-";
+
+  for (let i = 0; i < 3; i++) {
+    await client.send(
+      new CreateClusterCommand({
+        ClusterName: `${prefix}${i}`,
+        NodeType: "db.r6g.large",
+        ACLName: "open-access",
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new DescribeClustersCommand({ MaxResults: 2 }),
+  );
+  expect((page1.Clusters ?? []).length).toBeLessThanOrEqual(2);
+
+  if (page1.NextToken) {
+    const page2 = await client.send(
+      new DescribeClustersCommand({
+        MaxResults: 2,
+        NextToken: page1.NextToken,
+      }),
+    );
+    expect(Array.isArray(page2.Clusters)).toBe(true);
+  }
+
+  for (let i = 0; i < 3; i++) {
+    await client.send(
+      new DeleteClusterCommand({ ClusterName: `${prefix}${i}` }),
+    );
+  }
+});
+
+test("MemoryDB ShowShardDetails", async () => {
+  const client = memorydb();
+  const clusterName = "bunsai-shards-cluster";
+
+  await client.send(
+    new CreateClusterCommand({
+      ClusterName: clusterName,
+      NodeType: "db.r6g.large",
+      ACLName: "open-access",
+      NumShards: 2,
+    }),
+  );
+
+  const withShards = await client.send(
+    new DescribeClustersCommand({
+      ClusterName: clusterName,
+      ShowShardDetails: true,
+    }),
+  );
+  const cluster = withShards.Clusters?.[0];
+  expect(Array.isArray(cluster?.Shards)).toBe(true);
+  expect((cluster?.Shards ?? []).length).toBe(2);
+  expect(cluster?.Shards?.[0]?.Name).toBeDefined();
+  expect(cluster?.Shards?.[0]?.Status).toBe("available");
+  expect(cluster?.Shards?.[0]?.Slots).toContain("0");
+
+  await client.send(new DeleteClusterCommand({ ClusterName: clusterName }));
+});
+
+test("MemoryDB parameter persistence", async () => {
+  const client = memorydb();
+  const pgName = "bunsai-param-persist-pg";
+
+  await client.send(
+    new CreateParameterGroupCommand({
+      ParameterGroupName: pgName,
+      Family: "memorydb_redis7",
+    }),
+  );
+
+  const defaultParams = await client.send(
+    new DescribeParametersCommand({ ParameterGroupName: pgName }),
+  );
+  const defaultPolicy = defaultParams.Parameters?.find(
+    (p) => p.Name === "maxmemory-policy",
+  );
+  expect(defaultPolicy?.Value).toBe("noeviction");
+
+  await client.send(
+    new UpdateParameterGroupCommand({
+      ParameterGroupName: pgName,
+      ParameterNameValues: [
+        { ParameterName: "maxmemory-policy", ParameterValue: "allkeys-lru" },
+      ],
+    }),
+  );
+
+  const updated = await client.send(
+    new DescribeParametersCommand({ ParameterGroupName: pgName }),
+  );
+  const updatedPolicy = updated.Parameters?.find(
+    (p) => p.Name === "maxmemory-policy",
+  );
+  expect(updatedPolicy?.Value).toBe("allkeys-lru");
+
+  await client.send(
+    new ResetParameterGroupCommand({
+      ParameterGroupName: pgName,
+      AllParameters: true,
+    }),
+  );
+
+  const reset = await client.send(
+    new DescribeParametersCommand({ ParameterGroupName: pgName }),
+  );
+  const resetPolicy = reset.Parameters?.find(
+    (p) => p.Name === "maxmemory-policy",
+  );
+  expect(resetPolicy?.Value).toBe("noeviction");
+
+  await client.send(
+    new DeleteParameterGroupCommand({ ParameterGroupName: pgName }),
+  );
+});
+
+test("MemoryDB DescribeUsers ACL filter", async () => {
+  const client = memorydb();
+  const aclName = "bunsai-filter-acl";
+  const userName1 = "bunsai-filter-user1";
+  const userName2 = "bunsai-filter-user2";
+
+  await client.send(
+    new CreateUserCommand({
+      UserName: userName1,
+      AccessString: "on ~* +@all",
+      AuthenticationMode: { Type: "password", Passwords: ["Pass1234!"] },
+    }),
+  );
+  await client.send(
+    new CreateUserCommand({
+      UserName: userName2,
+      AccessString: "on ~* +@read",
+      AuthenticationMode: { Type: "password", Passwords: ["Pass1234!"] },
+    }),
+  );
+
+  await client.send(
+    new CreateACLCommand({
+      ACLName: aclName,
+      UserNames: [userName1],
+    }),
+  );
+
+  const filtered = await client.send(
+    new DescribeUsersCommand({
+      Filters: [{ Name: "ACLName", Values: [aclName] }],
+    }),
+  );
+  const names = (filtered.Users ?? []).map((u) => u.Name);
+  expect(names).toContain(userName1);
+  expect(names).not.toContain(userName2);
+
+  await client.send(new DeleteACLCommand({ ACLName: aclName }));
+  await client.send(new DeleteUserCommand({ UserName: userName1 }));
+  await client.send(new DeleteUserCommand({ UserName: userName2 }));
+});
+
+test("MemoryDB creating→available lifecycle", async () => {
+  const client = memorydb();
+  const clusterName = "bunsai-lifecycle-cluster";
+
+  const created = await client.send(
+    new CreateClusterCommand({
+      ClusterName: clusterName,
+      NodeType: "db.r6g.large",
+      ACLName: "open-access",
+    }),
+  );
+  expect(created.Cluster?.Status).toBe("creating");
+
+  const described = await client.send(
+    new DescribeClustersCommand({ ClusterName: clusterName }),
+  );
+  expect(described.Clusters?.[0]?.Status).toBe("available");
 
   await client.send(new DeleteClusterCommand({ ClusterName: clusterName }));
 });

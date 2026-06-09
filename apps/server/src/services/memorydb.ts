@@ -108,6 +108,26 @@ const multiRegionClusterKey = (name: string): string =>
   `multiregioncluster/${name}`;
 const reservedNodeKey = (id: string): string => `reservednode/${id}`;
 const tagKey = (arn: string): string => `tags/${arn}`;
+const paramValuesKey = (pgName: string): string => `paramvalues/${pgName}`;
+
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -283,20 +303,46 @@ const CreateCluster: OperationHandler = (input, ctx) => {
   if (tags.length > 0) {
     ctx.store.set(tagKey(cluster.ARN), tags);
   }
-  return { Cluster: cluster };
+  return { Cluster: { ...cluster, Status: "creating" } };
+};
+
+const buildShards = (numShards: number) => {
+  const totalSlots = 16384;
+  const slotsPerShard = Math.floor(totalSlots / numShards);
+  return Array.from({ length: numShards }, (_, i) => {
+    const start = i * slotsPerShard;
+    const end =
+      i === numShards - 1 ? totalSlots - 1 : start + slotsPerShard - 1;
+    return {
+      Name: String(i + 1).padStart(4, "0"),
+      Status: "available" as const,
+      Slots: `${start}-${end}`,
+      Nodes: [],
+      NumberOfNodes: 1,
+    };
+  });
 };
 
 const DescribeClusters: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["ClusterName"]);
-  const clusters = ctx.store
+  const showShardDetails = input["ShowShardDetails"] === true;
+  const allClusters = ctx.store
     .list<StoredCluster>()
     .filter((entry) => entry.key.startsWith("cluster/"))
     .map((entry) => entry.value)
     .filter((cluster) => name === undefined || cluster.Name === name);
-  if (name !== undefined && clusters.length === 0) {
+  if (name !== undefined && allClusters.length === 0) {
     throw awsError("ClusterNotFoundFault", `Cluster not found: ${name}`, 400);
   }
-  return { Clusters: clusters };
+  const { items, nextToken } = paginateList(
+    allClusters,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  const clusters = showShardDetails
+    ? items.map((c) => ({ ...c, Shards: buildShards(c.NumberOfShards) }))
+    : items;
+  return { Clusters: clusters, NextToken: nextToken };
 };
 
 const UpdateCluster: OperationHandler = (input, ctx) => {
@@ -392,19 +438,24 @@ const DeleteSubnetGroup: OperationHandler = (input, ctx) => {
 
 const DescribeSubnetGroups: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["SubnetGroupName"]);
-  const groups = ctx.store
+  const allGroups = ctx.store
     .list<StoredSubnetGroup>()
     .filter((entry) => entry.key.startsWith("subnetgroup/"))
     .map((entry) => entry.value)
     .filter((sg) => name === undefined || sg.Name === name);
-  if (name !== undefined && groups.length === 0) {
+  if (name !== undefined && allGroups.length === 0) {
     throw awsError(
       "SubnetGroupNotFoundFault",
       `Subnet group not found: ${name}`,
       400,
     );
   }
-  return { SubnetGroups: groups };
+  const { items, nextToken } = paginateList(
+    allGroups,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { SubnetGroups: items, NextToken: nextToken };
 };
 
 const UpdateSubnetGroup: OperationHandler = (input, ctx) => {
@@ -459,48 +510,116 @@ const DeleteParameterGroup: OperationHandler = (input, ctx) => {
 
 const DescribeParameterGroups: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["ParameterGroupName"]);
-  const groups = ctx.store
+  const allGroups = ctx.store
     .list<StoredParameterGroup>()
     .filter((entry) => entry.key.startsWith("parametergroup/"))
     .map((entry) => entry.value)
     .filter((pg) => name === undefined || pg.Name === name);
-  if (name !== undefined && groups.length === 0) {
+  if (name !== undefined && allGroups.length === 0) {
     throw awsError(
       "ParameterGroupNotFoundFault",
       `Parameter group not found: ${name}`,
       400,
     );
   }
-  return { ParameterGroups: groups };
+  const { items, nextToken } = paginateList(
+    allGroups,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { ParameterGroups: items, NextToken: nextToken };
 };
+
+const defaultParameters: Record<
+  string,
+  {
+    Description: string;
+    DataType: string;
+    AllowedValues: string;
+    MinimumEngineVersion: string;
+    defaultValue: string;
+  }
+> = {
+  "maxmemory-policy": {
+    Description: "Max memory policy",
+    DataType: "string",
+    AllowedValues:
+      "noeviction,allkeys-lru,volatile-lru,allkeys-random,volatile-random,volatile-ttl",
+    MinimumEngineVersion: "6.0",
+    defaultValue: "noeviction",
+  },
+} as const;
 
 const DescribeParameters: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ParameterGroupName");
   requireParameterGroup(ctx, name);
-  return {
-    Parameters: [
-      {
-        Name: "maxmemory-policy",
-        Value: "noeviction",
-        Description: "Max memory policy",
-        DataType: "string",
-        AllowedValues:
-          "noeviction,allkeys-lru,volatile-lru,allkeys-random,volatile-random,volatile-ttl",
-        MinimumEngineVersion: "6.0",
-      },
-    ],
-  };
+  const overrides =
+    ctx.store.get<Record<string, string>>(paramValuesKey(name)) ?? {};
+  const Parameters = Object.entries(defaultParameters).map(([pName, meta]) => ({
+    Name: pName,
+    Value: overrides[pName] ?? meta.defaultValue,
+    Description: meta.Description,
+    DataType: meta.DataType,
+    AllowedValues: meta.AllowedValues,
+    MinimumEngineVersion: meta.MinimumEngineVersion,
+  }));
+  return { Parameters };
 };
 
 const ResetParameterGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ParameterGroupName");
   const pg = requireParameterGroup(ctx, name);
+  const allParameters = input["AllParameters"] === true;
+  if (allParameters) {
+    ctx.store.delete(paramValuesKey(name));
+  } else {
+    const paramNames = Array.isArray(input["ParameterNames"])
+      ? (input["ParameterNames"] as unknown[]).filter(
+          (v): v is string => typeof v === "string",
+        )
+      : [];
+    if (paramNames.length > 0) {
+      const overrides =
+        ctx.store.get<Record<string, string>>(paramValuesKey(name)) ?? {};
+      const remaining = Object.fromEntries(
+        Object.entries(overrides).filter(([k]) => !paramNames.includes(k)),
+      );
+      ctx.store.set(paramValuesKey(name), remaining);
+    }
+  }
   return { ParameterGroup: pg };
 };
 
 const UpdateParameterGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ParameterGroupName");
   const pg = requireParameterGroup(ctx, name);
+  const nameValues = Array.isArray(input["ParameterNameValues"])
+    ? (input["ParameterNameValues"] as unknown[]).flatMap((nv) => {
+        if (
+          typeof nv === "object" &&
+          nv !== null &&
+          typeof (nv as Record<string, unknown>)["ParameterName"] ===
+            "string" &&
+          typeof (nv as Record<string, unknown>)["ParameterValue"] === "string"
+        ) {
+          return [
+            [
+              (nv as Record<string, unknown>)["ParameterName"] as string,
+              (nv as Record<string, unknown>)["ParameterValue"] as string,
+            ] as [string, string],
+          ];
+        }
+        return [];
+      })
+    : [];
+  if (nameValues.length > 0) {
+    const existing =
+      ctx.store.get<Record<string, string>>(paramValuesKey(name)) ?? {};
+    ctx.store.set(paramValuesKey(name), {
+      ...existing,
+      ...Object.fromEntries(nameValues),
+    });
+  }
   return { ParameterGroup: pg };
 };
 
@@ -534,7 +653,7 @@ const CreateSnapshot: OperationHandler = (input, ctx) => {
   if (tags.length > 0) {
     ctx.store.set(tagKey(snap.ARN), tags);
   }
-  return { Snapshot: snap };
+  return { Snapshot: { ...snap, Status: "creating" } };
 };
 
 const CopySnapshot: OperationHandler = (input, ctx) => {
@@ -573,7 +692,7 @@ const DescribeSnapshots: OperationHandler = (input, ctx) => {
   const clusterName = stringOrUndefined(input["ClusterName"]);
   const snapshotName = stringOrUndefined(input["SnapshotName"]);
   const sourceFilter = stringOrUndefined(input["Source"]);
-  const snapshots = ctx.store
+  const allSnapshots = ctx.store
     .list<StoredSnapshot>()
     .filter((entry) => entry.key.startsWith("snapshot/"))
     .map((entry) => entry.value)
@@ -584,14 +703,19 @@ const DescribeSnapshots: OperationHandler = (input, ctx) => {
         s.ClusterConfiguration.Name === clusterName,
     )
     .filter((s) => sourceFilter === undefined || s.Source === sourceFilter);
-  if (snapshotName !== undefined && snapshots.length === 0) {
+  if (snapshotName !== undefined && allSnapshots.length === 0) {
     throw awsError(
       "SnapshotNotFoundFault",
       `Snapshot not found: ${snapshotName}`,
       400,
     );
   }
-  return { Snapshots: snapshots };
+  const { items, nextToken } = paginateList(
+    allSnapshots,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { Snapshots: items, NextToken: nextToken };
 };
 
 const CreateUser: OperationHandler = (input, ctx) => {
@@ -643,15 +767,46 @@ const DeleteUser: OperationHandler = (input, ctx) => {
 
 const DescribeUsers: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["UserName"]);
-  const users = ctx.store
+  const filters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as unknown[]).flatMap((f) => {
+        if (
+          typeof f === "object" &&
+          f !== null &&
+          typeof (f as Record<string, unknown>)["Name"] === "string" &&
+          Array.isArray((f as Record<string, unknown>)["Values"])
+        ) {
+          return [
+            {
+              name: (f as Record<string, unknown>)["Name"] as string,
+              values: (
+                (f as Record<string, unknown>)["Values"] as unknown[]
+              ).filter((v): v is string => typeof v === "string"),
+            },
+          ];
+        }
+        return [];
+      })
+    : [];
+  const aclFilter = filters.find((f) => f.name === "ACLName");
+  const allUsers = ctx.store
     .list<StoredUser>()
     .filter((entry) => entry.key.startsWith("user/"))
     .map((entry) => entry.value)
-    .filter((u) => name === undefined || u.Name === name);
-  if (name !== undefined && users.length === 0) {
+    .filter((u) => name === undefined || u.Name === name)
+    .filter(
+      (u) =>
+        aclFilter === undefined ||
+        aclFilter.values.some((aclName) => u.ACLNames.includes(aclName)),
+    );
+  if (name !== undefined && allUsers.length === 0) {
     throw awsError("UserNotFoundFault", `User not found: ${name}`, 400);
   }
-  return { Users: users };
+  const { items, nextToken } = paginateList(
+    allUsers,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { Users: items, NextToken: nextToken };
 };
 
 const UpdateUser: OperationHandler = (input, ctx) => {
@@ -697,6 +852,15 @@ const CreateACL: OperationHandler = (input, ctx) => {
     ARN: aclArn(ctx, name),
   };
   ctx.store.set(aclKey(name), acl);
+  for (const userName of userNames) {
+    const u = ctx.store.get<StoredUser>(userKey(userName));
+    if (u !== undefined && !u.ACLNames.includes(name)) {
+      ctx.store.set(userKey(userName), {
+        ...u,
+        ACLNames: [...u.ACLNames, name],
+      });
+    }
+  }
   const tags = tagsFromInput(input);
   if (tags.length > 0) {
     ctx.store.set(tagKey(acl.ARN), tags);
@@ -713,15 +877,20 @@ const DeleteACL: OperationHandler = (input, ctx) => {
 
 const DescribeACLs: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["ACLName"]);
-  const acls = ctx.store
+  const allAcls = ctx.store
     .list<StoredACL>()
     .filter((entry) => entry.key.startsWith("acl/"))
     .map((entry) => entry.value)
     .filter((a) => name === undefined || a.Name === name);
-  if (name !== undefined && acls.length === 0) {
+  if (name !== undefined && allAcls.length === 0) {
     throw awsError("ACLNotFoundFault", `ACL not found: ${name}`, 400);
   }
-  return { ACLs: acls };
+  const { items, nextToken } = paginateList(
+    allAcls,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { ACLs: items, NextToken: nextToken };
 };
 
 const UpdateACL: OperationHandler = (input, ctx) => {
@@ -745,6 +914,24 @@ const UpdateACL: OperationHandler = (input, ctx) => {
   ];
   const updated: StoredACL = { ...acl, UserNames: updatedUsers };
   ctx.store.set(aclKey(name), updated);
+  for (const userName of toAdd) {
+    const u = ctx.store.get<StoredUser>(userKey(userName));
+    if (u !== undefined && !u.ACLNames.includes(name)) {
+      ctx.store.set(userKey(userName), {
+        ...u,
+        ACLNames: [...u.ACLNames, name],
+      });
+    }
+  }
+  for (const userName of toRemove) {
+    const u = ctx.store.get<StoredUser>(userKey(userName));
+    if (u !== undefined) {
+      ctx.store.set(userKey(userName), {
+        ...u,
+        ACLNames: u.ACLNames.filter((a) => a !== name),
+      });
+    }
+  }
   return { ACL: updated };
 };
 
@@ -783,7 +970,7 @@ const CreateMultiRegionCluster: OperationHandler = (input, ctx) => {
   if (tags.length > 0) {
     ctx.store.set(tagKey(mrc.ARN), tags);
   }
-  return { MultiRegionCluster: mrc };
+  return { MultiRegionCluster: { ...mrc, Status: "creating" } };
 };
 
 const DeleteMultiRegionCluster: OperationHandler = (input, ctx) => {
@@ -795,19 +982,24 @@ const DeleteMultiRegionCluster: OperationHandler = (input, ctx) => {
 
 const DescribeMultiRegionClusters: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["MultiRegionClusterName"]);
-  const clusters = ctx.store
+  const allClusters = ctx.store
     .list<StoredMultiRegionCluster>()
     .filter((entry) => entry.key.startsWith("multiregioncluster/"))
     .map((entry) => entry.value)
     .filter((mrc) => name === undefined || mrc.MultiRegionClusterName === name);
-  if (name !== undefined && clusters.length === 0) {
+  if (name !== undefined && allClusters.length === 0) {
     throw awsError(
       "MultiRegionClusterNotFoundFault",
       `Multi-region cluster not found: ${name}`,
       400,
     );
   }
-  return { MultiRegionClusters: clusters };
+  const { items, nextToken } = paginateList(
+    allClusters,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { MultiRegionClusters: items, NextToken: nextToken };
 };
 
 const UpdateMultiRegionCluster: OperationHandler = (input, ctx) => {
@@ -869,21 +1061,26 @@ const DescribeMultiRegionParameters: OperationHandler = (input, ctx) => {
 
 const DescribeReservedNodes: OperationHandler = (input, ctx) => {
   const reservationId = stringOrUndefined(input["ReservationId"]);
-  const nodes = ctx.store
+  const allNodes = ctx.store
     .list<StoredReservedNode>()
     .filter((entry) => entry.key.startsWith("reservednode/"))
     .map((entry) => entry.value)
     .filter(
       (n) => reservationId === undefined || n.ReservationId === reservationId,
     );
-  if (reservationId !== undefined && nodes.length === 0) {
+  if (reservationId !== undefined && allNodes.length === 0) {
     throw awsError(
       "ReservedNodeNotFoundFault",
       `Reserved node not found: ${reservationId}`,
       400,
     );
   }
-  return { ReservedNodes: nodes };
+  const { items, nextToken } = paginateList(
+    allNodes,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { ReservedNodes: items, NextToken: nextToken };
 };
 
 const DescribeReservedNodesOfferings: OperationHandler = (_input, _ctx) => {

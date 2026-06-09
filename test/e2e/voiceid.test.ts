@@ -214,7 +214,7 @@ test("VoiceID fraudster registration job and fraudster lifecycle", async () => {
   );
   const jobId = jobRes.Job?.JobId;
   expect(jobId).toBeDefined();
-  expect(jobRes.Job?.JobStatus).toBe("COMPLETED");
+  expect(jobRes.Job?.JobStatus).toBe("SUBMITTED");
 
   const describedJob = await client.send(
     new DescribeFraudsterRegistrationJobCommand({
@@ -223,7 +223,7 @@ test("VoiceID fraudster registration job and fraudster lifecycle", async () => {
     }),
   );
   expect(describedJob.Job?.JobId).toBe(jobId);
-  expect(describedJob.Job?.JobStatus).toBe("COMPLETED");
+  expect(describedJob.Job?.JobStatus).toBe("SUBMITTED");
 
   const listedJobs = await client.send(
     new ListFraudsterRegistrationJobsCommand({ DomainId: domainId }),
@@ -289,6 +289,13 @@ test("VoiceID fraudster registration job and fraudster lifecycle", async () => {
     ),
   ).toBe(false);
 
+  await Bun.sleep(300);
+  await client.send(
+    new DeleteWatchlistCommand({
+      DomainId: domainId,
+      WatchlistId: watchlistId,
+    }),
+  );
   await client.send(new DeleteDomainCommand({ DomainId: domainId }));
 });
 
@@ -365,7 +372,7 @@ test("VoiceID speaker operations via EvaluateSession", async () => {
   );
   const enrollJobId = enrollJob.Job?.JobId;
   expect(enrollJobId).toBeDefined();
-  expect(enrollJob.Job?.JobStatus).toBe("COMPLETED");
+  expect(enrollJob.Job?.JobStatus).toBe("SUBMITTED");
 
   const describedEnrollJob = await client.send(
     new DescribeSpeakerEnrollmentJobCommand({
@@ -382,6 +389,7 @@ test("VoiceID speaker operations via EvaluateSession", async () => {
     (listedEnrollJobs.JobSummaries ?? []).some((j) => j.JobId === enrollJobId),
   ).toBe(true);
 
+  await Bun.sleep(300);
   await client.send(new DeleteDomainCommand({ DomainId: domainId }));
 });
 
@@ -432,5 +440,185 @@ test("VoiceID tags", async () => {
 
   await client.send(
     new DeleteDomainCommand({ DomainId: domain.Domain?.DomainId }),
+  );
+});
+
+test("VoiceID fidelity: pagination, tags on create, lifecycle, conflicts", async () => {
+  const client = voiceid();
+  const kmsKeyId =
+    "arn:aws:kms:us-east-1:000000000000:key/bunsai-e2e-voiceid-key";
+  const roleArn = "arn:aws:iam::000000000000:role/bunsai-e2e-voiceid-role";
+
+  const tagsDomain = await client.send(
+    new CreateDomainCommand({
+      Name: "fidelity-tags-domain",
+      ServerSideEncryptionConfiguration: { KmsKeyId: kmsKeyId },
+      Tags: [
+        { Key: "env", Value: "e2e" },
+        { Key: "project", Value: "bunsai" },
+      ],
+    }),
+  );
+  const tagsArn = tagsDomain.Domain?.Arn!;
+  const tagsDomainId = tagsDomain.Domain?.DomainId!;
+
+  const tagsResult = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: tagsArn }),
+  );
+  const tagsMap = Object.fromEntries(
+    (tagsResult.Tags ?? []).map((t) => [t.Key, t.Value]),
+  );
+  expect(tagsMap["env"]).toBe("e2e");
+  expect(tagsMap["project"]).toBe("bunsai");
+
+  const pd1 = await client.send(
+    new CreateDomainCommand({
+      Name: "fidelity-pg-domain-1",
+      ServerSideEncryptionConfiguration: { KmsKeyId: kmsKeyId },
+    }),
+  );
+  const pd2 = await client.send(
+    new CreateDomainCommand({
+      Name: "fidelity-pg-domain-2",
+      ServerSideEncryptionConfiguration: { KmsKeyId: kmsKeyId },
+    }),
+  );
+
+  const page1 = await client.send(new ListDomainsCommand({ MaxResults: 1 }));
+  expect(page1.DomainSummaries?.length).toBe(1);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListDomainsCommand({ MaxResults: 1, NextToken: page1.NextToken }),
+  );
+  expect((page2.DomainSummaries ?? []).length).toBeGreaterThanOrEqual(1);
+
+  const lifecycleDomain = await client.send(
+    new CreateDomainCommand({
+      Name: "fidelity-lifecycle-domain",
+      ServerSideEncryptionConfiguration: { KmsKeyId: kmsKeyId },
+    }),
+  );
+  const lifecycleDomainId = lifecycleDomain.Domain?.DomainId!;
+
+  const lifecycleJob = await client.send(
+    new StartSpeakerEnrollmentJobCommand({
+      DomainId: lifecycleDomainId,
+      DataAccessRoleArn: roleArn,
+      InputDataConfig: { S3Uri: "s3://bunsai-e2e/input/" },
+      OutputDataConfig: { S3Uri: "s3://bunsai-e2e/output/" },
+      JobName: "fidelity-lifecycle-job",
+    }),
+  );
+  const lifecycleJobId = lifecycleJob.Job?.JobId!;
+  expect(lifecycleJob.Job?.JobStatus).toBe("SUBMITTED");
+  expect(lifecycleJob.Job?.JobProgress?.PercentComplete).toBe(0);
+
+  await Bun.sleep(80);
+  const inProgressJob = await client.send(
+    new DescribeSpeakerEnrollmentJobCommand({
+      DomainId: lifecycleDomainId,
+      JobId: lifecycleJobId,
+    }),
+  );
+  expect(inProgressJob.Job?.JobStatus).toBe("IN_PROGRESS");
+  expect(inProgressJob.Job?.JobProgress?.PercentComplete).toBe(50);
+
+  await Bun.sleep(220);
+  const completedJob = await client.send(
+    new DescribeSpeakerEnrollmentJobCommand({
+      DomainId: lifecycleDomainId,
+      JobId: lifecycleJobId,
+    }),
+  );
+  expect(completedJob.Job?.JobStatus).toBe("COMPLETED");
+  expect(completedJob.Job?.JobProgress?.PercentComplete).toBe(100);
+
+  const conflictDomainRes = await client.send(
+    new CreateDomainCommand({
+      Name: "fidelity-conflict-domain",
+      ServerSideEncryptionConfiguration: { KmsKeyId: kmsKeyId },
+    }),
+  );
+  const conflictDomainId = conflictDomainRes.Domain?.DomainId!;
+
+  await client.send(
+    new EvaluateSessionCommand({
+      DomainId: conflictDomainId,
+      SessionNameOrId: "conflict-session",
+    }),
+  );
+
+  await expect(
+    client.send(new DeleteDomainCommand({ DomainId: conflictDomainId })),
+  ).rejects.toMatchObject({ name: "ConflictException" });
+
+  const wlDomainRes = await client.send(
+    new CreateDomainCommand({
+      Name: "fidelity-wl-conflict-domain",
+      ServerSideEncryptionConfiguration: { KmsKeyId: kmsKeyId },
+    }),
+  );
+  const wlDomainId = wlDomainRes.Domain?.DomainId!;
+
+  const wl = await client.send(
+    new CreateWatchlistCommand({ DomainId: wlDomainId, Name: "conflict-wl" }),
+  );
+  const wlId = wl.Watchlist?.WatchlistId!;
+
+  await client.send(
+    new StartFraudsterRegistrationJobCommand({
+      DomainId: wlDomainId,
+      DataAccessRoleArn: roleArn,
+      InputDataConfig: { S3Uri: "s3://bunsai-e2e/input/" },
+      OutputDataConfig: { S3Uri: "s3://bunsai-e2e/output/" },
+      RegistrationConfig: { WatchlistIds: [wlId] },
+    }),
+  );
+
+  await expect(
+    client.send(
+      new DeleteWatchlistCommand({ DomainId: wlDomainId, WatchlistId: wlId }),
+    ),
+  ).rejects.toMatchObject({ name: "ConflictException" });
+
+  await Bun.sleep(300);
+
+  const wlFraudsters = await client.send(
+    new ListFraudstersCommand({ DomainId: wlDomainId }),
+  );
+  for (const f of wlFraudsters.FraudsterSummaries ?? []) {
+    await client.send(
+      new DeleteFraudsterCommand({
+        DomainId: wlDomainId,
+        FraudsterId: f.GeneratedFraudsterId!,
+      }),
+    );
+  }
+  await client.send(
+    new DeleteWatchlistCommand({ DomainId: wlDomainId, WatchlistId: wlId }),
+  );
+  await client.send(new DeleteDomainCommand({ DomainId: wlDomainId }));
+
+  const conflictSpeakers = await client.send(
+    new ListSpeakersCommand({ DomainId: conflictDomainId }),
+  );
+  for (const s of conflictSpeakers.SpeakerSummaries ?? []) {
+    await client.send(
+      new DeleteSpeakerCommand({
+        DomainId: conflictDomainId,
+        SpeakerId: s.GeneratedSpeakerId!,
+      }),
+    );
+  }
+  await client.send(new DeleteDomainCommand({ DomainId: conflictDomainId }));
+
+  await client.send(new DeleteDomainCommand({ DomainId: lifecycleDomainId }));
+  await client.send(new DeleteDomainCommand({ DomainId: tagsDomainId }));
+  await client.send(
+    new DeleteDomainCommand({ DomainId: pd1.Domain?.DomainId! }),
+  );
+  await client.send(
+    new DeleteDomainCommand({ DomainId: pd2.Domain?.DomainId! }),
   );
 });

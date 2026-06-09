@@ -63,11 +63,8 @@ type StoredSpeakerEnrollmentJob = {
   InputDataConfig: Record<string, unknown>;
   OutputDataConfig: Record<string, unknown>;
   EnrollmentConfig: Record<string, unknown> | undefined;
-  JobStatus: string;
-  JobProgress: { PercentComplete: number };
   FailureDetails: undefined;
   CreatedAt: number;
-  EndedAt: number;
 };
 
 type StoredFraudsterRegistrationJob = {
@@ -78,11 +75,32 @@ type StoredFraudsterRegistrationJob = {
   InputDataConfig: Record<string, unknown>;
   OutputDataConfig: Record<string, unknown>;
   RegistrationConfig: Record<string, unknown> | undefined;
-  JobStatus: string;
-  JobProgress: { PercentComplete: number };
   FailureDetails: undefined;
   CreatedAt: number;
-  EndedAt: number;
+};
+
+const JOB_IN_PROGRESS_AFTER_SEC = 0.05;
+const JOB_COMPLETED_AFTER_SEC = 0.25;
+
+const liveJobStatus = (createdAt: number): string => {
+  const age = nowSeconds() - createdAt;
+  if (age < JOB_IN_PROGRESS_AFTER_SEC) return "SUBMITTED";
+  if (age < JOB_COMPLETED_AFTER_SEC) return "IN_PROGRESS";
+  return "COMPLETED";
+};
+
+const liveJobProgress = (createdAt: number): { PercentComplete: number } => {
+  const age = nowSeconds() - createdAt;
+  if (age < JOB_IN_PROGRESS_AFTER_SEC) return { PercentComplete: 0 };
+  if (age < JOB_COMPLETED_AFTER_SEC) return { PercentComplete: 50 };
+  return { PercentComplete: 100 };
+};
+
+const liveJobEndedAt = (createdAt: number): number | undefined => {
+  const age = nowSeconds() - createdAt;
+  return age >= JOB_COMPLETED_AFTER_SEC
+    ? createdAt + JOB_COMPLETED_AFTER_SEC
+    : undefined;
 };
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -143,6 +161,24 @@ const fraudJobKey = (domainId: string, jobId: string): string =>
 
 const tagsKey = (arn: string): string => `${tagsPrefix}${arn}`;
 
+const paginatePage = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { page: T[]; nextToken: string | undefined } => {
+  const offset =
+    typeof nextToken === "string" ? parseInt(atob(nextToken), 10) : 0;
+  const max =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : undefined;
+  const page =
+    max !== undefined ? items.slice(offset, offset + max) : items.slice(offset);
+  const end = offset + page.length;
+  return {
+    page,
+    nextToken: end < items.length ? btoa(String(end)) : undefined,
+  };
+};
+
 const requireDomain = (ctx: ServiceContext, id: string): StoredDomain => {
   const domain = ctx.store.get<StoredDomain>(domainKey(id));
   if (domain === undefined) {
@@ -185,6 +221,19 @@ const requireFraudster = (
     );
   }
   return fraudster;
+};
+
+const requireResourceByArn = (ctx: ServiceContext, arn: string): void => {
+  const match = /domain\/([A-Za-z0-9]+)$/.exec(arn);
+  if (match !== null) {
+    requireDomain(ctx, match[1]);
+    return;
+  }
+  throw awsError(
+    "ResourceNotFoundException",
+    `Resource ${arn} not found.`,
+    400,
+  );
 };
 
 const findSpeaker = (
@@ -271,11 +320,11 @@ const enrollJobView = (
   InputDataConfig: job.InputDataConfig,
   OutputDataConfig: job.OutputDataConfig,
   EnrollmentConfig: job.EnrollmentConfig,
-  JobStatus: job.JobStatus,
-  JobProgress: job.JobProgress,
+  JobStatus: liveJobStatus(job.CreatedAt),
+  JobProgress: liveJobProgress(job.CreatedAt),
   FailureDetails: job.FailureDetails,
   CreatedAt: job.CreatedAt,
-  EndedAt: job.EndedAt,
+  EndedAt: liveJobEndedAt(job.CreatedAt),
 });
 
 const enrollJobSummaryView = (
@@ -284,11 +333,11 @@ const enrollJobSummaryView = (
   JobId: job.JobId,
   JobName: job.JobName,
   DomainId: job.DomainId,
-  JobStatus: job.JobStatus,
-  JobProgress: job.JobProgress,
+  JobStatus: liveJobStatus(job.CreatedAt),
+  JobProgress: liveJobProgress(job.CreatedAt),
   FailureDetails: job.FailureDetails,
   CreatedAt: job.CreatedAt,
-  EndedAt: job.EndedAt,
+  EndedAt: liveJobEndedAt(job.CreatedAt),
 });
 
 const fraudJobView = (
@@ -301,11 +350,11 @@ const fraudJobView = (
   InputDataConfig: job.InputDataConfig,
   OutputDataConfig: job.OutputDataConfig,
   RegistrationConfig: job.RegistrationConfig,
-  JobStatus: job.JobStatus,
-  JobProgress: job.JobProgress,
+  JobStatus: liveJobStatus(job.CreatedAt),
+  JobProgress: liveJobProgress(job.CreatedAt),
   FailureDetails: job.FailureDetails,
   CreatedAt: job.CreatedAt,
-  EndedAt: job.EndedAt,
+  EndedAt: liveJobEndedAt(job.CreatedAt),
 });
 
 const fraudJobSummaryView = (
@@ -314,12 +363,21 @@ const fraudJobSummaryView = (
   JobId: job.JobId,
   JobName: job.JobName,
   DomainId: job.DomainId,
-  JobStatus: job.JobStatus,
-  JobProgress: job.JobProgress,
+  JobStatus: liveJobStatus(job.CreatedAt),
+  JobProgress: liveJobProgress(job.CreatedAt),
   FailureDetails: job.FailureDetails,
   CreatedAt: job.CreatedAt,
-  EndedAt: job.EndedAt,
+  EndedAt: liveJobEndedAt(job.CreatedAt),
 });
+
+const persistTags = (ctx: ServiceContext, arn: string, tags: unknown): void => {
+  if (!Array.isArray(tags) || tags.length === 0) return;
+  const existing = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
+  for (const tag of tags as Array<Record<string, string>>) {
+    existing[tag["Key"]] = tag["Value"];
+  }
+  ctx.store.set(tagsKey(arn), existing);
+};
 
 const CreateDomain: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
@@ -327,9 +385,10 @@ const CreateDomain: OperationHandler = (input, ctx) => {
   requireString(sse, "KmsKeyId");
   const id = genId();
   const now = nowSeconds();
+  const arn = domainArn(ctx, id);
   const domain: StoredDomain = {
     DomainId: id,
-    Arn: domainArn(ctx, id),
+    Arn: arn,
     Name: name,
     Description: stringOrUndefined(input["Description"]),
     DomainStatus: "ACTIVE",
@@ -338,6 +397,7 @@ const CreateDomain: OperationHandler = (input, ctx) => {
     UpdatedAt: now,
   };
   ctx.store.set(domainKey(id), domain);
+  persistTags(ctx, arn, input["Tags"]);
   return { Domain: domainView(domain) };
 };
 
@@ -347,7 +407,7 @@ const DescribeDomain: OperationHandler = (input, ctx) => {
   return { Domain: domainView(domain) };
 };
 
-const ListDomains: OperationHandler = (_input, ctx) => {
+const ListDomains: OperationHandler = (input, ctx) => {
   const domains = ctx.store
     .list<StoredDomain>()
     .filter((entry) => entry.key.startsWith(domainPrefix))
@@ -355,13 +415,67 @@ const ListDomains: OperationHandler = (_input, ctx) => {
     .sort((a, b) =>
       a.CreatedAt < b.CreatedAt ? -1 : a.CreatedAt > b.CreatedAt ? 1 : 0,
     );
-  return { DomainSummaries: domains.map(domainView) };
+  const { page, nextToken } = paginatePage(
+    domains,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { DomainSummaries: page.map(domainView), NextToken: nextToken };
 };
 
 const DeleteDomain: OperationHandler = (input, ctx) => {
   const id = requireString(input, "DomainId");
-  requireDomain(ctx, id);
+  const domain = requireDomain(ctx, id);
+  const hasSpeakers = ctx.store
+    .list<StoredSpeaker>()
+    .some((e) => e.key.startsWith(`${speakerPrefix}${id}:`));
+  if (hasSpeakers) {
+    throw awsError("ConflictException", "Domain still contains speakers.", 400);
+  }
+  const hasWatchlists = ctx.store
+    .list<StoredWatchlist>()
+    .some((e) => e.key.startsWith(`${watchlistPrefix}${id}:`));
+  if (hasWatchlists) {
+    throw awsError(
+      "ConflictException",
+      "Domain still contains watchlists.",
+      400,
+    );
+  }
+  const hasFraudsters = ctx.store
+    .list<StoredFraudster>()
+    .some((e) => e.key.startsWith(`${fraudsterPrefix}${id}:`));
+  if (hasFraudsters) {
+    throw awsError(
+      "ConflictException",
+      "Domain still contains fraudsters.",
+      400,
+    );
+  }
+  const hasRunningEnrollJobs = ctx.store
+    .list<StoredSpeakerEnrollmentJob>()
+    .filter((e) => e.key.startsWith(`${enrollJobPrefix}${id}:`))
+    .some((e) => liveJobStatus(e.value.CreatedAt) !== "COMPLETED");
+  if (hasRunningEnrollJobs) {
+    throw awsError(
+      "ConflictException",
+      "Domain still contains running enrollment jobs.",
+      400,
+    );
+  }
+  const hasRunningFraudJobs = ctx.store
+    .list<StoredFraudsterRegistrationJob>()
+    .filter((e) => e.key.startsWith(`${fraudJobPrefix}${id}:`))
+    .some((e) => liveJobStatus(e.value.CreatedAt) !== "COMPLETED");
+  if (hasRunningFraudJobs) {
+    throw awsError(
+      "ConflictException",
+      "Domain still contains running fraudster registration jobs.",
+      400,
+    );
+  }
   ctx.store.delete(domainKey(id));
+  ctx.store.delete(tagsKey(domain.Arn));
   return {};
 };
 
@@ -400,7 +514,12 @@ const ListSpeakers: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       a.CreatedAt < b.CreatedAt ? -1 : a.CreatedAt > b.CreatedAt ? 1 : 0,
     );
-  return { SpeakerSummaries: speakers.map(speakerView) };
+  const { page, nextToken } = paginatePage(
+    speakers,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { SpeakerSummaries: page.map(speakerView), NextToken: nextToken };
 };
 
 const DeleteSpeaker: OperationHandler = (input, ctx) => {
@@ -475,7 +594,25 @@ const DeleteWatchlist: OperationHandler = (input, ctx) => {
   const domainId = requireString(input, "DomainId");
   requireDomain(ctx, domainId);
   const watchlistId = requireString(input, "WatchlistId");
-  requireWatchlist(ctx, domainId, watchlistId);
+  const watchlist = requireWatchlist(ctx, domainId, watchlistId);
+  if (watchlist.DefaultWatchlist) {
+    throw awsError(
+      "ConflictException",
+      "Cannot delete the default watchlist.",
+      400,
+    );
+  }
+  const hasAssociatedFraudsters = ctx.store
+    .list<StoredFraudster>()
+    .filter((e) => e.key.startsWith(`${fraudsterPrefix}${domainId}:`))
+    .some((e) => e.value.WatchlistIds.includes(watchlistId));
+  if (hasAssociatedFraudsters) {
+    throw awsError(
+      "ConflictException",
+      "Watchlist still has associated fraudsters.",
+      400,
+    );
+  }
   ctx.store.delete(watchlistKey(domainId, watchlistId));
   return {};
 };
@@ -490,7 +627,12 @@ const ListWatchlists: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       a.CreatedAt < b.CreatedAt ? -1 : a.CreatedAt > b.CreatedAt ? 1 : 0,
     );
-  return { WatchlistSummaries: watchlists.map(watchlistView) };
+  const { page, nextToken } = paginatePage(
+    watchlists,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { WatchlistSummaries: page.map(watchlistView), NextToken: nextToken };
 };
 
 const DescribeFraudster: OperationHandler = (input, ctx) => {
@@ -515,7 +657,12 @@ const ListFraudsters: OperationHandler = (input, ctx) => {
   fraudsters.sort((a, b) =>
     a.CreatedAt < b.CreatedAt ? -1 : a.CreatedAt > b.CreatedAt ? 1 : 0,
   );
-  return { FraudsterSummaries: fraudsters.map(fraudsterView) };
+  const { page, nextToken } = paginatePage(
+    fraudsters,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { FraudsterSummaries: page.map(fraudsterView), NextToken: nextToken };
 };
 
 const DeleteFraudster: OperationHandler = (input, ctx) => {
@@ -575,11 +722,8 @@ const StartSpeakerEnrollmentJob: OperationHandler = (input, ctx) => {
     InputDataConfig: inputDataConfig,
     OutputDataConfig: outputDataConfig,
     EnrollmentConfig: recordOrUndefined(input["EnrollmentConfig"]),
-    JobStatus: "COMPLETED",
-    JobProgress: { PercentComplete: 100 },
     FailureDetails: undefined,
     CreatedAt: now,
-    EndedAt: now,
   };
   ctx.store.set(enrollJobKey(domainId, jobId), job);
   return { Job: enrollJobView(job) };
@@ -611,12 +755,17 @@ const ListSpeakerEnrollmentJobs: OperationHandler = (input, ctx) => {
     .filter((e) => e.key.startsWith(`${enrollJobPrefix}${domainId}:`))
     .map((e) => e.value);
   if (statusFilter !== undefined) {
-    jobs = jobs.filter((j) => j.JobStatus === statusFilter);
+    jobs = jobs.filter((j) => liveJobStatus(j.CreatedAt) === statusFilter);
   }
   jobs.sort((a, b) =>
     a.CreatedAt < b.CreatedAt ? -1 : a.CreatedAt > b.CreatedAt ? 1 : 0,
   );
-  return { JobSummaries: jobs.map(enrollJobSummaryView) };
+  const { page, nextToken } = paginatePage(
+    jobs,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { JobSummaries: page.map(enrollJobSummaryView), NextToken: nextToken };
 };
 
 const StartFraudsterRegistrationJob: OperationHandler = (input, ctx) => {
@@ -636,11 +785,8 @@ const StartFraudsterRegistrationJob: OperationHandler = (input, ctx) => {
     InputDataConfig: inputDataConfig,
     OutputDataConfig: outputDataConfig,
     RegistrationConfig: registrationConfig,
-    JobStatus: "COMPLETED",
-    JobProgress: { PercentComplete: 100 },
     FailureDetails: undefined,
     CreatedAt: now,
-    EndedAt: now,
   };
   ctx.store.set(fraudJobKey(domainId, jobId), job);
   const fraudsterId = genId();
@@ -683,12 +829,20 @@ const ListFraudsterRegistrationJobs: OperationHandler = (input, ctx) => {
     .filter((e) => e.key.startsWith(`${fraudJobPrefix}${domainId}:`))
     .map((e) => e.value);
   if (statusFilter !== undefined) {
-    jobs = jobs.filter((j) => j.JobStatus === statusFilter);
+    jobs = jobs.filter((j) => liveJobStatus(j.CreatedAt) === statusFilter);
   }
   jobs.sort((a, b) =>
     a.CreatedAt < b.CreatedAt ? -1 : a.CreatedAt > b.CreatedAt ? 1 : 0,
   );
-  return { JobSummaries: jobs.map(fraudJobSummaryView) };
+  const { page, nextToken } = paginatePage(
+    jobs,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return {
+    JobSummaries: page.map(fraudJobSummaryView),
+    NextToken: nextToken,
+  };
 };
 
 const EvaluateSession: OperationHandler = (input, ctx) => {
@@ -745,6 +899,7 @@ const EvaluateSession: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
+  requireResourceByArn(ctx, arn);
   const tags = input["Tags"];
   if (!Array.isArray(tags)) {
     throw awsError("ValidationException", "Tags is required.", 400);
@@ -759,6 +914,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
+  requireResourceByArn(ctx, arn);
   const tagKeys = input["TagKeys"];
   if (!Array.isArray(tagKeys)) {
     throw awsError("ValidationException", "TagKeys is required.", 400);

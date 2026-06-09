@@ -21,6 +21,7 @@ import {
   DeregisterContainerInstanceCommand,
   DeregisterTaskDefinitionCommand,
   DescribeCapacityProvidersCommand,
+  DescribeClustersCommand,
   DescribeContainerInstancesCommand,
   DescribeDaemonCommand,
   DescribeDaemonTaskDefinitionCommand,
@@ -34,6 +35,7 @@ import {
   GetTaskProtectionCommand,
   ListAccountSettingsCommand,
   ListAttributesCommand,
+  ListClustersCommand,
   ListContainerInstancesCommand,
   ListDaemonsCommand,
   ListDaemonTaskDefinitionsCommand,
@@ -847,6 +849,296 @@ describe("ecs service and task definition e2e", () => {
       "MISSING",
     );
 
+    await client.send(new DeleteClusterCommand({ cluster: clusterName }));
+  });
+});
+
+describe("ecs fidelity gaps — pagination, failures, filters, tag round-trip", () => {
+  const ecs = () =>
+    new ECSClient({ endpoint, region, credentials, requestHandler });
+
+  test("updateService pushes new PRIMARY deployment", async () => {
+    const client = ecs();
+    const clusterName = "bunsai-e2e-dep-rollout";
+    const serviceName = "rollout-svc";
+    await client.send(new CreateClusterCommand({ clusterName }));
+    const td1 = await client.send(
+      new RegisterTaskDefinitionCommand({
+        family: "bunsai-e2e-rollout-td",
+        containerDefinitions: [{ name: "app", image: "nginx:1", memory: 128 }],
+      }),
+    );
+    const td1Arn = td1.taskDefinition?.taskDefinitionArn ?? "";
+    const td2 = await client.send(
+      new RegisterTaskDefinitionCommand({
+        family: "bunsai-e2e-rollout-td",
+        containerDefinitions: [{ name: "app", image: "nginx:2", memory: 128 }],
+      }),
+    );
+    const td2Arn = td2.taskDefinition?.taskDefinitionArn ?? "";
+    await client.send(
+      new CreateServiceCommand({
+        cluster: clusterName,
+        serviceName,
+        taskDefinition: td1Arn,
+        desiredCount: 1,
+      }),
+    );
+    const updated = await client.send(
+      new UpdateServiceCommand({
+        cluster: clusterName,
+        service: serviceName,
+        taskDefinition: td2Arn,
+      }),
+    );
+    const deployments = updated.service?.deployments ?? [];
+    const primary = deployments.filter((d) => d.status === "PRIMARY");
+    const active = deployments.filter((d) => d.status === "ACTIVE");
+    expect(primary).toHaveLength(1);
+    expect(primary[0]?.taskDefinition).toBe(td2Arn);
+    expect(active.length).toBeGreaterThanOrEqual(1);
+    expect(active[0]?.taskDefinition).toBe(td1Arn);
+    await client.send(
+      new DeleteServiceCommand({
+        cluster: clusterName,
+        service: serviceName,
+        force: true,
+      }),
+    );
+    await client.send(new DeleteClusterCommand({ cluster: clusterName }));
+  });
+
+  test("DescribeServices/DescribeTasks/DescribeClusters return failures for missing ARNs", async () => {
+    const client = ecs();
+    const clusterName = "bunsai-e2e-failures-cluster";
+    await client.send(new CreateClusterCommand({ clusterName }));
+
+    const svcResult = await client.send(
+      new DescribeServicesCommand({
+        cluster: clusterName,
+        services: ["nonexistent-service-xyz"],
+      }),
+    );
+    expect(svcResult.services ?? []).toHaveLength(0);
+    expect((svcResult.failures ?? []).map((f) => f.reason)).toContain(
+      "MISSING",
+    );
+
+    const clusterResult = await client.send(
+      new DescribeClustersCommand({ clusters: ["nonexistent-cluster-xyz"] }),
+    );
+    expect(clusterResult.clusters ?? []).toHaveLength(0);
+    expect((clusterResult.failures ?? []).map((f) => f.reason)).toContain(
+      "MISSING",
+    );
+
+    const taskResult = await client.send(
+      new DescribeTasksCommand({
+        cluster: clusterName,
+        tasks: ["arn:aws:ecs:us-east-1:000000000000:task/nonexistent-task-id"],
+      }),
+    );
+    expect(taskResult.tasks ?? []).toHaveLength(0);
+    expect((taskResult.failures ?? []).map((f) => f.reason)).toContain(
+      "MISSING",
+    );
+
+    await client.send(new DeleteClusterCommand({ cluster: clusterName }));
+  });
+
+  test("ListClusters/ListServices/ListTasks pagination with maxResults and nextToken", async () => {
+    const client = ecs();
+    const clusterA = "bunsai-e2e-pag-a";
+    const clusterB = "bunsai-e2e-pag-b";
+    const clusterC = "bunsai-e2e-pag-c";
+    await Promise.all([
+      client.send(new CreateClusterCommand({ clusterName: clusterA })),
+      client.send(new CreateClusterCommand({ clusterName: clusterB })),
+      client.send(new CreateClusterCommand({ clusterName: clusterC })),
+    ]);
+
+    const page1 = await client.send(new ListClustersCommand({ maxResults: 2 }));
+    expect((page1.clusterArns ?? []).length).toBeLessThanOrEqual(2);
+    expect(page1.nextToken).toBeDefined();
+
+    const page2 = await client.send(
+      new ListClustersCommand({ nextToken: page1.nextToken }),
+    );
+    expect(page2.clusterArns ?? []).toBeDefined();
+
+    const combined = [
+      ...(page1.clusterArns ?? []),
+      ...(page2.clusterArns ?? []),
+    ];
+    expect(
+      combined.some((arn) => arn.includes(clusterA)) &&
+        combined.some((arn) => arn.includes(clusterB)) &&
+        combined.some((arn) => arn.includes(clusterC)),
+    ).toBe(true);
+
+    const td = await client.send(
+      new RegisterTaskDefinitionCommand({
+        family: "bunsai-e2e-pag-td",
+        containerDefinitions: [{ name: "app", image: "nginx", memory: 128 }],
+      }),
+    );
+    const tdArn = td.taskDefinition?.taskDefinitionArn ?? "";
+    await client.send(
+      new CreateServiceCommand({
+        cluster: clusterA,
+        serviceName: "pag-svc-1",
+        taskDefinition: tdArn,
+        desiredCount: 0,
+      }),
+    );
+    await client.send(
+      new CreateServiceCommand({
+        cluster: clusterA,
+        serviceName: "pag-svc-2",
+        taskDefinition: tdArn,
+        desiredCount: 0,
+      }),
+    );
+    const svcPage1 = await client.send(
+      new ListServicesCommand({ cluster: clusterA, maxResults: 1 }),
+    );
+    expect((svcPage1.serviceArns ?? []).length).toBe(1);
+    expect(svcPage1.nextToken).toBeDefined();
+    const svcPage2 = await client.send(
+      new ListServicesCommand({
+        cluster: clusterA,
+        nextToken: svcPage1.nextToken,
+      }),
+    );
+    expect((svcPage2.serviceArns ?? []).length).toBeGreaterThanOrEqual(1);
+
+    await Promise.all([
+      client.send(
+        new DeleteServiceCommand({
+          cluster: clusterA,
+          service: "pag-svc-1",
+          force: true,
+        }),
+      ),
+      client.send(
+        new DeleteServiceCommand({
+          cluster: clusterA,
+          service: "pag-svc-2",
+          force: true,
+        }),
+      ),
+    ]);
+    await Promise.all([
+      client.send(new DeleteClusterCommand({ cluster: clusterA })),
+      client.send(new DeleteClusterCommand({ cluster: clusterB })),
+      client.send(new DeleteClusterCommand({ cluster: clusterC })),
+    ]);
+  });
+
+  test("ListTaskDefinitions familyPrefix, status, sort filters", async () => {
+    const client = ecs();
+    const family = "bunsai-e2e-filter-td";
+    await client.send(
+      new RegisterTaskDefinitionCommand({
+        family,
+        containerDefinitions: [{ name: "app", image: "nginx:1", memory: 128 }],
+      }),
+    );
+    await client.send(
+      new RegisterTaskDefinitionCommand({
+        family,
+        containerDefinitions: [{ name: "app", image: "nginx:2", memory: 128 }],
+      }),
+    );
+    await client.send(
+      new DeregisterTaskDefinitionCommand({ taskDefinition: `${family}:1` }),
+    );
+
+    const active = await client.send(
+      new ListTaskDefinitionsCommand({
+        familyPrefix: family,
+        status: "ACTIVE",
+      }),
+    );
+    const activeArns = active.taskDefinitionArns ?? [];
+    expect(activeArns.every((a) => a.includes(family))).toBe(true);
+    expect(activeArns.some((a) => a.includes(`${family}:2`))).toBe(true);
+    expect(activeArns.some((a) => a.includes(`${family}:1`))).toBe(false);
+
+    const inactive = await client.send(
+      new ListTaskDefinitionsCommand({
+        familyPrefix: family,
+        status: "INACTIVE",
+      }),
+    );
+    const inactiveArns = inactive.taskDefinitionArns ?? [];
+    expect(inactiveArns.some((a) => a.includes(`${family}:1`))).toBe(true);
+    expect(inactiveArns.some((a) => a.includes(`${family}:2`))).toBe(false);
+
+    const desc = await client.send(
+      new ListTaskDefinitionsCommand({ familyPrefix: family, sort: "DESC" }),
+    );
+    const descArns = desc.taskDefinitionArns ?? [];
+    expect(descArns.length).toBeGreaterThanOrEqual(2);
+    const firstRevision = parseInt(descArns[0]?.split(":").pop() ?? "0", 10);
+    const secondRevision = parseInt(descArns[1]?.split(":").pop() ?? "0", 10);
+    expect(firstRevision).toBeGreaterThan(secondRevision);
+  });
+
+  test("create-time tags round-trip via ListTagsForResource", async () => {
+    const client = ecs();
+    const clusterName = "bunsai-e2e-tag-rt-cluster";
+
+    const cluster = await client.send(
+      new CreateClusterCommand({
+        clusterName,
+        tags: [{ key: "env", value: "test" }],
+      }),
+    );
+    const clusterArn = cluster.cluster?.clusterArn ?? "";
+
+    const clusterTags = await client.send(
+      new ListTagsForResourceCommand({ resourceArn: clusterArn }),
+    );
+    expect((clusterTags.tags ?? []).map((t) => t.key)).toContain("env");
+
+    const td = await client.send(
+      new RegisterTaskDefinitionCommand({
+        family: "bunsai-e2e-tag-rt-td",
+        containerDefinitions: [{ name: "app", image: "nginx", memory: 128 }],
+        tags: [{ key: "version", value: "1" }],
+      }),
+    );
+    const tdArn = td.taskDefinition?.taskDefinitionArn ?? "";
+
+    const tdTags = await client.send(
+      new ListTagsForResourceCommand({ resourceArn: tdArn }),
+    );
+    expect((tdTags.tags ?? []).map((t) => t.key)).toContain("version");
+
+    const svc = await client.send(
+      new CreateServiceCommand({
+        cluster: clusterName,
+        serviceName: "tag-rt-svc",
+        taskDefinition: tdArn,
+        desiredCount: 0,
+        tags: [{ key: "owner", value: "platform" }],
+      }),
+    );
+    const svcArn = svc.service?.serviceArn ?? "";
+
+    const svcTags = await client.send(
+      new ListTagsForResourceCommand({ resourceArn: svcArn }),
+    );
+    expect((svcTags.tags ?? []).map((t) => t.key)).toContain("owner");
+
+    await client.send(
+      new DeleteServiceCommand({
+        cluster: clusterName,
+        service: "tag-rt-svc",
+        force: true,
+      }),
+    );
     await client.send(new DeleteClusterCommand({ cluster: clusterName }));
   });
 });

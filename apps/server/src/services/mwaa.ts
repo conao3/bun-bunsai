@@ -41,6 +41,8 @@ type StoredEnvironment = {
   RequirementsS3Path?: string;
   StartupScriptS3ObjectVersion?: string;
   StartupScriptS3Path?: string;
+  pendingStatus?: string;
+  pendingDelete?: boolean;
 };
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -206,7 +208,8 @@ const CreateEnvironment: OperationHandler = (input, ctx) => {
   const environment: StoredEnvironment = {
     Name: name,
     Arn: arn,
-    Status: "AVAILABLE",
+    Status: "CREATING",
+    pendingStatus: "AVAILABLE",
     CreatedAt: nowSeconds(),
     ExecutionRoleArn: executionRoleArn,
     ServiceRoleArn: `arn:aws:iam::${ctx.account}:role/aws-service-role/airflow.amazonaws.com/AWSServiceRoleForAmazonMWAA`,
@@ -242,11 +245,30 @@ const CreateEnvironment: OperationHandler = (input, ctx) => {
 
 const GetEnvironment: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
-  return { Environment: environmentView(requireEnvironment(ctx, name), ctx) };
+  const environment = requireEnvironment(ctx, name);
+  const view = environmentView(environment, ctx);
+  if (environment.pendingStatus !== undefined) {
+    ctx.store.set(environmentKey(name), {
+      ...environment,
+      Status: environment.pendingStatus,
+      pendingStatus: undefined,
+    });
+  } else if (environment.pendingDelete === true) {
+    ctx.store.delete(tagsKey(environment.Arn));
+    ctx.store.delete(environmentKey(name));
+  }
+  return { Environment: view };
 };
 
 const ListEnvironments: OperationHandler = (input, ctx) => {
   const maxResults = numberOr(input["MaxResults"], 25);
+  if (maxResults < 1 || maxResults > 25) {
+    throw awsError(
+      "ValidationException",
+      "MaxResults must be between 1 and 25.",
+      400,
+    );
+  }
   const nextToken = stringOrUndefined(input["NextToken"]);
   const allNames = ctx.store
     .list<StoredEnvironment>()
@@ -268,14 +290,25 @@ const ListEnvironments: OperationHandler = (input, ctx) => {
 const DeleteEnvironment: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   const environment = requireEnvironment(ctx, name);
-  ctx.store.delete(tagsKey(environment.Arn));
-  ctx.store.delete(environmentKey(name));
+  ctx.store.set(environmentKey(name), {
+    ...environment,
+    Status: "DELETING",
+    pendingDelete: true,
+    pendingStatus: undefined,
+  });
   return {};
 };
 
 const UpdateEnvironment: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   const environment = requireEnvironment(ctx, name);
+  if (environment.Status !== "AVAILABLE") {
+    throw awsError(
+      "ValidationException",
+      `Environment ${name} is not in a valid state for update.`,
+      400,
+    );
+  }
   const updated: StoredEnvironment = { ...environment };
   const executionRoleArn = stringOrUndefined(input["ExecutionRoleArn"]);
   if (executionRoleArn !== undefined)
@@ -355,8 +388,21 @@ const PublishMetrics: OperationHandler = (_input, _ctx) => {
   return {};
 };
 
+const requireEnvironmentByArn = (ctx: ServiceContext, arn: string): void => {
+  const match = /environment\/(.+)$/.exec(arn);
+  if (match === null) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${arn}`,
+      404,
+    );
+  }
+  requireEnvironment(ctx, match[1]);
+};
+
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
+  requireEnvironmentByArn(ctx, arn);
   const key = tagsKey(arn);
   const existing = ctx.store.get<Record<string, string>>(key) ?? {};
   const tags = { ...existing };
@@ -372,6 +418,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
+  requireEnvironmentByArn(ctx, arn);
   const key = tagsKey(arn);
   const existing = ctx.store.get<Record<string, string>>(key) ?? {};
   const tags = { ...existing };
@@ -387,6 +434,7 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
+  requireEnvironmentByArn(ctx, arn);
   const tags = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
   return { Tags: tags };
 };

@@ -46,6 +46,9 @@ test("MWAA environment roundtrip", async () => {
   );
   expect(created.Arn).toContain(`environment/${name}`);
 
+  const creating = await client.send(new GetEnvironmentCommand({ Name: name }));
+  expect(creating.Environment?.Status).toBe("CREATING");
+
   const got = await client.send(new GetEnvironmentCommand({ Name: name }));
   expect(got.Environment?.Name).toBe(name);
   expect(got.Environment?.Status).toBe("AVAILABLE");
@@ -61,6 +64,9 @@ test("MWAA environment roundtrip", async () => {
   expect(listed.Environments ?? []).toContain(name);
 
   await client.send(new DeleteEnvironmentCommand({ Name: name }));
+
+  const deleting = await client.send(new GetEnvironmentCommand({ Name: name }));
+  expect(deleting.Environment?.Status).toBe("DELETING");
 
   await expect(
     client.send(new GetEnvironmentCommand({ Name: name })),
@@ -83,6 +89,8 @@ test("MWAA UpdateEnvironment", async () => {
       },
     }),
   );
+
+  await client.send(new GetEnvironmentCommand({ Name: name }));
 
   const updated = await client.send(
     new UpdateEnvironmentCommand({
@@ -299,6 +307,9 @@ test("MWAA lifecycle and unified tags", async () => {
   );
   const arn = created.Arn!;
 
+  const creating = await client.send(new GetEnvironmentCommand({ Name: name }));
+  expect(creating.Environment?.Status).toBe("CREATING");
+
   const got = await client.send(new GetEnvironmentCommand({ Name: name }));
   expect(got.Environment?.Status).toBe("AVAILABLE");
   expect(got.Environment?.Tags).toEqual({ Env: "prod", Team: "data" });
@@ -318,6 +329,10 @@ test("MWAA lifecycle and unified tags", async () => {
   expect(afterUpdate.Environment?.Tags).toEqual({ Env: "prod", Team: "data" });
 
   await client.send(new DeleteEnvironmentCommand({ Name: name }));
+
+  const deleting = await client.send(new GetEnvironmentCommand({ Name: name }));
+  expect(deleting.Environment?.Status).toBe("DELETING");
+
   await expect(
     client.send(new GetEnvironmentCommand({ Name: name })),
   ).rejects.toThrow();
@@ -414,4 +429,54 @@ test("MWAA field persistence", async () => {
   expect(afterUpdate.Environment?.PluginsS3Path).toBe("plugins.zip");
 
   await client.send(new DeleteEnvironmentCommand({ Name: name }));
+});
+
+test("MWAA fidelity: lifecycle, tag ARN validation, pagination bounds", async () => {
+  const client = mwaa();
+  const name = `bunsai-e2e-fidelity-${Date.now()}`;
+
+  await client.send(
+    new CreateEnvironmentCommand({
+      Name: name,
+      DagS3Path: "dags",
+      ExecutionRoleArn: `arn:aws:iam::000000000000:role/${name}-exec`,
+      SourceBucketArn: `arn:aws:s3:::${name}-bucket`,
+      NetworkConfiguration: {
+        SubnetIds: ["subnet-11111111"],
+        SecurityGroupIds: ["sg-11111111"],
+      },
+    }),
+  );
+
+  const creating = await client.send(new GetEnvironmentCommand({ Name: name }));
+  expect(creating.Environment?.Status).toBe("CREATING");
+
+  const available = await client.send(
+    new GetEnvironmentCommand({ Name: name }),
+  );
+  expect(available.Environment?.Status).toBe("AVAILABLE");
+
+  await client.send(new DeleteEnvironmentCommand({ Name: name }));
+
+  const deleting = await client.send(new GetEnvironmentCommand({ Name: name }));
+  expect(deleting.Environment?.Status).toBe("DELETING");
+
+  await expect(
+    client.send(new GetEnvironmentCommand({ Name: name })),
+  ).rejects.toThrow();
+
+  const bogusArn = `arn:aws:airflow:us-east-1:000000000000:environment/nonexistent-bogus`;
+  await expect(
+    client.send(
+      new TagResourceCommand({ ResourceArn: bogusArn, Tags: { k: "v" } }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(new ListTagsForResourceCommand({ ResourceArn: bogusArn })),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(new ListEnvironmentsCommand({ MaxResults: 100 })),
+  ).rejects.toThrow();
 });

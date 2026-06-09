@@ -159,6 +159,55 @@ const requireApplication = (
   return application;
 };
 
+const requireEnvironment = (
+  ctx: ServiceContext,
+  name: string | undefined,
+  id: string | undefined,
+): void => {
+  const found = ctx.store
+    .list<StoredEnvironment>()
+    .filter((e) => e.key.startsWith("environment/"))
+    .some(
+      (e) =>
+        (id !== undefined ? e.value.EnvironmentId === id : true) &&
+        (name !== undefined ? e.value.EnvironmentName === name : true),
+    );
+  if (!found) {
+    throw awsError(
+      "InvalidParameterValue",
+      "No environment found for the specified identifier.",
+      400,
+    );
+  }
+};
+
+const isCustomPlatformArn = (arn: string): boolean => {
+  const parts = arn.split(":");
+  return parts.length >= 6 && parts[4] !== "";
+};
+
+const applyPagination = <T>(
+  items: T[],
+  maxRecordsInput: unknown,
+  tokenInput: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const offset =
+    typeof tokenInput === "string" && tokenInput !== ""
+      ? parseInt(tokenInput, 10)
+      : 0;
+  const maxRecords =
+    typeof maxRecordsInput === "number" && maxRecordsInput > 0
+      ? maxRecordsInput
+      : undefined;
+  const sliced =
+    maxRecords !== undefined
+      ? items.slice(offset, offset + maxRecords)
+      : items.slice(offset);
+  const nextOffset = offset + sliced.length;
+  const nextToken = nextOffset < items.length ? String(nextOffset) : undefined;
+  return { items: sliced, nextToken };
+};
+
 const applicationArnOf = (
   region: string,
   account: string,
@@ -393,6 +442,19 @@ const CreateEnvironment: OperationHandler = (input, ctx) => {
           ),
         }
       : { Name: "WebServer", Type: "Standard", Version: "1.0" };
+  const versionLabel = optionalString(input, "VersionLabel");
+  if (versionLabel !== undefined) {
+    const versionExists = ctx.store.get<StoredApplicationVersion>(
+      applicationVersionKey(applicationName, versionLabel),
+    );
+    if (versionExists === undefined) {
+      throw awsError(
+        "InvalidParameterValue",
+        `No Application Version named '${versionLabel}' found.`,
+        400,
+      );
+    }
+  }
   const cnamePrefix = optionalString(input, "CNAMEPrefix") ?? environmentName;
   const id = `e-${crypto.randomUUID().replace(/-/g, "").slice(0, 13)}`;
   const now = new Date().toISOString();
@@ -400,7 +462,7 @@ const CreateEnvironment: OperationHandler = (input, ctx) => {
     EnvironmentName: environmentName,
     EnvironmentId: id,
     ApplicationName: applicationName,
-    VersionLabel: optionalString(input, "VersionLabel"),
+    VersionLabel: versionLabel,
     SolutionStackName:
       optionalString(input, "SolutionStackName") ??
       "64bit Amazon Linux 2 v3.0.0 running Python 3.8",
@@ -425,7 +487,7 @@ const CreateEnvironment: OperationHandler = (input, ctx) => {
     OperationsRole: undefined,
   };
   ctx.store.set(environmentKey(id), environment);
-  return presentEnvironment(environment);
+  return { ...presentEnvironment(environment), Status: "Launching" };
 };
 
 const DescribeEnvironments: OperationHandler = (input, ctx) => {
@@ -441,7 +503,7 @@ const DescribeEnvironments: OperationHandler = (input, ctx) => {
       )
     : undefined;
   const includeDeleted = booleanOr(input, "IncludeDeleted", false);
-  const environments = ctx.store
+  const allEnvironments = ctx.store
     .list<StoredEnvironment>()
     .filter((entry) => entry.key.startsWith("environment/"))
     .map((entry) => entry.value)
@@ -462,7 +524,12 @@ const DescribeEnvironments: OperationHandler = (input, ctx) => {
       includeDeleted ? true : environment.Status !== "Terminated",
     )
     .map((environment) => presentEnvironment(environment));
-  return { Environments: environments };
+  const { items: environments, nextToken } = applyPagination(
+    allEnvironments,
+    input.MaxRecords,
+    input.NextToken,
+  );
+  return { Environments: environments, NextToken: nextToken };
 };
 
 const TerminateEnvironment: OperationHandler = (input, ctx) => {
@@ -519,8 +586,13 @@ const AbortEnvironmentUpdate: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const ApplyEnvironmentManagedAction: OperationHandler = (input, _ctx) => {
+const ApplyEnvironmentManagedAction: OperationHandler = (input, ctx) => {
   const actionId = requireString(input, "ActionId");
+  const envName = optionalString(input, "EnvironmentName");
+  const envId = optionalString(input, "EnvironmentId");
+  if (envName !== undefined || envId !== undefined) {
+    requireEnvironment(ctx, envName, envId);
+  }
   return {
     ActionId: actionId,
     ActionDescription: "Apply managed action",
@@ -696,7 +768,12 @@ const CreateApplicationVersion: OperationHandler = (input, ctx) => {
   application.Versions = [...application.Versions, versionLabel];
   application.DateUpdated = now;
   ctx.store.set(applicationKey(applicationName), application);
-  return { ApplicationVersion: presentApplicationVersion(version) };
+  return {
+    ApplicationVersion: {
+      ...presentApplicationVersion(version),
+      Status: "Processing",
+    },
+  };
 };
 
 const CreateConfigurationTemplate: OperationHandler = (input, ctx) => {
@@ -779,7 +856,10 @@ const CreatePlatformVersion: OperationHandler = (input, ctx) => {
   };
   ctx.store.set(platformVersionKey(platformArn), platform);
   return {
-    PlatformSummary: presentPlatformSummary(platform),
+    PlatformSummary: {
+      ...presentPlatformSummary(platform),
+      PlatformStatus: "Creating",
+    },
     Builder: {
       ARN: `arn:aws:elasticbeanstalk:${ctx.region}:${ctx.account}:builder/${platformName}`,
     },
@@ -906,7 +986,7 @@ const DescribeApplicationVersions: OperationHandler = (input, ctx) => {
         (v): v is string => typeof v === "string",
       )
     : undefined;
-  const versions = ctx.store
+  const allVersions = ctx.store
     .list<StoredApplicationVersion>()
     .filter((entry) => entry.key.startsWith("applicationVersion/"))
     .map((entry) => entry.value)
@@ -921,7 +1001,12 @@ const DescribeApplicationVersions: OperationHandler = (input, ctx) => {
         : true,
     )
     .map((v) => presentApplicationVersion(v));
-  return { ApplicationVersions: versions };
+  const { items: versions, nextToken } = applyPagination(
+    allVersions,
+    input.MaxRecords,
+    input.NextToken,
+  );
+  return { ApplicationVersions: versions, NextToken: nextToken };
 };
 
 const DescribeConfigurationOptions: OperationHandler = (_input, _ctx) => {
@@ -1091,7 +1176,12 @@ const DescribeEvents: OperationHandler = (_input, _ctx) => {
   };
 };
 
-const DescribeInstancesHealth: OperationHandler = (_input, _ctx) => {
+const DescribeInstancesHealth: OperationHandler = (input, ctx) => {
+  const envName = optionalString(input, "EnvironmentName");
+  const envId = optionalString(input, "EnvironmentId");
+  if (envName !== undefined || envId !== undefined) {
+    requireEnvironment(ctx, envName, envId);
+  }
   return {
     InstanceHealthList: [],
     RefreshedAt: new Date().toISOString(),
@@ -1107,6 +1197,13 @@ const DescribePlatformVersion: OperationHandler = (input, ctx) => {
     );
     if (platform !== undefined) {
       return { PlatformDescription: presentPlatformDescription(platform) };
+    }
+    if (isCustomPlatformArn(platformArn)) {
+      throw awsError(
+        "ResourceNotFoundException",
+        `No platform version found for '${platformArn}'.`,
+        404,
+      );
     }
   }
   const now = new Date().toISOString();
@@ -1260,11 +1357,21 @@ const RebuildEnvironment: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const RequestEnvironmentInfo: OperationHandler = (_input, _ctx) => {
+const RequestEnvironmentInfo: OperationHandler = (input, ctx) => {
+  const envName = optionalString(input, "EnvironmentName");
+  const envId = optionalString(input, "EnvironmentId");
+  if (envName !== undefined || envId !== undefined) {
+    requireEnvironment(ctx, envName, envId);
+  }
   return {};
 };
 
-const RestartAppServer: OperationHandler = (_input, _ctx) => {
+const RestartAppServer: OperationHandler = (input, ctx) => {
+  const envName = optionalString(input, "EnvironmentName");
+  const envId = optionalString(input, "EnvironmentId");
+  if (envName !== undefined || envId !== undefined) {
+    requireEnvironment(ctx, envName, envId);
+  }
   return {};
 };
 
@@ -1473,11 +1580,46 @@ const UpdateEnvironment: OperationHandler = (input, ctx) => {
   const newDescription = optionalString(input, "Description");
   if (newDescription !== undefined) env.Description = newDescription;
   const newVersionLabel = optionalString(input, "VersionLabel");
-  if (newVersionLabel !== undefined) env.VersionLabel = newVersionLabel;
+  if (newVersionLabel !== undefined) {
+    const versionExists = ctx.store.get<StoredApplicationVersion>(
+      applicationVersionKey(env.ApplicationName, newVersionLabel),
+    );
+    if (versionExists === undefined) {
+      throw awsError(
+        "InvalidParameterValue",
+        `No Application Version named '${newVersionLabel}' found.`,
+        400,
+      );
+    }
+    env.VersionLabel = newVersionLabel;
+  }
   const newSolutionStack = optionalString(input, "SolutionStackName");
-  if (newSolutionStack !== undefined) env.SolutionStackName = newSolutionStack;
+  if (newSolutionStack !== undefined) {
+    if (!SYNTHETIC_SOLUTION_STACKS.includes(newSolutionStack)) {
+      throw awsError(
+        "InvalidParameterValue",
+        `Invalid solution stack name: '${newSolutionStack}'.`,
+        400,
+      );
+    }
+    env.SolutionStackName = newSolutionStack;
+  }
   const newPlatformArn = optionalString(input, "PlatformArn");
-  if (newPlatformArn !== undefined) env.PlatformArn = newPlatformArn;
+  if (newPlatformArn !== undefined) {
+    if (isCustomPlatformArn(newPlatformArn)) {
+      const platformExists = ctx.store.get<StoredPlatformVersion>(
+        platformVersionKey(newPlatformArn),
+      );
+      if (platformExists === undefined) {
+        throw awsError(
+          "InvalidParameterValue",
+          `No platform version found for '${newPlatformArn}'.`,
+          400,
+        );
+      }
+    }
+    env.PlatformArn = newPlatformArn;
+  }
   const newTemplateName = optionalString(input, "TemplateName");
   if (newTemplateName !== undefined) env.TemplateName = newTemplateName;
   env.DateUpdated = new Date().toISOString();

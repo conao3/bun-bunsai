@@ -10,6 +10,7 @@ import {
   CreateWebACLCommand,
   DeleteAPIKeyCommand,
   DeleteFirewallManagerRuleGroupsCommand,
+  DeleteWebACLCommand,
   DeleteIPSetCommand,
   DeleteLoggingConfigurationCommand,
   DeletePermissionPolicyCommand,
@@ -53,6 +54,8 @@ import {
   UpdateManagedRuleSetVersionExpiryDateCommand,
   UpdateRegexPatternSetCommand,
   UpdateRuleGroupCommand,
+  WAFAssociatedItemException,
+  WAFNonexistentItemException,
   WAFV2Client,
 } from "@aws-sdk/client-wafv2";
 
@@ -691,4 +694,191 @@ test("WAFv2 GetSampledRequests and GetRateBasedStatementManagedKeys", async () =
     .then((res) => {
       expect(res.NextWebACLLockToken).toBeDefined();
     });
+});
+
+test("WAFv2 fidelity gaps: in-use guards, AssociateWebACL validation, tag round-trip", async () => {
+  const client = wafv2();
+  const scope = "REGIONAL" as const;
+
+  const created = await client.send(
+    new CreateWebACLCommand({
+      Name: "fidelity-acl",
+      Scope: scope,
+      DefaultAction: { Allow: {} },
+      VisibilityConfig: visibilityConfig,
+      Tags: [{ Key: "env", Value: "test" }],
+    }),
+  );
+  const aclArn = created.Summary?.ARN ?? "";
+  expect(aclArn).toBeTruthy();
+
+  const tags = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: aclArn }),
+  );
+  expect(
+    tags.TagInfoForResource?.TagList?.find((t) => t.Key === "env")?.Value,
+  ).toBe("test");
+
+  await expect(
+    client.send(
+      new AssociateWebACLCommand({
+        WebACLArn:
+          "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/bogus/bogusid",
+        ResourceArn:
+          "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/my-alb/abc",
+      }),
+    ),
+  ).rejects.toThrow(WAFNonexistentItemException);
+
+  const realResourceArn =
+    "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/my-alb/realid";
+  await client.send(
+    new AssociateWebACLCommand({
+      WebACLArn: aclArn,
+      ResourceArn: realResourceArn,
+    }),
+  );
+
+  const got = await client.send(
+    new GetWebACLCommand({
+      Scope: scope,
+      Name: "fidelity-acl",
+      Id: created.Summary?.Id ?? "",
+    }),
+  );
+  await expect(
+    client.send(
+      new DeleteWebACLCommand({
+        Scope: scope,
+        Name: "fidelity-acl",
+        Id: created.Summary?.Id ?? "",
+        LockToken: got.LockToken ?? "",
+      }),
+    ),
+  ).rejects.toThrow(WAFAssociatedItemException);
+
+  await client.send(
+    new DisassociateWebACLCommand({ ResourceArn: realResourceArn }),
+  );
+
+  const got2 = await client.send(
+    new GetWebACLCommand({
+      Scope: scope,
+      Name: "fidelity-acl",
+      Id: created.Summary?.Id ?? "",
+    }),
+  );
+  await client.send(
+    new DeleteWebACLCommand({
+      Scope: scope,
+      Name: "fidelity-acl",
+      Id: created.Summary?.Id ?? "",
+      LockToken: got2.LockToken ?? "",
+    }),
+  );
+
+  const tagsAfterDelete = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: aclArn }),
+  );
+  expect(tagsAfterDelete.TagInfoForResource?.TagList ?? []).toHaveLength(0);
+});
+
+test("WAFv2 fidelity gaps: IPSet and RegexPatternSet Id validation", async () => {
+  const client = wafv2();
+  const scope = "REGIONAL" as const;
+
+  const ipSetCreated = await client.send(
+    new CreateIPSetCommand({
+      Name: "fidelity-ipset",
+      Scope: scope,
+      IPAddressVersion: "IPV4",
+      Addresses: [],
+    }),
+  );
+  const ipSetId = ipSetCreated.Summary?.Id ?? "";
+  const ipSetToken = ipSetCreated.Summary?.LockToken ?? "";
+
+  await expect(
+    client.send(
+      new UpdateIPSetCommand({
+        Scope: scope,
+        Name: "fidelity-ipset",
+        Id: "wrong-id",
+        LockToken: ipSetToken,
+        Addresses: ["1.2.3.4/32"],
+      }),
+    ),
+  ).rejects.toThrow(WAFNonexistentItemException);
+
+  const getIPSet = await client.send(
+    new GetIPSetCommand({ Scope: scope, Name: "fidelity-ipset", Id: ipSetId }),
+  );
+  await expect(
+    client.send(
+      new DeleteIPSetCommand({
+        Scope: scope,
+        Name: "fidelity-ipset",
+        Id: "wrong-id",
+        LockToken: getIPSet.LockToken ?? "",
+      }),
+    ),
+  ).rejects.toThrow(WAFNonexistentItemException);
+
+  await client.send(
+    new DeleteIPSetCommand({
+      Scope: scope,
+      Name: "fidelity-ipset",
+      Id: ipSetId,
+      LockToken: getIPSet.LockToken ?? "",
+    }),
+  );
+
+  const rxCreated = await client.send(
+    new CreateRegexPatternSetCommand({
+      Name: "fidelity-regex",
+      Scope: scope,
+      RegularExpressionList: [{ RegexString: "^test$" }],
+    }),
+  );
+  const rxId = rxCreated.Summary?.Id ?? "";
+  const rxToken = rxCreated.Summary?.LockToken ?? "";
+
+  await expect(
+    client.send(
+      new UpdateRegexPatternSetCommand({
+        Scope: scope,
+        Name: "fidelity-regex",
+        Id: "wrong-id",
+        LockToken: rxToken,
+        RegularExpressionList: [],
+      }),
+    ),
+  ).rejects.toThrow(WAFNonexistentItemException);
+
+  const getRx = await client.send(
+    new GetRegexPatternSetCommand({
+      Scope: scope,
+      Name: "fidelity-regex",
+      Id: rxId,
+    }),
+  );
+  await expect(
+    client.send(
+      new DeleteRegexPatternSetCommand({
+        Scope: scope,
+        Name: "fidelity-regex",
+        Id: "wrong-id",
+        LockToken: getRx.LockToken ?? "",
+      }),
+    ),
+  ).rejects.toThrow(WAFNonexistentItemException);
+
+  await client.send(
+    new DeleteRegexPatternSetCommand({
+      Scope: scope,
+      Name: "fidelity-regex",
+      Id: rxId,
+      LockToken: getRx.LockToken ?? "",
+    }),
+  );
 });

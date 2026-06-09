@@ -30,6 +30,10 @@ describe("firehose tagging and encryption e2e", () => {
     );
 
     await client.send(
+      new DescribeDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+
+    await client.send(
       new TagDeliveryStreamCommand({
         DeliveryStreamName: name,
         Tags: [
@@ -74,6 +78,10 @@ describe("firehose tagging and encryption e2e", () => {
 
     await client.send(
       new CreateDeliveryStreamCommand({ DeliveryStreamName: name }),
+    );
+
+    await client.send(
+      new DescribeDeliveryStreamCommand({ DeliveryStreamName: name }),
     );
 
     await client.send(

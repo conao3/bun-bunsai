@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
   CreateDeliveryStreamCommand,
+  DescribeDeliveryStreamCommand,
   FirehoseClient,
   PutRecordBatchCommand,
   PutRecordCommand,
@@ -49,6 +50,10 @@ describe("firehose S3 delivery e2e", () => {
     );
     expect(created.DeliveryStreamARN).toContain(streamName);
 
+    await fh.send(
+      new DescribeDeliveryStreamCommand({ DeliveryStreamName: streamName }),
+    );
+
     const payload = new TextEncoder().encode("hello-firehose");
     const put = await fh.send(
       new PutRecordCommand({
@@ -92,6 +97,10 @@ describe("firehose S3 delivery e2e", () => {
       }),
     );
 
+    await fh.send(
+      new DescribeDeliveryStreamCommand({ DeliveryStreamName: streamName }),
+    );
+
     const payload = new TextEncoder().encode("extended-delivery");
     await fh.send(
       new PutRecordCommand({
@@ -131,6 +140,10 @@ describe("firehose S3 delivery e2e", () => {
           Prefix: "batch/",
         },
       }),
+    );
+
+    await fh.send(
+      new DescribeDeliveryStreamCommand({ DeliveryStreamName: streamName }),
     );
 
     const payloads = ["alpha", "beta", "gamma"].map((s) =>

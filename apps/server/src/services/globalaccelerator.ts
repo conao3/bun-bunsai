@@ -23,6 +23,7 @@ type StoredAccelerator = {
   Status: string;
   CreatedTime: number;
   LastModifiedTime: number;
+  Events: { Message: string; Timestamp: number }[];
 };
 
 type StoredListener = {
@@ -73,6 +74,7 @@ type StoredCustomRoutingAccelerator = {
   Status: string;
   CreatedTime: number;
   LastModifiedTime: number;
+  Events: { Message: string; Timestamp: number }[];
 };
 
 type StoredCustomRoutingListener = {
@@ -108,6 +110,14 @@ type StoredByoipCidr = {
   Events: { Message: string; Timestamp: number }[];
 };
 
+type StoredTrafficRule = {
+  EndpointGroupArn: string;
+  EndpointId: string;
+  DestinationAddresses: string[];
+  DestinationPorts: number[];
+  AllowAllTrafficToEndpoint: boolean;
+};
+
 const acceleratorKey = (arn: string): string => `accelerator/${arn}`;
 const listenerKey = (arn: string): string => `listener/${arn}`;
 const endpointGroupKey = (arn: string): string => `endpointgroup/${arn}`;
@@ -123,6 +133,8 @@ const customEndpointGroupKey = (arn: string): string =>
 const attachmentKey = (arn: string): string => `attachment/${arn}`;
 const byoipCidrKey = (cidr: string): string => `byoipcidr/${cidr}`;
 const tagsKey = (arn: string): string => `tags/${arn}`;
+const trafficRuleKey = (egArn: string, endpointId: string): string =>
+  `trafficroule/${egArn}|${endpointId}`;
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -251,28 +263,64 @@ const toPortRanges = (raw: unknown): { FromPort: number; ToPort: number }[] => {
   }));
 };
 
+const generateIpSets = (
+  id: string,
+  ipAddressType: string,
+): { IpFamily: string; IpAddresses: string[]; IpAddressFamily: string }[] => {
+  const hex = id.replace(/-/g, "");
+  const oct3 = parseInt(hex.slice(0, 4), 16) % 256;
+  const oct4 = parseInt(hex.slice(4, 8), 16) % 256;
+  const ipv4Set = {
+    IpFamily: "IPv4",
+    IpAddresses: [`100.${oct3}.${oct4}.1`, `100.${oct3}.${oct4}.2`],
+    IpAddressFamily: "IPv4",
+  };
+  const ipv6Prefix = `2600:9000:${oct3.toString(16).padStart(2, "0")}${oct4.toString(16).padStart(2, "0")}`;
+  const ipv6Set = {
+    IpFamily: "IPv6",
+    IpAddresses: [`${ipv6Prefix}::1`, `${ipv6Prefix}::2`],
+    IpAddressFamily: "IPv6",
+  };
+  if (ipAddressType === "IPV6") return [ipv6Set];
+  if (ipAddressType === "DUAL_STACK") return [ipv4Set, ipv6Set];
+  return [ipv4Set];
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const limit =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 10;
+  const offset =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(atob(nextToken), 10)
+      : 0;
+  const page = items.slice(offset, offset + limit);
+  const token =
+    offset + limit < items.length ? btoa(String(offset + limit)) : undefined;
+  return { items: page, nextToken: token };
+};
+
 const CreateAccelerator: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   requireString(input, "IdempotencyToken");
   const acceleratorId = crypto.randomUUID();
   const arn = `arn:aws:globalaccelerator::${ctx.account}:accelerator/${acceleratorId}`;
   const now = Date.now() / 1000;
+  const ipAddressType = stringOrUndefined(input["IpAddressType"]) ?? "IPV4";
   const accelerator: StoredAccelerator = {
     AcceleratorArn: arn,
     Name: name,
-    IpAddressType: stringOrUndefined(input["IpAddressType"]) ?? "IPV4",
+    IpAddressType: ipAddressType,
     Enabled: typeof input["Enabled"] === "boolean" ? input["Enabled"] : true,
-    IpSets: [
-      {
-        IpFamily: "IPv4",
-        IpAddresses: ["198.51.100.1", "198.51.100.2"],
-        IpAddressFamily: "IPv4",
-      },
-    ],
+    IpSets: generateIpSets(acceleratorId, ipAddressType),
     DnsName: `${acceleratorId}.awsglobalaccelerator.com`,
     Status: "DEPLOYED",
     CreatedTime: now,
     LastModifiedTime: now,
+    Events: [{ Message: "Accelerator created", Timestamp: now }],
   };
   ctx.store.set(acceleratorKey(arn), accelerator);
   ctx.store.set(acceleratorAttributesKey(arn), {
@@ -288,17 +336,23 @@ const DescribeAccelerator: OperationHandler = (input, ctx) => {
   return { Accelerator: requireAccelerator(ctx, arn) };
 };
 
-const ListAccelerators: OperationHandler = (_input, ctx) => {
-  const accelerators = ctx.store
+const ListAccelerators: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredAccelerator>()
     .filter((entry) => entry.key.startsWith("accelerator/"))
     .map((entry) => entry.value);
-  return { Accelerators: accelerators };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Accelerators: items, NextToken: nextToken };
 };
 
 const UpdateAccelerator: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "AcceleratorArn");
   const accelerator = requireAccelerator(ctx, arn);
+  const now = Date.now() / 1000;
   const updated: StoredAccelerator = {
     ...accelerator,
     Name: stringOrUndefined(input["Name"]) ?? accelerator.Name,
@@ -309,7 +363,11 @@ const UpdateAccelerator: OperationHandler = (input, ctx) => {
         ? input["Enabled"]
         : accelerator.Enabled,
     Status: "DEPLOYED",
-    LastModifiedTime: Date.now() / 1000,
+    LastModifiedTime: now,
+    Events: [
+      ...accelerator.Events,
+      { Message: "Accelerator updated", Timestamp: now },
+    ],
   };
   ctx.store.set(acceleratorKey(arn), updated);
   return { Accelerator: updated };
@@ -376,7 +434,7 @@ const DescribeListener: OperationHandler = (input, ctx) => {
 
 const ListListeners: OperationHandler = (input, ctx) => {
   const acceleratorArn = requireString(input, "AcceleratorArn");
-  const listeners = ctx.store
+  const all = ctx.store
     .list<StoredListener>()
     .filter(
       (entry) =>
@@ -384,7 +442,12 @@ const ListListeners: OperationHandler = (input, ctx) => {
         entry.value.AcceleratorArn === acceleratorArn,
     )
     .map((entry) => entry.value);
-  return { Listeners: listeners };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Listeners: items, NextToken: nextToken };
 };
 
 const UpdateListener: OperationHandler = (input, ctx) => {
@@ -459,7 +522,7 @@ const DescribeEndpointGroup: OperationHandler = (input, ctx) => {
 
 const ListEndpointGroups: OperationHandler = (input, ctx) => {
   const listenerArn = requireString(input, "ListenerArn");
-  const groups = ctx.store
+  const all = ctx.store
     .list<StoredEndpointGroup>()
     .filter(
       (entry) =>
@@ -467,7 +530,12 @@ const ListEndpointGroups: OperationHandler = (input, ctx) => {
         entry.value.ListenerArn === listenerArn,
     )
     .map((entry) => entry.value);
-  return { EndpointGroups: groups };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { EndpointGroups: items, NextToken: nextToken };
 };
 
 const UpdateEndpointGroup: OperationHandler = (input, ctx) => {
@@ -567,22 +635,18 @@ const CreateCustomRoutingAccelerator: OperationHandler = (input, ctx) => {
   const id = crypto.randomUUID();
   const arn = `arn:aws:globalaccelerator::${ctx.account}:accelerator/${id}`;
   const now = Date.now() / 1000;
+  const ipAddressType = stringOrUndefined(input["IpAddressType"]) ?? "IPV4";
   const acc: StoredCustomRoutingAccelerator = {
     AcceleratorArn: arn,
     Name: name,
-    IpAddressType: stringOrUndefined(input["IpAddressType"]) ?? "IPV4",
+    IpAddressType: ipAddressType,
     Enabled: typeof input["Enabled"] === "boolean" ? input["Enabled"] : true,
-    IpSets: [
-      {
-        IpFamily: "IPv4",
-        IpAddresses: ["198.51.100.3", "198.51.100.4"],
-        IpAddressFamily: "IPv4",
-      },
-    ],
+    IpSets: generateIpSets(id, ipAddressType),
     DnsName: `${id}.awsglobalaccelerator.com`,
     Status: "DEPLOYED",
     CreatedTime: now,
     LastModifiedTime: now,
+    Events: [{ Message: "Accelerator created", Timestamp: now }],
   };
   ctx.store.set(customAcceleratorKey(arn), acc);
   ctx.store.set(customAcceleratorAttributesKey(arn), {
@@ -598,17 +662,23 @@ const DescribeCustomRoutingAccelerator: OperationHandler = (input, ctx) => {
   return { Accelerator: requireCustomAccelerator(ctx, arn) };
 };
 
-const ListCustomRoutingAccelerators: OperationHandler = (_input, ctx) => {
-  const accelerators = ctx.store
+const ListCustomRoutingAccelerators: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredCustomRoutingAccelerator>()
     .filter((entry) => entry.key.startsWith("customaccelerator/"))
     .map((entry) => entry.value);
-  return { Accelerators: accelerators };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Accelerators: items, NextToken: nextToken };
 };
 
 const UpdateCustomRoutingAccelerator: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "AcceleratorArn");
   const acc = requireCustomAccelerator(ctx, arn);
+  const now = Date.now() / 1000;
   const updated: StoredCustomRoutingAccelerator = {
     ...acc,
     Name: stringOrUndefined(input["Name"]) ?? acc.Name,
@@ -617,7 +687,8 @@ const UpdateCustomRoutingAccelerator: OperationHandler = (input, ctx) => {
     Enabled:
       typeof input["Enabled"] === "boolean" ? input["Enabled"] : acc.Enabled,
     Status: "DEPLOYED",
-    LastModifiedTime: Date.now() / 1000,
+    LastModifiedTime: now,
+    Events: [...acc.Events, { Message: "Accelerator updated", Timestamp: now }],
   };
   ctx.store.set(customAcceleratorKey(arn), updated);
   return { Accelerator: updated };
@@ -689,7 +760,7 @@ const DescribeCustomRoutingListener: OperationHandler = (input, ctx) => {
 
 const ListCustomRoutingListeners: OperationHandler = (input, ctx) => {
   const acceleratorArn = requireString(input, "AcceleratorArn");
-  const listeners = ctx.store
+  const all = ctx.store
     .list<StoredCustomRoutingListener>()
     .filter(
       (entry) =>
@@ -697,7 +768,12 @@ const ListCustomRoutingListeners: OperationHandler = (input, ctx) => {
         entry.value.AcceleratorArn === acceleratorArn,
     )
     .map((entry) => entry.value);
-  return { Listeners: listeners };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Listeners: items, NextToken: nextToken };
 };
 
 const UpdateCustomRoutingListener: OperationHandler = (input, ctx) => {
@@ -758,7 +834,7 @@ const DescribeCustomRoutingEndpointGroup: OperationHandler = (input, ctx) => {
 
 const ListCustomRoutingEndpointGroups: OperationHandler = (input, ctx) => {
   const listenerArn = requireString(input, "ListenerArn");
-  const groups = ctx.store
+  const all = ctx.store
     .list<StoredCustomRoutingEndpointGroup>()
     .filter(
       (entry) =>
@@ -766,7 +842,12 @@ const ListCustomRoutingEndpointGroups: OperationHandler = (input, ctx) => {
         entry.value.ListenerArn === listenerArn,
     )
     .map((entry) => entry.value);
-  return { EndpointGroups: groups };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { EndpointGroups: items, NextToken: nextToken };
 };
 
 const DeleteCustomRoutingEndpointGroup: OperationHandler = (input, ctx) => {
@@ -814,23 +895,136 @@ const RemoveCustomRoutingEndpoints: OperationHandler = (input, ctx) => {
 };
 
 const AllowCustomRoutingTraffic: OperationHandler = (input, ctx) => {
-  const arn = requireString(input, "EndpointGroupArn");
-  requireCustomEndpointGroup(ctx, arn);
-  requireString(input, "EndpointId");
+  const egArn = requireString(input, "EndpointGroupArn");
+  requireCustomEndpointGroup(ctx, egArn);
+  const endpointId = requireString(input, "EndpointId");
+  const existing = ctx.store.get<StoredTrafficRule>(
+    trafficRuleKey(egArn, endpointId),
+  );
+  const allowAll =
+    typeof input["AllowAllTrafficToEndpoint"] === "boolean"
+      ? input["AllowAllTrafficToEndpoint"]
+      : (existing?.AllowAllTrafficToEndpoint ?? false);
+  const destinationAddresses = Array.isArray(input["DestinationAddresses"])
+    ? (input["DestinationAddresses"] as string[])
+    : (existing?.DestinationAddresses ?? []);
+  const destinationPorts = Array.isArray(input["DestinationPorts"])
+    ? (input["DestinationPorts"] as number[])
+    : (existing?.DestinationPorts ?? []);
+  const rule: StoredTrafficRule = {
+    EndpointGroupArn: egArn,
+    EndpointId: endpointId,
+    DestinationAddresses: destinationAddresses,
+    DestinationPorts: destinationPorts,
+    AllowAllTrafficToEndpoint: allowAll,
+  };
+  ctx.store.set(trafficRuleKey(egArn, endpointId), rule);
   return {};
 };
 
 const DenyCustomRoutingTraffic: OperationHandler = (input, ctx) => {
-  const arn = requireString(input, "EndpointGroupArn");
-  requireCustomEndpointGroup(ctx, arn);
-  requireString(input, "EndpointId");
+  const egArn = requireString(input, "EndpointGroupArn");
+  requireCustomEndpointGroup(ctx, egArn);
+  const endpointId = requireString(input, "EndpointId");
+  const denyAll =
+    typeof input["DenyAllTrafficToEndpoint"] === "boolean"
+      ? input["DenyAllTrafficToEndpoint"]
+      : true;
+  if (denyAll) {
+    ctx.store.delete(trafficRuleKey(egArn, endpointId));
+  } else {
+    const existing = ctx.store.get<StoredTrafficRule>(
+      trafficRuleKey(egArn, endpointId),
+    );
+    const denyAddresses = new Set(
+      Array.isArray(input["DestinationAddresses"])
+        ? (input["DestinationAddresses"] as string[])
+        : [],
+    );
+    const denyPorts = new Set(
+      Array.isArray(input["DestinationPorts"])
+        ? (input["DestinationPorts"] as number[])
+        : [],
+    );
+    if (existing) {
+      const updated: StoredTrafficRule = {
+        ...existing,
+        DestinationAddresses: existing.DestinationAddresses.filter(
+          (a) => !denyAddresses.has(a),
+        ),
+        DestinationPorts: existing.DestinationPorts.filter(
+          (p) => !denyPorts.has(p),
+        ),
+      };
+      ctx.store.set(trafficRuleKey(egArn, endpointId), updated);
+    }
+  }
   return {};
 };
 
 const ListCustomRoutingPortMappings: OperationHandler = (input, ctx) => {
   const acceleratorArn = requireString(input, "AcceleratorArn");
   requireCustomAccelerator(ctx, acceleratorArn);
-  return { PortMappings: [] };
+  const endpointGroupArn = stringOrUndefined(input["EndpointGroupArn"]);
+
+  const listeners = ctx.store
+    .list<StoredCustomRoutingListener>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith("customlistener/") &&
+        entry.value.AcceleratorArn === acceleratorArn,
+    )
+    .map((entry) => entry.value);
+
+  const portMappings: Record<string, unknown>[] = [];
+  for (const listener of listeners) {
+    const groups = ctx.store
+      .list<StoredCustomRoutingEndpointGroup>()
+      .filter(
+        (entry) =>
+          entry.key.startsWith("customendpointgroup/") &&
+          entry.value.ListenerArn === listener.ListenerArn &&
+          (endpointGroupArn === undefined ||
+            entry.value.EndpointGroupArn === endpointGroupArn),
+      )
+      .map((entry) => entry.value);
+
+    for (const eg of groups) {
+      for (const endpoint of eg.EndpointDescriptions) {
+        const rule = ctx.store.get<StoredTrafficRule>(
+          trafficRuleKey(eg.EndpointGroupArn, endpoint.EndpointId),
+        );
+        for (const dest of eg.DestinationDescriptions) {
+          const trafficState =
+            rule?.AllowAllTrafficToEndpoint === true ||
+            (rule !== undefined &&
+              rule.DestinationPorts.includes(dest.FromPort))
+              ? "ALLOW"
+              : "DENY";
+          portMappings.push({
+            AcceleratorPort: dest.FromPort,
+            AcceleratorArn: acceleratorArn,
+            EndpointGroupArn: eg.EndpointGroupArn,
+            EndpointId: endpoint.EndpointId,
+            EndpointGroupRegion: eg.EndpointGroupRegion,
+            DestinationSocketAddress: {
+              IpAddress: endpoint.EndpointId,
+              Port: dest.FromPort,
+            },
+            Protocols: dest.Protocols,
+            DestinationTrafficState: trafficState,
+          });
+        }
+      }
+    }
+  }
+
+  const { items, nextToken } = paginate(
+    portMappings,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { PortMappings: items, NextToken: nextToken };
 };
 
 const ListCustomRoutingPortMappingsByDestination: OperationHandler = (
@@ -867,17 +1061,35 @@ const DescribeCrossAccountAttachment: OperationHandler = (input, ctx) => {
   return { CrossAccountAttachment: requireAttachment(ctx, arn) };
 };
 
-const ListCrossAccountAttachments: OperationHandler = (_input, ctx) => {
-  const attachments = ctx.store
+const ListCrossAccountAttachments: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredAttachment>()
     .filter((entry) => entry.key.startsWith("attachment/"))
     .map((entry) => entry.value);
-  return { CrossAccountAttachments: attachments };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { CrossAccountAttachments: items, NextToken: nextToken };
 };
 
 const UpdateCrossAccountAttachment: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "AttachmentArn");
   const att = requireAttachment(ctx, arn);
+  const removeResourceSet = new Set(
+    Array.isArray(input["RemoveResources"])
+      ? (
+          input["RemoveResources"] as { EndpointId: string; Region: string }[]
+        ).map((r) => `${r.EndpointId}|${r.Region}`)
+      : [],
+  );
+  const filteredResources = att.Resources.filter(
+    (r) => !removeResourceSet.has(`${r.EndpointId}|${r.Region}`),
+  );
+  const addedResources = Array.isArray(input["AddResources"])
+    ? (input["AddResources"] as { EndpointId: string; Region: string }[])
+    : [];
   const updated: StoredAttachment = {
     ...att,
     Name: stringOrUndefined(input["Name"]) ?? att.Name,
@@ -895,15 +1107,7 @@ const UpdateCrossAccountAttachment: OperationHandler = (input, ctx) => {
             !Array.isArray(input["RemovePrincipals"]) ||
             !(input["RemovePrincipals"] as string[]).includes(p),
         ),
-    Resources: Array.isArray(input["AddResources"])
-      ? [
-          ...att.Resources,
-          ...(input["AddResources"] as {
-            EndpointId: string;
-            Region: string;
-          }[]),
-        ]
-      : att.Resources,
+    Resources: [...filteredResources, ...addedResources],
     LastModifiedTime: Date.now() / 1000,
   };
   ctx.store.set(attachmentKey(arn), updated);
@@ -985,12 +1189,17 @@ const WithdrawByoipCidr: OperationHandler = (input, ctx) => {
   return { ByoipCidr: updated };
 };
 
-const ListByoipCidrs: OperationHandler = (_input, ctx) => {
-  const cidrs = ctx.store
+const ListByoipCidrs: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredByoipCidr>()
     .filter((entry) => entry.key.startsWith("byoipcidr/"))
     .map((entry) => entry.value);
-  return { ByoipCidrs: cidrs };
+  const { items, nextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { ByoipCidrs: items, NextToken: nextToken };
 };
 
 const TagResource: OperationHandler = (input, ctx) => {

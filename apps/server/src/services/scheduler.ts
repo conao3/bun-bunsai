@@ -167,6 +167,25 @@ const groupKey = (name: string): string => `${groupPrefix}${name}`;
 
 const tagKey = (arn: string): string => `${tagPrefix}${arn}`;
 
+const arnExists = (arn: string, ctx: ServiceContext): boolean => {
+  const schedMatch =
+    /^arn:aws:scheduler:[^:]+:[^:]+:schedule\/([^/]+)\/(.+)$/.exec(arn);
+  if (schedMatch !== null) {
+    return (
+      ctx.store.get<StoredSchedule>(
+        scheduleKey(schedMatch[1]!, schedMatch[2]!),
+      ) !== undefined
+    );
+  }
+  const grpMatch = /^arn:aws:scheduler:[^:]+:[^:]+:schedule-group\/(.+)$/.exec(
+    arn,
+  );
+  if (grpMatch !== null) {
+    return ctx.store.get<StoredGroup>(groupKey(grpMatch[1]!)) !== undefined;
+  }
+  return false;
+};
+
 const scheduleArn = (
   ctx: ServiceContext,
   group: string,
@@ -227,6 +246,16 @@ const groupView = (group: StoredGroup): Record<string, unknown> => ({
 const CreateSchedule: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   const group = groupOf(input);
+  if (
+    group !== defaultGroup &&
+    ctx.store.get<StoredGroup>(groupKey(group)) === undefined
+  ) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Schedule group ${group} not found.`,
+      404,
+    );
+  }
   if (ctx.store.get<StoredSchedule>(scheduleKey(group, name)) !== undefined) {
     throw awsError(
       "ConflictException",
@@ -278,6 +307,7 @@ const ListSchedules: OperationHandler = (input, ctx) => {
   const group = stringOrUndefined(input["GroupName"]);
   const prefix = stringOrUndefined(input["NamePrefix"]);
   const state = stringOrUndefined(input["State"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
   const max =
     typeof input["MaxResults"] === "number"
       ? (input["MaxResults"] as number)
@@ -292,8 +322,11 @@ const ListSchedules: OperationHandler = (input, ctx) => {
     )
     .filter((schedule) => state === undefined || schedule.State === state)
     .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
-  const page = schedules.slice(0, max);
-  return { Schedules: page.map(scheduleSummary) };
+  const startIdx = nextToken !== undefined ? parseInt(atob(nextToken), 10) : 0;
+  const page = schedules.slice(startIdx, startIdx + max);
+  const hasMore = startIdx + max < schedules.length;
+  const responseNextToken = hasMore ? btoa(String(startIdx + max)) : undefined;
+  return { Schedules: page.map(scheduleSummary), NextToken: responseNextToken };
 };
 
 const UpdateSchedule: OperationHandler = (input, ctx) => {
@@ -384,19 +417,47 @@ const GetScheduleGroup: OperationHandler = (input, ctx) => {
 
 const DeleteScheduleGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
-  if (ctx.store.get<StoredGroup>(groupKey(name)) === undefined) {
+  const existing = ctx.store.get<StoredGroup>(groupKey(name));
+  if (existing === undefined) {
     throw awsError(
       "ResourceNotFoundException",
       `Schedule group ${name} not found.`,
       404,
     );
   }
-  ctx.store.delete(groupKey(name));
+  const schedulesInGroup = ctx.store
+    .list<StoredSchedule>()
+    .filter((entry) => entry.key.startsWith(schedulePrefix))
+    .map((entry) => ({ key: entry.key, value: entry.value }))
+    .filter((entry) => entry.value.GroupName === name);
+  if (schedulesInGroup.length === 0) {
+    ctx.store.delete(groupKey(name));
+    ctx.store.delete(tagKey(existing.Arn));
+    return {};
+  }
+  const deletingGroup: StoredGroup = { ...existing, State: "DELETING" };
+  ctx.store.set(groupKey(name), deletingGroup);
+  setTimeout(() => {
+    for (const { key, value } of schedulesInGroup) {
+      cancelTimer(key);
+      ctx.store.delete(key);
+      ctx.store.delete(tagKey(value.Arn));
+    }
+    ctx.store.delete(groupKey(name));
+    ctx.store.delete(tagKey(existing.Arn));
+  }, 0);
   return {};
 };
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
+  if (!arnExists(arn, ctx)) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource ${arn} not found.`,
+      404,
+    );
+  }
   const tags = Array.isArray(input["Tags"])
     ? (input["Tags"] as Record<string, unknown>[])
     : [];
@@ -414,6 +475,13 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
+  if (!arnExists(arn, ctx)) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource ${arn} not found.`,
+      404,
+    );
+  }
   const tagKeys = Array.isArray(input["TagKeys"])
     ? (input["TagKeys"] as string[])
     : [];
@@ -427,6 +495,13 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
+  if (!arnExists(arn, ctx)) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource ${arn} not found.`,
+      404,
+    );
+  }
   const existing = ctx.store.get<Record<string, string>>(tagKey(arn)) ?? {};
   const tags = Object.entries(existing).map(([Key, Value]) => ({ Key, Value }));
   return { Tags: tags };
@@ -434,6 +509,7 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
 
 const ListScheduleGroups: OperationHandler = (input, ctx) => {
   const prefix = stringOrUndefined(input["NamePrefix"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
   const max =
     typeof input["MaxResults"] === "number"
       ? (input["MaxResults"] as number)
@@ -444,8 +520,14 @@ const ListScheduleGroups: OperationHandler = (input, ctx) => {
     .map((entry) => entry.value)
     .filter((group) => prefix === undefined || group.Name.startsWith(prefix))
     .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
-  const page = groups.slice(0, max);
-  return { ScheduleGroups: page.map(groupView) };
+  const startIdx = nextToken !== undefined ? parseInt(atob(nextToken), 10) : 0;
+  const page = groups.slice(startIdx, startIdx + max);
+  const hasMore = startIdx + max < groups.length;
+  const responseNextToken = hasMore ? btoa(String(startIdx + max)) : undefined;
+  return {
+    ScheduleGroups: page.map(groupView),
+    NextToken: responseNextToken,
+  };
 };
 
 const pathSegments = (path: string): string[] =>

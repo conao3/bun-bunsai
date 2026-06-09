@@ -96,6 +96,7 @@ test("MWAA UpdateEnvironment", async () => {
   const got = await client.send(new GetEnvironmentCommand({ Name: name }));
   expect(got.Environment?.MaxWorkers).toBe(5);
   expect(got.Environment?.DagS3Path).toBe("dags/updated");
+  expect(got.Environment?.Status).toBe("AVAILABLE");
 
   await expect(
     client.send(new UpdateEnvironmentCommand({ Name: "nonexistent-env-xyz" })),
@@ -275,6 +276,142 @@ test("MWAA tag operations", async () => {
   );
   expect(after.Tags).toEqual({ Env: "staging" });
   expect(after.Tags).not.toHaveProperty("Team");
+
+  await client.send(new DeleteEnvironmentCommand({ Name: name }));
+});
+
+test("MWAA lifecycle and unified tags", async () => {
+  const client = mwaa();
+  const name = `bunsai-e2e-lifecycle-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateEnvironmentCommand({
+      Name: name,
+      DagS3Path: "dags",
+      ExecutionRoleArn: `arn:aws:iam::000000000000:role/${name}-exec`,
+      SourceBucketArn: `arn:aws:s3:::${name}-bucket`,
+      NetworkConfiguration: {
+        SubnetIds: ["subnet-11111111"],
+        SecurityGroupIds: ["sg-11111111"],
+      },
+      Tags: { Env: "prod", Team: "data" },
+    }),
+  );
+  const arn = created.Arn!;
+
+  const got = await client.send(new GetEnvironmentCommand({ Name: name }));
+  expect(got.Environment?.Status).toBe("AVAILABLE");
+  expect(got.Environment?.Tags).toEqual({ Env: "prod", Team: "data" });
+
+  const tags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect(tags.Tags).toEqual({ Env: "prod", Team: "data" });
+
+  await client.send(
+    new UpdateEnvironmentCommand({ Name: name, MaxWorkers: 3 }),
+  );
+  const afterUpdate = await client.send(
+    new GetEnvironmentCommand({ Name: name }),
+  );
+  expect(afterUpdate.Environment?.Status).toBe("AVAILABLE");
+  expect(afterUpdate.Environment?.Tags).toEqual({ Env: "prod", Team: "data" });
+
+  await client.send(new DeleteEnvironmentCommand({ Name: name }));
+  await expect(
+    client.send(new GetEnvironmentCommand({ Name: name })),
+  ).rejects.toThrow();
+});
+
+test("MWAA ListEnvironments pagination", async () => {
+  const client = mwaa();
+  const ts = Date.now();
+  const names = Array.from(
+    { length: 5 },
+    (_, i) => `bunsai-e2e-page-${ts}-${i}`,
+  );
+
+  for (const n of names) {
+    await client.send(
+      new CreateEnvironmentCommand({
+        Name: n,
+        DagS3Path: "dags",
+        ExecutionRoleArn: `arn:aws:iam::000000000000:role/${n}-exec`,
+        SourceBucketArn: `arn:aws:s3:::${n}-bucket`,
+        NetworkConfiguration: {
+          SubnetIds: ["subnet-11111111"],
+          SecurityGroupIds: ["sg-11111111"],
+        },
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListEnvironmentsCommand({ MaxResults: 2 }),
+  );
+  expect((page1.Environments ?? []).length).toBeLessThanOrEqual(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const allCollected: string[] = [];
+  let token: string | undefined;
+  do {
+    const resp = await client.send(
+      new ListEnvironmentsCommand({ MaxResults: 2, NextToken: token }),
+    );
+    allCollected.push(...(resp.Environments ?? []));
+    token = resp.NextToken;
+  } while (token !== undefined);
+
+  for (const n of names) {
+    expect(allCollected).toContain(n);
+  }
+
+  for (const n of names) {
+    await client.send(new DeleteEnvironmentCommand({ Name: n }));
+  }
+});
+
+test("MWAA field persistence", async () => {
+  const client = mwaa();
+  const name = `bunsai-e2e-fields-${Date.now()}`;
+
+  await client.send(
+    new CreateEnvironmentCommand({
+      Name: name,
+      DagS3Path: "dags",
+      ExecutionRoleArn: `arn:aws:iam::000000000000:role/${name}-exec`,
+      SourceBucketArn: `arn:aws:s3:::${name}-bucket`,
+      NetworkConfiguration: {
+        SubnetIds: ["subnet-11111111"],
+        SecurityGroupIds: ["sg-11111111"],
+      },
+      AirflowConfigurationOptions: { "core.parallelism": "128" },
+      PluginsS3Path: "plugins.zip",
+      RequirementsS3Path: "requirements.txt",
+    }),
+  );
+
+  const got = await client.send(new GetEnvironmentCommand({ Name: name }));
+  expect(got.Environment?.AirflowConfigurationOptions).toEqual({
+    "core.parallelism": "128",
+  });
+  expect(got.Environment?.PluginsS3Path).toBe("plugins.zip");
+  expect(got.Environment?.RequirementsS3Path).toBe("requirements.txt");
+
+  await client.send(
+    new UpdateEnvironmentCommand({
+      Name: name,
+      RequirementsS3Path: "requirements-v2.txt",
+    }),
+  );
+
+  const afterUpdate = await client.send(
+    new GetEnvironmentCommand({ Name: name }),
+  );
+  expect(afterUpdate.Environment?.RequirementsS3Path).toBe(
+    "requirements-v2.txt",
+  );
+  expect(afterUpdate.Environment?.PluginsS3Path).toBe("plugins.zip");
 
   await client.send(new DeleteEnvironmentCommand({ Name: name }));
 });

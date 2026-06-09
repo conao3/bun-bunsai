@@ -719,7 +719,7 @@ const DescribeBackupVault: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListBackupVaults: OperationHandler = (_input, ctx) => {
+const ListBackupVaults: OperationHandler = (input, ctx) => {
   const vaults = ctx.store
     .list<StoredVault>()
     .filter((entry) => entry.key.startsWith(vaultPrefix))
@@ -731,13 +731,30 @@ const ListBackupVaults: OperationHandler = (_input, ctx) => {
           ? 1
           : 0,
     );
-  return { BackupVaultList: vaults.map(vaultView) };
+  const offset =
+    typeof input["NextToken"] === "string" && input["NextToken"] !== ""
+      ? parseInt(atob(input["NextToken"] as string), 10) || 0
+      : 0;
+  const max =
+    typeof input["MaxResults"] === "number" &&
+    (input["MaxResults"] as number) > 0
+      ? (input["MaxResults"] as number)
+      : vaults.length;
+  const page = vaults.slice(offset, offset + max);
+  const result: Record<string, unknown> = {
+    BackupVaultList: page.map(vaultView),
+  };
+  if (offset + max < vaults.length) {
+    result["NextToken"] = btoa(String(offset + max));
+  }
+  return result;
 };
 
 const DeleteBackupVault: OperationHandler = (input, ctx) => {
   const name = requireString(input, "BackupVaultName");
-  requireVault(ctx, name);
+  const vault = requireVault(ctx, name);
   ctx.store.delete(vaultKey(name));
+  ctx.store.delete(tagKey(vault.BackupVaultArn));
   return {};
 };
 

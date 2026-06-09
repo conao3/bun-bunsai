@@ -967,9 +967,7 @@ test("AppConfig Create with Tags round-trip", async () => {
       ExtensionAssociationId: assoc.Id ?? "",
     }),
   );
-  await client.send(
-    new DeleteExtensionCommand({ ExtensionIdentifier: extId }),
-  );
+  await client.send(new DeleteExtensionCommand({ ExtensionIdentifier: extId }));
   await client.send(
     new DeleteDeploymentStrategyCommand({ DeploymentStrategyId: strategyId }),
   );
@@ -1067,7 +1065,10 @@ test("AppConfig pagination: extensions, associations, versions, deployments", as
   expect(extPage1.NextToken).toBeDefined();
   if (extPage1.NextToken) {
     const extPage2 = await client.send(
-      new ListExtensionsCommand({ MaxResults: 2, NextToken: extPage1.NextToken }),
+      new ListExtensionsCommand({
+        MaxResults: 2,
+        NextToken: extPage1.NextToken,
+      }),
     );
     expect(Array.isArray(extPage2.Items)).toBe(true);
   }
@@ -1162,7 +1163,9 @@ test("AppConfig pagination: extensions, associations, versions, deployments", as
 
   for (const assocId of assocIds) {
     await client.send(
-      new DeleteExtensionAssociationCommand({ ExtensionAssociationId: assocId }),
+      new DeleteExtensionAssociationCommand({
+        ExtensionAssociationId: assocId,
+      }),
     );
   }
   for (const extId of extIds) {
@@ -1171,7 +1174,9 @@ test("AppConfig pagination: extensions, associations, versions, deployments", as
     );
   }
   await client.send(
-    new DeleteDeploymentStrategyCommand({ DeploymentStrategyId: deploymentStrategyId }),
+    new DeleteDeploymentStrategyCommand({
+      DeploymentStrategyId: deploymentStrategyId,
+    }),
   );
   await client.send(
     new DeleteApplicationCommand({ ApplicationId: applicationId }),
@@ -1210,9 +1215,7 @@ test("AppConfig in-use guards: ConflictException on delete", async () => {
   await client.send(
     new DeleteExtensionAssociationCommand({ ExtensionAssociationId: assocId }),
   );
-  await client.send(
-    new DeleteExtensionCommand({ ExtensionIdentifier: extId }),
-  );
+  await client.send(new DeleteExtensionCommand({ ExtensionIdentifier: extId }));
 
   const profile = await client.send(
     new CreateConfigurationProfileCommand({
@@ -1271,7 +1274,9 @@ test("AppConfig in-use guards: ConflictException on delete", async () => {
   ).rejects.toThrow();
 
   await client.send(
-    new DeleteDeploymentStrategyCommand({ DeploymentStrategyId: deploymentStrategyId }),
+    new DeleteDeploymentStrategyCommand({
+      DeploymentStrategyId: deploymentStrategyId,
+    }),
   );
   await client.send(
     new DeleteApplicationCommand({ ApplicationId: applicationId }),

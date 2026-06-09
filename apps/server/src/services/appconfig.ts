@@ -688,13 +688,7 @@ const CreateConfigurationProfile: OperationHandler = (input, ctx) => {
   if (tags && Object.keys(tags).length > 0) {
     ctx.store.set(
       tagsKey(
-        makeArn(
-          ctx,
-          "application",
-          applicationId,
-          "configurationprofile",
-          id,
-        ),
+        makeArn(ctx, "application", applicationId, "configurationprofile", id),
       ),
       tags,
     );

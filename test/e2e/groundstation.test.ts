@@ -499,3 +499,221 @@ test("GroundStation agent operations", async () => {
   expect(urlResult.taskId).toBe(taskId);
   expect(urlResult.presignedLogUrl).toBeDefined();
 });
+
+test("GroundStation tag round-trip: create-time tags + TagResource both reflected", async () => {
+  const client = groundstation();
+  const trackingConfigArn = `arn:aws:groundstation:${region}:000000000000:config/tracking/${Date.now()}`;
+
+  const created = await client.send(
+    new CreateMissionProfileCommand({
+      name: `tag-roundtrip-${Date.now()}`,
+      minimumViableContactDurationSeconds: 180,
+      dataflowEdges: [],
+      trackingConfigArn,
+      tags: { source: "create-time" },
+    }),
+  );
+  const missionProfileId = created.missionProfileId ?? "";
+  const resourceArn = `arn:aws:groundstation:${region}:000000000000:mission-profile/${missionProfileId}`;
+
+  const afterCreate = await client.send(
+    new ListTagsForResourceCommand({ resourceArn }),
+  );
+  expect(afterCreate.tags).toMatchObject({ source: "create-time" });
+
+  await client.send(
+    new TagResourceCommand({
+      resourceArn,
+      tags: { added: "via-tag-resource" },
+    }),
+  );
+
+  const afterTag = await client.send(
+    new ListTagsForResourceCommand({ resourceArn }),
+  );
+  expect(afterTag.tags).toMatchObject({
+    source: "create-time",
+    added: "via-tag-resource",
+  });
+
+  const got = await client.send(
+    new GetMissionProfileCommand({ missionProfileId }),
+  );
+  expect(got.tags).toMatchObject({
+    source: "create-time",
+    added: "via-tag-resource",
+  });
+});
+
+test("GroundStation ListMissionProfiles pagination", async () => {
+  const client = groundstation();
+  const trackingConfigArn = `arn:aws:groundstation:${region}:000000000000:config/tracking/${Date.now()}`;
+  const ids: string[] = [];
+
+  for (let i = 0; i < 3; i++) {
+    const r = await client.send(
+      new CreateMissionProfileCommand({
+        name: `paginate-${i}-${Date.now()}`,
+        minimumViableContactDurationSeconds: 180,
+        dataflowEdges: [],
+        trackingConfigArn,
+      }),
+    );
+    ids.push(r.missionProfileId ?? "");
+  }
+
+  const page1 = await client.send(
+    new ListMissionProfilesCommand({ maxResults: 2 }),
+  );
+  expect((page1.missionProfileList ?? []).length).toBeGreaterThanOrEqual(2);
+
+  if (page1.nextToken !== undefined) {
+    const page2 = await client.send(
+      new ListMissionProfilesCommand({
+        maxResults: 2,
+        nextToken: page1.nextToken,
+      }),
+    );
+    const allIds = [
+      ...(page1.missionProfileList ?? []).map((p) => p.missionProfileId),
+      ...(page2.missionProfileList ?? []).map((p) => p.missionProfileId),
+    ];
+    expect(allIds).toContain(ids[0]);
+    expect(allIds).toContain(ids[1]);
+    expect(allIds).toContain(ids[2]);
+  }
+
+  for (const id of ids) {
+    await client.send(
+      new DeleteMissionProfileCommand({ missionProfileId: id }),
+    );
+  }
+});
+
+test("GroundStation ListContacts filters by statusList/startTime/endTime", async () => {
+  const client = groundstation();
+  const now = Math.floor(Date.now() / 1000);
+  const missionProfileArn = `arn:aws:groundstation:${region}:000000000000:mission-profile/${crypto.randomUUID()}`;
+  const satArn = `arn:aws:groundstation:${region}:000000000000:satellite/sat-filter-test`;
+
+  const reserved = await client.send(
+    new ReserveContactCommand({
+      missionProfileArn,
+      satelliteArn: satArn,
+      startTime: new Date((now + 600) * 1000),
+      endTime: new Date((now + 900) * 1000),
+      groundStation: "gs-bunsai-0001",
+    }),
+  );
+  const contactId = reserved.contactId ?? "";
+
+  const inWindow = await client.send(
+    new ListContactsCommand({
+      statusList: ["SCHEDULED"],
+      startTime: new Date((now + 500) * 1000),
+      endTime: new Date((now + 1000) * 1000),
+    }),
+  );
+  expect((inWindow.contactList ?? []).map((c) => c.contactId)).toContain(
+    contactId,
+  );
+
+  const outsideWindow = await client.send(
+    new ListContactsCommand({
+      statusList: ["SCHEDULED"],
+      startTime: new Date((now + 1100) * 1000),
+      endTime: new Date((now + 2000) * 1000),
+    }),
+  );
+  expect(
+    (outsideWindow.contactList ?? []).map((c) => c.contactId),
+  ).not.toContain(contactId);
+
+  const wrongStatus = await client.send(
+    new ListContactsCommand({
+      statusList: ["COMPLETED"],
+      startTime: new Date((now + 500) * 1000),
+      endTime: new Date((now + 1000) * 1000),
+    }),
+  );
+  expect((wrongStatus.contactList ?? []).map((c) => c.contactId)).not.toContain(
+    contactId,
+  );
+});
+
+test("GroundStation DeleteConfig raises DependencyException when referenced", async () => {
+  const client = groundstation();
+  const createdConfig = await client.send(
+    new CreateConfigCommand({
+      name: `dep-check-config-${Date.now()}`,
+      configData: { trackingConfig: { autotrack: "REQUIRED" } },
+    }),
+  );
+  const configId = createdConfig.configId ?? "";
+  const configType = createdConfig.configType ?? "tracking";
+  const configArn = createdConfig.configArn ?? "";
+
+  const createdProfile = await client.send(
+    new CreateMissionProfileCommand({
+      name: `dep-check-profile-${Date.now()}`,
+      minimumViableContactDurationSeconds: 180,
+      dataflowEdges: [],
+      trackingConfigArn: configArn,
+    }),
+  );
+  const missionProfileId = createdProfile.missionProfileId ?? "";
+
+  await expect(
+    client.send(new DeleteConfigCommand({ configId, configType })),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteMissionProfileCommand({ missionProfileId }));
+  const deleted = await client.send(
+    new DeleteConfigCommand({ configId, configType }),
+  );
+  expect(deleted.configId).toBe(configId);
+});
+
+test("GroundStation ephemeris status transitions to ENABLED/DISABLED", async () => {
+  const client = groundstation();
+  const satelliteId = "sat-bunsai-0001";
+
+  const enabled = await client.send(
+    new CreateEphemerisCommand({
+      satelliteId,
+      name: `eph-enabled-${Date.now()}`,
+      enabled: true,
+      priority: 1,
+      ephemeris: { oem: { s3Object: { bucket: "b", key: "k", version: "1" } } },
+    }),
+  );
+  const enabledId = enabled.ephemerisId ?? "";
+  const gotEnabled = await client.send(
+    new DescribeEphemerisCommand({ ephemerisId: enabledId }),
+  );
+  expect(gotEnabled.status).toBe("ENABLED");
+
+  const disabled = await client.send(
+    new CreateEphemerisCommand({
+      satelliteId,
+      name: `eph-disabled-${Date.now()}`,
+      enabled: false,
+      priority: 1,
+      ephemeris: { oem: { s3Object: { bucket: "b", key: "k", version: "1" } } },
+    }),
+  );
+  const disabledId = disabled.ephemerisId ?? "";
+  const gotDisabled = await client.send(
+    new DescribeEphemerisCommand({ ephemerisId: disabledId }),
+  );
+  expect(gotDisabled.status).toBe("DISABLED");
+
+  await client.send(
+    new UpdateEphemerisCommand({ ephemerisId: enabledId, enabled: false }),
+  );
+  const afterUpdate = await client.send(
+    new DescribeEphemerisCommand({ ephemerisId: enabledId }),
+  );
+  expect(afterUpdate.status).toBe("DISABLED");
+  expect(afterUpdate.enabled).toBe(false);
+});

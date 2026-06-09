@@ -62,6 +62,7 @@ type ContactVersionEntry = {
 
 type StoredContact = {
   contactId: string;
+  contactArn: string;
   versionId: string;
   versions: ContactVersionEntry[];
   missionProfileArn: string;
@@ -76,6 +77,7 @@ type StoredContact = {
   maximumElevation: { value: number; unit: string } | undefined;
   tags: Record<string, unknown>;
   region: string;
+  account: string;
   dataflowList: unknown[];
   visibilityStartTime: number;
   visibilityEndTime: number;
@@ -85,6 +87,7 @@ type StoredContact = {
 
 type StoredEphemeris = {
   ephemerisId: string;
+  ephemerisArn: string;
   satelliteId: string;
   status: string;
   priority: number;
@@ -141,6 +144,16 @@ const requireNumber = (
   return value;
 };
 
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
 const missionProfileKey = (id: string): string =>
   `${missionProfilePrefix}${id}`;
 
@@ -170,6 +183,12 @@ const configArn = (
 
 const dataflowEndpointGroupArnFor = (ctx: ServiceContext, id: string): string =>
   `arn:aws:groundstation:${ctx.region}:${ctx.account}:dataflow-endpoint-group/${id}`;
+
+const ephemerisArnFor = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:groundstation:${ctx.region}:${ctx.account}:ephemeris/${id}`;
+
+const contactArnFor = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:groundstation:${ctx.region}:${ctx.account}:contact/${id}`;
 
 const requireProfile = (
   ctx: ServiceContext,
@@ -245,6 +264,7 @@ const requireContact = (ctx: ServiceContext, id: string): StoredContact => {
 
 const profileView = (
   profile: StoredMissionProfile,
+  ctx: ServiceContext,
 ): Record<string, unknown> => ({
   missionProfileId: profile.missionProfileId,
   missionProfileArn: profile.missionProfileArn,
@@ -257,7 +277,10 @@ const profileView = (
   dataflowEdges: profile.dataflowEdges,
   trackingConfigArn: profile.trackingConfigArn,
   telemetrySinkConfigArn: profile.telemetrySinkConfigArn,
-  tags: profile.tags,
+  tags:
+    ctx.store.get<Record<string, unknown>>(
+      tagsKey(profile.missionProfileArn),
+    ) ?? {},
   streamsKmsKey: profile.streamsKmsKey,
   streamsKmsRole: profile.streamsKmsRole,
 });
@@ -271,7 +294,25 @@ const profileListItemView = (
   name: profile.name,
 });
 
-const contactView = (contact: StoredContact): Record<string, unknown> => ({
+const contactLiveStatus = (contact: StoredContact): string => {
+  if (
+    contact.contactStatus === "CANCELLED" ||
+    contact.contactStatus === "FAILED"
+  ) {
+    return contact.contactStatus;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (now < contact.prePassStartTime) return "SCHEDULED";
+  if (now < contact.startTime) return "PREPASS";
+  if (now < contact.endTime) return "PASS";
+  if (now < contact.postPassEndTime) return "POSTPASS";
+  return "COMPLETED";
+};
+
+const contactView = (
+  contact: StoredContact,
+  ctx: ServiceContext,
+): Record<string, unknown> => ({
   contactId: contact.contactId,
   missionProfileArn: contact.missionProfileArn,
   satelliteArn: contact.satelliteArn,
@@ -280,10 +321,11 @@ const contactView = (contact: StoredContact): Record<string, unknown> => ({
   prePassStartTime: contact.prePassStartTime,
   postPassEndTime: contact.postPassEndTime,
   groundStation: contact.groundStation,
-  contactStatus: contact.contactStatus,
+  contactStatus: contactLiveStatus(contact),
   errorMessage: contact.errorMessage,
   maximumElevation: contact.maximumElevation,
-  tags: contact.tags,
+  tags:
+    ctx.store.get<Record<string, unknown>>(tagsKey(contact.contactArn)) ?? {},
   region: contact.region,
   dataflowList: contact.dataflowList,
   visibilityStartTime: contact.visibilityStartTime,
@@ -328,29 +370,50 @@ const CreateMissionProfile: OperationHandler = (input, ctx) => {
     streamsKmsRole: stringOrUndefined(input["streamsKmsRole"]),
   };
   ctx.store.set(missionProfileKey(id), profile);
+  ctx.store.set(tagsKey(profile.missionProfileArn), profile.tags);
   return { missionProfileId: id };
 };
 
 const GetMissionProfile: OperationHandler = (input, ctx) => {
   const id = requireString(input, "missionProfileId");
-  return profileView(requireProfile(ctx, id));
+  return profileView(requireProfile(ctx, id), ctx);
 };
 
 const ListMissionProfiles: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const offset = decodePageToken(input["nextToken"]);
   const profiles = ctx.store
     .list<StoredMissionProfile>()
     .filter((entry) => entry.key.startsWith(missionProfilePrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return {
-    missionProfileList: profiles.slice(0, max).map(profileListItemView),
+  const page = profiles.slice(offset, offset + max);
+  const result: Record<string, unknown> = {
+    missionProfileList: page.map(profileListItemView),
   };
+  if (offset + max < profiles.length) {
+    result["nextToken"] = encodePageToken(offset + max);
+  }
+  return result;
 };
 
 const DeleteMissionProfile: OperationHandler = (input, ctx) => {
   const id = requireString(input, "missionProfileId");
-  requireProfile(ctx, id);
+  const profile = requireProfile(ctx, id);
+  const dependentContact = ctx.store
+    .list<StoredContact>()
+    .find(
+      (entry) =>
+        entry.key.startsWith(contactPrefix) &&
+        entry.value.missionProfileArn === profile.missionProfileArn,
+    );
+  if (dependentContact !== undefined) {
+    throw awsError(
+      "DependencyException",
+      `MissionProfile ${id} is referenced by a contact.`,
+      424,
+    );
+  }
   ctx.store.delete(missionProfileKey(id));
   return { missionProfileId: id };
 };
@@ -401,6 +464,7 @@ const CreateConfig: OperationHandler = (input, ctx) => {
     tags: recordOrEmpty(input["tags"]),
   };
   ctx.store.set(configKey(configType, id), config);
+  ctx.store.set(tagsKey(config.configArn), config.tags);
   return { configId: id, configType, configArn: config.configArn };
 };
 
@@ -430,25 +494,32 @@ const GetConfig: OperationHandler = (input, ctx) => {
     name: config.name,
     configType: config.configType,
     configData: config.configData,
-    tags: config.tags,
+    tags:
+      ctx.store.get<Record<string, unknown>>(tagsKey(config.configArn)) ?? {},
   };
 };
 
 const ListConfigs: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const offset = decodePageToken(input["nextToken"]);
   const configs = ctx.store
     .list<StoredConfig>()
     .filter((entry) => entry.key.startsWith(configPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return {
-    configList: configs.slice(0, max).map((c) => ({
+  const page = configs.slice(offset, offset + max);
+  const result: Record<string, unknown> = {
+    configList: page.map((c) => ({
       configId: c.configId,
       configType: c.configType,
       configArn: c.configArn,
       name: c.name,
     })),
   };
+  if (offset + max < configs.length) {
+    result["nextToken"] = encodePageToken(offset + max);
+  }
+  return result;
 };
 
 const UpdateConfig: OperationHandler = (input, ctx) => {
@@ -472,6 +543,23 @@ const DeleteConfig: OperationHandler = (input, ctx) => {
   const configId = requireString(input, "configId");
   const configType = requireString(input, "configType");
   const config = requireConfig(ctx, configType, configId);
+  const dependentProfile = ctx.store
+    .list<StoredMissionProfile>()
+    .find(
+      (entry) =>
+        entry.key.startsWith(missionProfilePrefix) &&
+        (entry.value.trackingConfigArn === config.configArn ||
+          (entry.value.dataflowEdges as string[][]).some((edge) =>
+            edge.includes(config.configArn),
+          )),
+    );
+  if (dependentProfile !== undefined) {
+    throw awsError(
+      "DependencyException",
+      `Config ${configId} is referenced by a mission profile.`,
+      424,
+    );
+  }
   ctx.store.delete(configKey(configType, configId));
   return {
     configId: config.configId,
@@ -495,6 +583,7 @@ const CreateDataflowEndpointGroup: OperationHandler = (input, ctx) => {
     ),
   };
   ctx.store.set(dataflowEndpointGroupKey(id), group);
+  ctx.store.set(tagsKey(group.dataflowEndpointGroupArn), group.tags);
   return { dataflowEndpointGroupId: id };
 };
 
@@ -513,6 +602,7 @@ const CreateDataflowEndpointGroupV2: OperationHandler = (input, ctx) => {
     ),
   };
   ctx.store.set(dataflowEndpointGroupKey(id), group);
+  ctx.store.set(tagsKey(group.dataflowEndpointGroupArn), group.tags);
   return { dataflowEndpointGroupId: id };
 };
 
@@ -523,7 +613,10 @@ const GetDataflowEndpointGroup: OperationHandler = (input, ctx) => {
     dataflowEndpointGroupId: group.dataflowEndpointGroupId,
     dataflowEndpointGroupArn: group.dataflowEndpointGroupArn,
     endpointsDetails: group.endpointsDetails,
-    tags: group.tags,
+    tags:
+      ctx.store.get<Record<string, unknown>>(
+        tagsKey(group.dataflowEndpointGroupArn),
+      ) ?? {},
     contactPrePassDurationSeconds: group.contactPrePassDurationSeconds,
     contactPostPassDurationSeconds: group.contactPostPassDurationSeconds,
   };
@@ -531,16 +624,22 @@ const GetDataflowEndpointGroup: OperationHandler = (input, ctx) => {
 
 const ListDataflowEndpointGroups: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const offset = decodePageToken(input["nextToken"]);
   const groups = ctx.store
     .list<StoredDataflowEndpointGroup>()
     .filter((entry) => entry.key.startsWith(dataflowEndpointGroupPrefix))
     .map((entry) => entry.value);
-  return {
-    dataflowEndpointGroupList: groups.slice(0, max).map((g) => ({
+  const page = groups.slice(offset, offset + max);
+  const result: Record<string, unknown> = {
+    dataflowEndpointGroupList: page.map((g) => ({
       dataflowEndpointGroupId: g.dataflowEndpointGroupId,
       dataflowEndpointGroupArn: g.dataflowEndpointGroupArn,
     })),
   };
+  if (offset + max < groups.length) {
+    result["nextToken"] = encodePageToken(offset + max);
+  }
+  return result;
 };
 
 const DeleteDataflowEndpointGroup: OperationHandler = (input, ctx) => {
@@ -554,14 +653,17 @@ const CreateEphemeris: OperationHandler = (input, ctx) => {
   const satelliteId = requireString(input, "satelliteId");
   const name = stringOrUndefined(input["name"]) ?? "";
   const id = crypto.randomUUID();
+  const arn = ephemerisArnFor(ctx, id);
   const now = Math.floor(Date.now() / 1000);
+  const enabled = booleanOrDefault(input["enabled"], true);
   const eph: StoredEphemeris = {
     ephemerisId: id,
+    ephemerisArn: arn,
     satelliteId,
-    status: "VALIDATING",
+    status: enabled ? "ENABLED" : "DISABLED",
     priority: numberOrUndefined(input["priority"]) ?? 0,
     creationTime: now,
-    enabled: booleanOrDefault(input["enabled"], true),
+    enabled,
     name,
     tags: recordOrEmpty(input["tags"]),
     suppliedData: input["ephemeris"],
@@ -569,6 +671,7 @@ const CreateEphemeris: OperationHandler = (input, ctx) => {
     errorReasons: undefined,
   };
   ctx.store.set(ephemerisKey(id), eph);
+  ctx.store.set(tagsKey(arn), eph.tags);
   return { ephemerisId: id };
 };
 
@@ -583,7 +686,8 @@ const DescribeEphemeris: OperationHandler = (input, ctx) => {
     creationTime: eph.creationTime,
     enabled: eph.enabled,
     name: eph.name,
-    tags: eph.tags,
+    tags:
+      ctx.store.get<Record<string, unknown>>(tagsKey(eph.ephemerisArn)) ?? {},
     suppliedData: eph.suppliedData,
     invalidReason: eph.invalidReason,
     errorReasons: eph.errorReasons,
@@ -593,10 +697,12 @@ const DescribeEphemeris: OperationHandler = (input, ctx) => {
 const UpdateEphemeris: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ephemerisId");
   const eph = requireEphemeris(ctx, id);
+  const enabled =
+    typeof input["enabled"] === "boolean" ? input["enabled"] : eph.enabled;
   const updated: StoredEphemeris = {
     ...eph,
-    enabled:
-      typeof input["enabled"] === "boolean" ? input["enabled"] : eph.enabled,
+    enabled,
+    status: enabled ? "ENABLED" : "DISABLED",
     name: stringOrUndefined(input["name"]) ?? eph.name,
     priority: numberOrUndefined(input["priority"]) ?? eph.priority,
   };
@@ -613,6 +719,7 @@ const DeleteEphemeris: OperationHandler = (input, ctx) => {
 
 const ListEphemerides: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const offset = decodePageToken(input["nextToken"]);
   const satelliteId = stringOrUndefined(input["satelliteId"]);
   const statusList = Array.isArray(input["statusList"])
     ? (input["statusList"] as string[])
@@ -627,8 +734,9 @@ const ListEphemerides: OperationHandler = (input, ctx) => {
   if (statusList !== undefined && statusList.length > 0) {
     ephs = ephs.filter((e) => statusList.includes(e.status));
   }
-  return {
-    ephemerides: ephs.slice(0, max).map((e) => ({
+  const page = ephs.slice(offset, offset + max);
+  const result: Record<string, unknown> = {
+    ephemerides: page.map((e) => ({
       ephemerisId: e.ephemerisId,
       ephemerisType: "OEM",
       status: e.status,
@@ -638,6 +746,10 @@ const ListEphemerides: OperationHandler = (input, ctx) => {
       name: e.name,
     })),
   };
+  if (offset + max < ephs.length) {
+    result["nextToken"] = encodePageToken(offset + max);
+  }
+  return result;
 };
 
 const ReserveContact: OperationHandler = (input, ctx) => {
@@ -647,6 +759,7 @@ const ReserveContact: OperationHandler = (input, ctx) => {
   const endTime = requireNumber(input, "endTime");
   const groundStation = requireString(input, "groundStation");
   const id = crypto.randomUUID();
+  const arn = contactArnFor(ctx, id);
   const versionId = crypto.randomUUID();
   const prePassStartTime = startTime - 120;
   const postPassEndTime = endTime + 120;
@@ -659,8 +772,10 @@ const ReserveContact: OperationHandler = (input, ctx) => {
     lastUpdated: now,
     status: "ACTIVE",
   };
+  const tags = recordOrEmpty(input["tags"]);
   const contact: StoredContact = {
     contactId: id,
+    contactArn: arn,
     versionId,
     versions: [initialVersion],
     missionProfileArn,
@@ -673,8 +788,9 @@ const ReserveContact: OperationHandler = (input, ctx) => {
     contactStatus: "SCHEDULED",
     errorMessage: undefined,
     maximumElevation: { value: 45.0, unit: "DEGREE_ANGLE" },
-    tags: recordOrEmpty(input["tags"]),
+    tags,
     region: ctx.region,
+    account: ctx.account,
     dataflowList: [],
     visibilityStartTime: startTime,
     visibilityEndTime: endTime,
@@ -682,12 +798,13 @@ const ReserveContact: OperationHandler = (input, ctx) => {
     ephemeris: undefined,
   };
   ctx.store.set(contactKey(id), contact);
+  ctx.store.set(tagsKey(arn), tags);
   return { contactId: id, versionId };
 };
 
 const DescribeContact: OperationHandler = (input, ctx) => {
   const id = requireString(input, "contactId");
-  return contactView(requireContact(ctx, id));
+  return contactView(requireContact(ctx, id), ctx);
 };
 
 const DescribeContactVersion: OperationHandler = (input, ctx) => {
@@ -702,12 +819,20 @@ const DescribeContactVersion: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  return { ...contactView(contact), version: versionId };
+  return { ...contactView(contact, ctx), version: versionId };
 };
 
 const CancelContact: OperationHandler = (input, ctx) => {
   const id = requireString(input, "contactId");
   const contact = requireContact(ctx, id);
+  const liveStatus = contactLiveStatus(contact);
+  if (liveStatus === "CANCELLED" || liveStatus === "COMPLETED") {
+    throw awsError(
+      "InvalidParameterException",
+      `Contact ${id} cannot be cancelled in status ${liveStatus}.`,
+      400,
+    );
+  }
   const updated: StoredContact = { ...contact, contactStatus: "CANCELLED" };
   ctx.store.set(contactKey(id), updated);
   return { contactId: id, versionId: contact.versionId };
@@ -715,9 +840,15 @@ const CancelContact: OperationHandler = (input, ctx) => {
 
 const ListContacts: OperationHandler = (input, ctx) => {
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
+  const offset = decodePageToken(input["nextToken"]);
   const statusList = Array.isArray(input["statusList"])
     ? (input["statusList"] as string[])
     : undefined;
+  if (statusList === undefined || statusList.length === 0) {
+    throw awsError("InvalidParameterException", "statusList is required.", 400);
+  }
+  const startTimeSec = requireNumber(input, "startTime");
+  const endTimeSec = requireNumber(input, "endTime");
   const groundStation = stringOrUndefined(input["groundStation"]);
   const satelliteArnFilter = stringOrUndefined(input["satelliteArn"]);
   const missionProfileArnFilter = stringOrUndefined(input["missionProfileArn"]);
@@ -725,9 +856,10 @@ const ListContacts: OperationHandler = (input, ctx) => {
     .list<StoredContact>()
     .filter((entry) => entry.key.startsWith(contactPrefix))
     .map((entry) => entry.value);
-  if (statusList !== undefined && statusList.length > 0) {
-    contacts = contacts.filter((c) => statusList.includes(c.contactStatus));
-  }
+  contacts = contacts.filter(
+    (c) => c.startTime >= startTimeSec && c.endTime <= endTimeSec,
+  );
+  contacts = contacts.filter((c) => statusList.includes(contactLiveStatus(c)));
   if (groundStation !== undefined) {
     contacts = contacts.filter((c) => c.groundStation === groundStation);
   }
@@ -739,8 +871,9 @@ const ListContacts: OperationHandler = (input, ctx) => {
       (c) => c.missionProfileArn === missionProfileArnFilter,
     );
   }
-  return {
-    contactList: contacts.slice(0, max).map((c) => ({
+  const page = contacts.slice(offset, offset + max);
+  const result: Record<string, unknown> = {
+    contactList: page.map((c) => ({
       contactId: c.contactId,
       missionProfileArn: c.missionProfileArn,
       satelliteArn: c.satelliteArn,
@@ -749,25 +882,31 @@ const ListContacts: OperationHandler = (input, ctx) => {
       prePassStartTime: c.prePassStartTime,
       postPassEndTime: c.postPassEndTime,
       groundStation: c.groundStation,
-      contactStatus: c.contactStatus,
+      contactStatus: contactLiveStatus(c),
       errorMessage: c.errorMessage,
       maximumElevation: c.maximumElevation,
       region: c.region,
-      tags: c.tags,
+      tags: ctx.store.get<Record<string, unknown>>(tagsKey(c.contactArn)) ?? {},
       visibilityStartTime: c.visibilityStartTime,
       visibilityEndTime: c.visibilityEndTime,
       ephemeris: c.ephemeris,
       version: c.versionId,
     })),
   };
+  if (offset + max < contacts.length) {
+    result["nextToken"] = encodePageToken(offset + max);
+  }
+  return result;
 };
 
 const ListContactVersions: OperationHandler = (input, ctx) => {
   const contactId = requireString(input, "contactId");
   const contact = requireContact(ctx, contactId);
   const max = numberOrUndefined(input["maxResults"]) ?? 100;
-  return {
-    contactVersionsList: contact.versions.slice(0, max).map((v) => ({
+  const offset = decodePageToken(input["nextToken"]);
+  const page = contact.versions.slice(offset, offset + max);
+  const result: Record<string, unknown> = {
+    contactVersionsList: page.map((v) => ({
       versionId: v.versionId,
       created: v.created,
       activated: v.activated,
@@ -777,6 +916,10 @@ const ListContactVersions: OperationHandler = (input, ctx) => {
       failureCodes: [],
     })),
   };
+  if (offset + max < contact.versions.length) {
+    result["nextToken"] = encodePageToken(offset + max);
+  }
+  return result;
 };
 
 const UpdateContact: OperationHandler = (input, ctx) => {

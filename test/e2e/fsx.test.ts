@@ -71,7 +71,7 @@ test("fsx file system and backup round-trip", async () => {
   );
   const fileSystemId = created.FileSystem?.FileSystemId;
   expect(fileSystemId).toMatch(/^fs-[0-9a-f]{16}$/);
-  expect(created.FileSystem?.Lifecycle).toBe("AVAILABLE");
+  expect(created.FileSystem?.Lifecycle).toBe("CREATING");
   expect(created.FileSystem?.DNSName).toContain(fileSystemId);
   expect(created.FileSystem?.ResourceARN).toContain(
     `:file-system/${fileSystemId}`,
@@ -82,13 +82,14 @@ test("fsx file system and backup round-trip", async () => {
   );
   const ids = (described.FileSystems ?? []).map((entry) => entry.FileSystemId);
   expect(ids).toContain(fileSystemId);
+  expect(described.FileSystems?.[0]?.Lifecycle).toBe("AVAILABLE");
 
   const createdBackup = await fsx.send(
     new CreateBackupCommand({ FileSystemId: fileSystemId }),
   );
   const backupId = createdBackup.Backup?.BackupId;
   expect(backupId).toMatch(/^backup-[0-9a-f]{16}$/);
-  expect(createdBackup.Backup?.Lifecycle).toBe("AVAILABLE");
+  expect(createdBackup.Backup?.Lifecycle).toBe("PENDING");
   expect(createdBackup.Backup?.FileSystem?.FileSystemId).toBe(fileSystemId);
 
   const describedBackups = await fsx.send(
@@ -98,17 +99,17 @@ test("fsx file system and backup round-trip", async () => {
     (entry) => entry.BackupId,
   );
   expect(backupIds).toContain(backupId);
+  expect(describedBackups.Backups?.[0]?.Lifecycle).toBe("AVAILABLE");
 
   const deleted = await fsx.send(
     new DeleteFileSystemCommand({ FileSystemId: fileSystemId }),
   );
   expect(deleted.FileSystemId).toBe(fileSystemId);
 
-  await expect(
-    fsx.send(
-      new DescribeFileSystemsCommand({ FileSystemIds: [fileSystemId ?? ""] }),
-    ),
-  ).resolves.toBeDefined();
+  const afterDelete = await fsx.send(
+    new DescribeFileSystemsCommand({ FileSystemIds: [fileSystemId ?? ""] }),
+  );
+  expect(afterDelete.FileSystems?.[0]?.Lifecycle).toBe("DELETING");
 });
 
 test("fsx volume, snapshot, and storage virtual machine round-trip", async () => {
@@ -132,7 +133,7 @@ test("fsx volume, snapshot, and storage virtual machine round-trip", async () =>
   );
   const svmId = svmResult.StorageVirtualMachine?.StorageVirtualMachineId;
   expect(svmId).toMatch(/^svm-[0-9a-f]{16}$/);
-  expect(svmResult.StorageVirtualMachine?.Lifecycle).toBe("CREATED");
+  expect(svmResult.StorageVirtualMachine?.Lifecycle).toBe("CREATING");
 
   const volumeResult = await fsx.send(
     new CreateVolumeCommand({
@@ -148,7 +149,7 @@ test("fsx volume, snapshot, and storage virtual machine round-trip", async () =>
   );
   const volumeId = volumeResult.Volume?.VolumeId;
   expect(volumeId).toMatch(/^fsvol-[0-9a-f]{16}$/);
-  expect(volumeResult.Volume?.Lifecycle).toBe("CREATED");
+  expect(volumeResult.Volume?.Lifecycle).toBe("CREATING");
 
   const snapshotResult = await fsx.send(
     new CreateSnapshotCommand({
@@ -158,17 +159,19 @@ test("fsx volume, snapshot, and storage virtual machine round-trip", async () =>
   );
   const snapshotId = snapshotResult.Snapshot?.SnapshotId;
   expect(snapshotId).toMatch(/^fsvolsnap-[0-9a-f]{16}$/);
-  expect(snapshotResult.Snapshot?.Lifecycle).toBe("AVAILABLE");
+  expect(snapshotResult.Snapshot?.Lifecycle).toBe("CREATING");
 
   const volumes = await fsx.send(
     new DescribeVolumesCommand({ VolumeIds: [volumeId ?? ""] }),
   );
   expect(volumes.Volumes?.map((v) => v.VolumeId)).toContain(volumeId);
+  expect(volumes.Volumes?.[0]?.Lifecycle).toBe("AVAILABLE");
 
   const snapshots = await fsx.send(
     new DescribeSnapshotsCommand({ SnapshotIds: [snapshotId ?? ""] }),
   );
   expect(snapshots.Snapshots?.map((s) => s.SnapshotId)).toContain(snapshotId);
+  expect(snapshots.Snapshots?.[0]?.Lifecycle).toBe("AVAILABLE");
 
   const svms = await fsx.send(
     new DescribeStorageVirtualMachinesCommand({
@@ -178,6 +181,7 @@ test("fsx volume, snapshot, and storage virtual machine round-trip", async () =>
   expect(
     svms.StorageVirtualMachines?.map((s) => s.StorageVirtualMachineId),
   ).toContain(svmId);
+  expect(svms.StorageVirtualMachines?.[0]?.Lifecycle).toBe("CREATED");
 
   const updatedVolume = await fsx.send(
     new UpdateVolumeCommand({ VolumeId: volumeId, Name: "updated-volume" }),
@@ -327,7 +331,7 @@ test("fsx file cache round-trip", async () => {
   );
   const fileCacheId = fcResult.FileCache?.FileCacheId;
   expect(fileCacheId).toMatch(/^fc-[0-9a-f]{16}$/);
-  expect(fcResult.FileCache?.Lifecycle).toBe("AVAILABLE");
+  expect(fcResult.FileCache?.Lifecycle).toBe("CREATING");
 
   const describedFcs = await fsx.send(
     new DescribeFileCachesCommand({ FileCacheIds: [fileCacheId ?? ""] }),
@@ -335,6 +339,7 @@ test("fsx file cache round-trip", async () => {
   expect(describedFcs.FileCaches?.map((fc) => fc.FileCacheId)).toContain(
     fileCacheId,
   );
+  expect(describedFcs.FileCaches?.[0]?.Lifecycle).toBe("AVAILABLE");
 
   const updatedFc = await fsx.send(
     new UpdateFileCacheCommand({ FileCacheId: fileCacheId }),
@@ -378,6 +383,15 @@ test("fsx aliases, tags, shared vpc, and misc operations", async () => {
   const tagKeys = (tags.Tags ?? []).map((t) => t.Key);
   expect(tagKeys).toContain("env");
   expect(tagKeys).toContain("project");
+
+  const describedWithTags = await fsx.send(
+    new DescribeFileSystemsCommand({ FileSystemIds: [fileSystemId ?? ""] }),
+  );
+  const fsTagKeys = (describedWithTags.FileSystems?.[0]?.Tags ?? []).map(
+    (t) => t.Key,
+  );
+  expect(fsTagKeys).toContain("env");
+  expect(fsTagKeys).toContain("project");
 
   await fsx.send(
     new UntagResourceCommand({
@@ -542,4 +556,61 @@ test("fsx s3 access point round-trip", async () => {
   );
   expect(deleteResult.Lifecycle).toBe("DELETING");
   expect(deleteResult.Name).toBe("test-s3-access-point");
+});
+
+test("fsx describe pagination and soft-delete queryable", async () => {
+  const fsx = client();
+
+  const fs1 = await fsx.send(
+    new CreateFileSystemCommand({
+      FileSystemType: "LUSTRE",
+      StorageCapacity: 1200,
+      SubnetIds: ["subnet-0123456789abcdef0"],
+    }),
+  );
+  const fs2 = await fsx.send(
+    new CreateFileSystemCommand({
+      FileSystemType: "LUSTRE",
+      StorageCapacity: 1200,
+      SubnetIds: ["subnet-0123456789abcdef0"],
+    }),
+  );
+  const fs3 = await fsx.send(
+    new CreateFileSystemCommand({
+      FileSystemType: "LUSTRE",
+      StorageCapacity: 1200,
+      SubnetIds: ["subnet-0123456789abcdef0"],
+    }),
+  );
+  const id1 = fs1.FileSystem?.FileSystemId ?? "";
+  const id2 = fs2.FileSystem?.FileSystemId ?? "";
+  const id3 = fs3.FileSystem?.FileSystemId ?? "";
+
+  const page1 = await fsx.send(
+    new DescribeFileSystemsCommand({
+      FileSystemIds: [id1, id2, id3],
+      MaxResults: 2,
+    }),
+  );
+  expect(page1.FileSystems?.length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await fsx.send(
+    new DescribeFileSystemsCommand({
+      FileSystemIds: [id1, id2, id3],
+      MaxResults: 2,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect(page2.FileSystems?.length).toBe(1);
+  expect(page2.NextToken).toBeUndefined();
+
+  await fsx.send(new DeleteFileSystemCommand({ FileSystemId: id1 }));
+  const afterDel = await fsx.send(
+    new DescribeFileSystemsCommand({ FileSystemIds: [id1] }),
+  );
+  expect(afterDel.FileSystems?.[0]?.Lifecycle).toBe("DELETING");
+
+  await fsx.send(new DeleteFileSystemCommand({ FileSystemId: id2 }));
+  await fsx.send(new DeleteFileSystemCommand({ FileSystemId: id3 }));
 });

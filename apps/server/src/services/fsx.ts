@@ -163,6 +163,64 @@ const boolOrFalse = (value: unknown): boolean =>
 const numberOrDefault = (value: unknown, def: number): number =>
   typeof value === "number" ? value : def;
 
+const numberOrUndefined = (value: unknown): number | undefined =>
+  typeof value === "number" ? value : undefined;
+
+const paginate = <T>(
+  items: T[],
+  maxResults: number | undefined,
+  nextToken: string | undefined,
+): { items: T[]; nextToken: string | undefined } => {
+  const start = nextToken !== undefined ? parseInt(atob(nextToken), 10) : 0;
+  const limit =
+    maxResults !== undefined && maxResults > 0 ? maxResults : items.length;
+  const sliced = items.slice(start, start + limit);
+  const newNextToken =
+    start + limit < items.length ? btoa(String(start + limit)) : undefined;
+  return { items: sliced, nextToken: newNextToken };
+};
+
+const applyFilters = (
+  filters: unknown,
+  record: Record<string, unknown>,
+): boolean => {
+  if (!Array.isArray(filters)) return true;
+  const fieldMap: Record<string, string> = {
+    "file-system-id": "FileSystemId",
+    status: "Lifecycle",
+    "file-cache-id": "FileCacheId",
+    "data-repository-type": "Type",
+  };
+  for (const filter of filters) {
+    if (typeof filter !== "object" || filter === null) continue;
+    const f = filter as Record<string, unknown>;
+    const name = typeof f["Name"] === "string" ? f["Name"] : undefined;
+    const values = Array.isArray(f["Values"])
+      ? f["Values"].filter((v): v is string => typeof v === "string")
+      : [];
+    if (name === undefined || values.length === 0) continue;
+    const field = fieldMap[name];
+    if (field === undefined) continue;
+    const fieldValue = record[field];
+    if (typeof fieldValue !== "string" || !values.includes(fieldValue))
+      return false;
+  }
+  return true;
+};
+
+const mergeTags = (
+  ctx: ServiceContext,
+  arn: string,
+  resourceTags: { Key: string; Value: string }[],
+): { Key: string; Value: string }[] => {
+  const extra =
+    ctx.store.get<{ Key: string; Value: string }[]>(tagsKey(arn)) ?? [];
+  if (extra.length === 0) return resourceTags;
+  const merged = new Map(resourceTags.map((t) => [t.Key, t.Value]));
+  for (const tag of extra) merged.set(tag.Key, tag.Value);
+  return Array.from(merged.entries()).map(([Key, Value]) => ({ Key, Value }));
+};
+
 const tagsFromInput = (value: unknown): { Key: string; Value: string }[] => {
   if (!Array.isArray(value)) return [];
   const tags: { Key: string; Value: string }[] = [];
@@ -314,7 +372,7 @@ const CreateFileSystem: OperationHandler = (input, ctx) => {
     CreationTime: Math.floor(Date.now() / 1000),
     FileSystemId: fileSystemId,
     FileSystemType: fileSystemType,
-    Lifecycle: "AVAILABLE",
+    Lifecycle: "CREATING",
     StorageCapacity: storageCapacity,
     StorageType: stringOrUndefined(input["StorageType"]) ?? "SSD",
     VpcId: `vpc-${hex(8)}`,
@@ -331,16 +389,34 @@ const CreateFileSystem: OperationHandler = (input, ctx) => {
 
 const DescribeFileSystems: OperationHandler = (input, ctx) => {
   const fileSystemIds = stringArray(input["FileSystemIds"]);
-  const fileSystems = ctx.store
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const filters = input["Filters"];
+  const raw = ctx.store
     .list<StoredFileSystem>()
     .filter((entry) => entry.key.startsWith("fs/"))
     .map((entry) => entry.value)
     .filter(
-      (fileSystem) =>
-        fileSystemIds.length === 0 ||
-        fileSystemIds.includes(fileSystem.FileSystemId),
+      (fs) =>
+        fileSystemIds.length === 0 || fileSystemIds.includes(fs.FileSystemId),
+    )
+    .filter((fs) =>
+      applyFilters(filters, fs as unknown as Record<string, unknown>),
     );
-  return { FileSystems: fileSystems };
+  const resolved = raw.map((fs) => {
+    if (fs.Lifecycle === "CREATING") {
+      const updated = { ...fs, Lifecycle: "AVAILABLE" };
+      ctx.store.set(fileSystemKey(fs.FileSystemId), updated);
+      return updated;
+    }
+    return fs;
+  });
+  const withTags = resolved.map((fs) => ({
+    ...fs,
+    Tags: mergeTags(ctx, fs.ResourceARN, fs.Tags),
+  }));
+  const { items, nextToken: next } = paginate(withTags, maxResults, nextToken);
+  return { FileSystems: items, NextToken: next };
 };
 
 const DeleteFileSystem: OperationHandler = (input, ctx) => {
@@ -348,8 +424,9 @@ const DeleteFileSystem: OperationHandler = (input, ctx) => {
   if (fileSystemId === undefined) {
     throw awsError("BadRequest", "FileSystemId is required.", 400);
   }
-  requireFileSystem(ctx, fileSystemId);
-  ctx.store.delete(fileSystemKey(fileSystemId));
+  const fileSystem = requireFileSystem(ctx, fileSystemId);
+  const updated = { ...fileSystem, Lifecycle: "DELETING" };
+  ctx.store.set(fileSystemKey(fileSystemId), updated);
   return { FileSystemId: fileSystemId, Lifecycle: "DELETING" };
 };
 
@@ -362,9 +439,9 @@ const CreateBackup: OperationHandler = (input, ctx) => {
   const backupId = `backup-${hex(8)}`;
   const backup: StoredBackup = {
     BackupId: backupId,
-    Lifecycle: "AVAILABLE",
+    Lifecycle: "PENDING",
     Type: "USER_INITIATED",
-    ProgressPercent: 100,
+    ProgressPercent: 0,
     CreationTime: Math.floor(Date.now() / 1000),
     ResourceARN: `arn:aws:fsx:${ctx.region}:${ctx.account}:backup/${backupId}`,
     Tags: tagsFromInput(input["Tags"]),
@@ -377,14 +454,31 @@ const CreateBackup: OperationHandler = (input, ctx) => {
 
 const DescribeBackups: OperationHandler = (input, ctx) => {
   const backupIds = stringArray(input["BackupIds"]);
-  const backups = ctx.store
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const filters = input["Filters"];
+  const raw = ctx.store
     .list<StoredBackup>()
     .filter((entry) => entry.key.startsWith("backup/"))
     .map((entry) => entry.value)
-    .filter(
-      (backup) => backupIds.length === 0 || backupIds.includes(backup.BackupId),
+    .filter((b) => backupIds.length === 0 || backupIds.includes(b.BackupId))
+    .filter((b) =>
+      applyFilters(filters, b as unknown as Record<string, unknown>),
     );
-  return { Backups: backups };
+  const resolved = raw.map((b) => {
+    if (b.Lifecycle === "PENDING" || b.Lifecycle === "COPYING") {
+      const updated = { ...b, Lifecycle: "AVAILABLE", ProgressPercent: 100 };
+      ctx.store.set(backupKey(b.BackupId), updated);
+      return updated;
+    }
+    return b;
+  });
+  const withTags = resolved.map((b) => ({
+    ...b,
+    Tags: mergeTags(ctx, b.ResourceARN, b.Tags),
+  }));
+  const { items, nextToken: next } = paginate(withTags, maxResults, nextToken);
+  return { Backups: items, NextToken: next };
 };
 
 const AssociateFileSystemAliases: OperationHandler = (input, ctx) => {
@@ -435,6 +529,8 @@ const CopyBackup: OperationHandler = (input, ctx) => {
     ResourceARN: `arn:aws:fsx:${ctx.region}:${ctx.account}:backup/${newBackupId}`,
     Tags: tagsFromInput(input["Tags"]) ?? sourceBackup.Tags,
     Type: "COPY",
+    Lifecycle: "COPYING",
+    ProgressPercent: 0,
     CreationTime: Math.floor(Date.now() / 1000),
   };
   ctx.store.set(backupKey(newBackupId), newBackup);
@@ -563,7 +659,7 @@ const CreateFileCache: OperationHandler = (input, ctx) => {
     FileCacheId: fileCacheId,
     FileCacheType: fileCacheType,
     FileCacheTypeVersion: fileCacheTypeVersion,
-    Lifecycle: "AVAILABLE",
+    Lifecycle: "CREATING",
     StorageCapacity: numberOrDefault(input["StorageCapacity"], 1200),
     VpcId: `vpc-${hex(8)}`,
     SubnetIds: subnetIds,
@@ -596,7 +692,7 @@ const CreateFileSystemFromBackup: OperationHandler = (input, ctx) => {
     CreationTime: Math.floor(Date.now() / 1000),
     FileSystemId: fileSystemId,
     FileSystemType: backup.FileSystem.FileSystemType,
-    Lifecycle: "AVAILABLE",
+    Lifecycle: "CREATING",
     StorageCapacity: backup.FileSystem.StorageCapacity,
     StorageType:
       stringOrUndefined(input["StorageType"]) ?? backup.FileSystem.StorageType,
@@ -627,7 +723,7 @@ const CreateSnapshot: OperationHandler = (input, ctx) => {
     SnapshotId: snapshotId,
     VolumeId: volumeId,
     Name: name,
-    Lifecycle: "AVAILABLE",
+    Lifecycle: "CREATING",
     ResourceARN: `arn:aws:fsx:${ctx.region}:${ctx.account}:snapshot/${snapshotId}`,
     Tags: tagsFromInput(input["Tags"]),
     CreationTime: Math.floor(Date.now() / 1000),
@@ -651,7 +747,7 @@ const CreateStorageVirtualMachine: OperationHandler = (input, ctx) => {
     StorageVirtualMachineId: svmId,
     FileSystemId: fileSystemId,
     Name: name,
-    Lifecycle: "CREATED",
+    Lifecycle: "CREATING",
     ResourceARN: `arn:aws:fsx:${ctx.region}:${ctx.account}:storage-virtual-machine/${fileSystemId}/${svmId}`,
     Tags: tagsFromInput(input["Tags"]),
     CreationTime: Math.floor(Date.now() / 1000),
@@ -691,7 +787,7 @@ const CreateVolume: OperationHandler = (input, ctx) => {
     FileSystemId: fileSystemId,
     Name: name,
     VolumeType: volumeType,
-    Lifecycle: "CREATED",
+    Lifecycle: "CREATING",
     ResourceARN: `arn:aws:fsx:${ctx.region}:${ctx.account}:volume/${volumeId}`,
     Tags: tagsFromInput(input["Tags"]),
     CreationTime: Math.floor(Date.now() / 1000),
@@ -716,7 +812,7 @@ const CreateVolumeFromBackup: OperationHandler = (input, ctx) => {
     FileSystemId: backup.FileSystem.FileSystemId,
     Name: name,
     VolumeType: "ONTAP",
-    Lifecycle: "CREATED",
+    Lifecycle: "CREATING",
     ResourceARN: `arn:aws:fsx:${ctx.region}:${ctx.account}:volume/${volumeId}`,
     Tags: tagsFromInput(input["Tags"]),
     CreationTime: Math.floor(Date.now() / 1000),
@@ -730,8 +826,9 @@ const DeleteBackup: OperationHandler = (input, ctx) => {
   if (backupId === undefined) {
     throw awsError("BadRequest", "BackupId is required.", 400);
   }
-  requireBackup(ctx, backupId);
-  ctx.store.delete(backupKey(backupId));
+  const backup = requireBackup(ctx, backupId);
+  const updated = { ...backup, Lifecycle: "DELETED" };
+  ctx.store.set(backupKey(backupId), updated);
   return { BackupId: backupId, Lifecycle: "DELETED" };
 };
 
@@ -754,8 +851,9 @@ const DeleteFileCache: OperationHandler = (input, ctx) => {
   if (fileCacheId === undefined) {
     throw awsError("BadRequest", "FileCacheId is required.", 400);
   }
-  requireFileCache(ctx, fileCacheId);
-  ctx.store.delete(fileCacheKey(fileCacheId));
+  const fc = requireFileCache(ctx, fileCacheId);
+  const updated = { ...fc, Lifecycle: "DELETING" };
+  ctx.store.set(fileCacheKey(fileCacheId), updated);
   return { FileCacheId: fileCacheId, Lifecycle: "DELETING" };
 };
 
@@ -764,8 +862,9 @@ const DeleteSnapshot: OperationHandler = (input, ctx) => {
   if (snapshotId === undefined) {
     throw awsError("BadRequest", "SnapshotId is required.", 400);
   }
-  requireSnapshot(ctx, snapshotId);
-  ctx.store.delete(snapshotKey(snapshotId));
+  const snapshot = requireSnapshot(ctx, snapshotId);
+  const updated = { ...snapshot, Lifecycle: "DELETING" };
+  ctx.store.set(snapshotKey(snapshotId), updated);
   return { SnapshotId: snapshotId, Lifecycle: "DELETING" };
 };
 
@@ -774,8 +873,9 @@ const DeleteStorageVirtualMachine: OperationHandler = (input, ctx) => {
   if (svmId === undefined) {
     throw awsError("BadRequest", "StorageVirtualMachineId is required.", 400);
   }
-  requireStorageVirtualMachine(ctx, svmId);
-  ctx.store.delete(svmKey(svmId));
+  const svm = requireStorageVirtualMachine(ctx, svmId);
+  const updated = { ...svm, Lifecycle: "DELETING" };
+  ctx.store.set(svmKey(svmId), updated);
   return { StorageVirtualMachineId: svmId, Lifecycle: "DELETING" };
 };
 
@@ -784,8 +884,9 @@ const DeleteVolume: OperationHandler = (input, ctx) => {
   if (volumeId === undefined) {
     throw awsError("BadRequest", "VolumeId is required.", 400);
   }
-  requireVolume(ctx, volumeId);
-  ctx.store.delete(volumeKey(volumeId));
+  const volume = requireVolume(ctx, volumeId);
+  const updated = { ...volume, Lifecycle: "DELETING" };
+  ctx.store.set(volumeKey(volumeId), updated);
   return { VolumeId: volumeId, Lifecycle: "DELETING" };
 };
 
@@ -810,20 +911,52 @@ const DescribeDataRepositoryTasks: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith("drt/"))
     .map((entry) => entry.value)
     .filter((drt) => taskIds.length === 0 || taskIds.includes(drt.TaskId));
-  return { DataRepositoryTasks: tasks };
+  const resolved = tasks.map((t) => {
+    if (t.Lifecycle === "PENDING") {
+      const updated = { ...t, Lifecycle: "EXECUTING" };
+      ctx.store.set(drtKey(t.TaskId), updated);
+      return updated;
+    }
+    if (t.Lifecycle === "EXECUTING") {
+      const updated = { ...t, Lifecycle: "SUCCEEDED" };
+      ctx.store.set(drtKey(t.TaskId), updated);
+      return updated;
+    }
+    return t;
+  });
+  return { DataRepositoryTasks: resolved };
 };
 
 const DescribeFileCaches: OperationHandler = (input, ctx) => {
   const fileCacheIds = stringArray(input["FileCacheIds"]);
-  const fileCaches = ctx.store
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const filters = input["Filters"];
+  const raw = ctx.store
     .list<StoredFileCache>()
     .filter((entry) => entry.key.startsWith("fc/"))
     .map((entry) => entry.value)
     .filter(
       (fc) =>
         fileCacheIds.length === 0 || fileCacheIds.includes(fc.FileCacheId),
+    )
+    .filter((fc) =>
+      applyFilters(filters, fc as unknown as Record<string, unknown>),
     );
-  return { FileCaches: fileCaches };
+  const resolved = raw.map((fc) => {
+    if (fc.Lifecycle === "CREATING") {
+      const updated = { ...fc, Lifecycle: "AVAILABLE" };
+      ctx.store.set(fileCacheKey(fc.FileCacheId), updated);
+      return updated;
+    }
+    return fc;
+  });
+  const withTags = resolved.map((fc) => ({
+    ...fc,
+    Tags: mergeTags(ctx, fc.ResourceARN, fc.Tags),
+  }));
+  const { items, nextToken: next } = paginate(withTags, maxResults, nextToken);
+  return { FileCaches: items, NextToken: next };
 };
 
 const DescribeFileSystemAliases: OperationHandler = (input, ctx) => {
@@ -833,7 +966,13 @@ const DescribeFileSystemAliases: OperationHandler = (input, ctx) => {
   }
   requireFileSystem(ctx, fileSystemId);
   const aliases = ctx.store.get<StoredAlias[]>(aliasesKey(fileSystemId)) ?? [];
-  return { Aliases: aliases };
+  const resolved = aliases.map((a) =>
+    a.Lifecycle === "CREATING" ? { ...a, Lifecycle: "AVAILABLE" } : a,
+  );
+  if (resolved.some((a, i) => a !== aliases[i])) {
+    ctx.store.set(aliasesKey(fileSystemId), resolved);
+  }
+  return { Aliases: resolved };
 };
 
 const DescribeS3AccessPointAttachments: OperationHandler = (input, ctx) => {
@@ -864,40 +1003,94 @@ const DescribeSharedVpcConfiguration: OperationHandler = (_input, ctx) => {
 
 const DescribeSnapshots: OperationHandler = (input, ctx) => {
   const snapshotIds = stringArray(input["SnapshotIds"]);
-  const snapshots = ctx.store
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const filters = input["Filters"];
+  const raw = ctx.store
     .list<StoredSnapshot>()
     .filter((entry) => entry.key.startsWith("snapshot/"))
     .map((entry) => entry.value)
     .filter(
-      (snapshot) =>
-        snapshotIds.length === 0 || snapshotIds.includes(snapshot.SnapshotId),
+      (s) => snapshotIds.length === 0 || snapshotIds.includes(s.SnapshotId),
+    )
+    .filter((s) =>
+      applyFilters(filters, s as unknown as Record<string, unknown>),
     );
-  return { Snapshots: snapshots };
+  const resolved = raw.map((s) => {
+    if (s.Lifecycle === "CREATING") {
+      const updated = { ...s, Lifecycle: "AVAILABLE" };
+      ctx.store.set(snapshotKey(s.SnapshotId), updated);
+      return updated;
+    }
+    return s;
+  });
+  const withTags = resolved.map((s) => ({
+    ...s,
+    Tags: mergeTags(ctx, s.ResourceARN, s.Tags),
+  }));
+  const { items, nextToken: next } = paginate(withTags, maxResults, nextToken);
+  return { Snapshots: items, NextToken: next };
 };
 
 const DescribeStorageVirtualMachines: OperationHandler = (input, ctx) => {
   const svmIds = stringArray(input["StorageVirtualMachineIds"]);
-  const svms = ctx.store
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const filters = input["Filters"];
+  const raw = ctx.store
     .list<StoredStorageVirtualMachine>()
     .filter((entry) => entry.key.startsWith("svm/"))
     .map((entry) => entry.value)
     .filter(
       (svm) =>
         svmIds.length === 0 || svmIds.includes(svm.StorageVirtualMachineId),
+    )
+    .filter((svm) =>
+      applyFilters(filters, svm as unknown as Record<string, unknown>),
     );
-  return { StorageVirtualMachines: svms };
+  const resolved = raw.map((svm) => {
+    if (svm.Lifecycle === "CREATING") {
+      const updated = { ...svm, Lifecycle: "CREATED" };
+      ctx.store.set(svmKey(svm.StorageVirtualMachineId), updated);
+      return updated;
+    }
+    return svm;
+  });
+  const withTags = resolved.map((svm) => ({
+    ...svm,
+    Tags: mergeTags(ctx, svm.ResourceARN, svm.Tags),
+  }));
+  const { items, nextToken: next } = paginate(withTags, maxResults, nextToken);
+  return { StorageVirtualMachines: items, NextToken: next };
 };
 
 const DescribeVolumes: OperationHandler = (input, ctx) => {
   const volumeIds = stringArray(input["VolumeIds"]);
-  const volumes = ctx.store
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const filters = input["Filters"];
+  const raw = ctx.store
     .list<StoredVolume>()
     .filter((entry) => entry.key.startsWith("volume/"))
     .map((entry) => entry.value)
-    .filter(
-      (volume) => volumeIds.length === 0 || volumeIds.includes(volume.VolumeId),
+    .filter((v) => volumeIds.length === 0 || volumeIds.includes(v.VolumeId))
+    .filter((v) =>
+      applyFilters(filters, v as unknown as Record<string, unknown>),
     );
-  return { Volumes: volumes };
+  const resolved = raw.map((v) => {
+    if (v.Lifecycle === "CREATING") {
+      const updated = { ...v, Lifecycle: "AVAILABLE" };
+      ctx.store.set(volumeKey(v.VolumeId), updated);
+      return updated;
+    }
+    return v;
+  });
+  const withTags = resolved.map((v) => ({
+    ...v,
+    Tags: mergeTags(ctx, v.ResourceARN, v.Tags),
+  }));
+  const { items, nextToken: next } = paginate(withTags, maxResults, nextToken);
+  return { Volumes: items, NextToken: next };
 };
 
 const DetachAndDeleteS3AccessPoint: OperationHandler = (input, ctx) => {

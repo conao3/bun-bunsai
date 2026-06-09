@@ -61,6 +61,7 @@ type StoredSegment = {
 type StoredJourney = {
   Id: string;
   ApplicationId: string;
+  Arn: string;
   Name: string;
   CreationDate: string;
   LastModifiedDate: string;
@@ -201,6 +202,12 @@ const segmentArnOf = (
   `arn:aws:mobiletargeting:${ctx.region}:${ctx.account}:apps/${appId}/segments/${segId}`;
 const recommenderArnOf = (ctx: ServiceContext, recId: string): string =>
   `arn:aws:mobiletargeting:${ctx.region}:${ctx.account}:recommenders/${recId}`;
+const journeyArnOf = (
+  ctx: ServiceContext,
+  appId: string,
+  jrnId: string,
+): string =>
+  `arn:aws:mobiletargeting:${ctx.region}:${ctx.account}:apps/${appId}/journeys/${jrnId}`;
 
 const appView = (app: StoredApp): Record<string, unknown> => ({
   Id: app.Id,
@@ -239,6 +246,7 @@ const segmentView = (s: StoredSegment): Record<string, unknown> => ({
 const journeyView = (j: StoredJourney): Record<string, unknown> => ({
   Id: j.Id,
   ApplicationId: j.ApplicationId,
+  Arn: j.Arn,
   Name: j.Name,
   CreationDate: j.CreationDate,
   LastModifiedDate: j.LastModifiedDate,
@@ -304,6 +312,34 @@ const recommenderView = (r: StoredRecommender): Record<string, unknown> => ({
   Name: r.Name,
   Description: r.Description,
 });
+
+const paginateList = <T>(
+  items: T[],
+  token: unknown,
+  pageSize: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const size =
+    typeof pageSize === "string" && pageSize !== ""
+      ? parseInt(pageSize, 10)
+      : 0;
+  const limit = size > 0 ? size : 100;
+  const start =
+    typeof token === "string" && token !== "" ? parseInt(token, 10) : 0;
+  const page = items.slice(start, start + limit);
+  const next = start + limit < items.length ? String(start + limit) : undefined;
+  return { items: page, nextToken: next };
+};
+
+const JOURNEY_STATES: ReadonlySet<string> = new Set([
+  "DRAFT",
+  "ACTIVE",
+  "PAUSED",
+  "COMPLETED",
+  "CANCELLED",
+  "CLOSED",
+]);
+
+const JOURNEY_TERMINAL_STATES = new Set(["COMPLETED", "CANCELLED", "CLOSED"]);
 
 const requireApp = (ctx: ServiceContext, id: string): StoredApp => {
   const stored = ctx.store.get<StoredApp>(appKey(id));
@@ -624,6 +660,9 @@ const CreateApp: OperationHandler = (input, ctx) => {
     CreationDate: new Date().toISOString(),
   };
   ctx.store.set(appKey(id), app);
+  if (Object.keys(app.tags).length > 0) {
+    ctx.store.set(tagsKey(app.Arn), app.tags);
+  }
   return { ApplicationResponse: appView(app) };
 };
 
@@ -633,19 +672,30 @@ const GetApp: OperationHandler = (input, ctx) => {
   return { ApplicationResponse: appView(app) };
 };
 
-const GetApps: OperationHandler = (_input, ctx) => {
-  const apps = ctx.store
+const GetApps: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredApp>()
     .filter((entry) => entry.key.startsWith(appPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => a.Name.localeCompare(b.Name));
-  return { ApplicationsResponse: { Item: apps.map(appView) } };
+  const { items, nextToken } = paginateList(
+    all,
+    input["Token"],
+    input["PageSize"],
+  );
+  return {
+    ApplicationsResponse: {
+      Item: items.map(appView),
+      ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+    },
+  };
 };
 
 const DeleteApp: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ApplicationId");
   const app = requireApp(ctx, id);
   ctx.store.delete(appKey(id));
+  ctx.store.delete(tagsKey(app.Arn));
   return { ApplicationResponse: appView(app) };
 };
 
@@ -727,11 +777,14 @@ const CreateCampaign: OperationHandler = (input, ctx) => {
     LastModifiedDate: nowStr,
     SegmentId: stringOrUndefined(body["SegmentId"]) ?? "",
     SegmentVersion: 1,
-    State: { Status: "COMPLETED" },
+    State: { Status: "SCHEDULED" },
     tags: stringMapFrom(body["tags"]),
     Version: 1,
   };
   ctx.store.set(campaignKey(appId, campId), camp);
+  if (Object.keys(camp.tags).length > 0) {
+    ctx.store.set(tagsKey(camp.Arn), camp.tags);
+  }
   return { CampaignResponse: campaignView(camp) };
 };
 
@@ -747,11 +800,21 @@ const GetCampaigns: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "ApplicationId");
   requireApp(ctx, appId);
   const pfx = `${campPrefix}${appId}:`;
-  const camps = ctx.store
+  const all = ctx.store
     .list<StoredCampaign>()
     .filter((e) => e.key.startsWith(pfx))
     .map((e) => campaignView(e.value));
-  return { CampaignsResponse: { Item: camps } };
+  const { items, nextToken } = paginateList(
+    all,
+    input["Token"],
+    input["PageSize"],
+  );
+  return {
+    CampaignsResponse: {
+      Item: items,
+      ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+    },
+  };
 };
 
 const UpdateCampaign: OperationHandler = (input, ctx) => {
@@ -775,6 +838,7 @@ const DeleteCampaign: OperationHandler = (input, ctx) => {
   const campId = requireString(input, "CampaignId");
   const camp = requireCampaign(ctx, appId, campId);
   ctx.store.delete(campaignKey(appId, campId));
+  ctx.store.delete(tagsKey(camp.Arn));
   return { CampaignResponse: campaignView(camp) };
 };
 
@@ -836,6 +900,9 @@ const CreateSegment: OperationHandler = (input, ctx) => {
     tags: stringMapFrom(body["tags"]),
   };
   ctx.store.set(segmentKey(appId, segId), seg);
+  if (Object.keys(seg.tags).length > 0) {
+    ctx.store.set(tagsKey(seg.Arn), seg.tags);
+  }
   return { SegmentResponse: segmentView(seg) };
 };
 
@@ -849,11 +916,21 @@ const GetSegments: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "ApplicationId");
   requireApp(ctx, appId);
   const pfx = `${segPrefix}${appId}:`;
-  const segs = ctx.store
+  const all = ctx.store
     .list<StoredSegment>()
     .filter((e) => e.key.startsWith(pfx))
     .map((e) => segmentView(e.value));
-  return { SegmentsResponse: { Item: segs } };
+  const { items, nextToken } = paginateList(
+    all,
+    input["Token"],
+    input["PageSize"],
+  );
+  return {
+    SegmentsResponse: {
+      Item: items,
+      ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+    },
+  };
 };
 
 const UpdateSegment: OperationHandler = (input, ctx) => {
@@ -877,6 +954,7 @@ const DeleteSegment: OperationHandler = (input, ctx) => {
   const segId = requireString(input, "SegmentId");
   const seg = requireSegment(ctx, appId, segId);
   ctx.store.delete(segmentKey(appId, segId));
+  ctx.store.delete(tagsKey(seg.Arn));
   return { SegmentResponse: segmentView(seg) };
 };
 
@@ -937,6 +1015,7 @@ const CreateJourney: OperationHandler = (input, ctx) => {
   const jrn: StoredJourney = {
     Id: jrnId,
     ApplicationId: appId,
+    Arn: journeyArnOf(ctx, appId, jrnId),
     Name: name,
     CreationDate: nowStr,
     LastModifiedDate: nowStr,
@@ -944,6 +1023,9 @@ const CreateJourney: OperationHandler = (input, ctx) => {
     tags: stringMapFrom(body["tags"]),
   };
   ctx.store.set(journeyKey(appId, jrnId), jrn);
+  if (Object.keys(jrn.tags).length > 0) {
+    ctx.store.set(tagsKey(jrn.Arn), jrn.tags);
+  }
   return { JourneyResponse: journeyView(jrn) };
 };
 
@@ -957,11 +1039,21 @@ const ListJourneys: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "ApplicationId");
   requireApp(ctx, appId);
   const pfx = `${jrnPrefix}${appId}:`;
-  const jrns = ctx.store
+  const all = ctx.store
     .list<StoredJourney>()
     .filter((e) => e.key.startsWith(pfx))
     .map((e) => journeyView(e.value));
-  return { JourneysResponse: { Item: jrns } };
+  const { items, nextToken } = paginateList(
+    all,
+    input["Token"],
+    input["PageSize"],
+  );
+  return {
+    JourneysResponse: {
+      Item: items,
+      ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+    },
+  };
 };
 
 const UpdateJourney: OperationHandler = (input, ctx) => {
@@ -984,10 +1076,25 @@ const UpdateJourneyState: OperationHandler = (input, ctx) => {
   const jrnId = requireString(input, "JourneyId");
   const jrn = requireJourney(ctx, appId, jrnId);
   const body = asRecord(input["JourneyStateRequest"]) ?? {};
+  const newState = stringOrUndefined(body["State"]);
+  if (newState === undefined || !JOURNEY_STATES.has(newState)) {
+    throw awsError(
+      "BadRequestException",
+      `State must be one of DRAFT, ACTIVE, PAUSED, COMPLETED, CANCELLED, CLOSED.`,
+      400,
+    );
+  }
+  if (JOURNEY_TERMINAL_STATES.has(jrn.State)) {
+    throw awsError(
+      "BadRequestException",
+      `Journey is in terminal state ${jrn.State} and cannot be transitioned.`,
+      400,
+    );
+  }
   const nowStr = new Date().toISOString();
   const updated: StoredJourney = {
     ...jrn,
-    State: stringOrUndefined(body["State"]) ?? jrn.State,
+    State: newState,
     LastModifiedDate: nowStr,
   };
   ctx.store.set(journeyKey(appId, jrnId), updated);
@@ -999,6 +1106,7 @@ const DeleteJourney: OperationHandler = (input, ctx) => {
   const jrnId = requireString(input, "JourneyId");
   const jrn = requireJourney(ctx, appId, jrnId);
   ctx.store.delete(journeyKey(appId, jrnId));
+  ctx.store.delete(tagsKey(jrn.Arn));
   return { JourneyResponse: journeyView(jrn) };
 };
 
@@ -1528,6 +1636,7 @@ const DeleteRecommenderConfiguration: OperationHandler = (input, ctx) => {
   const recId = requireString(input, "RecommenderId");
   const rec = requireRecommender(ctx, recId);
   ctx.store.delete(recommenderKey(recId));
+  ctx.store.delete(tagsKey(recommenderArnOf(ctx, recId)));
   return {
     RecommenderConfigurationResponse: {
       ...recommenderView(rec),

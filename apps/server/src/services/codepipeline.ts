@@ -99,7 +99,21 @@ const paginate = <T>(
     typeof maxResults === "number" && maxResults > 0 ? maxResults : undefined;
   const offset =
     typeof nextToken === "string" && nextToken !== ""
-      ? parseInt(atob(nextToken), 10)
+      ? (() => {
+          try {
+            const n = parseInt(atob(nextToken), 10);
+            if (!Number.isFinite(n)) {
+              throw new Error();
+            }
+            return n;
+          } catch {
+            throw awsError(
+              "InvalidNextTokenException",
+              "The next token supplied is not valid.",
+              400,
+            );
+          }
+        })()
       : 0;
   const sliced =
     limit !== undefined
@@ -149,6 +163,9 @@ const stageTransitionKey = (
 ): string => `stageTransition:${pipelineName}:${stageName}:${transitionType}`;
 
 const tagsKey = (arn: string): string => `tags:${arn}`;
+
+const idempotentKey = (name: string, token: string): string =>
+  `idempotent:${name}:${token}`;
 
 const pipelineName = (declaration: Record<string, unknown>): string => {
   const name = stringOrUndefined(declaration["name"]);
@@ -227,6 +244,7 @@ const CreatePipeline: OperationHandler = (input, ctx) => {
   };
   ctx.store.set(pipelineKey(name), pipeline);
   ctx.store.set(pipelineVersionKey(name, pipeline.version), pipeline);
+  ctx.store.set(tagsKey(pipeline.arn), pipeline.tags);
   return {
     pipeline: declarationView(pipeline),
     tags: pipeline.tags,
@@ -310,8 +328,29 @@ const DeletePipeline: OperationHandler = (input, ctx) => {
   if (name === undefined) {
     throw awsError("ValidationException", "name is required.", 400);
   }
-  getPipelineOrThrow(name, ctx);
+  const pipeline = getPipelineOrThrow(name, ctx);
   ctx.store.delete(pipelineKey(name));
+  ctx.store.delete(tagsKey(pipeline.arn));
+  for (let v = 1; v <= pipeline.version; v++) {
+    ctx.store.delete(pipelineVersionKey(name, v));
+  }
+  ctx.store
+    .list<StoredPipelineExecution>()
+    .filter(
+      (e) => e.key.startsWith("execution:") && e.value.pipelineName === name,
+    )
+    .forEach((e) => ctx.store.delete(e.key));
+  ctx.store
+    .list<StoredStageTransition>()
+    .filter(
+      (e) =>
+        e.key.startsWith("stageTransition:") && e.value.pipelineName === name,
+    )
+    .forEach((e) => ctx.store.delete(e.key));
+  ctx.store
+    .list<string>()
+    .filter((e) => e.key.startsWith(`idempotent:${name}:`))
+    .forEach((e) => ctx.store.delete(e.key));
   return {};
 };
 
@@ -321,6 +360,13 @@ const StartPipelineExecution: OperationHandler = (input, ctx) => {
     throw awsError("ValidationException", "name is required.", 400);
   }
   const pipeline = getPipelineOrThrow(name, ctx);
+  const token = stringOrUndefined(input["clientRequestToken"]);
+  if (token !== undefined) {
+    const existing = ctx.store.get<string>(idempotentKey(name, token));
+    if (existing !== undefined) {
+      return { pipelineExecutionId: existing };
+    }
+  }
   const executionId = crypto.randomUUID();
   const now = nowSeconds();
   const execution: StoredPipelineExecution = {
@@ -337,6 +383,9 @@ const StartPipelineExecution: OperationHandler = (input, ctx) => {
     executionType: "STANDARD",
   };
   ctx.store.set(executionKey(executionId), execution);
+  if (token !== undefined) {
+    ctx.store.set(idempotentKey(name, token), executionId);
+  }
   return { pipelineExecutionId: executionId };
 };
 
@@ -444,6 +493,10 @@ const DeleteWebhook: OperationHandler = (input, ctx) => {
   const name = stringOrUndefined(input["name"]);
   if (name === undefined) {
     throw awsError("ValidationException", "name is required.", 400);
+  }
+  const wh = ctx.store.get<StoredWebhook>(webhookKey(name));
+  if (wh !== undefined) {
+    ctx.store.delete(tagsKey(wh.arn));
   }
   ctx.store.delete(webhookKey(name));
   return {};
@@ -971,6 +1024,7 @@ const PutWebhook: OperationHandler = (input, ctx) => {
     tags: asArray(input["tags"]),
   };
   ctx.store.set(webhookKey(name), wh);
+  ctx.store.set(tagsKey(arn), wh.tags);
   return { webhook: webhookItemView(wh) };
 };
 
@@ -1018,6 +1072,14 @@ const RollbackStage: OperationHandler = (input, ctx) => {
   return { pipelineExecutionId: executionId };
 };
 
+const terminalExecutionStates = new Set([
+  "Succeeded",
+  "Failed",
+  "Stopped",
+  "Superseded",
+  "Cancelled",
+]);
+
 const StopPipelineExecution: OperationHandler = (input, ctx) => {
   const pName = stringOrUndefined(input["pipelineName"]);
   const executionId = stringOrUndefined(input["pipelineExecutionId"]);
@@ -1032,21 +1094,61 @@ const StopPipelineExecution: OperationHandler = (input, ctx) => {
   const execution = ctx.store.get<StoredPipelineExecution>(
     executionKey(executionId),
   );
-  if (execution !== undefined && execution.pipelineName === pName) {
-    const abandon = input["abandon"] === true;
-    ctx.store.set(executionKey(executionId), {
-      ...execution,
-      status: abandon ? "Stopped" : "Stopping",
-      lastUpdateTime: nowSeconds(),
-    });
+  if (execution === undefined || execution.pipelineName !== pName) {
+    throw awsError(
+      "PipelineExecutionNotFoundException",
+      `Execution ${executionId} not found.`,
+      400,
+    );
   }
+  if (terminalExecutionStates.has(execution.status)) {
+    throw awsError(
+      "PipelineExecutionNotStoppableException",
+      `Execution ${executionId} cannot be stopped in state ${execution.status}.`,
+      400,
+    );
+  }
+  if (execution.status === "Stopping") {
+    throw awsError(
+      "DuplicatedStopRequestException",
+      `Stop already requested for execution ${executionId}.`,
+      400,
+    );
+  }
+  const abandon = input["abandon"] === true;
+  ctx.store.set(executionKey(executionId), {
+    ...execution,
+    status: abandon ? "Stopped" : "Stopping",
+    lastUpdateTime: nowSeconds(),
+  });
   return { pipelineExecutionId: executionId };
+};
+
+const resolveArnExists = (arn: string, ctx: ServiceContext): boolean => {
+  const parts = arn.split(":");
+  if (parts.length < 6 || parts[0] !== "arn" || parts[2] !== "codepipeline") {
+    return false;
+  }
+  if (parts.length === 7 && parts[5] === "webhook") {
+    return ctx.store.get<StoredWebhook>(webhookKey(parts[6])) !== undefined;
+  }
+  if (parts.length === 6) {
+    return ctx.store.get<StoredPipeline>(pipelineKey(parts[5])) !== undefined;
+  }
+  return false;
 };
 
 const TagResource: OperationHandler = (input, ctx) => {
   const resourceArn = stringOrUndefined(input["resourceArn"]);
   if (resourceArn === undefined) {
     throw awsError("ValidationException", "resourceArn is required.", 400);
+  }
+  if (!resolveArnExists(resourceArn, ctx)) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${resourceArn}`,
+      400,
+    );
   }
   const newTags = asArray(input["tags"]);
   const existing =

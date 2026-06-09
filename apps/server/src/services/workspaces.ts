@@ -24,6 +24,12 @@ type StoredWorkspace = {
   ComputerName: string;
   SubnetId: string;
   Tags: StoredTag[];
+  WorkspaceProperties?: {
+    ComputeTypeName?: string;
+    RunningMode?: string;
+    UserVolumeSizeGib?: number;
+    RootVolumeSizeGib?: number;
+  };
 };
 
 type StoredWorkspaceBundle = {
@@ -196,6 +202,31 @@ const listByPrefix = <T>(ctx: ServiceContext, prefix: string): T[] =>
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value);
 
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 1000;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
+
+const nextWorkspaceIp = (ctx: ServiceContext): string => {
+  const counter = (ctx.store.get<number>("ipCounter") ?? 9) + 1;
+  ctx.store.set("ipCounter", counter);
+  return `10.0.${Math.floor(counter / 256)}.${counter % 256}`;
+};
+
 const requireStored = <T>(
   ctx: ServiceContext,
   key: string,
@@ -229,13 +260,13 @@ const CreateWorkspaces: OperationHandler = (input, ctx) => {
       UserName: userName,
       BundleId: bundleId,
       State: "AVAILABLE",
-      IpAddress: "10.0.0.10",
+      IpAddress: nextWorkspaceIp(ctx),
       ComputerName: `WSAMZN-${id.slice(3, 11).toUpperCase()}`,
       SubnetId: `subnet-${crypto.randomUUID().slice(0, 8)}`,
       Tags: toTagList(request["Tags"]),
     };
     ctx.store.set(workspaceKey(id), workspace);
-    return workspace;
+    return { ...workspace, State: "PENDING" };
   });
   return { FailedRequests: [], PendingRequests: pending };
 };
@@ -249,10 +280,11 @@ const DescribeWorkspaces: OperationHandler = (input, ctx) => {
   const directoryId = stringOrUndefined(input["DirectoryId"]);
   const userName = stringOrUndefined(input["UserName"]);
   const bundleId = stringOrUndefined(input["BundleId"]);
-  const workspaces = ctx.store
+  const allWorkspaces = ctx.store
     .list<StoredWorkspace>()
     .filter((entry) => entry.key.startsWith("workspace/"))
     .map((entry) => entry.value)
+    .filter((workspace) => workspace.State !== "TERMINATED")
     .filter(
       (workspace) => ids === undefined || ids.includes(workspace.WorkspaceId),
     )
@@ -266,7 +298,12 @@ const DescribeWorkspaces: OperationHandler = (input, ctx) => {
     .filter(
       (workspace) => bundleId === undefined || workspace.BundleId === bundleId,
     );
-  return { Workspaces: workspaces };
+  const { items, nextToken } = paginateList(
+    allWorkspaces,
+    input["NextToken"],
+    input["Limit"],
+  );
+  return { Workspaces: items, NextToken: nextToken };
 };
 
 const TerminateWorkspaces: OperationHandler = (input, ctx) => {
@@ -283,11 +320,26 @@ const TerminateWorkspaces: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const failedRequests: {
+    WorkspaceId: string;
+    ErrorCode: string;
+    ErrorMessage: string;
+  }[] = [];
   for (const request of requests) {
     const id = requireString(request, "WorkspaceId");
-    ctx.store.delete(workspaceKey(id));
+    const ws = ctx.store.get<StoredWorkspace>(workspaceKey(id));
+    if (ws === undefined) {
+      failedRequests.push({
+        WorkspaceId: id,
+        ErrorCode: "ValidationException",
+        ErrorMessage: `Workspace ${id} does not exist.`,
+      });
+    } else {
+      ctx.store.set(workspaceKey(id), { ...ws, State: "TERMINATING" });
+      ctx.store.set(workspaceKey(id), { ...ws, State: "TERMINATED" });
+    }
   }
-  return { FailedRequests: [] };
+  return { FailedRequests: failedRequests };
 };
 
 const CreateTags: OperationHandler = (input, ctx) => {
@@ -379,7 +431,12 @@ const DescribeWorkspaceBundles: OperationHandler = (input, ctx) => {
   const bundles = listByPrefix<StoredWorkspaceBundle>(ctx, "bundle/")
     .filter((b) => ids.length === 0 || ids.includes(b.BundleId))
     .filter((b) => owner === undefined || b.Owner === owner);
-  return { Bundles: bundles };
+  const { items, nextToken } = paginateList(
+    bundles,
+    input["NextToken"],
+    undefined,
+  );
+  return { Bundles: items, NextToken: nextToken };
 };
 
 const UpdateWorkspaceBundle: OperationHandler = (input, ctx) => {
@@ -442,7 +499,12 @@ const DescribeWorkspaceImages: OperationHandler = (input, ctx) => {
   const images = listByPrefix<StoredWorkspaceImage>(ctx, "image/").filter(
     (img) => ids.length === 0 || ids.includes(img.ImageId),
   );
-  return { Images: images };
+  const { items, nextToken } = paginateList(
+    images,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { Images: items, NextToken: nextToken };
 };
 
 const CopyWorkspaceImage: OperationHandler = (input, ctx) => {
@@ -1431,7 +1493,30 @@ const ModifyWorkspaceState: OperationHandler = (input, ctx) => {
 };
 
 const ModifyWorkspaceProperties: OperationHandler = (input, ctx) => {
-  requireString(input, "WorkspaceId");
+  const workspaceId = requireString(input, "WorkspaceId");
+  const ws = requireStored<StoredWorkspace>(
+    ctx,
+    workspaceKey(workspaceId),
+    `Workspace not found: ${workspaceId}`,
+  );
+  const props = input["WorkspaceProperties"];
+  if (typeof props !== "object" || props === null) return {};
+  const p = props as Record<string, unknown>;
+  const updated = { ...ws.WorkspaceProperties };
+  const computeTypeName = stringOrUndefined(p["ComputeTypeName"]);
+  const runningMode = stringOrUndefined(p["RunningMode"]);
+  const userVolumeSizeGib = numberOrUndefined(p["UserVolumeSizeGib"]);
+  const rootVolumeSizeGib = numberOrUndefined(p["RootVolumeSizeGib"]);
+  if (computeTypeName !== undefined) updated.ComputeTypeName = computeTypeName;
+  if (runningMode !== undefined) updated.RunningMode = runningMode;
+  if (userVolumeSizeGib !== undefined)
+    updated.UserVolumeSizeGib = userVolumeSizeGib;
+  if (rootVolumeSizeGib !== undefined)
+    updated.RootVolumeSizeGib = rootVolumeSizeGib;
+  ctx.store.set(workspaceKey(workspaceId), {
+    ...ws,
+    WorkspaceProperties: updated,
+  });
   return {};
 };
 
@@ -1462,14 +1547,18 @@ const DescribeWorkspacesConnectionStatus: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith("workspace/"))
     .map((entry) => entry.value)
     .filter((ws) => ids.length === 0 || ids.includes(ws.WorkspaceId));
-  return {
-    WorkspacesConnectionStatus: workspaces.map((ws) => ({
-      WorkspaceId: ws.WorkspaceId,
-      ConnectionState: "CONNECTED",
-      ConnectionStateCheckTimestamp: Date.now(),
-      LastKnownUserConnectionTimestamp: Date.now(),
-    })),
-  };
+  const statuses = workspaces.map((ws) => ({
+    WorkspaceId: ws.WorkspaceId,
+    ConnectionState: ws.State === "AVAILABLE" ? "CONNECTED" : "DISCONNECTED",
+    ConnectionStateCheckTimestamp: Date.now(),
+    LastKnownUserConnectionTimestamp: Date.now(),
+  }));
+  const { items, nextToken } = paginateList(
+    statuses,
+    input["NextToken"],
+    undefined,
+  );
+  return { WorkspacesConnectionStatus: items, NextToken: nextToken };
 };
 
 const DescribeWorkspaceSnapshots: OperationHandler = (input) => {

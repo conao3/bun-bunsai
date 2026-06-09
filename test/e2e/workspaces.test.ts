@@ -33,6 +33,7 @@ import {
   GetAccountLinkCommand,
   ImportClientBrandingCommand,
   ListAccountLinksCommand,
+  ModifyWorkspacePropertiesCommand,
   RebootWorkspacesCommand,
   RegisterWorkspaceDirectoryCommand,
   StartWorkspacesCommand,
@@ -75,7 +76,7 @@ test("WorkSpaces lifecycle", async () => {
   expect(created.FailedRequests?.length).toBe(0);
   const workspaceId = created.PendingRequests?.[0]?.WorkspaceId;
   expect(workspaceId).toBeDefined();
-  expect(created.PendingRequests?.[0]?.State).toBe("AVAILABLE");
+  expect(created.PendingRequests?.[0]?.State).toBe("PENDING");
 
   const described = await client.send(
     new DescribeWorkspacesCommand({
@@ -557,6 +558,129 @@ test("WorkSpaces delete tags", async () => {
   await client.send(
     new TerminateWorkspacesCommand({
       TerminateWorkspaceRequests: [{ WorkspaceId: wsId }],
+    }),
+  );
+});
+
+test("WorkSpaces fidelity: PENDING state, unique IP, ConnectionStatus, ModifyWorkspaceProperties, pagination, TerminateWorkspaces FailedRequests", async () => {
+  const client = workspaces();
+
+  const c1 = await client.send(
+    new CreateWorkspacesCommand({
+      Workspaces: [
+        { DirectoryId: "d-fidelity", UserName: "fuser1", BundleId: "wsb-f1" },
+      ],
+    }),
+  );
+  const c2 = await client.send(
+    new CreateWorkspacesCommand({
+      Workspaces: [
+        { DirectoryId: "d-fidelity", UserName: "fuser2", BundleId: "wsb-f1" },
+      ],
+    }),
+  );
+
+  const wsId1 = c1.PendingRequests?.[0]?.WorkspaceId as string;
+  const wsId2 = c2.PendingRequests?.[0]?.WorkspaceId as string;
+
+  expect(c1.PendingRequests?.[0]?.State).toBe("PENDING");
+
+  const d1 = await client.send(
+    new DescribeWorkspacesCommand({ WorkspaceIds: [wsId1] }),
+  );
+  const d2 = await client.send(
+    new DescribeWorkspacesCommand({ WorkspaceIds: [wsId2] }),
+  );
+  expect(d1.Workspaces?.[0]?.State).toBe("AVAILABLE");
+  expect(d1.Workspaces?.[0]?.IpAddress).not.toBe(d2.Workspaces?.[0]?.IpAddress);
+
+  const connAvailable = await client.send(
+    new DescribeWorkspacesConnectionStatusCommand({ WorkspaceIds: [wsId1] }),
+  );
+  expect(connAvailable.WorkspacesConnectionStatus?.[0]?.ConnectionState).toBe(
+    "CONNECTED",
+  );
+
+  await client.send(
+    new StopWorkspacesCommand({
+      StopWorkspaceRequests: [{ WorkspaceId: wsId1 }],
+    }),
+  );
+  const connStopped = await client.send(
+    new DescribeWorkspacesConnectionStatusCommand({ WorkspaceIds: [wsId1] }),
+  );
+  expect(connStopped.WorkspacesConnectionStatus?.[0]?.ConnectionState).toBe(
+    "DISCONNECTED",
+  );
+
+  await client.send(
+    new StartWorkspacesCommand({
+      StartWorkspaceRequests: [{ WorkspaceId: wsId1 }],
+    }),
+  );
+
+  await client.send(
+    new ModifyWorkspacePropertiesCommand({
+      WorkspaceId: wsId1,
+      WorkspaceProperties: {
+        ComputeTypeName: "PERFORMANCE",
+        RunningMode: "AUTO_STOP",
+        UserVolumeSizeGib: 100,
+        RootVolumeSizeGib: 80,
+      },
+    }),
+  );
+
+  const afterModify = await client.send(
+    new DescribeWorkspacesCommand({ WorkspaceIds: [wsId1] }),
+  );
+  expect(
+    afterModify.Workspaces?.[0]?.WorkspaceProperties?.ComputeTypeName,
+  ).toBe("PERFORMANCE");
+  expect(afterModify.Workspaces?.[0]?.WorkspaceProperties?.RunningMode).toBe(
+    "AUTO_STOP",
+  );
+  expect(
+    afterModify.Workspaces?.[0]?.WorkspaceProperties?.UserVolumeSizeGib,
+  ).toBe(100);
+  expect(
+    afterModify.Workspaces?.[0]?.WorkspaceProperties?.RootVolumeSizeGib,
+  ).toBe(80);
+
+  const allInDir = await client.send(
+    new DescribeWorkspacesCommand({ DirectoryId: "d-fidelity" }),
+  );
+  expect(allInDir.Workspaces?.length ?? 0).toBeGreaterThanOrEqual(2);
+
+  const page1 = await client.send(
+    new DescribeWorkspacesCommand({ DirectoryId: "d-fidelity", Limit: 1 }),
+  );
+  expect(page1.Workspaces?.length).toBe(1);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new DescribeWorkspacesCommand({
+      DirectoryId: "d-fidelity",
+      Limit: 1,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect(page2.Workspaces?.length).toBe(1);
+
+  const termFailed = await client.send(
+    new TerminateWorkspacesCommand({
+      TerminateWorkspaceRequests: [{ WorkspaceId: "ws-nonexistent" }],
+    }),
+  );
+  expect(termFailed.FailedRequests?.length).toBe(1);
+  expect(termFailed.FailedRequests?.[0]?.WorkspaceId).toBe("ws-nonexistent");
+
+  await client.send(
+    new TerminateWorkspacesCommand({
+      TerminateWorkspaceRequests: [
+        { WorkspaceId: wsId1 },
+        { WorkspaceId: wsId2 },
+      ],
     }),
   );
 });

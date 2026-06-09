@@ -415,6 +415,10 @@ const storeLocation = (
   const id = hex17();
   const arn = locationArn(ctx, id);
   ctx.store.set(locationKey(arn), makeLocation(arn, locationType, input));
+  const tags = arrayOrEmpty(input["Tags"]);
+  if (tags.length > 0) {
+    ctx.store.set(tagsKey(arn), tags);
+  }
   return arn;
 };
 
@@ -432,6 +436,10 @@ const CreateAgent: OperationHandler = (input, ctx) => {
     Platform: undefined,
   };
   ctx.store.set(agentKey(arn), agent);
+  const agentTags = arrayOrEmpty(input["Tags"]);
+  if (agentTags.length > 0) {
+    ctx.store.set(tagsKey(arn), agentTags);
+  }
   return { AgentArn: arn };
 };
 
@@ -439,6 +447,7 @@ const DeleteAgent: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "AgentArn");
   requireAgent(ctx, arn);
   ctx.store.delete(agentKey(arn));
+  ctx.store.delete(tagsKey(arn));
   return {};
 };
 
@@ -999,7 +1008,23 @@ const ListLocations: OperationHandler = (input, ctx) => {
 const DeleteLocation: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "LocationArn");
   requireLocation(ctx, arn);
+  const inUse = ctx.store
+    .list<StoredTask>()
+    .filter((entry) => entry.key.startsWith("task/"))
+    .some(
+      (entry) =>
+        entry.value.SourceLocationArn === arn ||
+        entry.value.DestinationLocationArn === arn,
+    );
+  if (inUse) {
+    throw awsError(
+      "InvalidRequestException",
+      `Location ${arn} is in use by one or more tasks.`,
+      400,
+    );
+  }
   ctx.store.delete(locationKey(arn));
+  ctx.store.delete(tagsKey(arn));
   return {};
 };
 
@@ -1028,6 +1053,10 @@ const CreateTask: OperationHandler = (input, ctx) => {
     executions: [],
   };
   ctx.store.set(taskKey(arn), task);
+  const taskTags = arrayOrEmpty(input["Tags"]);
+  if (taskTags.length > 0) {
+    ctx.store.set(tagsKey(arn), taskTags);
+  }
   return { TaskArn: arn };
 };
 
@@ -1090,6 +1119,7 @@ const DeleteTask: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "TaskArn");
   requireTask(ctx, arn);
   ctx.store.delete(taskKey(arn));
+  ctx.store.delete(tagsKey(arn));
   return {};
 };
 
@@ -1224,9 +1254,20 @@ const UpdateTaskExecution: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
-  const newTags = arrayOrEmpty(input["Tags"]);
-  const existing = ctx.store.get<unknown[]>(tagsKey(arn)) ?? [];
-  ctx.store.set(tagsKey(arn), [...existing, ...newTags]);
+  const newTags = arrayOrEmpty(input["Tags"]) as Record<string, unknown>[];
+  const merged = (ctx.store.get<unknown[]>(tagsKey(arn)) ?? []) as Record<
+    string,
+    unknown
+  >[];
+  for (const tag of newTags) {
+    const idx = merged.findIndex((t) => t["Key"] === tag["Key"]);
+    if (idx >= 0) {
+      merged[idx] = tag;
+    } else {
+      merged.push(tag);
+    }
+  }
+  ctx.store.set(tagsKey(arn), merged);
   return {};
 };
 

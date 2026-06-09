@@ -17,6 +17,7 @@ import {
   DeleteExtensionCommand,
   DeleteHostedConfigurationVersionCommand,
   GetApplicationCommand,
+  GetConfigurationCommand,
   GetConfigurationProfileCommand,
   GetDeploymentCommand,
   GetDeploymentStrategyCommand,
@@ -34,6 +35,7 @@ import {
   ListHostedConfigurationVersionsCommand,
   ListTagsForResourceCommand,
   StartDeploymentCommand,
+  StopDeploymentCommand,
   TagResourceCommand,
   UntagResourceCommand,
   UpdateApplicationCommand,
@@ -42,6 +44,7 @@ import {
   UpdateEnvironmentCommand,
   UpdateExtensionAssociationCommand,
   UpdateExtensionCommand,
+  ValidateConfigurationCommand,
 } from "@aws-sdk/client-appconfig";
 
 const { endpoint, requestHandler } = startApp();
@@ -497,6 +500,334 @@ test("AppConfig hosted configuration version lifecycle", async () => {
 
   await client.send(
     new DeleteApplicationCommand({ ApplicationId: applicationId }),
+  );
+});
+
+test("AppConfig GetConfiguration returns deployed content", async () => {
+  const client = appconfig();
+  const ts = Date.now();
+
+  const app = await client.send(
+    new CreateApplicationCommand({ Name: `e2e-app-gc-${ts}` }),
+  );
+  const applicationId = app.Id ?? "";
+
+  const env = await client.send(
+    new CreateEnvironmentCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-env-gc-${ts}`,
+    }),
+  );
+  const environmentId = env.Id ?? "";
+
+  const profile = await client.send(
+    new CreateConfigurationProfileCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-cp-gc-${ts}`,
+      LocationUri: "hosted",
+      Type: "AWS.Freeform",
+    }),
+  );
+  const configurationProfileId = profile.Id ?? "";
+
+  const strategy = await client.send(
+    new CreateDeploymentStrategyCommand({
+      Name: `e2e-strat-gc-${ts}`,
+      DeploymentDurationInMinutes: 0,
+      GrowthFactor: 100,
+      ReplicateTo: "NONE",
+    }),
+  );
+  const deploymentStrategyId = strategy.Id ?? "";
+
+  const configContent = JSON.stringify({ feature: "enabled", value: 42 });
+  const hcv = await client.send(
+    new CreateHostedConfigurationVersionCommand({
+      ApplicationId: applicationId,
+      ConfigurationProfileId: configurationProfileId,
+      Content: Buffer.from(configContent),
+      ContentType: "application/json",
+      VersionLabel: "v1.0",
+    }),
+  );
+  expect(hcv.VersionNumber).toBe(1);
+  expect(hcv.VersionLabel).toBe("v1.0");
+
+  const dep = await client.send(
+    new StartDeploymentCommand({
+      ApplicationId: applicationId,
+      EnvironmentId: environmentId,
+      DeploymentStrategyId: deploymentStrategyId,
+      ConfigurationProfileId: configurationProfileId,
+      ConfigurationVersion: "1",
+    }),
+  );
+  expect(dep.State).toBe("COMPLETE");
+  expect(dep.VersionLabel).toBe("v1.0");
+
+  const config = await client.send(
+    new GetConfigurationCommand({
+      Application: applicationId,
+      Environment: environmentId,
+      Configuration: configurationProfileId,
+      ClientId: "e2e-client",
+    }),
+  );
+  expect(config.ConfigurationVersion).toBe("1");
+  expect(config.ContentType).toBe("application/json");
+  const body = config.Content
+    ? Buffer.from(config.Content).toString("utf8")
+    : "";
+  expect(JSON.parse(body)).toEqual({ feature: "enabled", value: 42 });
+
+  const unchanged = await client.send(
+    new GetConfigurationCommand({
+      Application: applicationId,
+      Environment: environmentId,
+      Configuration: configurationProfileId,
+      ClientId: "e2e-client",
+      ClientConfigurationVersion: "1",
+    }),
+  );
+  expect(unchanged.ConfigurationVersion).toBe("1");
+  expect(unchanged.Content).toBeDefined();
+  const unchangedBody = unchanged.Content
+    ? Buffer.from(unchanged.Content).toString("utf8")
+    : "";
+  expect(unchangedBody).toBe("");
+
+  await client.send(
+    new DeleteApplicationCommand({ ApplicationId: applicationId }),
+  );
+  await client.send(
+    new DeleteDeploymentStrategyCommand({
+      DeploymentStrategyId: deploymentStrategyId,
+    }),
+  );
+});
+
+test("AppConfig List operations NextToken pagination", async () => {
+  const client = appconfig();
+  const ts = Date.now();
+
+  const appIds: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const a = await client.send(
+      new CreateApplicationCommand({ Name: `e2e-page-app-${ts}-${i}` }),
+    );
+    appIds.push(a.Id ?? "");
+  }
+
+  const page1 = await client.send(
+    new ListApplicationsCommand({ MaxResults: 2 }),
+  );
+  const page1Ids = (page1.Items ?? []).map((a) => a.Id);
+  const hasCreatedApps = appIds.some((id) => page1Ids.includes(id));
+  expect(hasCreatedApps).toBe(true);
+
+  if (page1.NextToken) {
+    const page2 = await client.send(
+      new ListApplicationsCommand({
+        MaxResults: 2,
+        NextToken: page1.NextToken,
+      }),
+    );
+    expect(Array.isArray(page2.Items)).toBe(true);
+  }
+
+  const app = await client.send(
+    new CreateApplicationCommand({ Name: `e2e-page-parent-${ts}` }),
+  );
+  const applicationId = app.Id ?? "";
+
+  const envIds: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const e = await client.send(
+      new CreateEnvironmentCommand({
+        ApplicationId: applicationId,
+        Name: `e2e-page-env-${ts}-${i}`,
+      }),
+    );
+    envIds.push(e.Id ?? "");
+  }
+
+  const envPage1 = await client.send(
+    new ListEnvironmentsCommand({
+      ApplicationId: applicationId,
+      MaxResults: 2,
+    }),
+  );
+  expect((envPage1.Items ?? []).length).toBe(2);
+  expect(envPage1.NextToken).toBeDefined();
+
+  const envPage2 = await client.send(
+    new ListEnvironmentsCommand({
+      ApplicationId: applicationId,
+      MaxResults: 2,
+      NextToken: envPage1.NextToken,
+    }),
+  );
+  expect((envPage2.Items ?? []).length).toBe(1);
+  expect(envPage2.NextToken).toBeUndefined();
+
+  for (const id of appIds) {
+    await client.send(new DeleteApplicationCommand({ ApplicationId: id }));
+  }
+  await client.send(
+    new DeleteApplicationCommand({ ApplicationId: applicationId }),
+  );
+});
+
+test("AppConfig StopDeployment AllowRevert and terminal-state rejection", async () => {
+  const client = appconfig();
+  const ts = Date.now();
+
+  const app = await client.send(
+    new CreateApplicationCommand({ Name: `e2e-app-stop-${ts}` }),
+  );
+  const applicationId = app.Id ?? "";
+
+  const env = await client.send(
+    new CreateEnvironmentCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-env-stop-${ts}`,
+    }),
+  );
+  const environmentId = env.Id ?? "";
+
+  const profile = await client.send(
+    new CreateConfigurationProfileCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-cp-stop-${ts}`,
+      LocationUri: "hosted",
+    }),
+  );
+  const configurationProfileId = profile.Id ?? "";
+
+  const strategy = await client.send(
+    new CreateDeploymentStrategyCommand({
+      Name: `e2e-strat-stop-${ts}`,
+      DeploymentDurationInMinutes: 0,
+      GrowthFactor: 100,
+      ReplicateTo: "NONE",
+    }),
+  );
+  const deploymentStrategyId = strategy.Id ?? "";
+
+  await client.send(
+    new StartDeploymentCommand({
+      ApplicationId: applicationId,
+      EnvironmentId: environmentId,
+      DeploymentStrategyId: deploymentStrategyId,
+      ConfigurationProfileId: configurationProfileId,
+      ConfigurationVersion: "1",
+    }),
+  );
+
+  const stopped = await client.send(
+    new StopDeploymentCommand({
+      ApplicationId: applicationId,
+      EnvironmentId: environmentId,
+      DeploymentNumber: 1,
+      AllowRevert: true,
+    }),
+  );
+  expect(stopped.State).toBe("REVERTED");
+
+  await expect(
+    client.send(
+      new StopDeploymentCommand({
+        ApplicationId: applicationId,
+        EnvironmentId: environmentId,
+        DeploymentNumber: 1,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteApplicationCommand({ ApplicationId: applicationId }),
+  );
+  await client.send(
+    new DeleteDeploymentStrategyCommand({
+      DeploymentStrategyId: deploymentStrategyId,
+    }),
+  );
+});
+
+test("AppConfig ValidateConfiguration against profile validators", async () => {
+  const client = appconfig();
+  const ts = Date.now();
+
+  const app = await client.send(
+    new CreateApplicationCommand({ Name: `e2e-app-val-${ts}` }),
+  );
+  const applicationId = app.Id ?? "";
+
+  const profile = await client.send(
+    new CreateConfigurationProfileCommand({
+      ApplicationId: applicationId,
+      Name: `e2e-cp-val-${ts}`,
+      LocationUri: "hosted",
+      Validators: [{ Type: "JSON_SCHEMA", Content: '{"type":"object"}' }],
+    }),
+  );
+  const configurationProfileId = profile.Id ?? "";
+
+  await client.send(
+    new CreateHostedConfigurationVersionCommand({
+      ApplicationId: applicationId,
+      ConfigurationProfileId: configurationProfileId,
+      Content: Buffer.from('{"key":"value"}'),
+      ContentType: "application/json",
+    }),
+  );
+
+  await expect(
+    client.send(
+      new ValidateConfigurationCommand({
+        ApplicationId: applicationId,
+        ConfigurationProfileId: configurationProfileId,
+        ConfigurationVersion: "1",
+      }),
+    ),
+  ).resolves.toBeDefined();
+
+  await client.send(
+    new DeleteApplicationCommand({ ApplicationId: applicationId }),
+  );
+});
+
+test("AppConfig UpdateDeploymentStrategy updates non-immutable fields", async () => {
+  const client = appconfig();
+  const ts = Date.now();
+
+  const strategy = await client.send(
+    new CreateDeploymentStrategyCommand({
+      Name: `e2e-strat-upd-${ts}`,
+      DeploymentDurationInMinutes: 5,
+      GrowthFactor: 25,
+      ReplicateTo: "NONE",
+    }),
+  );
+  const strategyId = strategy.Id ?? "";
+  expect(strategy.Name).toBe(`e2e-strat-upd-${ts}`);
+
+  const updated = await client.send(
+    new UpdateDeploymentStrategyCommand({
+      DeploymentStrategyId: strategyId,
+      Description: "updated description",
+      DeploymentDurationInMinutes: 10,
+      GrowthFactor: 50,
+    }),
+  );
+  expect(updated.Name).toBe(`e2e-strat-upd-${ts}`);
+  expect(updated.Description).toBe("updated description");
+  expect(updated.DeploymentDurationInMinutes).toBe(10);
+  expect(updated.GrowthFactor).toBe(50);
+  expect(updated.ReplicateTo).toBe("NONE");
+
+  await client.send(
+    new DeleteDeploymentStrategyCommand({ DeploymentStrategyId: strategyId }),
   );
 });
 

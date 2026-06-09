@@ -84,7 +84,7 @@ type StoredHostedConfigurationVersion = {
   ConfigurationProfileId: string;
   VersionNumber: number;
   Description: string | undefined;
-  Content: string;
+  Content: string | Uint8Array;
   ContentType: string;
   VersionLabel: string | undefined;
   KmsKeyArn: string | undefined;
@@ -151,6 +151,31 @@ const requireNumber = (
 };
 
 const newId = (): string => crypto.randomUUID().replaceAll("-", "").slice(0, 7);
+
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: number,
+  nextToken: unknown,
+): { page: T[]; nextToken: string | undefined } => {
+  const offset = decodePageToken(nextToken);
+  const page = items.slice(offset, offset + maxResults);
+  const nextOffset = offset + maxResults;
+  return {
+    page,
+    nextToken:
+      nextOffset < items.length ? encodePageToken(nextOffset) : undefined,
+  };
+};
 
 const applicationKey = (id: string): string => `${applicationPrefix}${id}`;
 
@@ -416,6 +441,69 @@ const requireHostedConfigVersion = (
   return stored;
 };
 
+const findApplicationByIdOrName = (
+  ctx: ServiceContext,
+  idOrName: string,
+): StoredApplication => {
+  const byId = ctx.store.get<StoredApplication>(applicationKey(idOrName));
+  if (byId !== undefined) return byId;
+  const byName = ctx.store
+    .list<StoredApplication>()
+    .filter((e) => e.key.startsWith(applicationPrefix))
+    .map((e) => e.value)
+    .find((a) => a.Name === idOrName);
+  if (byName !== undefined) return byName;
+  throw awsError(
+    "ResourceNotFoundException",
+    `Application not found: ${idOrName}.`,
+    404,
+  );
+};
+
+const findEnvironmentByIdOrName = (
+  ctx: ServiceContext,
+  applicationId: string,
+  idOrName: string,
+): StoredEnvironment => {
+  const byId = ctx.store.get<StoredEnvironment>(
+    environmentKey(applicationId, idOrName),
+  );
+  if (byId !== undefined) return byId;
+  const byName = ctx.store
+    .list<StoredEnvironment>()
+    .filter((e) => e.key.startsWith(`${environmentPrefix}${applicationId}/`))
+    .map((e) => e.value)
+    .find((e) => e.Name === idOrName);
+  if (byName !== undefined) return byName;
+  throw awsError(
+    "ResourceNotFoundException",
+    `Environment not found: ${idOrName}.`,
+    404,
+  );
+};
+
+const findConfigProfileByIdOrName = (
+  ctx: ServiceContext,
+  applicationId: string,
+  idOrName: string,
+): StoredConfigurationProfile => {
+  const byId = ctx.store.get<StoredConfigurationProfile>(
+    configProfileKey(applicationId, idOrName),
+  );
+  if (byId !== undefined) return byId;
+  const byName = ctx.store
+    .list<StoredConfigurationProfile>()
+    .filter((e) => e.key.startsWith(`${configProfilePrefix}${applicationId}/`))
+    .map((e) => e.value)
+    .find((p) => p.Name === idOrName);
+  if (byName !== undefined) return byName;
+  throw awsError(
+    "ResourceNotFoundException",
+    `Configuration Profile not found: ${idOrName}.`,
+    404,
+  );
+};
+
 const requireDeployment = (
   ctx: ServiceContext,
   applicationId: string,
@@ -459,7 +547,8 @@ const ListApplications: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(applicationPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
-  return { Items: applications.slice(0, max).map(applicationView) };
+  const { page, nextToken } = paginate(applications, max, input["NextToken"]);
+  return { Items: page.map(applicationView), NextToken: nextToken };
 };
 
 const UpdateApplication: OperationHandler = (input, ctx) => {
@@ -516,7 +605,8 @@ const ListEnvironments: OperationHandler = (input, ctx) => {
     )
     .map((entry) => entry.value)
     .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
-  return { Items: environments.slice(0, max).map(environmentView) };
+  const { page, nextToken } = paginate(environments, max, input["NextToken"]);
+  return { Items: page.map(environmentView), NextToken: nextToken };
 };
 
 const UpdateEnvironment: OperationHandler = (input, ctx) => {
@@ -585,7 +675,8 @@ const ListConfigurationProfiles: OperationHandler = (input, ctx) => {
     )
     .map((entry) => entry.value)
     .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
-  return { Items: profiles.slice(0, max).map(configProfileView) };
+  const { page, nextToken } = paginate(profiles, max, input["NextToken"]);
+  return { Items: page.map(configProfileView), NextToken: nextToken };
 };
 
 const UpdateConfigurationProfile: OperationHandler = (input, ctx) => {
@@ -653,7 +744,8 @@ const ListDeploymentStrategies: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(deploymentStrategyPrefix))
     .map((entry) => entry.value)
     .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
-  return { Items: strategies.slice(0, max).map(deploymentStrategyView) };
+  const { page, nextToken } = paginate(strategies, max, input["NextToken"]);
+  return { Items: page.map(deploymentStrategyView), NextToken: nextToken };
 };
 
 const UpdateDeploymentStrategy: OperationHandler = (input, ctx) => {
@@ -661,7 +753,7 @@ const UpdateDeploymentStrategy: OperationHandler = (input, ctx) => {
   const existing = requireDeploymentStrategy(ctx, id);
   const strategy: StoredDeploymentStrategy = {
     Id: existing.Id,
-    Name: existing.Name,
+    Name: stringOrUndefined(input["Name"]) ?? existing.Name,
     Description:
       stringOrUndefined(input["Description"]) ?? existing.Description,
     DeploymentDurationInMinutes:
@@ -809,7 +901,13 @@ const CreateHostedConfigurationVersion: OperationHandler = (input, ctx) => {
       ),
     );
   const nextVersion = existingVersions.length + 1;
-  const content = typeof input["Content"] === "string" ? input["Content"] : "";
+  const rawContent = input["Content"];
+  const content: string | Uint8Array =
+    typeof rawContent === "string"
+      ? rawContent
+      : rawContent instanceof Uint8Array
+        ? rawContent
+        : "";
   const hcv: StoredHostedConfigurationVersion = {
     ApplicationId: applicationId,
     ConfigurationProfileId: profileId,
@@ -892,6 +990,13 @@ const StartDeployment: OperationHandler = (input, ctx) => {
     );
   const nextNumber = existingDeployments.length + 1;
   const now = new Date().toISOString();
+  const configVersionNumber = Number.parseInt(configVersion, 10);
+  const hcv =
+    Number.isFinite(configVersionNumber) && configVersionNumber > 0
+      ? ctx.store.get<StoredHostedConfigurationVersion>(
+          hostedConfigVersionKey(applicationId, profileId, configVersionNumber),
+        )
+      : undefined;
   const deployment: StoredDeployment = {
     ApplicationId: applicationId,
     EnvironmentId: environmentId,
@@ -914,7 +1019,7 @@ const StartDeployment: OperationHandler = (input, ctx) => {
     AppliedExtensions: [],
     KmsKeyArn: undefined,
     KmsKeyIdentifier: stringOrUndefined(input["KmsKeyIdentifier"]),
-    VersionLabel: undefined,
+    VersionLabel: hcv?.VersionLabel,
   };
   ctx.store.set(
     deploymentKey(applicationId, environmentId, nextNumber),
@@ -959,6 +1064,23 @@ const StopDeployment: OperationHandler = (input, ctx) => {
     environmentId,
     deploymentNumber,
   );
+  const allowRevert = input["AllowRevert"] === true;
+  if (existing.State === "ROLLED_BACK" || existing.State === "REVERTED") {
+    throw awsError(
+      "BadRequestException",
+      `Deployment is already in a terminal state: ${existing.State}.`,
+      400,
+    );
+  }
+  if (!allowRevert && existing.State === "COMPLETE") {
+    throw awsError(
+      "BadRequestException",
+      "Cannot stop a completed deployment without Allow-Revert header.",
+      400,
+    );
+  }
+  const newState =
+    allowRevert && existing.State === "COMPLETE" ? "REVERTED" : "ROLLED_BACK";
   const deployment: StoredDeployment = {
     ApplicationId: existing.ApplicationId,
     EnvironmentId: existing.EnvironmentId,
@@ -973,7 +1095,7 @@ const StopDeployment: OperationHandler = (input, ctx) => {
     GrowthType: existing.GrowthType,
     GrowthFactor: existing.GrowthFactor,
     FinalBakeTimeInMinutes: existing.FinalBakeTimeInMinutes,
-    State: "ROLLED_BACK",
+    State: newState,
     EventLog: existing.EventLog,
     PercentageComplete: existing.PercentageComplete,
     StartedAt: existing.StartedAt,
@@ -1038,13 +1160,119 @@ const UntagResource: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const GetConfiguration: OperationHandler = (_input, _ctx) => ({
-  Content: "",
-  ConfigurationVersion: "1",
-  ContentType: "application/json",
-});
+const GetConfiguration: OperationHandler = (input, ctx) => {
+  const appIdOrName = requireString(input, "Application");
+  const envIdOrName = requireString(input, "Environment");
+  const configIdOrName = requireString(input, "Configuration");
+  const clientConfigVersion = stringOrUndefined(
+    input["ClientConfigurationVersion"],
+  );
+  const application = findApplicationByIdOrName(ctx, appIdOrName);
+  const environment = findEnvironmentByIdOrName(
+    ctx,
+    application.Id,
+    envIdOrName,
+  );
+  const profile = findConfigProfileByIdOrName(
+    ctx,
+    application.Id,
+    configIdOrName,
+  );
+  const deployments = ctx.store
+    .list<StoredDeployment>()
+    .filter(
+      (e) =>
+        e.key.startsWith(
+          `${deploymentPrefix}${application.Id}/${environment.Id}/`,
+        ) &&
+        e.value.State === "COMPLETE" &&
+        e.value.ConfigurationProfileId === profile.Id,
+    )
+    .map((e) => e.value)
+    .sort((a, b) => b.DeploymentNumber - a.DeploymentNumber);
+  if (deployments.length === 0) {
+    return {
+      $status: 204,
+      ConfigurationVersion: "0",
+      ContentType: "application/octet-stream",
+    };
+  }
+  const deployment = deployments[0];
+  const configVersion = deployment.ConfigurationVersion;
+  if (clientConfigVersion === configVersion) {
+    return {
+      $status: 204,
+      ConfigurationVersion: configVersion,
+      ContentType: "application/octet-stream",
+    };
+  }
+  const configVersionNumber = Number.parseInt(configVersion, 10);
+  const hcv =
+    Number.isFinite(configVersionNumber) && configVersionNumber > 0
+      ? ctx.store.get<StoredHostedConfigurationVersion>(
+          hostedConfigVersionKey(
+            application.Id,
+            profile.Id,
+            configVersionNumber,
+          ),
+        )
+      : undefined;
+  if (hcv === undefined) {
+    return {
+      $status: 204,
+      ConfigurationVersion: configVersion,
+      ContentType: "application/octet-stream",
+    };
+  }
+  return {
+    Content: hcv.Content,
+    ConfigurationVersion: configVersion,
+    ContentType: hcv.ContentType,
+  };
+};
 
-const ValidateConfiguration: OperationHandler = (_input, _ctx) => ({});
+const ValidateConfiguration: OperationHandler = (input, ctx) => {
+  const applicationId = requireString(input, "ApplicationId");
+  const profileId = requireString(input, "ConfigurationProfileId");
+  const configVersion = requireString(input, "ConfigurationVersion");
+  const profile = requireConfigProfile(ctx, applicationId, profileId);
+  const versionNumber = Number.parseInt(configVersion, 10);
+  const hcv =
+    Number.isFinite(versionNumber) && versionNumber > 0
+      ? ctx.store.get<StoredHostedConfigurationVersion>(
+          hostedConfigVersionKey(applicationId, profileId, versionNumber),
+        )
+      : undefined;
+  if (hcv === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Hosted configuration version ${configVersion} not found.`,
+      404,
+    );
+  }
+  const validators = profile.Validators as Array<{
+    Type?: string;
+    Content?: string;
+  }>;
+  for (const validator of validators) {
+    if (validator.Type === "JSON_SCHEMA") {
+      const contentStr =
+        hcv.Content instanceof Uint8Array
+          ? new TextDecoder().decode(hcv.Content)
+          : hcv.Content;
+      try {
+        JSON.parse(contentStr);
+      } catch {
+        throw awsError(
+          "BadRequestException",
+          "Configuration content is not valid JSON.",
+          400,
+        );
+      }
+    }
+  }
+  return { $status: 204 };
+};
 
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");

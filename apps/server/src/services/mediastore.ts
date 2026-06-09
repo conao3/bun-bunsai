@@ -23,6 +23,29 @@ const policyKey = (type: string, name: string): string =>
   `policy/${type}/${name}`;
 const tagsKey = (arn: string): string => `tags/${arn}`;
 
+const encodeCursor = (offset: number): string => btoa(String(offset));
+
+const decodeCursor = (token: string): number => {
+  const n = parseInt(atob(token), 10);
+  return isNaN(n) ? 0 : n;
+};
+
+const paginate = <T>(
+  items: T[],
+  maxResults: unknown,
+  nextToken: unknown,
+): { items: T[]; NextToken: string | undefined } => {
+  const offset = typeof nextToken === "string" ? decodeCursor(nextToken) : 0;
+  const max =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : items.length;
+  const page = items.slice(offset, offset + max);
+  const token =
+    offset + max < items.length ? encodeCursor(offset + max) : undefined;
+  return { items: page, NextToken: token };
+};
+
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
   if (typeof value !== "string" || value === "") {
@@ -40,15 +63,27 @@ const containerArn = (ctx: ServiceContext, name: string): string =>
 const containerEndpoint = (name: string): string =>
   `https://${name}.data.mediastore.amazonaws.com`;
 
-const requireContainer = (
-  ctx: ServiceContext,
-  name: string,
-): StoredContainer => {
+const getContainer = (ctx: ServiceContext, name: string): StoredContainer => {
   const container = ctx.store.get<StoredContainer>(containerKey(name));
   if (container === undefined) {
     throw awsError(
       "ContainerNotFoundException",
       `Container not found: ${name}`,
+      400,
+    );
+  }
+  return container;
+};
+
+const requireContainer = (
+  ctx: ServiceContext,
+  name: string,
+): StoredContainer => {
+  const container = getContainer(ctx, name);
+  if (container.Status === "DELETING") {
+    throw awsError(
+      "ContainerInUseException",
+      `Container is being deleted: ${name}`,
       400,
     );
   }
@@ -73,7 +108,7 @@ const CreateContainer: OperationHandler = (input, ctx) => {
     AccessLoggingEnabled: false,
   };
   ctx.store.set(containerKey(name), container);
-  return { Container: container };
+  return { Container: { ...container, Status: "CREATING", Endpoint: "" } };
 };
 
 const DescribeContainer: OperationHandler = (input, ctx) => {
@@ -81,22 +116,35 @@ const DescribeContainer: OperationHandler = (input, ctx) => {
   if (name === undefined) {
     throw awsError("ValidationException", "ContainerName is required.", 400);
   }
-  const container = requireContainer(ctx, name);
+  const container = getContainer(ctx, name);
   return { Container: container };
 };
 
-const ListContainers: OperationHandler = (_input, ctx) => {
-  const containers = ctx.store
+const ListContainers: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredContainer>()
-    .filter((entry) => entry.key.startsWith("container/"))
-    .map((entry) => entry.value);
-  return { Containers: containers };
+    .filter(
+      (entry) =>
+        entry.key.startsWith("container/") && entry.value.Status !== "DELETING",
+    )
+    .map((entry) => entry.value)
+    .sort((a, b) => a.Name.localeCompare(b.Name));
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Containers: items, NextToken };
 };
 
 const DeleteContainer: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ContainerName");
-  requireContainer(ctx, name);
-  ctx.store.delete(containerKey(name));
+  const container = getContainer(ctx, name);
+  if (container.Status === "DELETING") {
+    ctx.store.delete(containerKey(name));
+  } else {
+    ctx.store.set(containerKey(name), { ...container, Status: "DELETING" });
+  }
   return {};
 };
 

@@ -772,3 +772,171 @@ test("LicenseManager misc list operations", async () => {
   const inventory = await client.send(new ListResourceInventoryCommand({}));
   expect(Array.isArray(inventory.ResourceInventoryList)).toBe(true);
 });
+
+test("LicenseManager ListLicenses pagination and Status filter", async () => {
+  const client = licensemanager();
+
+  const lic1 = await client.send(
+    new CreateLicenseCommand({
+      LicenseName: "pagination-license-1",
+      ProductName: "PaginationProduct",
+      ProductSKU: "PAGI-SKU-001",
+      Issuer: { Name: "PaginationIssuer" },
+      HomeRegion: region,
+      Validity: {
+        Begin: "2024-01-01T00:00:00Z",
+        End: "2025-12-31T23:59:59Z",
+      },
+      Entitlements: [{ Name: "vCPU", Unit: "Count", MaxCount: 2 }],
+      Beneficiary: "arn:aws:iam::111111111111:root",
+      ConsumptionConfiguration: { RenewType: "None" },
+      ClientToken: `tok-${crypto.randomUUID()}`,
+    }),
+  );
+  const lic2 = await client.send(
+    new CreateLicenseCommand({
+      LicenseName: "pagination-license-2",
+      ProductName: "PaginationProduct",
+      ProductSKU: "PAGI-SKU-002",
+      Issuer: { Name: "PaginationIssuer" },
+      HomeRegion: region,
+      Validity: {
+        Begin: "2024-01-01T00:00:00Z",
+        End: "2025-12-31T23:59:59Z",
+      },
+      Entitlements: [{ Name: "vCPU", Unit: "Count", MaxCount: 4 }],
+      Beneficiary: "arn:aws:iam::222222222222:root",
+      ConsumptionConfiguration: { RenewType: "None" },
+      ClientToken: `tok-${crypto.randomUUID()}`,
+    }),
+  );
+
+  const page1 = await client.send(new ListLicensesCommand({ MaxResults: 1 }));
+  expect(Array.isArray(page1.Licenses)).toBe(true);
+  expect((page1.Licenses ?? []).length).toBe(1);
+  expect(typeof page1.NextToken).toBe("string");
+
+  const page2 = await client.send(
+    new ListLicensesCommand({ NextToken: page1.NextToken }),
+  );
+  expect(Array.isArray(page2.Licenses)).toBe(true);
+  expect((page2.Licenses ?? []).length).toBeGreaterThanOrEqual(1);
+
+  const filtered = await client.send(
+    new ListLicensesCommand({
+      Filters: [{ Name: "Status", Values: ["AVAILABLE"] }],
+    }),
+  );
+  expect(
+    (filtered.Licenses ?? []).some((l) => l.LicenseArn === lic1.LicenseArn),
+  ).toBe(true);
+  expect(
+    (filtered.Licenses ?? []).some((l) => l.LicenseArn === lic2.LicenseArn),
+  ).toBe(true);
+
+  const filteredBeneficiary = await client.send(
+    new ListLicensesCommand({
+      Filters: [
+        {
+          Name: "Beneficiary",
+          Values: ["arn:aws:iam::111111111111:root"],
+        },
+      ],
+    }),
+  );
+  expect(
+    (filteredBeneficiary.Licenses ?? []).some(
+      (l) => l.LicenseArn === lic1.LicenseArn,
+    ),
+  ).toBe(true);
+  expect(
+    (filteredBeneficiary.Licenses ?? []).some(
+      (l) => l.LicenseArn === lic2.LicenseArn,
+    ),
+  ).toBe(false);
+
+  await client.send(
+    new DeleteLicenseCommand({
+      LicenseArn: lic1.LicenseArn!,
+      SourceVersion: "1",
+    }),
+  );
+  await client.send(
+    new DeleteLicenseCommand({
+      LicenseArn: lic2.LicenseArn!,
+      SourceVersion: "1",
+    }),
+  );
+});
+
+test("LicenseManager ListLicenseConfigurations filter", async () => {
+  const client = licensemanager();
+
+  const vcpuConfig = await client.send(
+    new CreateLicenseConfigurationCommand({
+      Name: "filter-test-vcpu-config",
+      LicenseCountingType: "vCPU",
+      LicenseCount: 10,
+      LicenseCountHardLimit: true,
+    }),
+  );
+  const instanceConfig = await client.send(
+    new CreateLicenseConfigurationCommand({
+      Name: "filter-test-instance-config",
+      LicenseCountingType: "Instance",
+      LicenseCount: 5,
+      LicenseCountHardLimit: false,
+    }),
+  );
+
+  const filteredType = await client.send(
+    new ListLicenseConfigurationsCommand({
+      Filters: [{ Name: "licenseCountingType", Values: ["vCPU"] }],
+    }),
+  );
+  expect(
+    (filteredType.LicenseConfigurations ?? []).some(
+      (c) => c.LicenseConfigurationArn === vcpuConfig.LicenseConfigurationArn,
+    ),
+  ).toBe(true);
+  expect(
+    (filteredType.LicenseConfigurations ?? []).some(
+      (c) =>
+        c.LicenseConfigurationArn === instanceConfig.LicenseConfigurationArn,
+    ),
+  ).toBe(false);
+
+  const filteredEnforce = await client.send(
+    new ListLicenseConfigurationsCommand({
+      Filters: [{ Name: "enforceLicenseCount", Values: ["true"] }],
+    }),
+  );
+  expect(
+    (filteredEnforce.LicenseConfigurations ?? []).some(
+      (c) => c.LicenseConfigurationArn === vcpuConfig.LicenseConfigurationArn,
+    ),
+  ).toBe(true);
+  expect(
+    (filteredEnforce.LicenseConfigurations ?? []).some(
+      (c) =>
+        c.LicenseConfigurationArn === instanceConfig.LicenseConfigurationArn,
+    ),
+  ).toBe(false);
+
+  const page1 = await client.send(
+    new ListLicenseConfigurationsCommand({ MaxResults: 1 }),
+  );
+  expect((page1.LicenseConfigurations ?? []).length).toBe(1);
+  expect(typeof page1.NextToken).toBe("string");
+
+  await client.send(
+    new DeleteLicenseConfigurationCommand({
+      LicenseConfigurationArn: vcpuConfig.LicenseConfigurationArn,
+    }),
+  );
+  await client.send(
+    new DeleteLicenseConfigurationCommand({
+      LicenseConfigurationArn: instanceConfig.LicenseConfigurationArn,
+    }),
+  );
+});

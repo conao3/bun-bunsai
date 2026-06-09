@@ -177,6 +177,42 @@ const stringList = (value: unknown): string[] =>
     ? value.filter((entry): entry is string => typeof entry === "string")
     : [];
 
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+  defaultMax = 100,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : defaultMax;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
+
+const applyFilters = (
+  filters: unknown,
+  getFieldValue: (name: string) => string | undefined,
+): boolean => {
+  if (!Array.isArray(filters) || filters.length === 0) return true;
+  return filters.every((f) => {
+    if (typeof f !== "object" || f === null) return true;
+    const name = (f as Record<string, unknown>)["Name"];
+    const values = (f as Record<string, unknown>)["Values"];
+    if (typeof name !== "string") return true;
+    if (!Array.isArray(values) || values.length === 0) return true;
+    const fieldValue = getFieldValue(name);
+    return values.some((v) => typeof v === "string" && v === fieldValue);
+  });
+};
+
 const configArn = (ctx: ServiceContext, id: string): string =>
   `arn:aws:license-manager:${ctx.region}:${ctx.account}:license-configuration:${id}`;
 
@@ -384,15 +420,37 @@ const GetLicenseConfiguration: OperationHandler = (input, ctx) => {
 
 const ListLicenseConfigurations: OperationHandler = (input, ctx) => {
   const arns = stringList(input["LicenseConfigurationArns"]);
-  const configs = ctx.store
+  const filters = input["Filters"];
+  const all = ctx.store
     .list<StoredLicenseConfiguration>()
     .filter((entry) => entry.key.startsWith("licenseconfiguration/"))
     .map((entry) => entry.value)
     .filter(
       (config) =>
         arns.length === 0 || arns.includes(config.LicenseConfigurationArn),
+    )
+    .filter((config) =>
+      applyFilters(filters, (name) => {
+        if (name === "licenseCountingType") return config.LicenseCountingType;
+        if (name === "enforceLicenseCount")
+          return String(config.LicenseCountHardLimit);
+        if (name === "usagelimitExceeded")
+          return String(
+            config.LicenseCount !== undefined &&
+              config.ConsumedLicenses >= config.LicenseCount,
+          );
+        return undefined;
+      }),
     );
-  return { LicenseConfigurations: configs };
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    LicenseConfigurations: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const DeleteLicenseConfiguration: OperationHandler = (input, ctx) => {
@@ -576,7 +634,8 @@ const CreateLicenseVersion: OperationHandler = (input, ctx) => {
 
 const ListLicenses: OperationHandler = (input, ctx) => {
   const arns = stringList(input["LicenseArns"]);
-  const licenses = ctx.store
+  const filters = input["Filters"];
+  const all = ctx.store
     .list<StoredLicense>()
     .filter((entry) => entry.key.startsWith("license/"))
     .map((entry) => entry.value)
@@ -585,14 +644,42 @@ const ListLicenses: OperationHandler = (input, ctx) => {
         arns.length === 0 || arns.includes(lic.versions[0]?.LicenseArn ?? ""),
     )
     .map((lic) => lic.versions.find((v) => v.Version === lic.currentVersion))
-    .filter((v): v is LicenseVersionRecord => v !== undefined);
-  return { Licenses: licenses };
+    .filter((v): v is LicenseVersionRecord => v !== undefined)
+    .filter((v) =>
+      applyFilters(filters, (name) => {
+        if (name === "Beneficiary") return v.Beneficiary;
+        if (name === "ProductSKU") return v.ProductSKU;
+        if (name === "Fingerprint")
+          return (v.Issuer as Record<string, unknown>)?.["Fingerprint"] as
+            | string
+            | undefined;
+        if (name === "Status") return v.Status;
+        return undefined;
+      }),
+    );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Licenses: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const ListLicenseVersions: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "LicenseArn");
   const stored = requireLicense(ctx, arn);
-  return { Licenses: stored.versions };
+  const { items, nextToken } = paginateList(
+    stored.versions,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Licenses: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const DeleteLicense: OperationHandler = (input, ctx) => {
@@ -715,12 +802,41 @@ const GetGrant: OperationHandler = (input, ctx) => {
 
 const ListDistributedGrants: OperationHandler = (input, ctx) => {
   const arns = stringList(input["GrantArns"]);
-  const grants = ctx.store
+  const filters = input["Filters"];
+  const all = ctx.store
     .list<StoredGrant>()
     .filter((entry) => entry.key.startsWith("grant/"))
     .map((entry) => entry.value)
-    .filter((g) => arns.length === 0 || arns.includes(g.GrantArn));
-  return { Grants: grants.map(grantToShape) };
+    .filter((g) => arns.length === 0 || arns.includes(g.GrantArn))
+    .filter((g) =>
+      applyFilters(filters, (name) => {
+        if (name === "LicenseArn") return g.LicenseArn;
+        if (name === "GrantStatus") return g.GrantStatus;
+        if (name === "GranteePrincipalARN") return g.GranteePrincipalArn;
+        if (name === "ProductSKU" || name === "LicenseIssuerName") {
+          const lic = ctx.store.get<StoredLicense>(
+            licenseKey(arnId(g.LicenseArn)),
+          );
+          const current = lic?.versions.find(
+            (v) => v.Version === lic?.currentVersion,
+          );
+          if (name === "ProductSKU") return current?.ProductSKU;
+          return (current?.Issuer as Record<string, unknown>)?.["Name"] as
+            | string
+            | undefined;
+        }
+        return undefined;
+      }),
+    );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Grants: items.map(grantToShape),
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const ListReceivedGrants: OperationHandler = (input, ctx) => {
@@ -986,31 +1102,49 @@ const UpdateLicenseManagerReportGenerator: OperationHandler = (input, ctx) => {
 };
 
 const ListLicenseManagerReportGenerators: OperationHandler = (input, ctx) => {
-  const generators = ctx.store
+  const filters = input["Filters"];
+  const all = ctx.store
     .list<StoredReportGenerator>()
     .filter((entry) => entry.key.startsWith("reportgenerator/"))
-    .map((entry) => {
-      const rg = entry.value;
-      return {
-        ReportGeneratorName: rg.ReportGeneratorName,
-        ReportType: rg.ReportType,
-        ReportContext: rg.ReportContext,
-        ReportFrequency: rg.ReportFrequency,
-        LicenseManagerReportGeneratorArn: rg.LicenseManagerReportGeneratorArn,
-        LastRunStatus: rg.LastRunStatus,
-        LastRunFailureReason: rg.LastRunFailureReason,
-        LastReportGenerationTime: rg.LastReportGenerationTime,
-        ReportCreatorAccount: rg.ReportCreatorAccount,
-        Description: rg.Description,
-        S3Location: rg.S3Location,
-        CreateTime: rg.CreateTime,
-        Tags:
-          ctx.store.get<unknown[]>(
-            tagsKey(rg.LicenseManagerReportGeneratorArn),
-          ) ?? [],
-      };
-    });
-  return { ReportGenerators: generators };
+    .map((entry) => entry.value)
+    .filter((rg) =>
+      applyFilters(filters, (name) => {
+        if (name === "LicenseConfigurationArn") {
+          const arns = (rg.ReportContext as Record<string, unknown>)?.[
+            "licenseConfigurationArns"
+          ];
+          return Array.isArray(arns) ? arns[0] : undefined;
+        }
+        return undefined;
+      }),
+    )
+    .map((rg) => ({
+      ReportGeneratorName: rg.ReportGeneratorName,
+      ReportType: rg.ReportType,
+      ReportContext: rg.ReportContext,
+      ReportFrequency: rg.ReportFrequency,
+      LicenseManagerReportGeneratorArn: rg.LicenseManagerReportGeneratorArn,
+      LastRunStatus: rg.LastRunStatus,
+      LastRunFailureReason: rg.LastRunFailureReason,
+      LastReportGenerationTime: rg.LastReportGenerationTime,
+      ReportCreatorAccount: rg.ReportCreatorAccount,
+      Description: rg.Description,
+      S3Location: rg.S3Location,
+      CreateTime: rg.CreateTime,
+      Tags:
+        ctx.store.get<unknown[]>(
+          tagsKey(rg.LicenseManagerReportGeneratorArn),
+        ) ?? [],
+    }));
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    ReportGenerators: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const CreateLicenseAssetGroup: OperationHandler = (input, ctx) => {
@@ -1084,11 +1218,27 @@ const DeleteLicenseAssetGroup: OperationHandler = (input, ctx) => {
 };
 
 const ListLicenseAssetGroups: OperationHandler = (input, ctx) => {
-  const groups = ctx.store
+  const filters = input["Filters"];
+  const all = ctx.store
     .list<StoredLicenseAssetGroup>()
     .filter((entry) => entry.key.startsWith("assetgroup/"))
-    .map((entry) => entry.value);
-  return { LicenseAssetGroups: groups };
+    .map((entry) => entry.value)
+    .filter((ag) =>
+      applyFilters(filters, (name) => {
+        if (name === "LicenseAssetRulesetArn")
+          return ag.AssociatedLicenseAssetRulesetARNs[0];
+        return undefined;
+      }),
+    );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    LicenseAssetGroups: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const ListAssetsForLicenseAssetGroup: OperationHandler = (input, ctx) => {
@@ -1144,11 +1294,26 @@ const DeleteLicenseAssetRuleset: OperationHandler = (input, ctx) => {
 };
 
 const ListLicenseAssetRulesets: OperationHandler = (input, ctx) => {
-  const rulesets = ctx.store
+  const filters = input["Filters"];
+  const all = ctx.store
     .list<StoredLicenseAssetRuleset>()
     .filter((entry) => entry.key.startsWith("assetruleset/"))
-    .map((entry) => entry.value);
-  return { LicenseAssetRulesets: rulesets };
+    .map((entry) => entry.value)
+    .filter((ar) =>
+      applyFilters(filters, (name) => {
+        if (name === "Name") return ar.Name;
+        return undefined;
+      }),
+    );
+  const { items, nextToken } = paginateList(
+    all,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    LicenseAssetRulesets: items,
+    ...(nextToken !== undefined && { NextToken: nextToken }),
+  };
 };
 
 const CreateLicenseConversionTaskForResource: OperationHandler = (

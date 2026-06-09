@@ -56,6 +56,13 @@ const memorydb = () =>
     requestHandler,
   });
 
+test("MemoryDB seed: create open-access ACL", async () => {
+  const client = memorydb();
+  await client.send(
+    new CreateACLCommand({ ACLName: "open-access", UserNames: [] }),
+  );
+});
+
 test("MemoryDB cluster and subnet group lifecycle", async () => {
   const client = memorydb();
   const name = "bunsai-e2e-cluster";
@@ -634,4 +641,119 @@ test("MemoryDB creating→available lifecycle", async () => {
   expect(described.Clusters?.[0]?.Status).toBe("available");
 
   await client.send(new DeleteClusterCommand({ ClusterName: clusterName }));
+});
+
+test("MemoryDB fidelity: tag cleanup and ref validation", async () => {
+  const client = memorydb();
+
+  const tagClusterName = "fid-tag-cluster";
+  const clusterArn = (
+    await client.send(
+      new CreateClusterCommand({
+        ClusterName: tagClusterName,
+        NodeType: "db.r6g.large",
+        ACLName: "open-access",
+        Tags: [{ Key: "env", Value: "prod" }],
+      }),
+    )
+  ).Cluster?.ARN!;
+
+  const listed = await client.send(
+    new ListTagsCommand({ ResourceArn: clusterArn }),
+  );
+  expect((listed.TagList ?? []).some((t) => t.Key === "env")).toBe(true);
+
+  await client.send(new DeleteClusterCommand({ ClusterName: tagClusterName }));
+
+  await client.send(
+    new CreateClusterCommand({
+      ClusterName: tagClusterName,
+      NodeType: "db.r6g.large",
+      ACLName: "open-access",
+    }),
+  );
+  const listedAfter = await client.send(
+    new ListTagsCommand({ ResourceArn: clusterArn }),
+  );
+  expect((listedAfter.TagList ?? []).length).toBe(0);
+  await client.send(new DeleteClusterCommand({ ClusterName: tagClusterName }));
+
+  await expect(
+    client.send(
+      new CreateClusterCommand({
+        ClusterName: "fid-bogus-acl",
+        NodeType: "db.r6g.large",
+        ACLName: "nonexistent-acl",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "ACLNotFoundFault" });
+
+  const fidAclName = "fid-in-use-acl";
+  const fidClusterName = "fid-in-use-cluster";
+  await client.send(
+    new CreateACLCommand({ ACLName: fidAclName, UserNames: [] }),
+  );
+  await client.send(
+    new CreateClusterCommand({
+      ClusterName: fidClusterName,
+      NodeType: "db.r6g.large",
+      ACLName: fidAclName,
+    }),
+  );
+
+  await expect(
+    client.send(new DeleteACLCommand({ ACLName: fidAclName })),
+  ).rejects.toMatchObject({ name: "InvalidACLStateFault" });
+
+  await client.send(new DeleteClusterCommand({ ClusterName: fidClusterName }));
+  await client.send(new DeleteACLCommand({ ACLName: fidAclName }));
+
+  await expect(
+    client.send(new DescribeClustersCommand({ NextToken: "not-a-number" })),
+  ).rejects.toMatchObject({ name: "InvalidNextTokenException" });
+
+  const fidSnapSource = "fid-snap-source";
+  const fidSnapCopy = "fid-snap-copy";
+  const fidSnapCluster = "fid-snap-cluster";
+  await client.send(
+    new CreateClusterCommand({
+      ClusterName: fidSnapCluster,
+      NodeType: "db.r6g.large",
+      ACLName: "open-access",
+    }),
+  );
+  const snapArn = (
+    await client.send(
+      new CreateSnapshotCommand({
+        ClusterName: fidSnapCluster,
+        SnapshotName: fidSnapSource,
+        Tags: [{ Key: "origin", Value: "source" }],
+      }),
+    )
+  ).Snapshot?.ARN!;
+  await client.send(
+    new TagResourceCommand({
+      ResourceArn: snapArn,
+      Tags: [{ Key: "team", Value: "platform" }],
+    }),
+  );
+
+  const copied = await client.send(
+    new CopySnapshotCommand({
+      SourceSnapshotName: fidSnapSource,
+      TargetSnapshotName: fidSnapCopy,
+    }),
+  );
+  const copyArn = copied.Snapshot?.ARN!;
+  const copyTags = await client.send(
+    new ListTagsCommand({ ResourceArn: copyArn }),
+  );
+  const copyTagMap = Object.fromEntries(
+    (copyTags.TagList ?? []).map((t) => [t.Key, t.Value]),
+  );
+  expect(copyTagMap["team"]).toBe("platform");
+
+  await client.send(new DeleteSnapshotCommand({ SnapshotName: fidSnapCopy }));
+  await client.send(new DeleteSnapshotCommand({ SnapshotName: fidSnapSource }));
+  await client.send(new DeleteClusterCommand({ ClusterName: fidSnapCluster }));
 });

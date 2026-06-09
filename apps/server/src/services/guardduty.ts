@@ -140,6 +140,13 @@ type StoredOrgConfig = {
   AutoEnableOrganizationMembers: string;
 };
 
+type StoredAdminRelationship = {
+  AccountId: string;
+  InvitationId: string;
+  RelationshipStatus: string;
+  InvitedAt: string;
+};
+
 const detectorKey = (id: string): string => `detector/${id}`;
 const filterKey = (detectorId: string, name: string): string =>
   `filter:${detectorId}:${name}`;
@@ -166,6 +173,8 @@ const malwareScanSettingsKey = (detectorId: string): string =>
   `malwarescansettings:${detectorId}`;
 const orgConfigKey = (detectorId: string): string => `orgconfig:${detectorId}`;
 const tagsKey = (arn: string): string => `tags:${arn}`;
+const adminRelationshipKey = (detectorId: string): string =>
+  `adminrelationship:${detectorId}`;
 
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
@@ -194,6 +203,88 @@ const asStringArray = (value: unknown): string[] =>
     : [];
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
+
+const encodePageToken = (offset: number): string =>
+  Buffer.from(String(offset), "utf8").toString("base64");
+
+const decodePageToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const decoded = Buffer.from(token, "base64").toString("utf8");
+  const parsed = Number.parseInt(decoded, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const getFindingFieldValue = (
+  finding: StoredFinding,
+  field: string,
+): unknown => {
+  switch (field) {
+    case "id":
+      return finding.FindingId;
+    case "severity":
+      return finding.Severity;
+    case "type":
+      return finding.Type;
+    case "region":
+      return finding.Region;
+    case "accountId":
+      return finding.AccountId;
+    case "service.archived":
+      return String(finding.Archived);
+    case "createdAt":
+      return finding.CreatedAt;
+    case "updatedAt":
+      return finding.UpdatedAt;
+    default:
+      return undefined;
+  }
+};
+
+const matchesFindingCriterion = (
+  fieldVal: unknown,
+  condition: Record<string, unknown>,
+): boolean => {
+  if ("Eq" in condition) {
+    const eq = asStringArray(condition["Eq"]);
+    if (eq.length > 0 && !eq.includes(String(fieldVal ?? ""))) return false;
+  }
+  if ("Neq" in condition) {
+    const neq = asStringArray(condition["Neq"]);
+    if (neq.length > 0 && neq.includes(String(fieldVal ?? ""))) return false;
+  }
+  if ("Lt" in condition && typeof condition["Lt"] === "number") {
+    if (typeof fieldVal !== "number" || fieldVal >= condition["Lt"])
+      return false;
+  }
+  if ("Lte" in condition && typeof condition["Lte"] === "number") {
+    if (typeof fieldVal !== "number" || fieldVal > condition["Lte"])
+      return false;
+  }
+  if ("Gt" in condition && typeof condition["Gt"] === "number") {
+    if (typeof fieldVal !== "number" || fieldVal <= condition["Gt"])
+      return false;
+  }
+  if ("Gte" in condition && typeof condition["Gte"] === "number") {
+    if (typeof fieldVal !== "number" || fieldVal < condition["Gte"])
+      return false;
+  }
+  return true;
+};
+
+const matchesFindingCriteria = (
+  finding: StoredFinding,
+  criterion: Record<string, unknown>,
+): boolean => {
+  for (const [field, cond] of Object.entries(criterion)) {
+    const condition = asRecord(cond);
+    if (condition === undefined) continue;
+    if (
+      !matchesFindingCriterion(getFindingFieldValue(finding, field), condition)
+    )
+      return false;
+  }
+  return true;
+};
 
 const requireString = (
   input: Record<string, unknown>,
@@ -255,13 +346,23 @@ const GetDetector: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListDetectors: OperationHandler = (_input, ctx) => {
-  const ids = ctx.store
+const ListDetectors: OperationHandler = (input, ctx) => {
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const all = ctx.store
     .list<StoredDetector>()
     .filter((entry) => entry.key.startsWith("detector/"))
     .map((entry) => entry.value.DetectorId)
     .sort((a, b) => a.localeCompare(b));
-  return { DetectorIds: ids };
+  const pageSize = maxResults ?? all.length;
+  const page = all.slice(offset, offset + pageSize);
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { DetectorIds: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { DetectorIds: page };
 };
 
 const UpdateDetector: OperationHandler = (input, ctx) => {
@@ -294,24 +395,56 @@ const DeleteDetector: OperationHandler = (input, ctx) => {
 const AcceptAdministratorInvitation: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  const administratorId = requireString(input, "AdministratorId");
+  const invitationId =
+    stringOrUndefined(input["InvitationId"]) ??
+    "00000000000000000000000000000000";
+  const rel: StoredAdminRelationship = {
+    AccountId: administratorId,
+    InvitationId: invitationId,
+    RelationshipStatus: "Enabled",
+    InvitedAt: new Date().toISOString(),
+  };
+  ctx.store.set(adminRelationshipKey(detectorId), rel);
   return {};
 };
 
 const AcceptInvitation: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  const masterId = requireString(input, "MasterId");
+  const invitationId =
+    stringOrUndefined(input["InvitationId"]) ??
+    "00000000000000000000000000000000";
+  const rel: StoredAdminRelationship = {
+    AccountId: masterId,
+    InvitationId: invitationId,
+    RelationshipStatus: "Enabled",
+    InvitedAt: new Date().toISOString(),
+  };
+  ctx.store.set(adminRelationshipKey(detectorId), rel);
   return {};
 };
 
 const GetAdministratorAccount: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  const rel = ctx.store.get<StoredAdminRelationship>(
+    adminRelationshipKey(detectorId),
+  );
+  if (rel === undefined) {
+    throw awsError(
+      "BadRequestException",
+      "The request is rejected because no administrator account is associated with the detector.",
+      400,
+    );
+  }
   return {
     Administrator: {
-      AccountId: ctx.account,
-      InvitationId: "00000000000000000000000000000000",
-      RelationshipStatus: "Enabled",
-      InvitedAt: new Date().toISOString(),
+      AccountId: rel.AccountId,
+      InvitationId: rel.InvitationId,
+      RelationshipStatus: rel.RelationshipStatus,
+      InvitedAt: rel.InvitedAt,
     },
   };
 };
@@ -319,12 +452,22 @@ const GetAdministratorAccount: OperationHandler = (input, ctx) => {
 const GetMasterAccount: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  const rel = ctx.store.get<StoredAdminRelationship>(
+    adminRelationshipKey(detectorId),
+  );
+  if (rel === undefined) {
+    throw awsError(
+      "BadRequestException",
+      "The request is rejected because no master account is associated with the detector.",
+      400,
+    );
+  }
   return {
     Master: {
-      AccountId: ctx.account,
-      InvitationId: "00000000000000000000000000000000",
-      RelationshipStatus: "Enabled",
-      InvitedAt: new Date().toISOString(),
+      AccountId: rel.AccountId,
+      InvitationId: rel.InvitationId,
+      RelationshipStatus: rel.RelationshipStatus,
+      InvitedAt: rel.InvitedAt,
     },
   };
 };
@@ -332,12 +475,14 @@ const GetMasterAccount: OperationHandler = (input, ctx) => {
 const DisassociateFromAdministratorAccount: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  ctx.store.delete(adminRelationshipKey(detectorId));
   return {};
 };
 
 const DisassociateFromMasterAccount: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  ctx.store.delete(adminRelationshipKey(detectorId));
   return {};
 };
 
@@ -389,33 +534,25 @@ const GetFindings: OperationHandler = (input, ctx) => {
   const findingIds = asStringArray(input["FindingIds"]);
   const findings = findingIds.map((fid) => {
     const stored = ctx.store.get<StoredFinding>(findingKey(detectorId, fid));
-    if (stored !== undefined) {
-      return {
-        AccountId: stored.AccountId,
-        Arn: stored.Arn,
-        CreatedAt: stored.CreatedAt,
-        Description: stored.Description,
-        Id: stored.FindingId,
-        Region: stored.Region,
-        Severity: stored.Severity,
-        Title: stored.Title,
-        Type: stored.Type,
-        UpdatedAt: stored.UpdatedAt,
-        Service: { Archived: stored.Archived, Count: 1 },
-      };
+    if (stored === undefined) {
+      throw awsError(
+        "BadRequestException",
+        `The request is rejected because the input FindingId is not found: ${fid}`,
+        400,
+      );
     }
     return {
-      AccountId: ctx.account,
-      Arn: `arn:aws:guardduty:${ctx.region}:${ctx.account}:detector/${detectorId}/finding/${fid}`,
-      CreatedAt: new Date().toISOString(),
-      Description: "Sample finding.",
-      Id: fid,
-      Region: ctx.region,
-      Severity: 5,
-      Title: "Sample finding",
-      Type: "Recon:EC2/PortProbeUnprotectedPort",
-      UpdatedAt: new Date().toISOString(),
-      Service: { Archived: false, Count: 1 },
+      AccountId: stored.AccountId,
+      Arn: stored.Arn,
+      CreatedAt: stored.CreatedAt,
+      Description: stored.Description,
+      Id: stored.FindingId,
+      Region: stored.Region,
+      Severity: stored.Severity,
+      Title: stored.Title,
+      Type: stored.Type,
+      UpdatedAt: stored.UpdatedAt,
+      Service: { Archived: stored.Archived, Count: 1 },
     };
   });
   return { Findings: findings };
@@ -424,22 +561,65 @@ const GetFindings: OperationHandler = (input, ctx) => {
 const GetFindingsStatistics: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
-  return {
-    FindingStatistics: {
-      CountBySeverity: { "5": 1 },
-    },
-  };
+  const prefix = `finding:${detectorId}:`;
+  const findings = ctx.store
+    .list<StoredFinding>()
+    .filter((entry) => entry.key.startsWith(prefix))
+    .map((entry) => entry.value);
+  const countBySeverity: Record<string, number> = {};
+  for (const f of findings) {
+    const key = String(f.Severity);
+    countBySeverity[key] = (countBySeverity[key] ?? 0) + 1;
+  }
+  return { FindingStatistics: { CountBySeverity: countBySeverity } };
 };
 
 const ListFindings: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
   const prefix = `finding:${detectorId}:`;
-  const findingIds = ctx.store
+  let findings = ctx.store
     .list<StoredFinding>()
     .filter((entry) => entry.key.startsWith(prefix))
-    .map((entry) => entry.value.FindingId);
-  return { FindingIds: findingIds, NextToken: undefined };
+    .map((entry) => entry.value);
+
+  const findingCriteria = asRecord(input["FindingCriteria"]);
+  if (findingCriteria !== undefined) {
+    const criterion = asRecord(findingCriteria["Criterion"]) ?? {};
+    findings = findings.filter((f) => matchesFindingCriteria(f, criterion));
+  }
+
+  const sortCriteria = asRecord(input["SortCriteria"]);
+  if (sortCriteria !== undefined) {
+    const attr = stringOrUndefined(sortCriteria["AttributeName"]);
+    const order = stringOrUndefined(sortCriteria["OrderBy"]) ?? "ASC";
+    if (attr !== undefined) {
+      findings = [...findings].sort((a, b) => {
+        const va = getFindingFieldValue(a, attr);
+        const vb = getFindingFieldValue(b, attr);
+        let cmp = 0;
+        if (typeof va === "number" && typeof vb === "number") {
+          cmp = va - vb;
+        } else {
+          cmp = String(va ?? "").localeCompare(String(vb ?? ""));
+        }
+        return order === "DESC" ? -cmp : cmp;
+      });
+    }
+  }
+
+  const ids = findings.map((f) => f.FindingId);
+  const pageSize = maxResults ?? ids.length;
+  const page = ids.slice(offset, offset + pageSize);
+  const nextOffset = offset + pageSize;
+  if (nextOffset < ids.length) {
+    return { FindingIds: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { FindingIds: page };
 };
 
 const UnarchiveFindings: OperationHandler = (input, ctx) => {
@@ -502,13 +682,23 @@ const GetFilter: OperationHandler = (input, ctx) => {
 const ListFilters: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
   const prefix = `filter:${detectorId}:`;
-  const names = ctx.store
+  const all = ctx.store
     .list<StoredFilter>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value.Name)
     .sort();
-  return { FilterNames: names, NextToken: undefined };
+  const pageSize = maxResults ?? all.length;
+  const page = all.slice(offset, offset + pageSize);
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { FilterNames: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { FilterNames: page };
 };
 
 const UpdateFilter: OperationHandler = (input, ctx) => {
@@ -587,12 +777,22 @@ const GetIPSet: OperationHandler = (input, ctx) => {
 const ListIPSets: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
   const prefix = `ipset:${detectorId}:`;
-  const ids = ctx.store
+  const all = ctx.store
     .list<StoredIPSet>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value.IpSetId);
-  return { IpSetIds: ids, NextToken: undefined };
+  const pageSize = maxResults ?? all.length;
+  const page = all.slice(offset, offset + pageSize);
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { IpSetIds: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { IpSetIds: page };
 };
 
 const UpdateIPSet: OperationHandler = (input, ctx) => {
@@ -677,12 +877,22 @@ const GetThreatEntitySet: OperationHandler = (input, ctx) => {
 const ListThreatEntitySets: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
   const prefix = `threatentityset:${detectorId}:`;
-  const ids = ctx.store
+  const all = ctx.store
     .list<StoredThreatEntitySet>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value.ThreatEntitySetId);
-  return { ThreatEntitySetIds: ids, NextToken: undefined };
+  const pageSize = maxResults ?? all.length;
+  const page = all.slice(offset, offset + pageSize);
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { ThreatEntitySetIds: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { ThreatEntitySetIds: page };
 };
 
 const UpdateThreatEntitySet: OperationHandler = (input, ctx) => {
@@ -775,12 +985,22 @@ const GetThreatIntelSet: OperationHandler = (input, ctx) => {
 const ListThreatIntelSets: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
   const prefix = `threatintelset:${detectorId}:`;
-  const ids = ctx.store
+  const all = ctx.store
     .list<StoredThreatIntelSet>()
     .filter((entry) => entry.key.startsWith(prefix))
     .map((entry) => entry.value.ThreatIntelSetId);
-  return { ThreatIntelSetIds: ids, NextToken: undefined };
+  const pageSize = maxResults ?? all.length;
+  const page = all.slice(offset, offset + pageSize);
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { ThreatIntelSetIds: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { ThreatIntelSetIds: page };
 };
 
 const UpdateThreatIntelSet: OperationHandler = (input, ctx) => {
@@ -1534,14 +1754,17 @@ const UpdateOrganizationConfiguration: OperationHandler = (input, ctx) => {
 };
 
 const GetOrganizationStatistics: OperationHandler = (_input, ctx) => {
+  const memberCount = ctx.store
+    .list<StoredMember>()
+    .filter((entry) => entry.key.startsWith("member:")).length;
   return {
     OrganizationDetails: {
       UpdatedAt: new Date().toISOString(),
       OrganizationStatistics: {
-        TotalAccountsCount: 1,
-        MemberAccountsCount: 0,
-        ActiveAccountsCount: 1,
-        EnabledAccountsCount: 1,
+        TotalAccountsCount: memberCount + 1,
+        MemberAccountsCount: memberCount,
+        ActiveAccountsCount: memberCount + 1,
+        EnabledAccountsCount: memberCount + 1,
         CountByFeature: [],
       },
     },
@@ -1551,10 +1774,23 @@ const GetOrganizationStatistics: OperationHandler = (_input, ctx) => {
 const GetCoverageStatistics: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
+  const prefix = `coverage:${detectorId}:`;
+  const entries = ctx.store
+    .list<{ CoverageStatus: string; ResourceType: string }>()
+    .filter((e) => e.key.startsWith(prefix))
+    .map((e) => e.value);
+  const countByCoverageStatus: Record<string, number> = {};
+  const countByResourceType: Record<string, number> = {};
+  for (const e of entries) {
+    countByCoverageStatus[e.CoverageStatus] =
+      (countByCoverageStatus[e.CoverageStatus] ?? 0) + 1;
+    countByResourceType[e.ResourceType] =
+      (countByResourceType[e.ResourceType] ?? 0) + 1;
+  }
   return {
     CoverageStatistics: {
-      CountByCoverageStatus: { HEALTHY: 1 },
-      CountByResourceType: { EC2: 1 },
+      CountByCoverageStatus: countByCoverageStatus,
+      CountByResourceType: countByResourceType,
     },
   };
 };
@@ -1562,7 +1798,22 @@ const GetCoverageStatistics: OperationHandler = (input, ctx) => {
 const ListCoverage: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "DetectorId");
   requireDetector(ctx, detectorId);
-  return { Resources: [], NextToken: undefined };
+  const rawMax = input["MaxResults"];
+  const maxResults =
+    typeof rawMax === "number" && rawMax > 0 ? rawMax : undefined;
+  const offset = decodePageToken(input["NextToken"]);
+  const prefix = `coverage:${detectorId}:`;
+  const all = ctx.store
+    .list<Record<string, unknown>>()
+    .filter((e) => e.key.startsWith(prefix))
+    .map((e) => e.value);
+  const pageSize = maxResults ?? all.length;
+  const page = all.slice(offset, offset + pageSize);
+  const nextOffset = offset + pageSize;
+  if (nextOffset < all.length) {
+    return { Resources: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { Resources: page };
 };
 
 const GetRemainingFreeTrialDays: OperationHandler = (input, ctx) => {

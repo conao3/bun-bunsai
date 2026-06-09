@@ -538,3 +538,218 @@ test("AppMesh CreateMesh tags initialized in storage", async () => {
 
   await client.send(new DeleteMeshCommand({ meshName }));
 });
+
+test("AppMesh ResourceInUseException guards", async () => {
+  const client = appmesh();
+  const meshName = `bunsai-e2e-${Date.now()}`;
+  const vnName = `node-${Date.now()}`;
+  const vrName = `router-${Date.now()}`;
+  const routeName = `route-${Date.now()}`;
+  const vgName = `gw-${Date.now()}`;
+  const gwRouteName = `gwroute-${Date.now()}`;
+  const vsName = `svc-${Date.now()}.local`;
+
+  await client.send(new CreateMeshCommand({ meshName }));
+  await client.send(
+    new CreateVirtualNodeCommand({
+      meshName,
+      virtualNodeName: vnName,
+      spec: {},
+    }),
+  );
+
+  await expect(
+    client.send(new DeleteMeshCommand({ meshName })),
+  ).rejects.toThrow();
+
+  await client.send(
+    new CreateVirtualServiceCommand({
+      meshName,
+      virtualServiceName: vsName,
+      spec: { provider: { virtualNode: { virtualNodeName: vnName } } },
+    }),
+  );
+  await expect(
+    client.send(new DeleteVirtualNodeCommand({ meshName, virtualNodeName: vnName })),
+  ).rejects.toThrow();
+
+  await client.send(
+    new CreateVirtualRouterCommand({
+      meshName,
+      virtualRouterName: vrName,
+      spec: { listeners: [{ portMapping: { port: 8080, protocol: "http" } }] },
+    }),
+  );
+  await client.send(
+    new CreateRouteCommand({
+      meshName,
+      virtualRouterName: vrName,
+      routeName,
+      spec: {
+        httpRoute: { match: { prefix: "/" }, action: { weightedTargets: [] } },
+      },
+    }),
+  );
+  await expect(
+    client.send(new DeleteVirtualRouterCommand({ meshName, virtualRouterName: vrName })),
+  ).rejects.toThrow();
+
+  await client.send(
+    new CreateVirtualGatewayCommand({
+      meshName,
+      virtualGatewayName: vgName,
+      spec: { listeners: [{ portMapping: { port: 8080, protocol: "http" } }] },
+    }),
+  );
+  await client.send(
+    new CreateGatewayRouteCommand({
+      meshName,
+      virtualGatewayName: vgName,
+      gatewayRouteName: gwRouteName,
+      spec: {
+        httpRoute: {
+          match: { prefix: "/" },
+          action: { target: { virtualService: { virtualServiceName: vsName } } },
+        },
+      },
+    }),
+  );
+  await expect(
+    client.send(
+      new DeleteVirtualGatewayCommand({ meshName, virtualGatewayName: vgName }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteGatewayRouteCommand({ meshName, virtualGatewayName: vgName, gatewayRouteName: gwRouteName }),
+  );
+  await client.send(
+    new DeleteVirtualGatewayCommand({ meshName, virtualGatewayName: vgName }),
+  );
+  await client.send(
+    new DeleteRouteCommand({ meshName, virtualRouterName: vrName, routeName }),
+  );
+  await client.send(
+    new DeleteVirtualRouterCommand({ meshName, virtualRouterName: vrName }),
+  );
+  await client.send(
+    new DeleteVirtualServiceCommand({ meshName, virtualServiceName: vsName }),
+  );
+  await client.send(
+    new DeleteVirtualNodeCommand({ meshName, virtualNodeName: vnName }),
+  );
+  await client.send(new DeleteMeshCommand({ meshName }));
+});
+
+test("AppMesh clientToken idempotency", async () => {
+  const client = appmesh();
+  const meshName = `bunsai-e2e-${Date.now()}`;
+  const clientToken = crypto.randomUUID();
+
+  const first = await client.send(
+    new CreateMeshCommand({ meshName, clientToken }),
+  );
+  const second = await client.send(
+    new CreateMeshCommand({ meshName, clientToken }),
+  );
+  expect(second.mesh?.metadata?.arn).toBe(first.mesh?.metadata?.arn);
+  expect(second.mesh?.metadata?.uid).toBe(first.mesh?.metadata?.uid);
+
+  await expect(
+    client.send(new CreateMeshCommand({ meshName })),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteMeshCommand({ meshName }));
+
+  const vnName = `node-${Date.now()}`;
+  const vnToken = crypto.randomUUID();
+  await client.send(new CreateMeshCommand({ meshName }));
+  const vnFirst = await client.send(
+    new CreateVirtualNodeCommand({
+      meshName,
+      virtualNodeName: vnName,
+      spec: {},
+      clientToken: vnToken,
+    }),
+  );
+  const vnSecond = await client.send(
+    new CreateVirtualNodeCommand({
+      meshName,
+      virtualNodeName: vnName,
+      spec: {},
+      clientToken: vnToken,
+    }),
+  );
+  expect(vnSecond.virtualNode?.metadata?.arn).toBe(
+    vnFirst.virtualNode?.metadata?.arn,
+  );
+
+  await client.send(
+    new DeleteVirtualNodeCommand({ meshName, virtualNodeName: vnName }),
+  );
+  await client.send(new DeleteMeshCommand({ meshName }));
+});
+
+test("AppMesh non-Mesh Create tags round-trip", async () => {
+  const client = appmesh();
+  const meshName = `bunsai-e2e-${Date.now()}`;
+  const tag = [{ key: "env", value: "staging" }];
+
+  await client.send(new CreateMeshCommand({ meshName }));
+
+  const vnName = `node-${Date.now()}`;
+  const createdVn = await client.send(
+    new CreateVirtualNodeCommand({
+      meshName,
+      virtualNodeName: vnName,
+      spec: {},
+      tags: tag,
+    }),
+  );
+  const vnArn = createdVn.virtualNode?.metadata?.arn ?? "";
+  const vnTags = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: vnArn }),
+  );
+  expect(vnTags.tags?.find((t) => t.key === "env")?.value).toBe("staging");
+
+  const vrName = `router-${Date.now()}`;
+  const createdVr = await client.send(
+    new CreateVirtualRouterCommand({
+      meshName,
+      virtualRouterName: vrName,
+      spec: { listeners: [{ portMapping: { port: 8080, protocol: "http" } }] },
+      tags: tag,
+    }),
+  );
+  const vrArn = createdVr.virtualRouter?.metadata?.arn ?? "";
+  const vrTags = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: vrArn }),
+  );
+  expect(vrTags.tags?.find((t) => t.key === "env")?.value).toBe("staging");
+
+  const vsName = `svc-${Date.now()}.local`;
+  const createdVs = await client.send(
+    new CreateVirtualServiceCommand({
+      meshName,
+      virtualServiceName: vsName,
+      spec: {},
+      tags: tag,
+    }),
+  );
+  const vsArn = createdVs.virtualService?.metadata?.arn ?? "";
+  const vsTags = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: vsArn }),
+  );
+  expect(vsTags.tags?.find((t) => t.key === "env")?.value).toBe("staging");
+
+  await client.send(
+    new DeleteVirtualServiceCommand({ meshName, virtualServiceName: vsName }),
+  );
+  await client.send(
+    new DeleteVirtualNodeCommand({ meshName, virtualNodeName: vnName }),
+  );
+  await client.send(
+    new DeleteVirtualRouterCommand({ meshName, virtualRouterName: vrName }),
+  );
+  await client.send(new DeleteMeshCommand({ meshName }));
+});

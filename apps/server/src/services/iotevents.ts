@@ -114,6 +114,14 @@ const requireString = (
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
+const decodeToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const n = parseInt(token, 10);
+  return isNaN(n) ? 0 : n;
+};
+
+const encodeToken = (offset: number): string => String(offset);
+
 const inputKey = (name: string): string => `${inputPrefix}${name}`;
 const detectorModelKey = (name: string): string =>
   `${detectorModelPrefix}${name}`;
@@ -170,6 +178,49 @@ const requireAlarmModel = (
     );
   }
   return stored;
+};
+
+const requireResourceByArn = (ctx: ServiceContext, arn: string): void => {
+  const colonIdx = arn.lastIndexOf(":");
+  if (colonIdx === -1) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource ${arn} was not found.`,
+      404,
+    );
+  }
+  const resourcePart = arn.slice(colonIdx + 1);
+  const slashIdx = resourcePart.indexOf("/");
+  if (slashIdx === -1) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource ${arn} was not found.`,
+      404,
+    );
+  }
+  const resourceType = resourcePart.slice(0, slashIdx);
+  const resourceName = resourcePart.slice(slashIdx + 1);
+  let key: string;
+  if (resourceType === "input") {
+    key = inputKey(resourceName);
+  } else if (resourceType === "detectorModel") {
+    key = detectorModelKey(resourceName);
+  } else if (resourceType === "alarmModel") {
+    key = alarmModelKey(resourceName);
+  } else {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource ${arn} was not found.`,
+      404,
+    );
+  }
+  if (ctx.store.get(key) === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource ${arn} was not found.`,
+      404,
+    );
+  }
 };
 
 const requireAnalysis = (ctx: ServiceContext, id: string): StoredAnalysis => {
@@ -236,6 +287,13 @@ const alarmModelSummaryView = (
 const CreateInput: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const inputName = requireString(data, "inputName");
+  if (ctx.store.get(inputKey(inputName)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Input ${inputName} already exists.`,
+      400,
+    );
+  }
   const inputDefinition = data["inputDefinition"];
   if (inputDefinition === undefined || inputDefinition === null) {
     throw awsError(
@@ -294,7 +352,8 @@ const UpdateInput: OperationHandler = (input, ctx) => {
 
 const ListInputs: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
-  const max = numberOrUndefined(data["maxResults"]) ?? 100;
+  const max = numberOrUndefined(data["maxResults"]) ?? 250;
+  const offset = decodeToken(data["nextToken"]);
   const inputs = ctx.store
     .list<StoredInput>()
     .filter((entry) => entry.key.startsWith(inputPrefix))
@@ -302,14 +361,22 @@ const ListInputs: OperationHandler = (input, ctx) => {
     .sort((a, b) =>
       a.inputName < b.inputName ? -1 : a.inputName > b.inputName ? 1 : 0,
     );
-  return { inputSummaries: inputs.slice(0, max).map(summaryView) };
+  const page = inputs.slice(offset, offset + max);
+  const nextOffset = offset + max;
+  return {
+    inputSummaries: page.map(summaryView),
+    ...(nextOffset < inputs.length
+      ? { nextToken: encodeToken(nextOffset) }
+      : {}),
+  };
 };
 
 const DeleteInput: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const inputName = requireString(data, "inputName");
-  requireInput(ctx, inputName);
+  const stored = requireInput(ctx, inputName);
   ctx.store.delete(inputKey(inputName));
+  ctx.store.delete(tagsKey(stored.inputArn));
   return {};
 };
 
@@ -320,6 +387,13 @@ const ListInputRoutings: OperationHandler = () => {
 const CreateDetectorModel: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const detectorModelName = requireString(data, "detectorModelName");
+  if (ctx.store.get(detectorModelKey(detectorModelName)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `DetectorModel ${detectorModelName} already exists.`,
+      400,
+    );
+  }
   const roleArn = requireString(data, "roleArn");
   const detectorModelDefinition = data["detectorModelDefinition"];
   if (
@@ -430,14 +504,16 @@ const UpdateDetectorModel: OperationHandler = (input, ctx) => {
 const DeleteDetectorModel: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const detectorModelName = requireString(data, "detectorModelName");
-  requireDetectorModel(ctx, detectorModelName);
+  const stored = requireDetectorModel(ctx, detectorModelName);
   ctx.store.delete(detectorModelKey(detectorModelName));
+  ctx.store.delete(tagsKey(stored.detectorModelArn));
   return {};
 };
 
 const ListDetectorModels: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
-  const max = numberOrUndefined(data["maxResults"]) ?? 100;
+  const max = numberOrUndefined(data["maxResults"]) ?? 250;
+  const offset = decodeToken(data["nextToken"]);
   const models = ctx.store
     .list<StoredDetectorModel>()
     .filter((entry) => entry.key.startsWith(detectorModelPrefix))
@@ -449,18 +525,29 @@ const ListDetectorModels: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
+  const page = models.slice(offset, offset + max);
+  const nextOffset = offset + max;
   return {
-    detectorModelSummaries: models.slice(0, max).map(detectorModelSummaryView),
+    detectorModelSummaries: page.map(detectorModelSummaryView),
+    ...(nextOffset < models.length
+      ? { nextToken: encodeToken(nextOffset) }
+      : {}),
   };
 };
 
 const ListDetectorModelVersions: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const detectorModelName = requireString(data, "detectorModelName");
-  const max = numberOrUndefined(data["maxResults"]) ?? 100;
+  const max = numberOrUndefined(data["maxResults"]) ?? 500;
+  const offset = decodeToken(data["nextToken"]);
   const stored = requireDetectorModel(ctx, detectorModelName);
+  const page = stored.versions.slice(offset, offset + max);
+  const nextOffset = offset + max;
   return {
-    detectorModelVersionSummaries: stored.versions.slice(0, max),
+    detectorModelVersionSummaries: page,
+    ...(nextOffset < stored.versions.length
+      ? { nextToken: encodeToken(nextOffset) }
+      : {}),
   };
 };
 
@@ -505,6 +592,13 @@ const GetDetectorModelAnalysisResults: OperationHandler = (input, ctx) => {
 const CreateAlarmModel: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const alarmModelName = requireString(data, "alarmModelName");
+  if (ctx.store.get(alarmModelKey(alarmModelName)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `AlarmModel ${alarmModelName} already exists.`,
+      400,
+    );
+  }
   const roleArn = requireString(data, "roleArn");
   const alarmRule = data["alarmRule"];
   if (alarmRule === undefined || alarmRule === null) {
@@ -624,14 +718,16 @@ const UpdateAlarmModel: OperationHandler = (input, ctx) => {
 const DeleteAlarmModel: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const alarmModelName = requireString(data, "alarmModelName");
-  requireAlarmModel(ctx, alarmModelName);
+  const stored = requireAlarmModel(ctx, alarmModelName);
   ctx.store.delete(alarmModelKey(alarmModelName));
+  ctx.store.delete(tagsKey(stored.alarmModelArn));
   return {};
 };
 
 const ListAlarmModels: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
-  const max = numberOrUndefined(data["maxResults"]) ?? 100;
+  const max = numberOrUndefined(data["maxResults"]) ?? 250;
+  const offset = decodeToken(data["nextToken"]);
   const models = ctx.store
     .list<StoredAlarmModel>()
     .filter((entry) => entry.key.startsWith(alarmModelPrefix))
@@ -643,18 +739,29 @@ const ListAlarmModels: OperationHandler = (input, ctx) => {
           ? 1
           : 0,
     );
+  const page = models.slice(offset, offset + max);
+  const nextOffset = offset + max;
   return {
-    alarmModelSummaries: models.slice(0, max).map(alarmModelSummaryView),
+    alarmModelSummaries: page.map(alarmModelSummaryView),
+    ...(nextOffset < models.length
+      ? { nextToken: encodeToken(nextOffset) }
+      : {}),
   };
 };
 
 const ListAlarmModelVersions: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const alarmModelName = requireString(data, "alarmModelName");
-  const max = numberOrUndefined(data["maxResults"]) ?? 100;
+  const max = numberOrUndefined(data["maxResults"]) ?? 500;
+  const offset = decodeToken(data["nextToken"]);
   const stored = requireAlarmModel(ctx, alarmModelName);
+  const page = stored.versions.slice(offset, offset + max);
+  const nextOffset = offset + max;
   return {
-    alarmModelVersionSummaries: stored.versions.slice(0, max),
+    alarmModelVersionSummaries: page,
+    ...(nextOffset < stored.versions.length
+      ? { nextToken: encodeToken(nextOffset) }
+      : {}),
   };
 };
 
@@ -742,6 +849,7 @@ const UntagResource: OperationHandler = (input, ctx) => {
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const resourceArn = requireString(data, "resourceArn");
+  requireResourceByArn(ctx, resourceArn);
   const tags = ctx.store.get<unknown[]>(tagsKey(resourceArn)) ?? [];
   return { tags };
 };

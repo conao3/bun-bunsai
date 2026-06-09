@@ -286,8 +286,30 @@ test("IoT Events logging options roundtrip", async () => {
 
 test("IoT Events tag operations roundtrip", async () => {
   const client = iotevents();
+  const detectorModelName = `bunsai_e2e_tag_dm_${Date.now()}`;
+
+  const simpleDefinition = {
+    states: [
+      {
+        stateName: "idle",
+        onInput: { events: [], transitionEvents: [] },
+        onEnter: { events: [] },
+        onExit: { events: [] },
+      },
+    ],
+    initialStateName: "idle",
+  };
+
+  const created = await client.send(
+    new CreateDetectorModelCommand({
+      detectorModelName,
+      detectorModelDefinition: simpleDefinition,
+      roleArn: "arn:aws:iam::123456789012:role/test-role",
+    }),
+  );
   const resourceArn =
-    "arn:aws:iotevents:us-east-1:123456789012:detectorModel/test";
+    created.detectorModelConfiguration?.detectorModelArn ?? "";
+  expect(resourceArn).toContain(`detectorModel/${detectorModelName}`);
 
   await client.send(
     new TagResourceCommand({
@@ -317,4 +339,97 @@ test("IoT Events tag operations roundtrip", async () => {
   );
   expect((afterUntag.tags ?? []).map((t) => t.key)).not.toContain("env");
   expect((afterUntag.tags ?? []).map((t) => t.key)).toContain("owner");
+
+  await client.send(new DeleteDetectorModelCommand({ detectorModelName }));
+
+  await expect(
+    client.send(new ListTagsForResourceCommand({ resourceArn })),
+  ).rejects.toThrow();
+});
+
+test("IoT Events CreateDetectorModel duplicate name error", async () => {
+  const client = iotevents();
+  const detectorModelName = `bunsai_e2e_dup_${Date.now()}`;
+
+  const simpleDefinition = {
+    states: [
+      {
+        stateName: "idle",
+        onInput: { events: [], transitionEvents: [] },
+        onEnter: { events: [] },
+        onExit: { events: [] },
+      },
+    ],
+    initialStateName: "idle",
+  };
+
+  await client.send(
+    new CreateDetectorModelCommand({
+      detectorModelName,
+      detectorModelDefinition: simpleDefinition,
+      roleArn: "arn:aws:iam::123456789012:role/test-role",
+    }),
+  );
+
+  await expect(
+    client.send(
+      new CreateDetectorModelCommand({
+        detectorModelName,
+        detectorModelDefinition: simpleDefinition,
+        roleArn: "arn:aws:iam::123456789012:role/test-role",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteDetectorModelCommand({ detectorModelName }));
+});
+
+test("IoT Events ListDetectorModels pagination", async () => {
+  const client = iotevents();
+  const prefix = `bunsai_e2e_page_${Date.now()}_`;
+
+  const simpleDefinition = {
+    states: [
+      {
+        stateName: "idle",
+        onInput: { events: [], transitionEvents: [] },
+        onEnter: { events: [] },
+        onExit: { events: [] },
+      },
+    ],
+    initialStateName: "idle",
+  };
+
+  const names: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const name = `${prefix}${i}`;
+    names.push(name);
+    await client.send(
+      new CreateDetectorModelCommand({
+        detectorModelName: name,
+        detectorModelDefinition: simpleDefinition,
+        roleArn: "arn:aws:iam::123456789012:role/test-role",
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListDetectorModelsCommand({ maxResults: 2 }),
+  );
+  expect(page1.detectorModelSummaries?.length).toBeGreaterThanOrEqual(2);
+  expect(page1.nextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListDetectorModelsCommand({
+      maxResults: 2,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect(page2.detectorModelSummaries?.length).toBeGreaterThanOrEqual(1);
+
+  for (const name of names) {
+    await client.send(
+      new DeleteDetectorModelCommand({ detectorModelName: name }),
+    );
+  }
 });

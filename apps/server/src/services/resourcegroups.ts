@@ -110,6 +110,18 @@ const groupNameOf = (input: Record<string, unknown>): string => {
   throw awsError("BadRequestException", "GroupName is required.", 400);
 };
 
+const requireLocalGroupArn = (arn: string, ctx: ServiceContext): string => {
+  const prefix = `arn:aws:resource-groups:${ctx.region}:${ctx.account}:group/`;
+  if (!arn.startsWith(prefix) || arn.length === prefix.length) {
+    throw awsError(
+      "BadRequestException",
+      `ARN ${arn} does not identify a resource in this account and region.`,
+      400,
+    );
+  }
+  return arn.slice(prefix.length);
+};
+
 const groupView = (group: StoredGroup): Record<string, unknown> => ({
   GroupArn: group.GroupArn,
   Name: group.Name,
@@ -161,10 +173,28 @@ const paginate = <T>(
   max: number,
   rawToken: unknown,
 ): { page: T[]; nextToken: string | undefined } => {
-  const offset =
-    typeof rawToken === "string" && rawToken !== ""
-      ? parseInt(atob(rawToken), 10)
-      : 0;
+  let offset = 0;
+  if (typeof rawToken === "string" && rawToken !== "") {
+    let decoded: string;
+    try {
+      decoded = atob(rawToken);
+    } catch {
+      throw awsError(
+        "InvalidNextTokenException",
+        "The specified nextToken is not valid.",
+        400,
+      );
+    }
+    const parsed = parseInt(decoded, 10);
+    if (isNaN(parsed) || parsed < 0 || String(parsed) !== decoded) {
+      throw awsError(
+        "InvalidNextTokenException",
+        "The specified nextToken is not valid.",
+        400,
+      );
+    }
+    offset = parsed;
+  }
   const page = items.slice(offset, offset + max);
   const nextToken =
     offset + max < items.length ? btoa(String(offset + max)) : undefined;
@@ -242,6 +272,24 @@ const groupMatchesFilters = (
 
 const CreateGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
+  if (/^aws/i.test(name)) {
+    throw awsError(
+      "ValidationException",
+      "Group names beginning with aws are reserved.",
+      400,
+    );
+  }
+  const hasQuery = asRecord(input["ResourceQuery"]) !== undefined;
+  const hasCfg =
+    Array.isArray(input["Configuration"]) &&
+    (input["Configuration"] as unknown[]).length > 0;
+  if (hasQuery && hasCfg) {
+    throw awsError(
+      "BadRequestException",
+      "ResourceQuery and Configuration are mutually exclusive.",
+      400,
+    );
+  }
   if (ctx.store.get<StoredGroup>(groupKey(name)) !== undefined) {
     throw awsError(
       "BadRequestException",
@@ -326,6 +374,14 @@ const DeleteGroup: OperationHandler = (input, ctx) => {
   const name = groupNameOf(input);
   const group = requireGroup(ctx, name);
   ctx.store.delete(groupKey(name));
+  const taskEntries = ctx.store
+    .list<StoredTagSyncTask>()
+    .filter(
+      (entry) =>
+        entry.key.startsWith(taskPrefix) &&
+        entry.value.GroupArn === group.GroupArn,
+    );
+  for (const entry of taskEntries) ctx.store.delete(entry.key);
   return { Group: groupView(group) };
 };
 
@@ -577,14 +633,14 @@ const SearchResources: OperationHandler = (input, ctx) => {
 
 const GetTags: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "Arn");
-  const name = nameFromArn(arn);
+  const name = requireLocalGroupArn(arn, ctx);
   const group = requireGroup(ctx, name);
   return { Arn: arn, Tags: group.Tags };
 };
 
 const Tag: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "Arn");
-  const name = nameFromArn(arn);
+  const name = requireLocalGroupArn(arn, ctx);
   const existing = requireGroup(ctx, name);
   const newTags = stringMapFrom(input["Tags"]);
   const group: StoredGroup = {
@@ -597,7 +653,7 @@ const Tag: OperationHandler = (input, ctx) => {
 
 const Untag: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "Arn");
-  const name = nameFromArn(arn);
+  const name = requireLocalGroupArn(arn, ctx);
   const existing = requireGroup(ctx, name);
   const keys = Array.isArray(input["Keys"])
     ? (input["Keys"] as string[]).filter(
@@ -716,6 +772,13 @@ const ListTagSyncTasks: OperationHandler = (input, ctx) => {
 const CancelTagSyncTask: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "TaskArn");
   const existing = requireTask(ctx, arn);
+  if (existing.Status === "CANCELLED") {
+    throw awsError(
+      "ValidationException",
+      `Tag sync task ${arn} is already CANCELLED.`,
+      400,
+    );
+  }
   const task: StoredTagSyncTask = { ...existing, Status: "CANCELLED" };
   ctx.store.set(taskKey(arn), task);
   return {};

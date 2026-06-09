@@ -487,6 +487,151 @@ test("ResourceGroups GetAccountSettings and UpdateAccountSettings", async () => 
   );
 });
 
+test("ResourceGroups Tag with foreign-account ARN raises BadRequestException", async () => {
+  const client = resourcegroups();
+  const name = `bunsai-e2e-arnval-${Date.now()}`;
+
+  const created = await client.send(new CreateGroupCommand({ Name: name }));
+  const groupArn = created.Group?.GroupArn ?? "";
+  expect(groupArn).toContain(":000000000000:");
+
+  const foreignArn = groupArn.replace(":000000000000:", ":999999999999:");
+
+  await expect(
+    client.send(new GetTagsCommand({ Arn: foreignArn })),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(new TagCommand({ Arn: foreignArn, Tags: { k: "v" } })),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(new UntagCommand({ Arn: foreignArn, Keys: ["k"] })),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteGroupCommand({ GroupName: name }));
+});
+
+test("ResourceGroups multi-account isolation", async () => {
+  const client1 = resourcegroups();
+  const client2 = new ResourceGroupsClient({
+    endpoint,
+    region,
+    credentials: { accessKeyId: "ASIA111111111111", secretAccessKey: "test" },
+    requestHandler,
+  });
+  const name = `bunsai-e2e-iso-${Date.now()}`;
+
+  await client1.send(new CreateGroupCommand({ Name: name }));
+  await client2.send(new CreateGroupCommand({ Name: name }));
+
+  const got1 = await client1.send(new GetGroupCommand({ GroupName: name }));
+  const got2 = await client2.send(new GetGroupCommand({ GroupName: name }));
+  expect(got1.Group?.GroupArn).toContain(":000000000000:");
+  expect(got2.Group?.GroupArn).toContain(":111111111111:");
+
+  const list1 = await client1.send(new ListGroupsCommand({}));
+  const list2 = await client2.send(new ListGroupsCommand({}));
+  const arns1 = (list1.GroupIdentifiers ?? []).map((g) => g.GroupArn ?? "");
+  const arns2 = (list2.GroupIdentifiers ?? []).map((g) => g.GroupArn ?? "");
+  expect(arns1.every((a) => a.includes(":000000000000:"))).toBe(true);
+  expect(arns2.every((a) => a.includes(":111111111111:"))).toBe(true);
+
+  await client1.send(new DeleteGroupCommand({ GroupName: name }));
+  await client2.send(new DeleteGroupCommand({ GroupName: name }));
+});
+
+test("ResourceGroups CancelTagSyncTask twice raises ValidationException", async () => {
+  const client = resourcegroups();
+  const name = `bunsai-e2e-cancel2-${Date.now()}`;
+
+  await client.send(new CreateGroupCommand({ Name: name }));
+  const started = await client.send(
+    new StartTagSyncTaskCommand({
+      Group: name,
+      TagKey: "env",
+      TagValue: "test",
+      RoleArn: "arn:aws:iam::000000000000:role/test-role",
+    }),
+  );
+  const taskArn = started.TaskArn ?? "";
+
+  await client.send(new CancelTagSyncTaskCommand({ TaskArn: taskArn }));
+
+  await expect(
+    client.send(new CancelTagSyncTaskCommand({ TaskArn: taskArn })),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteGroupCommand({ GroupName: name }));
+});
+
+test("ResourceGroups DeleteGroup cascades to tag-sync tasks", async () => {
+  const client = resourcegroups();
+  const name = `bunsai-e2e-casc-${Date.now()}`;
+
+  await client.send(new CreateGroupCommand({ Name: name }));
+  const started = await client.send(
+    new StartTagSyncTaskCommand({
+      Group: name,
+      TagKey: "env",
+      TagValue: "test",
+      RoleArn: "arn:aws:iam::000000000000:role/test-role",
+    }),
+  );
+  const taskArn = started.TaskArn ?? "";
+
+  const before = await client.send(
+    new GetTagSyncTaskCommand({ TaskArn: taskArn }),
+  );
+  expect(before.TaskArn).toBe(taskArn);
+
+  await client.send(new DeleteGroupCommand({ GroupName: name }));
+
+  await expect(
+    client.send(new GetTagSyncTaskCommand({ TaskArn: taskArn })),
+  ).rejects.toThrow();
+});
+
+test("ResourceGroups CreateGroup reserved-name and mutual-exclusivity validation", async () => {
+  const client = resourcegroups();
+
+  await expect(
+    client.send(new CreateGroupCommand({ Name: "aws/my-group" })),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(new CreateGroupCommand({ Name: "AWSMyGroup" })),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new CreateGroupCommand({
+        Name: `bunsai-e2e-mutex-${Date.now()}`,
+        ResourceQuery: {
+          Type: "TAG_FILTERS_1_0",
+          Query: JSON.stringify({
+            ResourceTypeFilters: ["AWS::AllSupported"],
+            TagFilters: [],
+          }),
+        },
+        Configuration: [{ Type: "AWS::EC2::HostManagement", Parameters: [] }],
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("ResourceGroups ListGroups with corrupt NextToken raises InvalidNextTokenException", async () => {
+  const client = resourcegroups();
+
+  await expect(
+    client.send(new ListGroupsCommand({ NextToken: "not-valid-base64!!!" })),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(new ListGroupsCommand({ NextToken: btoa("notanumber") })),
+  ).rejects.toThrow();
+});
+
 test("ResourceGroups StartTagSyncTask, GetTagSyncTask, ListTagSyncTasks, CancelTagSyncTask", async () => {
   const client = resourcegroups();
   const name = `bunsai-e2e-tagsync-${Date.now()}`;

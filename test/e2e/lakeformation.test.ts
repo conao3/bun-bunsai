@@ -672,3 +672,113 @@ test("LakeFormation search by LF tags", async () => {
   );
   expect(tables.TableList).toHaveLength(0);
 });
+
+test("LakeFormation LF-tag resource assignment round-trip", async () => {
+  const client = lakeformation();
+
+  await client.send(
+    new CreateLFTagCommand({ TagKey: "team", TagValues: ["alpha", "beta"] }),
+  );
+
+  await client.send(
+    new AddLFTagsToResourceCommand({
+      Resource: {
+        Table: { DatabaseName: "mydb", Name: "mytable" },
+      },
+      LFTags: [{ TagKey: "team", TagValues: ["alpha"] }],
+    }),
+  );
+
+  const got = await client.send(
+    new GetResourceLFTagsCommand({
+      Resource: {
+        Table: { DatabaseName: "mydb", Name: "mytable" },
+      },
+    }),
+  );
+  expect(got.LFTagsOnTable).toHaveLength(1);
+  expect(got.LFTagsOnTable![0].TagKey).toBe("team");
+  expect(got.LFTagsOnTable![0].TagValues).toContain("alpha");
+
+  await client.send(
+    new RemoveLFTagsFromResourceCommand({
+      Resource: {
+        Table: { DatabaseName: "mydb", Name: "mytable" },
+      },
+      LFTags: [{ TagKey: "team", TagValues: ["alpha"] }],
+    }),
+  );
+
+  const afterRemove = await client.send(
+    new GetResourceLFTagsCommand({
+      Resource: {
+        Table: { DatabaseName: "mydb", Name: "mytable" },
+      },
+    }),
+  );
+  expect(afterRemove.LFTagsOnTable).toHaveLength(0);
+});
+
+test("LakeFormation SearchTablesByLFTags returns tagged tables", async () => {
+  const client = lakeformation();
+
+  await client.send(
+    new CreateLFTagCommand({ TagKey: "env", TagValues: ["prod", "staging"] }),
+  );
+
+  await client.send(
+    new AddLFTagsToResourceCommand({
+      Resource: {
+        Table: { DatabaseName: "searchdb", Name: "searchtable" },
+      },
+      LFTags: [{ TagKey: "env", TagValues: ["prod"] }],
+    }),
+  );
+
+  const result = await client.send(
+    new SearchTablesByLFTagsCommand({
+      Expression: [{ TagKey: "env", TagValues: ["prod"] }],
+    }),
+  );
+  const found = result.TableList?.some(
+    (t) =>
+      (t.Table as { DatabaseName?: string; Name?: string })?.Name ===
+      "searchtable",
+  );
+  expect(found).toBe(true);
+
+  const noMatch = await client.send(
+    new SearchTablesByLFTagsCommand({
+      Expression: [{ TagKey: "env", TagValues: ["dev"] }],
+    }),
+  );
+  const notFound = noMatch.TableList?.some(
+    (t) =>
+      (t.Table as { DatabaseName?: string; Name?: string })?.Name ===
+      "searchtable",
+  );
+  expect(notFound).toBeFalsy();
+});
+
+test("LakeFormation EntityNotFoundException returns 404", async () => {
+  const client = lakeformation();
+
+  await expect(
+    client.send(new GetLFTagCommand({ TagKey: "nonexistent-tag-xyz" })),
+  ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
+
+  await expect(
+    client.send(new DeleteLFTagCommand({ TagKey: "nonexistent-tag-xyz" })),
+  ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
+
+  await expect(
+    client.send(
+      new GetDataCellsFilterCommand({
+        TableCatalogId: "123456789012",
+        DatabaseName: "nodb",
+        TableName: "notable",
+        Name: "nofilter",
+      }),
+    ),
+  ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
+});

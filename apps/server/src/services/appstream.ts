@@ -31,6 +31,7 @@ type StoredFleet = {
   IamRoleArn: string | undefined;
   StreamView: string | undefined;
   Platform: string | undefined;
+  DomainJoinInfoDirectoryName: string | undefined;
 };
 
 type StoredStack = {
@@ -226,6 +227,48 @@ const imagePerm = (name: string, accountId: string): string =>
   `imageperm/${name}/${accountId}`;
 const imageBuilderSoftwareKey = (imageBuilderName: string): string =>
   `imagebuilder-software/${imageBuilderName}`;
+
+const arnResourceExists = (arn: string, ctx: ServiceContext): boolean => {
+  const colonParts = arn.split(":");
+  if (colonParts.length < 6) return false;
+  const resourcePart = colonParts.slice(5).join(":");
+  const slashIdx = resourcePart.indexOf("/");
+  if (slashIdx === -1) return false;
+  const resourceType = resourcePart.slice(0, slashIdx);
+  const resourceId = resourcePart.slice(slashIdx + 1);
+  if (resourceType === "fleet")
+    return ctx.store.get<StoredFleet>(fleetKey(resourceId)) !== undefined;
+  if (resourceType === "stack")
+    return ctx.store.get<StoredStack>(stackKey(resourceId)) !== undefined;
+  if (resourceType === "image")
+    return ctx.store.get<StoredImage>(imageKey(resourceId)) !== undefined;
+  if (resourceType === "image-builder")
+    return (
+      ctx.store.get<StoredImageBuilder>(imageBuilderKey(resourceId)) !==
+      undefined
+    );
+  if (resourceType === "application")
+    return (
+      ctx.store.get<StoredApplication>(applicationKey(resourceId)) !== undefined
+    );
+  if (resourceType === "app-block")
+    return ctx.store.get<StoredAppBlock>(appBlockKey(resourceId)) !== undefined;
+  if (resourceType === "app-block-builder")
+    return (
+      ctx.store.get<StoredAppBlockBuilder>(appBlockBuilderKey(resourceId)) !==
+      undefined
+    );
+  if (resourceType === "user") {
+    const slash = resourceId.indexOf("/");
+    if (slash === -1) return false;
+    return (
+      ctx.store.get<StoredUser>(
+        userKey(resourceId.slice(0, slash), resourceId.slice(slash + 1)),
+      ) !== undefined
+    );
+  }
+  return false;
+};
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -473,6 +516,11 @@ const CreateFleet: OperationHandler = (input, ctx) => {
     IamRoleArn: stringOrUndefined(input["IamRoleArn"]),
     StreamView: stringOrUndefined(input["StreamView"]),
     Platform: stringOrUndefined(input["Platform"]),
+    DomainJoinInfoDirectoryName: stringOrUndefined(
+      (input["DomainJoinInfo"] as Record<string, unknown> | undefined)?.[
+        "DirectoryName"
+      ],
+    ),
   };
   ctx.store.set(fleetKey(name), fleet);
   return { Fleet: fleet };
@@ -496,6 +544,12 @@ const DeleteFleet: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const hasStackAssoc = ctx.store
+    .list<boolean>()
+    .some((entry) => entry.key.startsWith(`fleet-stack/${name}/`));
+  if (hasStackAssoc) {
+    throw awsError("ResourceInUseException", `Fleet is in use: ${name}`, 400);
+  }
   ctx.store.delete(fleetKey(name));
   return {};
 };
@@ -510,6 +564,13 @@ const StartFleet: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  if (fleet.State === "RUNNING") {
+    throw awsError(
+      "OperationNotPermittedException",
+      `Fleet is already RUNNING: ${name}`,
+      400,
+    );
+  }
   ctx.store.set(fleetKey(name), { ...fleet, State: "RUNNING" });
   return {};
 };
@@ -521,6 +582,13 @@ const StopFleet: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Fleet not found: ${name}`,
+      400,
+    );
+  }
+  if (fleet.State === "STOPPED") {
+    throw awsError(
+      "OperationNotPermittedException",
+      `Fleet is already STOPPED: ${name}`,
       400,
     );
   }
@@ -565,6 +633,12 @@ const UpdateFleet: OperationHandler = (input, ctx) => {
     IamRoleArn: stringOrUndefined(input["IamRoleArn"]) ?? fleet.IamRoleArn,
     StreamView: stringOrUndefined(input["StreamView"]) ?? fleet.StreamView,
     Platform: stringOrUndefined(input["Platform"]) ?? fleet.Platform,
+    DomainJoinInfoDirectoryName:
+      stringOrUndefined(
+        (input["DomainJoinInfo"] as Record<string, unknown> | undefined)?.[
+          "DirectoryName"
+        ],
+      ) ?? fleet.DomainJoinInfoDirectoryName,
   };
   ctx.store.set(fleetKey(name), updated);
   return { Fleet: updated };
@@ -656,6 +730,21 @@ const DeleteStack: OperationHandler = (input, ctx) => {
       `Stack not found: ${name}`,
       400,
     );
+  }
+  const hasFleetAssoc = ctx.store
+    .list<boolean>()
+    .some(
+      (entry) =>
+        entry.key.startsWith("fleet-stack/") && entry.key.endsWith(`/${name}`),
+    );
+  if (hasFleetAssoc) {
+    throw awsError("ResourceInUseException", `Stack is in use: ${name}`, 400);
+  }
+  const hasEntitlement = ctx.store
+    .list<StoredEntitlement>()
+    .some((entry) => entry.key.startsWith(`entitlement/${name}/`));
+  if (hasEntitlement) {
+    throw awsError("ResourceInUseException", `Stack is in use: ${name}`, 400);
   }
   ctx.store.delete(stackKey(name));
   return {};
@@ -799,6 +888,13 @@ const StartAppBlockBuilder: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  if (builder.State === "RUNNING") {
+    throw awsError(
+      "OperationNotPermittedException",
+      `AppBlockBuilder is already RUNNING: ${name}`,
+      400,
+    );
+  }
   const updated = { ...builder, State: "RUNNING" };
   ctx.store.set(appBlockBuilderKey(name), updated);
   return { AppBlockBuilder: updated };
@@ -813,6 +909,13 @@ const StopAppBlockBuilder: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `AppBlockBuilder not found: ${name}`,
+      400,
+    );
+  }
+  if (builder.State === "STOPPED") {
+    throw awsError(
+      "OperationNotPermittedException",
+      `AppBlockBuilder is already STOPPED: ${name}`,
       400,
     );
   }
@@ -853,6 +956,25 @@ const UpdateAppBlockBuilder: OperationHandler = (input, ctx) => {
 const AssociateAppBlockBuilderAppBlock: OperationHandler = (input, ctx) => {
   const appBlockArn_ = requireString(input, "AppBlockArn");
   const appBlockBuilderName = requireString(input, "AppBlockBuilderName");
+  const appBlockName = appBlockArn_.split("/").pop() ?? "";
+  if (ctx.store.get<StoredAppBlock>(appBlockKey(appBlockName)) === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `AppBlock not found: ${appBlockArn_}`,
+      400,
+    );
+  }
+  if (
+    ctx.store.get<StoredAppBlockBuilder>(
+      appBlockBuilderKey(appBlockBuilderName),
+    ) === undefined
+  ) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `AppBlockBuilder not found: ${appBlockBuilderName}`,
+      400,
+    );
+  }
   const assoc = {
     AppBlockArn: appBlockArn_,
     AppBlockBuilderName: appBlockBuilderName,
@@ -994,6 +1116,21 @@ const UpdateApplication: OperationHandler = (input, ctx) => {
 const AssociateApplicationFleet: OperationHandler = (input, ctx) => {
   const fleetName = requireString(input, "FleetName");
   const appArn = requireString(input, "ApplicationArn");
+  if (ctx.store.get<StoredFleet>(fleetKey(fleetName)) === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Fleet not found: ${fleetName}`,
+      400,
+    );
+  }
+  const appName = appArn.split("/").pop() ?? "";
+  if (ctx.store.get<StoredApplication>(applicationKey(appName)) === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Application not found: ${appArn}`,
+      400,
+    );
+  }
   const assoc = { FleetName: fleetName, ApplicationArn: appArn };
   ctx.store.set(fleetAppAssocKey(fleetName, appArn), assoc);
   return { ApplicationFleetAssociation: assoc };
@@ -1022,6 +1159,17 @@ const AssociateApplicationToEntitlement: OperationHandler = (input, ctx) => {
   const stackName = requireString(input, "StackName");
   const entitlementName = requireString(input, "EntitlementName");
   const appId = requireString(input, "ApplicationIdentifier");
+  if (
+    ctx.store.get<StoredEntitlement>(
+      entitlementKey(stackName, entitlementName),
+    ) === undefined
+  ) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Entitlement not found: ${entitlementName}`,
+      400,
+    );
+  }
   ctx.store.set(entitledAppKey(stackName, entitlementName, appId), {
     ApplicationIdentifier: appId,
   });
@@ -1081,11 +1229,15 @@ const CreateDirectoryConfig: OperationHandler = (input, ctx) => {
 
 const DescribeDirectoryConfigs: OperationHandler = (input, ctx) => {
   const names = stringListFromInput(input["DirectoryNames"]);
-  return {
-    DirectoryConfigs: listDirectoryConfigs(ctx).filter(
-      (dc) => names.length === 0 || names.includes(dc.DirectoryName),
-    ),
-  };
+  const all = listDirectoryConfigs(ctx).filter(
+    (dc) => names.length === 0 || names.includes(dc.DirectoryName),
+  );
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { DirectoryConfigs: items, NextToken };
 };
 
 const DeleteDirectoryConfig: OperationHandler = (input, ctx) => {
@@ -1097,6 +1249,16 @@ const DeleteDirectoryConfig: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `DirectoryConfig not found: ${directoryName}`,
+      400,
+    );
+  }
+  const usedByFleet = listFleets(ctx).some(
+    (f) => f.DomainJoinInfoDirectoryName === directoryName,
+  );
+  if (usedByFleet) {
+    throw awsError(
+      "ResourceInUseException",
+      `DirectoryConfig is in use: ${directoryName}`,
       400,
     );
   }
@@ -1164,12 +1326,17 @@ const CreateEntitlement: OperationHandler = (input, ctx) => {
 const DescribeEntitlements: OperationHandler = (input, ctx) => {
   const stackName = requireString(input, "StackName");
   const name = stringOrUndefined(input["Name"]);
-  const entitlements = ctx.store
+  const all = ctx.store
     .list<StoredEntitlement>()
     .filter((entry) => entry.key.startsWith(`entitlement/${stackName}/`))
     .map((entry) => entry.value)
     .filter((e) => name === undefined || e.Name === name);
-  return { Entitlements: entitlements };
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Entitlements: items, NextToken };
 };
 
 const DeleteEntitlement: OperationHandler = (input, ctx) => {
@@ -1282,6 +1449,13 @@ const StartImageBuilder: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  if (builder.State === "RUNNING") {
+    throw awsError(
+      "OperationNotPermittedException",
+      `ImageBuilder is already RUNNING: ${name}`,
+      400,
+    );
+  }
   const updated = { ...builder, State: "RUNNING" };
   ctx.store.set(imageBuilderKey(name), updated);
   return { ImageBuilder: updated };
@@ -1294,6 +1468,13 @@ const StopImageBuilder: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `ImageBuilder not found: ${name}`,
+      400,
+    );
+  }
+  if (builder.State === "STOPPED") {
+    throw awsError(
+      "OperationNotPermittedException",
+      `ImageBuilder is already STOPPED: ${name}`,
       400,
     );
   }
@@ -1425,13 +1606,17 @@ const CreateUpdatedImage: OperationHandler = (input, ctx) => {
 const DescribeImages: OperationHandler = (input, ctx) => {
   const names = stringListFromInput(input["Names"]);
   const arns = stringListFromInput(input["Arns"]);
-  return {
-    Images: listImages(ctx).filter(
-      (img) =>
-        (names.length === 0 || names.includes(img.Name)) &&
-        (arns.length === 0 || arns.includes(img.Arn)),
-    ),
-  };
+  const all = listImages(ctx).filter(
+    (img) =>
+      (names.length === 0 || names.includes(img.Name)) &&
+      (arns.length === 0 || arns.includes(img.Arn)),
+  );
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Images: items, NextToken };
 };
 
 const DeleteImage: OperationHandler = (input, ctx) => {
@@ -1443,6 +1628,19 @@ const DeleteImage: OperationHandler = (input, ctx) => {
       `Image not found: ${name}`,
       400,
     );
+  }
+  const imageArn_ = image.Arn;
+  const usedByFleet = listFleets(ctx).some(
+    (f) => f.ImageName === name || f.ImageArn === imageArn_,
+  );
+  if (usedByFleet) {
+    throw awsError("ResourceInUseException", `Image is in use: ${name}`, 400);
+  }
+  const usedByBuilder = listImageBuilders(ctx).some(
+    (b) => b.ImageArn === imageArn_,
+  );
+  if (usedByBuilder) {
+    throw awsError("ResourceInUseException", `Image is in use: ${name}`, 400);
   }
   ctx.store.delete(imageKey(name));
   return { Image: { ...image, State: "DELETING" } };
@@ -1571,8 +1769,13 @@ const CreateUser: OperationHandler = (input, ctx) => {
 
 const DescribeUsers: OperationHandler = (input, ctx) => {
   const authType = requireString(input, "AuthenticationType");
-  const users = listUsers(ctx).filter((u) => u.AuthenticationType === authType);
-  return { Users: users };
+  const all = listUsers(ctx).filter((u) => u.AuthenticationType === authType);
+  const { items, NextToken } = paginate(
+    all,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Users: items, NextToken };
 };
 
 const DeleteUser: OperationHandler = (input, ctx) => {
@@ -1797,6 +2000,13 @@ const DeleteUsageReportSubscription: OperationHandler = (_input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceArn");
+  if (!arnResourceExists(resourceArn, ctx)) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${resourceArn}`,
+      400,
+    );
+  }
   const tags = tagsMapFromInput(input["Tags"]);
   const existing =
     ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
@@ -1806,6 +2016,13 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceArn");
+  if (!arnResourceExists(resourceArn, ctx)) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${resourceArn}`,
+      400,
+    );
+  }
   const tagKeys = stringListFromInput(input["TagKeys"]);
   const existing =
     ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
@@ -1818,6 +2035,13 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceArn");
+  if (!arnResourceExists(resourceArn, ctx)) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${resourceArn}`,
+      400,
+    );
+  }
   const tags =
     ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
   return { Tags: tags };

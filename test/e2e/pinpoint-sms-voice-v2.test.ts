@@ -25,6 +25,7 @@ import {
   DescribeRegistrationVersionsCommand,
   DescribeRegistrationsCommand,
   DescribeSpendLimitsCommand,
+  DisassociateOriginationIdentityCommand,
   ListPoolOriginationIdentitiesCommand,
   ListTagsForResourceCommand,
   PinpointSMSVoiceV2Client,
@@ -92,7 +93,7 @@ test("PinpointSMSVoiceV2 phone number request/describe/release", async () => {
   );
   expect(requested.PhoneNumberId).toBeTruthy();
   expect(requested.PhoneNumberArn).toContain("phone-number/");
-  expect(requested.Status).toBe("ACTIVE");
+  expect(requested.Status).toBe("PENDING");
   expect(requested.IsoCountryCode).toBe("US");
 
   const described = await client.send(
@@ -137,7 +138,7 @@ test("PinpointSMSVoiceV2 pool create/associate/describe/delete", async () => {
     }),
   );
   expect(pool.PoolId).toBeTruthy();
-  expect(pool.Status).toBe("ACTIVE");
+  expect(pool.Status).toBe("CREATING");
 
   await client.send(
     new AssociateOriginationIdentityCommand({
@@ -159,6 +160,13 @@ test("PinpointSMSVoiceV2 pool create/associate/describe/delete", async () => {
   );
   expect((pools.Pools ?? []).length).toBe(1);
 
+  await client.send(
+    new DisassociateOriginationIdentityCommand({
+      PoolId: pool.PoolId!,
+      OriginationIdentity: phoneResult.PhoneNumberId!,
+      IsoCountryCode: "US",
+    }),
+  );
   await client.send(new DeletePoolCommand({ PoolId: pool.PoolId! }));
   await client.send(
     new ReleasePhoneNumberCommand({
@@ -365,4 +373,242 @@ test("PinpointSMSVoiceV2 carrier lookup", async () => {
   );
   expect(result.E164PhoneNumber).toBe("+15555550300");
   expect(result.PhoneNumberType).toBeTruthy();
+});
+
+test("PinpointSMSVoiceV2 lifecycle: CREATING→ACTIVE pool, PENDING→ACTIVE phone", async () => {
+  const client = smsVoice();
+
+  const phone = await client.send(
+    new RequestPhoneNumberCommand({
+      IsoCountryCode: "US",
+      MessageType: "TRANSACTIONAL",
+      NumberCapabilities: ["SMS"],
+      NumberType: "SIMULATOR",
+    }),
+  );
+  expect(phone.Status).toBe("PENDING");
+
+  const described = await client.send(
+    new DescribePhoneNumbersCommand({ PhoneNumberIds: [phone.PhoneNumberId!] }),
+  );
+  expect(described.PhoneNumbers![0]!.Status).toBe("ACTIVE");
+
+  const pool = await client.send(
+    new CreatePoolCommand({
+      OriginationIdentity: phone.PhoneNumberId!,
+      MessageType: "TRANSACTIONAL",
+    }),
+  );
+  expect(pool.Status).toBe("CREATING");
+
+  const describedPool = await client.send(
+    new DescribePoolsCommand({ PoolIds: [pool.PoolId!] }),
+  );
+  expect(describedPool.Pools![0]!.Status).toBe("ACTIVE");
+
+  await client.send(
+    new DisassociateOriginationIdentityCommand({
+      PoolId: pool.PoolId!,
+      OriginationIdentity: phone.PhoneNumberId!,
+      IsoCountryCode: "US",
+    }),
+  );
+  await client.send(new DeletePoolCommand({ PoolId: pool.PoolId! }));
+  await client.send(
+    new ReleasePhoneNumberCommand({ PhoneNumberId: phone.PhoneNumberId! }),
+  );
+});
+
+test("PinpointSMSVoiceV2 pagination and filters on DescribePhoneNumbers", async () => {
+  const client = smsVoice();
+
+  const p1 = await client.send(
+    new RequestPhoneNumberCommand({
+      IsoCountryCode: "US",
+      MessageType: "TRANSACTIONAL",
+      NumberCapabilities: ["SMS"],
+      NumberType: "SIMULATOR",
+    }),
+  );
+  const p2 = await client.send(
+    new RequestPhoneNumberCommand({
+      IsoCountryCode: "US",
+      MessageType: "TRANSACTIONAL",
+      NumberCapabilities: ["SMS"],
+      NumberType: "SIMULATOR",
+    }),
+  );
+  const p3 = await client.send(
+    new RequestPhoneNumberCommand({
+      IsoCountryCode: "US",
+      MessageType: "TRANSACTIONAL",
+      NumberCapabilities: ["SMS"],
+      NumberType: "SIMULATOR",
+    }),
+  );
+
+  const page1 = await client.send(
+    new DescribePhoneNumbersCommand({ MaxResults: 2 }),
+  );
+  expect((page1.PhoneNumbers ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeTruthy();
+
+  const page2 = await client.send(
+    new DescribePhoneNumbersCommand({ NextToken: page1.NextToken }),
+  );
+  expect((page2.PhoneNumbers ?? []).length).toBeGreaterThanOrEqual(1);
+
+  const allIds = [
+    ...(page1.PhoneNumbers ?? []).map((p) => p.PhoneNumberId),
+    ...(page2.PhoneNumbers ?? []).map((p) => p.PhoneNumberId),
+  ];
+  expect(allIds).toContain(p1.PhoneNumberId);
+  expect(allIds).toContain(p2.PhoneNumberId);
+  expect(allIds).toContain(p3.PhoneNumberId);
+
+  const filtered = await client.send(
+    new DescribePhoneNumbersCommand({
+      Filters: [{ Name: "number-type", Values: ["SIMULATOR"] }],
+    }),
+  );
+  expect((filtered.PhoneNumbers ?? []).length).toBeGreaterThanOrEqual(3);
+  expect(
+    filtered.PhoneNumbers!.every((p) => p.NumberType === "SIMULATOR"),
+  ).toBe(true);
+
+  await client.send(
+    new ReleasePhoneNumberCommand({ PhoneNumberId: p1.PhoneNumberId! }),
+  );
+  await client.send(
+    new ReleasePhoneNumberCommand({ PhoneNumberId: p2.PhoneNumberId! }),
+  );
+  await client.send(
+    new ReleasePhoneNumberCommand({ PhoneNumberId: p3.PhoneNumberId! }),
+  );
+});
+
+test("PinpointSMSVoiceV2 ref validation: AssociateOriginationIdentity rejects unknown phone", async () => {
+  const client = smsVoice();
+
+  const phone = await client.send(
+    new RequestPhoneNumberCommand({
+      IsoCountryCode: "US",
+      MessageType: "TRANSACTIONAL",
+      NumberCapabilities: ["SMS"],
+      NumberType: "SIMULATOR",
+    }),
+  );
+
+  const pool = await client.send(
+    new CreatePoolCommand({
+      OriginationIdentity: phone.PhoneNumberId!,
+      MessageType: "TRANSACTIONAL",
+    }),
+  );
+
+  await expect(
+    client.send(
+      new AssociateOriginationIdentityCommand({
+        PoolId: pool.PoolId!,
+        OriginationIdentity: "phone-does-not-exist",
+        IsoCountryCode: "US",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DisassociateOriginationIdentityCommand({
+      PoolId: pool.PoolId!,
+      OriginationIdentity: phone.PhoneNumberId!,
+      IsoCountryCode: "US",
+    }),
+  );
+  await client.send(new DeletePoolCommand({ PoolId: pool.PoolId! }));
+  await client.send(
+    new ReleasePhoneNumberCommand({ PhoneNumberId: phone.PhoneNumberId! }),
+  );
+});
+
+test("PinpointSMSVoiceV2 deletion protection blocks DeletePool and ReleasePhoneNumber", async () => {
+  const client = smsVoice();
+
+  const phone = await client.send(
+    new RequestPhoneNumberCommand({
+      IsoCountryCode: "US",
+      MessageType: "TRANSACTIONAL",
+      NumberCapabilities: ["SMS"],
+      NumberType: "SIMULATOR",
+      DeletionProtectionEnabled: true,
+    }),
+  );
+
+  await expect(
+    client.send(
+      new ReleasePhoneNumberCommand({ PhoneNumberId: phone.PhoneNumberId! }),
+    ),
+  ).rejects.toThrow();
+
+  const pool = await client.send(
+    new CreatePoolCommand({
+      OriginationIdentity: phone.PhoneNumberId!,
+      MessageType: "TRANSACTIONAL",
+      DeletionProtectionEnabled: true,
+    }),
+  );
+
+  await expect(
+    client.send(new DeletePoolCommand({ PoolId: pool.PoolId! })),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DisassociateOriginationIdentityCommand({
+      PoolId: pool.PoolId!,
+      OriginationIdentity: phone.PhoneNumberId!,
+      IsoCountryCode: "US",
+    }),
+  );
+});
+
+test("PinpointSMSVoiceV2 in-use check: DeletePool blocked with associations, ReleasePhoneNumber blocked in pool", async () => {
+  const client = smsVoice();
+
+  const phone = await client.send(
+    new RequestPhoneNumberCommand({
+      IsoCountryCode: "US",
+      MessageType: "TRANSACTIONAL",
+      NumberCapabilities: ["SMS"],
+      NumberType: "SIMULATOR",
+    }),
+  );
+
+  const pool = await client.send(
+    new CreatePoolCommand({
+      OriginationIdentity: phone.PhoneNumberId!,
+      MessageType: "TRANSACTIONAL",
+    }),
+  );
+
+  await client.send(
+    new AssociateOriginationIdentityCommand({
+      PoolId: pool.PoolId!,
+      OriginationIdentity: phone.PhoneNumberId!,
+      IsoCountryCode: "US",
+    }),
+  );
+
+  await expect(
+    client.send(new DeletePoolCommand({ PoolId: pool.PoolId! })),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DisassociateOriginationIdentityCommand({
+      PoolId: pool.PoolId!,
+      OriginationIdentity: phone.PhoneNumberId!,
+      IsoCountryCode: "US",
+    }),
+  );
+  await client.send(new DeletePoolCommand({ PoolId: pool.PoolId! }));
+  await client.send(
+    new ReleasePhoneNumberCommand({ PhoneNumberId: phone.PhoneNumberId! }),
+  );
 });

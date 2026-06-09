@@ -290,6 +290,51 @@ const strArrayFrom = (value: unknown): string[] => {
   return value.filter((v): v is string => typeof v === "string");
 };
 
+const numberOrUndefined = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const paginate = <T>(
+  items: T[],
+  input: Record<string, unknown>,
+): { page: T[]; NextToken: string | undefined } => {
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const offset = nextToken !== undefined ? parseInt(atob(nextToken), 10) : 0;
+  const limit = maxResults ?? items.length;
+  const page = items.slice(offset, offset + limit);
+  const next =
+    offset + limit < items.length ? btoa(String(offset + limit)) : undefined;
+  return { page, NextToken: next };
+};
+
+type FilterSpec = { Name: string; Values: string[] };
+
+const filterBySpec = <T>(
+  items: T[],
+  filtersRaw: unknown,
+  fieldMap: Record<string, keyof T & string>,
+): T[] => {
+  if (!Array.isArray(filtersRaw) || filtersRaw.length === 0) return items;
+  const filters: FilterSpec[] = [];
+  for (const f of filtersRaw) {
+    if (typeof f !== "object" || f === null) continue;
+    const rec = f as Record<string, unknown>;
+    const name = stringOrUndefined(rec["Name"]);
+    const values = strArrayFrom(rec["Values"]);
+    if (name && values.length > 0) filters.push({ Name: name, Values: values });
+  }
+  if (filters.length === 0) return items;
+  return items.filter((item) =>
+    filters.every((filter) => {
+      const field = fieldMap[filter.Name];
+      if (!field) return true;
+      const itemValue = (item as Record<string, unknown>)[field];
+      const strValue = typeof itemValue === "string" ? itemValue : undefined;
+      return strValue !== undefined && filter.Values.includes(strValue);
+    }),
+  );
+};
+
 const requireString = (
   input: Record<string, unknown>,
   field: string,
@@ -911,6 +956,7 @@ const RequestPhoneNumber: OperationHandler = (input, ctx) => {
   if (tags.length > 0) setTagsForArn(ctx, arn, tags);
   return {
     ...phoneNumberView(stored),
+    Status: "PENDING",
     Tags: tags,
   };
 };
@@ -921,13 +967,20 @@ const DescribePhoneNumbers: OperationHandler = (input, ctx) => {
     .list<StoredPhoneNumber>()
     .filter((e) => e.key.startsWith(phonePrefix))
     .map((e) => e.value);
-  const filtered =
+  const byId =
     ids.length > 0
       ? all.filter((p) =>
           ids.some((id) => id === p.PhoneNumberId || id === p.PhoneNumberArn),
         )
       : all;
-  return { PhoneNumbers: filtered.map(phoneNumberView) };
+  const filtered = filterBySpec(byId, input["Filters"], {
+    status: "Status",
+    "number-type": "NumberType",
+    "iso-country-code": "IsoCountryCode",
+    "message-type": "MessageType",
+  });
+  const { page, NextToken } = paginate(filtered, input);
+  return { PhoneNumbers: page.map(phoneNumberView), NextToken };
 };
 
 const UpdatePhoneNumber: OperationHandler = (input, ctx) => {
@@ -954,6 +1007,20 @@ const UpdatePhoneNumber: OperationHandler = (input, ctx) => {
 const ReleasePhoneNumber: OperationHandler = (input, ctx) => {
   const idOrArn = requireString(input, "PhoneNumberId");
   const stored = requirePhoneNumber(ctx, idOrArn);
+  if (stored.DeletionProtectionEnabled) {
+    throw awsError(
+      "ConflictException",
+      `Phone number ${idOrArn} has deletion protection enabled.`,
+      409,
+    );
+  }
+  if (stored.PoolId !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `Phone number ${idOrArn} is associated with pool ${stored.PoolId}. Disassociate it first.`,
+      409,
+    );
+  }
   ctx.store.delete(`${phonePrefix}${stored.PhoneNumberId}`);
   return phoneNumberView(stored);
 };
@@ -997,6 +1064,7 @@ const CreatePool: OperationHandler = (input, ctx) => {
   }
   return {
     ...poolView(stored),
+    Status: "CREATING",
     Tags: tags,
   };
 };
@@ -1007,11 +1075,16 @@ const DescribePools: OperationHandler = (input, ctx) => {
     .list<StoredPool>()
     .filter((e) => e.key.startsWith(poolPrefix))
     .map((e) => e.value);
-  const filtered =
+  const byId =
     ids.length > 0
       ? all.filter((p) => ids.some((id) => id === p.PoolId || id === p.PoolArn))
       : all;
-  return { Pools: filtered.map(poolView) };
+  const filtered = filterBySpec(byId, input["Filters"], {
+    status: "Status",
+    "message-type": "MessageType",
+  });
+  const { page, NextToken } = paginate(filtered, input);
+  return { Pools: page.map(poolView), NextToken };
 };
 
 const UpdatePool: OperationHandler = (input, ctx) => {
@@ -1038,6 +1111,24 @@ const UpdatePool: OperationHandler = (input, ctx) => {
 const DeletePool: OperationHandler = (input, ctx) => {
   const idOrArn = requireString(input, "PoolId");
   const stored = requirePool(ctx, idOrArn);
+  if (stored.DeletionProtectionEnabled) {
+    throw awsError(
+      "ConflictException",
+      `Pool ${idOrArn} has deletion protection enabled.`,
+      409,
+    );
+  }
+  const originPrefix = `${poolOriginPrefix}${stored.PoolId}:`;
+  const hasOrigins = ctx.store
+    .list<unknown>()
+    .some((e) => e.key.startsWith(originPrefix));
+  if (hasOrigins) {
+    throw awsError(
+      "ConflictException",
+      `Pool ${idOrArn} still has origination identities associated. Disassociate them first.`,
+      409,
+    );
+  }
   ctx.store.delete(`${poolPrefix}${stored.PoolId}`);
   return poolView(stored);
 };
@@ -1047,6 +1138,24 @@ const AssociateOriginationIdentity: OperationHandler = (input, ctx) => {
   const originationIdentity = requireString(input, "OriginationIdentity");
   const pool = requirePool(ctx, poolIdOrArn);
   const originId = idFromArn(originationIdentity);
+  const phoneStored = ctx.store.get<StoredPhoneNumber>(
+    `${phonePrefix}${originId}`,
+  );
+  const senderStored = ctx.store
+    .list<StoredSenderId>()
+    .find(
+      (e) =>
+        e.key.startsWith(senderPrefix) &&
+        (e.value.SenderId === originId ||
+          e.value.SenderIdArn === originationIdentity),
+    );
+  if (!phoneStored && !senderStored) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Origination identity ${originationIdentity} does not exist.`,
+      404,
+    );
+  }
   const originArn = originationIdentity.startsWith("arn:")
     ? originationIdentity
     : `arn:aws:sms-voice:${ctx.region}:${ctx.account}:phone-number/${originId}`;

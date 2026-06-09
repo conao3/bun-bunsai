@@ -118,6 +118,106 @@ const requireRecord = (
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
+const decodeToken = (token: unknown): number => {
+  if (typeof token !== "string" || token === "") return 0;
+  const n = parseInt(token, 10);
+  return isNaN(n) ? 0 : n;
+};
+
+const encodeToken = (offset: number): string => String(offset);
+
+const matchesCondition = (
+  fieldValue: unknown,
+  condition: Record<string, unknown>,
+): boolean => {
+  if ("after" in condition && typeof condition.after === "number") {
+    if (typeof fieldValue !== "number" || fieldValue <= condition.after)
+      return false;
+  }
+  if ("before" in condition && typeof condition.before === "number") {
+    if (typeof fieldValue !== "number" || fieldValue >= condition.before)
+      return false;
+  }
+  if ("equals" in condition) {
+    const eq = recordOrUndefined(condition.equals);
+    if (eq !== undefined) {
+      if ("integerValues" in eq && Array.isArray(eq.integerValues)) {
+        if (!(eq.integerValues as unknown[]).includes(fieldValue)) return false;
+      } else if ("stringValues" in eq && Array.isArray(eq.stringValues)) {
+        if (!(eq.stringValues as unknown[]).includes(fieldValue)) return false;
+      }
+    }
+  }
+  return true;
+};
+
+const matchesIncidentFilters = (
+  rec: StoredIncidentRecord,
+  filters: unknown[],
+): boolean => {
+  for (const f of filters) {
+    const filter = recordOrUndefined(f);
+    if (filter === undefined) continue;
+    const key = typeof filter.key === "string" ? filter.key : undefined;
+    const condition = recordOrUndefined(filter.condition);
+    if (key === undefined || condition === undefined) continue;
+    let fieldValue: unknown;
+    switch (key) {
+      case "creationTime":
+        fieldValue = rec.creationTime;
+        break;
+      case "impact":
+        fieldValue = rec.impact;
+        break;
+      case "status":
+        fieldValue = rec.status;
+        break;
+      case "createdBy":
+        fieldValue = rec.incidentRecordSource.createdBy;
+        break;
+    }
+    if (!matchesCondition(fieldValue, condition)) return false;
+  }
+  return true;
+};
+
+const matchesTimelineFilters = (
+  event: StoredTimelineEvent,
+  filters: unknown[],
+): boolean => {
+  for (const f of filters) {
+    const filter = recordOrUndefined(f);
+    if (filter === undefined) continue;
+    const key = typeof filter.key === "string" ? filter.key : undefined;
+    const condition = recordOrUndefined(filter.condition);
+    if (key === undefined || condition === undefined) continue;
+    let fieldValue: unknown;
+    switch (key) {
+      case "eventTime":
+        fieldValue = event.eventTime;
+        break;
+      case "eventType":
+        fieldValue = event.eventType;
+        break;
+      case "eventReference": {
+        const eq = recordOrUndefined(condition.equals);
+        if (
+          eq !== undefined &&
+          "stringValues" in eq &&
+          Array.isArray(eq.stringValues)
+        ) {
+          const refs = JSON.stringify(event.eventReferences);
+          if (!(eq.stringValues as string[]).some((v) => refs.includes(v)))
+            return false;
+        }
+        continue;
+      }
+    }
+    if (!matchesCondition(fieldValue, condition)) return false;
+  }
+  return true;
+};
+
 const responsePlanKey = (arn: string): string => `${responsePlanPrefix}${arn}`;
 const incidentKey = (arn: string): string => `${incidentPrefix}${arn}`;
 const timelineKey = (incidentArn: string, eventId: string): string =>
@@ -212,6 +312,10 @@ const CreateResponsePlan: OperationHandler = (input, ctx) => {
     integrations: arrayOrEmpty(input.integrations),
   };
   ctx.store.set(responsePlanKey(arn), plan);
+  const tags = recordOrUndefined(input.tags) ?? {};
+  if (Object.keys(tags).length > 0) {
+    ctx.store.set(tagsKey(arn), tags);
+  }
   return { arn };
 };
 
@@ -237,12 +341,20 @@ const GetResponsePlan: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListResponsePlans: OperationHandler = (_input, ctx) => {
-  const plans = ctx.store
+const ListResponsePlans: OperationHandler = (input, ctx) => {
+  const max =
+    typeof input.maxResults === "number" ? (input.maxResults as number) : 100;
+  const offset = decodeToken(input.nextToken);
+  const all = ctx.store
     .list<StoredResponsePlan>()
     .filter((entry) => entry.key.startsWith(responsePlanPrefix))
     .map((entry) => summaryView(entry.value));
-  return { responsePlanSummaries: plans };
+  const page = all.slice(offset, offset + max);
+  const nextOffset = offset + page.length;
+  return {
+    responsePlanSummaries: page,
+    ...(nextOffset < all.length ? { nextToken: encodeToken(nextOffset) } : {}),
+  };
 };
 
 const DeleteResponsePlan: OperationHandler = (input, ctx) => {
@@ -361,16 +473,29 @@ const GetIncidentRecord: OperationHandler = (input, ctx) => {
   return { incidentRecord: rec };
 };
 
+const validIncidentStatuses: ReadonlySet<string> = new Set([
+  "OPEN",
+  "RESOLVED",
+]);
+
 const UpdateIncidentRecord: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "arn");
   const rec = requireIncident(ctx, arn);
   const now = nowSeconds();
+  const newStatus = stringOrUndefined(input.status as unknown);
+  if (newStatus !== undefined && !validIncidentStatuses.has(newStatus)) {
+    throw awsError(
+      "ValidationException",
+      `status must be one of OPEN, RESOLVED.`,
+      400,
+    );
+  }
   const updated: StoredIncidentRecord = {
     ...rec,
     lastModifiedTime: now,
     title: stringOrUndefined(input.title as unknown) ?? rec.title,
     impact: typeof input.impact === "number" ? input.impact : rec.impact,
-    status: stringOrUndefined(input.status as unknown) ?? rec.status,
+    status: newStatus ?? rec.status,
     summary:
       "summary" in input
         ? stringOrUndefined(input.summary as unknown)
@@ -384,8 +509,7 @@ const UpdateIncidentRecord: OperationHandler = (input, ctx) => {
         ? arrayOrEmpty(input.notificationTargets)
         : rec.notificationTargets,
     resolvedTime:
-      stringOrUndefined(input.status as unknown) === "RESOLVED" &&
-      rec.resolvedTime === undefined
+      newStatus === "RESOLVED" && rec.resolvedTime === undefined
         ? now
         : rec.resolvedTime,
   };
@@ -399,12 +523,22 @@ const DeleteIncidentRecord: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const ListIncidentRecords: OperationHandler = (_input, ctx) => {
-  const summaries = ctx.store
+const ListIncidentRecords: OperationHandler = (input, ctx) => {
+  const filters = Array.isArray(input.filters) ? input.filters : [];
+  const max =
+    typeof input.maxResults === "number" ? (input.maxResults as number) : 100;
+  const offset = decodeToken(input.nextToken);
+  const all = ctx.store
     .list<StoredIncidentRecord>()
     .filter((entry) => entry.key.startsWith(incidentPrefix))
-    .map((entry) => incidentSummaryView(entry.value));
-  return { incidentRecordSummaries: summaries };
+    .map((entry) => entry.value)
+    .filter((rec) => matchesIncidentFilters(rec, filters));
+  const page = all.slice(offset, offset + max);
+  const nextOffset = offset + page.length;
+  return {
+    incidentRecordSummaries: page.map(incidentSummaryView),
+    ...(nextOffset < all.length ? { nextToken: encodeToken(nextOffset) } : {}),
+  };
 };
 
 const ListIncidentFindings: OperationHandler = (input, _ctx) => {
@@ -497,21 +631,35 @@ const DeleteTimelineEvent: OperationHandler = (input, ctx) => {
 const ListTimelineEvents: OperationHandler = (input, ctx) => {
   const incidentRecordArn = requireString(input, "incidentRecordArn");
   const prefix = `${timelinePrefix}${incidentRecordArn}:`;
-  const eventSummaries = ctx.store
+  const filters = Array.isArray(input.filters) ? input.filters : [];
+  const max =
+    typeof input.maxResults === "number" ? (input.maxResults as number) : 100;
+  const offset = decodeToken(input.nextToken);
+  const sortOrder =
+    typeof input.sortOrder === "string" ? input.sortOrder : "ASCENDING";
+  const all = ctx.store
     .list<StoredTimelineEvent>()
     .filter((entry) => entry.key.startsWith(prefix))
-    .map((entry) => {
-      const e = entry.value;
-      return {
-        eventId: e.eventId,
-        eventTime: e.eventTime,
-        eventType: e.eventType,
-        eventUpdatedTime: e.eventUpdatedTime,
-        incidentRecordArn: e.incidentRecordArn,
-        eventReferences: e.eventReferences,
-      };
+    .map((entry) => entry.value)
+    .filter((e) => matchesTimelineFilters(e, filters))
+    .sort((a, b) => {
+      const diff = a.eventTime - b.eventTime;
+      return sortOrder === "DESCENDING" ? -diff : diff;
     });
-  return { eventSummaries };
+  const page = all.slice(offset, offset + max);
+  const nextOffset = offset + page.length;
+  const eventSummaries = page.map((e) => ({
+    eventId: e.eventId,
+    eventTime: e.eventTime,
+    eventType: e.eventType,
+    eventUpdatedTime: e.eventUpdatedTime,
+    incidentRecordArn: e.incidentRecordArn,
+    eventReferences: e.eventReferences,
+  }));
+  return {
+    eventSummaries,
+    ...(nextOffset < all.length ? { nextToken: encodeToken(nextOffset) } : {}),
+  };
 };
 
 const ListRelatedItems: OperationHandler = (input, ctx) => {
@@ -622,6 +770,20 @@ const UpdateReplicationSet: OperationHandler = (input, ctx) => {
     if (a.deleteRegionAction !== undefined) {
       const del = recordOrUndefined(a.deleteRegionAction);
       if (del !== undefined && typeof del.regionName === "string") {
+        if (rs.deletionProtected) {
+          throw awsError(
+            "ConflictException",
+            `Replication set ${arn} is deletion protected.`,
+            409,
+          );
+        }
+        if (Object.keys(regionMap).length <= 1) {
+          throw awsError(
+            "ConflictException",
+            `Cannot delete the last region from a replication set.`,
+            409,
+          );
+        }
         delete regionMap[del.regionName];
       }
     }
@@ -641,12 +803,20 @@ const DeleteReplicationSet: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const ListReplicationSets: OperationHandler = (_input, ctx) => {
-  const arns = ctx.store
+const ListReplicationSets: OperationHandler = (input, ctx) => {
+  const max =
+    typeof input.maxResults === "number" ? (input.maxResults as number) : 100;
+  const offset = decodeToken(input.nextToken);
+  const all = ctx.store
     .list<StoredReplicationSet>()
     .filter((entry) => entry.key.startsWith(replicationSetPrefix))
     .map((entry) => entry.value.arn);
-  return { replicationSetArns: arns };
+  const page = all.slice(offset, offset + max);
+  const nextOffset = offset + page.length;
+  return {
+    replicationSetArns: page,
+    ...(nextOffset < all.length ? { nextToken: encodeToken(nextOffset) } : {}),
+  };
 };
 
 const UpdateDeletionProtection: OperationHandler = (input, ctx) => {
@@ -700,7 +870,15 @@ const GetResourcePolicies: OperationHandler = (input, ctx) => {
 const DeleteResourcePolicy: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "resourceArn");
   const polId = requireString(input, "policyId");
-  ctx.store.delete(policyKey(resourceArn, polId));
+  const key = policyKey(resourceArn, polId);
+  if (ctx.store.get<StoredResourcePolicy>(key) === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource policy ${polId} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
   return {};
 };
 

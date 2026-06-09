@@ -934,8 +934,6 @@ test("SES ListReceiptRuleSets pagination (MEDIUM-1)", async () => {
   }
 
   for (const name of names) {
-    await client.send(
-      new DeleteReceiptRuleSetCommand({ RuleSetName: name }),
-    );
+    await client.send(new DeleteReceiptRuleSetCommand({ RuleSetName: name }));
   }
 });

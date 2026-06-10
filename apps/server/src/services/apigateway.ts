@@ -1320,7 +1320,7 @@ const UpdateMethod: OperationHandler = (input, ctx) => {
   return methodView(updated);
 };
 
-const TestInvokeMethod: OperationHandler = (input, ctx) => {
+const TestInvokeMethod: OperationHandler = async (input, ctx) => {
   const restApiId = stringOrUndefined(input["restApiId"]);
   const resourceId = stringOrUndefined(input["resourceId"]);
   const httpMethod = stringOrUndefined(input["httpMethod"]);
@@ -1332,8 +1332,96 @@ const TestInvokeMethod: OperationHandler = (input, ctx) => {
     );
   }
   requireRestApi(ctx, restApiId);
-  requireResource(ctx, restApiId, resourceId);
+  const resource = requireResource(ctx, restApiId, resourceId);
   requireMethod(ctx, restApiId, resourceId, httpMethod);
+
+  const integration = ctx.store.get<StoredIntegration>(
+    integrationKey(restApiId, resourceId, httpMethod),
+  );
+
+  if (!integration) {
+    throw awsError(
+      "NotFoundException",
+      "No integration defined for method",
+      404,
+    );
+  }
+
+  if (integration.type === "AWS_PROXY") {
+    const functionArn = integration.uri
+      ? lambdaArnFromUri(integration.uri)
+      : undefined;
+
+    if (!functionArn) {
+      return {
+        status: 500,
+        body: JSON.stringify({ message: "Invalid integration URI" }),
+        headers: {},
+        multiValueHeaders: {},
+        log: "",
+        latency: 0,
+      };
+    }
+
+    const bodyText = typeof input["body"] === "string" ? input["body"] : "";
+    const inputHeaders =
+      input["headers"] !== null && typeof input["headers"] === "object"
+        ? (input["headers"] as Record<string, string>)
+        : {};
+    const stageVariables =
+      input["stageVariables"] !== null &&
+      typeof input["stageVariables"] === "object"
+        ? (input["stageVariables"] as Record<string, string>)
+        : {};
+
+    const event = {
+      version: "1.0",
+      resource: resource.path,
+      path: resource.path,
+      httpMethod,
+      headers: inputHeaders,
+      queryStringParameters: null,
+      pathParameters: null,
+      stageVariables:
+        Object.keys(stageVariables).length > 0 ? stageVariables : null,
+      requestContext: {
+        stage: "test-invoke-stage",
+        resourcePath: resource.path,
+        httpMethod,
+      },
+      body: bodyText || null,
+      isBase64Encoded: false,
+    };
+
+    const result = await invokeTaskResource(ctx, functionArn, event);
+
+    if (!result.ok) {
+      return {
+        status: 502,
+        body: JSON.stringify({ message: "Internal server error" }),
+        headers: {},
+        multiValueHeaders: {},
+        log: "",
+        latency: 0,
+      };
+    }
+
+    const lambdaResult = result.result as {
+      statusCode?: number;
+      headers?: Record<string, string>;
+      body?: string;
+    };
+
+    return {
+      status: lambdaResult.statusCode ?? 200,
+      body: lambdaResult.body ?? "",
+      headers: lambdaResult.headers ?? {},
+      multiValueHeaders: {},
+      log: "",
+      latency: 0,
+    };
+  }
+
   return {
     status: 200,
     body: "{}",

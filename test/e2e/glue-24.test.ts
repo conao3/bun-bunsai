@@ -28,9 +28,8 @@ const client = new GlueClient({
 test("GetDatabases pagination via MaxResults + NextToken round-trip", async () => {
   const prefix = "pgdb_con2013_";
   const total = 7;
-  const CreateDatabaseCommand = (
-    await import("@aws-sdk/client-glue")
-  ).CreateDatabaseCommand;
+  const CreateDatabaseCommand = (await import("@aws-sdk/client-glue"))
+    .CreateDatabaseCommand;
   for (let i = 0; i < total; i++) {
     await client.send(
       new CreateDatabaseCommand({
@@ -39,9 +38,7 @@ test("GetDatabases pagination via MaxResults + NextToken round-trip", async () =
     );
   }
 
-  const page1 = await client.send(
-    new GetDatabasesCommand({ MaxResults: 5 }),
-  );
+  const page1 = await client.send(new GetDatabasesCommand({ MaxResults: 5 }));
   expect(Array.isArray(page1.DatabaseList)).toBe(true);
   expect(page1.DatabaseList!.length).toBeLessThanOrEqual(5);
   expect(typeof page1.NextToken).toBe("string");

@@ -1295,9 +1295,17 @@ const CreateStateMachine: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const definition = requireString(input, "definition");
   const roleArn = requireString(input, "roleArn");
+  const type = stringOrUndefined(input["type"]) ?? "STANDARD";
   const arn = stateMachineArnOf(ctx, name);
   const existing = ctx.store.get<StoredStateMachine>(stateMachineKey(arn));
   if (existing !== undefined) {
+    if (
+      existing.definition === definition &&
+      existing.roleArn === roleArn &&
+      existing.type === type
+    ) {
+      return { stateMachineArn: arn, creationDate: existing.creationDate };
+    }
     throw awsError(
       "StateMachineAlreadyExists",
       `State Machine Already Exists: '${arn}'`,
@@ -1310,11 +1318,15 @@ const CreateStateMachine: OperationHandler = (input, ctx) => {
     name,
     definition,
     roleArn,
-    type: stringOrUndefined(input["type"]) ?? "STANDARD",
+    type,
     status: "ACTIVE",
     creationDate,
   };
   ctx.store.set(stateMachineKey(arn), machine);
+  const tags = tagListToRecord(input["tags"]);
+  if (Object.keys(tags).length > 0) {
+    ctx.store.set(tagsKey(arn), { resourceArn: arn, tags });
+  }
   return { stateMachineArn: arn, creationDate };
 };
 
@@ -1513,11 +1525,7 @@ const CreateActivity: OperationHandler = (input, ctx) => {
   const arn = activityArnOf(ctx, name);
   const existing = ctx.store.get<StoredActivity>(activityKey(arn));
   if (existing !== undefined) {
-    throw awsError(
-      "ActivityLimitExceeded",
-      `Activity Already Exists: '${arn}'`,
-      400,
-    );
+    return { activityArn: arn, creationDate: existing.creationDate };
   }
   const creationDate = nowSeconds();
   const activity: StoredActivity = { activityArn: arn, name, creationDate };
@@ -1705,15 +1713,7 @@ const CreateStateMachineAlias: OperationHandler = (input, ctx) => {
   }
   const machineArn = normalizeMachineArn(firstVersionArn);
   const aliasArn = `${machineArn}:${name}`;
-  const existing = ctx.store.get<StoredStateMachineAlias>(aliasKey(aliasArn));
-  if (existing !== undefined) {
-    throw awsError(
-      "StateMachineAlreadyExists",
-      `Alias Already Exists: '${aliasArn}'`,
-      400,
-    );
-  }
-  const creationDate = nowSeconds();
+  const description = stringOrUndefined(input["description"]);
   const routingConf = (routingConfiguration as Record<string, unknown>[]).map(
     (item) => ({
       stateMachineVersionArn: String(item["stateMachineVersionArn"] ?? ""),
@@ -1721,11 +1721,30 @@ const CreateStateMachineAlias: OperationHandler = (input, ctx) => {
         typeof item["weight"] === "number" ? (item["weight"] as number) : 100,
     }),
   );
+  const existing = ctx.store.get<StoredStateMachineAlias>(aliasKey(aliasArn));
+  if (existing !== undefined) {
+    if (
+      existing.description === description &&
+      JSON.stringify(existing.routingConfiguration) ===
+        JSON.stringify(routingConf)
+    ) {
+      return {
+        stateMachineAliasArn: aliasArn,
+        creationDate: existing.creationDate,
+      };
+    }
+    throw awsError(
+      "StateMachineAlreadyExists",
+      `Alias Already Exists: '${aliasArn}'`,
+      400,
+    );
+  }
+  const creationDate = nowSeconds();
   const alias: StoredStateMachineAlias = {
     stateMachineAliasArn: aliasArn,
     stateMachineArn: machineArn,
     name,
-    description: stringOrUndefined(input["description"]),
+    description,
     routingConfiguration: routingConf,
     creationDate,
     updateDate: creationDate,

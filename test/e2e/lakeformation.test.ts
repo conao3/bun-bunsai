@@ -782,3 +782,130 @@ test("LakeFormation EntityNotFoundException returns 404", async () => {
     ),
   ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
 });
+
+test("LakeFormation transaction state guards", async () => {
+  const client = lakeformation();
+
+  const { TransactionId: txId } = await client.send(
+    new StartTransactionCommand({ TransactionType: "READ_AND_WRITE" }),
+  );
+
+  await client.send(new CommitTransactionCommand({ TransactionId: txId }));
+
+  await expect(
+    client.send(new CommitTransactionCommand({ TransactionId: txId })),
+  ).rejects.toMatchObject({
+    name: "TransactionCommittedException",
+  });
+
+  await expect(
+    client.send(new CancelTransactionCommand({ TransactionId: txId })),
+  ).rejects.toMatchObject({
+    name: "TransactionCommittedException",
+  });
+
+  const { TransactionId: txId2 } = await client.send(
+    new StartTransactionCommand({}),
+  );
+
+  await client.send(new CancelTransactionCommand({ TransactionId: txId2 }));
+
+  await expect(
+    client.send(new CommitTransactionCommand({ TransactionId: txId2 })),
+  ).rejects.toMatchObject({
+    name: "TransactionCanceledException",
+  });
+});
+
+test("LakeFormation ListTransactions StatusFilter", async () => {
+  const client = lakeformation();
+
+  const { TransactionId: activeTxId } = await client.send(
+    new StartTransactionCommand({}),
+  );
+  const { TransactionId: committedTxId } = await client.send(
+    new StartTransactionCommand({}),
+  );
+  const { TransactionId: abortedTxId } = await client.send(
+    new StartTransactionCommand({}),
+  );
+
+  await client.send(
+    new CommitTransactionCommand({ TransactionId: committedTxId }),
+  );
+  await client.send(
+    new CancelTransactionCommand({ TransactionId: abortedTxId }),
+  );
+
+  const active = await client.send(
+    new ListTransactionsCommand({ StatusFilter: "ACTIVE" }),
+  );
+  const activeIds = (active.Transactions ?? []).map((t) => t.TransactionId);
+  expect(activeIds).toContain(activeTxId);
+  expect(activeIds).not.toContain(committedTxId);
+  expect(activeIds).not.toContain(abortedTxId);
+
+  const committed = await client.send(
+    new ListTransactionsCommand({ StatusFilter: "COMMITTED" }),
+  );
+  const committedIds = (committed.Transactions ?? []).map(
+    (t) => t.TransactionId,
+  );
+  expect(committedIds).toContain(committedTxId);
+  expect(committedIds).not.toContain(activeTxId);
+  expect(committedIds).not.toContain(abortedTxId);
+
+  const aborted = await client.send(
+    new ListTransactionsCommand({ StatusFilter: "ABORTED" }),
+  );
+  const abortedIds = (aborted.Transactions ?? []).map((t) => t.TransactionId);
+  expect(abortedIds).toContain(abortedTxId);
+  expect(abortedIds).not.toContain(activeTxId);
+  expect(abortedIds).not.toContain(committedTxId);
+
+  const all = await client.send(
+    new ListTransactionsCommand({ StatusFilter: "ALL" }),
+  );
+  const allIds = (all.Transactions ?? []).map((t) => t.TransactionId);
+  expect(allIds).toContain(activeTxId);
+  expect(allIds).toContain(committedTxId);
+  expect(allIds).toContain(abortedTxId);
+
+  await client.send(
+    new CancelTransactionCommand({ TransactionId: activeTxId }),
+  );
+});
+
+test("LakeFormation ListTransactions pagination", async () => {
+  const client = lakeformation();
+
+  const txIds: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const { TransactionId } = await client.send(
+      new StartTransactionCommand({}),
+    );
+    txIds.push(TransactionId!);
+  }
+
+  const page1 = await client.send(
+    new ListTransactionsCommand({
+      StatusFilter: "ACTIVE",
+      MaxResults: 3,
+    }),
+  );
+  expect((page1.Transactions ?? []).length).toBeLessThanOrEqual(3);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListTransactionsCommand({
+      StatusFilter: "ACTIVE",
+      MaxResults: 3,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect((page2.Transactions ?? []).length).toBeGreaterThan(0);
+
+  for (const txId of txIds) {
+    await client.send(new CancelTransactionCommand({ TransactionId: txId }));
+  }
+});

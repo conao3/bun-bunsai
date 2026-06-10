@@ -18,10 +18,12 @@ import { Overview } from "./Overview";
 import { RequestLog, statusFilters } from "./RequestLog";
 import type { StatusFilter } from "./RequestLog";
 import { ResourceBrowser } from "./ResourceBrowser";
+import { Settings } from "./Settings";
 import { Snapshots } from "./Snapshots";
 import {
   buildLogPath,
   buildResourcePath,
+  buildSettingsPath,
   buildSnapshotPath,
   parseRoute,
   router,
@@ -106,7 +108,9 @@ export function App() {
             ? buildResourcePath(null)
             : v === "snapshots"
               ? buildSnapshotPath()
-              : buildLogPath(null);
+              : v === "settings"
+                ? buildSettingsPath()
+                : buildLogPath(null);
       const url = withQuery(path, loc.query);
       if (url === router.getSnapshot()) return;
       router.push(url);
@@ -374,6 +378,17 @@ export function App() {
         )}
         {screen === "snapshots" && (
           <Snapshots snapshots={snapshots} onRefresh={refreshSnapshots} />
+        )}
+        {screen === "settings" && (
+          <Settings
+            theme={theme}
+            setTheme={setTheme}
+            scope={scope}
+            setScope={setScope}
+            accounts={accounts}
+            regions={regions}
+            services={services}
+          />
         )}
       </div>
     </div>

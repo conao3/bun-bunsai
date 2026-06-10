@@ -5,11 +5,15 @@ import type { Screen, Theme } from "./types";
 
 type Scope = { account: string; region: string };
 
-const navItems = [
+const monitorNavItems = [
   { id: "overview", label: "Overview", ico: Ico.overview },
   { id: "log", label: "Request Log", ico: Ico.log },
   { id: "resources", label: "Resource Browser", ico: Ico.browser },
   { id: "snapshots", label: "Snapshots", ico: Ico.snapshot },
+] as const;
+
+const configureNavItems = [
+  { id: "settings", label: "Settings", ico: Ico.settings },
 ] as const;
 
 const screenTitles: Record<Screen, string> = {
@@ -17,6 +21,7 @@ const screenTitles: Record<Screen, string> = {
   log: "Request Log",
   resources: "Resource Browser",
   snapshots: "State Snapshots",
+  settings: "Settings",
 } as const;
 
 export function Sidebar({
@@ -50,6 +55,7 @@ export function Sidebar({
     log: logCount || null,
     resources: resourceCount || null,
     snapshots: snapshotCount || null,
+    settings: null,
   };
   return (
     <aside className="sidebar">
@@ -122,7 +128,7 @@ export function Sidebar({
 
       <nav className="nav">
         <div className="nav-group-label uppercase-label">Monitor</div>
-        {navItems.map((n) => (
+        {monitorNavItems.map((n) => (
           <button
             key={n.id}
             className={`nav-item${screen === n.id ? " active" : ""}`}
@@ -134,6 +140,23 @@ export function Sidebar({
             {counts[n.id] != null && (
               <span className="count mono">{counts[n.id]}</span>
             )}
+          </button>
+        ))}
+        <div
+          className="nav-group-label uppercase-label"
+          style={{ marginTop: 8 }}
+        >
+          Configure
+        </div>
+        {configureNavItems.map((n) => (
+          <button
+            key={n.id}
+            className={`nav-item${screen === n.id ? " active" : ""}`}
+            onClick={() => setScreen(n.id)}
+            aria-current={screen === n.id ? "page" : undefined}
+          >
+            <n.ico className="ico" />
+            <span className="label">{n.label}</span>
           </button>
         ))}
       </nav>

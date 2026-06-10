@@ -6,7 +6,8 @@ export type Route =
   | { screen: "overview" }
   | { screen: "log"; requestId: string | null }
   | { screen: "resources"; sel: { service: string; key: string } | null }
-  | { screen: "snapshots" };
+  | { screen: "snapshots" }
+  | { screen: "settings" };
 
 const listeners = new Set<() => void>();
 let bound = false;
@@ -96,6 +97,7 @@ export function parseRoute(path: string): Route | null {
   }
   if (seg.length === 1 && seg[0] === "snapshots")
     return { screen: "snapshots" };
+  if (seg.length === 1 && seg[0] === "settings") return { screen: "settings" };
   return null;
 }
 
@@ -113,6 +115,10 @@ export function buildResourcePath(
 
 export function buildSnapshotPath(): string {
   return "/snapshots";
+}
+
+export function buildSettingsPath(): string {
+  return "/settings";
 }
 
 export function withQuery(path: string, query: URLSearchParams): string {

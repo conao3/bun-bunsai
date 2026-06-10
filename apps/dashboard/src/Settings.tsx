@@ -1,0 +1,249 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ServiceSummary } from "./api";
+import { Ico, ProtoBadge, ServiceTag, svcInfo } from "./shared";
+import type { Theme } from "./types";
+
+type Scope = { account: string; region: string };
+
+type Tab = "general" | "scope" | "services";
+
+const tabs: { id: Tab; label: string }[] = [
+  { id: "general", label: "General" },
+  { id: "scope", label: "Scope" },
+  { id: "services", label: "Services" },
+];
+
+function TabBar({
+  active,
+  onChange,
+}: {
+  active: Tab;
+  onChange: (t: Tab) => void;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const handleKeyDown = (e: React.KeyboardEvent, idx: number) => {
+    let next = idx;
+    if (e.key === "ArrowRight") next = (idx + 1) % tabs.length;
+    else if (e.key === "ArrowLeft")
+      next = (idx - 1 + tabs.length) % tabs.length;
+    else return;
+    e.preventDefault();
+    refs.current[next]?.focus();
+    onChange(tabs[next].id);
+  };
+
+  return (
+    <div role="tablist" className="settings-tablist">
+      {tabs.map((t, i) => (
+        <button
+          key={t.id}
+          role="tab"
+          aria-selected={active === t.id}
+          className={`settings-tab${active === t.id ? " on" : ""}`}
+          onClick={() => onChange(t.id)}
+          onKeyDown={(e) => handleKeyDown(e, i)}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
+          tabIndex={active === t.id ? 0 : -1}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function GeneralTab({
+  theme,
+  setTheme,
+}: {
+  theme: Theme;
+  setTheme: (t: Theme) => void;
+}) {
+  return (
+    <div className="settings-section">
+      <div className="settings-row">
+        <div className="settings-label">
+          <div className="settings-label-title">Listening Port</div>
+          <div className="settings-label-sub">
+            Set via <span className="mono">BUNSAI_PORT</span> at startup
+          </div>
+        </div>
+        <span className="mono settings-value-ro">4566</span>
+      </div>
+      <div className="settings-sep" />
+      <div className="settings-row">
+        <div className="settings-label">
+          <div className="settings-label-title">Theme</div>
+        </div>
+        <div className="segmented">
+          <button
+            className={theme === "dark" ? "on" : ""}
+            onClick={() => setTheme("dark")}
+            aria-pressed={theme === "dark"}
+          >
+            <Ico.moon width="13" height="13" />
+            Dark
+          </button>
+          <button
+            className={theme === "light" ? "on" : ""}
+            onClick={() => setTheme("light")}
+            aria-pressed={theme === "light"}
+          >
+            <Ico.sun width="13" height="13" />
+            Light
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScopeTab({
+  scope,
+  setScope,
+  accounts,
+  regions,
+}: {
+  scope: Scope;
+  setScope: (s: Scope) => void;
+  accounts: string[];
+  regions: string[];
+}) {
+  return (
+    <div className="settings-section">
+      <div className="settings-row">
+        <div className="settings-label">
+          <div className="settings-label-title">Default Account</div>
+        </div>
+        <select
+          className="settings-select mono"
+          value={scope.account}
+          onChange={(e) => setScope({ ...scope, account: e.target.value })}
+        >
+          {accounts.map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="settings-sep" />
+      <div className="settings-row">
+        <div className="settings-label">
+          <div className="settings-label-title">Default Region</div>
+        </div>
+        <select
+          className="settings-select mono"
+          value={scope.region}
+          onChange={(e) => setScope({ ...scope, region: e.target.value })}
+        >
+          {regions.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function ServicesTab({ services }: { services: ServiceSummary[] }) {
+  if (services.length === 0) {
+    return (
+      <div className="settings-empty">
+        <span className="muted">No services available</span>
+      </div>
+    );
+  }
+  return (
+    <div className="settings-svc-table-wrap">
+      <table className="settings-svc-table">
+        <thead>
+          <tr>
+            <th>Service</th>
+            <th>Name</th>
+            <th>Protocol</th>
+          </tr>
+        </thead>
+        <tbody>
+          {services.map((svc) => (
+            <tr key={svc.name}>
+              <td>
+                <ServiceTag svc={svc.name} />
+              </td>
+              <td className="mono">{svcInfo(svc.name).name}</td>
+              <td>
+                <ProtoBadge protocol={svc.protocol} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function Settings({
+  theme,
+  setTheme,
+  scope,
+  setScope,
+  accounts,
+  regions,
+  services,
+}: {
+  theme: Theme;
+  setTheme: (t: Theme) => void;
+  scope: Scope;
+  setScope: (s: Scope) => void;
+  accounts: string[];
+  regions: string[];
+  services: ServiceSummary[];
+}) {
+  const getTabFromQuery = useCallback((): Tab => {
+    const q = new URLSearchParams(location.search).get("tab");
+    if (q === "scope" || q === "services") return q;
+    return "general";
+  }, []);
+
+  const [activeTab, setActiveTab] = useState<Tab>(getTabFromQuery);
+
+  useEffect(() => {
+    const handler = () => setActiveTab(getTabFromQuery());
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, [getTabFromQuery]);
+
+  const handleTabChange = (t: Tab) => {
+    setActiveTab(t);
+    const next = new URLSearchParams(location.search);
+    if (t === "general") next.delete("tab");
+    else next.set("tab", t);
+    const url = next.size ? `${location.pathname}?${next}` : location.pathname;
+    history.replaceState(history.state, "", url);
+  };
+
+  return (
+    <div className="settings-screen">
+      <TabBar active={activeTab} onChange={handleTabChange} />
+      <div className="settings-body">
+        {activeTab === "general" && (
+          <GeneralTab theme={theme} setTheme={setTheme} />
+        )}
+        {activeTab === "scope" && (
+          <ScopeTab
+            scope={scope}
+            setScope={setScope}
+            accounts={accounts}
+            regions={regions}
+          />
+        )}
+        {activeTab === "services" && <ServicesTab services={services} />}
+      </div>
+    </div>
+  );
+}

@@ -660,3 +660,133 @@ test("Lex v2 ListBots pagination", async () => {
     }
   }
 });
+
+test("Lex v2 CreateBot botTags and testBotAliasTags", async () => {
+  const client = lex();
+  const botName = `bunsai-tags-create-${Date.now()}`;
+  const { botId } = await client.send(
+    new CreateBotCommand({
+      botName,
+      roleArn: "arn:aws:iam::000000000000:role/bunsai-lex",
+      dataPrivacy: { childDirected: false },
+      idleSessionTTLInSeconds: 300,
+      botTags: { env: "e2e", owner: "test" },
+      testBotAliasTags: { stage: "test" },
+    }),
+  );
+  const botArn = `arn:aws:lex:us-east-1:000000000000:bot/${botId}`;
+  const botTagsResult = await client.send(
+    new ListTagsForResourceCommand({ resourceARN: botArn }),
+  );
+  expect(botTagsResult.tags?.env).toBe("e2e");
+  expect(botTagsResult.tags?.owner).toBe("test");
+
+  const testAliasArn = `${botArn}/botaliases/TSTALIASID`;
+  const testAliasTagsResult = await client.send(
+    new ListTagsForResourceCommand({ resourceARN: testAliasArn }),
+  );
+  expect(testAliasTagsResult.tags?.stage).toBe("test");
+
+  await client.send(new DeleteBotCommand({ botId, skipResourceInUseCheck: true }));
+});
+
+test("Lex v2 DeleteBot skipResourceInUseCheck", async () => {
+  const client = lex();
+  const botName = `bunsai-inuse-${Date.now()}`;
+  const { botId } = await client.send(
+    new CreateBotCommand({
+      botName,
+      roleArn: "arn:aws:iam::000000000000:role/bunsai-lex",
+      dataPrivacy: { childDirected: false },
+      idleSessionTTLInSeconds: 300,
+    }),
+  );
+  const { botAliasId } = await client.send(
+    new CreateBotAliasCommand({ botId, botAliasName: "inuse-alias" }),
+  );
+
+  let threw = false;
+  try {
+    await client.send(new DeleteBotCommand({ botId }));
+  } catch (err) {
+    threw = true;
+    expect((err as Error).name).toBe("ConflictException");
+  }
+  expect(threw).toBe(true);
+
+  const deleted = await client.send(
+    new DeleteBotCommand({ botId, skipResourceInUseCheck: true }),
+  );
+  expect(deleted.botId).toBe(botId);
+  expect(deleted.botStatus).toBe("Deleting");
+
+  await client.send(new DeleteBotAliasCommand({ botId, botAliasId }));
+});
+
+test("Lex v2 ListBots filters and sortBy", async () => {
+  const client = lex();
+  const prefix = `bunsai-filter-${Date.now()}`;
+  const botAId = (
+    await client.send(
+      new CreateBotCommand({
+        botName: `${prefix}-alpha`,
+        roleArn: "arn:aws:iam::000000000000:role/bunsai-lex",
+        dataPrivacy: { childDirected: false },
+        idleSessionTTLInSeconds: 300,
+      }),
+    )
+  ).botId!;
+  const botBId = (
+    await client.send(
+      new CreateBotCommand({
+        botName: `${prefix}-beta`,
+        roleArn: "arn:aws:iam::000000000000:role/bunsai-lex",
+        dataPrivacy: { childDirected: false },
+        idleSessionTTLInSeconds: 300,
+      }),
+    )
+  ).botId!;
+
+  const filterEq = await client.send(
+    new ListBotsCommand({
+      filters: [{ name: "BotName", values: [`${prefix}-alpha`], operator: "EQ" }],
+    }),
+  );
+  const eqIds = (filterEq.botSummaries ?? []).map((b) => b.botId);
+  expect(eqIds).toContain(botAId);
+  expect(eqIds).not.toContain(botBId);
+
+  const filterCo = await client.send(
+    new ListBotsCommand({
+      filters: [{ name: "BotName", values: [prefix], operator: "CO" }],
+    }),
+  );
+  const coIds = (filterCo.botSummaries ?? []).map((b) => b.botId);
+  expect(coIds).toContain(botAId);
+  expect(coIds).toContain(botBId);
+
+  const sorted = await client.send(
+    new ListBotsCommand({
+      filters: [{ name: "BotName", values: [prefix], operator: "CO" }],
+      sortBy: { attribute: "BotName", order: "Ascending" },
+    }),
+  );
+  const names = (sorted.botSummaries ?? []).map((b) => b.botName ?? "");
+  expect(names.indexOf(`${prefix}-alpha`)).toBeLessThan(
+    names.indexOf(`${prefix}-beta`),
+  );
+
+  const sortedDesc = await client.send(
+    new ListBotsCommand({
+      filters: [{ name: "BotName", values: [prefix], operator: "CO" }],
+      sortBy: { attribute: "BotName", order: "Descending" },
+    }),
+  );
+  const namesDesc = (sortedDesc.botSummaries ?? []).map((b) => b.botName ?? "");
+  expect(namesDesc.indexOf(`${prefix}-beta`)).toBeLessThan(
+    namesDesc.indexOf(`${prefix}-alpha`),
+  );
+
+  await client.send(new DeleteBotCommand({ botId: botAId }));
+  await client.send(new DeleteBotCommand({ botId: botBId }));
+});

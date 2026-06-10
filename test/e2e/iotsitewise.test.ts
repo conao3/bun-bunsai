@@ -12,7 +12,9 @@ import {
   CreateGatewayCommand,
   CreatePortalCommand,
   CreateProjectCommand,
+  DeleteAssetCommand,
   DeleteAssetModelCommand,
+  DeletePortalCommand,
   DescribeAccessPolicyCommand,
   DescribeAssetCommand,
   DescribeAssetModelCommand,
@@ -530,4 +532,96 @@ test("IoTSiteWise BatchPutAssetPropertyValue round-trip and history", async () =
   );
   expect((missingResult.errorEntries ?? []).length).toBe(1);
   expect(missingResult.errorEntries?.[0]?.entryId).toBe("missing");
+});
+
+test("IoTSiteWise clientToken idempotency", async () => {
+  const client = iotsitewise();
+  const clientToken = `token-${Date.now()}`;
+
+  const first = await client.send(
+    new CreateAssetModelCommand({
+      assetModelName: `model-idem-${Date.now()}`,
+      clientToken,
+    }),
+  );
+  expect(first.assetModelId).toBeDefined();
+
+  const second = await client.send(
+    new CreateAssetModelCommand({
+      assetModelName: `model-idem-different-name`,
+      clientToken,
+    }),
+  );
+  expect(second.assetModelId).toBe(first.assetModelId);
+  expect(second.assetModelArn).toBe(first.assetModelArn);
+});
+
+test("IoTSiteWise tag round-trip via Create and Delete", async () => {
+  const client = iotsitewise();
+
+  const model = await client.send(
+    new CreateAssetModelCommand({ assetModelName: `model-tr-${Date.now()}` }),
+  );
+  const assetModelId = model.assetModelId ?? "";
+
+  const created = await client.send(
+    new CreateAssetCommand({
+      assetName: `asset-tr-${Date.now()}`,
+      assetModelId,
+      tags: { env: "e2e", owner: "bunsai" },
+    }),
+  );
+  const assetId = created.assetId ?? "";
+  const assetArn = created.assetArn ?? "";
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: assetArn }),
+  );
+  expect(listed.tags?.env).toBe("e2e");
+  expect(listed.tags?.owner).toBe("bunsai");
+
+  await client.send(new DeleteAssetCommand({ assetId }));
+
+  const afterDelete = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: assetArn }),
+  );
+  expect(afterDelete.tags).toEqual({});
+});
+
+test("IoTSiteWise DeleteAssetModel rejects when child assets exist", async () => {
+  const client = iotsitewise();
+
+  const model = await client.send(
+    new CreateAssetModelCommand({ assetModelName: `model-guard-${Date.now()}` }),
+  );
+  const assetModelId = model.assetModelId ?? "";
+
+  await client.send(
+    new CreateAssetCommand({ assetName: "child-asset-guard", assetModelId }),
+  );
+
+  await expect(
+    client.send(new DeleteAssetModelCommand({ assetModelId })),
+  ).rejects.toThrow();
+});
+
+test("IoTSiteWise DeletePortal rejects when child projects exist", async () => {
+  const client = iotsitewise();
+
+  const portal = await client.send(
+    new CreatePortalCommand({
+      portalName: `portal-guard-${Date.now()}`,
+      portalContactEmail: "guard@example.com",
+      roleArn: "arn:aws:iam::123456789012:role/test-role",
+    }),
+  );
+  const portalId = portal.portalId ?? "";
+
+  await client.send(
+    new CreateProjectCommand({ portalId, projectName: `proj-guard-${Date.now()}` }),
+  );
+
+  await expect(
+    client.send(new DeletePortalCommand({ portalId })),
+  ).rejects.toThrow();
 });

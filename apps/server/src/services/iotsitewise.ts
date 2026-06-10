@@ -44,6 +44,7 @@ type StoredAssetModel = {
   creationDate: number;
   lastUpdateDate: number;
   state: string;
+  clientToken?: string;
 };
 
 type StoredAssetModelCompositeModel = {
@@ -70,6 +71,7 @@ type StoredAsset = {
   creationDate: number;
   lastUpdateDate: number;
   state: string;
+  clientToken?: string;
 };
 
 type StoredGateway = {
@@ -98,6 +100,7 @@ type StoredPortal = {
   status: string;
   creationDate: number;
   lastUpdateDate: number;
+  clientToken?: string;
 };
 
 type StoredProject = {
@@ -107,6 +110,7 @@ type StoredProject = {
   portalId: string;
   creationDate: number;
   lastUpdateDate: number;
+  clientToken?: string;
 };
 
 type StoredDashboard = {
@@ -117,6 +121,7 @@ type StoredDashboard = {
   projectId: string;
   creationDate: number;
   lastUpdateDate: number;
+  clientToken?: string;
 };
 
 type StoredDataset = {
@@ -127,6 +132,7 @@ type StoredDataset = {
   state: string;
   creationDate: number;
   lastUpdateDate: number;
+  clientToken?: string;
 };
 
 type StoredAccessPolicy = {
@@ -146,6 +152,7 @@ type StoredComputationModel = {
   state: string;
   creationDate: number;
   lastUpdateDate: number;
+  clientToken?: string;
 };
 
 type StoredBulkImportJob = {
@@ -400,6 +407,21 @@ const assetModelSummaryView = (
 // --- Asset Model CRUD (existing 4 + UpdateAssetModel) ---
 
 const CreateAssetModel: OperationHandler = (input, ctx) => {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const found = ctx.store
+      .list<StoredAssetModel>()
+      .filter((e) => e.key.startsWith(assetModelPrefix))
+      .map((e) => e.value)
+      .find((m) => m.clientToken === clientToken);
+    if (found !== undefined) {
+      return {
+        assetModelId: found.id,
+        assetModelArn: found.arn,
+        assetModelStatus: { state: "CREATING" },
+      };
+    }
+  }
   const name = requireString(input, "assetModelName");
   const id = crypto.randomUUID();
   const arn = makeArn(ctx, "asset-model", id);
@@ -413,8 +435,12 @@ const CreateAssetModel: OperationHandler = (input, ctx) => {
     creationDate: now,
     lastUpdateDate: now,
     state: "ACTIVE",
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(assetModelKey(id), assetModel);
+  if (input["tags"] !== undefined) {
+    ctx.store.set(tagsKey(arn), input["tags"] as Record<string, string>);
+  }
   return {
     assetModelId: id,
     assetModelArn: arn,
@@ -458,8 +484,21 @@ const ListAssetModels: OperationHandler = (input, ctx) => {
 
 const DeleteAssetModel: OperationHandler = (input, ctx) => {
   const id = requireString(input, "assetModelId");
-  requireAssetModel(ctx, id);
+  const model = requireAssetModel(ctx, id);
+  const childAsset = ctx.store
+    .list<StoredAsset>()
+    .filter((e) => e.key.startsWith(assetPrefix))
+    .map((e) => e.value)
+    .find((a) => a.assetModelId === id);
+  if (childAsset !== undefined) {
+    throw awsError(
+      "ConflictingOperationException",
+      `Cannot delete asset model ${id} because assets exist that were created from it.`,
+      409,
+    );
+  }
   ctx.store.delete(assetModelKey(id));
+  ctx.store.delete(tagsKey(model.arn));
   return { assetModelStatus: { state: "DELETING" } };
 };
 
@@ -680,6 +719,21 @@ const assetSummaryView = (a: StoredAsset): Record<string, unknown> => ({
 });
 
 const CreateAsset: OperationHandler = (input, ctx) => {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const found = ctx.store
+      .list<StoredAsset>()
+      .filter((e) => e.key.startsWith(assetPrefix))
+      .map((e) => e.value)
+      .find((a) => a.clientToken === clientToken);
+    if (found !== undefined) {
+      return {
+        assetId: found.id,
+        assetArn: found.arn,
+        assetStatus: { state: "CREATING" },
+      };
+    }
+  }
   const name = requireString(input, "assetName");
   const assetModelId = requireString(input, "assetModelId");
   requireAssetModel(ctx, assetModelId);
@@ -695,8 +749,12 @@ const CreateAsset: OperationHandler = (input, ctx) => {
     creationDate: now,
     lastUpdateDate: now,
     state: "ACTIVE",
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(assetKey(id), asset);
+  if (input["tags"] !== undefined) {
+    ctx.store.set(tagsKey(arn), input["tags"] as Record<string, string>);
+  }
   return {
     assetId: id,
     assetArn: arn,
@@ -742,9 +800,10 @@ const UpdateAsset: OperationHandler = (input, ctx) => {
 
 const DeleteAsset: OperationHandler = (input, ctx) => {
   const id = requireString(input, "assetId");
-  requireAsset(ctx, id);
+  const asset = requireAsset(ctx, id);
   ctx.store.delete(assetKey(id));
   ctx.store.delete(assetAssocKey(id));
+  ctx.store.delete(tagsKey(asset.arn));
   return { assetStatus: { state: "DELETING" } };
 };
 
@@ -931,8 +990,9 @@ const UpdateGateway: OperationHandler = (input, ctx) => {
 
 const DeleteGateway: OperationHandler = (input, ctx) => {
   const id = requireString(input, "gatewayId");
-  requireGateway(ctx, id);
+  const gateway = requireGateway(ctx, id);
   ctx.store.delete(gatewayKey(id));
+  ctx.store.delete(tagsKey(gateway.arn));
   return {};
 };
 
@@ -1006,6 +1066,23 @@ const portalSummaryView = (p: StoredPortal): Record<string, unknown> => ({
 });
 
 const CreatePortal: OperationHandler = (input, ctx) => {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const found = ctx.store
+      .list<StoredPortal>()
+      .filter((e) => e.key.startsWith(portalPrefix))
+      .map((e) => e.value)
+      .find((p) => p.clientToken === clientToken);
+    if (found !== undefined) {
+      return {
+        portalId: found.id,
+        portalArn: found.arn,
+        portalStartUrl: found.startUrl,
+        portalStatus: { state: "CREATING" },
+        ssoApplicationId: `sso-${found.id}`,
+      };
+    }
+  }
   const name = requireString(input, "portalName");
   const contactEmail = requireString(input, "portalContactEmail");
   const id = crypto.randomUUID();
@@ -1021,8 +1098,12 @@ const CreatePortal: OperationHandler = (input, ctx) => {
     status: "ACTIVE",
     creationDate: now,
     lastUpdateDate: now,
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(portalKey(id), portal);
+  if (input["tags"] !== undefined) {
+    ctx.store.set(tagsKey(arn), input["tags"] as Record<string, string>);
+  }
   return {
     portalId: id,
     portalArn: arn,
@@ -1072,8 +1153,21 @@ const UpdatePortal: OperationHandler = (input, ctx) => {
 
 const DeletePortal: OperationHandler = (input, ctx) => {
   const id = requireString(input, "portalId");
-  requirePortal(ctx, id);
+  const portal = requirePortal(ctx, id);
+  const childProject = ctx.store
+    .list<StoredProject>()
+    .filter((e) => e.key.startsWith(projectPrefix))
+    .map((e) => e.value)
+    .find((p) => p.portalId === id);
+  if (childProject !== undefined) {
+    throw awsError(
+      "ConflictingOperationException",
+      `Cannot delete portal ${id} because projects exist within it.`,
+      409,
+    );
+  }
   ctx.store.delete(portalKey(id));
+  ctx.store.delete(tagsKey(portal.arn));
   return { portalStatus: { state: "DELETING" } };
 };
 
@@ -1106,6 +1200,17 @@ const projectSummaryView = (p: StoredProject): Record<string, unknown> => ({
 });
 
 const CreateProject: OperationHandler = (input, ctx) => {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const found = ctx.store
+      .list<StoredProject>()
+      .filter((e) => e.key.startsWith(projectPrefix))
+      .map((e) => e.value)
+      .find((p) => p.clientToken === clientToken);
+    if (found !== undefined) {
+      return { projectId: found.id };
+    }
+  }
   const portalId = requireString(input, "portalId");
   const name = requireString(input, "projectName");
   const id = crypto.randomUUID();
@@ -1117,8 +1222,15 @@ const CreateProject: OperationHandler = (input, ctx) => {
     portalId,
     creationDate: now,
     lastUpdateDate: now,
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(projectKey(id), project);
+  if (input["tags"] !== undefined) {
+    ctx.store.set(
+      tagsKey(makeArn(ctx, "project", id)),
+      input["tags"] as Record<string, string>,
+    );
+  }
   return { projectId: id };
 };
 
@@ -1157,6 +1269,7 @@ const DeleteProject: OperationHandler = (input, ctx) => {
   requireProject(ctx, id);
   ctx.store.delete(projectKey(id));
   ctx.store.delete(projectAssetsKey(id));
+  ctx.store.delete(tagsKey(makeArn(ctx, "project", id)));
   return {};
 };
 
@@ -1222,6 +1335,20 @@ const dashboardSummaryView = (d: StoredDashboard): Record<string, unknown> => ({
 });
 
 const CreateDashboard: OperationHandler = (input, ctx) => {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const found = ctx.store
+      .list<StoredDashboard>()
+      .filter((e) => e.key.startsWith(dashboardPrefix))
+      .map((e) => e.value)
+      .find((d) => d.clientToken === clientToken);
+    if (found !== undefined) {
+      return {
+        dashboardId: found.id,
+        dashboardArn: makeArn(ctx, "dashboard", found.id),
+      };
+    }
+  }
   const projectId = requireString(input, "projectId");
   const name = requireString(input, "dashboardName");
   const definition = requireString(input, "dashboardDefinition");
@@ -1235,8 +1362,15 @@ const CreateDashboard: OperationHandler = (input, ctx) => {
     projectId,
     creationDate: now,
     lastUpdateDate: now,
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(dashboardKey(id), dashboard);
+  if (input["tags"] !== undefined) {
+    ctx.store.set(
+      tagsKey(makeArn(ctx, "dashboard", id)),
+      input["tags"] as Record<string, string>,
+    );
+  }
   return {
     dashboardId: id,
     dashboardArn: makeArn(ctx, "dashboard", id),
@@ -1280,6 +1414,7 @@ const DeleteDashboard: OperationHandler = (input, ctx) => {
   const id = requireString(input, "dashboardId");
   requireDashboard(ctx, id);
   ctx.store.delete(dashboardKey(id));
+  ctx.store.delete(tagsKey(makeArn(ctx, "dashboard", id)));
   return {};
 };
 
@@ -1318,6 +1453,21 @@ const datasetSummaryView = (d: StoredDataset): Record<string, unknown> => ({
 });
 
 const CreateDataset: OperationHandler = (input, ctx) => {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const found = ctx.store
+      .list<StoredDataset>()
+      .filter((e) => e.key.startsWith(datasetPrefix))
+      .map((e) => e.value)
+      .find((d) => d.clientToken === clientToken);
+    if (found !== undefined) {
+      return {
+        datasetId: found.id,
+        datasetArn: found.arn,
+        datasetStatus: { state: "CREATING" },
+      };
+    }
+  }
   const name = requireString(input, "datasetName");
   const id = crypto.randomUUID();
   const arn = makeArn(ctx, "dataset", id);
@@ -1330,8 +1480,12 @@ const CreateDataset: OperationHandler = (input, ctx) => {
     state: "ACTIVE",
     creationDate: now,
     lastUpdateDate: now,
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(datasetKey(id), dataset);
+  if (input["tags"] !== undefined) {
+    ctx.store.set(tagsKey(arn), input["tags"] as Record<string, string>);
+  }
   return {
     datasetId: id,
     datasetArn: arn,
@@ -1377,8 +1531,9 @@ const UpdateDataset: OperationHandler = (input, ctx) => {
 
 const DeleteDataset: OperationHandler = (input, ctx) => {
   const id = requireString(input, "datasetId");
-  requireDataset(ctx, id);
+  const dataset = requireDataset(ctx, id);
   ctx.store.delete(datasetKey(id));
+  ctx.store.delete(tagsKey(dataset.arn));
   return { datasetStatus: { state: "DELETING" } };
 };
 
@@ -1490,6 +1645,21 @@ const computationModelSummaryView = (
 });
 
 const CreateComputationModel: OperationHandler = (input, ctx) => {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const found = ctx.store
+      .list<StoredComputationModel>()
+      .filter((e) => e.key.startsWith(computationModelPrefix))
+      .map((e) => e.value)
+      .find((m) => m.clientToken === clientToken);
+    if (found !== undefined) {
+      return {
+        computationModelId: found.id,
+        computationModelArn: found.arn,
+        computationModelStatus: { state: "CREATING" },
+      };
+    }
+  }
   const name = requireString(input, "computationModelName");
   const id = crypto.randomUUID();
   const arn = makeArn(ctx, "computation-model", id);
@@ -1502,8 +1672,12 @@ const CreateComputationModel: OperationHandler = (input, ctx) => {
     state: "CREATING",
     creationDate: now,
     lastUpdateDate: now,
+    ...(clientToken !== undefined ? { clientToken } : {}),
   };
   ctx.store.set(computationModelKey(id), cm);
+  if (input["tags"] !== undefined) {
+    ctx.store.set(tagsKey(arn), input["tags"] as Record<string, string>);
+  }
   return {
     computationModelId: id,
     computationModelArn: arn,

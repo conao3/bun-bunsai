@@ -741,14 +741,9 @@ const paramgroupArnOf = (
   region: string,
   account: string,
   name: string,
-): string =>
-  `arn:aws:redshift:${region}:${account}:parametergroup:${name}`;
+): string => `arn:aws:redshift:${region}:${account}:parametergroup:${name}`;
 
-const secgroupArnOf = (
-  region: string,
-  account: string,
-  name: string,
-): string =>
+const secgroupArnOf = (region: string, account: string, name: string): string =>
   `arn:aws:redshift:${region}:${account}:securitygroup:${name}`;
 
 const applyMarkerPagination = <T>(
@@ -1724,7 +1719,11 @@ const DescribeClusterParameterGroups: OperationHandler = (input, ctx) => {
     .map((entry) => entry.value);
   if (tagKeys.length > 0 || tagValues.length > 0) {
     groups = groups.filter((g) => {
-      const arn = paramgroupArnOf(ctx.region, ctx.account, g.ParameterGroupName);
+      const arn = paramgroupArnOf(
+        ctx.region,
+        ctx.account,
+        g.ParameterGroupName,
+      );
       const tags =
         ctx.store.get<{ Key: string; Value: string }[]>(tagsKey(arn)) ?? [];
       if (tagKeys.length > 0 && !tags.some((t) => tagKeys.includes(t.Key)))

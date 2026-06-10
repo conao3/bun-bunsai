@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
+import type { DistributionConfig } from "@aws-sdk/client-cloudfront";
 import {
   AssociateDistributionWebACLCommand,
   CloudFrontClient,
@@ -39,6 +40,24 @@ const cloudfront = () =>
     credentials,
     requestHandler,
   });
+
+const disableAndDelete = async (
+  client: CloudFrontClient,
+  id: string,
+): Promise<void> => {
+  const cfg = await client.send(new GetDistributionConfigCommand({ Id: id }));
+  await client.send(
+    new UpdateDistributionCommand({
+      Id: id,
+      IfMatch: cfg.ETag,
+      DistributionConfig: {
+        ...cfg.DistributionConfig,
+        Enabled: false,
+      } as DistributionConfig,
+    }),
+  );
+  await client.send(new DeleteDistributionCommand({ Id: id }));
+};
 
 const distributionConfig = (callerReference: string, comment: string) => ({
   CallerReference: callerReference,
@@ -114,7 +133,7 @@ test("CloudFront distribution lifecycle and invalidation", async () => {
   expect(invalidation.Invalidation?.Id).toBeDefined();
   expect(invalidation.Invalidation?.Status).toBe("InProgress");
 
-  await client.send(new DeleteDistributionCommand({ Id: id }));
+  await disableAndDelete(client, id!);
   const afterDelete = await client.send(new ListDistributionsCommand({}));
   const idsAfter = (afterDelete.DistributionList?.Items ?? []).map((d) => d.Id);
   expect(idsAfter).not.toContain(id);
@@ -227,8 +246,8 @@ test("CloudFront distribution copy and get-config", async () => {
   expect(copiedId).toBeDefined();
   expect(copiedId).not.toBe(primaryId);
 
-  await client.send(new DeleteDistributionCommand({ Id: primaryId }));
-  await client.send(new DeleteDistributionCommand({ Id: copiedId }));
+  await disableAndDelete(client, primaryId!);
+  await disableAndDelete(client, copiedId!);
 });
 
 test("CloudFront invalidation get and list", async () => {
@@ -269,7 +288,7 @@ test("CloudFront invalidation get and list", async () => {
   const invIds = (listed.InvalidationList?.Items ?? []).map((i) => i.Id);
   expect(invIds).toContain(invId);
 
-  await client.send(new DeleteDistributionCommand({ Id: distId }));
+  await disableAndDelete(client, distId!);
 });
 
 test("CloudFront monitoring subscription lifecycle", async () => {
@@ -309,7 +328,7 @@ test("CloudFront monitoring subscription lifecycle", async () => {
     new DeleteMonitoringSubscriptionCommand({ DistributionId: distId }),
   );
 
-  await client.send(new DeleteDistributionCommand({ Id: distId }));
+  await disableAndDelete(client, distId!);
 });
 
 test("CloudFront WebACL associate and disassociate", async () => {
@@ -350,7 +369,7 @@ test("CloudFront WebACL associate and disassociate", async () => {
   expect(disassoc.Id).toBe(distId);
   expect(disassoc.ETag).toBeDefined();
 
-  await client.send(new DeleteDistributionCommand({ Id: distId }));
+  await disableAndDelete(client, distId!);
 });
 
 test("CloudFront CreateDistributionWithTags", async () => {
@@ -371,5 +390,5 @@ test("CloudFront CreateDistributionWithTags", async () => {
   expect(id).toBeDefined();
   expect(created.Distribution?.DistributionConfig?.Comment).toBe("with-tags");
 
-  await client.send(new DeleteDistributionCommand({ Id: id }));
+  await disableAndDelete(client, id!);
 });

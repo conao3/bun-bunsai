@@ -1,3 +1,4 @@
+import type { DistributionConfig } from "@aws-sdk/client-cloudfront";
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
@@ -23,6 +24,24 @@ const cloudfront = () =>
     credentials,
     requestHandler,
   });
+
+const disableAndDelete = async (
+  client: CloudFrontClient,
+  id: string,
+): Promise<void> => {
+  const cfg = await client.send(new GetDistributionConfigCommand({ Id: id }));
+  await client.send(
+    new UpdateDistributionCommand({
+      Id: id,
+      IfMatch: cfg.ETag,
+      DistributionConfig: {
+        ...cfg.DistributionConfig,
+        Enabled: false,
+      } as DistributionConfig,
+    }),
+  );
+  await client.send(new DeleteDistributionCommand({ Id: id }));
+};
 
 const distributionConfig = (callerReference: string, comment: string) => ({
   CallerReference: callerReference,
@@ -97,7 +116,7 @@ test("UpdateDistribution config round-trip + ETag advance", async () => {
   expect(gotDist.Distribution?.DistributionConfig?.Comment).toBe("updated");
   expect(gotDist.ETag).toBe(updatedETag);
 
-  await client.send(new DeleteDistributionCommand({ Id: id }));
+  await disableAndDelete(client, id!);
 });
 
 test("UpdateDistribution stale IfMatch → PreconditionFailed", async () => {
@@ -122,7 +141,7 @@ test("UpdateDistribution stale IfMatch → PreconditionFailed", async () => {
     ),
   ).rejects.toThrow();
 
-  await client.send(new DeleteDistributionCommand({ Id: id }));
+  await disableAndDelete(client, id!);
 });
 
 test("CreateInvalidation lifecycle: InProgress at create → Completed on read", async () => {
@@ -166,5 +185,5 @@ test("CreateInvalidation lifecycle: InProgress at create → Completed on read",
   expect(found).toBeDefined();
   expect(found?.Status).toBe("Completed");
 
-  await client.send(new DeleteDistributionCommand({ Id: distId }));
+  await disableAndDelete(client, distId!);
 });

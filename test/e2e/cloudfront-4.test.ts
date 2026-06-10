@@ -1,3 +1,4 @@
+import type { DistributionConfig } from "@aws-sdk/client-cloudfront";
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
@@ -24,6 +25,24 @@ const cloudfront = () =>
     credentials,
     requestHandler,
   });
+
+const disableAndDelete = async (
+  client: CloudFrontClient,
+  id: string,
+): Promise<void> => {
+  const cfg = await client.send(new GetDistributionConfigCommand({ Id: id }));
+  await client.send(
+    new UpdateDistributionCommand({
+      Id: id,
+      IfMatch: cfg.ETag,
+      DistributionConfig: {
+        ...cfg.DistributionConfig,
+        Enabled: false,
+      } as DistributionConfig,
+    }),
+  );
+  await client.send(new DeleteDistributionCommand({ Id: id }));
+};
 
 test("CloudFront distribution fidelity: 2 origins + CacheBehavior round-trip", async () => {
   const client = cloudfront();
@@ -224,7 +243,7 @@ test("CloudFront distribution fidelity: 2 origins + CacheBehavior round-trip", a
   expect(dist).toBeDefined();
   expect(dist?.CacheBehaviors?.Quantity).toBe(1);
 
-  await client.send(new DeleteDistributionCommand({ Id: id }));
+  await disableAndDelete(client, id!);
 });
 
 test("CloudFront missing distribution → NoSuchDistribution", async () => {

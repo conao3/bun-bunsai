@@ -35,6 +35,7 @@ const networkPrefix = "network:" as const;
 const channelAlertPrefix = "channelAlert:" as const;
 const multiplexAlertPrefix = "multiplexAlert:" as const;
 const clusterAlertPrefix = "clusterAlert:" as const;
+const idempotencyPrefix = "idempotency:" as const;
 
 type StoredChannel = {
   Id: string;
@@ -43,6 +44,15 @@ type StoredChannel = {
   State: string;
   ChannelClass: string;
   Tags: Record<string, unknown>;
+  CdiInputSpecification?: Record<string, unknown>;
+  Destinations?: unknown[];
+  EncoderSettings?: Record<string, unknown>;
+  InputAttachments?: unknown[];
+  InputSpecification?: Record<string, unknown>;
+  LogLevel?: string;
+  Maintenance?: Record<string, unknown>;
+  RoleArn?: string;
+  Vpc?: Record<string, unknown>;
 };
 
 type StoredInput = {
@@ -54,6 +64,8 @@ type StoredInput = {
   AttachedChannels: string[];
   SecurityGroups: string[];
   Tags: Record<string, unknown>;
+  Destinations?: unknown[];
+  Sources?: unknown[];
 };
 
 type StoredInputSecurityGroup = {
@@ -74,6 +86,7 @@ type StoredMultiplex = {
   Tags: Record<string, unknown>;
   PipelinesRunningCount: number;
   ProgramCount: number;
+  MultiplexSettings?: Record<string, unknown>;
 };
 
 type StoredMultiplexProgram = {
@@ -330,6 +343,8 @@ const scheduleKey = (channelId: string): string =>
   `${schedulePrefix}${channelId}`;
 const transferKey = (id: string): string => `${transferPrefix}${id}`;
 const tagsKey = (arn: string): string => `${tagsPrefix}${arn}`;
+const idempotencyKey = (op: string, requestId: string): string =>
+  `${idempotencyPrefix}${op}:${requestId}`;
 const cwAlarmTemplateKey = (id: string): string =>
   `${cwAlarmTemplatePrefix}${id}`;
 const cwAlarmTemplateGroupKey = (id: string): string =>
@@ -588,6 +603,31 @@ const requireReservation = (
   return stored;
 };
 
+const resolveArnExists = (ctx: ServiceContext, arn: string): void => {
+  const parts = arn.split(":");
+  if (parts.length < 7) {
+    throw awsError("NotFoundException", `Resource ${arn} not found.`, 404);
+  }
+  const resourceType = parts[5];
+  const resourceId = parts[6];
+  switch (resourceType) {
+    case "channel":
+      requireChannel(ctx, resourceId);
+      break;
+    case "input":
+      requireInput(ctx, resourceId);
+      break;
+    case "inputSecurityGroup":
+      requireInputSg(ctx, resourceId);
+      break;
+    case "multiplex":
+      requireMultiplex(ctx, resourceId);
+      break;
+    default:
+      throw awsError("NotFoundException", `Resource ${arn} not found.`, 404);
+  }
+};
+
 const requireCwAlarmTemplate = (
   ctx: ServiceContext,
   identifier: string,
@@ -761,16 +801,76 @@ const ensureSeedOfferings = (ctx: ServiceContext): void => {
 };
 
 const CreateChannel: OperationHandler = (input, ctx) => {
+  const requestId = stringOrUndefined(input["RequestId"]);
+  if (requestId !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("channel", requestId),
+    );
+    if (existingId !== undefined) {
+      return { Channel: requireChannel(ctx, existingId) };
+    }
+  }
   const id = nextChannelId(ctx);
+  const arn = channelArn(ctx, id);
+  const tags = recordOrEmpty(input["Tags"]);
+  const inputAttachments = arrayOrEmpty(input["InputAttachments"]);
+  for (const att of inputAttachments) {
+    const a = recordOrEmpty(att);
+    const inputId = stringOrUndefined(a["InputId"]);
+    if (inputId === undefined) continue;
+    const storedInput = ctx.store.get<StoredInput>(inputKey(inputId));
+    if (storedInput === undefined) {
+      throw awsError(
+        "UnprocessableEntityException",
+        `Input ${inputId} not found.`,
+        422,
+      );
+    }
+    const updated = {
+      ...storedInput,
+      AttachedChannels: [...storedInput.AttachedChannels, id],
+      State: "ATTACHED",
+    };
+    ctx.store.set(inputKey(inputId), updated);
+  }
   const channel: StoredChannel = {
     Id: id,
-    Arn: channelArn(ctx, id),
+    Arn: arn,
     Name: stringOrUndefined(input["Name"]) ?? "",
     State: "IDLE",
     ChannelClass: stringOrUndefined(input["ChannelClass"]) ?? "STANDARD",
-    Tags: recordOrEmpty(input["Tags"]),
+    Tags: tags,
+    CdiInputSpecification:
+      input["CdiInputSpecification"] !== undefined
+        ? recordOrEmpty(input["CdiInputSpecification"])
+        : undefined,
+    Destinations:
+      input["Destinations"] !== undefined
+        ? arrayOrEmpty(input["Destinations"])
+        : undefined,
+    EncoderSettings:
+      input["EncoderSettings"] !== undefined
+        ? recordOrEmpty(input["EncoderSettings"])
+        : undefined,
+    InputAttachments:
+      inputAttachments.length > 0 ? inputAttachments : undefined,
+    InputSpecification:
+      input["InputSpecification"] !== undefined
+        ? recordOrEmpty(input["InputSpecification"])
+        : undefined,
+    LogLevel: stringOrUndefined(input["LogLevel"]),
+    Maintenance:
+      input["Maintenance"] !== undefined
+        ? recordOrEmpty(input["Maintenance"])
+        : undefined,
+    RoleArn: stringOrUndefined(input["RoleArn"]),
+    Vpc: input["Vpc"] !== undefined ? recordOrEmpty(input["Vpc"]) : undefined,
   };
   ctx.store.set(channelKey(id), channel);
+  ctx.store.set(tagsKey(arn), tags);
+  if (requestId !== undefined) {
+    ctx.store.set(idempotencyKey("channel", requestId), id);
+  }
   appendAlert(ctx, channelAlertKey(id), {
     Id: `${id}-created`,
     AlertType: "RESOURCE_CREATED",
@@ -785,7 +885,18 @@ const CreateChannel: OperationHandler = (input, ctx) => {
 
 const DescribeChannel: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ChannelId");
-  return requireChannel(ctx, id);
+  const channel = requireChannel(ctx, id);
+  if (channel.State === "STARTING") {
+    const settled = { ...channel, State: "RUNNING" };
+    ctx.store.set(channelKey(id), settled);
+    return settled;
+  }
+  if (channel.State === "STOPPING") {
+    const settled = { ...channel, State: "IDLE" };
+    ctx.store.set(channelKey(id), settled);
+    return settled;
+  }
+  return channel;
 };
 
 const ListChannels: OperationHandler = (input, ctx) => {
@@ -808,6 +919,26 @@ const ListChannels: OperationHandler = (input, ctx) => {
 const DeleteChannel: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ChannelId");
   const channel = requireChannel(ctx, id);
+  if (channel.State !== "IDLE") {
+    throw awsError(
+      "ConflictException",
+      `Channel ${id} is not in IDLE state.`,
+      409,
+    );
+  }
+  for (const att of arrayOrEmpty(channel.InputAttachments)) {
+    const a = recordOrEmpty(att);
+    const inputId = stringOrUndefined(a["InputId"]);
+    if (inputId === undefined) continue;
+    const storedInput = ctx.store.get<StoredInput>(inputKey(inputId));
+    if (storedInput === undefined) continue;
+    const remaining = storedInput.AttachedChannels.filter((c) => c !== id);
+    ctx.store.set(inputKey(inputId), {
+      ...storedInput,
+      AttachedChannels: remaining,
+      State: remaining.length === 0 ? "DETACHED" : "ATTACHED",
+    });
+  }
   appendAlert(ctx, channelAlertKey(id), {
     Id: `${id}-deleted`,
     AlertType: "RESOURCE_DELETED",
@@ -818,13 +949,21 @@ const DeleteChannel: OperationHandler = (input, ctx) => {
     PipelineId: "0",
   });
   ctx.store.delete(channelKey(id));
+  ctx.store.delete(tagsKey(channel.Arn));
   return { ...channel, State: "DELETING" };
 };
 
 const StartChannel: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ChannelId");
   const channel = requireChannel(ctx, id);
-  const updated = { ...channel, State: "RUNNING" };
+  if (channel.State !== "IDLE") {
+    throw awsError(
+      "ConflictException",
+      `Channel ${id} is not in IDLE state.`,
+      409,
+    );
+  }
+  const updated = { ...channel, State: "STARTING" };
   ctx.store.set(channelKey(id), updated);
   appendAlert(ctx, channelAlertKey(id), {
     Id: `${id}-start-${nowIso()}`,
@@ -841,7 +980,14 @@ const StartChannel: OperationHandler = (input, ctx) => {
 const StopChannel: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ChannelId");
   const channel = requireChannel(ctx, id);
-  const updated = { ...channel, State: "IDLE" };
+  if (channel.State !== "RUNNING") {
+    throw awsError(
+      "ConflictException",
+      `Channel ${id} is not in RUNNING state.`,
+      409,
+    );
+  }
+  const updated = { ...channel, State: "STOPPING" };
   ctx.store.set(channelKey(id), updated);
   appendAlert(ctx, channelAlertKey(id), {
     Id: `${id}-stop-${nowIso()}`,
@@ -861,6 +1007,33 @@ const UpdateChannel: OperationHandler = (input, ctx) => {
   const updated: StoredChannel = {
     ...channel,
     Name: stringOrUndefined(input["Name"]) ?? channel.Name,
+    CdiInputSpecification:
+      input["CdiInputSpecification"] !== undefined
+        ? recordOrEmpty(input["CdiInputSpecification"])
+        : channel.CdiInputSpecification,
+    Destinations:
+      input["Destinations"] !== undefined
+        ? arrayOrEmpty(input["Destinations"])
+        : channel.Destinations,
+    EncoderSettings:
+      input["EncoderSettings"] !== undefined
+        ? recordOrEmpty(input["EncoderSettings"])
+        : channel.EncoderSettings,
+    InputAttachments:
+      input["InputAttachments"] !== undefined
+        ? arrayOrEmpty(input["InputAttachments"])
+        : channel.InputAttachments,
+    InputSpecification:
+      input["InputSpecification"] !== undefined
+        ? recordOrEmpty(input["InputSpecification"])
+        : channel.InputSpecification,
+    LogLevel: stringOrUndefined(input["LogLevel"]) ?? channel.LogLevel,
+    Maintenance:
+      input["Maintenance"] !== undefined
+        ? recordOrEmpty(input["Maintenance"])
+        : channel.Maintenance,
+    RoleArn: stringOrUndefined(input["RoleArn"]) ?? channel.RoleArn,
+    Vpc: input["Vpc"] !== undefined ? recordOrEmpty(input["Vpc"]) : channel.Vpc,
   };
   ctx.store.set(channelKey(id), updated);
   return { Channel: updated };
@@ -927,10 +1100,21 @@ const RestartChannelPipelines: OperationHandler = (input, ctx) => {
 };
 
 const CreateInput: OperationHandler = (input, ctx) => {
+  const requestId = stringOrUndefined(input["RequestId"]);
+  if (requestId !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("input", requestId),
+    );
+    if (existingId !== undefined) {
+      return { Input: requireInput(ctx, existingId) };
+    }
+  }
   const id = nextInputId(ctx);
+  const arn = inputArn(ctx, id);
+  const tags = recordOrEmpty(input["Tags"]);
   const storedInput: StoredInput = {
     Id: id,
-    Arn: inputArn(ctx, id),
+    Arn: arn,
     Name: stringOrUndefined(input["Name"]) ?? "",
     State: "DETACHED",
     Type: stringOrUndefined(input["Type"]) ?? "UDP_PUSH",
@@ -938,9 +1122,21 @@ const CreateInput: OperationHandler = (input, ctx) => {
     SecurityGroups: arrayOrEmpty(input["InputSecurityGroups"]).filter(
       (s): s is string => typeof s === "string",
     ),
-    Tags: recordOrEmpty(input["Tags"]),
+    Tags: tags,
+    Destinations:
+      input["Destinations"] !== undefined
+        ? arrayOrEmpty(input["Destinations"])
+        : undefined,
+    Sources:
+      input["Sources"] !== undefined
+        ? arrayOrEmpty(input["Sources"])
+        : undefined,
   };
   ctx.store.set(inputKey(id), storedInput);
+  ctx.store.set(tagsKey(arn), tags);
+  if (requestId !== undefined) {
+    ctx.store.set(idempotencyKey("input", requestId), id);
+  }
   return { Input: storedInput };
 };
 
@@ -972,6 +1168,14 @@ const UpdateInput: OperationHandler = (input, ctx) => {
   const updated: StoredInput = {
     ...existing,
     Name: stringOrUndefined(input["Name"]) ?? existing.Name,
+    Destinations:
+      input["Destinations"] !== undefined
+        ? arrayOrEmpty(input["Destinations"])
+        : existing.Destinations,
+    Sources:
+      input["Sources"] !== undefined
+        ? arrayOrEmpty(input["Sources"])
+        : existing.Sources,
   };
   ctx.store.set(inputKey(id), updated);
   return { Input: updated };
@@ -979,26 +1183,49 @@ const UpdateInput: OperationHandler = (input, ctx) => {
 
 const DeleteInput: OperationHandler = (input, ctx) => {
   const id = requireString(input, "InputId");
-  requireInput(ctx, id);
+  const storedInput = requireInput(ctx, id);
+  if (storedInput.AttachedChannels.length > 0) {
+    throw awsError(
+      "ConflictException",
+      `Input ${id} is attached to channels.`,
+      409,
+    );
+  }
   ctx.store.delete(inputKey(id));
+  ctx.store.delete(tagsKey(storedInput.Arn));
   return {};
 };
 
 const CreatePartnerInput: OperationHandler = (input, ctx) => {
   const parentId = requireString(input, "InputId");
   requireInput(ctx, parentId);
+  const requestId = stringOrUndefined(input["RequestId"]);
+  if (requestId !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("partnerinput", requestId),
+    );
+    if (existingId !== undefined) {
+      return { Input: requireInput(ctx, existingId) };
+    }
+  }
   const id = nextInputId(ctx);
+  const arn = inputArn(ctx, id);
+  const tags = recordOrEmpty(input["Tags"]);
   const partnerInput: StoredInput = {
     Id: id,
-    Arn: inputArn(ctx, id),
+    Arn: arn,
     Name: `partner-${parentId}-${id}`,
     State: "DETACHED",
     Type: "PARTNER",
     AttachedChannels: [],
     SecurityGroups: [],
-    Tags: recordOrEmpty(input["Tags"]),
+    Tags: tags,
   };
   ctx.store.set(inputKey(id), partnerInput);
+  ctx.store.set(tagsKey(arn), tags);
+  if (requestId !== undefined) {
+    ctx.store.set(idempotencyKey("partnerinput", requestId), id);
+  }
   return { Input: partnerInput };
 };
 
@@ -1071,21 +1298,40 @@ const DeleteInputSecurityGroup: OperationHandler = (input, ctx) => {
 };
 
 const CreateMultiplex: OperationHandler = (input, ctx) => {
+  const requestId = stringOrUndefined(input["RequestId"]);
+  if (requestId !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("multiplex", requestId),
+    );
+    if (existingId !== undefined) {
+      return { Multiplex: requireMultiplex(ctx, existingId) };
+    }
+  }
   const id = nextMultiplexId(ctx);
+  const arn = multiplexArn(ctx, id);
   const zones = arrayOrEmpty(input["AvailabilityZones"]).filter(
     (z): z is string => typeof z === "string",
   );
+  const tags = recordOrEmpty(input["Tags"]);
   const mx: StoredMultiplex = {
     Id: id,
-    Arn: multiplexArn(ctx, id),
+    Arn: arn,
     Name: stringOrUndefined(input["Name"]) ?? "",
     State: "IDLE",
     AvailabilityZones: zones,
-    Tags: recordOrEmpty(input["Tags"]),
+    Tags: tags,
     PipelinesRunningCount: 0,
     ProgramCount: 0,
+    MultiplexSettings:
+      input["MultiplexSettings"] !== undefined
+        ? recordOrEmpty(input["MultiplexSettings"])
+        : undefined,
   };
   ctx.store.set(multiplexKey(id), mx);
+  ctx.store.set(tagsKey(arn), tags);
+  if (requestId !== undefined) {
+    ctx.store.set(idempotencyKey("multiplex", requestId), id);
+  }
   appendAlert(ctx, multiplexAlertKey(id), {
     Id: `${id}-created`,
     AlertType: "RESOURCE_CREATED",
@@ -1100,7 +1346,18 @@ const CreateMultiplex: OperationHandler = (input, ctx) => {
 
 const DescribeMultiplex: OperationHandler = (input, ctx) => {
   const id = requireString(input, "MultiplexId");
-  return requireMultiplex(ctx, id);
+  const mx = requireMultiplex(ctx, id);
+  if (mx.State === "STARTING") {
+    const settled = { ...mx, State: "RUNNING" };
+    ctx.store.set(multiplexKey(id), settled);
+    return settled;
+  }
+  if (mx.State === "STOPPING") {
+    const settled = { ...mx, State: "IDLE" };
+    ctx.store.set(multiplexKey(id), settled);
+    return settled;
+  }
+  return mx;
 };
 
 const ListMultiplexes: OperationHandler = (input, ctx) => {
@@ -1126,6 +1383,10 @@ const UpdateMultiplex: OperationHandler = (input, ctx) => {
   const updated: StoredMultiplex = {
     ...existing,
     Name: stringOrUndefined(input["Name"]) ?? existing.Name,
+    MultiplexSettings:
+      input["MultiplexSettings"] !== undefined
+        ? recordOrEmpty(input["MultiplexSettings"])
+        : existing.MultiplexSettings,
   };
   ctx.store.set(multiplexKey(id), updated);
   return { Multiplex: updated };
@@ -1134,6 +1395,20 @@ const UpdateMultiplex: OperationHandler = (input, ctx) => {
 const DeleteMultiplex: OperationHandler = (input, ctx) => {
   const id = requireString(input, "MultiplexId");
   const mx = requireMultiplex(ctx, id);
+  if (mx.State !== "IDLE") {
+    throw awsError(
+      "ConflictException",
+      `Multiplex ${id} is not in IDLE state.`,
+      409,
+    );
+  }
+  if (mx.ProgramCount !== 0) {
+    throw awsError(
+      "ConflictException",
+      `Multiplex ${id} still has programs.`,
+      409,
+    );
+  }
   appendAlert(ctx, multiplexAlertKey(id), {
     Id: `${id}-deleted`,
     AlertType: "RESOURCE_DELETED",
@@ -1144,13 +1419,21 @@ const DeleteMultiplex: OperationHandler = (input, ctx) => {
     PipelineId: "0",
   });
   ctx.store.delete(multiplexKey(id));
+  ctx.store.delete(tagsKey(mx.Arn));
   return { ...mx, State: "DELETING" };
 };
 
 const StartMultiplex: OperationHandler = (input, ctx) => {
   const id = requireString(input, "MultiplexId");
   const mx = requireMultiplex(ctx, id);
-  const updated = { ...mx, State: "RUNNING" };
+  if (mx.State !== "IDLE") {
+    throw awsError(
+      "ConflictException",
+      `Multiplex ${id} is not in IDLE state.`,
+      409,
+    );
+  }
+  const updated = { ...mx, State: "STARTING" };
   ctx.store.set(multiplexKey(id), updated);
   appendAlert(ctx, multiplexAlertKey(id), {
     Id: `${id}-start-${nowIso()}`,
@@ -1167,7 +1450,14 @@ const StartMultiplex: OperationHandler = (input, ctx) => {
 const StopMultiplex: OperationHandler = (input, ctx) => {
   const id = requireString(input, "MultiplexId");
   const mx = requireMultiplex(ctx, id);
-  const updated = { ...mx, State: "IDLE" };
+  if (mx.State !== "RUNNING") {
+    throw awsError(
+      "ConflictException",
+      `Multiplex ${id} is not in RUNNING state.`,
+      409,
+    );
+  }
+  const updated = { ...mx, State: "STOPPING" };
   ctx.store.set(multiplexKey(id), updated);
   appendAlert(ctx, multiplexAlertKey(id), {
     Id: `${id}-stop-${nowIso()}`,
@@ -1185,6 +1475,14 @@ const CreateMultiplexProgram: OperationHandler = (input, ctx) => {
   const mxId = requireString(input, "MultiplexId");
   requireMultiplex(ctx, mxId);
   const programName = requireString(input, "ProgramName");
+  const requestId = stringOrUndefined(input["RequestId"]);
+  if (requestId !== undefined) {
+    const iKey = idempotencyKey(`mxprog:${mxId}`, requestId);
+    const existingName = ctx.store.get<string>(iKey);
+    if (existingName !== undefined) {
+      return { MultiplexProgram: requireMxProgram(ctx, mxId, existingName) };
+    }
+  }
   const prog: StoredMultiplexProgram = {
     ProgramName: programName,
     MultiplexId: mxId,
@@ -1196,6 +1494,9 @@ const CreateMultiplexProgram: OperationHandler = (input, ctx) => {
     ...mx,
     ProgramCount: mx.ProgramCount + 1,
   });
+  if (requestId !== undefined) {
+    ctx.store.set(idempotencyKey(`mxprog:${mxId}`, requestId), programName);
+  }
   return { MultiplexProgram: prog };
 };
 
@@ -1514,6 +1815,7 @@ const DeleteReservation: OperationHandler = (input, ctx) => {
 
 const CreateTags: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceArn");
+  resolveArnExists(ctx, resourceArn);
   const newTags = recordOrEmpty(input["Tags"]) as Record<string, string>;
   const existing =
     ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
@@ -1523,6 +1825,7 @@ const CreateTags: OperationHandler = (input, ctx) => {
 
 const DeleteTags: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceArn");
+  resolveArnExists(ctx, resourceArn);
   const tagKeys = arrayOrEmpty(input["TagKeys"]).filter(
     (k): k is string => typeof k === "string",
   );
@@ -1536,6 +1839,7 @@ const DeleteTags: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceArn");
+  resolveArnExists(ctx, resourceArn);
   const tags =
     ctx.store.get<Record<string, string>>(tagsKey(resourceArn)) ?? {};
   return { Tags: tags };

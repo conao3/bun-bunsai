@@ -743,6 +743,9 @@ const CreateUserPool: OperationHandler = (input, ctx) => {
         : "ESSENTIALS",
   };
   ctx.store.set(poolId, pool);
+  if (typeof input["UserPoolTags"] === "object" && input["UserPoolTags"] !== null) {
+    ctx.store.set(tagsKey(pool.Arn), input["UserPoolTags"] as StoredTags);
+  }
   return { UserPool: poolType(pool) };
 };
 
@@ -784,7 +787,14 @@ const ListUserPools: OperationHandler = (input, ctx) => {
 
 const DeleteUserPool: OperationHandler = (input, ctx) => {
   const poolId = requireString(input, "UserPoolId");
-  requirePool(ctx, poolId);
+  const pool = requirePool(ctx, poolId);
+  if (pool.DeletionProtection === "ACTIVE") {
+    throw awsError(
+      "InvalidParameterException",
+      "This operation is not supported when deletion protection is ACTIVE.",
+      400,
+    );
+  }
   ctx.store.delete(poolId);
   return {};
 };
@@ -3047,6 +3057,13 @@ const ListWebAuthnCredentials: OperationHandler = (_input, _ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceArn");
+  const poolIdMatch = resourceArn.match(
+    /arn:aws:cognito-idp:[^:]+:[^:]+:userpool\/(.+)/,
+  );
+  if (!poolIdMatch) {
+    throw awsError("ResourceNotFoundException", `Resource not found.`, 400);
+  }
+  requirePool(ctx, poolIdMatch[1]);
   const tags =
     typeof input["Tags"] === "object" && input["Tags"] !== null
       ? (input["Tags"] as Record<string, string>)
@@ -3409,7 +3426,14 @@ const DeleteGroup: OperationHandler = (input, ctx) => {
   const poolId = requireString(input, "UserPoolId");
   requirePool(ctx, poolId);
   const groupName = requireString(input, "GroupName");
-  requireGroup(ctx, poolId, groupName);
+  const group = requireGroup(ctx, poolId, groupName);
+  if (group.members.length > 0) {
+    throw awsError(
+      "InvalidParameterException",
+      `You must first remove all users from the group ${groupName} before deleting it.`,
+      400,
+    );
+  }
   ctx.store.delete(groupKey(poolId, groupName));
   return {};
 };

@@ -1738,3 +1738,153 @@ test("Redshift partner + resource-policy lifecycle", async () => {
     }),
   );
 });
+
+test("Redshift tag round-trip and delete cleanup", async () => {
+  const client = redshift();
+  const clusterId = "bunsai-tag-cluster";
+
+  const created = await client.send(
+    new CreateClusterCommand({
+      ClusterIdentifier: clusterId,
+      NodeType: "dc2.large",
+      MasterUsername: "admin",
+      MasterUserPassword: "BunsaiTestPw1",
+      ClusterType: "single-node",
+      Tags: [
+        { Key: "env", Value: "test" },
+        { Key: "team", Value: "bunsai" },
+      ],
+    }),
+  );
+  expect(created.Cluster?.ClusterIdentifier).toBe(clusterId);
+
+  const clusterArn = `arn:aws:redshift:${region}:000000000000:cluster:${clusterId}`;
+  const described = await client.send(
+    new DescribeTagsCommand({ ResourceName: clusterArn }),
+  );
+  const tagKeys = (described.TaggedResources ?? []).map((r) => r.Tag?.Key);
+  expect(tagKeys).toContain("env");
+  expect(tagKeys).toContain("team");
+
+  await client.send(
+    new DeleteClusterCommand({
+      ClusterIdentifier: clusterId,
+      SkipFinalClusterSnapshot: true,
+    }),
+  );
+
+  const afterDelete = await client.send(
+    new DescribeTagsCommand({ ResourceName: clusterArn }),
+  );
+  expect((afterDelete.TaggedResources ?? []).length).toBe(0);
+});
+
+test("Redshift snapshot pagination", async () => {
+  const client = redshift();
+  const clusterId = "bunsai-page-cluster";
+
+  await client.send(
+    new CreateClusterCommand({
+      ClusterIdentifier: clusterId,
+      NodeType: "dc2.large",
+      MasterUsername: "admin",
+      MasterUserPassword: "BunsaiTestPw1",
+      ClusterType: "single-node",
+    }),
+  );
+
+  for (let i = 0; i < 5; i++) {
+    await client.send(
+      new CreateClusterSnapshotCommand({
+        SnapshotIdentifier: `bunsai-page-snap-${i}`,
+        ClusterIdentifier: clusterId,
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new DescribeClusterSnapshotsCommand({
+      ClusterIdentifier: clusterId,
+      MaxRecords: 2,
+    }),
+  );
+  expect((page1.Snapshots ?? []).length).toBe(2);
+  expect(page1.Marker).toBeDefined();
+
+  const page2 = await client.send(
+    new DescribeClusterSnapshotsCommand({
+      ClusterIdentifier: clusterId,
+      MaxRecords: 2,
+      Marker: page1.Marker,
+    }),
+  );
+  expect((page2.Snapshots ?? []).length).toBe(2);
+
+  const page3 = await client.send(
+    new DescribeClusterSnapshotsCommand({
+      ClusterIdentifier: clusterId,
+      MaxRecords: 2,
+      Marker: page2.Marker,
+    }),
+  );
+  expect((page3.Snapshots ?? []).length).toBe(1);
+  expect(page3.Marker).toBeUndefined();
+
+  await client.send(
+    new DeleteClusterCommand({
+      ClusterIdentifier: clusterId,
+      SkipFinalClusterSnapshot: true,
+    }),
+  );
+});
+
+test("Redshift parameter group and security group pagination", async () => {
+  const client = redshift();
+
+  for (let i = 0; i < 4; i++) {
+    await client.send(
+      new CreateClusterParameterGroupCommand({
+        ParameterGroupName: `bunsai-pg-${i}`,
+        ParameterGroupFamily: "redshift-1.0",
+        Description: `group ${i}`,
+      }),
+    );
+  }
+
+  const pgPage1 = await client.send(
+    new DescribeClusterParameterGroupsCommand({ MaxRecords: 20 }),
+  );
+  expect((pgPage1.ParameterGroups ?? []).length).toBeGreaterThanOrEqual(4);
+
+  for (let i = 0; i < 4; i++) {
+    await client.send(
+      new DeleteClusterParameterGroupCommand({
+        ParameterGroupName: `bunsai-pg-${i}`,
+      }),
+    );
+  }
+
+  for (let i = 0; i < 4; i++) {
+    await client.send(
+      new CreateClusterSecurityGroupCommand({
+        ClusterSecurityGroupName: `bunsai-sg-${i}`,
+        Description: `sg ${i}`,
+      }),
+    );
+  }
+
+  const sgPage1 = await client.send(
+    new DescribeClusterSecurityGroupsCommand({ MaxRecords: 20 }),
+  );
+  expect((sgPage1.ClusterSecurityGroups ?? []).length).toBeGreaterThanOrEqual(
+    4,
+  );
+
+  for (let i = 0; i < 4; i++) {
+    await client.send(
+      new DeleteClusterSecurityGroupCommand({
+        ClusterSecurityGroupName: `bunsai-sg-${i}`,
+      }),
+    );
+  }
+});

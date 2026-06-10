@@ -109,6 +109,7 @@ aws-models/
   eks.json             # botocore/data/eks/2017-11-01/service-2.json             (protocol rest-json)
   appsync.json         # botocore/data/appsync/2017-07-25/service-2.json         (protocol rest-json)
   codebuild.json       # botocore/data/codebuild/2016-10-06/service-2.json       (protocol json)
+  codedeploy.json      # botocore/data/codedeploy/2014-10-06/service-2.json      (protocol json)
   codepipeline.json    # botocore/data/codepipeline/2015-07-09/service-2.json    (protocol json)
   transfer.json        # botocore/data/transfer/2018-11-05/service-2.json        (protocol json)
   codecommit.json      # botocore/data/codecommit/2015-04-13/service-2.json      (protocol json)

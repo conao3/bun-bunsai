@@ -189,9 +189,7 @@ test("RotateSecret sequential calls succeed (no stuck AWSPENDING)", async () => 
   const first = await client.send(new RotateSecretCommand({ SecretId: name }));
   expect(first.VersionId).toBeDefined();
 
-  const second = await client.send(
-    new RotateSecretCommand({ SecretId: name }),
-  );
+  const second = await client.send(new RotateSecretCommand({ SecretId: name }));
   expect(second.VersionId).toBeDefined();
   expect(second.VersionId).not.toBe(first.VersionId);
 

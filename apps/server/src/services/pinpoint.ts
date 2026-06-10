@@ -511,6 +511,8 @@ const makeChannelUpdate =
     const appId = requireString(input, "ApplicationId");
     requireApp(ctx, appId);
     const meta = channelMeta[chType];
+    const reqKey = (meta.responseKey as string).replace("Response", "Request");
+    const body = asRecord(input[reqKey]) ?? {};
     const nowStr = new Date().toISOString();
     const existing = ctx.store.get<StoredChannel>(channelKey(appId, chType));
     const ch: StoredChannel = {
@@ -518,7 +520,10 @@ const makeChannelUpdate =
       Platform: meta.platform,
       CreationDate: existing?.CreationDate ?? nowStr,
       LastModifiedDate: nowStr,
-      Enabled: true,
+      Enabled:
+        typeof body["Enabled"] === "boolean"
+          ? body["Enabled"]
+          : (existing?.Enabled ?? true),
       IsArchived: false,
       Version: (existing?.Version ?? 0) + 1,
     };
@@ -694,6 +699,22 @@ const GetApps: OperationHandler = (input, ctx) => {
 const DeleteApp: OperationHandler = (input, ctx) => {
   const id = requireString(input, "ApplicationId");
   const app = requireApp(ctx, id);
+  const childPrefixes = [
+    `${campPrefix}${id}:`,
+    `${segPrefix}${id}:`,
+    `${jrnPrefix}${id}:`,
+    `${epPrefix}${id}:`,
+  ];
+  const hasChildren = ctx.store
+    .list()
+    .some((entry) => childPrefixes.some((p) => entry.key.startsWith(p)));
+  if (hasChildren) {
+    throw awsError(
+      "BadRequestException",
+      `Application ${id} has dependent resources. Delete all campaigns, segments, journeys, and endpoints before deleting the application.`,
+      400,
+    );
+  }
   ctx.store.delete(appKey(id));
   ctx.store.delete(tagsKey(app.Arn));
   return { ApplicationResponse: appView(app) };
@@ -1101,10 +1122,19 @@ const UpdateJourneyState: OperationHandler = (input, ctx) => {
   return { JourneyResponse: journeyView(updated) };
 };
 
+const JOURNEY_UNDELETABLE_STATES = new Set(["ACTIVE", "PAUSED", "DRAFT"]);
+
 const DeleteJourney: OperationHandler = (input, ctx) => {
   const appId = requireString(input, "ApplicationId");
   const jrnId = requireString(input, "JourneyId");
   const jrn = requireJourney(ctx, appId, jrnId);
+  if (JOURNEY_UNDELETABLE_STATES.has(jrn.State)) {
+    throw awsError(
+      "BadRequestException",
+      `Journey cannot be deleted in ${jrn.State} state. Transition to CANCELLED before deleting.`,
+      400,
+    );
+  }
   ctx.store.delete(journeyKey(appId, jrnId));
   ctx.store.delete(tagsKey(jrn.Arn));
   return { JourneyResponse: journeyView(jrn) };
@@ -1645,9 +1675,28 @@ const DeleteRecommenderConfiguration: OperationHandler = (input, ctx) => {
   };
 };
 
-const ListTagsForResource: OperationHandler = (input, _ctx) => {
+const requireResourceByArn = (ctx: ServiceContext, arn: string): void => {
+  const pathPart = arn.split(":").slice(5).join(":");
+  const segs = pathPart.split("/");
+  if (segs[0] === "apps" && segs[1]) {
+    const appId = segs[1];
+    requireApp(ctx, appId);
+    if (segs.length >= 4 && segs[2] && segs[3]) {
+      if (segs[2] === "campaigns") requireCampaign(ctx, appId, segs[3]);
+      else if (segs[2] === "segments") requireSegment(ctx, appId, segs[3]);
+      else if (segs[2] === "journeys") requireJourney(ctx, appId, segs[3]);
+    }
+  } else if (segs[0] === "recommenders" && segs[1]) {
+    requireRecommender(ctx, segs[1]);
+  } else {
+    throw awsError("NotFoundException", `Resource not found: ${arn}.`, 404);
+  }
+};
+
+const ListTagsForResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
-  const stored = _ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
+  requireResourceByArn(ctx, arn);
+  const stored = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
   return { TagsModel: { tags: stored } };
 };
 

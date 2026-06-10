@@ -445,10 +445,9 @@ test("Pinpoint tag split-brain: create-time tags visible via ListTagsForResource
 
   await client.send(new DeleteAppCommand({ ApplicationId: appId }));
 
-  const afterDelete = await client.send(
-    new ListTagsForResourceCommand({ ResourceArn: arn }),
-  );
-  expect(Object.keys(afterDelete.TagsModel?.tags ?? {})).toHaveLength(0);
+  await expect(
+    client.send(new ListTagsForResourceCommand({ ResourceArn: arn })),
+  ).rejects.toThrow();
 });
 
 test("Pinpoint GetCampaigns pagination", async () => {
@@ -494,6 +493,11 @@ test("Pinpoint GetCampaigns pagination", async () => {
   const ids2 = page2.CampaignsResponse?.Item?.map((c) => c.Id) ?? [];
   expect(ids1[0]).not.toBe(ids2[0]);
 
+  for (const id of [...ids1, ...ids2]) {
+    await client.send(
+      new DeleteCampaignCommand({ ApplicationId: appId, CampaignId: id }),
+    );
+  }
   await client.send(new DeleteAppCommand({ ApplicationId: appId }));
 });
 
@@ -533,5 +537,127 @@ test("Pinpoint UpdateJourneyState rejects invalid state", async () => {
   );
   expect(activated.JourneyResponse?.State).toBe("ACTIVE");
 
+  await client.send(
+    new UpdateJourneyStateCommand({
+      ApplicationId: appId,
+      JourneyId: jrnId,
+      JourneyStateRequest: { State: "CANCELLED" },
+    }),
+  );
+  await client.send(
+    new DeleteJourneyCommand({ ApplicationId: appId, JourneyId: jrnId }),
+  );
+  await client.send(new DeleteAppCommand({ ApplicationId: appId }));
+});
+
+test("HIGH-1: UpdateEmailChannel preserves Enabled=false", async () => {
+  const client = pinpoint();
+  const app = await client.send(
+    new CreateAppCommand({
+      CreateApplicationRequest: { Name: `ch-enabled-${Date.now()}` },
+    }),
+  );
+  const appId = app.ApplicationResponse?.Id ?? "";
+
+  await client.send(
+    new UpdateEmailChannelCommand({
+      ApplicationId: appId,
+      EmailChannelRequest: {
+        Enabled: false,
+        FromAddress: "test@example.com",
+        Identity: "arn:aws:ses:us-east-1:123:identity/test@example.com",
+      },
+    }),
+  );
+
+  const got = await client.send(
+    new GetEmailChannelCommand({ ApplicationId: appId }),
+  );
+  expect(got.EmailChannelResponse?.Enabled).toBe(false);
+
+  await client.send(new DeleteEmailChannelCommand({ ApplicationId: appId }));
+  await client.send(new DeleteAppCommand({ ApplicationId: appId }));
+});
+
+test("HIGH-2: ListTagsForResource rejects non-existent ARN", async () => {
+  const client = pinpoint();
+  await expect(
+    client.send(
+      new ListTagsForResourceCommand({
+        ResourceArn:
+          "arn:aws:mobiletargeting:us-east-1:123456789012:apps/non-existent-id",
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("HIGH-3: DeleteApp rejects when child campaigns exist", async () => {
+  const client = pinpoint();
+  const app = await client.send(
+    new CreateAppCommand({
+      CreateApplicationRequest: { Name: `delete-guard-${Date.now()}` },
+    }),
+  );
+  const appId = app.ApplicationResponse?.Id ?? "";
+
+  const camp = await client.send(
+    new CreateCampaignCommand({
+      ApplicationId: appId,
+      WriteCampaignRequest: { Name: "BlockingCampaign" },
+    }),
+  );
+  const campId = camp.CampaignResponse?.Id ?? "";
+
+  await expect(
+    client.send(new DeleteAppCommand({ ApplicationId: appId })),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteCampaignCommand({ ApplicationId: appId, CampaignId: campId }),
+  );
+  await client.send(new DeleteAppCommand({ ApplicationId: appId }));
+});
+
+test("HIGH-4: DeleteJourney rejects ACTIVE state", async () => {
+  const client = pinpoint();
+  const app = await client.send(
+    new CreateAppCommand({
+      CreateApplicationRequest: { Name: `jrn-delete-guard-${Date.now()}` },
+    }),
+  );
+  const appId = app.ApplicationResponse?.Id ?? "";
+
+  const jrn = await client.send(
+    new CreateJourneyCommand({
+      ApplicationId: appId,
+      WriteJourneyRequest: { Name: "ActiveJourney" },
+    }),
+  );
+  const jrnId = jrn.JourneyResponse?.Id ?? "";
+
+  await client.send(
+    new UpdateJourneyStateCommand({
+      ApplicationId: appId,
+      JourneyId: jrnId,
+      JourneyStateRequest: { State: "ACTIVE" },
+    }),
+  );
+
+  await expect(
+    client.send(
+      new DeleteJourneyCommand({ ApplicationId: appId, JourneyId: jrnId }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new UpdateJourneyStateCommand({
+      ApplicationId: appId,
+      JourneyId: jrnId,
+      JourneyStateRequest: { State: "CANCELLED" },
+    }),
+  );
+  await client.send(
+    new DeleteJourneyCommand({ ApplicationId: appId, JourneyId: jrnId }),
+  );
   await client.send(new DeleteAppCommand({ ApplicationId: appId }));
 });

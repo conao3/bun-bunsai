@@ -375,6 +375,7 @@ const RegisterDomain: OperationHandler = (input, ctx) => {
 
 const ListDomains: OperationHandler = (input, ctx) => {
   const registrationStatus = requireString(input, "registrationStatus");
+  const reverseOrder = input["reverseOrder"] === true;
   const maximumPageSize =
     typeof input["maximumPageSize"] === "number"
       ? (input["maximumPageSize"] as number)
@@ -389,9 +390,11 @@ const ListDomains: OperationHandler = (input, ctx) => {
       status: domain.status,
       description: domain.description,
       arn: domain.arn,
-    }));
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const ordered = reverseOrder ? [...allInfos].reverse() : allInfos;
   const { items: domainInfos, nextPageToken: newToken } = applyPageToken(
-    allInfos,
+    ordered,
     maximumPageSize,
     nextPageToken,
   );
@@ -417,6 +420,13 @@ const DescribeDomain: OperationHandler = (input, ctx) => {
 const DeprecateDomain: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const domain = requireDomain(ctx, name);
+  if (domain.status === "DEPRECATED") {
+    throw awsError(
+      "DomainDeprecatedFault",
+      `Domain is already deprecated: ${name}`,
+      400,
+    );
+  }
   domain.status = "DEPRECATED";
   ctx.store.set(domainKey(name), domain);
   return {};
@@ -506,6 +516,7 @@ const ListActivityTypes: OperationHandler = (input, ctx) => {
   const domain = requireString(input, "domain");
   requireDomain(ctx, domain);
   const registrationStatus = requireString(input, "registrationStatus");
+  const reverseOrder = input["reverseOrder"] === true;
   const nameFilter = stringOrUndefined(input["name"]);
   const maximumPageSize =
     typeof input["maximumPageSize"] === "number"
@@ -527,9 +538,14 @@ const ListActivityTypes: OperationHandler = (input, ctx) => {
       description: at.description,
       creationDate: at.creationDate,
       deprecationDate: at.deprecationDate,
-    }));
+    }))
+    .sort((a, b) => {
+      const n = a.activityType.name.localeCompare(b.activityType.name);
+      return n !== 0 ? n : a.activityType.version.localeCompare(b.activityType.version);
+    });
+  const ordered = reverseOrder ? [...allInfos].reverse() : allInfos;
   const { items: typeInfos, nextPageToken: newToken } = applyPageToken(
-    allInfos,
+    ordered,
     maximumPageSize,
     nextPageToken,
   );
@@ -562,7 +578,14 @@ const DeleteActivityType: OperationHandler = (input, ctx) => {
   const domain = requireString(input, "domain");
   requireDomain(ctx, domain);
   const { name, version } = getTypeFromInput(input, "activityType");
-  requireActivityType(ctx, domain, name, version);
+  const at = requireActivityType(ctx, domain, name, version);
+  if (at.status !== "DEPRECATED") {
+    throw awsError(
+      "TypeNotDeprecatedFault",
+      `Type must be deprecated before deletion: ${name} ${version}`,
+      400,
+    );
+  }
   ctx.store.delete(activityTypeKey(domain, name, version));
   return {};
 };
@@ -640,6 +663,7 @@ const ListWorkflowTypes: OperationHandler = (input, ctx) => {
   const domain = requireString(input, "domain");
   requireDomain(ctx, domain);
   const registrationStatus = requireString(input, "registrationStatus");
+  const reverseOrder = input["reverseOrder"] === true;
   const nameFilter = stringOrUndefined(input["name"]);
   const maximumPageSize =
     typeof input["maximumPageSize"] === "number"
@@ -661,9 +685,14 @@ const ListWorkflowTypes: OperationHandler = (input, ctx) => {
       description: wt.description,
       creationDate: wt.creationDate,
       deprecationDate: wt.deprecationDate,
-    }));
+    }))
+    .sort((a, b) => {
+      const n = a.workflowType.name.localeCompare(b.workflowType.name);
+      return n !== 0 ? n : a.workflowType.version.localeCompare(b.workflowType.version);
+    });
+  const ordered = reverseOrder ? [...allInfos].reverse() : allInfos;
   const { items: typeInfos, nextPageToken: newToken } = applyPageToken(
-    allInfos,
+    ordered,
     maximumPageSize,
     nextPageToken,
   );
@@ -696,7 +725,14 @@ const DeleteWorkflowType: OperationHandler = (input, ctx) => {
   const domain = requireString(input, "domain");
   requireDomain(ctx, domain);
   const { name, version } = getTypeFromInput(input, "workflowType");
-  requireWorkflowType(ctx, domain, name, version);
+  const wt = requireWorkflowType(ctx, domain, name, version);
+  if (wt.status !== "DEPRECATED") {
+    throw awsError(
+      "TypeNotDeprecatedFault",
+      `Type must be deprecated before deletion: ${name} ${version}`,
+      400,
+    );
+  }
   ctx.store.delete(workflowTypeKey(domain, name, version));
   return {};
 };

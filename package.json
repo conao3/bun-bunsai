@@ -136,5 +136,8 @@
     "knip": "^6.15.0",
     "prettier": "^3.8.3",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity": "^3.1066.0"
   }
 }

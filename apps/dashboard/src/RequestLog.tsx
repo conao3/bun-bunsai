@@ -300,6 +300,51 @@ function RequestDetail({
   );
 }
 
+function RequestNotFound({ id, onClose }: { id: string; onClose: () => void }) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCloseRef.current();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  return (
+    <div
+      className="detail drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="リクエストが見つかりません"
+    >
+      <div className="detail-head">
+        <div />
+        <button className="icon-btn" onClick={onClose} aria-label="閉じる">
+          <Ico.close width="17" height="17" />
+        </button>
+      </div>
+      <EmptyState
+        glyph={<Ico.search width="26" height="26" />}
+        title="リクエストが見つかりません"
+        sub={
+          <>
+            <span className="mono">{id}</span>
+            <br />
+            ログは直近 600 件のみ保持されます
+          </>
+        }
+        action={
+          <button className="btn btn-sm btn-secondary" onClick={onClose}>
+            閉じる
+          </button>
+        }
+      />
+    </div>
+  );
+}
+
 export function RequestLog({
   requests,
   live,
@@ -549,7 +594,11 @@ export function RequestLog({
           )}
         </div>
 
-        {sel && <RequestDetail req={sel} onClose={() => onSelect(null)} />}
+        {sel ? (
+          <RequestDetail req={sel} onClose={() => onSelect(null)} />
+        ) : selId ? (
+          <RequestNotFound id={selId} onClose={() => onSelect(null)} />
+        ) : null}
       </div>
     </div>
   );

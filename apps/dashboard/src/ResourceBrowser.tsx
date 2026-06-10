@@ -156,11 +156,15 @@ export function ResourceBrowser({
 
   useEffect(() => {
     let cancelled = false;
-    void fetchResources().then((rows) => {
-      if (cancelled) return;
-      setEntries(rows);
-      setLoaded(true);
-    });
+    void fetchResources()
+      .then((rows) => {
+        if (cancelled) return;
+        setEntries(rows);
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) setLoaded(true);
+      });
     return () => {
       cancelled = true;
     };

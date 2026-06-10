@@ -38,7 +38,7 @@ export function Sidebar({
     ? "idle"
     : services.some((s) => s.callCount > 0)
       ? "running"
-      : "running";
+      : "idle";
   const stackLabel = !connected ? "停止" : "稼働中";
   const stackSub = !connected ? "Stack not reachable" : "All services healthy";
   const counts: Record<Screen, number | null> = {
@@ -92,7 +92,7 @@ export function Sidebar({
 
       <div className="stack-status">
         <div className="row1">
-          <StatusDot state={stackState} pulse={connected} lg />
+          <StatusDot state={stackState} pulse={stackState === "running"} lg />
           <span className="stack-state-label">{stackLabel}</span>
           <span style={{ flex: 1 }} />
           <span className="uppercase-label" style={{ fontSize: 9.5 }}>

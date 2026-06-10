@@ -39,31 +39,27 @@ export type RequestLogEntry = {
 
 const base = "/__bunsai" as const;
 
-async function getJson<T>(path: string): Promise<T | null> {
-  try {
-    const res = await fetch(`${base}${path}`, {
-      headers: { accept: "application/json" },
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
-  }
+async function getJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${base}${path}`, {
+    headers: { accept: "application/json" },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as T;
 }
 
 export async function fetchServices(): Promise<ServiceSummary[]> {
-  return (await getJson<ServiceSummary[]>("/services")) ?? [];
+  return getJson<ServiceSummary[]>("/services");
 }
 
 export async function fetchResources(
   service?: string,
 ): Promise<ResourceEntry[]> {
   const q = service ? `?service=${encodeURIComponent(service)}` : "";
-  return (await getJson<ResourceEntry[]>(`/resources${q}`)) ?? [];
+  return getJson<ResourceEntry[]>(`/resources${q}`);
 }
 
 export async function fetchLogs(): Promise<RequestLogEntry[]> {
-  return (await getJson<RequestLogEntry[]>("/logs")) ?? [];
+  return getJson<RequestLogEntry[]>("/logs");
 }
 
 export function openLogStream(

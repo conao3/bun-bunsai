@@ -291,9 +291,12 @@ export function RequestLog({
           )}
           {live ? "一時停止" : "ライブ再開"}
         </button>
-        <div className={`live-ind ${live ? "on" : ""}`}>
-          <StatusDot state={live ? "running" : "idle"} pulse={live} />
-          <span>{live ? "LIVE" : "PAUSED"}</span>
+        <div className={`live-ind ${live && connected ? "on" : ""}`}>
+          <StatusDot
+            state={!live ? "idle" : connected ? "running" : "error"}
+            pulse={live && connected}
+          />
+          <span>{!live ? "PAUSED" : connected ? "LIVE" : "OFFLINE"}</span>
         </div>
 
         <div className="tb-sep" />

@@ -194,7 +194,7 @@ export function Overview({
     perSvc.set(r.service, cur);
   }
 
-  if (!connected && services.length === 0 && requests.length === 0) {
+  if (!connected) {
     return (
       <div className="content">
         <EmptyState

@@ -1,0 +1,33 @@
+{
+  "clientPackage": "@aws-sdk/client-sns",
+  "clientName": "SNSClient",
+  "steps": [
+    {
+      "command": "CreateTopicCommand",
+      "input": { "Name": "parity-topic-publish" },
+      "expected": { "TopicArn": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "topic",
+      "refs": {}
+    },
+    {
+      "command": "PublishCommand",
+      "input": {
+        "TopicArn": "${topic.TopicArn}",
+        "Message": "hello from parity"
+      },
+      "expected": { "MessageId": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTopicCommand",
+      "input": { "TopicArn": "${topic.TopicArn}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

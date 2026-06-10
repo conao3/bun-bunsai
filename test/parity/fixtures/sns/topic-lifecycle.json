@@ -1,0 +1,39 @@
+{
+  "clientPackage": "@aws-sdk/client-sns",
+  "clientName": "SNSClient",
+  "steps": [
+    {
+      "command": "CreateTopicCommand",
+      "input": { "Name": "parity-topic" },
+      "expected": { "TopicArn": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "topic",
+      "refs": {}
+    },
+    {
+      "command": "GetTopicAttributesCommand",
+      "input": { "TopicArn": "${topic.TopicArn}" },
+      "expected": {
+        "Attributes": {
+          "TopicArn": "<ANY>",
+          "Owner": "<ANY>",
+          "SubscriptionsConfirmed": "0",
+          "SubscriptionsDeleted": "0",
+          "SubscriptionsPending": "0",
+          "DisplayName": ""
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTopicCommand",
+      "input": { "TopicArn": "${topic.TopicArn}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "clientPackage": "@aws-sdk/client-lambda",
+  "clientName": "LambdaClient",
+  "steps": [
+    {
+      "command": "CreateFunctionCommand",
+      "input": {
+        "FunctionName": "parity-fn-tags",
+        "Runtime": "nodejs20.x",
+        "Role": "arn:aws:iam::000000000000:role/parity-role",
+        "Handler": "index.handler",
+        "Code": { "ZipFile": { "$base64": "UEsgZmFrZSB6aXA=" } }
+      },
+      "expected": { "FunctionName": "parity-fn-tags", "FunctionArn": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "fn",
+      "refs": {}
+    },
+    {
+      "command": "TagResourceCommand",
+      "input": {
+        "Resource": "${fn.FunctionArn}",
+        "Tags": { "A": "tag-a" }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTagsCommand",
+      "input": { "Resource": "${fn.FunctionArn}" },
+      "expected": { "Tags": { "A": "tag-a" } },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "TagResourceCommand",
+      "input": {
+        "Resource": "${fn.FunctionArn}",
+        "Tags": { "B": "tag-b", "C": "tag-c" }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTagsCommand",
+      "input": { "Resource": "${fn.FunctionArn}" },
+      "expected": { "Tags": { "A": "tag-a", "B": "tag-b", "C": "tag-c" } },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UntagResourceCommand",
+      "input": {
+        "Resource": "${fn.FunctionArn}",
+        "TagKeys": ["A"]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTagsCommand",
+      "input": { "Resource": "${fn.FunctionArn}" },
+      "expected": { "Tags": { "B": "tag-b", "C": "tag-c" } },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteFunctionCommand",
+      "input": { "FunctionName": "parity-fn-tags" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -189,6 +189,49 @@ aws-models/
   `botocore-protocol-tests/LICENSE.txt` / `NOTICE` and the root `NOTICE`, which
   already propagate the Botocore attribution for all vendored botocore data.
 
+## localstack-snapshots/
+
+|               |                                                                                                                                                                                                     |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Upstream repo | https://github.com/localstack/localstack                                                                                                                                                            |
+| License       | Apache-2.0                                                                                                                                                                                          |
+| Pinned tag    | `v3.8.1`                                                                                                                                                                                            |
+| Commit hash   | `529aba7d8372e9199f42a31a6500071363ad8c18`                                                                                                                                                          |
+| Source path   | `tests/aws/services/{sqs,sns,lambda_}/*.snapshot.json`                                                                                                                                              |
+| Fetched on    | 2026-06-11 (JST)                                                                                                                                                                                    |
+| Method        | GitHub Contents API (`api.github.com/repos/localstack/localstack/contents/...?ref=<tag>`) for the file listing, `raw.githubusercontent.com/localstack/localstack/<commit>/...` for the bytes |
+
+### Layout
+
+```
+localstack-snapshots/
+  sqs/
+    test_sqs.snapshot.json           # snapshot responses for tests/aws/services/sqs/test_sqs.py
+    test_sqs_move_task.snapshot.json # snapshot responses for tests/aws/services/sqs/test_sqs_move_task.py
+  sns/
+    test_sns.snapshot.json           # snapshot responses for tests/aws/services/sns/test_sns.py
+    test_sns_filter_policy.snapshot.json
+  lambda/
+    test_lambda.snapshot.json
+    test_lambda_api.snapshot.json    # snapshot responses for tests/aws/services/lambda_/test_lambda_api.py
+    test_lambda_common.snapshot.json
+    test_lambda_destinations.snapshot.json
+    test_lambda_runtimes.snapshot.json
+  LICENSE.txt                        # upstream Apache-2.0 license text
+```
+
+### Notes
+
+- Each `.snapshot.json` is a dict keyed by `tests/aws/services/<svc>/test_<name>.py::<Class>::<method>[<variant>]`.
+  Values are `{ "recorded-date": "...", "recorded-content": { "<label>": <response> } }` where each
+  `<response>` is the raw boto3 response dict recorded against real AWS.
+- Placeholder tokens in the responses: `<resource:N>`, `<partition>`, `<region>`, `"timestamp"`,
+  `"date"`, `<code-sha256:N>`, `<uuid:N>` etc. — these are localstack's own normalizers applied at
+  record time to make snapshots region/account-agnostic.
+- Apache-2.0 attribution is satisfied by the co-located `localstack-snapshots/LICENSE.txt`. The v3.8.1
+  tag was chosen because it predates localstack's license change to BSL; the `LICENSE.txt` at that
+  commit confirms Apache-2.0.
+
 ## Refreshing
 
 Re-run with the same GitHub Contents API + raw.githubusercontent.com flow

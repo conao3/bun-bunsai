@@ -1,0 +1,57 @@
+{
+  "clientPackage": "@aws-sdk/client-sqs",
+  "clientName": "SQSClient",
+  "steps": [
+    {
+      "command": "CreateQueueCommand",
+      "input": { "QueueName": "parity-q-sendrecv" },
+      "expected": { "QueueUrl": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "q",
+      "refs": {}
+    },
+    {
+      "command": "SendMessageCommand",
+      "input": {
+        "QueueUrl": "${q.QueueUrl}",
+        "MessageBody": "hello parity"
+      },
+      "expected": {
+        "MD5OfMessageBody": "<ANY>",
+        "MessageId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "msg",
+      "refs": {}
+    },
+    {
+      "command": "ReceiveMessageCommand",
+      "input": {
+        "QueueUrl": "${q.QueueUrl}",
+        "MaxNumberOfMessages": 1,
+        "WaitTimeSeconds": 0
+      },
+      "expected": {
+        "Messages": [
+          {
+            "Body": "hello parity",
+            "MD5OfBody": "<ANY>",
+            "MessageId": "<ANY>",
+            "ReceiptHandle": "<ANY>"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "recv",
+      "refs": {}
+    },
+    {
+      "command": "DeleteQueueCommand",
+      "input": { "QueueUrl": "${q.QueueUrl}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

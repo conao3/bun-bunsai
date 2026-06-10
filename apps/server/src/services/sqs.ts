@@ -404,6 +404,19 @@ const CreateQueue: OperationHandler = (input, ctx) => {
   }
   const existing = ctx.store.get<StoredQueue>(name);
   if (existing !== undefined) {
+    const allKeys = new Set([
+      ...Object.keys(existing.Attributes),
+      ...Object.keys(attributes),
+    ]);
+    for (const key of allKeys) {
+      if (existing.Attributes[key] !== attributes[key]) {
+        throw awsError(
+          "QueueNameExists",
+          "A queue with this name already exists. Amazon SQS returns this error only if the request includes attributes whose values differ from those of the existing queue.",
+          400,
+        );
+      }
+    }
     return { QueueUrl: existing.QueueUrl };
   }
   const tags =
@@ -428,6 +441,11 @@ const CreateQueue: OperationHandler = (input, ctx) => {
 
 const ListQueues: OperationHandler = (input, ctx) => {
   const prefix = input["QueueNamePrefix"];
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const nextToken =
+    typeof input["NextToken"] === "string" ? input["NextToken"] : undefined;
+
   const urls = ctx.store
     .list<StoredQueue>()
     .filter((entry) =>
@@ -436,7 +454,26 @@ const ListQueues: OperationHandler = (input, ctx) => {
         : true,
     )
     .map((entry) => entry.value.QueueUrl);
-  return { QueueUrls: urls };
+
+  let startIndex = 0;
+  if (nextToken !== undefined) {
+    const decoded = parseInt(
+      Buffer.from(nextToken, "base64").toString("utf8"),
+      10,
+    );
+    if (!isNaN(decoded)) startIndex = decoded;
+  }
+
+  const page =
+    maxResults !== undefined
+      ? urls.slice(startIndex, startIndex + maxResults)
+      : urls.slice(startIndex);
+  const newNextToken =
+    maxResults !== undefined && startIndex + maxResults < urls.length
+      ? Buffer.from(String(startIndex + maxResults)).toString("base64")
+      : undefined;
+
+  return { QueueUrls: page, ...(newNextToken !== undefined ? { NextToken: newNextToken } : {}) };
 };
 
 const GetQueueUrl: OperationHandler = (input, ctx) => {
@@ -820,6 +857,11 @@ const ChangeMessageVisibility: OperationHandler = (input, ctx) => {
 
 type BatchEntry = Record<string, unknown>;
 
+const entryId = (entry: BatchEntry, index: number): string => {
+  const id = entry["Id"];
+  return typeof id === "string" && id !== "" ? id : String(index);
+};
+
 const batchEntriesFromInput = (
   input: Record<string, unknown>,
 ): BatchEntry[] => {
@@ -831,12 +873,26 @@ const batchEntriesFromInput = (
       400,
     );
   }
+  if (entries.length > 10) {
+    throw awsError(
+      "AWS.SimpleQueueService.TooManyEntriesInBatchRequest",
+      "Maximum number of entries per request are 10.",
+      400,
+    );
+  }
+  const seen = new Set<string>();
+  for (const [index, entry] of (entries as BatchEntry[]).entries()) {
+    const id = entryId(entry, index);
+    if (seen.has(id)) {
+      throw awsError(
+        "AWS.SimpleQueueService.BatchEntryIdsNotDistinct",
+        "Two or more batch entries in the request have the same Id.",
+        400,
+      );
+    }
+    seen.add(id);
+  }
   return entries as BatchEntry[];
-};
-
-const entryId = (entry: BatchEntry, index: number): string => {
-  const id = entry["Id"];
-  return typeof id === "string" && id !== "" ? id : String(index);
 };
 
 const SendMessageBatch: OperationHandler = (input, ctx) => {
@@ -1187,11 +1243,38 @@ const ListDeadLetterSourceQueues: OperationHandler = (input, ctx) => {
   const name = queueNameFromInput(input);
   requireQueue(ctx, name);
   const targetArn = `arn:aws:sqs:${ctx.region}:${ctx.account}:${name}`;
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const nextToken =
+    typeof input["NextToken"] === "string" ? input["NextToken"] : undefined;
+
   const queueUrls = ctx.store
     .list<StoredQueue>()
     .filter((entry) => redriveTargetArn(entry.value) === targetArn)
     .map((entry) => entry.value.QueueUrl);
-  return { queueUrls };
+
+  let startIndex = 0;
+  if (nextToken !== undefined) {
+    const decoded = parseInt(
+      Buffer.from(nextToken, "base64").toString("utf8"),
+      10,
+    );
+    if (!isNaN(decoded)) startIndex = decoded;
+  }
+
+  const page =
+    maxResults !== undefined
+      ? queueUrls.slice(startIndex, startIndex + maxResults)
+      : queueUrls.slice(startIndex);
+  const newNextToken =
+    maxResults !== undefined && startIndex + maxResults < queueUrls.length
+      ? Buffer.from(String(startIndex + maxResults)).toString("base64")
+      : undefined;
+
+  return {
+    queueUrls: page,
+    ...(newNextToken !== undefined ? { NextToken: newNextToken } : {}),
+  };
 };
 
 registerTarget("sqs", async (store, resource, delivery, ctx) => {

@@ -766,7 +766,7 @@ test("AppRunner CreateService rejects unknown AutoScaling ARN", async () => {
           "arn:aws:apprunner:us-east-1:123456789012:autoscalingconfiguration/Unknown/1/nonexistent",
       }),
     ),
-  ).rejects.toThrow();
+  ).rejects.toMatchObject({ name: "InvalidRequestException" });
 });
 
 test("AppRunner CreateService rejects unknown Observability ARN", async () => {
@@ -789,7 +789,7 @@ test("AppRunner CreateService rejects unknown Observability ARN", async () => {
         },
       }),
     ),
-  ).rejects.toThrow();
+  ).rejects.toMatchObject({ name: "InvalidRequestException" });
 });
 
 test("AppRunner UpdateService rejects unknown AutoScaling ARN", async () => {
@@ -817,7 +817,7 @@ test("AppRunner UpdateService rejects unknown AutoScaling ARN", async () => {
           "arn:aws:apprunner:us-east-1:123456789012:autoscalingconfiguration/Unknown/1/nonexistent",
       }),
     ),
-  ).rejects.toThrow();
+  ).rejects.toMatchObject({ name: "InvalidRequestException" });
 
   await client.send(new DeleteServiceCommand({ ServiceArn: serviceArn }));
 });
@@ -850,7 +850,7 @@ test("AppRunner UpdateService rejects unknown Observability ARN", async () => {
         },
       }),
     ),
-  ).rejects.toThrow();
+  ).rejects.toMatchObject({ name: "InvalidRequestException" });
 
   await client.send(new DeleteServiceCommand({ ServiceArn: serviceArn }));
 });

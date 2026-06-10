@@ -415,9 +415,7 @@ const paginateList = <T>(
   const pageSize =
     typeof maxItems === "number" && maxItems > 0 ? maxItems : 100;
   const startIndex =
-    typeof marker === "string" && marker !== ""
-      ? parseInt(marker, 10)
-      : 0;
+    typeof marker === "string" && marker !== "" ? parseInt(marker, 10) : 0;
   const page = items.slice(startIndex, startIndex + pageSize);
   const isTruncated = startIndex + pageSize < items.length;
   return {

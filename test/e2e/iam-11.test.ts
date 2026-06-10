@@ -45,7 +45,10 @@ const trustPolicy = JSON.stringify({
 test("HIGH-1: DeleteRole cleans up roletag/* and rolepolicy/* entries", async () => {
   const client = iam();
   await client.send(
-    new CreateRoleCommand({ RoleName: "del-role-1", AssumeRolePolicyDocument: trustPolicy }),
+    new CreateRoleCommand({
+      RoleName: "del-role-1",
+      AssumeRolePolicyDocument: trustPolicy,
+    }),
   );
   await client.send(
     new TagRoleCommand({
@@ -72,7 +75,10 @@ test("HIGH-1: DeleteRole cleans up roletag/* and rolepolicy/* entries", async ()
   await client.send(new DeleteRoleCommand({ RoleName: "del-role-1" }));
 
   await client.send(
-    new CreateRoleCommand({ RoleName: "del-role-1", AssumeRolePolicyDocument: trustPolicy }),
+    new CreateRoleCommand({
+      RoleName: "del-role-1",
+      AssumeRolePolicyDocument: trustPolicy,
+    }),
   );
   const tagsAfter = await client.send(
     new ListRoleTagsCommand({ RoleName: "del-role-1" }),
@@ -182,23 +188,29 @@ test("HIGH-4: ListRoles paginates correctly with MaxItems and Marker", async () 
   expect(page1.Marker).toBeDefined();
 
   const page2 = await client.send(
-    new ListRolesCommand({ PathPrefix: prefix, MaxItems: 3, Marker: page1.Marker }),
+    new ListRolesCommand({
+      PathPrefix: prefix,
+      MaxItems: 3,
+      Marker: page1.Marker,
+    }),
   );
   expect(page2.Roles).toHaveLength(3);
   expect(page2.IsTruncated).toBe(true);
 
   const page3 = await client.send(
-    new ListRolesCommand({ PathPrefix: prefix, MaxItems: 3, Marker: page2.Marker }),
+    new ListRolesCommand({
+      PathPrefix: prefix,
+      MaxItems: 3,
+      Marker: page2.Marker,
+    }),
   );
   expect(page3.Roles).toHaveLength(1);
   expect(page3.IsTruncated).toBe(false);
   expect(page3.Marker).toBeUndefined();
 
-  const allRoles = [
-    ...page1.Roles!,
-    ...page2.Roles!,
-    ...page3.Roles!,
-  ].map((r) => r.RoleName);
+  const allRoles = [...page1.Roles!, ...page2.Roles!, ...page3.Roles!].map(
+    (r) => r.RoleName,
+  );
   expect(new Set(allRoles).size).toBe(roleCount);
 
   for (let i = 0; i < roleCount; i++) {
@@ -223,12 +235,20 @@ test("HIGH-4: ListUsers paginates correctly with MaxItems and Marker", async () 
   expect(page1.IsTruncated).toBe(true);
 
   const page2 = await client.send(
-    new ListUsersCommand({ PathPrefix: prefix, MaxItems: 2, Marker: page1.Marker }),
+    new ListUsersCommand({
+      PathPrefix: prefix,
+      MaxItems: 2,
+      Marker: page1.Marker,
+    }),
   );
   expect(page2.Users).toHaveLength(2);
 
   const page3 = await client.send(
-    new ListUsersCommand({ PathPrefix: prefix, MaxItems: 2, Marker: page2.Marker }),
+    new ListUsersCommand({
+      PathPrefix: prefix,
+      MaxItems: 2,
+      Marker: page2.Marker,
+    }),
   );
   expect(page3.Users).toHaveLength(1);
   expect(page3.IsTruncated).toBe(false);
@@ -248,7 +268,10 @@ test("HIGH-4+HIGH-5: ListPolicies paginates and filters OnlyAttached", async () 
       new CreatePolicyCommand({
         PolicyName: `pagtest-policy-${i}`,
         Path: prefix,
-        PolicyDocument: JSON.stringify({ Version: "2012-10-17", Statement: [] }),
+        PolicyDocument: JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [],
+        }),
       }),
     );
     policyArns.push(res.Policy!.Arn!);
@@ -268,7 +291,11 @@ test("HIGH-4+HIGH-5: ListPolicies paginates and filters OnlyAttached", async () 
   );
 
   const page1 = await client.send(
-    new ListPoliciesCommand({ Scope: "Local", PathPrefix: prefix, MaxItems: 2 }),
+    new ListPoliciesCommand({
+      Scope: "Local",
+      PathPrefix: prefix,
+      MaxItems: 2,
+    }),
   );
   expect(page1.Policies).toHaveLength(2);
   expect(page1.IsTruncated).toBe(true);

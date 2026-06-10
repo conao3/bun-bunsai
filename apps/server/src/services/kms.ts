@@ -372,7 +372,10 @@ const CreateKey: OperationHandler = (input, ctx) => {
             typeof t["TagKey"] === "string" &&
             typeof t["TagValue"] === "string",
         )
-        .map((t) => ({ TagKey: t["TagKey"] as string, TagValue: t["TagValue"] as string }))
+        .map((t) => ({
+          TagKey: t["TagKey"] as string,
+          TagValue: t["TagValue"] as string,
+        }))
     : [];
   const key: StoredKey = {
     KeyId: keyId,
@@ -407,12 +410,17 @@ const applyPagination = <T>(
   const limit =
     typeof input["Limit"] === "number" ? (input["Limit"] as number) : undefined;
   const markerRaw =
-    typeof input["Marker"] === "string" ? (input["Marker"] as string) : undefined;
+    typeof input["Marker"] === "string"
+      ? (input["Marker"] as string)
+      : undefined;
   const offset = markerRaw
     ? parseInt(Buffer.from(markerRaw, "base64").toString("utf8"), 10)
     : 0;
   const start = isNaN(offset) ? 0 : offset;
-  const sliced = limit !== undefined ? items.slice(start, start + limit) : items.slice(start);
+  const sliced =
+    limit !== undefined
+      ? items.slice(start, start + limit)
+      : items.slice(start);
   const hasMore = start + sliced.length < items.length;
   const nextOffset = start + sliced.length;
   return {

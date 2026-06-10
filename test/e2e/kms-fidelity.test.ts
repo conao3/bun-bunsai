@@ -205,7 +205,9 @@ describe("kms fidelity e2e", () => {
       }),
     );
     const keyId = created.KeyMetadata?.KeyId;
-    const listed = await client.send(new ListResourceTagsCommand({ KeyId: keyId }));
+    const listed = await client.send(
+      new ListResourceTagsCommand({ KeyId: keyId }),
+    );
     expect(listed.Tags).toHaveLength(2);
     const tagMap = Object.fromEntries(
       (listed.Tags ?? []).map((t) => [t.TagKey, t.TagValue]),

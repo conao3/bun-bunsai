@@ -8,6 +8,7 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 import { deliverToArn, registerTarget } from "../core/events.ts";
+import { serviceBaseUrl } from "./_endpoint.ts";
 
 const model = loadServiceModel(snsModel);
 
@@ -180,9 +181,8 @@ const buildEnvelope = (topicArn: string, delivery: DeliveryMessage): string => {
     Timestamp: new Date().toISOString(),
     SignatureVersion: "1",
     Signature: "bunsai-local-unsigned",
-    SigningCertURL:
-      "http://localhost:4566/SimpleNotificationService-bunsai.pem",
-    UnsubscribeURL: `http://localhost:4566/?Action=Unsubscribe&SubscriptionArn=${topicArn}`,
+    SigningCertURL: `${serviceBaseUrl()}/SimpleNotificationService-bunsai.pem`,
+    UnsubscribeURL: `${serviceBaseUrl()}/?Action=Unsubscribe&SubscriptionArn=${topicArn}`,
   };
   if (delivery.subject !== undefined) envelope["Subject"] = delivery.subject;
   if (

@@ -8,6 +8,7 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 import { notifyEventSource, registerTarget } from "../core/events.ts";
+import { serviceBaseUrl } from "./_endpoint.ts";
 
 const model = loadServiceModel(sqsModel);
 
@@ -355,7 +356,7 @@ const buildSystemAttributes = (
 };
 
 const queueUrlOf = (account: string, name: string): string =>
-  `http://localhost:4566/${account}/${name}`;
+  `${serviceBaseUrl()}/${account}/${name}`;
 
 const nameFromQueueUrl = (queueUrl: string): string => {
   const trimmed = queueUrl.replace(/\/+$/, "");

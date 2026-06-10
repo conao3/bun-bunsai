@@ -4,6 +4,7 @@ import {
   CreateClusterCommand,
   CreateNodegroupCommand,
   DeleteClusterCommand,
+  DeleteNodegroupCommand,
   DescribeClusterCommand,
   DescribeNodegroupCommand,
   EKSClient,
@@ -74,6 +75,8 @@ test("EKS cluster and nodegroup roundtrip", async () => {
     new ListNodegroupsCommand({ clusterName }),
   );
   expect(listedNg.nodegroups ?? []).toContain(nodegroupName);
+
+  await client.send(new DeleteNodegroupCommand({ clusterName, nodegroupName }));
 
   const deleted = await client.send(
     new DeleteClusterCommand({ name: clusterName }),

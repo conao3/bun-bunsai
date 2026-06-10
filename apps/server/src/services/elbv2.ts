@@ -1,7 +1,11 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import elbv2Model from "../../../../test/vendor/aws-models/elbv2.json" with { type: "json" };
-import type { OperationHandler, ServiceDefinition } from "../core/types.ts";
+import type {
+  OperationHandler,
+  ServiceContext,
+  ServiceDefinition,
+} from "../core/types.ts";
 
 const model = loadServiceModel(elbv2Model);
 
@@ -155,6 +159,105 @@ const objectList = (value: unknown): Record<string, unknown>[] =>
         .map((item) => ({ ...item }))
     : [];
 
+const extractTgArnsFromActions = (
+  actions: Record<string, unknown>[],
+): string[] => {
+  const arns: string[] = [];
+  for (const action of actions) {
+    if (typeof action["TargetGroupArn"] === "string") {
+      arns.push(action["TargetGroupArn"]);
+    }
+    const fc = action["ForwardConfig"];
+    if (fc !== null && typeof fc === "object") {
+      const tgEntries = (fc as Record<string, unknown>)["TargetGroups"];
+      if (Array.isArray(tgEntries)) {
+        for (const t of tgEntries as Record<string, unknown>[]) {
+          if (typeof t["TargetGroupArn"] === "string") {
+            arns.push(t["TargetGroupArn"]);
+          }
+        }
+      }
+    }
+  }
+  return [...new Set(arns)];
+};
+
+const validateTgArnsInActions = (
+  ctx: ServiceContext,
+  actions: Record<string, unknown>[],
+): void => {
+  for (const arn of extractTgArnsFromActions(actions)) {
+    if (ctx.store.get<StoredTargetGroup>(targetGroupKey(arn)) === undefined) {
+      throw awsError(
+        "TargetGroupNotFound",
+        `Target group '${arn}' not found`,
+        400,
+      );
+    }
+  }
+};
+
+const syncTgLbAssociation = (ctx: ServiceContext, lbArn: string): void => {
+  const currentTgArns = new Set<string>();
+  const listeners = ctx.store
+    .list<StoredListener>()
+    .filter((e) => e.key.startsWith("listener/"))
+    .map((e) => e.value)
+    .filter((l) => l.LoadBalancerArn === lbArn);
+  for (const l of listeners) {
+    for (const arn of extractTgArnsFromActions(l.DefaultActions)) {
+      currentTgArns.add(arn);
+    }
+  }
+  const rules = ctx.store
+    .list<StoredRule>()
+    .filter((e) => e.key.startsWith("rule/"))
+    .map((e) => e.value)
+    .filter((r) => {
+      const l = ctx.store.get<StoredListener>(listenerKey(r.ListenerArn));
+      return l?.LoadBalancerArn === lbArn;
+    });
+  for (const r of rules) {
+    for (const arn of extractTgArnsFromActions(r.Actions)) {
+      currentTgArns.add(arn);
+    }
+  }
+  const allTgs = ctx.store
+    .list<StoredTargetGroup>()
+    .filter((e) => e.key.startsWith("tg/"))
+    .map((e) => e.value);
+  for (const tg of allTgs) {
+    const isReferenced = currentTgArns.has(tg.TargetGroupArn);
+    const hasLb = tg.LoadBalancerArns.includes(lbArn);
+    if (isReferenced && !hasLb) {
+      tg.LoadBalancerArns = [...tg.LoadBalancerArns, lbArn];
+      ctx.store.set(targetGroupKey(tg.TargetGroupArn), tg);
+    } else if (!isReferenced && hasLb) {
+      tg.LoadBalancerArns = tg.LoadBalancerArns.filter((a) => a !== lbArn);
+      ctx.store.set(targetGroupKey(tg.TargetGroupArn), tg);
+    }
+  }
+};
+
+const applyPagination = <T>(
+  items: T[],
+  marker: string | undefined,
+  pageSize: unknown,
+  arnFn: (item: T) => string,
+): { result: T[]; nextMarker?: string } => {
+  const size =
+    typeof pageSize === "number" && pageSize > 0 ? pageSize : items.length;
+  let startIdx = 0;
+  if (marker !== undefined) {
+    const idx = items.findIndex((item) => arnFn(item) === marker);
+    if (idx >= 0) startIdx = idx;
+  }
+  const result = items.slice(startIdx, startIdx + size);
+  const nextMarker =
+    startIdx + size < items.length ? arnFn(items[startIdx + size]) : undefined;
+  return { result, ...(nextMarker !== undefined ? { nextMarker } : {}) };
+};
+
 const loadBalancerView = (lb: StoredLoadBalancer): Record<string, unknown> => ({
   LoadBalancerArn: lb.LoadBalancerArn,
   DNSName: lb.DNSName,
@@ -296,23 +399,51 @@ const requireTargetGroup = (
 
 const CreateLoadBalancer: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
+  const allLbs = ctx.store
+    .list<StoredLoadBalancer>()
+    .filter((e) => e.key.startsWith("lb/"))
+    .map((e) => e.value);
+  const existing = allLbs.find((l) => l.LoadBalancerName === name);
+  if (existing !== undefined) {
+    const inputScheme = optionalString(input, "Scheme") ?? "internet-facing";
+    const inputType = optionalString(input, "Type") ?? "application";
+    if (existing.Scheme === inputScheme && existing.Type === inputType) {
+      return { LoadBalancers: [loadBalancerView(existing)] };
+    }
+    throw awsError(
+      "DuplicateLoadBalancerName",
+      `A load balancer with the name '${name}' already exists`,
+      400,
+    );
+  }
+  const type = optionalString(input, "Type") ?? "application";
+  const typePrefix =
+    type === "network" ? "net" : type === "gateway" ? "gwy" : "app";
   const arnId = randomHex(8);
   const dnsId = randomHex(8);
+  const subnets = stringList(input["Subnets"]);
+  const subnetMappings = objectList(input["SubnetMappings"]);
+  const azs =
+    subnetMappings.length > 0
+      ? subnetMappings
+      : subnets.map((subnetId) => ({ SubnetId: subnetId }));
   const lb: StoredLoadBalancer = {
-    LoadBalancerArn: `arn:aws:elasticloadbalancing:${ctx.region}:${ctx.account}:loadbalancer/app/${name}/${arnId}`,
+    LoadBalancerArn: `arn:aws:elasticloadbalancing:${ctx.region}:${ctx.account}:loadbalancer/${typePrefix}/${name}/${arnId}`,
     LoadBalancerName: name,
     DNSName: `${name}-${dnsId}.${ctx.region}.elb.amazonaws.com`,
     CanonicalHostedZoneId: "Z2BUNSAI0000ID",
     CreatedTime: new Date().toISOString(),
     Scheme: optionalString(input, "Scheme") ?? "internet-facing",
     VpcId: optionalString(input, "VpcId"),
-    State: { Code: "active" },
-    Type: optionalString(input, "Type") ?? "application",
-    AvailabilityZones: objectList(input["SubnetMappings"]),
+    State: { Code: "provisioning" },
+    Type: type,
+    AvailabilityZones: azs,
     SecurityGroups: stringList(input["SecurityGroups"]),
     IpAddressType: optionalString(input, "IpAddressType") ?? "ipv4",
   };
   ctx.store.set(loadBalancerKey(lb.LoadBalancerArn), lb);
+  const tags = objectList(input["Tags"]);
+  if (tags.length > 0) ctx.store.set(tagsKey(lb.LoadBalancerArn), tags);
   return { LoadBalancers: [loadBalancerView(lb)] };
 };
 
@@ -322,7 +453,8 @@ const DescribeLoadBalancers: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredLoadBalancer>()
     .filter((entry) => entry.key.startsWith("lb/"))
-    .map((entry) => entry.value);
+    .map((entry) => entry.value)
+    .sort((a, b) => a.LoadBalancerArn.localeCompare(b.LoadBalancerArn));
   let selected = all;
   if (arns.length > 0) {
     selected = arns.map((arn) => {
@@ -349,7 +481,22 @@ const DescribeLoadBalancers: OperationHandler = (input, ctx) => {
       return found;
     });
   }
-  return { LoadBalancers: selected.map(loadBalancerView) };
+  for (const lb of selected) {
+    if (lb.State.Code === "provisioning") {
+      lb.State = { Code: "active" };
+      ctx.store.set(loadBalancerKey(lb.LoadBalancerArn), lb);
+    }
+  }
+  const { result, nextMarker } = applyPagination(
+    selected,
+    optionalString(input, "Marker"),
+    input["PageSize"],
+    (lb) => lb.LoadBalancerArn,
+  );
+  return {
+    LoadBalancers: result.map(loadBalancerView),
+    ...(nextMarker !== undefined ? { NextMarker: nextMarker } : {}),
+  };
 };
 
 const DeleteLoadBalancer: OperationHandler = (input, ctx) => {
@@ -361,6 +508,40 @@ const DeleteLoadBalancer: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const attrs = ctx.store.get<Record<string, unknown>[]>(lbAttrsKey(arn)) ?? [];
+  const protection = attrs.find(
+    (a) => a["Key"] === "deletion_protection.enabled",
+  );
+  if (protection?.["Value"] === "true") {
+    throw awsError(
+      "OperationNotPermitted",
+      "Deletion protection is enabled for this load balancer",
+      400,
+    );
+  }
+  const listeners = ctx.store
+    .list<StoredListener>()
+    .filter((e) => e.key.startsWith("listener/"))
+    .map((e) => e.value)
+    .filter((l) => l.LoadBalancerArn === arn);
+  for (const listener of listeners) {
+    const rules = ctx.store
+      .list<StoredRule>()
+      .filter((e) => e.key.startsWith("rule/"))
+      .map((e) => e.value)
+      .filter((r) => r.ListenerArn === listener.ListenerArn);
+    for (const rule of rules) {
+      ctx.store.delete(ruleKey(rule.RuleArn));
+      ctx.store.delete(tagsKey(rule.RuleArn));
+    }
+    ctx.store.delete(listenerAttrsKey(listener.ListenerArn));
+    ctx.store.delete(tagsKey(listener.ListenerArn));
+    ctx.store.delete(listenerKey(listener.ListenerArn));
+  }
+  syncTgLbAssociation(ctx, arn);
+  ctx.store.delete(lbAttrsKey(arn));
+  ctx.store.delete(capacityKey(arn));
+  ctx.store.delete(tagsKey(arn));
   ctx.store.delete(loadBalancerKey(arn));
   return {};
 };
@@ -413,8 +594,11 @@ const SetSubnets: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "LoadBalancerArn");
   const lb = requireLoadBalancer(ctx, arn);
   const subnetMappings = objectList(input["SubnetMappings"]);
+  const subnets = stringList(input["Subnets"]);
   if (subnetMappings.length > 0) {
     lb.AvailabilityZones = subnetMappings;
+  } else if (subnets.length > 0) {
+    lb.AvailabilityZones = subnets.map((subnetId) => ({ SubnetId: subnetId }));
   }
   const ipType = optionalString(input, "IpAddressType");
   if (ipType !== undefined) {
@@ -439,6 +623,30 @@ const ModifyIpPools: OperationHandler = (input, ctx) => {
 
 const CreateTargetGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
+  const allTgs = ctx.store
+    .list<StoredTargetGroup>()
+    .filter((e) => e.key.startsWith("tg/"))
+    .map((e) => e.value);
+  const existing = allTgs.find((t) => t.TargetGroupName === name);
+  if (existing !== undefined) {
+    const inputProtocol = optionalString(input, "Protocol");
+    const inputPort = optionalNumber(input, "Port");
+    const inputVpcId = optionalString(input, "VpcId");
+    const inputTargetType = optionalString(input, "TargetType") ?? "instance";
+    if (
+      existing.Protocol === inputProtocol &&
+      existing.Port === inputPort &&
+      existing.VpcId === inputVpcId &&
+      existing.TargetType === inputTargetType
+    ) {
+      return { TargetGroups: [targetGroupView(existing)] };
+    }
+    throw awsError(
+      "DuplicateTargetGroupName",
+      `A target group with the name '${name}' already exists`,
+      400,
+    );
+  }
   const arnId = randomHex(8);
   const tg: StoredTargetGroup = {
     TargetGroupArn: `arn:aws:elasticloadbalancing:${ctx.region}:${ctx.account}:targetgroup/${name}/${arnId}`,
@@ -468,6 +676,8 @@ const CreateTargetGroup: OperationHandler = (input, ctx) => {
     IpAddressType: optionalString(input, "IpAddressType") ?? "ipv4",
   };
   ctx.store.set(targetGroupKey(tg.TargetGroupArn), tg);
+  const tags = objectList(input["Tags"]);
+  if (tags.length > 0) ctx.store.set(tagsKey(tg.TargetGroupArn), tags);
   return { TargetGroups: [targetGroupView(tg)] };
 };
 
@@ -478,7 +688,8 @@ const DescribeTargetGroups: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredTargetGroup>()
     .filter((entry) => entry.key.startsWith("tg/"))
-    .map((entry) => entry.value);
+    .map((entry) => entry.value)
+    .sort((a, b) => a.TargetGroupArn.localeCompare(b.TargetGroupArn));
   let selected = all;
   if (arns.length > 0) {
     selected = arns.map((arn) => {
@@ -509,7 +720,16 @@ const DescribeTargetGroups: OperationHandler = (input, ctx) => {
       tg.LoadBalancerArns.includes(loadBalancerArn),
     );
   }
-  return { TargetGroups: selected.map(targetGroupView) };
+  const { result, nextMarker } = applyPagination(
+    selected,
+    optionalString(input, "Marker"),
+    input["PageSize"],
+    (tg) => tg.TargetGroupArn,
+  );
+  return {
+    TargetGroups: result.map(targetGroupView),
+    ...(nextMarker !== undefined ? { NextMarker: nextMarker } : {}),
+  };
 };
 
 const DeleteTargetGroup: OperationHandler = (input, ctx) => {
@@ -521,6 +741,31 @@ const DeleteTargetGroup: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const refListeners = ctx.store
+    .list<StoredListener>()
+    .filter((e) => e.key.startsWith("listener/"))
+    .map((e) => e.value)
+    .filter((l) => extractTgArnsFromActions(l.DefaultActions).includes(arn));
+  if (refListeners.length > 0) {
+    throw awsError(
+      "ResourceInUse",
+      `Target group '${arn}' is referenced by a listener`,
+      400,
+    );
+  }
+  const refRules = ctx.store
+    .list<StoredRule>()
+    .filter((e) => e.key.startsWith("rule/"))
+    .map((e) => e.value)
+    .filter((r) => extractTgArnsFromActions(r.Actions).includes(arn));
+  if (refRules.length > 0) {
+    throw awsError(
+      "ResourceInUse",
+      `Target group '${arn}' is referenced by a rule`,
+      400,
+    );
+  }
+  ctx.store.delete(tagsKey(arn));
   ctx.store.delete(targetGroupKey(arn));
   return {};
 };
@@ -654,17 +899,44 @@ const CreateListener: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const port = optionalNumber(input, "Port");
+  const existingListeners = ctx.store
+    .list<StoredListener>()
+    .filter((e) => e.key.startsWith("listener/"))
+    .map((e) => e.value)
+    .filter((l) => l.LoadBalancerArn === loadBalancerArn);
+  if (port !== undefined && existingListeners.some((l) => l.Port === port)) {
+    throw awsError(
+      "DuplicateListener",
+      `A listener already exists on port ${port} for this load balancer`,
+      400,
+    );
+  }
+  const defaultActions = objectList(input["DefaultActions"]);
+  validateTgArnsInActions(ctx, defaultActions);
   const arnId = randomHex(8);
   const listener: StoredListener = {
     ListenerArn: `arn:aws:elasticloadbalancing:${ctx.region}:${ctx.account}:listener/app/${lb.LoadBalancerName}/${arnId}/${randomHex(8)}`,
     LoadBalancerArn: loadBalancerArn,
-    Port: optionalNumber(input, "Port"),
+    Port: port,
     Protocol: optionalString(input, "Protocol"),
-    DefaultActions: objectList(input["DefaultActions"]),
+    DefaultActions: defaultActions,
     Certificates: objectList(input["Certificates"]),
     SslPolicy: optionalString(input, "SslPolicy"),
   };
   ctx.store.set(listenerKey(listener.ListenerArn), listener);
+  const tags = objectList(input["Tags"]);
+  if (tags.length > 0) ctx.store.set(tagsKey(listener.ListenerArn), tags);
+  const defaultRule: StoredRule = {
+    RuleArn: `arn:aws:elasticloadbalancing:${ctx.region}:${ctx.account}:listener-rule/app/${lb.LoadBalancerName}/${arnId}/${randomHex(8)}`,
+    ListenerArn: listener.ListenerArn,
+    Priority: "default",
+    Conditions: [],
+    Actions: [...defaultActions],
+    IsDefault: true,
+  };
+  ctx.store.set(ruleKey(defaultRule.RuleArn), defaultRule);
+  syncTgLbAssociation(ctx, loadBalancerArn);
   return { Listeners: [listenerView(listener)] };
 };
 
@@ -674,7 +946,8 @@ const DescribeListeners: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredListener>()
     .filter((entry) => entry.key.startsWith("listener/"))
-    .map((entry) => entry.value);
+    .map((entry) => entry.value)
+    .sort((a, b) => a.ListenerArn.localeCompare(b.ListenerArn));
   let selected = all;
   if (arns.length > 0) {
     selected = arns.map((arn) => {
@@ -689,13 +962,35 @@ const DescribeListeners: OperationHandler = (input, ctx) => {
       (listener) => listener.LoadBalancerArn === loadBalancerArn,
     );
   }
-  return { Listeners: selected.map(listenerView) };
+  const { result, nextMarker } = applyPagination(
+    selected,
+    optionalString(input, "Marker"),
+    input["PageSize"],
+    (l) => l.ListenerArn,
+  );
+  return {
+    Listeners: result.map(listenerView),
+    ...(nextMarker !== undefined ? { NextMarker: nextMarker } : {}),
+  };
 };
 
 const DeleteListener: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ListenerArn");
-  requireListener(ctx, arn);
+  const listener = requireListener(ctx, arn);
+  const lbArn = listener.LoadBalancerArn;
+  const rules = ctx.store
+    .list<StoredRule>()
+    .filter((e) => e.key.startsWith("rule/"))
+    .map((e) => e.value)
+    .filter((r) => r.ListenerArn === arn);
+  for (const rule of rules) {
+    ctx.store.delete(ruleKey(rule.RuleArn));
+    ctx.store.delete(tagsKey(rule.RuleArn));
+  }
+  ctx.store.delete(listenerAttrsKey(arn));
+  ctx.store.delete(tagsKey(arn));
   ctx.store.delete(listenerKey(arn));
+  syncTgLbAssociation(ctx, lbArn);
   return {};
 };
 
@@ -709,12 +1004,24 @@ const ModifyListener: OperationHandler = (input, ctx) => {
   const sslPolicy = optionalString(input, "SslPolicy");
   if (sslPolicy !== undefined) listener.SslPolicy = sslPolicy;
   if (Array.isArray(input["DefaultActions"])) {
-    listener.DefaultActions = objectList(input["DefaultActions"]);
+    const newActions = objectList(input["DefaultActions"]);
+    validateTgArnsInActions(ctx, newActions);
+    listener.DefaultActions = newActions;
+    const defaultRule = ctx.store
+      .list<StoredRule>()
+      .filter((e) => e.key.startsWith("rule/"))
+      .map((e) => e.value)
+      .find((r) => r.ListenerArn === arn && r.IsDefault);
+    if (defaultRule !== undefined) {
+      defaultRule.Actions = [...newActions];
+      ctx.store.set(ruleKey(defaultRule.RuleArn), defaultRule);
+    }
   }
   if (Array.isArray(input["Certificates"])) {
     listener.Certificates = objectList(input["Certificates"]);
   }
   ctx.store.set(listenerKey(arn), listener);
+  syncTgLbAssociation(ctx, listener.LoadBalancerArn);
   return { Listeners: [listenerView(listener)] };
 };
 
@@ -786,7 +1093,7 @@ const DescribeListenerCertificates: OperationHandler = (input, ctx) => {
 
 const CreateRule: OperationHandler = (input, ctx) => {
   const listenerArn = requireString(input, "ListenerArn");
-  requireListener(ctx, listenerArn);
+  const listener = requireListener(ctx, listenerArn);
   const priority = input["Priority"];
   const priorityStr =
     typeof priority === "number"
@@ -809,16 +1116,21 @@ const CreateRule: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const actions = objectList(input["Actions"]);
+  validateTgArnsInActions(ctx, actions);
   const arnId = randomHex(8);
   const rule: StoredRule = {
     RuleArn: `arn:aws:elasticloadbalancing:${ctx.region}:${ctx.account}:listener-rule/app/${arnId}/${randomHex(8)}/${randomHex(8)}`,
     ListenerArn: listenerArn,
     Priority: priorityStr,
     Conditions: objectList(input["Conditions"]),
-    Actions: objectList(input["Actions"]),
+    Actions: actions,
     IsDefault: false,
   };
   ctx.store.set(ruleKey(rule.RuleArn), rule);
+  const tags = objectList(input["Tags"]);
+  if (tags.length > 0) ctx.store.set(tagsKey(rule.RuleArn), tags);
+  syncTgLbAssociation(ctx, listener.LoadBalancerArn);
   return { Rules: [ruleView(rule)] };
 };
 
@@ -850,26 +1162,53 @@ const DescribeRules: OperationHandler = (input, ctx) => {
   const sorted = [...selected].sort(
     (a, b) => rulePriorityOrder(a.Priority) - rulePriorityOrder(b.Priority),
   );
-  return { Rules: sorted.map(ruleView) };
+  const { result, nextMarker } = applyPagination(
+    sorted,
+    optionalString(input, "Marker"),
+    input["PageSize"],
+    (r) => r.RuleArn,
+  );
+  return {
+    Rules: result.map(ruleView),
+    ...(nextMarker !== undefined ? { NextMarker: nextMarker } : {}),
+  };
 };
 
 const ModifyRule: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "RuleArn");
   const rule = requireRule(ctx, arn);
+  const listener = ctx.store.get<StoredListener>(listenerKey(rule.ListenerArn));
   if (Array.isArray(input["Conditions"])) {
     rule.Conditions = objectList(input["Conditions"]);
   }
   if (Array.isArray(input["Actions"])) {
-    rule.Actions = objectList(input["Actions"]);
+    const newActions = objectList(input["Actions"]);
+    validateTgArnsInActions(ctx, newActions);
+    rule.Actions = newActions;
   }
   ctx.store.set(ruleKey(arn), rule);
+  if (listener !== undefined) {
+    syncTgLbAssociation(ctx, listener.LoadBalancerArn);
+  }
   return { Rules: [ruleView(rule)] };
 };
 
 const DeleteRule: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "RuleArn");
-  requireRule(ctx, arn);
+  const rule = requireRule(ctx, arn);
+  if (rule.IsDefault) {
+    throw awsError(
+      "OperationNotPermitted",
+      "Cannot delete the default rule of a listener",
+      400,
+    );
+  }
+  const listener = ctx.store.get<StoredListener>(listenerKey(rule.ListenerArn));
+  ctx.store.delete(tagsKey(arn));
   ctx.store.delete(ruleKey(arn));
+  if (listener !== undefined) {
+    syncTgLbAssociation(ctx, listener.LoadBalancerArn);
+  }
   return {};
 };
 
@@ -955,6 +1294,8 @@ const CreateTrustStore: OperationHandler = (input, ctx) => {
     TotalRevokedEntries: 0,
   };
   ctx.store.set(trustStoreKey(ts.TrustStoreArn), ts);
+  const tags = objectList(input["Tags"]);
+  if (tags.length > 0) ctx.store.set(tagsKey(ts.TrustStoreArn), tags);
   return { TrustStores: [trustStoreView(ts)] };
 };
 
@@ -964,7 +1305,8 @@ const DescribeTrustStores: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredTrustStore>()
     .filter((entry) => entry.key.startsWith("truststore/"))
-    .map((entry) => entry.value);
+    .map((entry) => entry.value)
+    .sort((a, b) => a.TrustStoreArn.localeCompare(b.TrustStoreArn));
   let selected = all;
   if (arns.length > 0) {
     selected = arns.map((arn) => {
@@ -991,7 +1333,16 @@ const DescribeTrustStores: OperationHandler = (input, ctx) => {
       return found;
     });
   }
-  return { TrustStores: selected.map(trustStoreView) };
+  const { result, nextMarker } = applyPagination(
+    selected,
+    optionalString(input, "Marker"),
+    input["PageSize"],
+    (ts) => ts.TrustStoreArn,
+  );
+  return {
+    TrustStores: result.map(trustStoreView),
+    ...(nextMarker !== undefined ? { NextMarker: nextMarker } : {}),
+  };
 };
 
 const ModifyTrustStore: OperationHandler = (input, ctx) => {
@@ -1004,6 +1355,7 @@ const ModifyTrustStore: OperationHandler = (input, ctx) => {
 const DeleteTrustStore: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "TrustStoreArn");
   requireTrustStore(ctx, arn);
+  ctx.store.delete(tagsKey(arn));
   ctx.store.delete(trustStoreKey(arn));
   return {};
 };

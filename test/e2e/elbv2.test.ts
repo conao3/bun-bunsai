@@ -71,7 +71,7 @@ test("ELBv2 load balancer / target group / listener round-trip", async () => {
   const lb = createdLb.LoadBalancers?.[0];
   expect(lb?.LoadBalancerName).toBe(lbName);
   expect(lb?.LoadBalancerArn).toContain("loadbalancer/app/");
-  expect(lb?.State?.Code).toBe("active");
+  expect(lb?.State?.Code).toBe("provisioning");
   expect(lb?.DNSName).toContain(lbName);
   const lbArn = lb?.LoadBalancerArn ?? "";
 
@@ -129,8 +129,8 @@ test("ELBv2 load balancer / target group / listener round-trip", async () => {
   expect(describedListeners.Listeners?.length).toBe(1);
   expect(describedListeners.Listeners?.[0]?.ListenerArn).toBe(listenerArn);
 
-  await client.send(new DeleteTargetGroupCommand({ TargetGroupArn: tgArn }));
   await client.send(new DeleteLoadBalancerCommand({ LoadBalancerArn: lbArn }));
+  await client.send(new DeleteTargetGroupCommand({ TargetGroupArn: tgArn }));
 
   const remaining = await client.send(new DescribeLoadBalancersCommand({}));
   expect(
@@ -848,4 +848,280 @@ test("ELBv2 listener rule conditions, priority, and errors", async () => {
   await client.send(new DeleteListenerCommand({ ListenerArn: listenerArn }));
   await client.send(new DeleteTargetGroupCommand({ TargetGroupArn: tgArn }));
   await client.send(new DeleteLoadBalancerCommand({ LoadBalancerArn: lbArn }));
+});
+
+test("ELBv2 gap coverage: tags, dup guards, in-use, deletion-protection, default rule, TG assoc", async () => {
+  const client = elbv2();
+
+  const { LoadBalancers: createdLbs } = await client.send(
+    new CreateLoadBalancerCommand({
+      Name: "gap-lb",
+      Subnets: ["subnet-gap1"],
+      Tags: [{ Key: "env", Value: "dev" }],
+    }),
+  );
+  const lbArn = createdLbs?.[0]?.LoadBalancerArn ?? "";
+
+  const { TagDescriptions: lbTagDesc } = await client.send(
+    new DescribeTagsCommand({ ResourceArns: [lbArn] }),
+  );
+  expect(lbTagDesc?.[0]?.Tags?.find((t) => t.Key === "env")?.Value).toBe("dev");
+
+  const { LoadBalancers: dupeIdempotent } = await client.send(
+    new CreateLoadBalancerCommand({
+      Name: "gap-lb",
+      Subnets: ["subnet-gap1"],
+    }),
+  );
+  expect(dupeIdempotent?.[0]?.LoadBalancerArn).toBe(lbArn);
+
+  let dupeLbErr: unknown;
+  try {
+    await client.send(
+      new CreateLoadBalancerCommand({
+        Name: "gap-lb",
+        Subnets: ["subnet-gap1"],
+        Scheme: "internal",
+      }),
+    );
+  } catch (e) {
+    dupeLbErr = e;
+  }
+  expect((dupeLbErr as { name?: string })?.name).toBe(
+    "DuplicateLoadBalancerNameException",
+  );
+
+  const { TargetGroups: createdTgs } = await client.send(
+    new CreateTargetGroupCommand({
+      Name: "gap-tg",
+      Protocol: "HTTP",
+      Port: 80,
+      VpcId: "vpc-gap",
+      TargetType: "instance",
+      Tags: [{ Key: "tier", Value: "web" }],
+    }),
+  );
+  const tgArn = createdTgs?.[0]?.TargetGroupArn ?? "";
+
+  const { TagDescriptions: tgTagDesc } = await client.send(
+    new DescribeTagsCommand({ ResourceArns: [tgArn] }),
+  );
+  expect(tgTagDesc?.[0]?.Tags?.find((t) => t.Key === "tier")?.Value).toBe(
+    "web",
+  );
+
+  const { TargetGroups: dupeIdempotentTg } = await client.send(
+    new CreateTargetGroupCommand({
+      Name: "gap-tg",
+      Protocol: "HTTP",
+      Port: 80,
+      VpcId: "vpc-gap",
+      TargetType: "instance",
+    }),
+  );
+  expect(dupeIdempotentTg?.[0]?.TargetGroupArn).toBe(tgArn);
+
+  let dupeTgErr: unknown;
+  try {
+    await client.send(
+      new CreateTargetGroupCommand({
+        Name: "gap-tg",
+        Protocol: "HTTP",
+        Port: 443,
+        VpcId: "vpc-gap",
+        TargetType: "instance",
+      }),
+    );
+  } catch (e) {
+    dupeTgErr = e;
+  }
+  expect((dupeTgErr as { name?: string })?.name).toBe(
+    "DuplicateTargetGroupNameException",
+  );
+
+  let tgNotFoundErr: unknown;
+  try {
+    await client.send(
+      new CreateListenerCommand({
+        LoadBalancerArn: lbArn,
+        Protocol: "HTTP",
+        Port: 80,
+        DefaultActions: [
+          {
+            Type: "forward",
+            TargetGroupArn:
+              "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/bogus/deadbeef",
+          },
+        ],
+      }),
+    );
+  } catch (e) {
+    tgNotFoundErr = e;
+  }
+  expect((tgNotFoundErr as { name?: string })?.name).toBe(
+    "TargetGroupNotFoundException",
+  );
+
+  const { Listeners: createdListeners } = await client.send(
+    new CreateListenerCommand({
+      LoadBalancerArn: lbArn,
+      Protocol: "HTTP",
+      Port: 80,
+      DefaultActions: [{ Type: "forward", TargetGroupArn: tgArn }],
+    }),
+  );
+  const listenerArn = createdListeners?.[0]?.ListenerArn ?? "";
+
+  const { Rules: defaultRules } = await client.send(
+    new DescribeRulesCommand({ ListenerArn: listenerArn }),
+  );
+  expect(defaultRules?.length).toBe(1);
+  expect(defaultRules?.[0]?.IsDefault).toBe(true);
+  expect(defaultRules?.[0]?.Priority).toBe("default");
+  const defaultRuleArn = defaultRules?.[0]?.RuleArn ?? "";
+
+  let deleteDefaultRuleErr: unknown;
+  try {
+    await client.send(new DeleteRuleCommand({ RuleArn: defaultRuleArn }));
+  } catch (e) {
+    deleteDefaultRuleErr = e;
+  }
+  expect((deleteDefaultRuleErr as { name?: string })?.name).toBe(
+    "OperationNotPermittedException",
+  );
+
+  const { TargetGroups: tgsWithLb } = await client.send(
+    new DescribeTargetGroupsCommand({ LoadBalancerArn: lbArn }),
+  );
+  expect(tgsWithLb?.some((tg) => tg.TargetGroupArn === tgArn)).toBe(true);
+  expect(tgsWithLb?.[0]?.LoadBalancerArns).toContain(lbArn);
+
+  let dupListenerErr: unknown;
+  try {
+    await client.send(
+      new CreateListenerCommand({
+        LoadBalancerArn: lbArn,
+        Protocol: "HTTP",
+        Port: 80,
+        DefaultActions: [{ Type: "forward", TargetGroupArn: tgArn }],
+      }),
+    );
+  } catch (e) {
+    dupListenerErr = e;
+  }
+  expect((dupListenerErr as { name?: string })?.name).toBe(
+    "DuplicateListenerException",
+  );
+
+  let tgInUseErr: unknown;
+  try {
+    await client.send(new DeleteTargetGroupCommand({ TargetGroupArn: tgArn }));
+  } catch (e) {
+    tgInUseErr = e;
+  }
+  expect((tgInUseErr as { name?: string })?.name).toBe(
+    "ResourceInUseException",
+  );
+
+  await client.send(
+    new ModifyLoadBalancerAttributesCommand({
+      LoadBalancerArn: lbArn,
+      Attributes: [{ Key: "deletion_protection.enabled", Value: "true" }],
+    }),
+  );
+
+  let deletionProtectedErr: unknown;
+  try {
+    await client.send(
+      new DeleteLoadBalancerCommand({ LoadBalancerArn: lbArn }),
+    );
+  } catch (e) {
+    deletionProtectedErr = e;
+  }
+  expect((deletionProtectedErr as { name?: string })?.name).toBe(
+    "OperationNotPermittedException",
+  );
+
+  await client.send(
+    new ModifyLoadBalancerAttributesCommand({
+      LoadBalancerArn: lbArn,
+      Attributes: [{ Key: "deletion_protection.enabled", Value: "false" }],
+    }),
+  );
+
+  await client.send(new DeleteLoadBalancerCommand({ LoadBalancerArn: lbArn }));
+
+  const { Listeners: listenersAfterLbDelete } = await client.send(
+    new DescribeListenersCommand({ LoadBalancerArn: lbArn }),
+  );
+  expect(listenersAfterLbDelete?.length).toBe(0);
+
+  const { TargetGroups: tgsAfterLbDelete } = await client.send(
+    new DescribeTargetGroupsCommand({ TargetGroupArns: [tgArn] }),
+  );
+  expect(tgsAfterLbDelete?.[0]?.LoadBalancerArns?.length).toBe(0);
+
+  await client.send(new DeleteTargetGroupCommand({ TargetGroupArn: tgArn }));
+});
+
+test("ELBv2 gap coverage: subnet types and pagination", async () => {
+  const client = elbv2();
+
+  const { LoadBalancers: nlbs } = await client.send(
+    new CreateLoadBalancerCommand({
+      Name: "gap-nlb",
+      Type: "network",
+      Subnets: ["subnet-net-1", "subnet-net-2"],
+    }),
+  );
+  const nlbArn = nlbs?.[0]?.LoadBalancerArn ?? "";
+  expect(nlbArn).toContain("loadbalancer/net/");
+  expect(nlbs?.[0]?.State?.Code).toBe("provisioning");
+  const azs = nlbs?.[0]?.AvailabilityZones ?? [];
+  expect(
+    azs.some((az) => (az as { SubnetId?: string }).SubnetId === "subnet-net-1"),
+  ).toBe(true);
+
+  const { LoadBalancers: afterDescribe } = await client.send(
+    new DescribeLoadBalancersCommand({ LoadBalancerArns: [nlbArn] }),
+  );
+  expect(afterDescribe?.[0]?.State?.Code).toBe("active");
+
+  const lbNames = ["gap-pg-lb-a", "gap-pg-lb-b", "gap-pg-lb-c"];
+  for (const name of lbNames) {
+    await client.send(
+      new CreateLoadBalancerCommand({ Name: name, Subnets: ["subnet-pg"] }),
+    );
+  }
+
+  const allLbs = (
+    await client.send(new DescribeLoadBalancersCommand({ Names: lbNames }))
+  ).LoadBalancers?.sort((a, b) =>
+    (a.LoadBalancerArn ?? "").localeCompare(b.LoadBalancerArn ?? ""),
+  );
+  const allArns = allLbs?.map((l) => l.LoadBalancerArn ?? "") ?? [];
+
+  const { LoadBalancers: page1, NextMarker: marker1 } = await client.send(
+    new DescribeLoadBalancersCommand({
+      LoadBalancerArns: allArns,
+      PageSize: 2,
+    }),
+  );
+  expect(page1?.length).toBe(2);
+  expect(marker1).toBeTruthy();
+
+  const { LoadBalancers: page2, NextMarker: marker2 } = await client.send(
+    new DescribeLoadBalancersCommand({
+      LoadBalancerArns: allArns,
+      Marker: marker1,
+      PageSize: 2,
+    }),
+  );
+  expect(page2?.length).toBe(1);
+  expect(marker2).toBeUndefined();
+
+  await client.send(new DeleteLoadBalancerCommand({ LoadBalancerArn: nlbArn }));
+  for (const arn of allArns) {
+    await client.send(new DeleteLoadBalancerCommand({ LoadBalancerArn: arn }));
+  }
 });

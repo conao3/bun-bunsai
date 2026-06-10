@@ -472,7 +472,10 @@ const ListQueryExecutions: OperationHandler = (input, ctx) => {
     .sort((a, b) => b.value.SubmissionDateTime - a.value.SubmissionDateTime)
     .map((entry) => entry.value.QueryExecutionId);
   const { items, nextToken: next } = paginate(ids, maxResults, nextToken);
-  return { QueryExecutionIds: items, ...(next !== undefined ? { NextToken: next } : {}) };
+  return {
+    QueryExecutionIds: items,
+    ...(next !== undefined ? { NextToken: next } : {}),
+  };
 };
 
 const GetQueryResults: OperationHandler = (input, ctx) => {
@@ -682,7 +685,10 @@ const ListWorkGroups: OperationHandler = (input, ctx) => {
       CreationTime: entry.value.CreationTime,
     }));
   const { items, nextToken: next } = paginate(all, maxResults, nextToken);
-  return { WorkGroups: items, ...(next !== undefined ? { NextToken: next } : {}) };
+  return {
+    WorkGroups: items,
+    ...(next !== undefined ? { NextToken: next } : {}),
+  };
 };
 
 const CreateDataCatalog: OperationHandler = (input, ctx) => {
@@ -1193,7 +1199,10 @@ const ListSessions: OperationHandler = (input, ctx) => {
       Status: sessionStatusView(entry.value),
     }));
   const { items, nextToken: next } = paginate(all, maxResults, nextToken);
-  return { Sessions: items, ...(next !== undefined ? { NextToken: next } : {}) };
+  return {
+    Sessions: items,
+    ...(next !== undefined ? { NextToken: next } : {}),
+  };
 };
 
 const TerminateSession: OperationHandler = (input, ctx) => {

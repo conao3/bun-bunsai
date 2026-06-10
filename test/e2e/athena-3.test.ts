@@ -378,16 +378,14 @@ describe("athena fidelity gaps: idempotency, tags, pagination, state filter", ()
         EngineConfiguration: { MaxConcurrentDpus: 2 },
       }),
     );
-    await client.send(
-      new TerminateSessionCommand({ SessionId: s2.SessionId }),
-    );
+    await client.send(new TerminateSessionCommand({ SessionId: s2.SessionId }));
 
     const idleSessions = await client.send(
       new ListSessionsCommand({ WorkGroup: wgName, StateFilter: "IDLE" }),
     );
-    expect(idleSessions.Sessions?.every((s) => s.Status?.State === "IDLE")).toBe(
-      true,
-    );
+    expect(
+      idleSessions.Sessions?.every((s) => s.Status?.State === "IDLE"),
+    ).toBe(true);
     expect(
       idleSessions.Sessions?.find((s) => s.SessionId === s1.SessionId),
     ).toBeDefined();

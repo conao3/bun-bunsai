@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { decideAutoSelect } from "../../../apps/dashboard/src/autoSelect.ts";
 
-import type { ResourceEntry } from "../../../apps/dashboard/src/api.ts";
+type RE = {
+  account: string;
+  region: string;
+  service: string;
+  key: string;
+  value: unknown;
+};
 
-const r = (service: string, key: string): ResourceEntry => ({
+const r = (service: string, key: string): RE => ({
   account: "000000000000",
   region: "us-east-1",
   service,

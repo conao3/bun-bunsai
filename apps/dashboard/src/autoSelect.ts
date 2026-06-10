@@ -1,10 +1,10 @@
-import type { ResourceEntry } from "./api";
-
 export type Selection = { service: string; key: string };
+
+type ScopedResource = { service: string; key: string };
 
 export function decideAutoSelect(
   sel: Selection | null,
-  scoped: ResourceEntry[],
+  scoped: ScopedResource[],
   svcHint: string | null,
 ): Selection | null {
   if (sel !== null && scoped.length === 0) return null;

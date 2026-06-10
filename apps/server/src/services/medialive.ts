@@ -93,6 +93,7 @@ type StoredMultiplexProgram = {
   ProgramName: string;
   MultiplexId: string;
   ChannelId: string;
+  MultiplexProgramSettings?: Record<string, unknown>;
 };
 
 type StoredInputDevice = {
@@ -1483,10 +1484,34 @@ const CreateMultiplexProgram: OperationHandler = (input, ctx) => {
       return { MultiplexProgram: requireMxProgram(ctx, mxId, existingName) };
     }
   }
+  if (
+    input["MultiplexProgramSettings"] === undefined ||
+    input["MultiplexProgramSettings"] === null
+  ) {
+    throw awsError(
+      "UnprocessableEntityException",
+      "MultiplexProgramSettings is required.",
+      422,
+    );
+  }
+  const existingProg = ctx.store.get<StoredMultiplexProgram>(
+    mxProgramKey(mxId, programName),
+  );
+  if (existingProg !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `Program ${programName} already exists.`,
+      409,
+    );
+  }
   const prog: StoredMultiplexProgram = {
     ProgramName: programName,
     MultiplexId: mxId,
     ChannelId: "",
+    MultiplexProgramSettings: input["MultiplexProgramSettings"] as Record<
+      string,
+      unknown
+    >,
   };
   ctx.store.set(mxProgramKey(mxId, programName), prog);
   const mx = requireMultiplex(ctx, mxId);
@@ -1536,8 +1561,15 @@ const UpdateMultiplexProgram: OperationHandler = (input, ctx) => {
   const mxId = requireString(input, "MultiplexId");
   const programName = requireString(input, "ProgramName");
   const existing = requireMxProgram(ctx, mxId, programName);
-  ctx.store.set(mxProgramKey(mxId, programName), existing);
-  return { MultiplexProgram: existing };
+  const updated: StoredMultiplexProgram = {
+    ...existing,
+    MultiplexProgramSettings:
+      input["MultiplexProgramSettings"] !== undefined
+        ? (input["MultiplexProgramSettings"] as Record<string, unknown>)
+        : existing.MultiplexProgramSettings,
+  };
+  ctx.store.set(mxProgramKey(mxId, programName), updated);
+  return { MultiplexProgram: updated };
 };
 
 const DeleteMultiplexProgram: OperationHandler = (input, ctx) => {
@@ -1562,12 +1594,20 @@ const DescribeInputDevice: OperationHandler = (input, ctx) => {
   return stored;
 };
 
-const ListInputDevices: OperationHandler = (_input, ctx) => {
+const ListInputDevices: OperationHandler = (input, ctx) => {
   const devices = ctx.store
     .list<StoredInputDevice>()
     .filter((entry) => entry.key.startsWith(inputDevicePrefix))
     .map((entry) => entry.value);
-  return { InputDevices: devices };
+  const { items, nextToken } = paginateList(
+    devices,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    InputDevices: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateInputDevice: OperationHandler = (input, ctx) => {
@@ -1679,7 +1719,7 @@ const TransferInputDevice: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const ListInputDeviceTransfers: OperationHandler = (_input, ctx) => {
+const ListInputDeviceTransfers: OperationHandler = (input, ctx) => {
   const transfers = ctx.store
     .list<StoredTransfer>()
     .filter((entry) => entry.key.startsWith(transferPrefix))
@@ -1689,7 +1729,15 @@ const ListInputDeviceTransfers: OperationHandler = (_input, ctx) => {
       TransferType: entry.value.TransferType,
       Message: entry.value.Message,
     }));
-  return { InputDeviceTransfers: transfers };
+  const { items, nextToken } = paginateList(
+    transfers,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    InputDeviceTransfers: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const ClaimDevice: OperationHandler = (input, ctx) => {
@@ -1711,13 +1759,72 @@ const ClaimDevice: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const ListOfferings: OperationHandler = (_input, ctx) => {
+const ListOfferings: OperationHandler = (input, ctx) => {
   ensureSeedOfferings(ctx);
-  const offerings = ctx.store
+  let offerings = ctx.store
     .list<StoredOffering>()
     .filter((entry) => entry.key.startsWith(offeringPrefix))
     .map((entry) => entry.value);
-  return { Offerings: offerings };
+  const channelClass = stringOrUndefined(input["ChannelClass"]);
+  const codec = stringOrUndefined(input["Codec"]);
+  const duration = stringOrUndefined(input["Duration"]);
+  const maximumBitrate = stringOrUndefined(input["MaximumBitrate"]);
+  const maximumFramerate = stringOrUndefined(input["MaximumFramerate"]);
+  const resolution = stringOrUndefined(input["Resolution"]);
+  const resourceType = stringOrUndefined(input["ResourceType"]);
+  const specialFeature = stringOrUndefined(input["SpecialFeature"]);
+  const videoQuality = stringOrUndefined(input["VideoQuality"]);
+  if (
+    channelClass !== undefined ||
+    codec !== undefined ||
+    duration !== undefined ||
+    maximumBitrate !== undefined ||
+    maximumFramerate !== undefined ||
+    resolution !== undefined ||
+    resourceType !== undefined ||
+    specialFeature !== undefined ||
+    videoQuality !== undefined
+  ) {
+    offerings = offerings.filter((o) => {
+      const rs = o.ResourceSpecification as Record<string, string>;
+      if (channelClass !== undefined && rs["ChannelClass"] !== channelClass)
+        return false;
+      if (codec !== undefined && rs["Codec"] !== codec) return false;
+      if (duration !== undefined && String(o.Duration) !== duration)
+        return false;
+      if (
+        maximumBitrate !== undefined &&
+        rs["MaximumBitrate"] !== maximumBitrate
+      )
+        return false;
+      if (
+        maximumFramerate !== undefined &&
+        rs["MaximumFramerate"] !== maximumFramerate
+      )
+        return false;
+      if (resolution !== undefined && rs["Resolution"] !== resolution)
+        return false;
+      if (resourceType !== undefined && rs["ResourceType"] !== resourceType)
+        return false;
+      if (
+        specialFeature !== undefined &&
+        rs["SpecialFeature"] !== specialFeature
+      )
+        return false;
+      if (videoQuality !== undefined && rs["VideoQuality"] !== videoQuality)
+        return false;
+      return true;
+    });
+  }
+  const { items, nextToken } = paginateList(
+    offerings,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Offerings: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DescribeOffering: OperationHandler = (input, ctx) => {
@@ -1776,7 +1883,7 @@ const DescribeReservation: OperationHandler = (input, ctx) => {
   return requireReservation(ctx, id);
 };
 
-const ListReservations: OperationHandler = (_input, ctx) => {
+const ListReservations: OperationHandler = (input, ctx) => {
   const reservations = ctx.store
     .list<StoredReservation>()
     .filter((entry) => entry.key.startsWith(reservationPrefix))
@@ -1788,7 +1895,15 @@ const ListReservations: OperationHandler = (_input, ctx) => {
           ? 1
           : 0,
     );
-  return { Reservations: reservations };
+  const { items, nextToken } = paginateList(
+    reservations,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Reservations: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateReservation: OperationHandler = (input, ctx) => {
@@ -2031,12 +2146,20 @@ const GetCloudWatchAlarmTemplateGroup: OperationHandler = (input, ctx) => {
   return requireCwAlarmTemplateGroup(ctx, identifier);
 };
 
-const ListCloudWatchAlarmTemplateGroups: OperationHandler = (_input, ctx) => {
+const ListCloudWatchAlarmTemplateGroups: OperationHandler = (input, ctx) => {
   const groups = ctx.store
     .list<StoredCloudWatchAlarmTemplateGroup>()
     .filter((e) => e.key.startsWith(cwAlarmTemplateGroupPrefix))
     .map((e) => e.value);
-  return { CloudWatchAlarmTemplateGroups: groups };
+  const { items, nextToken } = paginateList(
+    groups,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    CloudWatchAlarmTemplateGroups: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateCloudWatchAlarmTemplateGroup: OperationHandler = (input, ctx) => {
@@ -2097,12 +2220,38 @@ const GetCloudWatchAlarmTemplate: OperationHandler = (input, ctx) => {
   return requireCwAlarmTemplate(ctx, identifier);
 };
 
-const ListCloudWatchAlarmTemplates: OperationHandler = (_input, ctx) => {
-  const templates = ctx.store
+const ListCloudWatchAlarmTemplates: OperationHandler = (input, ctx) => {
+  let templates = ctx.store
     .list<StoredCloudWatchAlarmTemplate>()
     .filter((e) => e.key.startsWith(cwAlarmTemplatePrefix))
     .map((e) => e.value);
-  return { CloudWatchAlarmTemplates: templates };
+  const groupIdentifier = stringOrUndefined(input["GroupIdentifier"]);
+  if (groupIdentifier !== undefined) {
+    const allGroups = ctx.store
+      .list<StoredCloudWatchAlarmTemplateGroup>()
+      .filter((e) => e.key.startsWith(cwAlarmTemplateGroupPrefix))
+      .map((e) => e.value);
+    const group = allGroups.find(
+      (g) => g.Id === groupIdentifier || g.Name === groupIdentifier,
+    );
+    if (group === undefined) {
+      throw awsError(
+        "NotFoundException",
+        `CloudWatchAlarmTemplateGroup ${groupIdentifier} not found.`,
+        404,
+      );
+    }
+    templates = templates.filter((t) => t.GroupId === group.Id);
+  }
+  const { items, nextToken } = paginateList(
+    templates,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    CloudWatchAlarmTemplates: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateCloudWatchAlarmTemplate: OperationHandler = (input, ctx) => {
@@ -2171,12 +2320,20 @@ const GetEventBridgeRuleTemplateGroup: OperationHandler = (input, ctx) => {
   return requireEbRuleTemplateGroup(ctx, identifier);
 };
 
-const ListEventBridgeRuleTemplateGroups: OperationHandler = (_input, ctx) => {
+const ListEventBridgeRuleTemplateGroups: OperationHandler = (input, ctx) => {
   const groups = ctx.store
     .list<StoredEventBridgeRuleTemplateGroup>()
     .filter((e) => e.key.startsWith(ebRuleTemplateGroupPrefix))
     .map((e) => e.value);
-  return { EventBridgeRuleTemplateGroups: groups };
+  const { items, nextToken } = paginateList(
+    groups,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    EventBridgeRuleTemplateGroups: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateEventBridgeRuleTemplateGroup: OperationHandler = (input, ctx) => {
@@ -2224,12 +2381,38 @@ const GetEventBridgeRuleTemplate: OperationHandler = (input, ctx) => {
   return requireEbRuleTemplate(ctx, identifier);
 };
 
-const ListEventBridgeRuleTemplates: OperationHandler = (_input, ctx) => {
-  const templates = ctx.store
+const ListEventBridgeRuleTemplates: OperationHandler = (input, ctx) => {
+  let templates = ctx.store
     .list<StoredEventBridgeRuleTemplate>()
     .filter((e) => e.key.startsWith(ebRuleTemplatePrefix))
     .map((e) => e.value);
-  return { EventBridgeRuleTemplates: templates };
+  const groupIdentifier = stringOrUndefined(input["GroupIdentifier"]);
+  if (groupIdentifier !== undefined) {
+    const allGroups = ctx.store
+      .list<StoredEventBridgeRuleTemplateGroup>()
+      .filter((e) => e.key.startsWith(ebRuleTemplateGroupPrefix))
+      .map((e) => e.value);
+    const group = allGroups.find(
+      (g) => g.Id === groupIdentifier || g.Name === groupIdentifier,
+    );
+    if (group === undefined) {
+      throw awsError(
+        "NotFoundException",
+        `EventBridgeRuleTemplateGroup ${groupIdentifier} not found.`,
+        404,
+      );
+    }
+    templates = templates.filter((t) => t.GroupId === group.Id);
+  }
+  const { items, nextToken } = paginateList(
+    templates,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    EventBridgeRuleTemplates: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateEventBridgeRuleTemplate: OperationHandler = (input, ctx) => {
@@ -2266,7 +2449,7 @@ const CreateSignalMap: OperationHandler = (input, ctx) => {
     Name: requireString(input, "Name"),
     Description: stringOrUndefined(input["Description"]) ?? "",
     DiscoveryEntryPointArn: requireString(input, "DiscoveryEntryPointArn"),
-    Status: "CREATE_COMPLETE",
+    Status: "CREATE_IN_PROGRESS",
     CloudWatchAlarmTemplateGroupIds: arrayOrEmpty(
       input["CloudWatchAlarmTemplateGroupIdentifiers"],
     ).filter((s): s is string => typeof s === "string"),
@@ -2284,15 +2467,36 @@ const CreateSignalMap: OperationHandler = (input, ctx) => {
 
 const GetSignalMap: OperationHandler = (input, ctx) => {
   const identifier = requireString(input, "Identifier");
-  return requireSignalMap(ctx, identifier);
+  const signalMap = requireSignalMap(ctx, identifier);
+  if (
+    signalMap.Status === "CREATE_IN_PROGRESS" ||
+    signalMap.Status === "UPDATE_IN_PROGRESS"
+  ) {
+    const completedStatus =
+      signalMap.Status === "CREATE_IN_PROGRESS"
+        ? "CREATE_COMPLETE"
+        : "UPDATE_COMPLETE";
+    const updated: StoredSignalMap = { ...signalMap, Status: completedStatus };
+    ctx.store.set(signalMapKey(identifier), updated);
+    return updated;
+  }
+  return signalMap;
 };
 
-const ListSignalMaps: OperationHandler = (_input, ctx) => {
+const ListSignalMaps: OperationHandler = (input, ctx) => {
   const maps = ctx.store
     .list<StoredSignalMap>()
     .filter((e) => e.key.startsWith(signalMapPrefix))
     .map((e) => e.value);
-  return { SignalMaps: maps };
+  const { items, nextToken } = paginateList(
+    maps,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    SignalMaps: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const StartUpdateSignalMap: OperationHandler = (input, ctx) => {
@@ -2306,7 +2510,7 @@ const StartUpdateSignalMap: OperationHandler = (input, ctx) => {
     DiscoveryEntryPointArn:
       stringOrUndefined(input["DiscoveryEntryPointArn"]) ??
       signalMap.DiscoveryEntryPointArn,
-    Status: "UPDATE_COMPLETE",
+    Status: "UPDATE_IN_PROGRESS",
     ModifiedAt: nowIso(),
   };
   ctx.store.set(signalMapKey(identifier), updated);
@@ -2376,12 +2580,20 @@ const DescribeSdiSource: OperationHandler = (input, ctx) => {
   return { SdiSource: requireSdiSource(ctx, id) };
 };
 
-const ListSdiSources: OperationHandler = (_input, ctx) => {
+const ListSdiSources: OperationHandler = (input, ctx) => {
   const sources = ctx.store
     .list<StoredSdiSource>()
     .filter((entry) => entry.key.startsWith(sdiSourcePrefix))
     .map((entry) => entry.value);
-  return { SdiSources: sources };
+  const { items, nextToken } = paginateList(
+    sources,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    SdiSources: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const UpdateSdiSource: OperationHandler = (input, ctx) => {
@@ -2636,12 +2848,20 @@ const DescribeCluster: OperationHandler = (input, ctx) => {
   return clusterResponse(requireCluster(ctx, id));
 };
 
-const ListClusters: OperationHandler = (_input, ctx) => {
+const ListClusters: OperationHandler = (input, ctx) => {
   const clusters = ctx.store
     .list<StoredCluster>()
     .filter((entry) => entry.key.startsWith(clusterPrefix))
     .map((entry) => clusterResponse(entry.value));
-  return { Clusters: clusters };
+  const { items, nextToken } = paginateList(
+    clusters,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Clusters: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeleteCluster: OperationHandler = (input, ctx) => {
@@ -2817,12 +3037,20 @@ const DescribeNetwork: OperationHandler = (input, ctx) => {
   return networkResponse(requireNetwork(ctx, id));
 };
 
-const ListNetworks: OperationHandler = (_input, ctx) => {
+const ListNetworks: OperationHandler = (input, ctx) => {
   const networks = ctx.store
     .list<StoredNetwork>()
     .filter((entry) => entry.key.startsWith(networkPrefix))
     .map((entry) => networkResponse(entry.value));
-  return { Networks: networks };
+  const { items, nextToken } = paginateList(
+    networks,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return {
+    Networks: items,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeleteNetwork: OperationHandler = (input, ctx) => {

@@ -1834,15 +1834,29 @@ const deliverEventToBus = async (
   ctx: ServiceContext,
   busName: string,
   event: Record<string, unknown>,
+  replayName?: string,
 ): Promise<void> => {
+  const deliveredEvent =
+    replayName !== undefined ? { ...event, "replay-name": replayName } : event;
   const busEvent: BusEvent = {
-    source: typeof event["source"] === "string" ? event["source"] : "",
+    source:
+      typeof deliveredEvent["source"] === "string"
+        ? deliveredEvent["source"]
+        : "",
     "detail-type":
-      typeof event["detail-type"] === "string" ? event["detail-type"] : "",
-    account: typeof event["account"] === "string" ? event["account"] : "",
-    region: typeof event["region"] === "string" ? event["region"] : "",
-    resources: stringList(event["resources"]),
-    detail: event["detail"] ?? {},
+      typeof deliveredEvent["detail-type"] === "string"
+        ? deliveredEvent["detail-type"]
+        : "",
+    account:
+      typeof deliveredEvent["account"] === "string"
+        ? deliveredEvent["account"]
+        : "",
+    region:
+      typeof deliveredEvent["region"] === "string"
+        ? deliveredEvent["region"]
+        : "",
+    resources: stringList(deliveredEvent["resources"]),
+    detail: deliveredEvent["detail"] ?? {},
   };
   const prefix = `${busName}/`;
   for (const { key, value: rule } of ctx.store.list<StoredRule>()) {
@@ -1852,9 +1866,9 @@ const deliverEventToBus = async (
     for (const target of Object.values(rule.targets)) {
       const arn = target["Arn"];
       if (typeof arn === "string") {
-        const body = applyTargetTransform(event, target);
+        const body = applyTargetTransform(deliveredEvent, target);
         if (body === undefined) continue;
-        await deliverToArn(ctx, arn, { body, event });
+        await deliverToArn(ctx, arn, { body, event: deliveredEvent });
       }
     }
   }
@@ -1907,7 +1921,7 @@ const StartReplay: OperationHandler = async (input, ctx) => {
   let lastReplayed: number | undefined;
   for (const { event, time } of archivedEvents) {
     if (time < replay.EventStartTime || time > replay.EventEndTime) continue;
-    await deliverEventToBus(ctx, destBusName, event);
+    await deliverEventToBus(ctx, destBusName, event, name);
     lastReplayed = time;
   }
   const finishedSec = Math.floor(Date.now() / 1000);

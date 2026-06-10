@@ -1146,6 +1146,17 @@ const newInstanceFromParams = (
   };
 };
 
+const tagListFromInput = (
+  input: Record<string, unknown>,
+): { Key: string; Value: string }[] => {
+  const raw = input["Tags"];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (t): t is { Key: string; Value: string } =>
+      typeof t === "object" && t !== null && "Key" in t && "Value" in t,
+  );
+};
+
 const CreateDBInstance: OperationHandler = (input, ctx) => {
   const id = requireString(input, "DBInstanceIdentifier");
   const existing = ctx.store.get<StoredDBInstance>(instanceKey(id));
@@ -1159,6 +1170,10 @@ const CreateDBInstance: OperationHandler = (input, ctx) => {
   const engine = requireString(input, "Engine");
   const instance = newInstanceFromParams(ctx, id, input, engine);
   ctx.store.set(instanceKey(id), instance);
+  const initialTags = tagListFromInput(input);
+  if (initialTags.length > 0) {
+    setTags(ctx, instance.DBInstanceArn, initialTags);
+  }
   return { DBInstance: presentInstance(instance) };
 };
 
@@ -1237,6 +1252,7 @@ const DeleteDBInstance: OperationHandler = (input, ctx) => {
   }
   const presented = presentInstance(instance);
   ctx.store.delete(instanceKey(id));
+  ctx.store.delete(tagsKey(instance.DBInstanceArn));
   return { DBInstance: { ...presented, DBInstanceStatus: "deleting" } };
 };
 

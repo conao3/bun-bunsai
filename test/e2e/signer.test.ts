@@ -405,6 +405,220 @@ test("AddProfilePermission, ListProfilePermissions, RemoveProfilePermission", as
   ).not.toContain(statementId);
 });
 
+test("HIGH-1: clientRequestToken idempotency", async () => {
+  const client = signer();
+  const profileName = `bunsai_idem_${Date.now()}`;
+  await client.send(
+    new PutSigningProfileCommand({
+      profileName,
+      platformId: "AWSLambda-SHA384-ECDSA",
+    }),
+  );
+
+  const token = `idem-token-${Date.now()}`;
+  const first = await client.send(
+    new StartSigningJobCommand({
+      profileName,
+      source: { s3: { bucketName: "src", key: "k1", version: "1" } },
+      destination: { s3: { bucketName: "dst", prefix: "" } },
+      clientRequestToken: token,
+    }),
+  );
+  const second = await client.send(
+    new StartSigningJobCommand({
+      profileName,
+      source: { s3: { bucketName: "src", key: "k2", version: "1" } },
+      destination: { s3: { bucketName: "dst2", prefix: "" } },
+      clientRequestToken: token,
+    }),
+  );
+  expect(second.jobId).toBe(first.jobId);
+
+  const list = await client.send(new ListSigningJobsCommand({}));
+  const matchingJobs = (list.jobs ?? []).filter((j) => j.jobId === first.jobId);
+  expect(matchingJobs.length).toBe(1);
+});
+
+test("HIGH-2: PutSigningProfile tags visible via ListTagsForResource and TagResource visible in GetSigningProfile", async () => {
+  const client = signer();
+  const profileName = `bunsai_tagsunify_${Date.now()}`;
+  const put = await client.send(
+    new PutSigningProfileCommand({
+      profileName,
+      platformId: "AWSLambda-SHA384-ECDSA",
+      tags: { env: "test" },
+    }),
+  );
+  const arn = put.arn!;
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ resourceArn: arn }),
+  );
+  expect(listed.tags?.["env"]).toBe("test");
+
+  await client.send(
+    new TagResourceCommand({ resourceArn: arn, tags: { team: "a" } }),
+  );
+
+  const got = await client.send(new GetSigningProfileCommand({ profileName }));
+  expect(got.tags?.["env"]).toBe("test");
+  expect(got.tags?.["team"]).toBe("a");
+});
+
+test("HIGH-3: ListTagsForResource on nonexistent profile ARN throws NotFoundException", async () => {
+  const client = signer();
+  const fakeArn =
+    "arn:aws:signer:us-east-1:000000000000:/signing-profiles/doesNotExist";
+  try {
+    await client.send(new ListTagsForResourceCommand({ resourceArn: fakeArn }));
+    expect(true).toBe(false);
+  } catch (e: unknown) {
+    const err = e as { name: string; $metadata: { httpStatusCode: number } };
+    expect(err.name).toBe("NotFoundException");
+    expect(err.$metadata.httpStatusCode).toBe(404);
+  }
+});
+
+test("MEDIUM-1: PutSigningProfile rejects unknown platformId with ValidationException", async () => {
+  const client = signer();
+  try {
+    await client.send(
+      new PutSigningProfileCommand({
+        profileName: `bunsai_badplat_${Date.now()}`,
+        platformId: "NoSuchPlatform-SHA999",
+      }),
+    );
+    expect(true).toBe(false);
+  } catch (e: unknown) {
+    const err = e as { name: string };
+    expect(err.name).toBe("ValidationException");
+  }
+});
+
+test("MEDIUM-2: RevokeSigningProfile rejects wrong profileVersion with ValidationException", async () => {
+  const client = signer();
+  const profileName = `bunsai_revver_${Date.now()}`;
+  await client.send(
+    new PutSigningProfileCommand({
+      profileName,
+      platformId: "AWSLambda-SHA384-ECDSA",
+    }),
+  );
+
+  try {
+    await client.send(
+      new RevokeSigningProfileCommand({
+        profileName,
+        profileVersion: "WRONGVERSION00",
+        reason: "test",
+        effectiveTime: new Date(),
+      }),
+    );
+    expect(true).toBe(false);
+  } catch (e: unknown) {
+    const err = e as { name: string };
+    expect(err.name).toBe("ValidationException");
+  }
+
+  const got = await client.send(new GetSigningProfileCommand({ profileName }));
+  expect(got.status).toBe("Active");
+});
+
+test("MEDIUM-3: AddProfilePermission rejects duplicate statementId with ConflictException", async () => {
+  const client = signer();
+  const profileName = `bunsai_dupstmt_${Date.now()}`;
+  await client.send(
+    new PutSigningProfileCommand({
+      profileName,
+      platformId: "AWSLambda-SHA384-ECDSA",
+    }),
+  );
+
+  const statementId = `stmt-dup-${Date.now()}`;
+  await client.send(
+    new AddProfilePermissionCommand({
+      profileName,
+      statementId,
+      action: "signer:StartSigningJob",
+      principal: "123456789012",
+    }),
+  );
+
+  try {
+    await client.send(
+      new AddProfilePermissionCommand({
+        profileName,
+        statementId,
+        action: "signer:StartSigningJob",
+        principal: "123456789012",
+      }),
+    );
+    expect(true).toBe(false);
+  } catch (e: unknown) {
+    const err = e as { name: string };
+    expect(err.name).toBe("ConflictException");
+  }
+});
+
+test("MEDIUM-4: DescribeSigningJob returns signedObject and signatureExpiresAt", async () => {
+  const client = signer();
+  const profileName = `bunsai_sigobj_${Date.now()}`;
+  await client.send(
+    new PutSigningProfileCommand({
+      profileName,
+      platformId: "AWSLambda-SHA384-ECDSA",
+    }),
+  );
+
+  const start = await client.send(
+    new StartSigningJobCommand({
+      profileName,
+      source: { s3: { bucketName: "src", key: "k", version: "1" } },
+      destination: { s3: { bucketName: "dst-bucket", prefix: "signed/" } },
+      clientRequestToken: `token-sigobj-${Date.now()}`,
+    }),
+  );
+
+  const desc = await client.send(
+    new DescribeSigningJobCommand({ jobId: start.jobId! }),
+  );
+  expect(desc.signedObject?.s3?.bucketName).toBe("dst-bucket");
+  expect(typeof desc.signedObject?.s3?.key).toBe("string");
+  expect(desc.signatureExpiresAt).toBeDefined();
+});
+
+test("LOW-1: GetRevocationStatus includes profileVersionArn after RevokeSigningProfile", async () => {
+  const client = signer();
+  const profileName = `bunsai_revstatus_${Date.now()}`;
+  const put = await client.send(
+    new PutSigningProfileCommand({
+      profileName,
+      platformId: "AWSLambda-SHA384-ECDSA",
+    }),
+  );
+  const pvArn = put.profileVersionArn!;
+
+  await client.send(
+    new RevokeSigningProfileCommand({
+      profileName,
+      profileVersion: put.profileVersion!,
+      reason: "low-1 test",
+      effectiveTime: new Date(Date.now() - 2000),
+    }),
+  );
+
+  const status = await client.send(
+    new GetRevocationStatusCommand({
+      signatureTimestamp: new Date(),
+      platformId: "AWSLambda-SHA384-ECDSA",
+      profileVersionArn: pvArn,
+      jobArn: `arn:aws:signer:us-east-1:000000000000:/signing-jobs/nojob`,
+      certificateHashes: ["0".repeat(96)],
+    }),
+  );
+  expect(status.revokedEntities).toContain(pvArn);
+});
+
 test("TagResource, ListTagsForResource, UntagResource", async () => {
   const client = signer();
   const profileName = `bunsai_tag_${Date.now()}`;

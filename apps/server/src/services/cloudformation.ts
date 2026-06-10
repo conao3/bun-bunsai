@@ -471,6 +471,40 @@ const provisionSnsTopic = (
   return arn;
 };
 
+const provisionSnsSubscription = (
+  ctx: ServiceContext,
+  props: Record<string, unknown>,
+  resources: StackResource[],
+): string => {
+  const topicArn = resolveValue(ctx, props["TopicArn"], resources);
+  const protocol =
+    typeof props["Protocol"] === "string" ? props["Protocol"] : "sqs";
+  const endpoint = resolveValue(ctx, props["Endpoint"], resources);
+  const subscriptionArn = `${topicArn}:${crypto.randomUUID()}`;
+  const sns = ctx.storeFor("sns");
+  sns.set(`subscription/${subscriptionArn}`, {
+    SubscriptionArn: subscriptionArn,
+    TopicArn: topicArn,
+    Protocol: protocol,
+    Endpoint: endpoint,
+    Owner: ctx.account,
+  });
+  sns.set(`subattrs/${subscriptionArn}`, {
+    SubscriptionArn: subscriptionArn,
+    Attributes: {
+      SubscriptionArn: subscriptionArn,
+      TopicArn: topicArn,
+      Protocol: protocol,
+      Endpoint: endpoint,
+      Owner: ctx.account,
+      ConfirmationWasAuthenticated: "false",
+      PendingConfirmation: "false",
+      RawMessageDelivery: "false",
+    },
+  });
+  return subscriptionArn;
+};
+
 const provisionS3Bucket = (
   ctx: ServiceContext,
   stackName: string,
@@ -565,6 +599,7 @@ const provisionResource = (
   logicalId: string,
   resourceType: string,
   props: Record<string, unknown>,
+  resources: StackResource[] = [],
 ): string => {
   if (resourceType === "AWS::SQS::Queue")
     return provisionSqsQueue(ctx, stackName, logicalId, props);
@@ -572,6 +607,8 @@ const provisionResource = (
     return provisionDynamoTable(ctx, stackName, logicalId, props);
   if (resourceType === "AWS::SNS::Topic")
     return provisionSnsTopic(ctx, stackName, logicalId, props);
+  if (resourceType === "AWS::SNS::Subscription")
+    return provisionSnsSubscription(ctx, props, resources);
   if (resourceType === "AWS::S3::Bucket")
     return provisionS3Bucket(ctx, stackName, logicalId, props);
   if (resourceType === "AWS::Lambda::Function")
@@ -598,6 +635,15 @@ const deprovisionSnsTopic = (ctx: ServiceContext, physicalId: string): void => {
   const parts = physicalId.split(":");
   const name = parts[parts.length - 1] ?? physicalId;
   ctx.storeFor("sns").delete(`topic/${name}`);
+};
+
+const deprovisionSnsSubscription = (
+  ctx: ServiceContext,
+  physicalId: string,
+): void => {
+  const sns = ctx.storeFor("sns");
+  sns.delete(`subscription/${physicalId}`);
+  sns.delete(`subattrs/${physicalId}`);
 };
 
 const deprovisionS3Bucket = (ctx: ServiceContext, physicalId: string): void => {
@@ -635,6 +681,10 @@ const deprovisionResource = (
   }
   if (resourceType === "AWS::SNS::Topic") {
     deprovisionSnsTopic(ctx, physicalId);
+    return;
+  }
+  if (resourceType === "AWS::SNS::Subscription") {
+    deprovisionSnsSubscription(ctx, physicalId);
     return;
   }
   if (resourceType === "AWS::S3::Bucket") {
@@ -776,8 +826,9 @@ const CreateStack: OperationHandler = (input, ctx) => {
   const id = crypto.randomUUID();
   const arn = stackArn(ctx, name, id);
   const templateBody = templateBodyOf(input);
-  const stackResources: StackResource[] = resourcesOf(templateBody).map(
-    (resource) => ({
+  const stackResources: StackResource[] = [];
+  for (const resource of resourcesOf(templateBody)) {
+    stackResources.push({
       LogicalResourceId: resource.LogicalResourceId,
       ResourceType: resource.ResourceType,
       PhysicalResourceId: provisionResource(
@@ -786,9 +837,10 @@ const CreateStack: OperationHandler = (input, ctx) => {
         resource.LogicalResourceId,
         resource.ResourceType,
         resource.Properties,
+        stackResources,
       ),
-    }),
-  );
+    });
+  }
   const stack: StoredStack = {
     StackId: arn,
     StackName: name,
@@ -843,23 +895,28 @@ const UpdateStack: OperationHandler = (input, ctx) => {
       deprovisionResource(ctx, oldRes.ResourceType, oldRes.PhysicalResourceId);
     }
   }
-  const newResources: StackResource[] = newResourceDefs.map((resource) => {
+  const newResources: StackResource[] = [];
+  for (const resource of newResourceDefs) {
     const existing = oldResources.find(
       (r) => r.LogicalResourceId === resource.LogicalResourceId,
     );
-    if (existing !== undefined) return existing;
-    return {
-      LogicalResourceId: resource.LogicalResourceId,
-      ResourceType: resource.ResourceType,
-      PhysicalResourceId: provisionResource(
-        ctx,
-        name,
-        resource.LogicalResourceId,
-        resource.ResourceType,
-        resource.Properties,
-      ),
-    };
-  });
+    if (existing !== undefined) {
+      newResources.push(existing);
+    } else {
+      newResources.push({
+        LogicalResourceId: resource.LogicalResourceId,
+        ResourceType: resource.ResourceType,
+        PhysicalResourceId: provisionResource(
+          ctx,
+          name,
+          resource.LogicalResourceId,
+          resource.ResourceType,
+          resource.Properties,
+          newResources,
+        ),
+      });
+    }
+  }
   const updated: StoredStack = {
     ...stack,
     TemplateBody: newTemplateBody,
@@ -1258,8 +1315,9 @@ const ExecuteChangeSet: OperationHandler = (input, ctx) => {
   if (stack === undefined) {
     const id = crypto.randomUUID();
     const arn = stackArn(ctx, cs.StackName, id);
-    const csStackResources: StackResource[] = resourcesOf(cs.TemplateBody).map(
-      (resource) => ({
+    const csStackResources: StackResource[] = [];
+    for (const resource of resourcesOf(cs.TemplateBody)) {
+      csStackResources.push({
         LogicalResourceId: resource.LogicalResourceId,
         ResourceType: resource.ResourceType,
         PhysicalResourceId: provisionResource(
@@ -1268,9 +1326,10 @@ const ExecuteChangeSet: OperationHandler = (input, ctx) => {
           resource.LogicalResourceId,
           resource.ResourceType,
           resource.Properties,
+          csStackResources,
         ),
-      }),
-    );
+      });
+    }
     const newStack: StoredStack = {
       StackId: arn,
       StackName: cs.StackName,
@@ -1304,23 +1363,28 @@ const ExecuteChangeSet: OperationHandler = (input, ctx) => {
         );
       }
     }
-    const csResources: StackResource[] = newResourceDefs.map((resource) => {
+    const csResources: StackResource[] = [];
+    for (const resource of newResourceDefs) {
       const existing = oldResources.find(
         (r) => r.LogicalResourceId === resource.LogicalResourceId,
       );
-      if (existing !== undefined) return existing;
-      return {
-        LogicalResourceId: resource.LogicalResourceId,
-        ResourceType: resource.ResourceType,
-        PhysicalResourceId: provisionResource(
-          ctx,
-          cs.StackName,
-          resource.LogicalResourceId,
-          resource.ResourceType,
-          resource.Properties,
-        ),
-      };
-    });
+      if (existing !== undefined) {
+        csResources.push(existing);
+      } else {
+        csResources.push({
+          LogicalResourceId: resource.LogicalResourceId,
+          ResourceType: resource.ResourceType,
+          PhysicalResourceId: provisionResource(
+            ctx,
+            cs.StackName,
+            resource.LogicalResourceId,
+            resource.ResourceType,
+            resource.Properties,
+            csResources,
+          ),
+        });
+      }
+    }
     const updated: StoredStack = {
       ...stack,
       TemplateBody: csBody,

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ServiceSummary } from "./api";
 import { Ico, ProtoBadge, ServiceTag, svcInfo } from "./shared";
-import type { Theme } from "./types";
+import type { Density, LogLayout, Theme } from "./types";
 
 type Scope = { account: string; region: string };
 
@@ -58,9 +58,17 @@ function TabBar({
 function GeneralTab({
   theme,
   setTheme,
+  density,
+  setDensity,
+  logLayout,
+  setLogLayout,
 }: {
   theme: Theme;
   setTheme: (t: Theme) => void;
+  density: Density;
+  setDensity: (d: Density) => void;
+  logLayout: LogLayout;
+  setLogLayout: (l: LogLayout) => void;
 }) {
   return (
     <div className="settings-section">
@@ -94,6 +102,50 @@ function GeneralTab({
           >
             <Ico.sun width="13" height="13" />
             Light
+          </button>
+        </div>
+      </div>
+      <div className="settings-sep" />
+      <div className="settings-row">
+        <div className="settings-label">
+          <div className="settings-label-title">情報密度</div>
+        </div>
+        <div className="segmented">
+          <button
+            className={density === "compact" ? "on" : ""}
+            onClick={() => setDensity("compact")}
+            aria-pressed={density === "compact"}
+          >
+            コンパクト
+          </button>
+          <button
+            className={density === "spacious" ? "on" : ""}
+            onClick={() => setDensity("spacious")}
+            aria-pressed={density === "spacious"}
+          >
+            ゆったり
+          </button>
+        </div>
+      </div>
+      <div className="settings-sep" />
+      <div className="settings-row">
+        <div className="settings-label">
+          <div className="settings-label-title">Request Log 詳細の表示位置</div>
+        </div>
+        <div className="segmented">
+          <button
+            className={logLayout === "drawer" ? "on" : ""}
+            onClick={() => setLogLayout("drawer")}
+            aria-pressed={logLayout === "drawer"}
+          >
+            右ドロワー
+          </button>
+          <button
+            className={logLayout === "bottom" ? "on" : ""}
+            onClick={() => setLogLayout("bottom")}
+            aria-pressed={logLayout === "bottom"}
+          >
+            下部パネル
           </button>
         </div>
       </div>
@@ -190,6 +242,10 @@ function ServicesTab({ services }: { services: ServiceSummary[] }) {
 export function Settings({
   theme,
   setTheme,
+  density,
+  setDensity,
+  logLayout,
+  setLogLayout,
   scope,
   setScope,
   accounts,
@@ -198,6 +254,10 @@ export function Settings({
 }: {
   theme: Theme;
   setTheme: (t: Theme) => void;
+  density: Density;
+  setDensity: (d: Density) => void;
+  logLayout: LogLayout;
+  setLogLayout: (l: LogLayout) => void;
   scope: Scope;
   setScope: (s: Scope) => void;
   accounts: string[];
@@ -232,7 +292,14 @@ export function Settings({
       <TabBar active={activeTab} onChange={handleTabChange} />
       <div className="settings-body">
         {activeTab === "general" && (
-          <GeneralTab theme={theme} setTheme={setTheme} />
+          <GeneralTab
+            theme={theme}
+            setTheme={setTheme}
+            density={density}
+            setDensity={setDensity}
+            logLayout={logLayout}
+            setLogLayout={setLogLayout}
+          />
         )}
         {activeTab === "scope" && (
           <ScopeTab

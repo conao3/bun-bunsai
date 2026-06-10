@@ -42,9 +42,10 @@ function ResourceTree({
         const isOpen = open[svc] ?? true;
         return (
           <div key={svc} className="tree-svc">
-            <div
+            <button
               className="tree-node svc"
               onClick={() => setOpen({ ...open, [svc]: !isOpen })}
+              aria-expanded={isOpen}
             >
               <Ico.chevR
                 className="tw"
@@ -55,24 +56,27 @@ function ResourceTree({
               <ServiceTag svc={svc} />
               <span className="tree-svc-label">{s.resourceLabel}</span>
               <span className="tree-count mono">{items.length}</span>
-            </div>
+            </button>
             {isOpen && (
               <div className="tree-children">
                 {items.length === 0 ? (
                   <div className="tree-empty">なし</div>
                 ) : (
                   items.map((it) => (
-                    <div
+                    <button
                       key={`${svc}/${it.key}`}
                       className={`tree-node leaf${sel && sel.service === svc && sel.key === it.key ? " sel" : ""}`}
                       onClick={() => setSel({ service: svc, key: it.key })}
+                      aria-selected={
+                        sel?.service === svc && sel?.key === it.key
+                      }
                     >
                       <span
                         className="leaf-glyph"
                         style={{ background: s.color }}
                       />
                       <span className="leaf-name mono">{it.key}</span>
-                    </div>
+                    </button>
                   ))
                 )}
               </div>

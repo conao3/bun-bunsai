@@ -244,6 +244,12 @@ export function svcInfo(svc: string) {
   );
 }
 
+const dotLabel: Record<"running" | "error" | "idle", string> = {
+  running: "稼働中",
+  error: "エラー",
+  idle: "停止",
+};
+
 export function StatusDot({
   state,
   pulse,
@@ -255,6 +261,8 @@ export function StatusDot({
 }) {
   return (
     <span
+      role="img"
+      aria-label={dotLabel[state]}
       className={`dot ${state}${pulse ? " pulse" : ""}${lg ? " lg" : ""}`}
     />
   );
@@ -415,7 +423,7 @@ export function MultiFilter({
   onChange: (v: string[]) => void;
   render?: (o: string) => ReactNode;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const all = selected.length === 0;
   const toggle = (o: string) => {
@@ -424,10 +432,11 @@ export function MultiFilter({
   };
   return (
     <>
-      <div
+      <button
         className={`select-pill${all ? "" : " on"}`}
         ref={ref}
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
       >
         <Ico.filter width="13" height="13" />
         <span>
@@ -439,21 +448,21 @@ export function MultiFilter({
           height="12"
           style={{ color: "var(--muted-soft)" }}
         />
-      </div>
+      </button>
       {open && (
         <Popover anchor={ref.current} onClose={() => setOpen(false)}>
-          <div className="opt" onClick={() => onChange([])}>
+          <button className="opt" onClick={() => onChange([])}>
             <span style={{ fontWeight: 500 }}>All {label.toLowerCase()}</span>
             {all && <Ico.check className="chk" width="15" height="15" />}
-          </div>
+          </button>
           <div className="sep" />
           {options.map((o) => (
-            <div key={o} className="opt" onClick={() => toggle(o)}>
+            <button key={o} className="opt" onClick={() => toggle(o)}>
               <span>{render ? render(o) : o}</span>
               {selected.includes(o) && (
                 <Ico.check className="chk" width="15" height="15" />
               )}
-            </div>
+            </button>
           ))}
         </Popover>
       )}

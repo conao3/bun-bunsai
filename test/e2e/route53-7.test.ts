@@ -5,6 +5,7 @@ import {
   CreateReusableDelegationSetCommand,
   DeleteHostedZoneCommand,
   DeleteReusableDelegationSetCommand,
+  HostedZoneType,
   ListHostedZonesCommand,
   Route53Client,
 } from "@aws-sdk/client-route-53";
@@ -78,7 +79,9 @@ test("ListHostedZones HostedZoneType filter", async () => {
   expect(zoneId).toBeDefined();
 
   const privateOnly = await client.send(
-    new ListHostedZonesCommand({ HostedZoneType: "PrivateHostedZone" as never }),
+    new ListHostedZonesCommand({
+      HostedZoneType: HostedZoneType.PRIVATE_HOSTED_ZONE,
+    }),
   );
   const ids = (privateOnly.HostedZones ?? []).map((z) => z.Id);
   expect(ids).toContain(zoneId);
@@ -101,7 +104,7 @@ test("ListHostedZones MaxItems pagination", async () => {
     );
   }
 
-  const page1 = await client.send(new ListHostedZonesCommand({ MaxItems: "2" }));
+  const page1 = await client.send(new ListHostedZonesCommand({ MaxItems: 2 }));
   expect((page1.HostedZones ?? []).length).toBeGreaterThanOrEqual(2);
 
   const zoneIds: string[] = [];

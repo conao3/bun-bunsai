@@ -812,9 +812,11 @@ const route53: ServiceDefinition = {
       const marker = typeof input["Marker"] === "string" ? input["Marker"] : "";
       const maxItemsRaw = input["MaxItems"];
       const maxItems =
-        typeof maxItemsRaw === "string" && maxItemsRaw !== ""
-          ? Math.max(1, parseInt(maxItemsRaw, 10) || 100)
-          : 100;
+        typeof maxItemsRaw === "number"
+          ? Math.max(1, maxItemsRaw)
+          : typeof maxItemsRaw === "string" && maxItemsRaw !== ""
+            ? Math.max(1, parseInt(maxItemsRaw, 10) || 100)
+            : 100;
       const startIndex =
         marker === ""
           ? 0

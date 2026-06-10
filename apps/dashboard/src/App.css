@@ -103,6 +103,42 @@
 * {
   box-sizing: border-box;
 }
+
+button.nav-item,
+button.scope-seg,
+button.select-pill,
+button.log-row,
+button.svc-card,
+button.ms-row,
+button.tree-node,
+.popover button.opt {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.nav-item,
+button.scope-seg,
+button.tree-node,
+.popover button.opt,
+button.ms-row,
+button.select-pill {
+  background: transparent;
+  border: none;
+}
+
+button.log-row {
+  background: transparent;
+  border-top: none;
+  border-right: none;
+  width: 100%;
+}
+
+button.svc-card {
+  width: 100%;
+}
 html,
 body {
   height: 100%;

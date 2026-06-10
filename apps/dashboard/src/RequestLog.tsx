@@ -128,12 +128,14 @@ function RequestDetail({
         </div>
       )}
 
-      <div className="detail-tabs">
+      <div className="detail-tabs" role="tablist">
         {detailTabs.map((t) => (
           <button
             key={t.id}
+            role="tab"
             className={tab === t.id ? "on" : ""}
             onClick={() => setTab(t.id)}
+            aria-selected={tab === t.id}
           >
             {t.label}
           </button>
@@ -314,6 +316,7 @@ export function RequestLog({
               key={s}
               className={statusFilter === s ? "on" : ""}
               onClick={() => onStatusFilter(s)}
+              aria-pressed={statusFilter === s}
             >
               {s === "all" ? "All" : s}
             </button>
@@ -328,6 +331,8 @@ export function RequestLog({
           />
           <input
             className="input"
+            type="search"
+            aria-label="operation, service, request id を検索"
             placeholder="operation, service, request id を検索…"
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
@@ -411,10 +416,11 @@ export function RequestLog({
                 onScroll={onScroll}
               >
                 {filtered.map((r) => (
-                  <div
+                  <button
                     key={r.id}
                     className={`log-row${r.id === selId ? " sel" : ""}${r.statusCode >= 500 ? " r5xx" : r.statusCode >= 400 ? " r4xx" : ""}`}
                     onClick={() => onSelect(r.id)}
+                    aria-selected={r.id === selId}
                   >
                     <span className="c-time mono">{fmtTime(r.time)}</span>
                     <span className="c-svc">
@@ -429,7 +435,7 @@ export function RequestLog({
                       <span className="lat-u">ms</span>
                     </span>
                     <span className="c-scope mono">{r.region}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
               {!stick && newCount > 0 && (

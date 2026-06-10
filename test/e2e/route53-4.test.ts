@@ -212,5 +212,26 @@ test("ChangeResourceRecordSets batch semantics and ALIAS round-trip", async () =
   expect(getChange.ChangeInfo?.Status).toBe("INSYNC");
   expect(getChange.ChangeInfo?.Id).toBeDefined();
 
+  await client.send(
+    new ChangeResourceRecordSetsCommand({
+      HostedZoneId: zoneId,
+      ChangeBatch: {
+        Changes: [
+          {
+            Action: "DELETE",
+            ResourceRecordSet: {
+              Name: "alias.batch-e2e.example.com.",
+              Type: "A",
+              AliasTarget: {
+                HostedZoneId: "Z2FDTNDATAQYW2",
+                DNSName: "d111111abcdef8.cloudfront.net.",
+                EvaluateTargetHealth: false,
+              },
+            },
+          },
+        ],
+      },
+    }),
+  );
   await client.send(new DeleteHostedZoneCommand({ Id: zoneId }));
 });

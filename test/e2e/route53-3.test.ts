@@ -102,5 +102,48 @@ test("Route53 alias record and weighted pair round-trip", async () => {
   expect(secondary?.Weight).toBe(50);
   expect(secondary?.ResourceRecords?.[0]?.Value).toBe("10.0.0.2");
 
+  await client.send(
+    new ChangeResourceRecordSetsCommand({
+      HostedZoneId: zoneId,
+      ChangeBatch: {
+        Changes: [
+          {
+            Action: "DELETE",
+            ResourceRecordSet: {
+              Name: "alias.alias-weighted-e2e.example.com.",
+              Type: "A",
+              AliasTarget: {
+                HostedZoneId: "Z2FDTNDATAQYW2",
+                DNSName: "d111111abcdef8.cloudfront.net.",
+                EvaluateTargetHealth: false,
+              },
+            },
+          },
+          {
+            Action: "DELETE",
+            ResourceRecordSet: {
+              Name: "weighted.alias-weighted-e2e.example.com.",
+              Type: "A",
+              SetIdentifier: "primary",
+              Weight: 100,
+              TTL: 60,
+              ResourceRecords: [{ Value: "10.0.0.1" }],
+            },
+          },
+          {
+            Action: "DELETE",
+            ResourceRecordSet: {
+              Name: "weighted.alias-weighted-e2e.example.com.",
+              Type: "A",
+              SetIdentifier: "secondary",
+              Weight: 50,
+              TTL: 60,
+              ResourceRecords: [{ Value: "10.0.0.2" }],
+            },
+          },
+        ],
+      },
+    }),
+  );
   await client.send(new DeleteHostedZoneCommand({ Id: zoneId }));
 });

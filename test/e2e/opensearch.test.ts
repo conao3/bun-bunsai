@@ -194,6 +194,7 @@ test("OpenSearch VPC endpoint lifecycle", async () => {
     }),
   );
   expect(ep.VpcEndpoint?.VpcEndpointId).toBeTruthy();
+  expect(ep.VpcEndpoint?.Status).toBe("CREATING");
   const vpcEndpointId = ep.VpcEndpoint!.VpcEndpointId!;
 
   const listed = await client.send(new ListVpcEndpointsCommand({}));
@@ -202,6 +203,11 @@ test("OpenSearch VPC endpoint lifecycle", async () => {
       (e) => e.VpcEndpointId === vpcEndpointId,
     ),
   ).toBe(true);
+
+  const described = await client.send(
+    new DescribeVpcEndpointsCommand({ VpcEndpointIds: [vpcEndpointId] }),
+  );
+  expect(described.VpcEndpoints?.[0]?.Status).toBe("ACTIVE");
 
   await client.send(
     new DeleteVpcEndpointCommand({ VpcEndpointId: vpcEndpointId }),
@@ -520,4 +526,105 @@ test("OpenSearch index status lifecycle", async () => {
   expect(got.IndexSchema).toBeDefined();
 
   await client.send(new DeleteDomainCommand({ DomainName: domainName }));
+});
+
+test("OpenSearch tag round-trip: CreateDomain with TagList, ListTags, DeleteDomain cleanup", async () => {
+  const client = opensearch();
+  const domainName = `tag-rt-${Date.now()}`.slice(0, 28).toLowerCase();
+
+  const created = await client.send(
+    new CreateDomainCommand({
+      DomainName: domainName,
+      TagList: [
+        { Key: "Env", Value: "test" },
+        { Key: "Owner", Value: "bunsai" },
+      ],
+    }),
+  );
+  const arn = created.DomainStatus!.ARN!;
+
+  const tags = await client.send(new ListTagsCommand({ ARN: arn }));
+  expect(tags.TagList).toHaveLength(2);
+  expect(tags.TagList?.find((t) => t.Key === "Env")?.Value).toBe("test");
+  expect(tags.TagList?.find((t) => t.Key === "Owner")?.Value).toBe("bunsai");
+
+  await client.send(new DeleteDomainCommand({ DomainName: domainName }));
+
+  const afterDelete = await client.send(new ListTagsCommand({ ARN: arn }));
+  expect(afterDelete.TagList).toHaveLength(0);
+});
+
+test("OpenSearch CreateApplication clientToken idempotency and tagList", async () => {
+  const client = opensearch();
+  const token = `tok-${Date.now()}`;
+
+  const first = await client.send(
+    new CreateApplicationCommand({
+      name: "idempotent-app",
+      clientToken: token,
+      tagList: [{ Key: "Project", Value: "bunsai" }],
+    }),
+  );
+  expect(first.id).toBeTruthy();
+  expect(first.tagList).toHaveLength(1);
+  expect(first.tagList?.[0]?.Key).toBe("Project");
+
+  const second = await client.send(
+    new CreateApplicationCommand({
+      name: "idempotent-app",
+      clientToken: token,
+    }),
+  );
+  expect(second.id).toBe(first.id);
+
+  await client.send(new DeleteApplicationCommand({ id: first.id! }));
+
+  const thirdAfterDelete = await client.send(
+    new CreateApplicationCommand({
+      name: "new-app",
+      clientToken: token,
+    }),
+  );
+  expect(thirdAfterDelete.id).toBeTruthy();
+  expect(thirdAfterDelete.id).not.toBe(first.id);
+
+  await client.send(new DeleteApplicationCommand({ id: thirdAfterDelete.id! }));
+});
+
+test("OpenSearch CreateOutboundConnection returns VALIDATING status", async () => {
+  const client = opensearch();
+
+  const conn = await client.send(
+    new CreateOutboundConnectionCommand({
+      LocalDomainInfo: {
+        AWSDomainInformation: {
+          DomainName: "local-validating",
+          OwnerId: "000000000000",
+          Region: "us-east-1",
+        },
+      },
+      RemoteDomainInfo: {
+        AWSDomainInformation: {
+          DomainName: "remote-validating",
+          OwnerId: "111111111111",
+          Region: "us-west-2",
+        },
+      },
+      ConnectionAlias: "validating-conn",
+    }),
+  );
+  expect(conn.ConnectionStatus?.StatusCode).toBe("VALIDATING");
+
+  const described = await client.send(
+    new DescribeOutboundConnectionsCommand({
+      Filters: [{ Name: "connection-id", Values: [conn.ConnectionId!] }],
+    }),
+  );
+  expect(described.Connections?.[0]?.ConnectionStatus?.StatusCode).toBe(
+    "PENDING_ACCEPTANCE",
+  );
+
+  await client.send(
+    new DeleteOutboundConnectionCommand({ ConnectionId: conn.ConnectionId! }),
+  );
 });

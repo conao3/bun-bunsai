@@ -26,7 +26,6 @@ for (const f of serviceFiles) {
     /import\s+\w+\s+from\s+["']([^"']*aws-models[^"']*)["']/,
   );
   let total = 0;
-  let protocol = "-";
   if (importMatch) {
     try {
       const modelPath = importMatch[1].replace(
@@ -35,9 +34,11 @@ for (const f of serviceFiles) {
       );
       const model = JSON.parse(readFileSync(modelPath, "utf8"));
       total = Object.keys(model.operations || {}).length;
-      protocol = (model.metadata?.protocol as string) || "-";
     } catch {}
   }
+
+  const protocolMatch = src.match(/^\s+protocol:\s+"([^"]+)"/m);
+  const protocol = protocolMatch ? protocolMatch[1] : "-";
 
   const idx = src.lastIndexOf("operations:");
   let impl = 0;

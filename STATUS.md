@@ -4,14 +4,14 @@
 
 ## At a glance
 
-| Metric                   | Value                                                             |
-| ------------------------ | ----------------------------------------------------------------- |
-| Services registered      | **113**                                                           |
-| Wire protocols           | **6** (ec2, json, query, rest-json, rest-xml, smithy-rpc-v2-cbor) |
-| Services at 100%         | **113 / 113**                                                     |
-| Unimplemented operations | **0**                                                             |
-| E2E test files           | **459**                                                           |
-| Scenario test files      | **19**                                                            |
+| Metric                   | Value                                         |
+| ------------------------ | --------------------------------------------- |
+| Services registered      | **113**                                       |
+| Wire protocols           | **5** (ec2, json, query, rest-json, rest-xml) |
+| Services at 100%         | **113 / 113**                                 |
+| Unimplemented operations | **0**                                         |
+| E2E test files           | **459**                                       |
+| Scenario test files      | **19**                                        |
 
 ## Features
 
@@ -24,121 +24,121 @@
 
 Sorted by total modeled operations (descending). `impl/total` counts handler entries vs. modeled operations.
 
-| Service               | Protocol           | Ops     | E2E files |
-| --------------------- | ------------------ | ------- | --------- |
-| ec2                   | ec2                | 765/765 | 66        |
-| sagemaker             | json               | 396/396 | 32        |
-| connect               | rest-json          | 370/370 | 23        |
-| glue                  | json               | 265/265 | 25        |
-| iam                   | query              | 176/176 | 13        |
-| cloudfront            | rest-xml           | 178/167 | 5         |
-| rds                   | query              | 164/164 | 7         |
-| ssm                   | json               | 146/146 | 2         |
-| redshift              | query              | 141/141 | 1         |
-| cognito-idp           | json               | 126/126 | 7         |
-| apigateway            | rest-json          | 124/124 | 11        |
-| medialive             | rest-json          | 123/123 | 1         |
-| pinpoint              | rest-json          | 122/122 | 1         |
-| logs                  | json               | 113/113 | 7         |
-| s3                    | rest-xml           | 153/111 | 19        |
-| backup                | rest-json          | 109/109 | 1         |
-| lexv2                 | rest-json          | 107/107 | 1         |
-| pinpoint-sms-voice-v2 | json               | 106/106 | 1         |
-| iotsitewise           | rest-json          | 104/104 | 1         |
-| config                | json               | 97/97   | 1         |
-| storagegateway        | json               | 96/96   | 1         |
-| networkmanager        | rest-json          | 95/95   | 1         |
-| greengrass            | rest-json          | 92/92   | 1         |
-| workspaces            | json               | 91/91   | 1         |
-| cloudformation        | query              | 90/90   | 7         |
-| servicecatalog        | json               | 90/90   | 1         |
-| appstream             | json               | 89/89   | 1         |
-| opensearch            | rest-json          | 88/88   | 1         |
-| guardduty             | rest-json          | 87/87   | 1         |
-| comprehend            | json               | 85/85   | 1         |
-| lambda                | rest-json          | 85/85   | 10        |
-| codecommit            | json               | 79/79   | 1         |
-| network-firewall      | json               | 79/79   | 1         |
-| ecs                   | json               | 77/77   | 2         |
-| imagebuilder          | rest-json          | 77/77   | 1         |
-| elasticache           | query              | 75/75   | 3         |
-| appsync               | rest-json          | 74/74   | 1         |
-| frauddetector         | json               | 73/73   | 1         |
-| personalize           | json               | 71/71   | 1         |
-| route53               | rest-xml           | 240/71  | 7         |
-| ses                   | query              | 71/71   | 1         |
-| transfer              | json               | 71/71   | 1         |
-| athena                | json               | 70/70   | 3         |
-| kendra                | json               | 66/66   | 1         |
-| eks                   | rest-json          | 64/64   | 4         |
-| directconnect         | json               | 63/63   | 1         |
-| forecast              | json               | 63/63   | 1         |
-| organizations         | json               | 63/63   | 1         |
-| licensemanager        | json               | 62/62   | 1         |
-| lakeformation         | rest-json          | 61/61   | 1         |
-| cloudtrail            | json               | 60/60   | 2         |
-| emr                   | json               | 60/60   | 1         |
-| codebuild             | json               | 59/59   | 1         |
-| ecr                   | json               | 58/58   | 1         |
-| dynamodb              | json               | 61/57   | 26        |
-| eventbridge           | json               | 57/57   | 9         |
-| globalaccelerator     | json               | 56/56   | 1         |
-| wafv2                 | json               | 55/55   | 2         |
-| kms                   | json               | 54/54   | 5         |
-| datasync              | json               | 53/53   | 1         |
-| elbv2                 | query              | 51/51   | 2         |
-| codeartifact          | rest-json          | 48/48   | 1         |
-| fsx                   | json               | 48/48   | 1         |
-| mediatailor           | rest-json          | 48/48   | 1         |
-| elasticbeanstalk      | query              | 47/47   | 1         |
-| cloudwatch            | smithy-rpc-v2-cbor | 46/46   | 3         |
-| appconfig             | rest-json          | 45/45   | 1         |
-| batch                 | rest-json          | 45/45   | 3         |
-| memorydb              | json               | 45/45   | 1         |
-| codepipeline          | json               | 44/44   | 1         |
-| transcribe            | json               | 43/43   | 1         |
-| fms                   | json               | 42/42   | 1         |
-| sns                   | query              | 42/42   | 12        |
-| wisdom                | rest-json          | 41/41   | 1         |
-| groundstation         | rest-json          | 40/40   | 1         |
-| ivs                   | rest-json          | 40/40   | 1         |
-| accessanalyzer        | rest-json          | 39/39   | 1         |
-| kinesis               | json               | 39/39   | 8         |
-| ssm-contacts          | json               | 39/39   | 1         |
-| swf                   | json               | 39/39   | 1         |
-| appmesh               | rest-json          | 38/38   | 1         |
-| amplify               | rest-json          | 37/37   | 1         |
-| apprunner             | json               | 37/37   | 1         |
-| dataexchange          | rest-json          | 37/37   | 1         |
-| outposts              | rest-json          | 37/37   | 1         |
-| stepfunctions         | json               | 37/37   | 13        |
-| shield                | json               | 36/36   | 1         |
-| ram                   | rest-json          | 35/35   | 1         |
-| efs                   | rest-json          | 31/31   | 1         |
-| schemas               | rest-json          | 31/31   | 1         |
-| ssm-incidents         | rest-json          | 31/31   | 1         |
-| servicediscovery      | json               | 30/30   | 1         |
-| detective             | rest-json          | 29/29   | 1         |
-| voiceid               | json               | 29/29   | 1         |
-| budgets               | json               | 26/26   | 1         |
-| iotevents             | rest-json          | 26/26   | 1         |
-| mq                    | rest-json          | 24/24   | 1         |
-| resourcegroups        | rest-json          | 23/23   | 1         |
-| secretsmanager        | json               | 23/23   | 7         |
-| sqs                   | json               | 23/23   | 11        |
-| emr-serverless        | rest-json          | 22/22   | 1         |
-| dax                   | json               | 21/21   | 1         |
-| mediastore            | json               | 21/21   | 1         |
-| datapipeline          | json               | 19/19   | 1         |
-| keyspaces             | json               | 19/19   | 1         |
-| mediapackage          | rest-json          | 19/19   | 1         |
-| signer                | rest-json          | 19/19   | 1         |
-| acm                   | json               | 17/17   | 4         |
-| firehose              | json               | 12/12   | 3         |
-| mwaa                  | rest-json          | 12/12   | 1         |
-| scheduler             | rest-json          | 12/12   | 1         |
-| sts                   | query              | 49/11   | 2         |
-| dlm                   | rest-json          | 8/8     | 1         |
+| Service               | Protocol  | Ops     | E2E files |
+| --------------------- | --------- | ------- | --------- |
+| ec2                   | ec2       | 765/765 | 66        |
+| sagemaker             | json      | 396/396 | 32        |
+| connect               | rest-json | 370/370 | 23        |
+| glue                  | json      | 265/265 | 25        |
+| iam                   | query     | 176/176 | 13        |
+| cloudfront            | rest-xml  | 178/167 | 5         |
+| rds                   | query     | 164/164 | 7         |
+| ssm                   | json      | 146/146 | 2         |
+| redshift              | query     | 141/141 | 1         |
+| cognito-idp           | json      | 126/126 | 7         |
+| apigateway            | rest-json | 124/124 | 11        |
+| medialive             | rest-json | 123/123 | 1         |
+| pinpoint              | rest-json | 122/122 | 1         |
+| logs                  | json      | 113/113 | 7         |
+| s3                    | rest-xml  | 153/111 | 19        |
+| backup                | rest-json | 109/109 | 1         |
+| lexv2                 | rest-json | 107/107 | 1         |
+| pinpoint-sms-voice-v2 | json      | 106/106 | 1         |
+| iotsitewise           | rest-json | 104/104 | 1         |
+| config                | json      | 97/97   | 1         |
+| storagegateway        | json      | 96/96   | 1         |
+| networkmanager        | rest-json | 95/95   | 1         |
+| greengrass            | rest-json | 92/92   | 1         |
+| workspaces            | json      | 91/91   | 1         |
+| cloudformation        | query     | 90/90   | 7         |
+| servicecatalog        | json      | 90/90   | 1         |
+| appstream             | json      | 89/89   | 1         |
+| opensearch            | rest-json | 88/88   | 1         |
+| guardduty             | rest-json | 87/87   | 1         |
+| comprehend            | json      | 85/85   | 1         |
+| lambda                | rest-json | 85/85   | 10        |
+| codecommit            | json      | 79/79   | 1         |
+| network-firewall      | json      | 79/79   | 1         |
+| ecs                   | json      | 77/77   | 2         |
+| imagebuilder          | rest-json | 77/77   | 1         |
+| elasticache           | query     | 75/75   | 3         |
+| appsync               | rest-json | 74/74   | 1         |
+| frauddetector         | json      | 73/73   | 1         |
+| personalize           | json      | 71/71   | 1         |
+| route53               | rest-xml  | 240/71  | 7         |
+| ses                   | query     | 71/71   | 1         |
+| transfer              | json      | 71/71   | 1         |
+| athena                | json      | 70/70   | 3         |
+| kendra                | json      | 66/66   | 1         |
+| eks                   | rest-json | 64/64   | 4         |
+| directconnect         | json      | 63/63   | 1         |
+| forecast              | json      | 63/63   | 1         |
+| organizations         | json      | 63/63   | 1         |
+| licensemanager        | json      | 62/62   | 1         |
+| lakeformation         | rest-json | 61/61   | 1         |
+| cloudtrail            | json      | 60/60   | 2         |
+| emr                   | json      | 60/60   | 1         |
+| codebuild             | json      | 59/59   | 1         |
+| ecr                   | json      | 58/58   | 1         |
+| dynamodb              | json      | 61/57   | 26        |
+| eventbridge           | json      | 57/57   | 9         |
+| globalaccelerator     | json      | 56/56   | 1         |
+| wafv2                 | json      | 55/55   | 2         |
+| kms                   | json      | 54/54   | 5         |
+| datasync              | json      | 53/53   | 1         |
+| elbv2                 | query     | 51/51   | 2         |
+| codeartifact          | rest-json | 48/48   | 1         |
+| fsx                   | json      | 48/48   | 1         |
+| mediatailor           | rest-json | 48/48   | 1         |
+| elasticbeanstalk      | query     | 47/47   | 1         |
+| cloudwatch            | json      | 46/46   | 3         |
+| appconfig             | rest-json | 45/45   | 1         |
+| batch                 | rest-json | 45/45   | 3         |
+| memorydb              | json      | 45/45   | 1         |
+| codepipeline          | json      | 44/44   | 1         |
+| transcribe            | json      | 43/43   | 1         |
+| fms                   | json      | 42/42   | 1         |
+| sns                   | query     | 42/42   | 12        |
+| wisdom                | rest-json | 41/41   | 1         |
+| groundstation         | rest-json | 40/40   | 1         |
+| ivs                   | rest-json | 40/40   | 1         |
+| accessanalyzer        | rest-json | 39/39   | 1         |
+| kinesis               | json      | 39/39   | 8         |
+| ssm-contacts          | json      | 39/39   | 1         |
+| swf                   | json      | 39/39   | 1         |
+| appmesh               | rest-json | 38/38   | 1         |
+| amplify               | rest-json | 37/37   | 1         |
+| apprunner             | json      | 37/37   | 1         |
+| dataexchange          | rest-json | 37/37   | 1         |
+| outposts              | rest-json | 37/37   | 1         |
+| stepfunctions         | json      | 37/37   | 13        |
+| shield                | json      | 36/36   | 1         |
+| ram                   | rest-json | 35/35   | 1         |
+| efs                   | rest-json | 31/31   | 1         |
+| schemas               | rest-json | 31/31   | 1         |
+| ssm-incidents         | rest-json | 31/31   | 1         |
+| servicediscovery      | json      | 30/30   | 1         |
+| detective             | rest-json | 29/29   | 1         |
+| voiceid               | json      | 29/29   | 1         |
+| budgets               | json      | 26/26   | 1         |
+| iotevents             | rest-json | 26/26   | 1         |
+| mq                    | rest-json | 24/24   | 1         |
+| resourcegroups        | rest-json | 23/23   | 1         |
+| secretsmanager        | json      | 23/23   | 7         |
+| sqs                   | json      | 23/23   | 11        |
+| emr-serverless        | rest-json | 22/22   | 1         |
+| dax                   | json      | 21/21   | 1         |
+| mediastore            | json      | 21/21   | 1         |
+| datapipeline          | json      | 19/19   | 1         |
+| keyspaces             | json      | 19/19   | 1         |
+| mediapackage          | rest-json | 19/19   | 1         |
+| signer                | rest-json | 19/19   | 1         |
+| acm                   | json      | 17/17   | 4         |
+| firehose              | json      | 12/12   | 3         |
+| mwaa                  | rest-json | 12/12   | 1         |
+| scheduler             | rest-json | 12/12   | 1         |
+| sts                   | query     | 49/11   | 2         |
+| dlm                   | rest-json | 8/8     | 1         |
 
 ---
 

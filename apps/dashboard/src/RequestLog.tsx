@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { RequestLogEntry } from "./api";
 import {
   CodeBlock,
@@ -21,6 +21,37 @@ const detailTabs = [
   { id: "response", label: "レスポンス" },
 ] as const;
 type DetailTab = (typeof detailTabs)[number]["id"];
+
+const LogRow = memo(function LogRow({
+  r,
+  isSelected,
+  onSelect,
+}: {
+  r: RequestLogEntry;
+  isSelected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div
+      className={`log-row${isSelected ? " sel" : ""}${r.statusCode >= 500 ? " r5xx" : r.statusCode >= 400 ? " r4xx" : ""}`}
+      onClick={() => onSelect(r.id)}
+    >
+      <span className="c-time mono">{fmtTime(r.time)}</span>
+      <span className="c-svc">
+        <ServiceTag svc={r.service} />
+      </span>
+      <span className="c-op mono">{r.operation}</span>
+      <span className="c-status">
+        <StatusChip status={r.statusCode} />
+      </span>
+      <span className="c-lat mono">
+        {fmtLatency(r.latencyMs)}
+        <span className="lat-u">ms</span>
+      </span>
+      <span className="c-scope mono">{r.region}</span>
+    </div>
+  );
+});
 
 export const statusFilters = ["all", "2xx", "4xx", "5xx"] as const;
 export type StatusFilter = (typeof statusFilters)[number];
@@ -411,25 +442,12 @@ export function RequestLog({
                 onScroll={onScroll}
               >
                 {filtered.map((r) => (
-                  <div
+                  <LogRow
                     key={r.id}
-                    className={`log-row${r.id === selId ? " sel" : ""}${r.statusCode >= 500 ? " r5xx" : r.statusCode >= 400 ? " r4xx" : ""}`}
-                    onClick={() => onSelect(r.id)}
-                  >
-                    <span className="c-time mono">{fmtTime(r.time)}</span>
-                    <span className="c-svc">
-                      <ServiceTag svc={r.service} />
-                    </span>
-                    <span className="c-op mono">{r.operation}</span>
-                    <span className="c-status">
-                      <StatusChip status={r.statusCode} />
-                    </span>
-                    <span className="c-lat mono">
-                      {fmtLatency(r.latencyMs)}
-                      <span className="lat-u">ms</span>
-                    </span>
-                    <span className="c-scope mono">{r.region}</span>
-                  </div>
+                    r={r}
+                    isSelected={r.id === selId}
+                    onSelect={onSelect}
+                  />
                 ))}
               </div>
               {!stick && newCount > 0 && (

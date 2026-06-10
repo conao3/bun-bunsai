@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ResourceEntry } from "./api";
 import { useLocation } from "./router";
 import {
@@ -360,6 +360,31 @@ function ResourceTree({
   );
 }
 
+function buildArn(entry: ResourceEntry): string | null {
+  const { service, account, region, key } = entry;
+  const obj =
+    entry.value && typeof entry.value === "object"
+      ? (entry.value as Record<string, unknown>)
+      : null;
+  if (service === "sqs" && obj && isSQSQueue(obj)) {
+    const queueArn = (obj.Attributes as Record<string, string> | undefined)
+      ?.QueueArn;
+    if (typeof queueArn === "string") return queueArn;
+  }
+  switch (service) {
+    case "s3":
+      return `arn:aws:s3:::${key}`;
+    case "sqs":
+      return `arn:aws:sqs:${region}:${account}:${key}`;
+    case "dynamodb":
+      return `arn:aws:dynamodb:${region}:${account}:table/${key}`;
+    case "secretsmanager":
+      return `arn:aws:secretsmanager:${region}:${account}:secret:${key}`;
+    default:
+      return null;
+  }
+}
+
 function ResourceDetail({
   scope,
   entry,
@@ -376,6 +401,7 @@ function ResourceDetail({
       ? (entry.value as Record<string, unknown>)
       : null;
   const s = svcInfo(entry.service);
+  const arn = buildArn(entry);
   return (
     <div className="res-detail">
       <div className="res-detail-head">
@@ -391,6 +417,14 @@ function ResourceDetail({
         >
           {s.name} · {entry.account} · {entry.region}
         </div>
+        {arn && (
+          <div
+            className="mono"
+            style={{ fontSize: 11, color: "var(--muted-soft)", marginTop: 2 }}
+          >
+            {arn}
+          </div>
+        )}
       </div>
 
       {obj && entry.service === "s3" && isS3Bucket(obj) ? (
@@ -443,6 +477,9 @@ export function ResourceBrowser({
   const loc = useLocation();
   const svcHint = loc.query.get("svc");
 
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+
   const scoped = useMemo(
     () =>
       resources.filter(
@@ -473,7 +510,7 @@ export function ResourceBrowser({
     if (svcHint) {
       const svcResources = scoped.filter((e) => e.service === svcHint);
       if (svcResources.length > 0) {
-        onSelect(
+        onSelectRef.current(
           { service: svcResources[0].service, key: svcResources[0].key },
           true,
         );
@@ -481,8 +518,11 @@ export function ResourceBrowser({
       }
     }
     const first = scoped[0];
-    onSelect(first ? { service: first.service, key: first.key } : null, true);
-  }, [scoped, sel, loaded, onSelect, svcHint]);
+    onSelectRef.current(
+      first ? { service: first.service, key: first.key } : null,
+      true,
+    );
+  }, [scoped, sel, loaded, svcHint]);
 
   const selEntry = sel
     ? (scoped.find((e) => e.service === sel.service && e.key === sel.key) ??

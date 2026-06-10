@@ -55,16 +55,45 @@ function RequestDetail({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<DetailTab>("interpreted");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const prevFocusRef = useRef<Element | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     setTab("interpreted");
   }, [req.id]);
+
+  useEffect(() => {
+    prevFocusRef.current = document.activeElement;
+    dialogRef.current?.focus();
+    return () => {
+      (prevFocusRef.current as HTMLElement | null)?.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCloseRef.current();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   const isErr = req.statusCode >= 400;
   const err = isErr ? parsedError(req.responseBodyText) : null;
   const respIsJson =
     req.responseBodyText.trim().startsWith("{") ||
     req.responseBodyText.trim().startsWith("[");
   return (
-    <div className="detail drawer">
+    <div
+      className="detail drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${req.operation} (${req.service})`}
+      ref={dialogRef}
+      tabIndex={-1}
+    >
       <div className="detail-head">
         <div className="flex aic gap8" style={{ minWidth: 0 }}>
           <ServiceTag svc={req.service} />
@@ -77,7 +106,7 @@ function RequestDetail({
           <StatusChip status={req.statusCode} />
           <ProtoBadge protocol={req.protocol} />
         </div>
-        <button className="icon-btn" onClick={onClose}>
+        <button className="icon-btn" onClick={onClose} aria-label="閉じる">
           <Ico.close width="17" height="17" />
         </button>
       </div>

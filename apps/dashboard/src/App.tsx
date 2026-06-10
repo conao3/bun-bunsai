@@ -97,7 +97,7 @@ export function App() {
       const next = new URLSearchParams(loc.query);
       next.set("account", v.account);
       next.set("region", v.region);
-      router.push(withQuery(loc.path, next));
+      router.replace(withQuery(loc.path, next));
     },
     [loc.query, loc.path],
   );
@@ -106,9 +106,11 @@ export function App() {
     (id: string | null) => {
       if (id === null)
         router.closeDrawer(withQuery(buildLogPath(null), loc.query));
+      else if (selId !== null)
+        router.replace(withQuery(buildLogPath(id), loc.query));
       else router.push(withQuery(buildLogPath(id), loc.query));
     },
-    [loc.query],
+    [loc.query, selId],
   );
 
   const setSel = useCallback(

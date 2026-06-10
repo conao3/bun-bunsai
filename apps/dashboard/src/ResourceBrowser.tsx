@@ -45,6 +45,7 @@ function ResourceTree({
             <div
               className="tree-node svc"
               onClick={() => setOpen({ ...open, [svc]: !isOpen })}
+              aria-expanded={isOpen}
             >
               <Ico.chevR
                 className="tw"

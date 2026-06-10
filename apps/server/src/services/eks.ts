@@ -587,7 +587,28 @@ const ListClusters: OperationHandler = (input, ctx) => {
 const DeleteCluster: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const cluster = requireCluster(ctx, name);
+  const hasNodegroups = ctx.store
+    .list<StoredNodegroup>()
+    .some((entry) => entry.key.startsWith(`nodegroup/${name}/`));
+  if (hasNodegroups) {
+    throw awsError(
+      "ResourceInUseException",
+      `Cluster has nodegroups attached. Remove all nodegroups before deleting the cluster.`,
+      409,
+    );
+  }
+  const hasFargate = ctx.store
+    .list<StoredFargateProfile>()
+    .some((entry) => entry.key.startsWith(`fargate/${name}/`));
+  if (hasFargate) {
+    throw awsError(
+      "ResourceInUseException",
+      `Cluster has Fargate profiles attached. Remove all Fargate profiles before deleting the cluster.`,
+      409,
+    );
+  }
   ctx.store.delete(clusterKey(name));
+  ctx.store.delete(tagsKey(cluster.arn));
   return { cluster: clusterView({ ...cluster, status: "DELETING" }) };
 };
 
@@ -684,6 +705,7 @@ const DeleteNodegroup: OperationHandler = (input, ctx) => {
   const nodegroupName = requireString(input, "nodegroupName");
   const stored = requireNodegroup(ctx, clusterName, nodegroupName);
   ctx.store.delete(nodegroupKey(clusterName, nodegroupName));
+  ctx.store.delete(tagsKey(stored.nodegroupArn));
   return { nodegroup: nodegroupView({ ...stored, status: "DELETING" }) };
 };
 
@@ -849,6 +871,7 @@ const DeleteFargateProfile: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(fargateKey(clusterName, fargateProfileName));
+  ctx.store.delete(tagsKey(stored.fargateProfileArn));
   return {
     fargateProfile: fargateProfileView({ ...stored, status: "DELETING" }),
   };
@@ -936,6 +959,7 @@ const DeleteAddon: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(addonKey(clusterName, addonName));
+  ctx.store.delete(tagsKey(stored.addonArn));
   return { addon: addonView({ ...stored, status: "DELETING" }) };
 };
 

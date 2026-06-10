@@ -743,7 +743,10 @@ const CreateUserPool: OperationHandler = (input, ctx) => {
         : "ESSENTIALS",
   };
   ctx.store.set(poolId, pool);
-  if (typeof input["UserPoolTags"] === "object" && input["UserPoolTags"] !== null) {
+  if (
+    typeof input["UserPoolTags"] === "object" &&
+    input["UserPoolTags"] !== null
+  ) {
     ctx.store.set(tagsKey(pool.Arn), input["UserPoolTags"] as StoredTags);
   }
   return { UserPool: poolType(pool) };

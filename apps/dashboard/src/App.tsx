@@ -339,6 +339,7 @@ export function App() {
           <Overview
             services={services}
             requests={requests}
+            scope={scope}
             setScreen={setScreen}
             connected={connected}
           />
@@ -346,6 +347,7 @@ export function App() {
         {screen === "log" && (
           <RequestLog
             requests={requests}
+            scope={scope}
             live={live}
             setLive={setLive}
             clearRequests={clearRequests}

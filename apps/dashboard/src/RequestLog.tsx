@@ -302,6 +302,7 @@ function RequestDetail({
 
 export function RequestLog({
   requests,
+  scope,
   live,
   setLive,
   clearRequests,
@@ -316,6 +317,7 @@ export function RequestLog({
   onQ,
 }: {
   requests: RequestLogEntry[];
+  scope: { account: string; region: string };
   live: boolean;
   setLive: (v: boolean) => void;
   clearRequests: () => void;
@@ -351,6 +353,8 @@ export function RequestLog({
   const filtered = useMemo(() => {
     const needle = qInput.toLowerCase();
     return requests.filter((r) => {
+      if (r.account !== scope.account || r.region !== scope.region)
+        return false;
       if (svcFilter.length && !svcFilter.includes(r.service)) return false;
       if (statusFilter !== "all" && statusClass(r.statusCode) !== statusFilter)
         return false;
@@ -363,7 +367,7 @@ export function RequestLog({
         return false;
       return true;
     });
-  }, [requests, svcFilter, statusFilter, qInput]);
+  }, [requests, scope, svcFilter, statusFilter, qInput]);
 
   useEffect(() => {
     const el = listRef.current;

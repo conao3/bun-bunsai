@@ -60,6 +60,7 @@ type StoredTable = {
   KeySchema: KeySchemaElement[];
   CreationDateTime: number;
   items: Record<string, Item>;
+  status?: string;
   tags?: StoredTag[];
   ttl?: StoredTtl;
   pointInTimeRecovery?: boolean;
@@ -179,6 +180,10 @@ type StoredStream = {
   sequenceNumber: number;
 };
 
+type StoredTransactToken = {
+  kind: "transact-token";
+};
+
 const tableArn = (region: string, account: string, name: string): string =>
   `arn:aws:dynamodb:${region}:${account}:table/${name}`;
 
@@ -227,6 +232,8 @@ const tableNameFromArn = (value: string): string => {
 };
 
 const backupKey = (backupArn: string): string => `backup:${backupArn}`;
+
+const transactTokenKey = (token: string): string => `transact-token:${token}`;
 
 const isBackupEntry = (value: unknown): value is StoredBackup =>
   typeof value === "object" &&
@@ -611,6 +618,10 @@ const CreateTable: OperationHandler = (input, ctx) => {
   if (gsi.length > 0) table.globalSecondaryIndexes = gsi;
   const lsi = parseSecondaryIndexes(input["LocalSecondaryIndexes"]);
   if (lsi.length > 0) table.localSecondaryIndexes = lsi;
+  const inputTags = Array.isArray(input["Tags"])
+    ? (input["Tags"] as StoredTag[])
+    : [];
+  if (inputTags.length > 0) table.tags = inputTags;
   const streamSpec = asRecord(input["StreamSpecification"]);
   if (streamSpec["StreamEnabled"] === true) {
     const viewType =
@@ -634,8 +645,19 @@ const CreateTable: OperationHandler = (input, ctx) => {
     };
     ctx.store.set(streamKey(table.latestStreamArn), stream);
   }
+  table.status = "CREATING";
   ctx.store.set(name, table);
-  return { TableDescription: tableDescription(ctx, table, "ACTIVE") };
+  setTimeout(() => {
+    const stored = ctx.store.get<StoredTable>(name);
+    if (
+      stored !== undefined &&
+      !hasKind(stored) &&
+      stored.status === "CREATING"
+    ) {
+      ctx.store.set(name, { ...stored, status: "ACTIVE" });
+    }
+  }, 0);
+  return { TableDescription: tableDescription(ctx, table, "CREATING") };
 };
 
 const DeleteTable: OperationHandler = (input, ctx) => {
@@ -670,7 +692,7 @@ const ListTables: OperationHandler = (input, ctx) => {
 const DescribeTable: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
-  return { Table: tableDescription(ctx, table, "ACTIVE") };
+  return { Table: tableDescription(ctx, table, table.status ?? "ACTIVE") };
 };
 
 const keyProjection = (table: StoredTable, item: Item): Item => {
@@ -1469,6 +1491,19 @@ type TransactPlan =
   | { kind: "Skip" };
 
 const TransactWriteItems: OperationHandler = (input, ctx) => {
+  const clientRequestToken =
+    typeof input["ClientRequestToken"] === "string"
+      ? input["ClientRequestToken"]
+      : undefined;
+  if (clientRequestToken !== undefined) {
+    if (
+      ctx.store.get<StoredTransactToken>(
+        transactTokenKey(clientRequestToken),
+      ) !== undefined
+    ) {
+      return {};
+    }
+  }
   const transactItems = Array.isArray(input["TransactItems"])
     ? (input["TransactItems"] as Record<string, unknown>[])
     : [];
@@ -1647,6 +1682,11 @@ const TransactWriteItems: OperationHandler = (input, ctx) => {
   }
   for (const [name, table] of snapshots) {
     ctx.store.set(name, table);
+  }
+  if (clientRequestToken !== undefined) {
+    ctx.store.set<StoredTransactToken>(transactTokenKey(clientRequestToken), {
+      kind: "transact-token",
+    });
   }
   return {};
 };

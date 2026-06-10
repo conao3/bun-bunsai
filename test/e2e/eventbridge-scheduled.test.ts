@@ -7,6 +7,7 @@ import {
   EventBridgeClient,
   PutRuleCommand,
   PutTargetsCommand,
+  RemoveTargetsCommand,
 } from "@aws-sdk/client-eventbridge";
 import {
   CreateQueueCommand,
@@ -70,6 +71,9 @@ test("scheduled rule fires immediately and delivers to SQS target", async () => 
   expect(body.region).toBe(region);
   expect(body.detail).toEqual({});
 
+  await client.send(
+    new RemoveTargetsCommand({ Rule: "sched-rule", Ids: ["t1"] }),
+  );
   await client.send(new DeleteRuleCommand({ Name: "sched-rule" }));
 
   await new Promise((resolve) => setTimeout(resolve, 200));
@@ -126,5 +130,8 @@ test("DisableRule stops delivery, EnableRule resumes it", async () => {
   expect(body.source).toBe("aws.events");
   expect(body["detail-type"]).toBe("Scheduled Event");
 
+  await client.send(
+    new RemoveTargetsCommand({ Rule: "sched-rule2", Ids: ["t1"] }),
+  );
   await client.send(new DeleteRuleCommand({ Name: "sched-rule2" }));
 });

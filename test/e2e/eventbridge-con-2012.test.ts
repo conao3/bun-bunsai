@@ -48,7 +48,9 @@ test("HIGH-1: PutRule with Tags stores tags atomically", async () => {
   expect(tagMap["env"]).toBe("test");
   expect(tagMap["team"]).toBe("bunsai");
 
-  await client.send(new DeleteRuleCommand({ Name: ruleName, EventBusName: busName }));
+  await client.send(
+    new DeleteRuleCommand({ Name: ruleName, EventBusName: busName }),
+  );
 });
 
 test("HIGH-2: CreateEventBus with Tags stores tags atomically", async () => {
@@ -92,12 +94,16 @@ test("HIGH-3: DeleteRule with targets throws ResourceInUseException", async () =
     new PutTargetsCommand({
       Rule: ruleName,
       EventBusName: busName,
-      Targets: [{ Id: "target1", Arn: `arn:aws:sqs:${region}:000000000000:test-queue` }],
+      Targets: [
+        { Id: "target1", Arn: `arn:aws:sqs:${region}:000000000000:test-queue` },
+      ],
     }),
   );
 
   await expect(
-    client.send(new DeleteRuleCommand({ Name: ruleName, EventBusName: busName })),
+    client.send(
+      new DeleteRuleCommand({ Name: ruleName, EventBusName: busName }),
+    ),
   ).rejects.toMatchObject({ name: "ResourceInUseException" });
 
   await client.send(
@@ -107,7 +113,9 @@ test("HIGH-3: DeleteRule with targets throws ResourceInUseException", async () =
       Ids: ["target1"],
     }),
   );
-  await client.send(new DeleteRuleCommand({ Name: ruleName, EventBusName: busName }));
+  await client.send(
+    new DeleteRuleCommand({ Name: ruleName, EventBusName: busName }),
+  );
 });
 
 test("HIGH-4: DeleteEventBus with rules throws ResourceInUseException", async () => {
@@ -159,7 +167,10 @@ test("HIGH-5: CreateApiDestination with valid ConnectionArn succeeds", async () 
       Name: connName,
       AuthorizationType: "API_KEY",
       AuthParameters: {
-        ApiKeyAuthParameters: { ApiKeyName: "x-api-key", ApiKeyValue: "secret" },
+        ApiKeyAuthParameters: {
+          ApiKeyName: "x-api-key",
+          ApiKeyValue: "secret",
+        },
       },
     }),
   );

@@ -2228,6 +2228,141 @@ const DeleteQueryDefinition: OperationHandler = (input, ctx) => {
   return { success };
 };
 
+type InsightsFilterExpr =
+  | { kind: "like"; field: string; pattern: string; flags: string }
+  | { kind: "eq"; field: string; value: string };
+
+type InsightsStage =
+  | { type: "fields"; fields: string[] }
+  | { type: "filter"; filter: InsightsFilterExpr }
+  | { type: "sort"; field: string; direction: "asc" | "desc" }
+  | { type: "limit"; count: number };
+
+const parseInsightsQuery = (queryString: string): InsightsStage[] => {
+  const stages: InsightsStage[] = [];
+  for (const part of queryString.split("|").map((p) => p.trim())) {
+    if (part.startsWith("fields ")) {
+      const fields = part
+        .slice("fields ".length)
+        .split(",")
+        .map((f) => f.trim());
+      stages.push({ type: "fields", fields });
+    } else if (part.startsWith("filter ")) {
+      const expr = part.slice("filter ".length).trim();
+      const likeM = /^([@\w]+)\s+like\s+\/(.+?)\/([gimsuy]*)$/.exec(expr);
+      if (likeM) {
+        stages.push({
+          type: "filter",
+          filter: {
+            kind: "like",
+            field: likeM[1]!,
+            pattern: likeM[2]!,
+            flags: likeM[3] ?? "",
+          },
+        });
+      } else {
+        const eqM = /^([@\w]+)\s*=\s*"([^"]*)"$/.exec(expr);
+        if (eqM) {
+          stages.push({
+            type: "filter",
+            filter: { kind: "eq", field: eqM[1]!, value: eqM[2]! },
+          });
+        }
+      }
+    } else if (part.startsWith("sort ")) {
+      const m = /^([@\w]+)\s+(asc|desc)$/i.exec(
+        part.slice("sort ".length).trim(),
+      );
+      if (m) {
+        stages.push({
+          type: "sort",
+          field: m[1]!,
+          direction: m[2]!.toLowerCase() as "asc" | "desc",
+        });
+      }
+    } else if (part.startsWith("limit ")) {
+      const n = parseInt(part.slice("limit ".length).trim(), 10);
+      if (!isNaN(n)) stages.push({ type: "limit", count: n });
+    }
+  }
+  return stages;
+};
+
+const applyInsightsQuery = (
+  queryString: string,
+  events: StoredEvent[],
+): { field: string; value: string }[][] => {
+  const stages = parseInsightsQuery(queryString);
+
+  let rows: Record<string, string>[] = events.map((ev) => {
+    const base: Record<string, string> = {
+      "@timestamp": String(ev.timestamp),
+      "@message": ev.message,
+    };
+    try {
+      const parsed: unknown = JSON.parse(ev.message);
+      if (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed)
+      ) {
+        for (const [k, v] of Object.entries(
+          parsed as Record<string, unknown>,
+        )) {
+          if (
+            typeof v === "string" ||
+            typeof v === "number" ||
+            typeof v === "boolean"
+          ) {
+            base[k] = String(v);
+          }
+        }
+      }
+    } catch {}
+    return base;
+  });
+
+  let selectedFields: string[] | undefined;
+
+  for (const stage of stages) {
+    if (stage.type === "fields") {
+      selectedFields = stage.fields;
+    } else if (stage.type === "filter") {
+      const { filter } = stage;
+      rows = rows.filter((row) => {
+        const val = row[filter.field] ?? "";
+        if (filter.kind === "like") {
+          return new RegExp(filter.pattern, filter.flags).test(val);
+        }
+        return val === filter.value;
+      });
+    } else if (stage.type === "sort") {
+      const { field, direction } = stage;
+      rows.sort((a, b) => {
+        const av = a[field] ?? "";
+        const bv = b[field] ?? "";
+        const an = Number(av);
+        const bn = Number(bv);
+        if (!isNaN(an) && !isNaN(bn)) {
+          return direction === "asc" ? an - bn : bn - an;
+        }
+        return direction === "asc"
+          ? av.localeCompare(bv)
+          : bv.localeCompare(av);
+      });
+    } else if (stage.type === "limit") {
+      rows = rows.slice(0, stage.count);
+    }
+  }
+
+  return rows.map((row) => {
+    const keys = selectedFields ?? Object.keys(row);
+    return keys
+      .filter((f) => f in row)
+      .map((f) => ({ field: f, value: row[f]! }));
+  });
+};
+
 const StartQuery: OperationHandler = (input, ctx) => {
   const queryString = requireString(input, "queryString");
   const singleName = optionalString(input, "logGroupName");
@@ -2288,7 +2423,7 @@ const GetQueryResults: OperationHandler = (input, ctx) => {
     const endMs =
       query.endTime !== undefined ? query.endTime * 1000 : undefined;
     const groupNames = query.logGroupNames ?? [];
-    const results: { field: string; value: string }[][] = [];
+    const candidateEvents: StoredEvent[] = [];
     let scanned = 0;
     for (const groupName of groupNames) {
       const group = ctx.store.get<StoredGroup>(groupName);
@@ -2298,13 +2433,11 @@ const GetQueryResults: OperationHandler = (input, ctx) => {
           scanned++;
           if (startMs !== undefined && event.timestamp < startMs) continue;
           if (endMs !== undefined && event.timestamp > endMs) continue;
-          results.push([
-            { field: "@timestamp", value: String(event.timestamp) },
-            { field: "@message", value: event.message },
-          ]);
+          candidateEvents.push(event);
         }
       }
     }
+    const results = applyInsightsQuery(query.queryString, candidateEvents);
     query.results = results;
     query.statistics = {
       recordsMatched: results.length,

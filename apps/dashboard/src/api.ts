@@ -51,11 +51,8 @@ export async function fetchServices(): Promise<ServiceSummary[]> {
   return getJson<ServiceSummary[]>("/services");
 }
 
-export async function fetchResources(
-  service?: string,
-): Promise<ResourceEntry[]> {
-  const q = service ? `?service=${encodeURIComponent(service)}` : "";
-  return getJson<ResourceEntry[]>(`/resources${q}`);
+export async function fetchResources(): Promise<ResourceEntry[]> {
+  return getJson<ResourceEntry[]>("/resources");
 }
 
 export async function fetchLogs(): Promise<RequestLogEntry[]> {

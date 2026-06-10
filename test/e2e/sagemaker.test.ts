@@ -249,9 +249,7 @@ test("SageMaker tag round-trip — CreateEndpoint with Tags → ListTagsForResou
   );
   const arn = created.EndpointArn!;
 
-  const listed = await client.send(
-    new ListTagsCommand({ ResourceArn: arn }),
-  );
+  const listed = await client.send(new ListTagsCommand({ ResourceArn: arn }));
   expect(listed.Tags).toEqual([{ Key: "Env", Value: "test" }]);
 
   await client.send(new DeleteEndpointCommand({ EndpointName: endpointName }));
@@ -286,9 +284,7 @@ test("SageMaker delete cleanup — tags removed after DeleteModel", async () => 
   ).resolves.toMatchObject({ Tags: [] });
 });
 
-test(
-  "SageMaker UpdateEndpoint — Updating status transitions to InService",
-  async () => {
+test("SageMaker UpdateEndpoint — Updating status transitions to InService", async () => {
   const client = sagemaker();
   const configName = "update-status-config";
   const config2Name = "update-status-config2";
@@ -355,9 +351,7 @@ test(
   await client.send(
     new DeleteEndpointConfigCommand({ EndpointConfigName: config2Name }),
   );
-  },
-  15000,
-);
+}, 15000);
 
 test("SageMaker DeleteEndpointConfig — ResourceInUse when endpoint is live", async () => {
   const client = sagemaker();

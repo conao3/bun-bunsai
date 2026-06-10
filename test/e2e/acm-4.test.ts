@@ -130,9 +130,7 @@ test("ACM ListCertificates pagination with MaxItems", async () => {
     );
   }
 
-  const page1 = await client.send(
-    new ListCertificatesCommand({ MaxItems: 2 }),
-  );
+  const page1 = await client.send(new ListCertificatesCommand({ MaxItems: 2 }));
   expect((page1.CertificateSummaryList ?? []).length).toBeLessThanOrEqual(2);
 
   if (page1.NextToken !== undefined) {

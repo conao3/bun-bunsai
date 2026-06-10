@@ -112,9 +112,7 @@ const checkIdempotency = (
   token: string | undefined,
 ): unknown | undefined => {
   if (token === undefined || token === "") return undefined;
-  const record = ctx.store.get<IdempotencyRecord>(
-    idempotencyKey(scope, token),
-  );
+  const record = ctx.store.get<IdempotencyRecord>(idempotencyKey(scope, token));
   if (record === undefined) return undefined;
   const now = Math.floor(Date.now() / 1000);
   if (now >= record.expiresAt) return undefined;
@@ -278,7 +276,9 @@ const applyPagination = <T extends { CertificateArn: string }>(
   };
 };
 
-const sortCertificates = <T extends { CertificateArn: string; CreatedAt: number }>(
+const sortCertificates = <
+  T extends { CertificateArn: string; CreatedAt: number },
+>(
   items: T[],
   sortBy: string,
   sortOrder: string,

@@ -728,6 +728,7 @@ const DeleteParameter: OperationHandler = (input, ctx) => {
   if (!removed) {
     throw awsError("ParameterNotFound", `Parameter ${name} not found.`, 400);
   }
+  ctx.store.delete(tagsKey("Parameter", name));
   return {};
 };
 
@@ -739,6 +740,7 @@ const DeleteParameters: OperationHandler = (input, ctx) => {
   const invalid: string[] = [];
   for (const name of names) {
     if (ctx.store.delete(name)) {
+      ctx.store.delete(tagsKey("Parameter", name));
       deleted.push(name);
     } else {
       invalid.push(name);

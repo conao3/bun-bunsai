@@ -48,6 +48,7 @@ type StoredDatasetImportJob = {
 type StoredPredictor = {
   PredictorArn: string;
   PredictorName: string;
+  DatasetGroupArn: string | undefined;
   ForecastHorizon: number | undefined;
   AlgorithmArn: string | undefined;
   IsAutoPredictor: boolean;
@@ -163,7 +164,7 @@ const paginateList = <T>(
   maxResults: unknown,
 ): { items: T[]; nextToken: string | undefined } => {
   const pageSize =
-    typeof maxResults === "number" && maxResults > 0 ? maxResults : 10;
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 100;
   const startIndex =
     typeof nextToken === "string" && nextToken !== ""
       ? parseInt(nextToken, 10)
@@ -444,6 +445,13 @@ const CreateDataset: OperationHandler = (input, ctx) => {
     throw awsError("InvalidInputException", "Schema is a required field.", 400);
   }
   const DatasetArn = datasetArn(ctx, DatasetName);
+  if (ctx.store.get(datasetKey(DatasetArn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Dataset already exists: ${DatasetArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const dataset: StoredDataset = {
     DatasetArn,
@@ -457,6 +465,12 @@ const CreateDataset: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(datasetKey(DatasetArn), dataset);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(DatasetArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { DatasetArn };
 };
 
@@ -504,6 +518,7 @@ const DeleteDataset: OperationHandler = (input, ctx) => {
   const DatasetArn = requireString(input, "DatasetArn");
   requireDataset(ctx, DatasetArn);
   ctx.store.delete(datasetKey(DatasetArn));
+  ctx.store.delete(tagKey(DatasetArn));
   return {};
 };
 
@@ -511,6 +526,13 @@ const CreateDatasetGroup: OperationHandler = (input, ctx) => {
   const DatasetGroupName = requireString(input, "DatasetGroupName");
   const Domain = requireString(input, "Domain");
   const DatasetGroupArn = datasetGroupArn(ctx, DatasetGroupName);
+  if (ctx.store.get(datasetGroupKey(DatasetGroupArn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `DatasetGroup already exists: ${DatasetGroupArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const DatasetArns = Array.isArray(input["DatasetArns"])
     ? (input["DatasetArns"] as string[])
@@ -528,6 +550,12 @@ const CreateDatasetGroup: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(datasetGroupKey(DatasetGroupArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(DatasetGroupArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { DatasetGroupArn };
 };
 
@@ -573,6 +601,7 @@ const DeleteDatasetGroup: OperationHandler = (input, ctx) => {
   const DatasetGroupArn = requireString(input, "DatasetGroupArn");
   requireDatasetGroup(ctx, DatasetGroupArn);
   ctx.store.delete(datasetGroupKey(DatasetGroupArn));
+  ctx.store.delete(tagKey(DatasetGroupArn));
   return {};
 };
 
@@ -609,6 +638,13 @@ const CreateDatasetImportJob: OperationHandler = (input, ctx) => {
     );
   }
   const DatasetImportJobArn = datasetImportJobArn(ctx, DatasetImportJobName);
+  if (ctx.store.get(datasetImportJobKey(DatasetImportJobArn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `DatasetImportJob already exists: ${DatasetImportJobArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const item: StoredDatasetImportJob = {
     DatasetImportJobArn,
@@ -629,6 +665,12 @@ const CreateDatasetImportJob: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(datasetImportJobKey(DatasetImportJobArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(DatasetImportJobArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { DatasetImportJobArn };
 };
 
@@ -679,16 +721,38 @@ const DeleteDatasetImportJob: OperationHandler = (input, ctx) => {
   const DatasetImportJobArn = requireString(input, "DatasetImportJobArn");
   requireDatasetImportJob(ctx, DatasetImportJobArn);
   ctx.store.delete(datasetImportJobKey(DatasetImportJobArn));
+  ctx.store.delete(tagKey(DatasetImportJobArn));
   return {};
 };
 
 const CreateAutoPredictor: OperationHandler = (input, ctx) => {
   const PredictorName = requireString(input, "PredictorName");
+  const dataConfig = input["DataConfig"] as
+    | { DatasetGroupArn?: string }
+    | undefined;
+  const referencePredictorArn = stringOrUndefined(
+    input["ReferencePredictorArn"],
+  );
+  if (dataConfig?.DatasetGroupArn !== undefined) {
+    requireDatasetGroup(ctx, dataConfig.DatasetGroupArn);
+  }
+  if (referencePredictorArn !== undefined) {
+    requirePredictor(ctx, referencePredictorArn);
+  }
+  const DatasetGroupArn = dataConfig?.DatasetGroupArn;
   const PredictorArn = predictorArn(ctx, PredictorName);
+  if (ctx.store.get(predictorKey(PredictorArn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Predictor already exists: ${PredictorArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const item: StoredPredictor = {
     PredictorArn,
     PredictorName,
+    DatasetGroupArn,
     ForecastHorizon:
       typeof input["ForecastHorizon"] === "number"
         ? input["ForecastHorizon"]
@@ -700,6 +764,12 @@ const CreateAutoPredictor: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(predictorKey(PredictorArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(PredictorArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { PredictorArn };
 };
 
@@ -740,11 +810,26 @@ const CreatePredictor: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const inputDataConfig = input["InputDataConfig"] as
+    | { DatasetGroupArn?: string }
+    | undefined;
+  const DatasetGroupArn = inputDataConfig?.DatasetGroupArn;
+  if (DatasetGroupArn !== undefined) {
+    requireDatasetGroup(ctx, DatasetGroupArn);
+  }
   const PredictorArn = predictorArn(ctx, PredictorName);
+  if (ctx.store.get(predictorKey(PredictorArn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Predictor already exists: ${PredictorArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const item: StoredPredictor = {
     PredictorArn,
     PredictorName,
+    DatasetGroupArn,
     ForecastHorizon,
     AlgorithmArn: stringOrUndefined(input["AlgorithmArn"]),
     IsAutoPredictor: false,
@@ -753,6 +838,12 @@ const CreatePredictor: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(predictorKey(PredictorArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(PredictorArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { PredictorArn };
 };
 
@@ -798,6 +889,7 @@ const DeletePredictor: OperationHandler = (input, ctx) => {
   const PredictorArn = requireString(input, "PredictorArn");
   requirePredictor(ctx, PredictorArn);
   ctx.store.delete(predictorKey(PredictorArn));
+  ctx.store.delete(tagKey(PredictorArn));
   return {};
 };
 
@@ -815,6 +907,13 @@ const CreateForecast: OperationHandler = (input, ctx) => {
   const PredictorArn = requireString(input, "PredictorArn");
   requirePredictor(ctx, PredictorArn);
   const ForecastArn = forecastResArn(ctx, ForecastName);
+  if (ctx.store.get(forecastKey(ForecastArn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Forecast already exists: ${ForecastArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const ForecastTypes = Array.isArray(input["ForecastTypes"])
     ? (input["ForecastTypes"] as string[])
@@ -829,6 +928,12 @@ const CreateForecast: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(forecastKey(ForecastArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(ForecastArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { ForecastArn };
 };
 
@@ -874,6 +979,7 @@ const DeleteForecast: OperationHandler = (input, ctx) => {
   const ForecastArn = requireString(input, "ForecastArn");
   requireForecast(ctx, ForecastArn);
   ctx.store.delete(forecastKey(ForecastArn));
+  ctx.store.delete(tagKey(ForecastArn));
   return {};
 };
 
@@ -890,6 +996,13 @@ const CreateForecastExportJob: OperationHandler = (input, ctx) => {
     );
   }
   const ForecastExportJobArn = forecastExportJobArn(ctx, ForecastExportJobName);
+  if (ctx.store.get(forecastExportJobKey(ForecastExportJobArn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `ForecastExportJob already exists: ${ForecastExportJobArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const item: StoredForecastExportJob = {
     ForecastExportJobArn,
@@ -901,6 +1014,12 @@ const CreateForecastExportJob: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(forecastExportJobKey(ForecastExportJobArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(ForecastExportJobArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { ForecastExportJobArn };
 };
 
@@ -947,6 +1066,7 @@ const DeleteForecastExportJob: OperationHandler = (input, ctx) => {
   const ForecastExportJobArn = requireString(input, "ForecastExportJobArn");
   requireForecastExportJob(ctx, ForecastExportJobArn);
   ctx.store.delete(forecastExportJobKey(ForecastExportJobArn));
+  ctx.store.delete(tagKey(ForecastExportJobArn));
   return {};
 };
 
@@ -973,6 +1093,13 @@ const CreateExplainability: OperationHandler = (input, ctx) => {
     );
   }
   const ExplainabilityArn = explainabilityArn(ctx, ExplainabilityName);
+  if (ctx.store.get(explainabilityKey(ExplainabilityArn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Explainability already exists: ${ExplainabilityArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const item: StoredExplainability = {
     ExplainabilityArn,
@@ -984,6 +1111,12 @@ const CreateExplainability: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(explainabilityKey(ExplainabilityArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(ExplainabilityArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { ExplainabilityArn };
 };
 
@@ -1029,6 +1162,7 @@ const DeleteExplainability: OperationHandler = (input, ctx) => {
   const ExplainabilityArn = requireString(input, "ExplainabilityArn");
   requireExplainability(ctx, ExplainabilityArn);
   ctx.store.delete(explainabilityKey(ExplainabilityArn));
+  ctx.store.delete(tagKey(ExplainabilityArn));
   return {};
 };
 
@@ -1051,6 +1185,16 @@ const CreateExplainabilityExport: OperationHandler = (input, ctx) => {
     ctx,
     ExplainabilityExportName,
   );
+  if (
+    ctx.store.get(explainabilityExportKey(ExplainabilityExportArn)) !==
+    undefined
+  ) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `ExplainabilityExport already exists: ${ExplainabilityExportArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const item: StoredExplainabilityExport = {
     ExplainabilityExportArn,
@@ -1062,6 +1206,12 @@ const CreateExplainabilityExport: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(explainabilityExportKey(ExplainabilityExportArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(ExplainabilityExportArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { ExplainabilityExportArn };
 };
 
@@ -1114,6 +1264,7 @@ const DeleteExplainabilityExport: OperationHandler = (input, ctx) => {
   );
   requireExplainabilityExport(ctx, ExplainabilityExportArn);
   ctx.store.delete(explainabilityExportKey(ExplainabilityExportArn));
+  ctx.store.delete(tagKey(ExplainabilityExportArn));
   return {};
 };
 
@@ -1134,6 +1285,13 @@ const CreateMonitor: OperationHandler = (input, ctx) => {
     );
   }
   const MonitorArn = monitorArn(ctx, MonitorName);
+  if (ctx.store.get(monitorKey(MonitorArn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Monitor already exists: ${MonitorArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const item: StoredMonitor = {
     MonitorArn,
@@ -1144,6 +1302,12 @@ const CreateMonitor: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(monitorKey(MonitorArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(MonitorArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { MonitorArn };
 };
 
@@ -1194,6 +1358,7 @@ const DeleteMonitor: OperationHandler = (input, ctx) => {
   const MonitorArn = requireString(input, "MonitorArn");
   requireMonitor(ctx, MonitorArn);
   ctx.store.delete(monitorKey(MonitorArn));
+  ctx.store.delete(tagKey(MonitorArn));
   return {};
 };
 
@@ -1216,6 +1381,17 @@ const CreatePredictorBacktestExportJob: OperationHandler = (input, ctx) => {
     ctx,
     PredictorBacktestExportJobName,
   );
+  if (
+    ctx.store.get(
+      predictorBacktestExportJobKey(PredictorBacktestExportJobArn),
+    ) !== undefined
+  ) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `PredictorBacktestExportJob already exists: ${PredictorBacktestExportJobArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const item: StoredPredictorBacktestExportJob = {
     PredictorBacktestExportJobArn,
@@ -1230,6 +1406,12 @@ const CreatePredictorBacktestExportJob: OperationHandler = (input, ctx) => {
     predictorBacktestExportJobKey(PredictorBacktestExportJobArn),
     item,
   );
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(PredictorBacktestExportJobArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { PredictorBacktestExportJobArn };
 };
 
@@ -1287,6 +1469,7 @@ const DeletePredictorBacktestExportJob: OperationHandler = (input, ctx) => {
   ctx.store.delete(
     predictorBacktestExportJobKey(PredictorBacktestExportJobArn),
   );
+  ctx.store.delete(tagKey(PredictorBacktestExportJobArn));
   return {};
 };
 
@@ -1295,6 +1478,13 @@ const CreateWhatIfAnalysis: OperationHandler = (input, ctx) => {
   const ForecastArn = requireString(input, "ForecastArn");
   requireForecast(ctx, ForecastArn);
   const WhatIfAnalysisArn = whatIfAnalysisArn(ctx, WhatIfAnalysisName);
+  if (ctx.store.get(whatIfAnalysisKey(WhatIfAnalysisArn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `WhatIfAnalysis already exists: ${WhatIfAnalysisArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const item: StoredWhatIfAnalysis = {
     WhatIfAnalysisArn,
@@ -1305,6 +1495,12 @@ const CreateWhatIfAnalysis: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(whatIfAnalysisKey(WhatIfAnalysisArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(WhatIfAnalysisArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { WhatIfAnalysisArn };
 };
 
@@ -1349,6 +1545,7 @@ const DeleteWhatIfAnalysis: OperationHandler = (input, ctx) => {
   const WhatIfAnalysisArn = requireString(input, "WhatIfAnalysisArn");
   requireWhatIfAnalysis(ctx, WhatIfAnalysisArn);
   ctx.store.delete(whatIfAnalysisKey(WhatIfAnalysisArn));
+  ctx.store.delete(tagKey(WhatIfAnalysisArn));
   return {};
 };
 
@@ -1357,6 +1554,13 @@ const CreateWhatIfForecast: OperationHandler = (input, ctx) => {
   const WhatIfAnalysisArn = requireString(input, "WhatIfAnalysisArn");
   requireWhatIfAnalysis(ctx, WhatIfAnalysisArn);
   const WhatIfForecastArn = whatIfForecastResArn(ctx, WhatIfForecastName);
+  if (ctx.store.get(whatIfForecastKey(WhatIfForecastArn)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `WhatIfForecast already exists: ${WhatIfForecastArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const item: StoredWhatIfForecast = {
     WhatIfForecastArn,
@@ -1367,6 +1571,12 @@ const CreateWhatIfForecast: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(whatIfForecastKey(WhatIfForecastArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(WhatIfForecastArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { WhatIfForecastArn };
 };
 
@@ -1411,6 +1621,7 @@ const DeleteWhatIfForecast: OperationHandler = (input, ctx) => {
   const WhatIfForecastArn = requireString(input, "WhatIfForecastArn");
   requireWhatIfForecast(ctx, WhatIfForecastArn);
   ctx.store.delete(whatIfForecastKey(WhatIfForecastArn));
+  ctx.store.delete(tagKey(WhatIfForecastArn));
   return {};
 };
 
@@ -1439,6 +1650,16 @@ const CreateWhatIfForecastExport: OperationHandler = (input, ctx) => {
     ctx,
     WhatIfForecastExportName,
   );
+  if (
+    ctx.store.get(whatIfForecastExportKey(WhatIfForecastExportArn)) !==
+    undefined
+  ) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `WhatIfForecastExport already exists: ${WhatIfForecastExportArn}`,
+      400,
+    );
+  }
   const now = nowSeconds();
   const item: StoredWhatIfForecastExport = {
     WhatIfForecastExportArn,
@@ -1450,6 +1671,12 @@ const CreateWhatIfForecastExport: OperationHandler = (input, ctx) => {
     LastModificationTime: now,
   };
   ctx.store.set(whatIfForecastExportKey(WhatIfForecastExportArn), item);
+  if (Array.isArray(input["Tags"])) {
+    ctx.store.set(
+      tagKey(WhatIfForecastExportArn),
+      input["Tags"] as { Key: string; Value: string }[],
+    );
+  }
   return { WhatIfForecastExportArn };
 };
 
@@ -1502,6 +1729,7 @@ const DeleteWhatIfForecastExport: OperationHandler = (input, ctx) => {
   );
   requireWhatIfForecastExport(ctx, WhatIfForecastExportArn);
   ctx.store.delete(whatIfForecastExportKey(WhatIfForecastExportArn));
+  ctx.store.delete(tagKey(WhatIfForecastExportArn));
   return {};
 };
 
@@ -1552,27 +1780,35 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
   return { Tags };
 };
 
-const resourceKeyFns = [
+const stopResourceKeyFns = [
+  datasetImportJobKey,
   predictorKey,
   forecastKey,
   explainabilityKey,
   explainabilityExportKey,
   forecastExportJobKey,
   predictorBacktestExportJobKey,
-  whatIfAnalysisKey,
-  whatIfForecastKey,
-  whatIfForecastExportKey,
-] as const;
+];
 
 const StopResource: OperationHandler = (input, ctx) => {
   const ResourceArn = requireString(input, "ResourceArn");
-  for (const keyFn of resourceKeyFns) {
+  const monitorItem = ctx.store.get<{
+    Status: string;
+    LastModificationTime: number;
+  }>(monitorKey(ResourceArn));
+  if (monitorItem !== undefined) {
+    monitorItem.Status = "ACTIVE_STOPPED";
+    monitorItem.LastModificationTime = nowSeconds();
+    ctx.store.set(monitorKey(ResourceArn), monitorItem);
+    return {};
+  }
+  for (const keyFn of stopResourceKeyFns) {
     const item = ctx.store.get<{
       Status: string;
       LastModificationTime: number;
     }>(keyFn(ResourceArn));
     if (item !== undefined) {
-      item.Status = "STOPPED";
+      item.Status = "CREATE_STOPPED";
       item.LastModificationTime = nowSeconds();
       ctx.store.set(keyFn(ResourceArn), item);
       return {};
@@ -1587,17 +1823,15 @@ const StopResource: OperationHandler = (input, ctx) => {
 
 const ResumeResource: OperationHandler = (input, ctx) => {
   const ResourceArn = requireString(input, "ResourceArn");
-  for (const keyFn of resourceKeyFns) {
-    const item = ctx.store.get<{
-      Status: string;
-      LastModificationTime: number;
-    }>(keyFn(ResourceArn));
-    if (item !== undefined) {
-      item.Status = "ACTIVE";
-      item.LastModificationTime = nowSeconds();
-      ctx.store.set(keyFn(ResourceArn), item);
-      return {};
-    }
+  const item = ctx.store.get<{
+    Status: string;
+    LastModificationTime: number;
+  }>(monitorKey(ResourceArn));
+  if (item !== undefined) {
+    item.Status = "ACTIVE";
+    item.LastModificationTime = nowSeconds();
+    ctx.store.set(monitorKey(ResourceArn), item);
+    return {};
   }
   throw awsError(
     "ResourceNotFoundException",
@@ -1606,28 +1840,62 @@ const ResumeResource: OperationHandler = (input, ctx) => {
   );
 };
 
+const allResourceKeyFns = [
+  datasetKey,
+  datasetGroupKey,
+  datasetImportJobKey,
+  predictorKey,
+  forecastKey,
+  forecastExportJobKey,
+  explainabilityKey,
+  explainabilityExportKey,
+  monitorKey,
+  predictorBacktestExportJobKey,
+  whatIfAnalysisKey,
+  whatIfForecastKey,
+  whatIfForecastExportKey,
+];
+
+const collectCascadeArns = (
+  ctx: ServiceContext,
+  rootArn: string,
+): Set<string> => {
+  const toDelete = new Set<string>([rootArn]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const { key, value } of ctx.store.list<Record<string, unknown>>()) {
+      const entryArn = key.slice(key.indexOf("#") + 1);
+      if (toDelete.has(entryArn)) continue;
+      const v = value;
+      const parentRefs: unknown[] = [
+        v["DatasetArn"],
+        v["DatasetGroupArn"],
+        v["PredictorArn"],
+        v["ForecastArn"],
+        v["WhatIfAnalysisArn"],
+        v["ExplainabilityArn"],
+        v["ResourceArn"],
+        ...(Array.isArray(v["WhatIfForecastArns"])
+          ? (v["WhatIfForecastArns"] as unknown[])
+          : []),
+      ];
+      if (parentRefs.some((r) => typeof r === "string" && toDelete.has(r))) {
+        toDelete.add(entryArn);
+        changed = true;
+      }
+    }
+  }
+  return toDelete;
+};
+
 const DeleteResourceTree: OperationHandler = (input, ctx) => {
   const ResourceArn = requireString(input, "ResourceArn");
-  const keysToCheck = [
-    datasetKey(ResourceArn),
-    datasetGroupKey(ResourceArn),
-    datasetImportJobKey(ResourceArn),
-    predictorKey(ResourceArn),
-    forecastKey(ResourceArn),
-    forecastExportJobKey(ResourceArn),
-    explainabilityKey(ResourceArn),
-    explainabilityExportKey(ResourceArn),
-    monitorKey(ResourceArn),
-    predictorBacktestExportJobKey(ResourceArn),
-    whatIfAnalysisKey(ResourceArn),
-    whatIfForecastKey(ResourceArn),
-    whatIfForecastExportKey(ResourceArn),
-  ];
   let found = false;
-  for (const key of keysToCheck) {
-    if (ctx.store.get(key) !== undefined) {
-      ctx.store.delete(key);
+  for (const keyFn of allResourceKeyFns) {
+    if (ctx.store.get(keyFn(ResourceArn)) !== undefined) {
       found = true;
+      break;
     }
   }
   if (!found) {
@@ -1636,6 +1904,13 @@ const DeleteResourceTree: OperationHandler = (input, ctx) => {
       `No resource found ${ResourceArn}`,
       400,
     );
+  }
+  const arnsToDelete = collectCascadeArns(ctx, ResourceArn);
+  for (const arn of arnsToDelete) {
+    for (const keyFn of allResourceKeyFns) {
+      ctx.store.delete(keyFn(arn));
+    }
+    ctx.store.delete(tagKey(arn));
   }
   return {};
 };

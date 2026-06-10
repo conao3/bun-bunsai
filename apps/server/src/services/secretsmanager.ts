@@ -108,6 +108,21 @@ const CreateSecret: OperationHandler = (input, ctx) => {
   }
   const existing = ctx.store.get<StoredSecret>(name);
   if (existing !== undefined) {
+    const crt = stringOrUndefined(input["ClientRequestToken"]);
+    if (crt !== undefined) {
+      const existingVersion = existing.versions[crt];
+      if (existingVersion !== undefined) {
+        const sameString =
+          existingVersion.SecretString ===
+          stringOrUndefined(input["SecretString"]);
+        const sameBinary =
+          existingVersion.SecretBinary ===
+          stringOrUndefined(input["SecretBinary"]);
+        if (sameString && sameBinary) {
+          return { ARN: existing.ARN, Name: name, VersionId: crt };
+        }
+      }
+    }
     throw awsError(
       "ResourceExistsException",
       "The operation failed because the secret already exists.",
@@ -186,6 +201,26 @@ const PutSecretValue: OperationHandler = (input, ctx) => {
   const stages = Array.isArray(input["VersionStages"])
     ? (input["VersionStages"] as unknown[]).map((value) => String(value))
     : ["AWSCURRENT"];
+  const existingVersion = secret.versions[versionId];
+  if (existingVersion !== undefined) {
+    const sameString =
+      existingVersion.SecretString === stringOrUndefined(input["SecretString"]);
+    const sameBinary =
+      existingVersion.SecretBinary === stringOrUndefined(input["SecretBinary"]);
+    if (sameString && sameBinary) {
+      return {
+        ARN: secret.ARN,
+        Name: secret.Name,
+        VersionId: versionId,
+        VersionStages: existingVersion.VersionStages,
+      };
+    }
+    throw awsError(
+      "ResourceExistsException",
+      "A resource with the ID you requested already exists.",
+      400,
+    );
+  }
   const version: StoredVersion = {
     VersionId: versionId,
     SecretString: stringOrUndefined(input["SecretString"]),
@@ -263,13 +298,16 @@ const DeleteSecret: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const rawDays = input["RecoveryWindowInDays"];
+  if (typeof rawDays === "number" && (rawDays < 7 || rawDays > 30)) {
+    throw awsError(
+      "InvalidParameterException",
+      `The recovery window must be between 7 and 30 days. You specified ${rawDays}.`,
+      400,
+    );
+  }
   const recoveryDays =
-    typeof input["RecoveryWindowInDays"] === "number"
-      ? Math.min(
-          30,
-          Math.max(7, Math.floor(input["RecoveryWindowInDays"] as number)),
-        )
-      : 30;
+    typeof rawDays === "number" ? Math.floor(rawDays as number) : 30;
   const deletionDate = force
     ? nowSeconds()
     : nowSeconds() + recoveryDays * 86400;
@@ -294,6 +332,13 @@ const UpdateSecret: OperationHandler = (input, ctx) => {
   if (secretString !== undefined || secretBinary !== undefined) {
     versionId =
       stringOrUndefined(input["ClientRequestToken"]) ?? crypto.randomUUID();
+    if (secret.versions[versionId] !== undefined) {
+      throw awsError(
+        "ResourceExistsException",
+        "A resource with the ID you requested already exists.",
+        400,
+      );
+    }
     const oldVersionId = secret.currentVersionId;
     secret.versions[versionId] = {
       VersionId: versionId,
@@ -384,6 +429,19 @@ const RotateSecret: OperationHandler = async (input, ctx) => {
   const newVersionId =
     stringOrUndefined(input["ClientRequestToken"]) ?? crypto.randomUUID();
   const currentVersion = secret.versions[secret.currentVersionId];
+
+  const activePending = Object.values(secret.versions).find(
+    (v) =>
+      v.VersionStages.includes("AWSPENDING") &&
+      v.VersionId !== secret.currentVersionId,
+  );
+  if (activePending !== undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      "You tried to perform the operation on a secret that isn't in a valid state for the operation. An attempt to finish the rotation already exists.",
+      400,
+    );
+  }
 
   for (const v of Object.values(secret.versions))
     v.VersionStages = v.VersionStages.filter((s) => s !== "AWSPENDING");

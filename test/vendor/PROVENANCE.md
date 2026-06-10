@@ -179,6 +179,7 @@ aws-models/
   network-firewall.json # botocore/data/network-firewall/2020-11-12/service-2.json (protocol json, endpointPrefix network-firewall, signingName network-firewall, targetPrefix NetworkFirewall_20201112)
   schemas.json          # botocore/data/schemas/2019-12-02/service-2.json          (protocol rest-json, endpointPrefix schemas, signingName schemas)
   autoscaling.json      # botocore/data/autoscaling/2011-01-01/service-2.json      (protocol query, signingName autoscaling)
+  cognito-identity.json # botocore/data/cognito-identity/2014-06-30/service-2.json  (protocol json, signingName cognito-identity)
 ```
 
 ### Notes

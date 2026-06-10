@@ -549,13 +549,22 @@ test("Kendra tag round-trip", async () => {
   );
   expect(listed.Tags).toEqual([{ Key: "env", Value: "test" }]);
 
-  await client.send(new TagResourceCommand({ ResourceARN: arn, Tags: [{ Key: "team", Value: "qa" }] }));
-  const after = await client.send(new ListTagsForResourceCommand({ ResourceARN: arn }));
+  await client.send(
+    new TagResourceCommand({
+      ResourceARN: arn,
+      Tags: [{ Key: "team", Value: "qa" }],
+    }),
+  );
+  const after = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: arn }),
+  );
   expect(after.Tags?.find((t) => t.Key === "team")?.Value).toBe("qa");
 
   await client.send(new DeleteIndexCommand({ Id: id! }));
 
-  const afterDelete = await client.send(new ListTagsForResourceCommand({ ResourceARN: arn }));
+  const afterDelete = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: arn }),
+  );
   expect(afterDelete.Tags ?? []).toEqual([]);
 });
 

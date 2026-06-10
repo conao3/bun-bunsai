@@ -157,11 +157,7 @@ const qsblArn = (ctx: ServiceContext, indexId: string, id: string): string =>
 const frsArn = (ctx: ServiceContext, indexId: string, id: string): string =>
   `arn:aws:kendra:${ctx.region}:${ctx.account}:index/${indexId}/featured-results-set/${id}`;
 
-const saveTags = (
-  ctx: ServiceContext,
-  arn: string,
-  tags: unknown,
-): void => {
+const saveTags = (ctx: ServiceContext, arn: string, tags: unknown): void => {
   if (!Array.isArray(tags) || tags.length === 0) return;
   ctx.store.set(tagKey(arn), tags);
 };
@@ -281,7 +277,11 @@ const DeleteIndex: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
   const index = requireIndex(ctx, id);
   if (index.Status === "DELETING") {
-    throw awsError("ConflictException", `Index ${id} is already being deleted.`, 409);
+    throw awsError(
+      "ConflictException",
+      `Index ${id} is already being deleted.`,
+      409,
+    );
   }
   const arn = indexArn(ctx, id);
   ctx.store.delete(tagKey(arn));
@@ -311,7 +311,9 @@ const CreateDataSource: OperationHandler = (input, ctx) => {
   const clientToken =
     typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
   if (clientToken) {
-    const cached = ctx.store.get<{ Id: string; IndexId: string }>(ctKey(clientToken));
+    const cached = ctx.store.get<{ Id: string; IndexId: string }>(
+      ctKey(clientToken),
+    );
     if (cached) return cached;
   }
   const indexId = requireString(input, "IndexId");
@@ -353,7 +355,11 @@ const DescribeDataSource: OperationHandler = (input, ctx) => {
   let finalStatus = ds.Status;
   if (ds.Status === "CREATING") {
     finalStatus = "ACTIVE";
-    ctx.store.set(dsKey(indexId, id), { ...ds, Status: "ACTIVE", UpdatedAt: nowSeconds() });
+    ctx.store.set(dsKey(indexId, id), {
+      ...ds,
+      Status: "ACTIVE",
+      UpdatedAt: nowSeconds(),
+    });
   } else if (ds.Status === "DELETING") {
     ctx.store.delete(dsKey(indexId, id));
   }
@@ -435,11 +441,19 @@ const DeleteDataSource: OperationHandler = (input, ctx) => {
     );
   }
   if (ds.Status === "DELETING") {
-    throw awsError("ConflictException", `DataSource ${id} is already being deleted.`, 409);
+    throw awsError(
+      "ConflictException",
+      `DataSource ${id} is already being deleted.`,
+      409,
+    );
   }
   const arn = dsArn(ctx, indexId, id);
   ctx.store.delete(tagKey(arn));
-  ctx.store.set(dsKey(indexId, id), { ...ds, Status: "DELETING", UpdatedAt: nowSeconds() });
+  ctx.store.set(dsKey(indexId, id), {
+    ...ds,
+    Status: "DELETING",
+    UpdatedAt: nowSeconds(),
+  });
   return {};
 };
 
@@ -546,7 +560,11 @@ const DescribeFaq: OperationHandler = (input, ctx) => {
   let finalStatus = faq.Status;
   if (faq.Status === "CREATING") {
     finalStatus = "ACTIVE";
-    ctx.store.set(faqKey(indexId, id), { ...faq, Status: "ACTIVE", UpdatedAt: nowSeconds() });
+    ctx.store.set(faqKey(indexId, id), {
+      ...faq,
+      Status: "ACTIVE",
+      UpdatedAt: nowSeconds(),
+    });
   } else if (faq.Status === "DELETING") {
     ctx.store.delete(faqKey(indexId, id));
   }
@@ -601,11 +619,19 @@ const DeleteFaq: OperationHandler = (input, ctx) => {
     throw awsError("ResourceNotFoundException", `FAQ ${id} not found.`, 404);
   }
   if (faq.Status === "DELETING") {
-    throw awsError("ConflictException", `FAQ ${id} is already being deleted.`, 409);
+    throw awsError(
+      "ConflictException",
+      `FAQ ${id} is already being deleted.`,
+      409,
+    );
   }
   const arn = faqArn(ctx, indexId, id);
   ctx.store.delete(tagKey(arn));
-  ctx.store.set(faqKey(indexId, id), { ...faq, Status: "DELETING", UpdatedAt: nowSeconds() });
+  ctx.store.set(faqKey(indexId, id), {
+    ...faq,
+    Status: "DELETING",
+    UpdatedAt: nowSeconds(),
+  });
   return {};
 };
 
@@ -613,7 +639,9 @@ const CreateExperience: OperationHandler = (input, ctx) => {
   const clientToken =
     typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
   if (clientToken) {
-    const cached = ctx.store.get<{ Id: string; IndexId: string }>(ctKey(clientToken));
+    const cached = ctx.store.get<{ Id: string; IndexId: string }>(
+      ctKey(clientToken),
+    );
     if (cached) return cached;
   }
   const indexId = requireString(input, "IndexId");
@@ -658,7 +686,11 @@ const DescribeExperience: OperationHandler = (input, ctx) => {
   let finalStatus = exp.Status;
   if (exp.Status === "CREATING") {
     finalStatus = "ACTIVE";
-    ctx.store.set(expKey(indexId, id), { ...exp, Status: "ACTIVE", UpdatedAt: nowSeconds() });
+    ctx.store.set(expKey(indexId, id), {
+      ...exp,
+      Status: "ACTIVE",
+      UpdatedAt: nowSeconds(),
+    });
   } else if (exp.Status === "DELETING") {
     ctx.store.delete(expKey(indexId, id));
   }
@@ -739,9 +771,17 @@ const DeleteExperience: OperationHandler = (input, ctx) => {
     );
   }
   if (exp.Status === "DELETING") {
-    throw awsError("ConflictException", `Experience ${id} is already being deleted.`, 409);
+    throw awsError(
+      "ConflictException",
+      `Experience ${id} is already being deleted.`,
+      409,
+    );
   }
-  ctx.store.set(expKey(indexId, id), { ...exp, Status: "DELETING", UpdatedAt: nowSeconds() });
+  ctx.store.set(expKey(indexId, id), {
+    ...exp,
+    Status: "DELETING",
+    UpdatedAt: nowSeconds(),
+  });
   return {};
 };
 
@@ -907,7 +947,11 @@ const DescribeThesaurus: OperationHandler = (input, ctx) => {
   let finalStatus = thes.Status;
   if (thes.Status === "CREATING") {
     finalStatus = "ACTIVE";
-    ctx.store.set(thesKey(indexId, id), { ...thes, Status: "ACTIVE", UpdatedAt: nowSeconds() });
+    ctx.store.set(thesKey(indexId, id), {
+      ...thes,
+      Status: "ACTIVE",
+      UpdatedAt: nowSeconds(),
+    });
   } else if (thes.Status === "DELETING") {
     ctx.store.delete(thesKey(indexId, id));
   }
@@ -989,11 +1033,19 @@ const DeleteThesaurus: OperationHandler = (input, ctx) => {
     );
   }
   if (thes.Status === "DELETING") {
-    throw awsError("ConflictException", `Thesaurus ${id} is already being deleted.`, 409);
+    throw awsError(
+      "ConflictException",
+      `Thesaurus ${id} is already being deleted.`,
+      409,
+    );
   }
   const arn = thesArn(ctx, indexId, id);
   ctx.store.delete(tagKey(arn));
-  ctx.store.set(thesKey(indexId, id), { ...thes, Status: "DELETING", UpdatedAt: nowSeconds() });
+  ctx.store.set(thesKey(indexId, id), {
+    ...thes,
+    Status: "DELETING",
+    UpdatedAt: nowSeconds(),
+  });
   return {};
 };
 
@@ -1151,7 +1203,11 @@ const DescribeQuerySuggestionsBlockList: OperationHandler = (input, ctx) => {
   let finalStatus = qsbl.Status;
   if (qsbl.Status === "CREATING") {
     finalStatus = "ACTIVE";
-    ctx.store.set(qsblKey(indexId, id), { ...qsbl, Status: "ACTIVE", UpdatedAt: nowSeconds() });
+    ctx.store.set(qsblKey(indexId, id), {
+      ...qsbl,
+      Status: "ACTIVE",
+      UpdatedAt: nowSeconds(),
+    });
   } else if (qsbl.Status === "DELETING") {
     ctx.store.delete(qsblKey(indexId, id));
   }
@@ -1230,11 +1286,19 @@ const DeleteQuerySuggestionsBlockList: OperationHandler = (input, ctx) => {
     );
   }
   if (qsbl.Status === "DELETING") {
-    throw awsError("ConflictException", `QuerySuggestionsBlockList ${id} is already being deleted.`, 409);
+    throw awsError(
+      "ConflictException",
+      `QuerySuggestionsBlockList ${id} is already being deleted.`,
+      409,
+    );
   }
   const arn = qsblArn(ctx, indexId, id);
   ctx.store.delete(tagKey(arn));
-  ctx.store.set(qsblKey(indexId, id), { ...qsbl, Status: "DELETING", UpdatedAt: nowSeconds() });
+  ctx.store.set(qsblKey(indexId, id), {
+    ...qsbl,
+    Status: "DELETING",
+    UpdatedAt: nowSeconds(),
+  });
   return {};
 };
 
@@ -1242,7 +1306,9 @@ const CreateFeaturedResultsSet: OperationHandler = (input, ctx) => {
   const clientToken =
     typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
   if (clientToken) {
-    const cached = ctx.store.get<{ FeaturedResultsSet: unknown }>(ctKey(clientToken));
+    const cached = ctx.store.get<{ FeaturedResultsSet: unknown }>(
+      ctKey(clientToken),
+    );
     if (cached) return cached;
   }
   const indexId = requireString(input, "IndexId");

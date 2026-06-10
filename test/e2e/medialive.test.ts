@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  UpdateMultiplexProgramCommand,
   CloudWatchAlarmTemplateComparisonOperator,
   CloudWatchAlarmTemplateStatistic,
   CloudWatchAlarmTemplateTargetResourceType,
@@ -1027,4 +1028,192 @@ test("HIGH-5: Input attachment tracking", async () => {
   expect(describedAfter.AttachedChannels ?? []).not.toContain(channelId);
 
   await client.send(new DeleteInputCommand({ InputId: inputId }));
+});
+
+test("MEDIUM-1: CreateMultiplexProgram persists settings, rejects duplicate, UpdateMultiplexProgram merges", async () => {
+  const client = medialive();
+
+  const mx = await client.send(
+    new CreateMultiplexCommand({
+      Name: "test-mx-m1",
+      AvailabilityZones: ["us-east-1a", "us-east-1b"],
+      MultiplexSettings: {
+        TransportStreamBitrate: 1000000,
+        TransportStreamId: 1,
+      },
+    }),
+  );
+  const mxId = mx.Multiplex?.Id!;
+
+  const settings = {
+    ProgramNumber: 1,
+    TransportStreamSettings: { EcmPid: "8182" },
+  };
+
+  const created = await client.send(
+    new CreateMultiplexProgramCommand({
+      MultiplexId: mxId,
+      ProgramName: "prog-a",
+      MultiplexProgramSettings: settings as never,
+    }),
+  );
+  expect(created.MultiplexProgram?.ProgramName).toBe("prog-a");
+  expect(created.MultiplexProgram?.MultiplexProgramSettings).toBeDefined();
+
+  await expect(
+    client.send(
+      new CreateMultiplexProgramCommand({
+        MultiplexId: mxId,
+        ProgramName: "prog-a",
+        MultiplexProgramSettings: settings as never,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const described = await client.send(
+    new DescribeMultiplexProgramCommand({
+      MultiplexId: mxId,
+      ProgramName: "prog-a",
+    }),
+  );
+  expect(described.MultiplexProgramSettings).toBeDefined();
+
+  const newSettings = {
+    ProgramNumber: 2,
+    TransportStreamSettings: { EcmPid: "8183" },
+  };
+  const updated = await client.send(
+    new UpdateMultiplexProgramCommand({
+      MultiplexId: mxId,
+      ProgramName: "prog-a",
+      MultiplexProgramSettings: newSettings as never,
+    }),
+  );
+  expect(updated.MultiplexProgram?.MultiplexProgramSettings).toBeDefined();
+
+  await client.send(
+    new DeleteMultiplexProgramCommand({
+      MultiplexId: mxId,
+      ProgramName: "prog-a",
+    }),
+  );
+  await client.send(new DeleteMultiplexCommand({ MultiplexId: mxId }));
+});
+
+test("MEDIUM-2: ListSignalMaps respects MaxResults and NextToken", async () => {
+  const client = medialive();
+
+  const ids: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const sm = await client.send(
+      new CreateSignalMapCommand({
+        Name: `sm-page-${i}`,
+        DiscoveryEntryPointArn: `arn:aws:medialive:us-east-1:123456789012:channel:sm-page-${i}`,
+      }),
+    );
+    ids.push(sm.Id!);
+  }
+
+  const page1 = await client.send(new ListSignalMapsCommand({ MaxResults: 2 }));
+  expect((page1.SignalMaps ?? []).length).toBe(2);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new ListSignalMapsCommand({ NextToken: page1.NextToken }),
+  );
+  const page2Ids = (page2.SignalMaps ?? []).map((s) => s.Id);
+  const ourRemaining = ids.filter(
+    (id) => !page1.SignalMaps?.some((s) => s.Id === id),
+  );
+  expect(page2Ids).toEqual(expect.arrayContaining(ourRemaining));
+
+  for (const id of ids) {
+    await client.send(new DeleteSignalMapCommand({ Identifier: id }));
+  }
+});
+
+test("MEDIUM-3: ListCloudWatchAlarmTemplates filters by GroupIdentifier", async () => {
+  const client = medialive();
+
+  const groupA = await client.send(
+    new CreateCloudWatchAlarmTemplateGroupCommand({ Name: "group-filter-a" }),
+  );
+  const groupB = await client.send(
+    new CreateCloudWatchAlarmTemplateGroupCommand({ Name: "group-filter-b" }),
+  );
+
+  const templateBase = {
+    ComparisonOperator:
+      CloudWatchAlarmTemplateComparisonOperator.GreaterThanOrEqualToThreshold,
+    EvaluationPeriods: 1,
+    MetricName: "NetworkIn",
+    Period: 60,
+    Statistic: CloudWatchAlarmTemplateStatistic.Average,
+    TargetResourceType:
+      CloudWatchAlarmTemplateTargetResourceType.MEDIALIVE_MULTIPLEX,
+    Threshold: 1,
+    TreatMissingData: "notBreaching",
+  } as const;
+
+  await client.send(
+    new CreateCloudWatchAlarmTemplateCommand({
+      ...templateBase,
+      Name: "tmpl-a",
+      GroupIdentifier: groupA.Id!,
+    }),
+  );
+  await client.send(
+    new CreateCloudWatchAlarmTemplateCommand({
+      ...templateBase,
+      Name: "tmpl-b",
+      GroupIdentifier: groupB.Id!,
+    }),
+  );
+
+  const filtered = await client.send(
+    new ListCloudWatchAlarmTemplatesCommand({ GroupIdentifier: groupB.Id }),
+  );
+  const names = (filtered.CloudWatchAlarmTemplates ?? []).map((t) => t.Name);
+  expect(names).toContain("tmpl-b");
+  expect(names).not.toContain("tmpl-a");
+
+  await client.send(
+    new DeleteCloudWatchAlarmTemplateGroupCommand({ Identifier: groupA.Id! }),
+  );
+  await client.send(
+    new DeleteCloudWatchAlarmTemplateGroupCommand({ Identifier: groupB.Id! }),
+  );
+});
+
+test("LOW-1: CreateSignalMap returns CREATE_IN_PROGRESS, GetSignalMap transitions to CREATE_COMPLETE", async () => {
+  const client = medialive();
+
+  const created = await client.send(
+    new CreateSignalMapCommand({
+      Name: "sm-lifecycle",
+      DiscoveryEntryPointArn:
+        "arn:aws:medialive:us-east-1:123456789012:channel:sm-lifecycle",
+    }),
+  );
+  expect(created.Status).toBe("CREATE_IN_PROGRESS");
+
+  const gotten = await client.send(
+    new GetSignalMapCommand({ Identifier: created.Id! }),
+  );
+  expect(gotten.Status).toBe("CREATE_COMPLETE");
+
+  const updated = await client.send(
+    new StartUpdateSignalMapCommand({
+      Identifier: created.Id!,
+      Name: "sm-lifecycle-updated",
+    }),
+  );
+  expect(updated.Status).toBe("UPDATE_IN_PROGRESS");
+
+  const gottenAfterUpdate = await client.send(
+    new GetSignalMapCommand({ Identifier: created.Id! }),
+  );
+  expect(gottenAfterUpdate.Status).toBe("UPDATE_COMPLETE");
+
+  await client.send(new DeleteSignalMapCommand({ Identifier: created.Id! }));
 });

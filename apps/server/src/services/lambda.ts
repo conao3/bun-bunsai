@@ -165,24 +165,45 @@ const CreateFunction: OperationHandler = (input, ctx) => {
     Version: "$LATEST",
     RevisionId: crypto.randomUUID(),
     LastModified: nowIso(),
-    State: "Active",
+    State: "Pending",
     CodeZipFile: zip,
     Environment: environmentOf(input),
     ...(layerArns.length > 0 ? { Layers: layerArns } : {}),
   };
+  setTimeout(() => {
+    const stored = ctx.store.get<StoredFunction>(name);
+    if (stored !== undefined && stored.State === "Pending") {
+      stored.State = "Active";
+      ctx.store.set(name, stored);
+    }
+  }, 100);
+  const tagsInput = input["Tags"];
+  if (typeof tagsInput === "object" && tagsInput !== null) {
+    const tags: Record<string, string> = {};
+    for (const [k, v] of Object.entries(
+      tagsInput as Record<string, unknown>,
+    )) {
+      if (typeof v === "string") tags[k] = v;
+    }
+    if (Object.keys(tags).length > 0) {
+      ctx.store.set(tagsKey(fn.FunctionArn), tags);
+    }
+  }
   ctx.store.set(name, fn);
   return configurationOf(fn);
 };
 
 const GetFunction: OperationHandler = (input, ctx) => {
   const fn = requireFunction(ctx, functionNameFromInput(input));
+  const tags =
+    ctx.store.get<Record<string, string>>(tagsKey(fn.FunctionArn)) ?? {};
   return {
     Configuration: configurationOf(fn),
     Code: {
       RepositoryType: "S3",
       Location: `https://bunsai-lambda.local/${fn.FunctionName}`,
     },
-    Tags: {},
+    Tags: tags,
   };
 };
 
@@ -190,12 +211,31 @@ const ListFunctions: OperationHandler = (input, ctx) => {
   const functions = ctx.store
     .list<StoredFunction>()
     .map((entry) => configurationOf(entry.value));
-  return { Functions: functions };
+  const maxItems =
+    typeof input["MaxItems"] === "number"
+      ? (input["MaxItems"] as number)
+      : undefined;
+  const markerRaw =
+    typeof input["Marker"] === "string" ? (input["Marker"] as string) : undefined;
+  const offset = markerRaw
+    ? parseInt(Buffer.from(markerRaw, "base64").toString("utf8"), 10)
+    : 0;
+  const start = isNaN(offset) ? 0 : offset;
+  const page =
+    maxItems !== undefined
+      ? functions.slice(start, start + maxItems)
+      : functions.slice(start);
+  const hasMore = start + page.length < functions.length;
+  const nextMarker = hasMore
+    ? Buffer.from(String(start + page.length)).toString("base64")
+    : undefined;
+  return { Functions: page, ...(nextMarker !== undefined ? { NextMarker: nextMarker } : {}) };
 };
 
 const DeleteFunction: OperationHandler = (input, ctx) => {
   const fn = requireFunction(ctx, functionNameFromInput(input));
   ctx.store.delete(fn.FunctionName);
+  ctx.store.delete(tagsKey(fn.FunctionArn));
   return {};
 };
 

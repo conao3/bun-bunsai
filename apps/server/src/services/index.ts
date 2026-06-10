@@ -44,6 +44,7 @@ import mq from "./mq.ts";
 import eks from "./eks.ts";
 import appsync from "./appsync.ts";
 import codebuild from "./codebuild.ts";
+import codedeploy from "./codedeploy.ts";
 import codepipeline from "./codepipeline.ts";
 import transfer from "./transfer.ts";
 import codecommit from "./codecommit.ts";
@@ -162,6 +163,7 @@ export const services: ServiceDefinition[] = [
   eks,
   appsync,
   codebuild,
+  codedeploy,
   codepipeline,
   transfer,
   codecommit,

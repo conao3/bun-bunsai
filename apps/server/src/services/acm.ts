@@ -38,10 +38,16 @@ type StoredCertificate = {
     CertificateTransparencyLoggingPreference?: string;
     Export?: string;
   };
+  InUseBy: string[];
 };
 
 type AccountConfig = {
   ExpiryEvents?: { DaysBeforeExpiry?: number };
+};
+
+type IdempotencyRecord = {
+  result: unknown;
+  expiresAt: number;
 };
 
 const certificateKey = (id: string): string => `certificate/${id}`;
@@ -97,7 +103,43 @@ const privateKeyPemOf = (id: string): string =>
 
 const accountConfigKey = "account-config";
 
+const idempotencyKey = (scope: string, token: string): string =>
+  `idempotency/${scope}/${token}`;
+
+const checkIdempotency = (
+  ctx: ServiceContext,
+  scope: string,
+  token: string | undefined,
+): unknown | undefined => {
+  if (token === undefined || token === "") return undefined;
+  const record = ctx.store.get<IdempotencyRecord>(idempotencyKey(scope, token));
+  if (record === undefined) return undefined;
+  const now = Math.floor(Date.now() / 1000);
+  if (now >= record.expiresAt) return undefined;
+  return record.result;
+};
+
+const storeIdempotency = (
+  ctx: ServiceContext,
+  scope: string,
+  token: string | undefined,
+  result: unknown,
+): void => {
+  if (token === undefined || token === "") return;
+  const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+  const record: IdempotencyRecord = { result, expiresAt };
+  ctx.store.set(idempotencyKey(scope, token), record);
+};
+
 const RequestCertificate: OperationHandler = (input, ctx) => {
+  const idempotencyToken =
+    typeof input["IdempotencyToken"] === "string"
+      ? (input["IdempotencyToken"] as string)
+      : undefined;
+
+  const cached = checkIdempotency(ctx, "req-cert", idempotencyToken);
+  if (cached !== undefined) return cached as Record<string, unknown>;
+
   const domainName = requireString(input, "DomainName");
   const subjectAlternativeNames = Array.isArray(
     input["SubjectAlternativeNames"],
@@ -120,6 +162,7 @@ const RequestCertificate: OperationHandler = (input, ctx) => {
         ? { ResourceRecord: dnsResourceRecordOf(name) }
         : {}),
     }));
+  const tags = Array.isArray(input["Tags"]) ? normalizeTags(input["Tags"]) : [];
   const certificate: StoredCertificate = {
     CertificateArn: arn,
     DomainName: domainName,
@@ -135,10 +178,13 @@ const RequestCertificate: OperationHandler = (input, ctx) => {
     DomainValidationOptions: domainValidationOptions,
     describeCount: 0,
     pem: pemOf(id),
-    tags: [],
+    tags,
+    InUseBy: [],
   };
   ctx.store.set(certificateKey(id), certificate);
-  return { CertificateArn: arn };
+  const result = { CertificateArn: arn };
+  storeIdempotency(ctx, "req-cert", idempotencyToken, result);
+  return result;
 };
 
 const certificateDetail = (
@@ -182,7 +228,7 @@ const certificateDetail = (
   Subject: `CN=${certificate.DomainName}`,
   Issuer: "Amazon",
   RenewalEligibility: "INELIGIBLE",
-  InUseBy: [],
+  InUseBy: certificate.InUseBy,
   KeyUsages: [],
   ExtendedKeyUsages: [],
 });
@@ -212,11 +258,65 @@ const DescribeCertificate: OperationHandler = (input, ctx) => {
   return { Certificate: certificateDetail(certificate) };
 };
 
+const applyPagination = <T extends { CertificateArn: string }>(
+  items: T[],
+  nextToken: string | undefined,
+  maxItems: number,
+): { page: T[]; nextToken: string | undefined } => {
+  let start = 0;
+  if (nextToken !== undefined && nextToken !== "") {
+    const idx = items.findIndex((item) => item.CertificateArn === nextToken);
+    start = idx >= 0 ? idx + 1 : 0;
+  }
+  const page = items.slice(start, start + maxItems);
+  const hasMore = start + maxItems < items.length;
+  return {
+    page,
+    nextToken: hasMore ? page[page.length - 1]?.CertificateArn : undefined,
+  };
+};
+
+const sortCertificates = <
+  T extends { CertificateArn: string; CreatedAt: number },
+>(
+  items: T[],
+  sortBy: string,
+  sortOrder: string,
+): T[] => {
+  const multiplier = sortOrder === "DESCENDING" ? -1 : 1;
+  return [...items].sort((a, b) => {
+    let cmp = 0;
+    if (sortBy === "CREATED_AT") {
+      cmp = a.CreatedAt - b.CreatedAt;
+    } else {
+      cmp = a.CertificateArn.localeCompare(b.CertificateArn);
+    }
+    return cmp * multiplier;
+  });
+};
+
 const ListCertificates: OperationHandler = (input, ctx) => {
   const statuses = Array.isArray(input["CertificateStatuses"])
     ? (input["CertificateStatuses"] as string[])
     : [];
-  const certificates = ctx.store
+  const includes = input["Includes"] as Record<string, unknown> | undefined;
+  const keyTypes = Array.isArray(includes?.["keyTypes"])
+    ? (includes["keyTypes"] as string[])
+    : [];
+  const nextTokenInput =
+    typeof input["NextToken"] === "string" ? input["NextToken"] : undefined;
+  const maxItems =
+    typeof input["MaxItems"] === "number" ? (input["MaxItems"] as number) : 100;
+  const sortBy =
+    typeof input["SortBy"] === "string"
+      ? (input["SortBy"] as string)
+      : "CERTIFICATE_ARN";
+  const sortOrder =
+    typeof input["SortOrder"] === "string"
+      ? (input["SortOrder"] as string)
+      : "ASCENDING";
+
+  let certificates = ctx.store
     .list<StoredCertificate>()
     .filter((entry) => entry.key.startsWith("certificate/"))
     .map((entry) => entry.value)
@@ -224,9 +324,21 @@ const ListCertificates: OperationHandler = (input, ctx) => {
       (certificate) =>
         statuses.length === 0 || statuses.includes(certificate.Status),
     )
-    .sort((a, b) => a.CertificateArn.localeCompare(b.CertificateArn));
-  return {
-    CertificateSummaryList: certificates.map((certificate) => ({
+    .filter(
+      (certificate) =>
+        keyTypes.length === 0 || keyTypes.includes(certificate.KeyAlgorithm),
+    );
+
+  certificates = sortCertificates(certificates, sortBy, sortOrder);
+
+  const { page, nextToken } = applyPagination(
+    certificates,
+    nextTokenInput,
+    maxItems,
+  );
+
+  const result: Record<string, unknown> = {
+    CertificateSummaryList: page.map((certificate) => ({
       CertificateArn: certificate.CertificateArn,
       DomainName: certificate.DomainName,
       SubjectAlternativeNameSummaries: certificate.SubjectAlternativeNames,
@@ -234,17 +346,28 @@ const ListCertificates: OperationHandler = (input, ctx) => {
       Type: certificate.Type,
       KeyAlgorithm: certificate.KeyAlgorithm,
       RenewalEligibility: "INELIGIBLE",
-      InUse: false,
+      InUse: certificate.InUseBy.length > 0,
       Exported: false,
       CreatedAt: certificate.CreatedAt,
       IssuedAt: certificate.IssuedAt,
     })),
   };
+  if (nextToken !== undefined) {
+    result["NextToken"] = nextToken;
+  }
+  return result;
 };
 
 const DeleteCertificate: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "CertificateArn");
-  requireCertificate(ctx, arn);
+  const certificate = requireCertificate(ctx, arn);
+  if (certificate.InUseBy.length > 0) {
+    throw awsError(
+      "ResourceInUseException",
+      `Certificate ${arn} is in use by ${certificate.InUseBy.join(", ")}.`,
+      400,
+    );
+  }
   ctx.store.delete(certificateKey(idFromArn(arn)));
   return {};
 };
@@ -380,6 +503,7 @@ const ImportCertificate: OperationHandler = (input, ctx) => {
     describeCount: 0,
     pem: pemOf(id),
     tags,
+    InUseBy: [],
   };
   ctx.store.set(certificateKey(id), certificate);
   return { CertificateArn: arn };
@@ -436,12 +560,22 @@ const GetAccountConfiguration: OperationHandler = (_input, ctx) => {
 };
 
 const PutAccountConfiguration: OperationHandler = (input, ctx) => {
+  const idempotencyToken =
+    typeof input["IdempotencyToken"] === "string"
+      ? (input["IdempotencyToken"] as string)
+      : undefined;
+
+  const cached = checkIdempotency(ctx, "put-acfg", idempotencyToken);
+  if (cached !== undefined) return cached as Record<string, unknown>;
+
   const expiryEvents = input["ExpiryEvents"] as
     | { DaysBeforeExpiry?: number }
     | undefined;
   const config: AccountConfig = { ExpiryEvents: expiryEvents };
   ctx.store.set(accountConfigKey, config);
-  return {};
+  const result = {};
+  storeIdempotency(ctx, "put-acfg", idempotencyToken, result);
+  return result;
 };
 
 const matchesCertificateFilter = (
@@ -524,7 +658,7 @@ const certToSearchResult = (
       Status: cert.Status,
       Type: cert.Type,
       RenewalEligibility: "INELIGIBLE",
-      InUse: false,
+      InUse: cert.InUseBy.length > 0,
       Exported: false,
     },
   },
@@ -535,6 +669,8 @@ const SearchCertificates: OperationHandler = (input, ctx) => {
     typeof input["MaxResults"] === "number"
       ? (input["MaxResults"] as number)
       : 100;
+  const nextTokenInput =
+    typeof input["NextToken"] === "string" ? input["NextToken"] : undefined;
   const filterStatement = input["FilterStatement"] as
     | Record<string, unknown>
     | undefined;
@@ -580,8 +716,19 @@ const SearchCertificates: OperationHandler = (input, ctx) => {
     return cmp * multiplier;
   });
 
-  const results = certificates.slice(0, maxResults).map(certToSearchResult);
-  return { Results: results };
+  const { page, nextToken } = applyPagination(
+    certificates,
+    nextTokenInput,
+    maxResults,
+  );
+
+  const result: Record<string, unknown> = {
+    Results: page.map(certToSearchResult),
+  };
+  if (nextToken !== undefined) {
+    result["NextToken"] = nextToken;
+  }
+  return result;
 };
 
 const acm = {

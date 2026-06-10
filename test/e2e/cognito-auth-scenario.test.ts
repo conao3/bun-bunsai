@@ -81,6 +81,11 @@ describe("cognito auth scenario: SignUp → Confirm → InitiateAuth → JWT ver
     });
     expect(signUpRes.status).toBe(200);
     expect(signUpRes.body["UserConfirmed"]).toBe(false);
+    const signUpSub = signUpRes.body["UserSub"] as string;
+    expect(typeof signUpSub).toBe("string");
+    expect(signUpSub).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
 
     await client.send(
       new AdminConfirmSignUpCommand({
@@ -96,6 +101,10 @@ describe("cognito auth scenario: SignUp → Confirm → InitiateAuth → JWT ver
       }),
     );
     expect(adminUser.UserStatus).toBe("CONFIRMED");
+    const adminSubAttr = adminUser.UserAttributes?.find(
+      (a) => a.Name === "sub",
+    );
+    expect(adminSubAttr?.Value).toBe(signUpSub);
 
     const authRes = await cognitoPost("InitiateAuth", {
       ClientId: clientId,
@@ -130,7 +139,7 @@ describe("cognito auth scenario: SignUp → Confirm → InitiateAuth → JWT ver
       `https://cognito-idp.${region}.amazonaws.com/${poolId}`,
     );
     expect(idPayload.email).toBe("scenario@example.com");
-    expect(typeof idPayload.sub).toBe("string");
+    expect(idPayload.sub).toBe(signUpSub);
 
     const jwksRes = await gwFetch(
       `${endpoint}/${poolId}/.well-known/jwks.json`,
@@ -169,6 +178,8 @@ describe("cognito auth scenario: SignUp → Confirm → InitiateAuth → JWT ver
     ).filter(Boolean);
     const emailAttr = attrs.find((a) => a.Name === "email");
     expect(emailAttr?.Value).toBe("scenario@example.com");
+    const subAttr = attrs.find((a) => a.Name === "sub");
+    expect(subAttr?.Value).toBe(signUpSub);
 
     const refreshRes = await cognitoPost("InitiateAuth", {
       ClientId: clientId,

@@ -47,6 +47,7 @@ type HostedZone = {
   comment?: string;
   privateZone: boolean;
   recordSets: ResourceRecordSet[];
+  delegationSetId?: string;
 };
 
 type HealthCheck = {
@@ -731,6 +732,12 @@ const route53: ServiceDefinition = {
           Location: `https://route53.amazonaws.com${apiPrefix}/${existing.id}`,
         };
       }
+      const rawDelegationSetId = input["DelegationSetId"];
+      const delegationSetId = stripPrefix(rawDelegationSetId);
+      const delegationSet =
+        delegationSetId !== undefined
+          ? getReusableDelegationSet(ctx, delegationSetId)
+          : undefined;
       const config = input["HostedZoneConfig"];
       const configRecord = (
         typeof config === "object" && config !== null ? config : {}
@@ -750,7 +757,9 @@ const route53: ServiceDefinition = {
             Name: name.endsWith(".") ? name : `${name}.`,
             Type: "NS",
             TTL: 172800,
-            ResourceRecords: nameServers.map((ns) => ({ Value: ns })),
+            ResourceRecords: (delegationSet?.nameServers ?? nameServers).map(
+              (ns) => ({ Value: ns }),
+            ),
           },
           {
             Name: name.endsWith(".") ? name : `${name}.`,
@@ -758,17 +767,23 @@ const route53: ServiceDefinition = {
             TTL: 900,
             ResourceRecords: [
               {
-                Value: `${nameServers[0]}. hostmaster.bunsai. 1 7200 900 1209600 86400`,
+                Value: `${(delegationSet?.nameServers ?? nameServers)[0]}. hostmaster.bunsai. 1 7200 900 1209600 86400`,
               },
             ],
           },
         ],
+        delegationSetId,
       };
       ctx.store.set<HostedZone>(id, zone);
       return {
         HostedZone: hostedZoneView(zone),
         ChangeInfo: changeInfo(id),
-        DelegationSet: { NameServers: [...nameServers] },
+        DelegationSet: {
+          NameServers: delegationSet?.nameServers ?? [...nameServers],
+          ...(delegationSet !== undefined
+            ? { Id: `/delegationset/${delegationSet.id}` }
+            : {}),
+        },
         Location: `https://route53.amazonaws.com${apiPrefix}/${id}`,
       };
     },
@@ -783,14 +798,44 @@ const route53: ServiceDefinition = {
         DelegationSet: { NameServers: [...nameServers] },
       };
     },
-    ListHostedZones: (_input, ctx) => {
-      const zones = listZones(ctx);
-      return {
-        HostedZones: zones.map((zone) => hostedZoneView(zone)),
-        Marker: "",
-        IsTruncated: false,
-        MaxItems: "100",
+    ListHostedZones: (input, ctx) => {
+      let zones = listZones(ctx);
+      const filterDelegationSetId = stripPrefix(input["DelegationSetId"]);
+      if (filterDelegationSetId !== undefined) {
+        getReusableDelegationSet(ctx, filterDelegationSetId);
+        zones = zones.filter((z) => z.delegationSetId === filterDelegationSetId);
+      }
+      const hostedZoneType = input["HostedZoneType"];
+      if (hostedZoneType === "PrivateHostedZone") {
+        zones = zones.filter((z) => z.privateZone);
+      }
+      const marker = typeof input["Marker"] === "string" ? input["Marker"] : "";
+      const maxItemsRaw = input["MaxItems"];
+      const maxItems =
+        typeof maxItemsRaw === "string" && maxItemsRaw !== ""
+          ? Math.max(1, parseInt(maxItemsRaw, 10) || 100)
+          : 100;
+      const startIndex =
+        marker === ""
+          ? 0
+          : zones.findIndex((z) => z.id === marker);
+      const sliced =
+        startIndex === -1 ? [] : zones.slice(startIndex, startIndex + maxItems);
+      const isTruncated =
+        startIndex !== -1 && startIndex + maxItems < zones.length;
+      const nextMarker = isTruncated
+        ? zones[startIndex + maxItems]?.id
+        : undefined;
+      const result: Record<string, unknown> = {
+        HostedZones: sliced.map((zone) => hostedZoneView(zone)),
+        Marker: marker,
+        IsTruncated: isTruncated,
+        MaxItems: String(maxItems),
       };
+      if (nextMarker !== undefined) {
+        result["NextMarker"] = nextMarker;
+      }
+      return result;
     },
     DeleteHostedZone: (input, ctx) => {
       const id = stripPrefix(input["Id"]);
@@ -1680,6 +1725,19 @@ const route53: ServiceDefinition = {
       const callerReference = input["CallerReference"];
       if (typeof callerReference !== "string" || callerReference === "") {
         throw awsError("InvalidInput", "CallerReference is required", 400);
+      }
+      const existing = ctx.store
+        .list<ReusableDelegationSet>()
+        .find(
+          (e) =>
+            e.key.startsWith(rdsPrefix) &&
+            e.value.callerReference === callerReference,
+        );
+      if (existing !== undefined) {
+        return {
+          DelegationSet: delegationSetView(existing.value),
+          Location: `https://route53.amazonaws.com/2013-04-01/delegationset/${existing.value.id}`,
+        };
       }
       const id = generateId();
       const rds: ReusableDelegationSet = {

@@ -10,7 +10,9 @@ import {
   CreateEndpointCommand,
   CreateEntityRecognizerCommand,
   CreateFlywheelCommand,
+  DeleteDocumentClassifierCommand,
   DeleteEndpointCommand,
+  DeleteEntityRecognizerCommand,
   DescribeDatasetCommand,
   DescribeDocumentClassificationJobCommand,
   DescribeDocumentClassifierCommand,
@@ -31,6 +33,7 @@ import {
   ListTagsForResourceCommand,
   PutResourcePolicyCommand,
   StartDocumentClassificationJobCommand,
+  StartEntitiesDetectionJobCommand,
   StartFlywheelIterationCommand,
   StartSentimentDetectionJobCommand,
   StopSentimentDetectionJobCommand,
@@ -522,4 +525,175 @@ test("Comprehend resource policy and tags", async () => {
     new ListTagsForResourceCommand({ ResourceArn: resourceArn }),
   );
   expect((untagged.Tags ?? []).find((t) => t.Key === "env")).toBeUndefined();
+});
+
+test("Comprehend idempotency: CreateEndpoint same ClientRequestToken returns same ARN", async () => {
+  const client = comprehend();
+  const name = `bunsai-idem-ep-${Date.now()}`;
+  const token = `token-ep-${Date.now()}`;
+
+  const first = await client.send(
+    new CreateEndpointCommand({
+      EndpointName: name,
+      DesiredInferenceUnits: 1,
+      ClientRequestToken: token,
+    }),
+  );
+  expect(first.EndpointArn).toBeDefined();
+
+  const second = await client.send(
+    new CreateEndpointCommand({
+      EndpointName: name,
+      DesiredInferenceUnits: 2,
+      ClientRequestToken: token,
+    }),
+  );
+  expect(second.EndpointArn).toBe(first.EndpointArn);
+});
+
+test("Comprehend idempotency: CreateFlywheel same ClientRequestToken returns same ARN", async () => {
+  const client = comprehend();
+  const name = `bunsai-idem-fw-${Date.now()}`;
+  const token = `token-fw-${Date.now()}`;
+
+  const first = await client.send(
+    new CreateFlywheelCommand({
+      FlywheelName: name,
+      DataAccessRoleArn: `arn:aws:iam::${account}:role/ComprehendRole`,
+      DataLakeS3Uri: "s3://my-data-lake/",
+      ClientRequestToken: token,
+    }),
+  );
+  expect(first.FlywheelArn).toBeDefined();
+
+  const second = await client.send(
+    new CreateFlywheelCommand({
+      FlywheelName: name,
+      DataAccessRoleArn: `arn:aws:iam::${account}:role/ComprehendRole`,
+      DataLakeS3Uri: "s3://my-data-lake/",
+      ClientRequestToken: token,
+    }),
+  );
+  expect(second.FlywheelArn).toBe(first.FlywheelArn);
+});
+
+test("Comprehend idempotency: CreateDataset same ClientRequestToken returns same ARN", async () => {
+  const client = comprehend();
+  const fwName = `bunsai-idem-ds-fw-${Date.now()}`;
+  const datasetName = `bunsai-idem-ds-${Date.now()}`;
+  const token = `token-ds-${Date.now()}`;
+
+  const fw = await client.send(
+    new CreateFlywheelCommand({
+      FlywheelName: fwName,
+      DataAccessRoleArn: `arn:aws:iam::${account}:role/ComprehendRole`,
+      DataLakeS3Uri: "s3://my-data-lake/",
+    }),
+  );
+  const fwArn = fw.FlywheelArn ?? "";
+
+  const dsInput = {
+    FlywheelArn: fwArn,
+    DatasetName: datasetName,
+    DatasetType: "TRAIN" as const,
+    InputDataConfig: {
+      DataFormat: "COMPREHEND_CSV" as const,
+      DocumentClassifierInputDataConfig: { S3Uri: "s3://my-bucket/ds/" },
+    },
+    ClientRequestToken: token,
+  };
+
+  const first = await client.send(new CreateDatasetCommand(dsInput));
+  expect(first.DatasetArn).toBeDefined();
+
+  const second = await client.send(new CreateDatasetCommand(dsInput));
+  expect(second.DatasetArn).toBe(first.DatasetArn);
+});
+
+test("Comprehend delete state guard: DeleteDocumentClassifier rejects TRAINING status", async () => {
+  const client = comprehend();
+  const name = `bunsai-del-dc-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateDocumentClassifierCommand({
+      DocumentClassifierName: name,
+      LanguageCode: "en",
+      DataAccessRoleArn: `arn:aws:iam::${account}:role/ComprehendRole`,
+      InputDataConfig: { S3Uri: "s3://my-bucket/train/" },
+    }),
+  );
+  const classifierArn = created.DocumentClassifierArn ?? "";
+
+  await expect(
+    client.send(
+      new DeleteDocumentClassifierCommand({
+        DocumentClassifierArn: classifierArn,
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("Comprehend delete state guard: DeleteEntityRecognizer rejects TRAINING status", async () => {
+  const client = comprehend();
+  const name = `bunsai-del-er-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateEntityRecognizerCommand({
+      RecognizerName: name,
+      LanguageCode: "en",
+      DataAccessRoleArn: `arn:aws:iam::${account}:role/ComprehendRole`,
+      InputDataConfig: {
+        EntityTypes: [{ Type: "PERSON" }],
+        Documents: { S3Uri: "s3://my-bucket/docs/" },
+      },
+    }),
+  );
+  const recognizerArn = created.EntityRecognizerArn ?? "";
+
+  await expect(
+    client.send(
+      new DeleteEntityRecognizerCommand({
+        EntityRecognizerArn: recognizerArn,
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("Comprehend ARN validation: StartEntitiesDetectionJob with missing EntityRecognizerArn throws", async () => {
+  const client = comprehend();
+  const missingArn = `arn:aws:comprehend:${region}:${account}:entity-recognizer/does-not-exist`;
+
+  await expect(
+    client.send(
+      new StartEntitiesDetectionJobCommand({
+        InputDataConfig: {
+          S3Uri: "s3://my-bucket/input/",
+          InputFormat: "ONE_DOC_PER_FILE",
+        },
+        OutputDataConfig: { S3Uri: "s3://my-bucket/output/" },
+        DataAccessRoleArn: `arn:aws:iam::${account}:role/ComprehendRole`,
+        LanguageCode: "en",
+        EntityRecognizerArn: missingArn,
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("Comprehend ARN validation: StartDocumentClassificationJob with missing DocumentClassifierArn throws", async () => {
+  const client = comprehend();
+  const missingArn = `arn:aws:comprehend:${region}:${account}:document-classifier/does-not-exist`;
+
+  await expect(
+    client.send(
+      new StartDocumentClassificationJobCommand({
+        InputDataConfig: {
+          S3Uri: "s3://my-bucket/input/",
+          InputFormat: "ONE_DOC_PER_FILE",
+        },
+        OutputDataConfig: { S3Uri: "s3://my-bucket/output/" },
+        DataAccessRoleArn: `arn:aws:iam::${account}:role/ComprehendRole`,
+        DocumentClassifierArn: missingArn,
+      }),
+    ),
+  ).rejects.toThrow();
 });

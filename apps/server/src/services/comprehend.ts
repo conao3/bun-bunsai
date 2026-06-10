@@ -424,7 +424,17 @@ const CreateEndpoint: OperationHandler = (input, ctx) => {
   const name = requireString(input, "EndpointName");
   const desired = requireNumber(input, "DesiredInferenceUnits");
   const modelArn = stringOrUndefined(input.ModelArn);
+  const token = stringOrUndefined(input.ClientRequestToken);
   const arn = endpointArn(ctx.region, ctx.account, name);
+
+  if (token !== undefined) {
+    const existing = ctx.store.get<string>(idempotencyKey("endpoint", token));
+    if (existing !== undefined) {
+      const ep = ctx.store.get<StoredEndpoint>(endpointKey(existing));
+      return { EndpointArn: existing, ModelArn: ep?.ModelArn };
+    }
+  }
+
   const now = Date.now();
   const endpoint: StoredEndpoint = {
     EndpointArn: arn,
@@ -439,6 +449,9 @@ const CreateEndpoint: OperationHandler = (input, ctx) => {
     describeCount: 0,
   };
   ctx.store.set(endpointKey(arn), endpoint);
+  if (token !== undefined) {
+    ctx.store.set(idempotencyKey("endpoint", token), arn);
+  }
   return { EndpointArn: arn, ModelArn: modelArn };
 };
 
@@ -635,7 +648,14 @@ const ListDocumentClassifierSummaries: OperationHandler = (input, ctx) => {
 
 const DeleteDocumentClassifier: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "DocumentClassifierArn");
-  requireClassifier(ctx, arn);
+  const rec = requireClassifier(ctx, arn);
+  if (rec.Status !== "TRAINED" && rec.Status !== "IN_ERROR") {
+    throw awsError(
+      "InvalidRequestException",
+      `Classifier '${arn}' cannot be deleted in '${rec.Status}' state.`,
+      400,
+    );
+  }
   ctx.store.delete(`classifier/${arn}`);
   return {};
 };
@@ -788,7 +808,14 @@ const ListEntityRecognizerSummaries: OperationHandler = (input, ctx) => {
 
 const DeleteEntityRecognizer: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "EntityRecognizerArn");
-  requireEntityRecognizer(ctx, arn);
+  const rec = requireEntityRecognizer(ctx, arn);
+  if (rec.Status !== "TRAINED" && rec.Status !== "IN_ERROR") {
+    throw awsError(
+      "InvalidRequestException",
+      `Entity recognizer '${arn}' cannot be deleted in '${rec.Status}' state.`,
+      400,
+    );
+  }
   ctx.store.delete(`recognizer/${arn}`);
   return {};
 };
@@ -802,7 +829,17 @@ const StopTrainingEntityRecognizer: OperationHandler = (input, ctx) => {
 
 const CreateFlywheel: OperationHandler = (input, ctx) => {
   const name = requireString(input, "FlywheelName");
+  const token = stringOrUndefined(input.ClientRequestToken);
   const arn = flywheelArn(ctx.region, ctx.account, name);
+
+  if (token !== undefined) {
+    const existing = ctx.store.get<string>(idempotencyKey("flywheel", token));
+    if (existing !== undefined) {
+      const fw = ctx.store.get<StoredFlywheel>(`flywheel/${existing}`);
+      return { FlywheelArn: existing, ActiveModelArn: fw?.ActiveModelArn };
+    }
+  }
+
   const now = Date.now();
   const rec: StoredFlywheel = {
     FlywheelArn: arn,
@@ -827,6 +864,9 @@ const CreateFlywheel: OperationHandler = (input, ctx) => {
     describeCount: 0,
   };
   ctx.store.set(`flywheel/${arn}`, rec);
+  if (token !== undefined) {
+    ctx.store.set(idempotencyKey("flywheel", token), arn);
+  }
   const tags = parseTags(input.Tags);
   if (tags.length > 0) ctx.store.set(tagsKey(arn), tags);
   return { FlywheelArn: arn, ActiveModelArn: rec.ActiveModelArn };
@@ -1004,8 +1044,15 @@ const CreateDataset: OperationHandler = (input, ctx) => {
   const fwArn = requireString(input, "FlywheelArn");
   requireFlywheel(ctx, fwArn);
   const name = requireString(input, "DatasetName");
+  const token = stringOrUndefined(input.ClientRequestToken);
   const fwName = fwArn.split("/").pop() ?? "fw";
   const arn = datasetArn(ctx.region, ctx.account, fwName, name);
+
+  if (token !== undefined) {
+    const existing = ctx.store.get<string>(idempotencyKey("dataset", token));
+    if (existing !== undefined) return { DatasetArn: existing };
+  }
+
   const now = Date.now();
   const rec: StoredDataset = {
     DatasetArn: arn,
@@ -1019,6 +1066,9 @@ const CreateDataset: OperationHandler = (input, ctx) => {
     describeCount: 0,
   };
   ctx.store.set(`dataset/${arn}`, rec);
+  if (token !== undefined) {
+    ctx.store.set(idempotencyKey("dataset", token), arn);
+  }
   return { DatasetArn: arn };
 };
 
@@ -1297,6 +1347,10 @@ const StopDominantLanguageDetectionJob: OperationHandler = (input, ctx) =>
   stopDetectionJob(input, ctx, "dominant-language-job");
 
 const StartEntitiesDetectionJob: OperationHandler = (input, ctx) => {
+  const recognizerArn = stringOrUndefined(input.EntityRecognizerArn);
+  if (recognizerArn !== undefined) {
+    requireEntityRecognizer(ctx, recognizerArn);
+  }
   const j = startDetectionJob(
     input,
     ctx,
@@ -1304,7 +1358,7 @@ const StartEntitiesDetectionJob: OperationHandler = (input, ctx) => {
     "entities-detection-jobs",
     {
       LanguageCode: stringOrUndefined(input.LanguageCode),
-      EntityRecognizerArn: stringOrUndefined(input.EntityRecognizerArn),
+      EntityRecognizerArn: recognizerArn,
       FlywheelArn: stringOrUndefined(input.FlywheelArn),
     },
   );
@@ -1562,13 +1616,17 @@ const ListTopicsDetectionJobs: OperationHandler = (input, ctx) => {
 };
 
 const StartDocumentClassificationJob: OperationHandler = (input, ctx) => {
+  const classifierArn = stringOrUndefined(input.DocumentClassifierArn);
+  if (classifierArn !== undefined) {
+    requireClassifier(ctx, classifierArn);
+  }
   const j = startDetectionJob(
     input,
     ctx,
     "document-classification-job",
     "document-classification-jobs",
     {
-      DocumentClassifierArn: stringOrUndefined(input.DocumentClassifierArn),
+      DocumentClassifierArn: classifierArn,
       FlywheelArn: stringOrUndefined(input.FlywheelArn),
     },
   );

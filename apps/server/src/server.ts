@@ -4,7 +4,7 @@ import { createRequestLog, recordLog } from "./core/log.ts";
 import { buildParsedRequest, routeRequest } from "./core/router.ts";
 import { createStateStore } from "./core/state.ts";
 import type { Protocol } from "./core/types.ts";
-import { handleManagement } from "./management/api.ts";
+import { createSnapshotRegistry, handleManagement } from "./management/api.ts";
 import { findService } from "./services/index.ts";
 import { virtualHostBucket } from "./services/s3.ts";
 import { handleCognitoDiscovery } from "./services/cognito-idp.ts";
@@ -19,9 +19,18 @@ const bodyTextForLog = (body: string | Uint8Array): string => {
   }
 };
 
+const headersToRecord = (headers: Headers): Record<string, string> => {
+  const obj: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    obj[key] = value;
+  });
+  return obj;
+};
+
 export function createBunsaiApp() {
   const store = createStateStore();
   const log = createRequestLog();
+  const snapshots = createSnapshotRegistry();
 
   const gatewayFetch = async (req: Request): Promise<Response> => {
     const start = performance.now();
@@ -53,6 +62,11 @@ export function createBunsaiApp() {
         statusCode: 400,
       };
       const serialized = serializeError(protocol, error, { requestId });
+      const unknownRespHeaders = {
+        "content-type": serialized.contentType,
+        "x-amzn-requestid": requestId,
+        ...(route.service === "s3" ? { "x-amz-request-id": requestId } : {}),
+      };
       recordLog(log, {
         service: route.service ?? "unknown",
         operation: route.target ?? "unknown",
@@ -61,8 +75,12 @@ export function createBunsaiApp() {
         account: route.account,
         region: route.region,
         protocol: "unknown",
+        method: req.method,
+        path: url.pathname,
         requestBodyText: bodyTextForLog(bodyBytes),
         responseBodyText: bodyTextForLog(serialized.body),
+        requestHeaders: headersToRecord(req.headers),
+        responseHeaders: unknownRespHeaders,
       });
       return new Response(serialized.body, {
         status: error.statusCode,
@@ -82,6 +100,11 @@ export function createBunsaiApp() {
         statusCode: 403,
       };
       const serialized = serializeError(service.protocol, error, { requestId });
+      const expiredRespHeaders = {
+        "content-type": serialized.contentType,
+        "x-amzn-requestid": requestId,
+        ...(route.service === "s3" ? { "x-amz-request-id": requestId } : {}),
+      };
       recordLog(log, {
         service: route.service,
         operation: route.target ?? "unknown",
@@ -90,8 +113,12 @@ export function createBunsaiApp() {
         account: route.account,
         region: route.region,
         protocol: service.protocol,
+        method: req.method,
+        path: url.pathname,
         requestBodyText: bodyTextForLog(bodyBytes),
         responseBodyText: bodyTextForLog(serialized.body),
+        requestHeaders: headersToRecord(req.headers),
+        responseHeaders: expiredRespHeaders,
       });
       return new Response(serialized.body, {
         status: error.statusCode,
@@ -118,6 +145,12 @@ export function createBunsaiApp() {
       service.protocol,
     );
     const result = await dispatch(service, parsed, store, requestId);
+    const responseHeaders = new Headers({ "content-type": result.contentType });
+    responseHeaders.set("x-amzn-RequestId", requestId);
+    if (result.service === "s3")
+      responseHeaders.set("x-amz-request-id", requestId);
+    for (const [name, value] of Object.entries(result.headers ?? {}))
+      responseHeaders.set(name, value);
     recordLog(log, {
       service: result.service,
       operation: result.operation,
@@ -126,24 +159,22 @@ export function createBunsaiApp() {
       account: route.account,
       region: route.region,
       protocol: service.protocol,
+      method: req.method,
+      path: url.pathname,
       requestBodyText: bodyTextForLog(bodyBytes),
       responseBodyText: bodyTextForLog(result.body),
+      requestHeaders: headersToRecord(req.headers),
+      responseHeaders: headersToRecord(responseHeaders),
     });
-    const responseHeaders = new Headers({ "content-type": result.contentType });
-    responseHeaders.set("x-amzn-RequestId", requestId);
-    if (result.service === "s3")
-      responseHeaders.set("x-amz-request-id", requestId);
-    for (const [name, value] of Object.entries(result.headers ?? {}))
-      responseHeaders.set(name, value);
     return new Response(result.body, {
       status: result.statusCode,
       headers: responseHeaders,
     });
   };
 
-  const managementFetch = (req: Request): Response => {
+  const managementFetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
-    const managed = handleManagement(req, url, { store, log });
+    const managed = await handleManagement(req, url, { store, log, snapshots });
     return managed ?? new Response("not found", { status: 404 });
   };
 

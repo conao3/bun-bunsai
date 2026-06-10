@@ -18,6 +18,7 @@ import {
 const detailTabs = [
   { id: "interpreted", label: "解釈後パラメータ" },
   { id: "raw", label: "生ボディ" },
+  { id: "headers", label: "ヘッダ" },
   { id: "response", label: "レスポンス" },
 ] as const;
 type DetailTab = (typeof detailTabs)[number]["id"];
@@ -32,9 +33,10 @@ const LogRow = memo(function LogRow({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div
+    <button
       className={`log-row${isSelected ? " sel" : ""}${r.statusCode >= 500 ? " r5xx" : r.statusCode >= 400 ? " r4xx" : ""}`}
       onClick={() => onSelect(r.id)}
+      aria-selected={isSelected}
     >
       <span className="c-time mono">{fmtTime(r.time)}</span>
       <span className="c-svc">
@@ -49,7 +51,7 @@ const LogRow = memo(function LogRow({
         <span className="lat-u">ms</span>
       </span>
       <span className="c-scope mono">{r.region}</span>
-    </div>
+    </button>
   );
 });
 
@@ -86,16 +88,45 @@ function RequestDetail({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<DetailTab>("interpreted");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const prevFocusRef = useRef<Element | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     setTab("interpreted");
   }, [req.id]);
+
+  useEffect(() => {
+    prevFocusRef.current = document.activeElement;
+    dialogRef.current?.focus();
+    return () => {
+      (prevFocusRef.current as HTMLElement | null)?.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCloseRef.current();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   const isErr = req.statusCode >= 400;
   const err = isErr ? parsedError(req.responseBodyText) : null;
   const respIsJson =
     req.responseBodyText.trim().startsWith("{") ||
     req.responseBodyText.trim().startsWith("[");
   return (
-    <div className="detail drawer">
+    <div
+      className="detail drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${req.operation} (${req.service})`}
+      ref={dialogRef}
+      tabIndex={-1}
+    >
       <div className="detail-head">
         <div className="flex aic gap8" style={{ minWidth: 0 }}>
           <ServiceTag svc={req.service} />
@@ -108,7 +139,7 @@ function RequestDetail({
           <StatusChip status={req.statusCode} />
           <ProtoBadge protocol={req.protocol} />
         </div>
-        <button className="icon-btn" onClick={onClose}>
+        <button className="icon-btn" onClick={onClose} aria-label="閉じる">
           <Ico.close width="17" height="17" />
         </button>
       </div>
@@ -118,6 +149,20 @@ function RequestDetail({
           <span className="k">Service</span>
           <span className="v">{svcInfo(req.service).name}</span>
         </div>
+        {req.method && req.path && (
+          <div className="kv-row">
+            <span className="k">Method · Path</span>
+            <span className="v mono">
+              {req.method} {req.path}
+            </span>
+          </div>
+        )}
+        {req.resourceArn && (
+          <div className="kv-row">
+            <span className="k">Resource ARN</span>
+            <span className="v mono">{req.resourceArn}</span>
+          </div>
+        )}
         <div className="kv-row">
           <span className="k">Request ID</span>
           <span className="v">{req.id}</span>
@@ -159,12 +204,14 @@ function RequestDetail({
         </div>
       )}
 
-      <div className="detail-tabs">
+      <div className="detail-tabs" role="tablist">
         {detailTabs.map((t) => (
           <button
             key={t.id}
+            role="tab"
             className={tab === t.id ? "on" : ""}
             onClick={() => setTab(t.id)}
+            aria-selected={tab === t.id}
           >
             {t.label}
           </button>
@@ -187,6 +234,45 @@ function RequestDetail({
               raw request body
             </div>
             <CodeBlock text={req.requestBodyText} />
+          </>
+        )}
+        {tab === "headers" && (
+          <>
+            <div className="uppercase-label" style={{ marginBottom: 8 }}>
+              request headers
+            </div>
+            {req.requestHeaders &&
+            Object.keys(req.requestHeaders).length > 0 ? (
+              <div className="headers-kv">
+                {Object.entries(req.requestHeaders).map(([k, v]) => (
+                  <div key={k} className="hkv-row">
+                    <span className="hkv-k mono">{k}</span>
+                    <span className="hkv-v mono">{v}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <span style={{ color: "var(--muted)", fontSize: 12.5 }}>—</span>
+            )}
+            <div
+              className="uppercase-label"
+              style={{ marginTop: 16, marginBottom: 8 }}
+            >
+              response headers
+            </div>
+            {req.responseHeaders &&
+            Object.keys(req.responseHeaders).length > 0 ? (
+              <div className="headers-kv">
+                {Object.entries(req.responseHeaders).map(([k, v]) => (
+                  <div key={k} className="hkv-row">
+                    <span className="hkv-k mono">{k}</span>
+                    <span className="hkv-v mono">{v}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <span style={{ color: "var(--muted)", fontSize: 12.5 }}>—</span>
+            )}
           </>
         )}
         {tab === "response" && (
@@ -345,6 +431,7 @@ export function RequestLog({
               key={s}
               className={statusFilter === s ? "on" : ""}
               onClick={() => onStatusFilter(s)}
+              aria-pressed={statusFilter === s}
             >
               {s === "all" ? "All" : s}
             </button>
@@ -359,6 +446,8 @@ export function RequestLog({
           />
           <input
             className="input"
+            type="search"
+            aria-label="operation, service, request id を検索"
             placeholder="operation, service, request id を検索…"
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}

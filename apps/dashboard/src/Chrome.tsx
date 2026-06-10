@@ -9,12 +9,14 @@ const navItems = [
   { id: "overview", label: "Overview", ico: Ico.overview },
   { id: "log", label: "Request Log", ico: Ico.log },
   { id: "resources", label: "Resource Browser", ico: Ico.browser },
+  { id: "snapshots", label: "Snapshots", ico: Ico.snapshot },
 ] as const;
 
 const screenTitles: Record<Screen, string> = {
   overview: "Overview",
   log: "Request Log",
   resources: "Resource Browser",
+  snapshots: "State Snapshots",
 } as const;
 
 export function Sidebar({
@@ -23,6 +25,7 @@ export function Sidebar({
   services,
   logCount,
   resourceCount,
+  snapshotCount,
   connected,
   endpoint,
 }: {
@@ -31,6 +34,7 @@ export function Sidebar({
   services: ServiceSummary[];
   logCount: number;
   resourceCount: number;
+  snapshotCount: number;
   connected: boolean;
   endpoint: string;
 }) {
@@ -45,6 +49,7 @@ export function Sidebar({
     overview: null,
     log: logCount || null,
     resources: resourceCount || null,
+    snapshots: snapshotCount || null,
   };
   return (
     <aside className="sidebar">
@@ -118,17 +123,18 @@ export function Sidebar({
       <nav className="nav">
         <div className="nav-group-label uppercase-label">Monitor</div>
         {navItems.map((n) => (
-          <div
+          <button
             key={n.id}
             className={`nav-item${screen === n.id ? " active" : ""}`}
             onClick={() => setScreen(n.id)}
+            aria-current={screen === n.id ? "page" : undefined}
           >
             <n.ico className="ico" />
             <span className="label">{n.label}</span>
             {counts[n.id] != null && (
               <span className="count mono">{counts[n.id]}</span>
             )}
-          </div>
+          </button>
         ))}
       </nav>
 
@@ -156,23 +162,28 @@ function ScopeSeg({
   options: string[];
   onPick: (o: string) => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   return (
     <>
-      <div className="scope-seg" ref={ref} onClick={() => setOpen((o) => !o)}>
+      <button
+        className="scope-seg"
+        ref={ref}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
         <div>
           <div className="k">{k}</div>
           <div className="v">{v}</div>
         </div>
         <Ico.caret className="caret" width="13" height="13" />
-      </div>
+      </button>
       {open && (
         <Popover anchor={ref.current} onClose={() => setOpen(false)}>
           <div className="grp uppercase-label">{k}</div>
           {options.length === 0 && <div className="opt muted">該当なし</div>}
           {options.map((o) => (
-            <div
+            <button
               key={o}
               className={`opt${o === v ? " sel" : ""}`}
               onClick={() => {
@@ -184,7 +195,7 @@ function ScopeSeg({
                 {o}
               </span>
               {o === v && <Ico.check className="chk" width="15" height="15" />}
-            </div>
+            </button>
           ))}
         </Popover>
       )}
@@ -233,7 +244,10 @@ export function GlobalBar({
 
       <button
         className="icon-btn"
-        title="Toggle theme"
+        aria-label={
+          theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
+        }
+        aria-pressed={theme === "dark"}
         onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
       >
         {theme === "dark" ? (

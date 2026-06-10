@@ -1,15 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import type { RequestLogEntry, ResourceEntry, ServiceSummary } from "./api";
-import { fetchLogs, fetchResources, fetchServices, openLogStream } from "./api";
+import type {
+  RequestLogEntry,
+  ResourceEntry,
+  ServiceSummary,
+  SnapshotMeta,
+} from "./api";
+import {
+  fetchLogs,
+  fetchResources,
+  fetchServices,
+  fetchSnapshots,
+  openLogStream,
+} from "./api";
 import { GlobalBar, Sidebar } from "./Chrome";
 import { Overview } from "./Overview";
 import { RequestLog, statusFilters } from "./RequestLog";
 import type { StatusFilter } from "./RequestLog";
 import { ResourceBrowser } from "./ResourceBrowser";
+import { Snapshots } from "./Snapshots";
 import {
   buildLogPath,
   buildResourcePath,
+  buildSnapshotPath,
   parseRoute,
   router,
   useLocation,
@@ -53,8 +66,9 @@ export function App() {
   const [services, setServices] = useState<ServiceSummary[]>([]);
   const [resources, setResources] = useState<ResourceEntry[]>([]);
   const [requests, setRequests] = useState<RequestLogEntry[]>([]);
+  const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
   const [connected, setConnected] = useState(false);
-  const [resourceToken, setResourceToken] = useState(0);
+  const [resourcesLoaded, setResourcesLoaded] = useState(false);
 
   const liveRef = useRef(live);
   liveRef.current = live;
@@ -77,6 +91,12 @@ export function App() {
     ls.set("theme", v);
   }, []);
 
+  const refreshSnapshots = useCallback(() => {
+    fetchSnapshots()
+      .then(setSnapshots)
+      .catch(() => {});
+  }, []);
+
   const setScreen = useCallback(
     (v: Screen) => {
       const path =
@@ -84,7 +104,9 @@ export function App() {
           ? "/overview"
           : v === "resources"
             ? buildResourcePath(null)
-            : buildLogPath(null);
+            : v === "snapshots"
+              ? buildSnapshotPath()
+              : buildLogPath(null);
       const url = withQuery(path, loc.query);
       if (url === router.getSnapshot()) return;
       router.push(url);
@@ -98,7 +120,7 @@ export function App() {
       const next = new URLSearchParams(loc.query);
       next.set("account", v.account);
       next.set("region", v.region);
-      router.push(withQuery(loc.path, next));
+      router.replace(withQuery(loc.path, next));
     },
     [loc.query, loc.path],
   );
@@ -107,9 +129,11 @@ export function App() {
     (id: string | null) => {
       if (id === null)
         router.closeDrawer(withQuery(buildLogPath(null), loc.query));
+      else if (selId !== null)
+        router.replace(withQuery(buildLogPath(id), loc.query));
       else router.push(withQuery(buildLogPath(id), loc.query));
     },
-    [loc.query],
+    [loc.query, selId],
   );
 
   const setSel = useCallback(
@@ -162,11 +186,13 @@ export function App() {
           setServices(svcs);
           setResources(res);
           setConnected(true);
+          setResourcesLoaded(true);
           delay = 4000;
         })
         .catch(() => {
           if (cancelled) return;
           setConnected(false);
+          setResourcesLoaded(true);
           delay = Math.min(delay * 2, POLL_MAX);
         })
         .finally(() => {
@@ -180,6 +206,10 @@ export function App() {
       clearTimeout(timer);
     };
   }, []);
+
+  useEffect(() => {
+    refreshSnapshots();
+  }, [refreshSnapshots]);
 
   useEffect(() => {
     let cancelled = false;
@@ -234,10 +264,6 @@ export function App() {
   }, []);
 
   const clearRequests = useCallback(() => setRequests([]), []);
-
-  useEffect(() => {
-    setResourceToken((t) => t + 1);
-  }, [resources.length]);
 
   const accounts = useMemo(() => {
     const set = new Set<string>([scope.account, defaultScope.account]);
@@ -294,6 +320,7 @@ export function App() {
         services={services}
         logCount={requests.length}
         resourceCount={scopedResourceCount}
+        snapshotCount={snapshots.length}
         connected={connected}
         endpoint={endpoint}
       />
@@ -337,10 +364,14 @@ export function App() {
           <ResourceBrowser
             scope={scope}
             connected={connected}
-            refreshToken={resourceToken}
+            resources={resources}
+            loaded={resourcesLoaded}
             sel={sel}
             onSelect={setSel}
           />
+        )}
+        {screen === "snapshots" && (
+          <Snapshots snapshots={snapshots} onRefresh={refreshSnapshots} />
         )}
       </div>
     </div>

@@ -190,6 +190,32 @@ export const Ico = {
       />
     </svg>
   ),
+  snapshot: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="none" {...p}>
+      <rect
+        x="3"
+        y="4"
+        width="18"
+        height="4"
+        rx="1"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M5 8v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 13h6"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  ),
 } as const;
 
 const serviceMeta: Record<
@@ -230,6 +256,125 @@ const serviceMeta: Record<
     color: "#e8a55a",
     resourceLabel: "Secrets",
   },
+  lambda: {
+    name: "Lambda",
+    tag: "Lambda",
+    kind: "Function runtime",
+    color: "#d4885c",
+    resourceLabel: "Functions",
+  },
+  sns: {
+    name: "SNS",
+    tag: "SNS",
+    kind: "Pub/sub topic",
+    color: "#c87888",
+    resourceLabel: "Topics",
+  },
+  events: {
+    name: "EventBridge",
+    tag: "Events",
+    kind: "Event bus",
+    color: "#5aaac4",
+    resourceLabel: "Rules",
+  },
+  logs: {
+    name: "CloudWatch Logs",
+    tag: "Logs",
+    kind: "Log group",
+    color: "#8ab878",
+    resourceLabel: "Log groups",
+  },
+  monitoring: {
+    name: "CloudWatch",
+    tag: "CloudWatch",
+    kind: "Metrics & alarms",
+    color: "#d4a840",
+    resourceLabel: "Alarms",
+  },
+  cloudformation: {
+    name: "CloudFormation",
+    tag: "CFN",
+    kind: "Stack orchestration",
+    color: "#8878c0",
+    resourceLabel: "Stacks",
+  },
+  states: {
+    name: "Step Functions",
+    tag: "StepFn",
+    kind: "Workflow engine",
+    color: "#b078b0",
+    resourceLabel: "State machines",
+  },
+  "cognito-idp": {
+    name: "Cognito",
+    tag: "Cognito",
+    kind: "Identity provider",
+    color: "#b06878",
+    resourceLabel: "User pools",
+  },
+  kms: {
+    name: "KMS",
+    tag: "KMS",
+    kind: "Key management",
+    color: "#9870b8",
+    resourceLabel: "Keys",
+  },
+  sts: {
+    name: "STS",
+    tag: "STS",
+    kind: "Security tokens",
+    color: "#7888c4",
+    resourceLabel: "Tokens",
+  },
+  iam: {
+    name: "IAM",
+    tag: "IAM",
+    kind: "Access management",
+    color: "#c46860",
+    resourceLabel: "Roles",
+  },
+  apigateway: {
+    name: "API Gateway",
+    tag: "APIGW",
+    kind: "REST/HTTP API",
+    color: "#8878b0",
+    resourceLabel: "APIs",
+  },
+  ssm: {
+    name: "Systems Manager",
+    tag: "SSM",
+    kind: "Parameter store",
+    color: "#5898bc",
+    resourceLabel: "Parameters",
+  },
+  kinesis: {
+    name: "Kinesis",
+    tag: "Kinesis",
+    kind: "Data stream",
+    color: "#6878c4",
+    resourceLabel: "Streams",
+  },
+  elasticache: {
+    name: "ElastiCache",
+    tag: "Cache",
+    kind: "In-memory cache",
+    color: "#5ab0a0",
+    resourceLabel: "Clusters",
+  },
+  rds: {
+    name: "RDS",
+    tag: "RDS",
+    kind: "Relational DB",
+    color: "#5880b8",
+    resourceLabel: "Instances",
+  },
+  ecs: {
+    name: "ECS",
+    tag: "ECS",
+    kind: "Container service",
+    color: "#e88050",
+    resourceLabel: "Clusters",
+  },
 } as const;
 
 export function svcInfo(svc: string) {
@@ -244,6 +389,12 @@ export function svcInfo(svc: string) {
   );
 }
 
+const dotLabel: Record<"running" | "error" | "idle", string> = {
+  running: "稼働中",
+  error: "エラー",
+  idle: "停止",
+};
+
 export function StatusDot({
   state,
   pulse,
@@ -255,6 +406,8 @@ export function StatusDot({
 }) {
   return (
     <span
+      role="img"
+      aria-label={dotLabel[state]}
       className={`dot ${state}${pulse ? " pulse" : ""}${lg ? " lg" : ""}`}
     />
   );
@@ -415,7 +568,7 @@ export function MultiFilter({
   onChange: (v: string[]) => void;
   render?: (o: string) => ReactNode;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const all = selected.length === 0;
   const toggle = (o: string) => {
@@ -424,10 +577,11 @@ export function MultiFilter({
   };
   return (
     <>
-      <div
+      <button
         className={`select-pill${all ? "" : " on"}`}
         ref={ref}
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
       >
         <Ico.filter width="13" height="13" />
         <span>
@@ -439,21 +593,21 @@ export function MultiFilter({
           height="12"
           style={{ color: "var(--muted-soft)" }}
         />
-      </div>
+      </button>
       {open && (
         <Popover anchor={ref.current} onClose={() => setOpen(false)}>
-          <div className="opt" onClick={() => onChange([])}>
+          <button className="opt" onClick={() => onChange([])}>
             <span style={{ fontWeight: 500 }}>All {label.toLowerCase()}</span>
             {all && <Ico.check className="chk" width="15" height="15" />}
-          </div>
+          </button>
           <div className="sep" />
           {options.map((o) => (
-            <div key={o} className="opt" onClick={() => toggle(o)}>
+            <button key={o} className="opt" onClick={() => toggle(o)}>
               <span>{render ? render(o) : o}</span>
               {selected.includes(o) && (
                 <Ico.check className="chk" width="15" height="15" />
               )}
-            </div>
+            </button>
           ))}
         </Popover>
       )}

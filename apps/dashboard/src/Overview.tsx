@@ -56,7 +56,7 @@ function ServiceCard({
   const s = svcInfo(svc.name);
   const state = errCount > 0 ? "error" : "running";
   return (
-    <div
+    <button
       className={`svc-card${errCount > 0 ? " has-error" : ""}`}
       onClick={onOpen}
     >
@@ -116,7 +116,7 @@ function ServiceCard({
           </span>
         )}
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -151,7 +151,11 @@ function MiniStream({
       ) : (
         <div className="ms-list">
           {recent.map((r) => (
-            <div key={r.id} className="ms-row" onClick={() => setScreen("log")}>
+            <button
+              key={r.id}
+              className="ms-row"
+              onClick={() => setScreen("log")}
+            >
               <span className="ms-time mono">
                 {fmtTime(r.time).slice(0, 8)}
               </span>
@@ -160,7 +164,7 @@ function MiniStream({
               <span style={{ flex: 1 }} />
               <span className="ms-lat mono">{fmtLatency(r.latencyMs)}ms</span>
               <StatusChip status={r.statusCode} />
-            </div>
+            </button>
           ))}
         </div>
       )}

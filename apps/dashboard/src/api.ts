@@ -33,8 +33,22 @@ export type RequestLogEntry = {
   account: string;
   region: string;
   protocol: string;
+  method?: string;
+  path?: string;
   requestBodyText: string;
   responseBodyText: string;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
+  resourceArn?: string;
+};
+
+export type SnapshotMeta = {
+  id: string;
+  name: string;
+  createdAt: string;
+  services: string[];
+  entryCount: number;
+  sizeBytes: number;
 };
 
 const base = "/__bunsai" as const;
@@ -47,19 +61,45 @@ async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as T;
+}
+
 export async function fetchServices(): Promise<ServiceSummary[]> {
   return getJson<ServiceSummary[]>("/services");
 }
 
-export async function fetchResources(
-  service?: string,
-): Promise<ResourceEntry[]> {
-  const q = service ? `?service=${encodeURIComponent(service)}` : "";
-  return getJson<ResourceEntry[]>(`/resources${q}`);
+export async function fetchResources(): Promise<ResourceEntry[]> {
+  return getJson<ResourceEntry[]>("/resources");
 }
 
 export async function fetchLogs(): Promise<RequestLogEntry[]> {
   return getJson<RequestLogEntry[]>("/logs");
+}
+
+export async function fetchSnapshots(): Promise<SnapshotMeta[]> {
+  return getJson<SnapshotMeta[]>("/snapshots");
+}
+
+export async function createSnapshot(name: string): Promise<SnapshotMeta> {
+  return postJson<SnapshotMeta>("/snapshots", { name });
+}
+
+export async function restoreSnapshot(id: string): Promise<SnapshotMeta> {
+  return postJson<SnapshotMeta>(`/snapshots/${encodeURIComponent(id)}/restore`);
+}
+
+export async function deleteSnapshot(id: string): Promise<void> {
+  const res = await fetch(`${base}/snapshots/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
 }
 
 export function openLogStream(

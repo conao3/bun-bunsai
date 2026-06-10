@@ -162,6 +162,13 @@ const CreateSecret: OperationHandler = (input, ctx) => {
 
 const GetSecretValue: OperationHandler = (input, ctx) => {
   const secret = requireSecret(ctx, secretIdFromInput(input));
+  if (secret.DeletedDate !== undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      "You tried to perform the operation on a secret that isn't in a valid state for the operation.",
+      400,
+    );
+  }
   const requestedStage = stringOrUndefined(input["VersionStage"]);
   const requestedVersion = stringOrUndefined(input["VersionId"]);
   let version: StoredVersion | undefined;

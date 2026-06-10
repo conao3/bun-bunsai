@@ -64,3 +64,31 @@ export const enumerateResources = (
 
 export const countResources = (store: StateStore, service: string): number =>
   enumerateResources(store, service).length;
+
+export type StateSnapshot = Map<string, Map<string, unknown>>;
+
+export const dumpState = (store: StateStore): StateSnapshot => {
+  const snapshot: StateSnapshot = new Map();
+  for (const [key, bucket] of store.data.entries()) {
+    const cloned = new Map<string, unknown>();
+    for (const [k, v] of bucket.entries()) {
+      cloned.set(k, structuredClone(v));
+    }
+    snapshot.set(key, cloned);
+  }
+  return snapshot;
+};
+
+export const restoreState = (
+  store: StateStore,
+  snapshot: StateSnapshot,
+): void => {
+  store.data.clear();
+  for (const [key, bucket] of snapshot.entries()) {
+    const cloned = new Map<string, unknown>();
+    for (const [k, v] of bucket.entries()) {
+      cloned.set(k, structuredClone(v));
+    }
+    store.data.set(key, cloned);
+  }
+};

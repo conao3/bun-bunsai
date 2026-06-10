@@ -197,6 +197,11 @@ export type RequestLogEntry = {
   account: string;
   region: string;
   protocol: Protocol | "unknown";
+  method: string;
+  path: string;
   requestBodyText: string;
   responseBodyText: string;
+  requestHeaders: Record<string, string>;
+  responseHeaders: Record<string, string>;
+  resourceArn?: string;
 };

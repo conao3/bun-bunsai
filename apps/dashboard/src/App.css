@@ -1558,3 +1558,139 @@ body {
   border-radius: var(--r-md);
   padding: 4px 14px;
 }
+
+.snap-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--section-gap);
+  max-width: 960px;
+}
+
+.snap-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+}
+
+.snap-table-wrap {
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.snap-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--cell-fs);
+}
+
+.snap-table thead tr {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.snap-table th {
+  padding: var(--row-pad-y) var(--row-pad-x);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.snap-table td {
+  padding: var(--row-pad-y) var(--row-pad-x);
+  border-bottom: 1px solid var(--hairline);
+  color: var(--body);
+  vertical-align: middle;
+}
+
+.snap-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.snap-table tbody tr:hover td {
+  background: var(--hover);
+}
+
+.snap-svc-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.snap-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.48);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadein 0.15s ease both;
+}
+
+.modal-dialog {
+  background: var(--panel);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow);
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  animation: fadein 0.15s ease both;
+}
+
+.modal-head {
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.modal-title {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 18px;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+.modal-body {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-desc {
+  font-size: 13px;
+  color: var(--body);
+  margin: 0;
+  line-height: 1.6;
+}
+
+.modal-svc-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.modal-foot {
+  padding: 14px 20px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--hairline);
+}

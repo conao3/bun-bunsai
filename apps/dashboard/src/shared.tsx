@@ -190,6 +190,32 @@ export const Ico = {
       />
     </svg>
   ),
+  snapshot: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" fill="none" {...p}>
+      <rect
+        x="3"
+        y="4"
+        width="18"
+        height="4"
+        rx="1"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M5 8v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 13h6"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  ),
 } as const;
 
 const serviceMeta: Record<

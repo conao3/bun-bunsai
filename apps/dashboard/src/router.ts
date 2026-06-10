@@ -5,7 +5,8 @@ export type Loc = { path: string; query: URLSearchParams };
 export type Route =
   | { screen: "overview" }
   | { screen: "log"; requestId: string | null }
-  | { screen: "resources"; sel: { service: string; key: string } | null };
+  | { screen: "resources"; sel: { service: string; key: string } | null }
+  | { screen: "snapshots" };
 
 const listeners = new Set<() => void>();
 let bound = false;
@@ -93,6 +94,8 @@ export function parseRoute(path: string): Route | null {
       ? null
       : { screen: "resources", sel: { service, key } };
   }
+  if (seg.length === 1 && seg[0] === "snapshots")
+    return { screen: "snapshots" };
   return null;
 }
 
@@ -106,6 +109,10 @@ export function buildResourcePath(
   return sel
     ? `/resources/${encodeURIComponent(sel.service)}/${encodeURIComponent(sel.key)}`
     : "/resources";
+}
+
+export function buildSnapshotPath(): string {
+  return "/snapshots";
 }
 
 export function withQuery(path: string, query: URLSearchParams): string {

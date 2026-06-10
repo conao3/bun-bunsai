@@ -96,6 +96,7 @@ import {
   StopChannelCommand,
   StartMultiplexCommand,
   StopMultiplexCommand,
+  TimecodeConfigSource,
 } from "@aws-sdk/client-medialive";
 
 const { endpoint, requestHandler } = startApp();
@@ -956,7 +957,7 @@ test("HIGH-4: Channel config persistence", async () => {
   const encoderSettings = {
     AudioDescriptions: [],
     OutputGroups: [],
-    TimecodeConfig: { Source: "EMBEDDED" },
+    TimecodeConfig: { Source: TimecodeConfigSource.EMBEDDED },
     VideoDescriptions: [],
   };
 
@@ -979,9 +980,7 @@ test("HIGH-4: Channel config persistence", async () => {
     new DescribeChannelCommand({ ChannelId: id }),
   );
   expect(described.EncoderSettings).toBeDefined();
-  expect(
-    (described.EncoderSettings as Record<string, unknown>)?.["TimecodeConfig"],
-  ).toBeDefined();
+  expect(described.EncoderSettings?.TimecodeConfig).toBeDefined();
   expect(described.InputSpecification?.Codec).toBe("AVC");
   expect(described.LogLevel).toBe("INFO");
   expect(described.RoleArn).toBe(

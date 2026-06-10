@@ -685,6 +685,10 @@ const CreateCacheCluster: OperationHandler = (input, ctx) => {
     ARN: clusterArnOf(ctx.region, ctx.account, id),
   };
   ctx.store.set(clusterKey(id), cluster);
+  const initialTags = tagList(input);
+  if (initialTags.length > 0) {
+    ctx.store.set(tagKey(cluster.ARN), initialTags);
+  }
   return { CacheCluster: presentCluster(cluster) };
 };
 
@@ -726,6 +730,7 @@ const DeleteCacheCluster: OperationHandler = (input, ctx) => {
     CacheClusterStatus: "deleting",
   };
   ctx.store.set(clusterKey(id), updated);
+  ctx.store.delete(tagKey(cluster.ARN));
   return { CacheCluster: presentCluster(updated) };
 };
 
@@ -788,6 +793,10 @@ const CreateReplicationGroup: OperationHandler = (input, ctx) => {
     ARN: groupArnOf(ctx.region, ctx.account, id),
   };
   ctx.store.set(groupKey(id), group);
+  const initialGroupTags = tagList(input);
+  if (initialGroupTags.length > 0) {
+    ctx.store.set(tagKey(group.ARN), initialGroupTags);
+  }
   return { ReplicationGroup: presentGroup(group) };
 };
 
@@ -826,6 +835,7 @@ const DeleteReplicationGroup: OperationHandler = (input, ctx) => {
   const group = requireReplicationGroup(ctx, id);
   const updated: StoredReplicationGroup = { ...group, Status: "deleting" };
   ctx.store.set(groupKey(id), updated);
+  ctx.store.delete(tagKey(group.ARN));
   return { ReplicationGroup: presentGroup(updated) };
 };
 

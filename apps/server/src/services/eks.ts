@@ -26,6 +26,7 @@ type StoredCluster = {
   certificateAuthority: Record<string, unknown>;
   identity: Record<string, unknown>;
   connectorConfig: Record<string, unknown> | undefined;
+  clientRequestToken: string | undefined;
 };
 
 type StoredNodegroup = {
@@ -522,7 +523,15 @@ const storeUpdate = (
 const CreateCluster: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const roleArn = requireString(input, "roleArn");
-  if (ctx.store.get<StoredCluster>(clusterKey(name)) !== undefined) {
+  const clientRequestToken = stringOrUndefined(input["clientRequestToken"]);
+  const existingCluster = ctx.store.get<StoredCluster>(clusterKey(name));
+  if (existingCluster !== undefined) {
+    if (
+      clientRequestToken !== undefined &&
+      existingCluster.clientRequestToken === clientRequestToken
+    ) {
+      return { cluster: clusterView(existingCluster) };
+    }
     throw awsError(
       "ResourceInUseException",
       `Cluster already exists with name: ${name}.`,
@@ -546,6 +555,7 @@ const CreateCluster: OperationHandler = (input, ctx) => {
     certificateAuthority: { data: btoa(`bunsai-ca-${name}`) },
     identity: { oidc: { issuer: endpointOf(ctx, id) } },
     connectorConfig: undefined,
+    clientRequestToken,
   };
   ctx.store.set(clusterKey(name), cluster);
   return { cluster: clusterView(cluster) };
@@ -1632,6 +1642,7 @@ const RegisterCluster: OperationHandler = (input, ctx) => {
       provider: stringOrUndefined(connectorConfig["provider"]) ?? "OTHER",
       roleArn: stringOrUndefined(connectorConfig["roleArn"]) ?? "",
     },
+    clientRequestToken: undefined,
   };
   ctx.store.set(clusterKey(name), cluster);
   return { cluster: clusterView(cluster) };

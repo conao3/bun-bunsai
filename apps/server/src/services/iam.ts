@@ -3173,6 +3173,7 @@ type PolicyStatementShape = {
   Action?: string | string[];
   NotAction?: string | string[];
   Resource?: string | string[];
+  NotResource?: string | string[];
 };
 
 type PolicyDocumentShape = {
@@ -3180,6 +3181,18 @@ type PolicyDocumentShape = {
 };
 
 type EvalDecision = "allowed" | "explicitDeny" | "implicitDeny";
+
+type MatchedStatement = {
+  SourcePolicyId?: string;
+  SourcePolicyType?: string;
+  StartPosition?: { Line: number; Column: number };
+  EndPosition?: { Line: number; Column: number };
+};
+
+type EvalResult = {
+  decision: EvalDecision;
+  matchedStatements: MatchedStatement[];
+};
 
 const toStringArray = (v: string | string[] | undefined): string[] => {
   if (v === undefined) return [];
@@ -3213,19 +3226,25 @@ const statementMatchesResource = (
   stmt: PolicyStatementShape,
   resource: string,
 ): boolean => {
+  if (stmt.NotResource !== undefined) {
+    return !toStringArray(stmt.NotResource).some((p) =>
+      matchesWildcard(p, resource),
+    );
+  }
   const resources = toStringArray(stmt.Resource);
   if (resources.length === 0) return true;
   return resources.some((p) => matchesWildcard(p, resource));
 };
 
 const evaluatePolicies = (
-  documents: string[],
+  documents: Array<{ doc: string; policyId: string; policyType?: string }>,
   action: string,
   resource: string,
-): EvalDecision => {
+): EvalResult => {
   let hasAllow = false;
   let hasDeny = false;
-  for (const docStr of documents) {
+  const matchedStatements: MatchedStatement[] = [];
+  for (const { doc: docStr, policyId, policyType } of documents) {
     let doc: PolicyDocumentShape;
     try {
       doc = JSON.parse(docStr) as PolicyDocumentShape;
@@ -3238,23 +3257,34 @@ const evaluatePolicies = (
       : raw !== undefined
         ? [raw]
         : [];
-    for (const stmt of stmts) {
+    for (let i = 0; i < stmts.length; i++) {
+      const stmt = stmts[i];
       if (!statementMatchesAction(stmt, action)) continue;
       if (!statementMatchesResource(stmt, resource)) continue;
+      matchedStatements.push({
+        SourcePolicyId: policyId,
+        SourcePolicyType: policyType ?? "IAMPolicy",
+        StartPosition: { Line: 0, Column: 0 },
+        EndPosition: { Line: 0, Column: 0 },
+      });
       if (stmt.Effect === "Deny") hasDeny = true;
       else if (stmt.Effect === "Allow") hasAllow = true;
     }
   }
-  if (hasDeny) return "explicitDeny";
-  if (hasAllow) return "allowed";
-  return "implicitDeny";
+  let decision: EvalDecision;
+  if (hasDeny) decision = "explicitDeny";
+  else if (hasAllow) decision = "allowed";
+  else decision = "implicitDeny";
+  return { decision, matchedStatements };
 };
+
+type PolicyEntry = { doc: string; policyId: string; policyType: string };
 
 const collectPrincipalPolicies = (
   ctx: ServiceContext,
   arn: string,
-): string[] => {
-  const docs: string[] = [];
+): PolicyEntry[] => {
+  const entries: PolicyEntry[] = [];
   const userMatch = arn.match(/arn:aws:iam::[^:]+:user\/(.+)/);
   const roleMatch = arn.match(/arn:aws:iam::[^:]+:role\/(.+)/);
   const groupMatch = arn.match(/arn:aws:iam::[^:]+:group\/(.+)/);
@@ -3262,7 +3292,11 @@ const collectPrincipalPolicies = (
     const userName = userMatch[1];
     for (const e of ctx.store.list<StoredUserPolicy>()) {
       if (e.key.startsWith("userpolicy/") && e.value.UserName === userName)
-        docs.push(e.value.PolicyDocument);
+        entries.push({
+          doc: e.value.PolicyDocument,
+          policyId: e.value.PolicyName,
+          policyType: "IAMPolicy",
+        });
     }
     for (const e of ctx.store.list<StoredUserAttachment>()) {
       if (
@@ -3270,7 +3304,12 @@ const collectPrincipalPolicies = (
         e.value.UserName === userName
       ) {
         const p = ctx.store.get<StoredPolicy>(policyKey(e.value.PolicyArn));
-        if (p?.PolicyDocument) docs.push(p.PolicyDocument);
+        if (p?.PolicyDocument)
+          entries.push({
+            doc: p.PolicyDocument,
+            policyId: e.value.PolicyArn,
+            policyType: "IAMPolicy",
+          });
       }
     }
     for (const e of ctx.store.list<StoredGroupMember>()) {
@@ -3278,7 +3317,11 @@ const collectPrincipalPolicies = (
         const gn = e.value.GroupName;
         for (const ge of ctx.store.list<StoredGroupPolicy>()) {
           if (ge.key.startsWith("grouppolicy/") && ge.value.GroupName === gn)
-            docs.push(ge.value.PolicyDocument);
+            entries.push({
+              doc: ge.value.PolicyDocument,
+              policyId: ge.value.PolicyName,
+              policyType: "IAMPolicy",
+            });
         }
         for (const ge of ctx.store.list<StoredGroupAttachment>()) {
           if (
@@ -3288,7 +3331,12 @@ const collectPrincipalPolicies = (
             const p = ctx.store.get<StoredPolicy>(
               policyKey(ge.value.PolicyArn),
             );
-            if (p?.PolicyDocument) docs.push(p.PolicyDocument);
+            if (p?.PolicyDocument)
+              entries.push({
+                doc: p.PolicyDocument,
+                policyId: ge.value.PolicyArn,
+                policyType: "IAMPolicy",
+              });
           }
         }
       }
@@ -3297,19 +3345,32 @@ const collectPrincipalPolicies = (
     const roleName = roleMatch[1];
     for (const e of ctx.store.list<StoredRolePolicy>()) {
       if (e.key.startsWith("rolepolicy/") && e.value.RoleName === roleName)
-        docs.push(e.value.PolicyDocument);
+        entries.push({
+          doc: e.value.PolicyDocument,
+          policyId: e.value.PolicyName,
+          policyType: "IAMPolicy",
+        });
     }
     for (const e of ctx.store.list<StoredAttachment>()) {
       if (e.key.startsWith("attachment/") && e.value.RoleName === roleName) {
         const p = ctx.store.get<StoredPolicy>(policyKey(e.value.PolicyArn));
-        if (p?.PolicyDocument) docs.push(p.PolicyDocument);
+        if (p?.PolicyDocument)
+          entries.push({
+            doc: p.PolicyDocument,
+            policyId: e.value.PolicyArn,
+            policyType: "IAMPolicy",
+          });
       }
     }
   } else if (groupMatch) {
     const groupName = groupMatch[1];
     for (const e of ctx.store.list<StoredGroupPolicy>()) {
       if (e.key.startsWith("grouppolicy/") && e.value.GroupName === groupName)
-        docs.push(e.value.PolicyDocument);
+        entries.push({
+          doc: e.value.PolicyDocument,
+          policyId: e.value.PolicyName,
+          policyType: "IAMPolicy",
+        });
     }
     for (const e of ctx.store.list<StoredGroupAttachment>()) {
       if (
@@ -3317,18 +3378,28 @@ const collectPrincipalPolicies = (
         e.value.GroupName === groupName
       ) {
         const p = ctx.store.get<StoredPolicy>(policyKey(e.value.PolicyArn));
-        if (p?.PolicyDocument) docs.push(p.PolicyDocument);
+        if (p?.PolicyDocument)
+          entries.push({
+            doc: p.PolicyDocument,
+            policyId: e.value.PolicyArn,
+            policyType: "IAMPolicy",
+          });
       }
     }
   }
-  return docs;
+  return entries;
 };
 
 const SimulateCustomPolicy: OperationHandler = (input, _ctx) => {
   const policyInputList = input["PolicyInputList"];
-  const policies = Array.isArray(policyInputList)
+  const rawPolicies = Array.isArray(policyInputList)
     ? (policyInputList as string[])
     : [];
+  const policies = rawPolicies.map((doc, i) => ({
+    doc,
+    policyId: `PolicyInputList/1/${i + 1}`,
+    policyType: "IAMPolicy",
+  }));
   const actionNames = input["ActionNames"];
   const actions = Array.isArray(actionNames) ? (actionNames as string[]) : [];
   const resourceArnsInput = input["ResourceArns"];
@@ -3337,12 +3408,19 @@ const SimulateCustomPolicy: OperationHandler = (input, _ctx) => {
       ? (resourceArnsInput as string[])
       : ["*"];
   const results = actions.flatMap((action) =>
-    resources.map((resource) => ({
-      EvalActionName: action,
-      EvalResourceName: resource,
-      EvalDecision: evaluatePolicies(policies, action, resource),
-      MatchedStatements: [] as unknown[],
-    })),
+    resources.map((resource) => {
+      const { decision, matchedStatements } = evaluatePolicies(
+        policies,
+        action,
+        resource,
+      );
+      return {
+        EvalActionName: action,
+        EvalResourceName: resource,
+        EvalDecision: decision,
+        MatchedStatements: matchedStatements,
+      };
+    }),
   );
   return { EvaluationResults: results, IsTruncated: false };
 };
@@ -3357,18 +3435,30 @@ const SimulatePrincipalPolicy: OperationHandler = (input, ctx) => {
       ? (resourceArnsInput as string[])
       : ["*"];
   const policyInputList = input["PolicyInputList"];
-  const additionalPolicies = Array.isArray(policyInputList)
+  const rawAdditional = Array.isArray(policyInputList)
     ? (policyInputList as string[])
     : [];
-  const principalDocs = collectPrincipalPolicies(ctx, sourceArn);
-  const allPolicies = [...principalDocs, ...additionalPolicies];
+  const additionalPolicies = rawAdditional.map((doc, i) => ({
+    doc,
+    policyId: `PolicyInputList/1/${i + 1}`,
+    policyType: "IAMPolicy",
+  }));
+  const principalPolicies = collectPrincipalPolicies(ctx, sourceArn);
+  const allPolicies = [...principalPolicies, ...additionalPolicies];
   const results = actions.flatMap((action) =>
-    resources.map((resource) => ({
-      EvalActionName: action,
-      EvalResourceName: resource,
-      EvalDecision: evaluatePolicies(allPolicies, action, resource),
-      MatchedStatements: [] as unknown[],
-    })),
+    resources.map((resource) => {
+      const { decision, matchedStatements } = evaluatePolicies(
+        allPolicies,
+        action,
+        resource,
+      );
+      return {
+        EvalActionName: action,
+        EvalResourceName: resource,
+        EvalDecision: decision,
+        MatchedStatements: matchedStatements,
+      };
+    }),
   );
   return { EvaluationResults: results, IsTruncated: false };
 };

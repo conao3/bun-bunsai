@@ -180,6 +180,7 @@ aws-models/
   schemas.json          # botocore/data/schemas/2019-12-02/service-2.json          (protocol rest-json, endpointPrefix schemas, signingName schemas)
   autoscaling.json      # botocore/data/autoscaling/2011-01-01/service-2.json      (protocol query, signingName autoscaling)
   cognito-identity.json # botocore/data/cognito-identity/2014-06-30/service-2.json  (protocol json, signingName cognito-identity)
+  pipes.json            # botocore/data/pipes/2015-10-07/service-2.json             (protocol rest-json, signingName pipes; Amazon EventBridge Pipes)
 ```
 
 ### Notes

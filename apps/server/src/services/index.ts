@@ -114,6 +114,7 @@ import ram from "./ram.ts";
 import networkFirewall from "./network-firewall.ts";
 import schemas from "./schemas.ts";
 import autoscaling from "./autoscaling.ts";
+import pipes from "./pipes.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -231,6 +232,7 @@ export const services: ServiceDefinition[] = [
   networkFirewall,
   schemas,
   autoscaling,
+  pipes,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

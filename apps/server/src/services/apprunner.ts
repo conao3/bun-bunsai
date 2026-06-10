@@ -508,7 +508,15 @@ const CreateService: OperationHandler = (input, ctx) => {
     input["AutoScalingConfigurationArn"],
   );
   if (inputAutoScalingArn !== undefined) {
-    getAutoScalingByArn(ctx, inputAutoScalingArn);
+    try {
+      getAutoScalingByArn(ctx, inputAutoScalingArn);
+    } catch {
+      throw awsError(
+        "InvalidRequestException",
+        `AutoScalingConfigurationArn ${inputAutoScalingArn} is invalid.`,
+        400,
+      );
+    }
   }
   const observabilityInput = recordOrUndefined(
     input["ObservabilityConfiguration"],
@@ -518,7 +526,15 @@ const CreateService: OperationHandler = (input, ctx) => {
       observabilityInput["ObservabilityConfigurationArn"],
     );
     if (obsArn !== undefined) {
-      getObservabilityByArn(ctx, obsArn);
+      try {
+        getObservabilityByArn(ctx, obsArn);
+      } catch {
+        throw awsError(
+          "InvalidRequestException",
+          `ObservabilityConfigurationArn ${obsArn} is invalid.`,
+          400,
+        );
+      }
     }
   }
   const serviceId = crypto.randomUUID().replace(/-/g, "");
@@ -725,7 +741,15 @@ const UpdateService: OperationHandler = (input, ctx) => {
     input["AutoScalingConfigurationArn"],
   );
   if (newAutoScalingArn !== undefined) {
-    getAutoScalingByArn(ctx, newAutoScalingArn);
+    try {
+      getAutoScalingByArn(ctx, newAutoScalingArn);
+    } catch {
+      throw awsError(
+        "InvalidRequestException",
+        `AutoScalingConfigurationArn ${newAutoScalingArn} is invalid.`,
+        400,
+      );
+    }
   }
   const newObservabilityInput = recordOrUndefined(
     input["ObservabilityConfiguration"],
@@ -735,7 +759,15 @@ const UpdateService: OperationHandler = (input, ctx) => {
       newObservabilityInput["ObservabilityConfigurationArn"],
     );
     if (newObsArn !== undefined) {
-      getObservabilityByArn(ctx, newObsArn);
+      try {
+        getObservabilityByArn(ctx, newObsArn);
+      } catch {
+        throw awsError(
+          "InvalidRequestException",
+          `ObservabilityConfigurationArn ${newObsArn} is invalid.`,
+          400,
+        );
+      }
     }
   }
   const updated: StoredService = {

@@ -112,6 +112,7 @@ import smsVoice from "./pinpoint-sms-voice-v2.ts";
 import ram from "./ram.ts";
 import networkFirewall from "./network-firewall.ts";
 import schemas from "./schemas.ts";
+import xray from "./xray.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -227,6 +228,7 @@ export const services: ServiceDefinition[] = [
   ram,
   networkFirewall,
   schemas,
+  xray,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>

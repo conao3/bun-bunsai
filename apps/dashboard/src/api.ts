@@ -33,8 +33,13 @@ export type RequestLogEntry = {
   account: string;
   region: string;
   protocol: string;
+  method?: string;
+  path?: string;
   requestBodyText: string;
   responseBodyText: string;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
+  resourceArn?: string;
 };
 
 const base = "/__bunsai" as const;

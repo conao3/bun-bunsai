@@ -18,6 +18,7 @@ import {
 const detailTabs = [
   { id: "interpreted", label: "解釈後パラメータ" },
   { id: "raw", label: "生ボディ" },
+  { id: "headers", label: "ヘッダ" },
   { id: "response", label: "レスポンス" },
 ] as const;
 type DetailTab = (typeof detailTabs)[number]["id"];
@@ -116,6 +117,20 @@ function RequestDetail({
           <span className="k">Service</span>
           <span className="v">{svcInfo(req.service).name}</span>
         </div>
+        {req.method && req.path && (
+          <div className="kv-row">
+            <span className="k">Method · Path</span>
+            <span className="v mono">
+              {req.method} {req.path}
+            </span>
+          </div>
+        )}
+        {req.resourceArn && (
+          <div className="kv-row">
+            <span className="k">Resource ARN</span>
+            <span className="v mono">{req.resourceArn}</span>
+          </div>
+        )}
         <div className="kv-row">
           <span className="k">Request ID</span>
           <span className="v">{req.id}</span>
@@ -187,6 +202,45 @@ function RequestDetail({
               raw request body
             </div>
             <CodeBlock text={req.requestBodyText} />
+          </>
+        )}
+        {tab === "headers" && (
+          <>
+            <div className="uppercase-label" style={{ marginBottom: 8 }}>
+              request headers
+            </div>
+            {req.requestHeaders &&
+            Object.keys(req.requestHeaders).length > 0 ? (
+              <div className="headers-kv">
+                {Object.entries(req.requestHeaders).map(([k, v]) => (
+                  <div key={k} className="hkv-row">
+                    <span className="hkv-k mono">{k}</span>
+                    <span className="hkv-v mono">{v}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <span style={{ color: "var(--muted)", fontSize: 12.5 }}>—</span>
+            )}
+            <div
+              className="uppercase-label"
+              style={{ marginTop: 16, marginBottom: 8 }}
+            >
+              response headers
+            </div>
+            {req.responseHeaders &&
+            Object.keys(req.responseHeaders).length > 0 ? (
+              <div className="headers-kv">
+                {Object.entries(req.responseHeaders).map(([k, v]) => (
+                  <div key={k} className="hkv-row">
+                    <span className="hkv-k mono">{k}</span>
+                    <span className="hkv-v mono">{v}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <span style={{ color: "var(--muted)", fontSize: 12.5 }}>—</span>
+            )}
           </>
         )}
         {tab === "response" && (

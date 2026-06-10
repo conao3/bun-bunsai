@@ -175,23 +175,28 @@ function MiniStream({
 export function Overview({
   services,
   requests,
+  scope,
   setScreen,
   connected,
 }: {
   services: ServiceSummary[];
   requests: RequestLogEntry[];
+  scope: { account: string; region: string };
   setScreen: (s: Screen) => void;
   connected: boolean;
 }) {
-  const total = requests.length;
-  const totErr = requests.filter((r) => r.statusCode >= 400).length;
+  const scopedRequests = requests.filter(
+    (r) => r.account === scope.account && r.region === scope.region,
+  );
+  const total = scopedRequests.length;
+  const totErr = scopedRequests.filter((r) => r.statusCode >= 400).length;
   const errRate = total ? ((totErr / total) * 100).toFixed(1) : "0.0";
   const avgLat = total
-    ? (requests.reduce((a, r) => a + r.latencyMs, 0) / total).toFixed(1)
+    ? (scopedRequests.reduce((a, r) => a + r.latencyMs, 0) / total).toFixed(1)
     : "—";
 
   const perSvc = new Map<string, { calls: number; errs: number }>();
-  for (const r of requests) {
+  for (const r of scopedRequests) {
     const cur = perSvc.get(r.service) ?? { calls: 0, errs: 0 };
     cur.calls += 1;
     if (r.statusCode >= 400) cur.errs += 1;
@@ -300,7 +305,7 @@ export function Overview({
         )}
       </div>
 
-      <MiniStream requests={requests} setScreen={setScreen} />
+      <MiniStream requests={scopedRequests} setScreen={setScreen} />
     </div>
   );
 }

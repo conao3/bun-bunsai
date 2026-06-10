@@ -141,7 +141,30 @@ const qsblKey = (indexId: string, id: string): string =>
   `qsbl#${indexId}#${id}`;
 const frsKey = (indexId: string, id: string): string => `frs#${indexId}#${id}`;
 const tagKey = (arn: string): string => `tags#${arn}`;
+const ctKey = (token: string): string => `ct#${token}`;
 const qscKey = (indexId: string): string => `qsc#${indexId}`;
+
+const indexArn = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:kendra:${ctx.region}:${ctx.account}:index/${id}`;
+const dsArn = (ctx: ServiceContext, indexId: string, id: string): string =>
+  `arn:aws:kendra:${ctx.region}:${ctx.account}:index/${indexId}/data-source/${id}`;
+const faqArn = (ctx: ServiceContext, indexId: string, id: string): string =>
+  `arn:aws:kendra:${ctx.region}:${ctx.account}:index/${indexId}/faq/${id}`;
+const thesArn = (ctx: ServiceContext, indexId: string, id: string): string =>
+  `arn:aws:kendra:${ctx.region}:${ctx.account}:index/${indexId}/thesaurus/${id}`;
+const qsblArn = (ctx: ServiceContext, indexId: string, id: string): string =>
+  `arn:aws:kendra:${ctx.region}:${ctx.account}:index/${indexId}/query-suggestions-block-list/${id}`;
+const frsArn = (ctx: ServiceContext, indexId: string, id: string): string =>
+  `arn:aws:kendra:${ctx.region}:${ctx.account}:index/${indexId}/featured-results-set/${id}`;
+
+const saveTags = (
+  ctx: ServiceContext,
+  arn: string,
+  tags: unknown,
+): void => {
+  if (!Array.isArray(tags) || tags.length === 0) return;
+  ctx.store.set(tagKey(arn), tags);
+};
 const pmKey = (indexId: string, groupId: string): string =>
   `pm#${indexId}#${groupId}`;
 const expEntitiesKey = (indexId: string, expId: string): string =>
@@ -173,6 +196,12 @@ const paginateList = <T>(
 };
 
 const CreateIndex: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  if (clientToken) {
+    const cached = ctx.store.get<{ Id: string }>(ctKey(clientToken));
+    if (cached) return cached;
+  }
   const name = requireString(input, "Name");
   const roleArn = requireString(input, "RoleArn");
   const id = crypto.randomUUID();
@@ -191,23 +220,33 @@ const CreateIndex: OperationHandler = (input, ctx) => {
     RoleArn: roleArn,
     Edition: edition,
     Description: description,
-    Status: "ACTIVE",
+    Status: "CREATING",
     CreatedAt: now,
     UpdatedAt: now,
   };
   ctx.store.set(id, index);
-  return { Id: id };
+  saveTags(ctx, indexArn(ctx, id), input["Tags"]);
+  const result = { Id: id };
+  if (clientToken) ctx.store.set(ctKey(clientToken), result);
+  return result;
 };
 
 const DescribeIndex: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
   const index = requireIndex(ctx, id);
+  let finalStatus = index.Status;
+  if (index.Status === "CREATING") {
+    finalStatus = "ACTIVE";
+    ctx.store.set(id, { ...index, Status: "ACTIVE", UpdatedAt: nowSeconds() });
+  } else if (index.Status === "DELETING") {
+    ctx.store.delete(id);
+  }
   return {
     Name: index.Name,
     Id: index.Id,
     Edition: index.Edition,
     RoleArn: index.RoleArn,
-    Status: index.Status,
+    Status: finalStatus,
     Description: index.Description,
     CreatedAt: index.CreatedAt,
     UpdatedAt: index.UpdatedAt,
@@ -218,6 +257,7 @@ const ListIndices: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredIndex>()
     .filter(({ key }) => !key.includes("#"))
+    .filter(({ value: index }) => index.Status !== "DELETING")
     .map(({ value: index }) => ({
       Name: index.Name,
       Id: index.Id,
@@ -239,8 +279,13 @@ const ListIndices: OperationHandler = (input, ctx) => {
 
 const DeleteIndex: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
-  requireIndex(ctx, id);
-  ctx.store.delete(id);
+  const index = requireIndex(ctx, id);
+  if (index.Status === "DELETING") {
+    throw awsError("ConflictException", `Index ${id} is already being deleted.`, 409);
+  }
+  const arn = indexArn(ctx, id);
+  ctx.store.delete(tagKey(arn));
+  ctx.store.set(id, { ...index, Status: "DELETING", UpdatedAt: nowSeconds() });
   return {};
 };
 
@@ -263,6 +308,12 @@ const UpdateIndex: OperationHandler = (input, ctx) => {
 };
 
 const CreateDataSource: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  if (clientToken) {
+    const cached = ctx.store.get<{ Id: string; IndexId: string }>(ctKey(clientToken));
+    if (cached) return cached;
+  }
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const name = requireString(input, "Name");
@@ -277,12 +328,15 @@ const CreateDataSource: OperationHandler = (input, ctx) => {
     Description:
       typeof input["Description"] === "string" ? input["Description"] : "",
     RoleArn: typeof input["RoleArn"] === "string" ? input["RoleArn"] : "",
-    Status: "ACTIVE",
+    Status: "CREATING",
     CreatedAt: now,
     UpdatedAt: now,
   };
   ctx.store.set(dsKey(indexId, id), ds);
-  return { Id: id, IndexId: indexId };
+  saveTags(ctx, dsArn(ctx, indexId, id), input["Tags"]);
+  const result = { Id: id, IndexId: indexId };
+  if (clientToken) ctx.store.set(ctKey(clientToken), result);
+  return result;
 };
 
 const DescribeDataSource: OperationHandler = (input, ctx) => {
@@ -296,6 +350,13 @@ const DescribeDataSource: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  let finalStatus = ds.Status;
+  if (ds.Status === "CREATING") {
+    finalStatus = "ACTIVE";
+    ctx.store.set(dsKey(indexId, id), { ...ds, Status: "ACTIVE", UpdatedAt: nowSeconds() });
+  } else if (ds.Status === "DELETING") {
+    ctx.store.delete(dsKey(indexId, id));
+  }
   return {
     Id: ds.Id,
     IndexId: ds.IndexId,
@@ -303,7 +364,7 @@ const DescribeDataSource: OperationHandler = (input, ctx) => {
     Type: ds.Type,
     Description: ds.Description,
     RoleArn: ds.RoleArn,
-    Status: ds.Status,
+    Status: finalStatus,
     CreatedAt: ds.CreatedAt,
     UpdatedAt: ds.UpdatedAt,
   };
@@ -316,6 +377,7 @@ const ListDataSources: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredDataSource>()
     .filter(({ key }) => key.startsWith(prefix))
+    .filter(({ value: ds }) => ds.Status !== "DELETING")
     .map(({ value: ds }) => ({
       Id: ds.Id,
       Name: ds.Name,
@@ -372,7 +434,12 @@ const DeleteDataSource: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  ctx.store.delete(dsKey(indexId, id));
+  if (ds.Status === "DELETING") {
+    throw awsError("ConflictException", `DataSource ${id} is already being deleted.`, 409);
+  }
+  const arn = dsArn(ctx, indexId, id);
+  ctx.store.delete(tagKey(arn));
+  ctx.store.set(dsKey(indexId, id), { ...ds, Status: "DELETING", UpdatedAt: nowSeconds() });
   return {};
 };
 
@@ -435,6 +502,12 @@ const ListDataSourceSyncJobs: OperationHandler = (input, ctx) => {
 };
 
 const CreateFaq: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  if (clientToken) {
+    const cached = ctx.store.get<{ Id: string }>(ctKey(clientToken));
+    if (cached) return cached;
+  }
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const name = requireString(input, "Name");
@@ -448,7 +521,7 @@ const CreateFaq: OperationHandler = (input, ctx) => {
       typeof input["Description"] === "string" ? input["Description"] : "",
     S3Path: input["S3Path"] ?? null,
     RoleArn: typeof input["RoleArn"] === "string" ? input["RoleArn"] : "",
-    Status: "ACTIVE",
+    Status: "CREATING",
     LanguageCode:
       typeof input["LanguageCode"] === "string" ? input["LanguageCode"] : "en",
     FileFormat:
@@ -457,7 +530,10 @@ const CreateFaq: OperationHandler = (input, ctx) => {
     UpdatedAt: now,
   };
   ctx.store.set(faqKey(indexId, id), faq);
-  return { Id: id };
+  saveTags(ctx, faqArn(ctx, indexId, id), input["Tags"]);
+  const result = { Id: id };
+  if (clientToken) ctx.store.set(ctKey(clientToken), result);
+  return result;
 };
 
 const DescribeFaq: OperationHandler = (input, ctx) => {
@@ -467,6 +543,13 @@ const DescribeFaq: OperationHandler = (input, ctx) => {
   if (!faq) {
     throw awsError("ResourceNotFoundException", `FAQ ${id} not found.`, 404);
   }
+  let finalStatus = faq.Status;
+  if (faq.Status === "CREATING") {
+    finalStatus = "ACTIVE";
+    ctx.store.set(faqKey(indexId, id), { ...faq, Status: "ACTIVE", UpdatedAt: nowSeconds() });
+  } else if (faq.Status === "DELETING") {
+    ctx.store.delete(faqKey(indexId, id));
+  }
   return {
     Id: faq.Id,
     IndexId: faq.IndexId,
@@ -474,7 +557,7 @@ const DescribeFaq: OperationHandler = (input, ctx) => {
     Description: faq.Description,
     S3Path: faq.S3Path,
     RoleArn: faq.RoleArn,
-    Status: faq.Status,
+    Status: finalStatus,
     LanguageCode: faq.LanguageCode,
     FileFormat: faq.FileFormat,
     CreatedAt: faq.CreatedAt,
@@ -489,6 +572,7 @@ const ListFaqs: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredFaq>()
     .filter(({ key }) => key.startsWith(prefix))
+    .filter(({ value: faq }) => faq.Status !== "DELETING")
     .map(({ value: faq }) => ({
       Id: faq.Id,
       Name: faq.Name,
@@ -516,11 +600,22 @@ const DeleteFaq: OperationHandler = (input, ctx) => {
   if (!faq) {
     throw awsError("ResourceNotFoundException", `FAQ ${id} not found.`, 404);
   }
-  ctx.store.delete(faqKey(indexId, id));
+  if (faq.Status === "DELETING") {
+    throw awsError("ConflictException", `FAQ ${id} is already being deleted.`, 409);
+  }
+  const arn = faqArn(ctx, indexId, id);
+  ctx.store.delete(tagKey(arn));
+  ctx.store.set(faqKey(indexId, id), { ...faq, Status: "DELETING", UpdatedAt: nowSeconds() });
   return {};
 };
 
 const CreateExperience: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  if (clientToken) {
+    const cached = ctx.store.get<{ Id: string; IndexId: string }>(ctKey(clientToken));
+    if (cached) return cached;
+  }
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const name = requireString(input, "Name");
@@ -533,7 +628,7 @@ const CreateExperience: OperationHandler = (input, ctx) => {
     Description:
       typeof input["Description"] === "string" ? input["Description"] : "",
     RoleArn: typeof input["RoleArn"] === "string" ? input["RoleArn"] : "",
-    Status: "ACTIVE",
+    Status: "CREATING",
     Endpoints: [
       {
         EndpointType: "HOME",
@@ -544,7 +639,9 @@ const CreateExperience: OperationHandler = (input, ctx) => {
     UpdatedAt: now,
   };
   ctx.store.set(expKey(indexId, id), exp);
-  return { Id: id, IndexId: indexId };
+  const result = { Id: id, IndexId: indexId };
+  if (clientToken) ctx.store.set(ctKey(clientToken), result);
+  return result;
 };
 
 const DescribeExperience: OperationHandler = (input, ctx) => {
@@ -558,13 +655,20 @@ const DescribeExperience: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  let finalStatus = exp.Status;
+  if (exp.Status === "CREATING") {
+    finalStatus = "ACTIVE";
+    ctx.store.set(expKey(indexId, id), { ...exp, Status: "ACTIVE", UpdatedAt: nowSeconds() });
+  } else if (exp.Status === "DELETING") {
+    ctx.store.delete(expKey(indexId, id));
+  }
   return {
     Id: exp.Id,
     IndexId: exp.IndexId,
     Name: exp.Name,
     Description: exp.Description,
     RoleArn: exp.RoleArn,
-    Status: exp.Status,
+    Status: finalStatus,
     Endpoints: exp.Endpoints,
     CreatedAt: exp.CreatedAt,
     UpdatedAt: exp.UpdatedAt,
@@ -578,6 +682,7 @@ const ListExperiences: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredExperience>()
     .filter(({ key }) => key.startsWith(prefix))
+    .filter(({ value: exp }) => exp.Status !== "DELETING")
     .map(({ value: exp }) => ({
       Id: exp.Id,
       Name: exp.Name,
@@ -633,7 +738,10 @@ const DeleteExperience: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  ctx.store.delete(expKey(indexId, id));
+  if (exp.Status === "DELETING") {
+    throw awsError("ConflictException", `Experience ${id} is already being deleted.`, 409);
+  }
+  ctx.store.set(expKey(indexId, id), { ...exp, Status: "DELETING", UpdatedAt: nowSeconds() });
   return {};
 };
 
@@ -755,6 +863,12 @@ const ListEntityPersonas: OperationHandler = (input, ctx) => {
 };
 
 const CreateThesaurus: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  if (clientToken) {
+    const cached = ctx.store.get<{ Id: string }>(ctKey(clientToken));
+    if (cached) return cached;
+  }
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const name = requireString(input, "Name");
@@ -767,13 +881,16 @@ const CreateThesaurus: OperationHandler = (input, ctx) => {
     Description:
       typeof input["Description"] === "string" ? input["Description"] : "",
     RoleArn: typeof input["RoleArn"] === "string" ? input["RoleArn"] : "",
-    Status: "ACTIVE",
+    Status: "CREATING",
     SourceS3Path: input["SourceS3Path"] ?? null,
     CreatedAt: now,
     UpdatedAt: now,
   };
   ctx.store.set(thesKey(indexId, id), thes);
-  return { Id: id };
+  saveTags(ctx, thesArn(ctx, indexId, id), input["Tags"]);
+  const result = { Id: id };
+  if (clientToken) ctx.store.set(ctKey(clientToken), result);
+  return result;
 };
 
 const DescribeThesaurus: OperationHandler = (input, ctx) => {
@@ -787,13 +904,20 @@ const DescribeThesaurus: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  let finalStatus = thes.Status;
+  if (thes.Status === "CREATING") {
+    finalStatus = "ACTIVE";
+    ctx.store.set(thesKey(indexId, id), { ...thes, Status: "ACTIVE", UpdatedAt: nowSeconds() });
+  } else if (thes.Status === "DELETING") {
+    ctx.store.delete(thesKey(indexId, id));
+  }
   return {
     Id: thes.Id,
     IndexId: thes.IndexId,
     Name: thes.Name,
     Description: thes.Description,
     RoleArn: thes.RoleArn,
-    Status: thes.Status,
+    Status: finalStatus,
     SourceS3Path: thes.SourceS3Path,
     CreatedAt: thes.CreatedAt,
     UpdatedAt: thes.UpdatedAt,
@@ -807,6 +931,7 @@ const ListThesauri: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredThesaurus>()
     .filter(({ key }) => key.startsWith(prefix))
+    .filter(({ value: thes }) => thes.Status !== "DELETING")
     .map(({ value: thes }) => ({
       Id: thes.Id,
       Name: thes.Name,
@@ -863,11 +988,22 @@ const DeleteThesaurus: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  ctx.store.delete(thesKey(indexId, id));
+  if (thes.Status === "DELETING") {
+    throw awsError("ConflictException", `Thesaurus ${id} is already being deleted.`, 409);
+  }
+  const arn = thesArn(ctx, indexId, id);
+  ctx.store.delete(tagKey(arn));
+  ctx.store.set(thesKey(indexId, id), { ...thes, Status: "DELETING", UpdatedAt: nowSeconds() });
   return {};
 };
 
 const CreateAccessControlConfiguration: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  if (clientToken) {
+    const cached = ctx.store.get<{ Id: string }>(ctKey(clientToken));
+    if (cached) return cached;
+  }
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const name = requireString(input, "Name");
@@ -882,7 +1018,9 @@ const CreateAccessControlConfiguration: OperationHandler = (input, ctx) => {
     CreatedAt: now,
   };
   ctx.store.set(accKey(indexId, id), acc);
-  return { Id: id };
+  const result = { Id: id };
+  if (clientToken) ctx.store.set(ctKey(clientToken), result);
+  return result;
 };
 
 const DescribeAccessControlConfiguration: OperationHandler = (input, ctx) => {
@@ -967,6 +1105,12 @@ const DeleteAccessControlConfiguration: OperationHandler = (input, ctx) => {
 };
 
 const CreateQuerySuggestionsBlockList: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  if (clientToken) {
+    const cached = ctx.store.get<{ Id: string }>(ctKey(clientToken));
+    if (cached) return cached;
+  }
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const name = requireString(input, "Name");
@@ -978,14 +1122,17 @@ const CreateQuerySuggestionsBlockList: OperationHandler = (input, ctx) => {
     Name: name,
     Description:
       typeof input["Description"] === "string" ? input["Description"] : "",
-    Status: "ACTIVE",
+    Status: "CREATING",
     RoleArn: typeof input["RoleArn"] === "string" ? input["RoleArn"] : "",
     SourceS3Path: input["SourceS3Path"] ?? null,
     CreatedAt: now,
     UpdatedAt: now,
   };
   ctx.store.set(qsblKey(indexId, id), qsbl);
-  return { Id: id };
+  saveTags(ctx, qsblArn(ctx, indexId, id), input["Tags"]);
+  const result = { Id: id };
+  if (clientToken) ctx.store.set(ctKey(clientToken), result);
+  return result;
 };
 
 const DescribeQuerySuggestionsBlockList: OperationHandler = (input, ctx) => {
@@ -1001,12 +1148,19 @@ const DescribeQuerySuggestionsBlockList: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  let finalStatus = qsbl.Status;
+  if (qsbl.Status === "CREATING") {
+    finalStatus = "ACTIVE";
+    ctx.store.set(qsblKey(indexId, id), { ...qsbl, Status: "ACTIVE", UpdatedAt: nowSeconds() });
+  } else if (qsbl.Status === "DELETING") {
+    ctx.store.delete(qsblKey(indexId, id));
+  }
   return {
     IndexId: qsbl.IndexId,
     Id: qsbl.Id,
     Name: qsbl.Name,
     Description: qsbl.Description,
-    Status: qsbl.Status,
+    Status: finalStatus,
     RoleArn: qsbl.RoleArn,
     SourceS3Path: qsbl.SourceS3Path,
     CreatedAt: qsbl.CreatedAt,
@@ -1020,7 +1174,8 @@ const ListQuerySuggestionsBlockLists: OperationHandler = (input, ctx) => {
   const prefix = `qsbl#${indexId}#`;
   const entries = ctx.store
     .list<StoredQuerySuggestionsBlockList>()
-    .filter(({ key }) => key.startsWith(prefix));
+    .filter(({ key }) => key.startsWith(prefix))
+    .filter(({ value: qsbl }) => qsbl.Status !== "DELETING");
   return {
     BlockListSummaryItems: entries.map(({ value: qsbl }) => ({
       Id: qsbl.Id,
@@ -1074,11 +1229,22 @@ const DeleteQuerySuggestionsBlockList: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  ctx.store.delete(qsblKey(indexId, id));
+  if (qsbl.Status === "DELETING") {
+    throw awsError("ConflictException", `QuerySuggestionsBlockList ${id} is already being deleted.`, 409);
+  }
+  const arn = qsblArn(ctx, indexId, id);
+  ctx.store.delete(tagKey(arn));
+  ctx.store.set(qsblKey(indexId, id), { ...qsbl, Status: "DELETING", UpdatedAt: nowSeconds() });
   return {};
 };
 
 const CreateFeaturedResultsSet: OperationHandler = (input, ctx) => {
+  const clientToken =
+    typeof input["ClientToken"] === "string" ? input["ClientToken"] : undefined;
+  if (clientToken) {
+    const cached = ctx.store.get<{ FeaturedResultsSet: unknown }>(ctKey(clientToken));
+    if (cached) return cached;
+  }
   const indexId = requireString(input, "IndexId");
   requireIndex(ctx, indexId);
   const name = requireString(input, "FeaturedResultsSetName");
@@ -1101,7 +1267,8 @@ const CreateFeaturedResultsSet: OperationHandler = (input, ctx) => {
     CreationTimestamp: now,
   };
   ctx.store.set(frsKey(indexId, id), frs);
-  return {
+  saveTags(ctx, frsArn(ctx, indexId, id), input["Tags"]);
+  const result = {
     FeaturedResultsSet: {
       FeaturedResultsSetId: id,
       FeaturedResultsSetName: name,
@@ -1112,6 +1279,8 @@ const CreateFeaturedResultsSet: OperationHandler = (input, ctx) => {
       CreationTimestamp: now,
     },
   };
+  if (clientToken) ctx.store.set(ctKey(clientToken), result);
+  return result;
 };
 
 const DescribeFeaturedResultsSet: OperationHandler = (input, ctx) => {

@@ -113,6 +113,7 @@ type AttachmentBase = {
   CoreNetworkId: string | undefined;
   CoreNetworkArn: string | undefined;
   AttachmentId: string;
+  Arn: string;
   OwnerAccountId: string;
   AttachmentType: string;
   State: string;
@@ -264,6 +265,8 @@ const resourcePolicyKey = (arn: string): string => `resource-policy/${arn}`;
 const tagsKey = (arn: string): string => `tags/${arn}`;
 const routingPolicyLabelKey = (cnId: string, attId: string): string =>
   `routing-label/${cnId}/${attId}`;
+const idempotencyKey = (prefix: string, token: string): string =>
+  `idempotency/${prefix}/${token}`;
 
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
@@ -334,6 +337,9 @@ const globalNetworkArnOf = (ctx: ServiceContext, id: string): string =>
 
 const coreNetworkArnOf = (ctx: ServiceContext, id: string): string =>
   `arn:aws:networkmanager::${ctx.account}:core-network/${id}`;
+
+const attachmentArnOf = (ctx: ServiceContext, id: string): string =>
+  `arn:aws:networkmanager::${ctx.account}:attachment/${id}`;
 
 const globalNetworkView = (
   network: StoredGlobalNetwork,
@@ -545,6 +551,7 @@ const attachmentBaseView = (a: AttachmentBase): Record<string, unknown> => ({
   CoreNetworkId: a.CoreNetworkId,
   CoreNetworkArn: a.CoreNetworkArn,
   AttachmentId: a.AttachmentId,
+  Arn: a.Arn,
   OwnerAccountId: a.OwnerAccountId,
   AttachmentType: a.AttachmentType,
   State: a.State,
@@ -646,10 +653,12 @@ const CreateGlobalNetwork: OperationHandler = (input, ctx) => {
     GlobalNetworkArn: globalNetworkArnOf(ctx, id),
     Description: stringOrUndefined(input["Description"]),
     CreatedAt: nowSec(),
-    State: "AVAILABLE",
+    State: "PENDING",
     Tags: tagListFrom(input["Tags"]),
   };
   ctx.store.set(globalNetworkKey(id), network);
+  if (network.Tags.length > 0)
+    ctx.store.set(tagsKey(network.GlobalNetworkArn), network.Tags);
   return { GlobalNetwork: globalNetworkView(network) };
 };
 
@@ -677,6 +686,41 @@ const DeleteGlobalNetwork: OperationHandler = (input, ctx) => {
     throw awsError("ValidationException", "GlobalNetworkId is required.", 400);
   }
   const network = requireGlobalNetwork(ctx, id);
+  const hasSites = ctx.store
+    .list()
+    .some((e) => e.key.startsWith(`site/${id}/`));
+  const hasDevices = ctx.store
+    .list()
+    .some((e) => e.key.startsWith(`device/${id}/`));
+  const hasLinks = ctx.store
+    .list()
+    .some((e) => e.key.startsWith(`link/${id}/`));
+  const hasConnections = ctx.store
+    .list()
+    .some((e) => e.key.startsWith(`connection/${id}/`));
+  const hasTgwRegs = ctx.store
+    .list()
+    .some((e) => e.key.startsWith(`tgw-reg/${id}/`));
+  const hasCoreNetworks = ctx.store
+    .list<StoredCoreNetwork>()
+    .some(
+      (e) =>
+        e.key.startsWith("core-network/") && e.value.GlobalNetworkId === id,
+    );
+  if (
+    hasSites ||
+    hasDevices ||
+    hasLinks ||
+    hasConnections ||
+    hasTgwRegs ||
+    hasCoreNetworks
+  ) {
+    throw awsError(
+      "ConflictException",
+      "Cannot delete global network with existing child resources.",
+      409,
+    );
+  }
   ctx.store.delete(globalNetworkKey(id));
   return {
     GlobalNetwork: globalNetworkView({ ...network, State: "DELETING" }),
@@ -705,10 +749,11 @@ const CreateSite: OperationHandler = (input, ctx) => {
     Description: stringOrUndefined(input["Description"]),
     Location: asRecord(input["Location"]),
     CreatedAt: nowSec(),
-    State: "AVAILABLE",
+    State: "PENDING",
     Tags: tagListFrom(input["Tags"]),
   };
   ctx.store.set(siteKey(gid, sid), site);
+  if (site.Tags.length > 0) ctx.store.set(tagsKey(site.SiteArn), site.Tags);
   return { Site: siteView(site) };
 };
 
@@ -769,10 +814,12 @@ const CreateDevice: OperationHandler = (input, ctx) => {
     Location: asRecord(input["Location"]),
     SiteId: stringOrUndefined(input["SiteId"]),
     CreatedAt: nowSec(),
-    State: "AVAILABLE",
+    State: "PENDING",
     Tags: tagListFrom(input["Tags"]),
   };
   ctx.store.set(deviceKey(gid, did), device);
+  if (device.Tags.length > 0)
+    ctx.store.set(tagsKey(device.DeviceArn), device.Tags);
   return { Device: deviceView(device) };
 };
 
@@ -839,10 +886,11 @@ const CreateLink: OperationHandler = (input, ctx) => {
     Bandwidth: asRecord(input["Bandwidth"]),
     Provider: stringOrUndefined(input["Provider"]),
     CreatedAt: nowSec(),
-    State: "AVAILABLE",
+    State: "PENDING",
     Tags: tagListFrom(input["Tags"]),
   };
   ctx.store.set(linkKey(gid, lid), link);
+  if (link.Tags.length > 0) ctx.store.set(tagsKey(link.LinkArn), link.Tags);
   return { Link: linkView(link) };
 };
 
@@ -960,10 +1008,12 @@ const CreateConnection: OperationHandler = (input, ctx) => {
     ConnectedLinkId: stringOrUndefined(input["ConnectedLinkId"]),
     Description: stringOrUndefined(input["Description"]),
     CreatedAt: nowSec(),
-    State: "AVAILABLE",
+    State: "PENDING",
     Tags: tagListFrom(input["Tags"]),
   };
   ctx.store.set(connectionKey(gid, cid), conn);
+  if (conn.Tags.length > 0)
+    ctx.store.set(tagsKey(conn.ConnectionArn), conn.Tags);
   return { Connection: connectionView(conn) };
 };
 
@@ -1321,6 +1371,19 @@ const GetRouteAnalysis: OperationHandler = (input, ctx) => {
 const CreateCoreNetwork: OperationHandler = (input, ctx) => {
   const gid = requireString(input, "GlobalNetworkId");
   requireGlobalNetwork(ctx, gid);
+  const token = stringOrUndefined(input["ClientToken"]);
+  if (token !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("core-network", token),
+    );
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredCoreNetwork>(
+        coreNetworkKey(existingId),
+      );
+      if (existing !== undefined)
+        return { CoreNetwork: coreNetworkView(existing) };
+    }
+  }
   const cnId = `core-network-${shortId().slice(0, 10)}`;
   const cn: StoredCoreNetwork = {
     GlobalNetworkId: gid,
@@ -1328,7 +1391,7 @@ const CreateCoreNetwork: OperationHandler = (input, ctx) => {
     CoreNetworkArn: coreNetworkArnOf(ctx, cnId),
     Description: stringOrUndefined(input["Description"]),
     CreatedAt: nowSec(),
-    State: "AVAILABLE",
+    State: "CREATING",
     Segments: [],
     NetworkFunctionGroups: [],
     Edges: [],
@@ -1337,6 +1400,9 @@ const CreateCoreNetwork: OperationHandler = (input, ctx) => {
     PolicyVersionCounter: 0,
   };
   ctx.store.set(coreNetworkKey(cnId), cn);
+  if (cn.Tags.length > 0) ctx.store.set(tagsKey(cn.CoreNetworkArn), cn.Tags);
+  if (token !== undefined)
+    ctx.store.set(idempotencyKey("core-network", token), cnId);
   return { CoreNetwork: coreNetworkView(cn) };
 };
 
@@ -1595,12 +1661,15 @@ const makeAttachmentBase = (
   tags: TagEntry[],
 ): AttachmentBase => {
   const id = `attachment-${shortId()}`;
+  const arn = attachmentArnOf(ctx, id);
   const now = nowSec();
   const cnArn = cnId !== undefined ? coreNetworkArnOf(ctx, cnId) : undefined;
+  if (tags.length > 0) ctx.store.set(tagsKey(arn), tags);
   return {
     CoreNetworkId: cnId,
     CoreNetworkArn: cnArn,
     AttachmentId: id,
+    Arn: arn,
     OwnerAccountId: ctx.account,
     AttachmentType: type,
     State: "CREATING",
@@ -1620,6 +1689,25 @@ const CreateVpcAttachment: OperationHandler = (input, ctx) => {
   const cnId = requireString(input, "CoreNetworkId");
   requireCoreNetwork(ctx, cnId);
   const vpcArn = requireString(input, "VpcArn");
+  const token = stringOrUndefined(input["ClientToken"]);
+  if (token !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("vpc-attachment", token),
+    );
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredVpcAttachment>(
+        attachmentKey(existingId),
+      );
+      if (existing !== undefined)
+        return {
+          VpcAttachment: {
+            Attachment: attachmentBaseView(existing),
+            SubnetArns: existing.SubnetArns,
+            Options: existing.Options,
+          },
+        };
+    }
+  }
   const base = makeAttachmentBase(
     ctx,
     "VPC",
@@ -1636,6 +1724,8 @@ const CreateVpcAttachment: OperationHandler = (input, ctx) => {
     Options: asRecord(input["Options"]),
   };
   ctx.store.set(attachmentKey(att.AttachmentId), att);
+  if (token !== undefined)
+    ctx.store.set(idempotencyKey("vpc-attachment", token), att.AttachmentId);
   return {
     VpcAttachment: {
       Attachment: attachmentBaseView(att),
@@ -1695,6 +1785,25 @@ const UpdateVpcAttachment: OperationHandler = (input, ctx) => {
 const CreateConnectAttachment: OperationHandler = (input, ctx) => {
   const cnId = requireString(input, "CoreNetworkId");
   requireCoreNetwork(ctx, cnId);
+  const token = stringOrUndefined(input["ClientToken"]);
+  if (token !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("connect-attachment", token),
+    );
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredConnectAttachment>(
+        attachmentKey(existingId),
+      );
+      if (existing !== undefined)
+        return {
+          ConnectAttachment: {
+            Attachment: attachmentBaseView(existing),
+            TransportAttachmentId: existing.TransportAttachmentId,
+            Options: existing.Options,
+          },
+        };
+    }
+  }
   const base = makeAttachmentBase(
     ctx,
     "CONNECT",
@@ -1709,6 +1818,11 @@ const CreateConnectAttachment: OperationHandler = (input, ctx) => {
     Options: asRecord(input["Options"]),
   };
   ctx.store.set(attachmentKey(att.AttachmentId), att);
+  if (token !== undefined)
+    ctx.store.set(
+      idempotencyKey("connect-attachment", token),
+      att.AttachmentId,
+    );
   return {
     ConnectAttachment: {
       Attachment: attachmentBaseView(att),
@@ -1741,6 +1855,24 @@ const CreateSiteToSiteVpnAttachment: OperationHandler = (input, ctx) => {
   const cnId = requireString(input, "CoreNetworkId");
   requireCoreNetwork(ctx, cnId);
   const vpnArn = requireString(input, "VpnConnectionArn");
+  const token = stringOrUndefined(input["ClientToken"]);
+  if (token !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("s2s-attachment", token),
+    );
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredSiteToSiteVpnAttachment>(
+        attachmentKey(existingId),
+      );
+      if (existing !== undefined)
+        return {
+          SiteToSiteVpnAttachment: {
+            Attachment: attachmentBaseView(existing),
+            VpnConnectionArn: existing.VpnConnectionArn,
+          },
+        };
+    }
+  }
   const base = makeAttachmentBase(
     ctx,
     "SITE_TO_SITE_VPN",
@@ -1754,6 +1886,8 @@ const CreateSiteToSiteVpnAttachment: OperationHandler = (input, ctx) => {
     VpnConnectionArn: vpnArn,
   };
   ctx.store.set(attachmentKey(att.AttachmentId), att);
+  if (token !== undefined)
+    ctx.store.set(idempotencyKey("s2s-attachment", token), att.AttachmentId);
   return {
     SiteToSiteVpnAttachment: {
       Attachment: attachmentBaseView(att),
@@ -1786,6 +1920,25 @@ const CreateTransitGatewayRouteTableAttachment: OperationHandler = (
 ) => {
   const pid = requireString(input, "PeeringId");
   const tgwRtArn = requireString(input, "TransitGatewayRouteTableArn");
+  const token = stringOrUndefined(input["ClientToken"]);
+  if (token !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("tgwrt-attachment", token),
+    );
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredTransitGatewayRouteTableAttachment>(
+        attachmentKey(existingId),
+      );
+      if (existing !== undefined)
+        return {
+          TransitGatewayRouteTableAttachment: {
+            Attachment: attachmentBaseView(existing),
+            PeeringId: existing.PeeringId,
+            TransitGatewayRouteTableArn: existing.TransitGatewayRouteTableArn,
+          },
+        };
+    }
+  }
   const base = makeAttachmentBase(
     ctx,
     "TRANSIT_GATEWAY_ROUTE_TABLE",
@@ -1800,6 +1953,8 @@ const CreateTransitGatewayRouteTableAttachment: OperationHandler = (
     TransitGatewayRouteTableArn: tgwRtArn,
   };
   ctx.store.set(attachmentKey(att.AttachmentId), att);
+  if (token !== undefined)
+    ctx.store.set(idempotencyKey("tgwrt-attachment", token), att.AttachmentId);
   return {
     TransitGatewayRouteTableAttachment: {
       Attachment: attachmentBaseView(att),
@@ -1837,6 +1992,24 @@ const CreateDirectConnectGatewayAttachment: OperationHandler = (input, ctx) => {
   const cnId = requireString(input, "CoreNetworkId");
   requireCoreNetwork(ctx, cnId);
   const dcgwArn = requireString(input, "DirectConnectGatewayArn");
+  const token = stringOrUndefined(input["ClientToken"]);
+  if (token !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("dcgw-attachment", token),
+    );
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredDirectConnectGatewayAttachment>(
+        attachmentKey(existingId),
+      );
+      if (existing !== undefined)
+        return {
+          DirectConnectGatewayAttachment: {
+            Attachment: attachmentBaseView(existing),
+            DirectConnectGatewayArn: existing.DirectConnectGatewayArn,
+          },
+        };
+    }
+  }
   const edgeLocs = Array.isArray(input["EdgeLocations"])
     ? (input["EdgeLocations"] as string[])
     : [];
@@ -1854,6 +2027,8 @@ const CreateDirectConnectGatewayAttachment: OperationHandler = (input, ctx) => {
     DirectConnectGatewayArn: dcgwArn,
   };
   ctx.store.set(attachmentKey(att.AttachmentId), att);
+  if (token !== undefined)
+    ctx.store.set(idempotencyKey("dcgw-attachment", token), att.AttachmentId);
   return {
     DirectConnectGatewayAttachment: {
       Attachment: attachmentBaseView(att),
@@ -1958,6 +2133,19 @@ const RejectAttachment: OperationHandler = (input, ctx) => {
 };
 
 const CreateConnectPeer: OperationHandler = (input, ctx) => {
+  const token = stringOrUndefined(input["ClientToken"]);
+  if (token !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("connect-peer", token),
+    );
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredConnectPeer>(
+        connectPeerKey(existingId),
+      );
+      if (existing !== undefined)
+        return { ConnectPeer: connectPeerView(existing) };
+    }
+  }
   const cpId = `connect-peer-${shortId().slice(0, 10)}`;
   const cp: StoredConnectPeer = {
     CoreNetworkId: stringOrUndefined(input["CoreNetworkId"]),
@@ -1979,6 +2167,8 @@ const CreateConnectPeer: OperationHandler = (input, ctx) => {
     SubnetArn: stringOrUndefined(input["SubnetArn"]),
   };
   ctx.store.set(connectPeerKey(cpId), cp);
+  if (token !== undefined)
+    ctx.store.set(idempotencyKey("connect-peer", token), cpId);
   return { ConnectPeer: connectPeerView(cp) };
 };
 
@@ -2026,6 +2216,24 @@ const CreateTransitGatewayPeering: OperationHandler = (input, ctx) => {
   const cnId = requireString(input, "CoreNetworkId");
   requireCoreNetwork(ctx, cnId);
   const tgwArn = requireString(input, "TransitGatewayArn");
+  const token = stringOrUndefined(input["ClientToken"]);
+  if (token !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("tgw-peering", token),
+    );
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredPeering>(peeringKey(existingId));
+      if (existing !== undefined)
+        return {
+          TransitGatewayPeering: {
+            Peering: peeringView(existing),
+            TransitGatewayArn: existing.TransitGatewayArn,
+            TransitGatewayPeeringAttachmentId:
+              existing.TransitGatewayPeeringAttachmentId,
+          },
+        };
+    }
+  }
   const pid = `peering-${shortId()}`;
   const attId = `attachment-${shortId()}`;
   const now = nowSec();
@@ -2044,6 +2252,8 @@ const CreateTransitGatewayPeering: OperationHandler = (input, ctx) => {
     TransitGatewayPeeringAttachmentId: attId,
   };
   ctx.store.set(peeringKey(pid), peering);
+  if (token !== undefined)
+    ctx.store.set(idempotencyKey("tgw-peering", token), pid);
   return {
     TransitGatewayPeering: {
       Peering: peeringView(peering),

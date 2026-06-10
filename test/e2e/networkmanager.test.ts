@@ -12,7 +12,14 @@ import {
   CreateLinkCommand,
   CreateSiteCommand,
   CreateVpcAttachmentCommand,
+  DeleteAttachmentCommand,
+  DeleteConnectPeerCommand,
+  DeleteConnectionCommand,
+  DeleteCoreNetworkCommand,
+  DeleteDeviceCommand,
   DeleteGlobalNetworkCommand,
+  DeleteLinkCommand,
+  DeleteSiteCommand,
   DescribeGlobalNetworksCommand,
   DisassociateLinkCommand,
   GetConnectPeerCommand,
@@ -56,7 +63,7 @@ test("NetworkManager global network roundtrip", async () => {
   const id = created.GlobalNetwork?.GlobalNetworkId;
   expect(id).toBeDefined();
   expect(created.GlobalNetwork?.GlobalNetworkArn).toContain("global-network/");
-  expect(created.GlobalNetwork?.State).toBe("AVAILABLE");
+  expect(created.GlobalNetwork?.State).toBe("PENDING");
 
   const described = await client.send(
     new DescribeGlobalNetworksCommand({ GlobalNetworkIds: [id ?? ""] }),
@@ -94,13 +101,16 @@ test("NetworkManager site lifecycle", async () => {
   );
   const sid = site.Site?.SiteId;
   expect(sid).toBeDefined();
-  expect(site.Site?.State).toBe("AVAILABLE");
+  expect(site.Site?.State).toBe("PENDING");
 
   const listed = await client.send(
     new GetSitesCommand({ GlobalNetworkId: gid }),
   );
   expect(listed.Sites?.some((s) => s.SiteId === sid)).toBe(true);
 
+  await client.send(
+    new DeleteSiteCommand({ GlobalNetworkId: gid, SiteId: sid ?? "" }),
+  );
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
 
@@ -127,13 +137,19 @@ test("NetworkManager device lifecycle", async () => {
   );
   const did = device.Device?.DeviceId;
   expect(did).toBeDefined();
-  expect(device.Device?.State).toBe("AVAILABLE");
+  expect(device.Device?.State).toBe("PENDING");
 
   const listed = await client.send(
     new GetDevicesCommand({ GlobalNetworkId: gid }),
   );
   expect(listed.Devices?.some((d) => d.DeviceId === did)).toBe(true);
 
+  await client.send(
+    new DeleteDeviceCommand({ GlobalNetworkId: gid, DeviceId: did ?? "" }),
+  );
+  await client.send(
+    new DeleteSiteCommand({ GlobalNetworkId: gid, SiteId: sid }),
+  );
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
 
@@ -165,7 +181,7 @@ test("NetworkManager link and association lifecycle", async () => {
   );
   const lid = link.Link?.LinkId;
   expect(lid).toBeDefined();
-  expect(link.Link?.State).toBe("AVAILABLE");
+  expect(link.Link?.State).toBe("PENDING");
 
   const links = await client.send(
     new GetLinksCommand({ GlobalNetworkId: gid }),
@@ -196,6 +212,15 @@ test("NetworkManager link and association lifecycle", async () => {
     }),
   );
 
+  await client.send(
+    new DeleteLinkCommand({ GlobalNetworkId: gid, LinkId: lid ?? "" }),
+  );
+  await client.send(
+    new DeleteDeviceCommand({ GlobalNetworkId: gid, DeviceId: did }),
+  );
+  await client.send(
+    new DeleteSiteCommand({ GlobalNetworkId: gid, SiteId: sid }),
+  );
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
 
@@ -224,13 +249,31 @@ test("NetworkManager connection lifecycle", async () => {
   );
   const cid = conn.Connection?.ConnectionId;
   expect(cid).toBeDefined();
-  expect(conn.Connection?.State).toBe("AVAILABLE");
+  expect(conn.Connection?.State).toBe("PENDING");
 
   const listed = await client.send(
     new GetConnectionsCommand({ GlobalNetworkId: gid }),
   );
   expect(listed.Connections?.some((c) => c.ConnectionId === cid)).toBe(true);
 
+  await client.send(
+    new DeleteConnectionCommand({
+      GlobalNetworkId: gid,
+      ConnectionId: cid ?? "",
+    }),
+  );
+  await client.send(
+    new DeleteDeviceCommand({
+      GlobalNetworkId: gid,
+      DeviceId: d1.Device?.DeviceId ?? "",
+    }),
+  );
+  await client.send(
+    new DeleteDeviceCommand({
+      GlobalNetworkId: gid,
+      DeviceId: d2.Device?.DeviceId ?? "",
+    }),
+  );
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
 
@@ -251,7 +294,7 @@ test("NetworkManager core network create/get/policy", async () => {
   );
   const cnId = cn.CoreNetwork?.CoreNetworkId;
   expect(cnId).toBeDefined();
-  expect(cn.CoreNetwork?.State).toBe("AVAILABLE");
+  expect(cn.CoreNetwork?.State).toBe("CREATING");
 
   const fetched = await client.send(
     new GetCoreNetworkCommand({ CoreNetworkId: cnId ?? "" }),
@@ -269,6 +312,9 @@ test("NetworkManager core network create/get/policy", async () => {
   );
   expect(policy.CoreNetworkPolicy?.PolicyVersionId).toBeDefined();
 
+  await client.send(
+    new DeleteCoreNetworkCommand({ CoreNetworkId: cnId ?? "" }),
+  );
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
 
@@ -309,6 +355,8 @@ test("NetworkManager VPC attachment create/accept/get", async () => {
   const allAtts = await client.send(new ListAttachmentsCommand({}));
   expect(allAtts.Attachments?.some((a) => a.AttachmentId === attId)).toBe(true);
 
+  await client.send(new DeleteAttachmentCommand({ AttachmentId: attId ?? "" }));
+  await client.send(new DeleteCoreNetworkCommand({ CoreNetworkId: cnId }));
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
 
@@ -361,6 +409,16 @@ test("NetworkManager connect peer lifecycle", async () => {
   );
   expect(fetched.ConnectPeer?.ConnectPeerId).toBe(cpId);
 
+  await client.send(
+    new DeleteConnectPeerCommand({ ConnectPeerId: cpId ?? "" }),
+  );
+  await client.send(
+    new DeleteAttachmentCommand({ AttachmentId: connectAttId }),
+  );
+  await client.send(
+    new DeleteAttachmentCommand({ AttachmentId: transportAttId }),
+  );
+  await client.send(new DeleteCoreNetworkCommand({ CoreNetworkId: cnId }));
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
 
@@ -409,6 +467,11 @@ test("NetworkManager GetSites SiteIds filter and pagination", async () => {
   expect(page2.Sites?.length).toBe(1);
   expect(page2.NextToken).toBeUndefined();
 
+  for (const sid of [sid1, sid2, sid3]) {
+    await client.send(
+      new DeleteSiteCommand({ GlobalNetworkId: gid, SiteId: sid }),
+    );
+  }
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
 
@@ -429,10 +492,10 @@ test("NetworkManager GetDevices SiteId filter and pagination", async () => {
   const siteA = sA.Site?.SiteId ?? "";
   const siteB = sB.Site?.SiteId ?? "";
 
-  await client.send(
+  const dA1 = await client.send(
     new CreateDeviceCommand({ GlobalNetworkId: gid, SiteId: siteA }),
   );
-  await client.send(
+  const dA2 = await client.send(
     new CreateDeviceCommand({ GlobalNetworkId: gid, SiteId: siteA }),
   );
   const dB = await client.send(
@@ -462,6 +525,21 @@ test("NetworkManager GetDevices SiteId filter and pagination", async () => {
   expect(page2.Devices?.length).toBe(1);
   expect(page2.NextToken).toBeUndefined();
 
+  for (const did of [
+    dA1.Device?.DeviceId ?? "",
+    dA2.Device?.DeviceId ?? "",
+    didB,
+  ]) {
+    await client.send(
+      new DeleteDeviceCommand({ GlobalNetworkId: gid, DeviceId: did }),
+    );
+  }
+  await client.send(
+    new DeleteSiteCommand({ GlobalNetworkId: gid, SiteId: siteA }),
+  );
+  await client.send(
+    new DeleteSiteCommand({ GlobalNetworkId: gid, SiteId: siteB }),
+  );
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
 
@@ -484,6 +562,7 @@ test("NetworkManager ListPeerings CoreNetworkId filter", async () => {
   expect(listed.Peerings).toBeDefined();
   expect(Array.isArray(listed.Peerings)).toBe(true);
 
+  await client.send(new DeleteCoreNetworkCommand({ CoreNetworkId: cnId }));
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
 
@@ -514,4 +593,116 @@ test("NetworkManager tags roundtrip", async () => {
       GlobalNetworkId: gn.GlobalNetwork?.GlobalNetworkId ?? "",
     }),
   );
+});
+
+test("NetworkManager CreateVpcAttachment ClientToken idempotency", async () => {
+  const client = networkmanager();
+
+  const gn = await client.send(
+    new CreateGlobalNetworkCommand({ Description: "idem-test" }),
+  );
+  const gid = gn.GlobalNetwork?.GlobalNetworkId ?? "";
+
+  const cn = await client.send(
+    new CreateCoreNetworkCommand({ GlobalNetworkId: gid }),
+  );
+  const cnId = cn.CoreNetwork?.CoreNetworkId ?? "";
+
+  const token = "test-idempotency-token-001";
+  const first = await client.send(
+    new CreateVpcAttachmentCommand({
+      CoreNetworkId: cnId,
+      VpcArn: "arn:aws:ec2:us-east-1:123:vpc/vpc-idem",
+      SubnetArns: ["arn:aws:ec2:us-east-1:123:subnet/subnet-idem"],
+      ClientToken: token,
+    }),
+  );
+  const firstId = first.VpcAttachment?.Attachment?.AttachmentId;
+  expect(firstId).toBeDefined();
+
+  const second = await client.send(
+    new CreateVpcAttachmentCommand({
+      CoreNetworkId: cnId,
+      VpcArn: "arn:aws:ec2:us-east-1:123:vpc/vpc-idem",
+      SubnetArns: ["arn:aws:ec2:us-east-1:123:subnet/subnet-idem"],
+      ClientToken: token,
+    }),
+  );
+  expect(second.VpcAttachment?.Attachment?.AttachmentId).toBe(firstId);
+
+  await client.send(
+    new DeleteAttachmentCommand({ AttachmentId: firstId ?? "" }),
+  );
+  await client.send(new DeleteCoreNetworkCommand({ CoreNetworkId: cnId }));
+  await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
+});
+
+test("NetworkManager CreateVpcAttachment tags round-trip via ListTagsForResource", async () => {
+  const client = networkmanager();
+
+  const gn = await client.send(
+    new CreateGlobalNetworkCommand({ Description: "att-tags-test" }),
+  );
+  const gid = gn.GlobalNetwork?.GlobalNetworkId ?? "";
+
+  const cn = await client.send(
+    new CreateCoreNetworkCommand({ GlobalNetworkId: gid }),
+  );
+  const cnId = cn.CoreNetwork?.CoreNetworkId ?? "";
+
+  const att = await client.send(
+    new CreateVpcAttachmentCommand({
+      CoreNetworkId: cnId,
+      VpcArn: "arn:aws:ec2:us-east-1:123:vpc/vpc-tag-test",
+      SubnetArns: ["arn:aws:ec2:us-east-1:123:subnet/subnet-tag"],
+      Tags: [{ Key: "purpose", Value: "tag-roundtrip" }],
+    }),
+  );
+  const attId = att.VpcAttachment?.Attachment?.AttachmentId ?? "";
+  const cnArn = cn.CoreNetwork?.CoreNetworkArn ?? "";
+  const accountId = cnArn.split(":")[4] ?? "test";
+  const attArn = `arn:aws:networkmanager::${accountId}:attachment/${attId}`;
+
+  const tagList = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: attArn }),
+  );
+  expect(
+    tagList.TagList?.some(
+      (t) => t.Key === "purpose" && t.Value === "tag-roundtrip",
+    ),
+  ).toBe(true);
+
+  await client.send(
+    new DeleteAttachmentCommand({
+      AttachmentId: att.VpcAttachment?.Attachment?.AttachmentId ?? "",
+    }),
+  );
+  await client.send(new DeleteCoreNetworkCommand({ CoreNetworkId: cnId }));
+  await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
+});
+
+test("NetworkManager DeleteGlobalNetwork rejects when child resources exist", async () => {
+  const client = networkmanager();
+
+  const gn = await client.send(
+    new CreateGlobalNetworkCommand({ Description: "in-use-delete-test" }),
+  );
+  const gid = gn.GlobalNetwork?.GlobalNetworkId ?? "";
+
+  await client.send(
+    new CreateSiteCommand({ GlobalNetworkId: gid, Description: "blocker" }),
+  );
+
+  await expect(
+    client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid })),
+  ).rejects.toThrow();
+
+  const sites = await client.send(
+    new GetSitesCommand({ GlobalNetworkId: gid }),
+  );
+  const sid = sites.Sites?.[0]?.SiteId ?? "";
+  await client.send(
+    new DeleteSiteCommand({ GlobalNetworkId: gid, SiteId: sid }),
+  );
+  await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });

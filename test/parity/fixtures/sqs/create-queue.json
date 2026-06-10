@@ -1,0 +1,22 @@
+{
+  "clientPackage": "@aws-sdk/client-sqs",
+  "clientName": "SQSClient",
+  "steps": [
+    {
+      "command": "CreateQueueCommand",
+      "input": { "QueueName": "parity-q" },
+      "expected": { "QueueUrl": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "q1",
+      "refs": {}
+    },
+    {
+      "command": "DeleteQueueCommand",
+      "input": { "QueueUrl": "${q1.QueueUrl}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "q1.QueueUrl": "q1" }
+    }
+  ]
+}

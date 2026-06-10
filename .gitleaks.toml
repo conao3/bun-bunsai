@@ -2,7 +2,7 @@
 useDefault = true
 
 [allowlist]
-description = "Vendored upstream test data is byte-for-byte copies of botocore (Apache-2.0). It contains AWS's own public documentation example credentials (AKIAIOSFODNN7EXAMPLE / wJalrXUtnFEMI...EXAMPLEKEY), which are not real secrets. The acm service stub emits a placeholder PEM (base64 of the cert id), not a real certificate or key. The ec2 service stub emits a placeholder TPM EK public key value, not a real key."
+description = "Vendored upstream test data is byte-for-byte copies of botocore and localstack snapshots (Apache-2.0). It contains AWS's own public documentation example credentials (AKIAIOSFODNN7EXAMPLE / wJalrXUtnFEMI...EXAMPLEKEY), which are not real secrets. The acm service stub emits a placeholder PEM (base64 of the cert id), not a real certificate or key. The ec2 service stub emits a placeholder TPM EK public key value, not a real key."
 paths = [
   '''test/vendor/.*''',
   '''apps/server/src/services/acm\.ts''',

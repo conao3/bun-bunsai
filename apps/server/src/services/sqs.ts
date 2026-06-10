@@ -741,7 +741,17 @@ const GetQueueAttributes: OperationHandler = (input, ctx) => {
     (message) => message.invisibleUntil > now && message.receiveCount === 0,
   ).length;
   const notVisible = queue.messages.length - visible - delayed;
+  const isFifo = queue.QueueName.endsWith(".fifo");
+  const defaults: Record<string, string> = {
+    DelaySeconds: "0",
+    MaximumMessageSize: "262144",
+    MessageRetentionPeriod: "345600",
+    ReceiveMessageWaitTimeSeconds: "0",
+    VisibilityTimeout: "30",
+    SqsManagedSseEnabled: isFifo ? "false" : "true",
+  };
   const computed: Record<string, string> = {
+    ...defaults,
     ...queue.Attributes,
     QueueArn: `arn:aws:sqs:${ctx.region}:${ctx.account}:${name}`,
     ApproximateNumberOfMessages: String(visible),

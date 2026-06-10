@@ -1,0 +1,91 @@
+{
+  "clientPackage": "@aws-sdk/client-sns",
+  "clientName": "SNSClient",
+  "steps": [
+    {
+      "command": "CreateTopicCommand",
+      "input": { "Name": "parity-topic-tags" },
+      "expected": { "TopicArn": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "topic",
+      "refs": {}
+    },
+    {
+      "command": "TagResourceCommand",
+      "input": {
+        "ResourceArn": "${topic.TopicArn}",
+        "Tags": [
+          { "Key": "k1", "Value": "v1" },
+          { "Key": "k2", "Value": "v2" }
+        ]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTagsForResourceCommand",
+      "input": { "ResourceArn": "${topic.TopicArn}" },
+      "expected": {
+        "Tags": [
+          { "Key": "k1", "Value": "v1" },
+          { "Key": "k2", "Value": "v2" }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UntagResourceCommand",
+      "input": {
+        "ResourceArn": "${topic.TopicArn}",
+        "TagKeys": ["k1"]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTagsForResourceCommand",
+      "input": { "ResourceArn": "${topic.TopicArn}" },
+      "expected": {
+        "Tags": [{ "Key": "k2", "Value": "v2" }]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "TagResourceCommand",
+      "input": {
+        "ResourceArn": "${topic.TopicArn}",
+        "Tags": [{ "Key": "k2", "Value": "v2b" }]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTagsForResourceCommand",
+      "input": { "ResourceArn": "${topic.TopicArn}" },
+      "expected": {
+        "Tags": [{ "Key": "k2", "Value": "v2b" }]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTopicCommand",
+      "input": { "TopicArn": "${topic.TopicArn}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "clientPackage": "@aws-sdk/client-sqs",
+  "clientName": "SQSClient",
+  "steps": [
+    {
+      "command": "CreateQueueCommand",
+      "input": {
+        "QueueName": "parity-q-attrs",
+        "Attributes": {
+          "MessageRetentionPeriod": "604800",
+          "ReceiveMessageWaitTimeSeconds": "10",
+          "VisibilityTimeout": "20"
+        }
+      },
+      "expected": { "QueueUrl": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "q",
+      "refs": {}
+    },
+    {
+      "command": "GetQueueAttributesCommand",
+      "input": {
+        "QueueUrl": "${q.QueueUrl}",
+        "AttributeNames": ["All"]
+      },
+      "expected": {
+        "Attributes": {
+          "ApproximateNumberOfMessages": "0",
+          "ApproximateNumberOfMessagesDelayed": "0",
+          "ApproximateNumberOfMessagesNotVisible": "0",
+          "CreatedTimestamp": "<ANY>",
+          "DelaySeconds": "0",
+          "LastModifiedTimestamp": "<ANY>",
+          "MaximumMessageSize": "262144",
+          "MessageRetentionPeriod": "604800",
+          "QueueArn": "<ANY>",
+          "ReceiveMessageWaitTimeSeconds": "10",
+          "VisibilityTimeout": "20"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "SetQueueAttributesCommand",
+      "input": {
+        "QueueUrl": "${q.QueueUrl}",
+        "Attributes": {
+          "MaximumMessageSize": "2048",
+          "VisibilityTimeout": "69",
+          "DelaySeconds": "420"
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetQueueAttributesCommand",
+      "input": {
+        "QueueUrl": "${q.QueueUrl}",
+        "AttributeNames": ["All"]
+      },
+      "expected": {
+        "Attributes": {
+          "ApproximateNumberOfMessages": "0",
+          "ApproximateNumberOfMessagesDelayed": "0",
+          "ApproximateNumberOfMessagesNotVisible": "0",
+          "CreatedTimestamp": "<ANY>",
+          "DelaySeconds": "420",
+          "LastModifiedTimestamp": "<ANY>",
+          "MaximumMessageSize": "2048",
+          "MessageRetentionPeriod": "604800",
+          "QueueArn": "<ANY>",
+          "ReceiveMessageWaitTimeSeconds": "10",
+          "VisibilityTimeout": "69"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteQueueCommand",
+      "input": { "QueueUrl": "${q.QueueUrl}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

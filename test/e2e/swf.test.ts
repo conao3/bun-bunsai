@@ -1095,3 +1095,164 @@ test("SWF GetWorkflowExecutionHistory pagination", async () => {
   expect(allTypes).toContain("DecisionTaskStarted");
   expect(allTypes).toContain("WorkflowExecutionCompleted");
 });
+
+test("SWF reverseOrder on ListActivityTypes", async () => {
+  const client = swf();
+  const domain = "bunsai-ro-at-domain";
+  await client.send(
+    new RegisterDomainCommand({
+      name: domain,
+      workflowExecutionRetentionPeriodInDays: "7",
+    }),
+  );
+  for (const name of ["Alpha", "Beta", "Gamma"]) {
+    await client.send(
+      new RegisterActivityTypeCommand({ domain, name, version: "1.0" }),
+    );
+  }
+  const asc = await client.send(
+    new ListActivityTypesCommand({ domain, registrationStatus: "REGISTERED" }),
+  );
+  const ascNames = (asc.typeInfos ?? []).map((t) => t.activityType?.name);
+  expect(ascNames).toEqual(["Alpha", "Beta", "Gamma"]);
+
+  const desc = await client.send(
+    new ListActivityTypesCommand({
+      domain,
+      registrationStatus: "REGISTERED",
+      reverseOrder: true,
+    }),
+  );
+  const descNames = (desc.typeInfos ?? []).map((t) => t.activityType?.name);
+  expect(descNames).toEqual(["Gamma", "Beta", "Alpha"]);
+});
+
+test("SWF reverseOrder on ListWorkflowTypes", async () => {
+  const client = swf();
+  const domain = "bunsai-ro-wt-domain";
+  await client.send(
+    new RegisterDomainCommand({
+      name: domain,
+      workflowExecutionRetentionPeriodInDays: "7",
+    }),
+  );
+  for (const name of ["Alpha", "Beta", "Gamma"]) {
+    await client.send(
+      new RegisterWorkflowTypeCommand({ domain, name, version: "1.0" }),
+    );
+  }
+  const asc = await client.send(
+    new ListWorkflowTypesCommand({ domain, registrationStatus: "REGISTERED" }),
+  );
+  const ascNames = (asc.typeInfos ?? []).map((t) => t.workflowType?.name);
+  expect(ascNames).toEqual(["Alpha", "Beta", "Gamma"]);
+
+  const desc = await client.send(
+    new ListWorkflowTypesCommand({
+      domain,
+      registrationStatus: "REGISTERED",
+      reverseOrder: true,
+    }),
+  );
+  const descNames = (desc.typeInfos ?? []).map((t) => t.workflowType?.name);
+  expect(descNames).toEqual(["Gamma", "Beta", "Alpha"]);
+});
+
+test("SWF reverseOrder on ListDomains", async () => {
+  const client = swf();
+  for (const name of [
+    "bunsai-ro-d-alpha",
+    "bunsai-ro-d-beta",
+    "bunsai-ro-d-gamma",
+  ]) {
+    await client.send(
+      new RegisterDomainCommand({
+        name,
+        workflowExecutionRetentionPeriodInDays: "7",
+      }),
+    );
+  }
+  const asc = await client.send(
+    new ListDomainsCommand({ registrationStatus: "REGISTERED" }),
+  );
+  const ascNames = (asc.domainInfos ?? []).map((d) => d.name);
+  const ascFiltered = ascNames.filter((n) => n?.startsWith("bunsai-ro-d-"));
+  expect(ascFiltered).toEqual([
+    "bunsai-ro-d-alpha",
+    "bunsai-ro-d-beta",
+    "bunsai-ro-d-gamma",
+  ]);
+
+  const desc = await client.send(
+    new ListDomainsCommand({
+      registrationStatus: "REGISTERED",
+      reverseOrder: true,
+    }),
+  );
+  const descNames = (desc.domainInfos ?? []).map((d) => d.name);
+  const descFiltered = descNames.filter((n) => n?.startsWith("bunsai-ro-d-"));
+  expect(descFiltered).toEqual([
+    "bunsai-ro-d-gamma",
+    "bunsai-ro-d-beta",
+    "bunsai-ro-d-alpha",
+  ]);
+});
+
+test("SWF TypeNotDeprecatedFault on DeleteActivityType", async () => {
+  const client = swf();
+  const domain = "bunsai-tnd-at-domain";
+  await client.send(
+    new RegisterDomainCommand({
+      name: domain,
+      workflowExecutionRetentionPeriodInDays: "7",
+    }),
+  );
+  await client.send(
+    new RegisterActivityTypeCommand({ domain, name: "MyAct", version: "1.0" }),
+  );
+  await expect(
+    client.send(
+      new DeleteActivityTypeCommand({
+        domain,
+        activityType: { name: "MyAct", version: "1.0" },
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "TypeNotDeprecatedFault" });
+});
+
+test("SWF TypeNotDeprecatedFault on DeleteWorkflowType", async () => {
+  const client = swf();
+  const domain = "bunsai-tnd-wt-domain";
+  await client.send(
+    new RegisterDomainCommand({
+      name: domain,
+      workflowExecutionRetentionPeriodInDays: "7",
+    }),
+  );
+  await client.send(
+    new RegisterWorkflowTypeCommand({ domain, name: "MyWf", version: "1.0" }),
+  );
+  await expect(
+    client.send(
+      new DeleteWorkflowTypeCommand({
+        domain,
+        workflowType: { name: "MyWf", version: "1.0" },
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "TypeNotDeprecatedFault" });
+});
+
+test("SWF DomainDeprecatedFault on double DeprecateDomain", async () => {
+  const client = swf();
+  const name = "bunsai-dd-domain";
+  await client.send(
+    new RegisterDomainCommand({
+      name,
+      workflowExecutionRetentionPeriodInDays: "7",
+    }),
+  );
+  await client.send(new DeprecateDomainCommand({ name }));
+  await expect(
+    client.send(new DeprecateDomainCommand({ name })),
+  ).rejects.toMatchObject({ name: "DomainDeprecatedFault" });
+});

@@ -905,7 +905,12 @@ const GetEffectivePermissionsForPath: OperationHandler = (rawInput, ctx) => {
       return dataLoc.ResourceArn === resourceArn;
     })
     .map((e) => permInfo(e.value));
-  return { Permissions: perms };
+  const { items, nextToken } = paginateList(
+    perms,
+    input.NextToken,
+    input.MaxResults,
+  );
+  return { Permissions: items, NextToken: nextToken };
 };
 
 const StartTransaction: OperationHandler = (rawInput, ctx) => {
@@ -933,6 +938,20 @@ const CancelTransaction: OperationHandler = (rawInput, ctx) => {
       400,
     );
   }
+  if (tx.transactionStatus === "COMMITTED") {
+    throw awsError(
+      "TransactionCommittedException",
+      `Transaction ${transactionId} is already committed.`,
+      400,
+    );
+  }
+  if (tx.transactionStatus === "COMMIT_IN_PROGRESS") {
+    throw awsError(
+      "TransactionCommitInProgressException",
+      `Transaction ${transactionId} commit is in progress.`,
+      400,
+    );
+  }
   const updated: StoredTransaction = {
     ...tx,
     transactionStatus: "ABORTED",
@@ -950,6 +969,27 @@ const CommitTransaction: OperationHandler = (rawInput, ctx) => {
     throw awsError(
       "EntityNotFoundException",
       `Transaction ${transactionId} not found.`,
+      400,
+    );
+  }
+  if (tx.transactionStatus === "COMMITTED") {
+    throw awsError(
+      "TransactionCommittedException",
+      `Transaction ${transactionId} is already committed.`,
+      400,
+    );
+  }
+  if (tx.transactionStatus === "COMMIT_IN_PROGRESS") {
+    throw awsError(
+      "TransactionCommitInProgressException",
+      `Transaction ${transactionId} commit is in progress.`,
+      400,
+    );
+  }
+  if (tx.transactionStatus === "ABORTED") {
+    throw awsError(
+      "TransactionCanceledException",
+      `Transaction ${transactionId} has been cancelled.`,
       400,
     );
   }
@@ -990,13 +1030,28 @@ const ExtendTransaction: OperationHandler = (rawInput, ctx) => {
   return {};
 };
 
-const ListTransactions: OperationHandler = (_rawInput, ctx) => {
+const ListTransactions: OperationHandler = (rawInput, ctx) => {
+  const input = asRecord(rawInput);
+  const statusFilter = stringOrUndefined(input.StatusFilter) ?? "ALL";
   const entries = ctx.store.list<StoredTransaction>();
-  return {
-    Transactions: entries
-      .filter((e) => e.key.startsWith(txPrefix))
-      .map((e) => txInfo(e.value)),
-  };
+  const txs = entries
+    .filter((e) => e.key.startsWith(txPrefix))
+    .filter((e) => {
+      if (statusFilter === "ALL") return true;
+      if (statusFilter === "COMPLETED")
+        return (
+          e.value.transactionStatus === "COMMITTED" ||
+          e.value.transactionStatus === "ABORTED"
+        );
+      return e.value.transactionStatus === statusFilter;
+    })
+    .map((e) => txInfo(e.value));
+  const { items, nextToken } = paginateList(
+    txs,
+    input.NextToken,
+    input.MaxResults,
+  );
+  return { Transactions: items, NextToken: nextToken };
 };
 
 const GetDataLakePrincipal: OperationHandler = (_rawInput, ctx) => {
@@ -1191,7 +1246,12 @@ const GetTableObjects: OperationHandler = (rawInput, ctx) => {
     PartitionValues: o.partitionValues,
     Objects: [{ Uri: o.uri, ETag: o.eTag, Size: o.size }],
   }));
-  return { Objects: objects };
+  const { items, nextToken } = paginateList(
+    objects,
+    input.NextToken,
+    input.MaxResults,
+  );
+  return { Objects: items, NextToken: nextToken };
 };
 
 const UpdateTableObjects: OperationHandler = (rawInput, ctx) => {

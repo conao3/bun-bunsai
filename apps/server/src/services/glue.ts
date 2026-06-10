@@ -416,6 +416,18 @@ const GetDatabases: OperationHandler = (input, ctx) => {
   const maxResults =
     typeof input["MaxResults"] === "number" ? input["MaxResults"] : 1000;
   const offset = decodePage(input["NextToken"]);
+  const resourceShareType =
+    typeof input["ResourceShareType"] === "string"
+      ? input["ResourceShareType"]
+      : undefined;
+  const attributesToGet = Array.isArray(input["AttributesToGet"])
+    ? (input["AttributesToGet"] as string[])
+    : undefined;
+
+  if (resourceShareType === "FEDERATED" || resourceShareType === "FOREIGN") {
+    return { DatabaseList: [] };
+  }
+
   const all = ctx.store
     .list<StoredDatabase>()
     .filter(
@@ -438,7 +450,14 @@ const GetDatabases: OperationHandler = (input, ctx) => {
         !entry.key.startsWith(sessionPrefix) &&
         !entry.key.startsWith(dqRulesetPrefix),
     )
-    .map((entry) => databaseView(entry.key, entry.value, catalogId));
+    .map((entry) => {
+      const full = databaseView(entry.key, entry.value, catalogId);
+      if (attributesToGet === undefined) return full;
+      const projected: Record<string, unknown> = { Name: full["Name"] };
+      if (attributesToGet.includes("TARGET_DATABASE") && full["TargetDatabase"])
+        projected["TargetDatabase"] = full["TargetDatabase"];
+      return projected;
+    });
   const page = all.slice(offset, offset + maxResults);
   const nextToken = encodeNext(offset, maxResults, all.length);
   return {
@@ -655,6 +674,22 @@ const requireCrawler = (ctx: ServiceContext, name: string): StoredCrawler => {
   return crawler;
 };
 
+const validateRole = (role: unknown): void => {
+  if (typeof role !== "string" || role === "") {
+    throw awsError("InvalidInputException", "Role is required.", 400);
+  }
+  if (
+    role.startsWith("arn:") &&
+    !/^arn:aws[^:]*:iam::\d{12}:role\/.+/.test(role)
+  ) {
+    throw awsError(
+      "InvalidInputException",
+      `Invalid IAM role ARN: ${role}`,
+      400,
+    );
+  }
+};
+
 const CreateCrawler: OperationHandler = (input, ctx) => {
   const record = asRecord(input);
   const name = requireName(record);
@@ -665,6 +700,7 @@ const CreateCrawler: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  validateRole(record["Role"]);
   const now = Math.floor(Date.now() / 1000);
   const crawler: StoredCrawler = {
     input: record,
@@ -773,6 +809,7 @@ const CreateJob: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  validateRole(record["Role"]);
   const now = Math.floor(Date.now() / 1000);
   const job: StoredJob = {
     input: record,
@@ -832,12 +869,20 @@ const BatchGetJobs: OperationHandler = (input, ctx) => {
   return { Jobs: jobs, JobsNotFound: jobsNotFound };
 };
 
-const ListJobs: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
+const ListJobs: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : 1000;
+  const offset = decodePage(input["NextToken"]);
+  const all = ctx.store
     .list<StoredJob>()
     .filter((e) => e.key.startsWith(jobPrefix))
     .map((e) => e.key.slice(jobPrefix.length));
-  return { JobNames: list };
+  const page = all.slice(offset, offset + maxResults);
+  const nextToken = encodeNext(offset, maxResults, all.length);
+  return {
+    JobNames: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const resolveJobRunState = (
@@ -1616,14 +1661,49 @@ const GetConnection: OperationHandler = (input, ctx) => {
   return { Connection: connectionView(name, conn) };
 };
 
-const GetConnections: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
+const GetConnections: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : 1000;
+  const offset = decodePage(input["NextToken"]);
+  const filter =
+    typeof input["Filter"] === "object" && input["Filter"] !== null
+      ? (input["Filter"] as Record<string, unknown>)
+      : undefined;
+  const filterConnectionType =
+    filter !== undefined && typeof filter["ConnectionType"] === "string"
+      ? filter["ConnectionType"]
+      : undefined;
+  const filterMatchCriteria =
+    filter !== undefined && Array.isArray(filter["MatchCriteria"])
+      ? (filter["MatchCriteria"] as string[])
+      : undefined;
+  const all = ctx.store
     .list<StoredConnection>()
     .filter((entry) => entry.key.startsWith(connPrefix))
+    .filter((entry) => {
+      if (
+        filterConnectionType !== undefined &&
+        entry.value.input["ConnectionType"] !== filterConnectionType
+      ) {
+        return false;
+      }
+      if (filterMatchCriteria !== undefined && filterMatchCriteria.length > 0) {
+        const connCriteria = Array.isArray(entry.value.input["MatchCriteria"])
+          ? (entry.value.input["MatchCriteria"] as string[])
+          : [];
+        return filterMatchCriteria.some((c) => connCriteria.includes(c));
+      }
+      return true;
+    })
     .map((entry) =>
       connectionView(entry.key.slice(connPrefix.length), entry.value),
     );
-  return { ConnectionList: list };
+  const page = all.slice(offset, offset + maxResults);
+  const nextToken = encodeNext(offset, maxResults, all.length);
+  return {
+    ConnectionList: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeleteConnection: OperationHandler = (input, ctx) => {
@@ -5260,6 +5340,11 @@ const StartCrawler: OperationHandler = (input, ctx) => {
     );
   }
   const now = Math.floor(Date.now() / 1000);
+  ctx.store.set(`${crawlerPrefix}${name}`, {
+    ...crawler,
+    state: "RUNNING",
+    lastUpdated: now,
+  });
   const databaseName =
     typeof crawler.input["DatabaseName"] === "string"
       ? crawler.input["DatabaseName"]

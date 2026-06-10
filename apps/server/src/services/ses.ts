@@ -255,6 +255,54 @@ const requireIdentity = (
   return stored;
 };
 
+const requireFilter = (
+  ctx: ServiceContext,
+  name: string,
+): StoredReceiptFilter => {
+  const f = ctx.store.get<StoredReceiptFilter>(filterKey(name));
+  if (f === undefined) {
+    throw awsError(
+      "FilterDoesNotExistException",
+      `Filter ${name} does not exist.`,
+      400,
+    );
+  }
+  return f;
+};
+
+const requireCvTemplate = (
+  ctx: ServiceContext,
+  name: string,
+): StoredCustomVerificationEmailTemplate => {
+  const t = ctx.store.get<StoredCustomVerificationEmailTemplate>(
+    cvTemplateKey(name),
+  );
+  if (t === undefined) {
+    throw awsError(
+      "CustomVerificationEmailTemplateDoesNotExistException",
+      `Custom verification email template ${name} does not exist.`,
+      400,
+    );
+  }
+  return t;
+};
+
+const checkConfigurationSet = (
+  ctx: ServiceContext,
+  input: Record<string, unknown>,
+): void => {
+  const name = input["ConfigurationSetName"];
+  if (typeof name !== "string" || name === "") return;
+  const cs = requireConfigSet(ctx, name);
+  if (!cs.ReputationOptions.SendingEnabled) {
+    throw awsError(
+      "ConfigurationSetSendingPausedException",
+      `Configuration set <${name}> has disabled email sending.`,
+      400,
+    );
+  }
+};
+
 const getOrDefaultNotifAttrs = (
   ctx: ServiceContext,
   identity: string,
@@ -405,6 +453,7 @@ const DeleteVerifiedEmailAddress: OperationHandler = (input, ctx) => {
 
 const SendEmail: OperationHandler = (input, ctx) => {
   checkAccountSendingEnabled(ctx);
+  checkConfigurationSet(ctx, input);
   const source = requireString(input, "Source");
   const destination = input["Destination"];
   if (typeof destination !== "object" || destination === null) {
@@ -437,6 +486,7 @@ const SendEmail: OperationHandler = (input, ctx) => {
 
 const SendRawEmail: OperationHandler = (input, ctx) => {
   checkAccountSendingEnabled(ctx);
+  checkConfigurationSet(ctx, input);
   const rawMessage = input["RawMessage"];
   if (typeof rawMessage !== "object" || rawMessage === null) {
     throw awsError("InvalidParameterValue", "RawMessage is required.", 400);
@@ -466,6 +516,7 @@ const SendRawEmail: OperationHandler = (input, ctx) => {
 
 const SendTemplatedEmail: OperationHandler = (input, ctx) => {
   checkAccountSendingEnabled(ctx);
+  checkConfigurationSet(ctx, input);
   const source = requireString(input, "Source");
   const templateName = requireString(input, "Template");
   requireTemplate(ctx, templateName);
@@ -483,6 +534,7 @@ const SendTemplatedEmail: OperationHandler = (input, ctx) => {
 
 const SendBulkTemplatedEmail: OperationHandler = (input, ctx) => {
   checkAccountSendingEnabled(ctx);
+  checkConfigurationSet(ctx, input);
   const source = requireString(input, "Source");
   const templateName = requireString(input, "Template");
   requireTemplate(ctx, templateName);
@@ -727,6 +779,7 @@ const PutIdentityPolicy: OperationHandler = (input, ctx) => {
 
 const DeleteIdentityPolicy: OperationHandler = (input, ctx) => {
   const identity = requireString(input, "Identity");
+  requireIdentity(ctx, identity);
   const policyName = requireString(input, "PolicyName");
   ctx.store.delete(identityPolicyKey(identity, policyName));
   return {};
@@ -1229,6 +1282,14 @@ const DeleteReceiptRule: OperationHandler = (input, ctx) => {
   const ruleSetName = requireString(input, "RuleSetName");
   const rs = requireRuleSet(ctx, ruleSetName);
   const ruleName = requireString(input, "RuleName");
+  const ruleExists = rs.Rules.some((r) => r.Name === ruleName);
+  if (!ruleExists) {
+    throw awsError(
+      "RuleDoesNotExistException",
+      `Rule ${ruleName} does not exist.`,
+      400,
+    );
+  }
   const newRules = rs.Rules.filter((r) => r.Name !== ruleName);
   ctx.store.set(ruleSetKey(ruleSetName), { ...rs, Rules: newRules });
   return {};
@@ -1327,6 +1388,7 @@ const CreateReceiptFilter: OperationHandler = (input, ctx) => {
 
 const DeleteReceiptFilter: OperationHandler = (input, ctx) => {
   const name = requireString(input, "FilterName");
+  requireFilter(ctx, name);
   ctx.store.delete(filterKey(name));
   return {};
 };
@@ -1366,6 +1428,7 @@ const CreateTemplate: OperationHandler = (input, ctx) => {
 
 const DeleteTemplate: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TemplateName");
+  requireTemplate(ctx, name);
   ctx.store.delete(templateKey(name));
   return {};
 };
@@ -1483,6 +1546,7 @@ const DeleteCustomVerificationEmailTemplate: OperationHandler = (
   ctx,
 ) => {
   const name = requireString(input, "TemplateName");
+  requireCvTemplate(ctx, name);
   ctx.store.delete(cvTemplateKey(name));
   return {};
 };

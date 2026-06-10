@@ -370,11 +370,7 @@ const CreateFileSystem: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith("fs/"))
     .find((entry) => entry.value.creationToken === creationToken);
   if (existing !== undefined) {
-    throw awsError(
-      "FileSystemAlreadyExists",
-      `File system already exists with creation token '${creationToken}'.`,
-      409,
-    );
+    return fileSystemView(existing.value);
   }
   const kmsKeyId = stringOrUndefined(input["KmsKeyId"]);
   if (kmsKeyId !== undefined && input["Encrypted"] !== true) {
@@ -394,7 +390,7 @@ const CreateFileSystem: OperationHandler = (input, ctx) => {
     fileSystemId,
     fileSystemArn: `arn:aws:elasticfilesystem:${ctx.region}:${ctx.account}:file-system/${fileSystemId}`,
     creationTime: Math.floor(Date.now() / 1000),
-    lifeCycleState: "available",
+    lifeCycleState: "creating",
     name: nameTag?.Value,
     numberOfMountTargets: 0,
     sizeInBytes: { Value: 0, Timestamp: Math.floor(Date.now() / 1000) },
@@ -420,7 +416,12 @@ const CreateFileSystem: OperationHandler = (input, ctx) => {
       status: "ENABLED",
     } satisfies StoredBackupPolicy);
   }
-  return fileSystemView(fileSystem);
+  const response = fileSystemView(fileSystem);
+  ctx.store.set(fileSystemKey(fileSystemId), {
+    ...fileSystem,
+    lifeCycleState: "available",
+  });
+  return response;
 };
 
 const DescribeFileSystems: OperationHandler = (input, ctx) => {
@@ -459,6 +460,14 @@ const DeleteFileSystem: OperationHandler = (input, ctx) => {
     throw awsError("BadRequest", "FileSystemId is required.", 400);
   }
   const fileSystem = requireFileSystem(ctx, fileSystemId);
+  const replication = ctx.store.get<StoredReplication>(replKey(fileSystemId));
+  if (replication !== undefined) {
+    throw awsError(
+      "FileSystemInUse",
+      `File system '${fileSystemId}' is part of a replication configuration and cannot be deleted.`,
+      409,
+    );
+  }
   const mountTargets = ctx.store
     .list<StoredMountTarget>()
     .filter((entry) => entry.key.startsWith("mt/"))

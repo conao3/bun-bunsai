@@ -54,7 +54,7 @@ test("EFS file system, mount target and lifecycle roundtrip", async () => {
   );
   expect(created.FileSystemId).toMatch(/^fs-/);
   expect(created.CreationToken).toBe(creationToken);
-  expect(created.LifeCycleState).toBe("available");
+  expect(created.LifeCycleState).toBe("creating");
   expect(created.Name).toBe("bunsai-e2e");
   const fileSystemId = created.FileSystemId as string;
 
@@ -826,6 +826,81 @@ test("EFS CreateFileSystem Backup param initializes backup policy", async () => 
     new DeleteFileSystemCommand({
       FileSystemId: withoutBackup.FileSystemId as string,
     }),
+  );
+});
+
+test("EFS CreateFileSystem CreationToken idempotency returns existing FS", async () => {
+  const client = efs();
+  const token = `idem-ct-${Date.now()}`;
+
+  const first = await client.send(
+    new CreateFileSystemCommand({
+      CreationToken: token,
+      Tags: [{ Key: "Name", Value: "first" }],
+    }),
+  );
+  const second = await client.send(
+    new CreateFileSystemCommand({
+      CreationToken: token,
+      Tags: [{ Key: "Name", Value: "second" }],
+    }),
+  );
+  expect(first.FileSystemId).toBe(second.FileSystemId);
+  expect(first.CreationToken).toBe(second.CreationToken);
+  expect(second.LifeCycleState).toBe("available");
+
+  await client.send(
+    new DeleteFileSystemCommand({ FileSystemId: first.FileSystemId as string }),
+  );
+});
+
+test("EFS CreateFileSystem LifeCycleState creating then available", async () => {
+  const client = efs();
+  const token = `lc-create-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateFileSystemCommand({ CreationToken: token }),
+  );
+  expect(created.LifeCycleState).toBe("creating");
+  const fileSystemId = created.FileSystemId as string;
+
+  const described = await client.send(
+    new DescribeFileSystemsCommand({ FileSystemId: fileSystemId }),
+  );
+  expect((described.FileSystems ?? [])[0]?.LifeCycleState).toBe("available");
+
+  await client.send(
+    new DeleteFileSystemCommand({ FileSystemId: fileSystemId }),
+  );
+});
+
+test("EFS DeleteFileSystem blocked when replication configuration exists", async () => {
+  const client = efs();
+  const token = `repl-del-guard-${Date.now()}`;
+
+  const fs = await client.send(
+    new CreateFileSystemCommand({ CreationToken: token }),
+  );
+  const fileSystemId = fs.FileSystemId as string;
+
+  await client.send(
+    new CreateReplicationConfigurationCommand({
+      SourceFileSystemId: fileSystemId,
+      Destinations: [{ Region: "us-west-2" }],
+    }),
+  );
+
+  await expect(
+    client.send(new DeleteFileSystemCommand({ FileSystemId: fileSystemId })),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteReplicationConfigurationCommand({
+      SourceFileSystemId: fileSystemId,
+    }),
+  );
+  await client.send(
+    new DeleteFileSystemCommand({ FileSystemId: fileSystemId }),
   );
 });
 

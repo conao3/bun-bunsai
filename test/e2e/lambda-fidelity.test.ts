@@ -34,9 +34,7 @@ test("Lambda tag round-trip via CreateFunction", async () => {
   );
   expect(created.FunctionArn).toBeDefined();
 
-  const got = await client.send(
-    new GetFunctionCommand({ FunctionName: name }),
-  );
+  const got = await client.send(new GetFunctionCommand({ FunctionName: name }));
   expect(got.Tags?.env).toBe("prod");
   expect(got.Tags?.team).toBe("bunsai");
 
@@ -90,9 +88,7 @@ test("Lambda ListFunctions Marker/MaxItems pagination", async () => {
     );
   }
 
-  const page1 = await client.send(
-    new ListFunctionsCommand({ MaxItems: 3 }),
-  );
+  const page1 = await client.send(new ListFunctionsCommand({ MaxItems: 3 }));
   expect((page1.Functions ?? []).length).toBe(3);
   expect(page1.NextMarker).toBeDefined();
 

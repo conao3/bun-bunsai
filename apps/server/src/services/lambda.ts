@@ -180,9 +180,7 @@ const CreateFunction: OperationHandler = (input, ctx) => {
   const tagsInput = input["Tags"];
   if (typeof tagsInput === "object" && tagsInput !== null) {
     const tags: Record<string, string> = {};
-    for (const [k, v] of Object.entries(
-      tagsInput as Record<string, unknown>,
-    )) {
+    for (const [k, v] of Object.entries(tagsInput as Record<string, unknown>)) {
       if (typeof v === "string") tags[k] = v;
     }
     if (Object.keys(tags).length > 0) {
@@ -216,7 +214,9 @@ const ListFunctions: OperationHandler = (input, ctx) => {
       ? (input["MaxItems"] as number)
       : undefined;
   const markerRaw =
-    typeof input["Marker"] === "string" ? (input["Marker"] as string) : undefined;
+    typeof input["Marker"] === "string"
+      ? (input["Marker"] as string)
+      : undefined;
   const offset = markerRaw
     ? parseInt(Buffer.from(markerRaw, "base64").toString("utf8"), 10)
     : 0;
@@ -229,7 +229,10 @@ const ListFunctions: OperationHandler = (input, ctx) => {
   const nextMarker = hasMore
     ? Buffer.from(String(start + page.length)).toString("base64")
     : undefined;
-  return { Functions: page, ...(nextMarker !== undefined ? { NextMarker: nextMarker } : {}) };
+  return {
+    Functions: page,
+    ...(nextMarker !== undefined ? { NextMarker: nextMarker } : {}),
+  };
 };
 
 const DeleteFunction: OperationHandler = (input, ctx) => {

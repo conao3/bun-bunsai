@@ -407,6 +407,26 @@ const optionalNumber = (
   return typeof value === "number" ? value : undefined;
 };
 
+const paginateList = <T>(
+  items: T[],
+  marker: unknown,
+  maxItems: unknown,
+): { items: T[]; IsTruncated: boolean; Marker: string | undefined } => {
+  const pageSize =
+    typeof maxItems === "number" && maxItems > 0 ? maxItems : 100;
+  const startIndex =
+    typeof marker === "string" && marker !== ""
+      ? parseInt(marker, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const isTruncated = startIndex + pageSize < items.length;
+  return {
+    items: page,
+    IsTruncated: isTruncated,
+    Marker: isTruncated ? String(startIndex + pageSize) : undefined,
+  };
+};
+
 const normalizePath = (input: Record<string, unknown>): string => {
   const path = optionalString(input, "Path");
   if (path === undefined || path === "") {
@@ -460,8 +480,13 @@ const DeleteRole: OperationHandler = (input, ctx) => {
   const name = requireString(input, "RoleName");
   requireRole(ctx, name);
   ctx.store.delete(roleKey(name));
-  for (const entry of ctx.store.list<StoredAttachment>()) {
-    if (entry.key.startsWith("attachment/") && entry.value.RoleName === name) {
+  for (const entry of ctx.store.list()) {
+    if (
+      (entry.key.startsWith("attachment/") &&
+        (entry.value as StoredAttachment).RoleName === name) ||
+      entry.key.startsWith(`roletag/${name}/`) ||
+      entry.key.startsWith(`rolepolicy/${name}/`)
+    ) {
       ctx.store.delete(entry.key);
     }
   }
@@ -470,12 +495,17 @@ const DeleteRole: OperationHandler = (input, ctx) => {
 
 const ListRoles: OperationHandler = (input, ctx) => {
   const prefix = optionalString(input, "PathPrefix") ?? "/";
-  const roles = ctx.store
+  const all = ctx.store
     .list<StoredRole>()
     .filter((entry) => entry.key.startsWith("role/"))
     .map((entry) => entry.value)
     .filter((role) => role.Path.startsWith(prefix));
-  return { Roles: roles, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return { Roles: items, IsTruncated, ...(Marker !== undefined && { Marker }) };
 };
 
 const CreateUser: OperationHandler = (input, ctx) => {
@@ -519,8 +549,12 @@ const DeleteUser: OperationHandler = (input, ctx) => {
   const name = requireString(input, "UserName");
   requireUser(ctx, name);
   ctx.store.delete(userKey(name));
-  for (const entry of ctx.store.list<StoredAccessKey>()) {
-    if (entry.key.startsWith("accesskey/") && entry.value.UserName === name) {
+  for (const entry of ctx.store.list()) {
+    if (
+      (entry.key.startsWith("accesskey/") &&
+        (entry.value as StoredAccessKey).UserName === name) ||
+      entry.key.startsWith(`usertag/${name}/`)
+    ) {
       ctx.store.delete(entry.key);
     }
   }
@@ -529,12 +563,17 @@ const DeleteUser: OperationHandler = (input, ctx) => {
 
 const ListUsers: OperationHandler = (input, ctx) => {
   const prefix = optionalString(input, "PathPrefix") ?? "/";
-  const users = ctx.store
+  const all = ctx.store
     .list<StoredUser>()
     .filter((entry) => entry.key.startsWith("user/"))
     .map((entry) => entry.value)
     .filter((user) => user.Path.startsWith(prefix));
-  return { Users: users, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return { Users: items, IsTruncated, ...(Marker !== undefined && { Marker }) };
 };
 
 const UpdateUser: OperationHandler = (input, ctx) => {
@@ -610,14 +649,19 @@ const UntagUser: OperationHandler = (input, ctx) => {
 const ListUserTags: OperationHandler = (input, ctx) => {
   const userName = requireString(input, "UserName");
   requireUser(ctx, userName);
-  const tags = ctx.store
+  const all = ctx.store
     .list<StoredTag & { UserName: string }>()
     .filter(
       (entry) =>
         entry.key.startsWith("usertag/") && entry.value.UserName === userName,
     )
     .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
-  return { Tags: tags, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return { Tags: items, IsTruncated, ...(Marker !== undefined && { Marker }) };
 };
 
 const PutUserPolicy: OperationHandler = (input, ctx) => {
@@ -672,7 +716,7 @@ const DeleteUserPolicy: OperationHandler = (input, ctx) => {
 const ListUserPolicies: OperationHandler = (input, ctx) => {
   const userName = requireString(input, "UserName");
   requireUser(ctx, userName);
-  const names = ctx.store
+  const all = ctx.store
     .list<StoredUserPolicy>()
     .filter(
       (entry) =>
@@ -680,7 +724,16 @@ const ListUserPolicies: OperationHandler = (input, ctx) => {
         entry.value.UserName === userName,
     )
     .map((entry) => entry.value.PolicyName);
-  return { PolicyNames: names, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    PolicyNames: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const AttachUserPolicy: OperationHandler = (input, ctx) => {
@@ -716,7 +769,7 @@ const DetachUserPolicy: OperationHandler = (input, ctx) => {
 const ListAttachedUserPolicies: OperationHandler = (input, ctx) => {
   const userName = requireString(input, "UserName");
   requireUser(ctx, userName);
-  const attached = ctx.store
+  const all = ctx.store
     .list<StoredUserAttachment>()
     .filter(
       (entry) =>
@@ -727,7 +780,16 @@ const ListAttachedUserPolicies: OperationHandler = (input, ctx) => {
       PolicyName: entry.value.PolicyName,
       PolicyArn: entry.value.PolicyArn,
     }));
-  return { AttachedPolicies: attached, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    AttachedPolicies: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const PutUserPermissionsBoundary: OperationHandler = (input, ctx) => {
@@ -802,7 +864,9 @@ const GetPolicy: OperationHandler = (input, ctx) => {
 const ListPolicies: OperationHandler = (input, ctx) => {
   const scope = optionalString(input, "Scope") ?? "All";
   const pathPrefix = optionalString(input, "PathPrefix") ?? "/";
-  const policies = ctx.store
+  const onlyAttached = optionalBool(input, "OnlyAttached") ?? false;
+  const policyUsageFilter = optionalString(input, "PolicyUsageFilter");
+  const all = ctx.store
     .list<StoredPolicy>()
     .filter((entry) => entry.key.startsWith("policy/"))
     .map((entry) => entry.value)
@@ -811,8 +875,48 @@ const ListPolicies: OperationHandler = (input, ctx) => {
       if (scope === "Local") return !p.Arn.startsWith("arn:aws:iam::aws:");
       if (scope === "AWS") return p.Arn.startsWith("arn:aws:iam::aws:");
       return true;
+    })
+    .filter((p) => !onlyAttached || p.AttachmentCount > 0)
+    .filter((p) => {
+      if (policyUsageFilter === "PermissionsPolicy") {
+        const isPermBoundary = ctx.store
+          .list()
+          .some(
+            (entry) =>
+              (entry.key.startsWith("role/") &&
+                (entry.value as StoredRole).PermissionsBoundary
+                  ?.PermissionsBoundaryArn === p.Arn) ||
+              (entry.key.startsWith("user/") &&
+                (entry.value as StoredUser).PermissionsBoundary
+                  ?.PermissionsBoundaryArn === p.Arn),
+          );
+        return !isPermBoundary;
+      }
+      if (policyUsageFilter === "PermissionsBoundary") {
+        return ctx.store
+          .list()
+          .some(
+            (entry) =>
+              (entry.key.startsWith("role/") &&
+                (entry.value as StoredRole).PermissionsBoundary
+                  ?.PermissionsBoundaryArn === p.Arn) ||
+              (entry.key.startsWith("user/") &&
+                (entry.value as StoredUser).PermissionsBoundary
+                  ?.PermissionsBoundaryArn === p.Arn),
+          );
+      }
+      return true;
     });
-  return { Policies: policies, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    Policies: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const ListPoliciesGrantingServiceAccess: OperationHandler = (input, ctx) => {
@@ -876,7 +980,7 @@ const AttachRolePolicy: OperationHandler = (input, ctx) => {
 const ListAttachedRolePolicies: OperationHandler = (input, ctx) => {
   const roleName = requireString(input, "RoleName");
   requireRole(ctx, roleName);
-  const attached = ctx.store
+  const all = ctx.store
     .list<StoredAttachment>()
     .filter(
       (entry) =>
@@ -887,7 +991,16 @@ const ListAttachedRolePolicies: OperationHandler = (input, ctx) => {
       PolicyName: entry.value.PolicyName,
       PolicyArn: entry.value.PolicyArn,
     }));
-  return { AttachedPolicies: attached, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    AttachedPolicies: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const CreateAccessKey: OperationHandler = (input, ctx) => {
@@ -906,7 +1019,7 @@ const CreateAccessKey: OperationHandler = (input, ctx) => {
 
 const ListAccessKeys: OperationHandler = (input, ctx) => {
   const userName = optionalString(input, "UserName");
-  const keys = ctx.store
+  const all = ctx.store
     .list<StoredAccessKey>()
     .filter((entry) => entry.key.startsWith("accesskey/"))
     .map((entry) => entry.value)
@@ -917,7 +1030,16 @@ const ListAccessKeys: OperationHandler = (input, ctx) => {
       Status: key.Status,
       CreateDate: key.CreateDate,
     }));
-  return { AccessKeyMetadata: keys, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    AccessKeyMetadata: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const DeleteAccessKey: OperationHandler = (input, ctx) => {
@@ -1001,7 +1123,7 @@ const GetRolePolicy: OperationHandler = (input, ctx) => {
 const ListRolePolicies: OperationHandler = (input, ctx) => {
   const roleName = requireString(input, "RoleName");
   requireRole(ctx, roleName);
-  const names = ctx.store
+  const all = ctx.store
     .list<StoredRolePolicy>()
     .filter(
       (entry) =>
@@ -1009,7 +1131,16 @@ const ListRolePolicies: OperationHandler = (input, ctx) => {
         entry.value.RoleName === roleName,
     )
     .map((entry) => entry.value.PolicyName);
-  return { PolicyNames: names, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    PolicyNames: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const DeleteRolePolicy: OperationHandler = (input, ctx) => {
@@ -1127,11 +1258,17 @@ const ListEntitiesForPolicy: OperationHandler = (input, ctx) => {
         RoleId: role === undefined ? `AROA${randomHex(17)}` : role.RoleId,
       };
     });
+  const { items, IsTruncated, Marker } = paginateList(
+    roles,
+    input["Marker"],
+    input["MaxItems"],
+  );
   return {
     PolicyGroups: [],
     PolicyUsers: [],
-    PolicyRoles: roles,
-    IsTruncated: false,
+    PolicyRoles: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
   };
 };
 
@@ -1150,14 +1287,19 @@ const TagRole: OperationHandler = (input, ctx) => {
 const ListRoleTags: OperationHandler = (input, ctx) => {
   const roleName = requireString(input, "RoleName");
   requireRole(ctx, roleName);
-  const tags = ctx.store
+  const all = ctx.store
     .list<StoredTag & { RoleName: string }>()
     .filter(
       (entry) =>
         entry.key.startsWith("roletag/") && entry.value.RoleName === roleName,
     )
     .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
-  return { Tags: tags, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return { Tags: items, IsTruncated, ...(Marker !== undefined && { Marker }) };
 };
 
 const UntagRole: OperationHandler = (input, ctx) => {
@@ -1219,22 +1361,33 @@ const GetGroup: OperationHandler = (input, ctx) => {
 
 const ListGroups: OperationHandler = (input, ctx) => {
   const prefix = optionalString(input, "PathPrefix") ?? "/";
-  const groups = ctx.store
+  const all = ctx.store
     .list<StoredGroup>()
     .filter((entry) => entry.key.startsWith("group/"))
     .map((entry) => entry.value)
     .filter((group) => group.Path.startsWith(prefix));
-  return { Groups: groups, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    Groups: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const DeleteGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "GroupName");
   requireGroup(ctx, name);
   ctx.store.delete(groupKey(name));
-  for (const entry of ctx.store.list<StoredGroupMember>()) {
+  for (const entry of ctx.store.list()) {
     if (
-      entry.key.startsWith("groupmember/") &&
-      entry.value.GroupName === name
+      (entry.key.startsWith("groupmember/") &&
+        (entry.value as StoredGroupMember).GroupName === name) ||
+      entry.key.startsWith(`grouppolicy/${name}/`) ||
+      entry.key.startsWith(`groupattachment/${name}/`)
     ) {
       ctx.store.delete(entry.key);
     }
@@ -1309,7 +1462,7 @@ const RemoveUserFromGroup: OperationHandler = (input, ctx) => {
 const ListGroupsForUser: OperationHandler = (input, ctx) => {
   const userName = requireString(input, "UserName");
   requireUser(ctx, userName);
-  const groups = ctx.store
+  const all = ctx.store
     .list<StoredGroupMember>()
     .filter(
       (entry) =>
@@ -1318,7 +1471,16 @@ const ListGroupsForUser: OperationHandler = (input, ctx) => {
     )
     .map((entry) => ctx.store.get<StoredGroup>(groupKey(entry.value.GroupName)))
     .filter((group): group is StoredGroup => group !== undefined);
-  return { Groups: groups, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    Groups: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const AttachGroupPolicy: OperationHandler = (input, ctx) => {
@@ -1354,7 +1516,7 @@ const DetachGroupPolicy: OperationHandler = (input, ctx) => {
 const ListAttachedGroupPolicies: OperationHandler = (input, ctx) => {
   const groupName = requireString(input, "GroupName");
   requireGroup(ctx, groupName);
-  const attached = ctx.store
+  const all = ctx.store
     .list<StoredGroupAttachment>()
     .filter(
       (entry) =>
@@ -1365,7 +1527,16 @@ const ListAttachedGroupPolicies: OperationHandler = (input, ctx) => {
       PolicyName: entry.value.PolicyName,
       PolicyArn: entry.value.PolicyArn,
     }));
-  return { AttachedPolicies: attached, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    AttachedPolicies: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const PutGroupPolicy: OperationHandler = (input, ctx) => {
@@ -1420,7 +1591,7 @@ const DeleteGroupPolicy: OperationHandler = (input, ctx) => {
 const ListGroupPolicies: OperationHandler = (input, ctx) => {
   const groupName = requireString(input, "GroupName");
   requireGroup(ctx, groupName);
-  const names = ctx.store
+  const all = ctx.store
     .list<StoredGroupPolicy>()
     .filter(
       (entry) =>
@@ -1428,7 +1599,16 @@ const ListGroupPolicies: OperationHandler = (input, ctx) => {
         entry.value.GroupName === groupName,
     )
     .map((entry) => entry.value.PolicyName);
-  return { PolicyNames: names, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    PolicyNames: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const policyVersionsOf = (
@@ -1504,14 +1684,23 @@ const ListPolicyVersions: OperationHandler = (input, ctx) => {
   const policy = requirePolicy(ctx, policyArn);
   const stored = policyVersionsOf(ctx, policyArn);
   const hasV1 = stored.some((version) => version.VersionId === "v1");
-  const versions = (
+  const all = (
     hasV1 ? stored : [defaultPolicyVersionOf(policy), ...stored]
   ).map((version) => ({
     VersionId: version.VersionId,
     IsDefaultVersion: version.VersionId === policy.DefaultVersionId,
     CreateDate: version.CreateDate,
   }));
-  return { Versions: versions, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    Versions: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const GetPolicyVersion: OperationHandler = (input, ctx) => {
@@ -1671,8 +1860,17 @@ const DeleteAccountAlias: OperationHandler = (input, ctx) => {
 
 const ListAccountAliases: OperationHandler = (input, ctx) => {
   const stored = ctx.store.get<{ AccountAlias: string }>("accountalias/0");
-  const aliases = stored !== undefined ? [stored.AccountAlias] : [];
-  return { AccountAliases: aliases, IsTruncated: false };
+  const all = stored !== undefined ? [stored.AccountAlias] : [];
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    AccountAliases: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const UpdateAccountPasswordPolicy: OperationHandler = (input, ctx) => {
@@ -1941,7 +2139,7 @@ const DeleteServerCertificate: OperationHandler = (input, ctx) => {
 
 const ListServerCertificates: OperationHandler = (input, ctx) => {
   const prefix = optionalString(input, "PathPrefix") ?? "/";
-  const certs = ctx.store
+  const all = ctx.store
     .list<StoredServerCertificate>()
     .filter((entry) => entry.key.startsWith("servercert/"))
     .map((entry) => entry.value)
@@ -1954,7 +2152,16 @@ const ListServerCertificates: OperationHandler = (input, ctx) => {
       UploadDate: cert.UploadDate,
       Expiration: cert.Expiration,
     }));
-  return { ServerCertificateMetadataList: certs, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    ServerCertificateMetadataList: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const TagServerCertificate: OperationHandler = (input, ctx) => {
@@ -1986,7 +2193,7 @@ const UntagServerCertificate: OperationHandler = (input, ctx) => {
 const ListServerCertificateTags: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ServerCertificateName");
   requireServerCert(ctx, name);
-  const tags = ctx.store
+  const all = ctx.store
     .list<StoredTag & { ServerCertificateName: string }>()
     .filter(
       (entry) =>
@@ -1994,7 +2201,12 @@ const ListServerCertificateTags: OperationHandler = (input, ctx) => {
         entry.value.ServerCertificateName === name,
     )
     .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
-  return { Tags: tags, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return { Tags: items, IsTruncated, ...(Marker !== undefined && { Marker }) };
 };
 
 const UploadSSHPublicKey: OperationHandler = (input, ctx) => {
@@ -2080,7 +2292,7 @@ const DeleteSSHPublicKey: OperationHandler = (input, ctx) => {
 
 const ListSSHPublicKeys: OperationHandler = (input, ctx) => {
   const userName = optionalString(input, "UserName");
-  const keys = ctx.store
+  const all = ctx.store
     .list<StoredSSHPublicKey>()
     .filter((entry) => entry.key.startsWith("sshpublickey/"))
     .map((entry) => entry.value)
@@ -2091,7 +2303,16 @@ const ListSSHPublicKeys: OperationHandler = (input, ctx) => {
       Status: key.Status,
       UploadDate: key.UploadDate,
     }));
-  return { SSHPublicKeys: keys, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    SSHPublicKeys: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const UploadSigningCertificate: OperationHandler = (input, ctx) => {
@@ -2152,7 +2373,7 @@ const DeleteSigningCertificate: OperationHandler = (input, ctx) => {
 
 const ListSigningCertificates: OperationHandler = (input, ctx) => {
   const userName = optionalString(input, "UserName");
-  const certs = ctx.store
+  const all = ctx.store
     .list<StoredSigningCertificate>()
     .filter((entry) => entry.key.startsWith("signingcert/"))
     .map((entry) => entry.value)
@@ -2164,7 +2385,16 @@ const ListSigningCertificates: OperationHandler = (input, ctx) => {
       Status: cert.Status,
       UploadDate: cert.UploadDate,
     }));
-  return { Certificates: certs, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    Certificates: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const CreateVirtualMFADevice: OperationHandler = (input, ctx) => {
@@ -2280,7 +2510,7 @@ const GetMFADevice: OperationHandler = (input, ctx) => {
 
 const ListMFADevices: OperationHandler = (input, ctx) => {
   const userName = optionalString(input, "UserName");
-  const devices = ctx.store
+  const all = ctx.store
     .list<StoredEnabledMFADevice>()
     .filter((entry) => entry.key.startsWith("mfaenabled/"))
     .map((entry) => entry.value)
@@ -2290,7 +2520,16 @@ const ListMFADevices: OperationHandler = (input, ctx) => {
       SerialNumber: device.SerialNumber,
       EnableDate: device.EnableDate,
     }));
-  return { MFADevices: devices, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    MFADevices: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const ListVirtualMFADevices: OperationHandler = (input, ctx) => {
@@ -2301,7 +2540,7 @@ const ListVirtualMFADevices: OperationHandler = (input, ctx) => {
       .filter((e) => e.key.startsWith("mfaenabled/"))
       .map((e) => e.value.SerialNumber),
   );
-  const devices = ctx.store
+  const all = ctx.store
     .list<StoredVirtualMFADevice>()
     .filter((entry) => entry.key.startsWith("virtualmfa/"))
     .map((entry) => entry.value)
@@ -2326,7 +2565,16 @@ const ListVirtualMFADevices: OperationHandler = (input, ctx) => {
         Tags: device.Tags,
       };
     });
-  return { VirtualMFADevices: devices, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    VirtualMFADevices: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const TagMFADevice: OperationHandler = (input, ctx) => {
@@ -2385,7 +2633,7 @@ const ListMFADeviceTags: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  const tags = ctx.store
+  const all = ctx.store
     .list<StoredTag & { SerialNumber: string }>()
     .filter(
       (entry) =>
@@ -2393,7 +2641,12 @@ const ListMFADeviceTags: OperationHandler = (input, ctx) => {
         entry.value.SerialNumber === serialNumber,
     )
     .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
-  return { Tags: tags, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return { Tags: items, IsTruncated, ...(Marker !== undefined && { Marker }) };
 };
 
 const CreateServiceSpecificCredential: OperationHandler = (input, ctx) => {
@@ -2621,7 +2874,7 @@ const UntagPolicy: OperationHandler = (input, ctx) => {
 const ListPolicyTags: OperationHandler = (input, ctx) => {
   const policyArn = requireString(input, "PolicyArn");
   requirePolicy(ctx, policyArn);
-  const tags = ctx.store
+  const all = ctx.store
     .list<StoredTag & { PolicyArn: string }>()
     .filter(
       (entry) =>
@@ -2629,7 +2882,12 @@ const ListPolicyTags: OperationHandler = (input, ctx) => {
         entry.value.PolicyArn === policyArn,
     )
     .map((entry) => ({ Key: entry.value.Key, Value: entry.value.Value }));
-  return { Tags: tags, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return { Tags: items, IsTruncated, ...(Marker !== undefined && { Marker }) };
 };
 
 const DeleteInstanceProfile: OperationHandler = (input, ctx) => {
@@ -2648,23 +2906,41 @@ const DeleteInstanceProfile: OperationHandler = (input, ctx) => {
 
 const ListInstanceProfiles: OperationHandler = (input, ctx) => {
   const prefix = optionalString(input, "PathPrefix") ?? "/";
-  const profiles = ctx.store
+  const all = ctx.store
     .list<StoredInstanceProfile>()
     .filter((entry) => entry.key.startsWith("instanceprofile/"))
     .map((entry) => entry.value)
     .filter((profile) => profile.Path.startsWith(prefix));
-  return { InstanceProfiles: profiles, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    InstanceProfiles: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const ListInstanceProfilesForRole: OperationHandler = (input, ctx) => {
   const roleName = requireString(input, "RoleName");
   requireRole(ctx, roleName);
-  const profiles = ctx.store
+  const all = ctx.store
     .list<StoredInstanceProfile>()
     .filter((entry) => entry.key.startsWith("instanceprofile/"))
     .map((entry) => entry.value)
     .filter((profile) => profile.Roles.some((r) => r.RoleName === roleName));
-  return { InstanceProfiles: profiles, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    all,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return {
+    InstanceProfiles: items,
+    IsTruncated,
+    ...(Marker !== undefined && { Marker }),
+  };
 };
 
 const RemoveRoleFromInstanceProfile: OperationHandler = (input, ctx) => {
@@ -2718,7 +2994,12 @@ const UntagInstanceProfile: OperationHandler = (input, ctx) => {
 const ListInstanceProfileTags: OperationHandler = (input, ctx) => {
   const name = requireString(input, "InstanceProfileName");
   const profile = requireInstanceProfile(ctx, name);
-  return { Tags: profile.Tags, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    profile.Tags,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return { Tags: items, IsTruncated, ...(Marker !== undefined && { Marker }) };
 };
 
 const PutRolePermissionsBoundary: OperationHandler = (input, ctx) => {
@@ -3252,7 +3533,12 @@ const ListOpenIDConnectProviderTags: OperationHandler = (input, ctx) => {
     ...storedTags,
     ...inlineTags.filter((t) => !allTagKeys.has(t.Key)),
   ];
-  return { Tags: combinedTags, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    combinedTags,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return { Tags: items, IsTruncated, ...(Marker !== undefined && { Marker }) };
 };
 
 const UntagOpenIDConnectProvider: OperationHandler = (input, ctx) => {
@@ -3376,7 +3662,12 @@ const ListSAMLProviderTags: OperationHandler = (input, ctx) => {
     ...storedTags,
     ...inlineTags.filter((t) => !allTagKeys.has(t.Key)),
   ];
-  return { Tags: combinedTags, IsTruncated: false };
+  const { items, IsTruncated, Marker } = paginateList(
+    combinedTags,
+    input["Marker"],
+    input["MaxItems"],
+  );
+  return { Tags: items, IsTruncated, ...(Marker !== undefined && { Marker }) };
 };
 
 const TagSAMLProvider: OperationHandler = (input, ctx) => {

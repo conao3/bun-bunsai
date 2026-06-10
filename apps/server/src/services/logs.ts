@@ -802,6 +802,7 @@ const GetLogEvents: OperationHandler = (input, ctx) => {
   const endTime = optionalNumber(input, "endTime");
   const limit = optionalNumber(input, "limit") ?? 10000;
   const startFromHead = input["startFromHead"] === true;
+  const nextToken = optionalString(input, "nextToken");
   const filtered = stream.events.filter((event) => {
     if (startTime !== undefined && event.timestamp < startTime) return false;
     if (endTime !== undefined && event.timestamp >= endTime) return false;
@@ -809,7 +810,21 @@ const GetLogEvents: OperationHandler = (input, ctx) => {
   });
   let pageStartIdx: number;
   let page: StoredEvent[];
-  if (startFromHead) {
+  if (nextToken !== undefined) {
+    const fMatch = /^f\/(\d+)$/.exec(nextToken);
+    const bMatch = /^b\/(\d+)$/.exec(nextToken);
+    if (fMatch) {
+      pageStartIdx = parseInt(fMatch[1], 10);
+      page = filtered.slice(pageStartIdx, pageStartIdx + limit);
+    } else if (bMatch) {
+      const endIdx = parseInt(bMatch[1], 10);
+      pageStartIdx = Math.max(0, endIdx - limit);
+      page = filtered.slice(pageStartIdx, endIdx);
+    } else {
+      pageStartIdx = startFromHead ? 0 : Math.max(0, filtered.length - limit);
+      page = filtered.slice(pageStartIdx, pageStartIdx + limit);
+    }
+  } else if (startFromHead) {
     pageStartIdx = 0;
     page = filtered.slice(0, limit);
   } else {
@@ -833,12 +848,22 @@ const FilterLogEvents: OperationHandler = (input, ctx) => {
   const startTime = optionalNumber(input, "startTime");
   const endTime = optionalNumber(input, "endTime");
   const pattern = optionalString(input, "filterPattern");
+  const limit = optionalNumber(input, "limit") ?? 10000;
+  const nextToken = optionalString(input, "nextToken");
+  const logStreamNamePrefix = optionalString(input, "logStreamNamePrefix");
   const rawStreamNames = input["logStreamNames"];
   const streamNames = Array.isArray(rawStreamNames)
     ? rawStreamNames.filter(
         (value): value is string => typeof value === "string",
       )
     : undefined;
+  if (streamNames !== undefined && logStreamNamePrefix !== undefined) {
+    throw awsError(
+      "InvalidParameterException",
+      "logStreamNames and logStreamNamePrefix cannot be used together.",
+      400,
+    );
+  }
   const collected: {
     logStreamName: string;
     timestamp: number;
@@ -850,6 +875,11 @@ const FilterLogEvents: OperationHandler = (input, ctx) => {
     if (
       streamNames !== undefined &&
       !streamNames.includes(stream.logStreamName)
+    )
+      continue;
+    if (
+      logStreamNamePrefix !== undefined &&
+      !stream.logStreamName.startsWith(logStreamNamePrefix)
     )
       continue;
     for (const event of stream.events) {
@@ -869,13 +899,18 @@ const FilterLogEvents: OperationHandler = (input, ctx) => {
     }
   }
   collected.sort((a, b) => a.timestamp - b.timestamp);
+  const startIdx = nextToken !== undefined ? parseInt(nextToken, 10) || 0 : 0;
+  const page = collected.slice(startIdx, startIdx + limit);
+  const newNextToken =
+    startIdx + limit < collected.length ? String(startIdx + limit) : undefined;
   const searched = Object.values(group.streams).map((stream) => ({
     logStreamName: stream.logStreamName,
     searchedCompletely: true,
   }));
   return {
-    events: collected,
+    events: page,
     searchedLogStreams: searched,
+    ...(newNextToken !== undefined ? { nextToken: newNextToken } : {}),
   };
 };
 
@@ -1555,6 +1590,21 @@ const DeleteDelivery: OperationHandler = (input, ctx) => {
 };
 
 const CreateExportTask: OperationHandler = (input, ctx) => {
+  const activeTasks = ctx.store
+    .list<StoredExportTask>()
+    .filter((entry) => entry.key.startsWith(exportTaskPrefix))
+    .map((entry) => entry.value)
+    .filter(
+      (task) =>
+        task.status.code === "PENDING" || task.status.code === "RUNNING",
+    );
+  if (activeTasks.length > 0) {
+    throw awsError(
+      "LimitExceededException",
+      "You have reached the maximum number of active export tasks.",
+      400,
+    );
+  }
   const taskName = optionalString(input, "taskName") ?? "";
   const groupName = requireString(input, "logGroupName");
   const from = optionalNumber(input, "from") ?? 0;
@@ -1570,9 +1620,8 @@ const CreateExportTask: OperationHandler = (input, ctx) => {
     to,
     destination,
     destinationPrefix: optionalString(input, "destinationPrefix"),
-    status: { code: "COMPLETED" },
+    status: { code: "PENDING" },
     creationTime: Date.now(),
-    completionTime: Date.now(),
   };
   ctx.store.set(`${exportTaskPrefix}${taskId}`, task);
   return { taskId };
@@ -1604,6 +1653,13 @@ const DescribeExportTasks: OperationHandler = (input, ctx) => {
     .map((entry) => entry.value)
     .filter((task) => (taskId === undefined ? true : task.taskId === taskId))
     .sort((a, b) => a.creationTime - b.creationTime);
+  for (const task of tasks) {
+    if (task.status.code === "PENDING") {
+      task.status = { code: "COMPLETED" };
+      task.completionTime = Date.now();
+      ctx.store.set(`${exportTaskPrefix}${task.taskId}`, task);
+    }
+  }
   return { exportTasks: tasks.map(exportTaskView) };
 };
 
@@ -1615,6 +1671,13 @@ const CancelExportTask: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       "The specified export task does not exist.",
+      400,
+    );
+  }
+  if (task.status.code !== "PENDING" && task.status.code !== "RUNNING") {
+    throw awsError(
+      "InvalidOperationException",
+      "The specified export task is not in PENDING or RUNNING state.",
       400,
     );
   }

@@ -295,6 +295,18 @@ const asRecord = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
+const decodePage = (nextToken: unknown): number =>
+  typeof nextToken === "string" && nextToken !== ""
+    ? parseInt(atob(nextToken), 10) || 0
+    : 0;
+
+const encodeNext = (
+  offset: number,
+  limit: number,
+  total: number,
+): string | undefined =>
+  offset + limit < total ? btoa(String(offset + limit)) : undefined;
+
 const requireName = (input: Record<string, unknown>): string => {
   const value = input["Name"];
   if (typeof value !== "string" || value === "") {
@@ -401,7 +413,10 @@ const GetDatabases: OperationHandler = (input, ctx) => {
     typeof input["CatalogId"] === "string"
       ? (input["CatalogId"] as string)
       : ctx.account;
-  const list = ctx.store
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : 1000;
+  const offset = decodePage(input["NextToken"]);
+  const all = ctx.store
     .list<StoredDatabase>()
     .filter(
       (entry) =>
@@ -424,7 +439,12 @@ const GetDatabases: OperationHandler = (input, ctx) => {
         !entry.key.startsWith(dqRulesetPrefix),
     )
     .map((entry) => databaseView(entry.key, entry.value, catalogId));
-  return { DatabaseList: list };
+  const page = all.slice(offset, offset + maxResults);
+  const nextToken = encodeNext(offset, maxResults, all.length);
+  return {
+    DatabaseList: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeleteDatabase: OperationHandler = (input, ctx) => {
@@ -661,20 +681,31 @@ const GetCrawler: OperationHandler = (input, ctx) => {
   return { Crawler: crawlerView(name, crawler) };
 };
 
-const GetCrawlers: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
+const GetCrawlers: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : 1000;
+  const offset = decodePage(input["NextToken"]);
+  const all = ctx.store
     .list<StoredCrawler>()
     .filter((entry) => entry.key.startsWith(crawlerPrefix))
     .map((entry) =>
       crawlerView(entry.key.slice(crawlerPrefix.length), entry.value),
     );
-  return { Crawlers: list };
+  const page = all.slice(offset, offset + maxResults);
+  const nextToken = encodeNext(offset, maxResults, all.length);
+  return {
+    Crawlers: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeleteCrawler: OperationHandler = (input, ctx) => {
   const name = requireName(input);
   requireCrawler(ctx, name);
   ctx.store.delete(`${crawlerPrefix}${name}`);
+  ctx.store.delete(
+    `${tagsPrefix}arn:aws:glue:${ctx.region}:${ctx.account}:crawler/${name}`,
+  );
   return {};
 };
 
@@ -758,18 +789,29 @@ const GetJob: OperationHandler = (input, ctx) => {
   return { Job: jobView(name, job) };
 };
 
-const GetJobs: OperationHandler = (_input, ctx) => {
-  const list = ctx.store
+const GetJobs: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : 1000;
+  const offset = decodePage(input["NextToken"]);
+  const all = ctx.store
     .list<StoredJob>()
     .filter((entry) => entry.key.startsWith(jobPrefix))
     .map((entry) => jobView(entry.key.slice(jobPrefix.length), entry.value));
-  return { Jobs: list };
+  const page = all.slice(offset, offset + maxResults);
+  const nextToken = encodeNext(offset, maxResults, all.length);
+  return {
+    Jobs: page,
+    ...(nextToken !== undefined ? { NextToken: nextToken } : {}),
+  };
 };
 
 const DeleteJob: OperationHandler = (input, ctx) => {
   const name = requireJobName(input);
   requireJob(ctx, name);
   ctx.store.delete(`${jobPrefix}${name}`);
+  ctx.store.delete(
+    `${tagsPrefix}arn:aws:glue:${ctx.region}:${ctx.account}:job/${name}`,
+  );
   return { JobName: name };
 };
 
@@ -1022,6 +1064,9 @@ const DeleteTrigger: OperationHandler = (input, ctx) => {
   const name = requireName(input);
   requireTrigger(ctx, name);
   ctx.store.delete(`${triggerPrefix}${name}`);
+  ctx.store.delete(
+    `${tagsPrefix}arn:aws:glue:${ctx.region}:${ctx.account}:trigger/${name}`,
+  );
   return { Name: name };
 };
 
@@ -1591,6 +1636,9 @@ const DeleteConnection: OperationHandler = (input, ctx) => {
   }
   requireConnection(ctx, name);
   ctx.store.delete(`${connPrefix}${name}`);
+  ctx.store.delete(
+    `${tagsPrefix}arn:aws:glue:${ctx.region}:${ctx.account}:connection/${name}`,
+  );
   return {};
 };
 
@@ -2729,6 +2777,22 @@ const CreateDataQualityRuleset: OperationHandler = (input, ctx) => {
     typeof record["Name"] === "string" ? (record["Name"] as string) : "";
   if (name === "") {
     throw awsError("InvalidInputException", "Name is required.", 400);
+  }
+  const clientToken =
+    typeof record["ClientToken"] === "string" && record["ClientToken"] !== ""
+      ? (record["ClientToken"] as string)
+      : undefined;
+  if (clientToken !== undefined) {
+    const existing = ctx.store
+      .list<StoredDataQualityRuleset>()
+      .find(
+        (e) =>
+          e.key.startsWith(dqRulesetPrefix) &&
+          e.value.input["ClientToken"] === clientToken,
+      );
+    if (existing !== undefined) {
+      return { Name: existing.value.name };
+    }
   }
   if (
     ctx.store.get<StoredDataQualityRuleset>(`${dqRulesetPrefix}${name}`) !==

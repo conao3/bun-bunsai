@@ -720,6 +720,17 @@ const route53: ServiceDefinition = {
       if (typeof callerReference !== "string" || callerReference === "") {
         throw awsError("InvalidInput", "CallerReference is required", 400);
       }
+      const existing = listZones(ctx).find(
+        (z) => z.callerReference === callerReference,
+      );
+      if (existing !== undefined) {
+        return {
+          HostedZone: hostedZoneView(existing),
+          ChangeInfo: changeInfo(existing.id),
+          DelegationSet: { NameServers: [...nameServers] },
+          Location: `https://route53.amazonaws.com${apiPrefix}/${existing.id}`,
+        };
+      }
       const config = input["HostedZoneConfig"];
       const configRecord = (
         typeof config === "object" && config !== null ? config : {}
@@ -786,7 +797,14 @@ const route53: ServiceDefinition = {
       if (id === undefined) {
         throw awsError("InvalidInput", "Id is required", 400);
       }
-      getZone(ctx, id);
+      const zone = getZone(ctx, id);
+      if (zone.recordSets.length > 2) {
+        throw awsError(
+          "HostedZoneNotEmpty",
+          "The hosted zone contains resource records that must be deleted before the zone itself can be deleted.",
+          400,
+        );
+      }
       ctx.store.delete(id);
       return { ChangeInfo: changeInfo(id) };
     },
@@ -910,42 +928,93 @@ const route53: ServiceDefinition = {
         throw awsError("InvalidInput", "HostedZoneId is required", 400);
       }
       const zone = getZone(ctx, id);
-      const sorted = [...zone.recordSets].sort((a, b) =>
-        a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : a.Type < b.Type ? -1 : 1,
-      );
+      const sorted = [...zone.recordSets].sort((a, b) => {
+        if (a.Name < b.Name) return -1;
+        if (a.Name > b.Name) return 1;
+        if (a.Type < b.Type) return -1;
+        if (a.Type > b.Type) return 1;
+        const ai = a.SetIdentifier ?? "";
+        const bi = b.SetIdentifier ?? "";
+        return ai < bi ? -1 : ai > bi ? 1 : 0;
+      });
+      const startName =
+        typeof input["StartRecordName"] === "string"
+          ? input["StartRecordName"]
+          : undefined;
+      const startType =
+        typeof input["StartRecordType"] === "string"
+          ? input["StartRecordType"]
+          : undefined;
+      const startIdentifier =
+        typeof input["StartRecordIdentifier"] === "string"
+          ? input["StartRecordIdentifier"]
+          : undefined;
+      const maxItems =
+        input["MaxItems"] !== undefined
+          ? Math.min(Math.max(1, Number(input["MaxItems"])), 300)
+          : 300;
+      let startIdx = 0;
+      if (startName !== undefined) {
+        const normalizedStart = startName.endsWith(".")
+          ? startName
+          : `${startName}.`;
+        startIdx = sorted.findIndex((s) => {
+          if (s.Name < normalizedStart) return false;
+          if (s.Name > normalizedStart) return true;
+          if (startType === undefined) return true;
+          if (s.Type < startType) return false;
+          if (s.Type > startType) return true;
+          if (startIdentifier === undefined) return true;
+          return (s.SetIdentifier ?? "") >= startIdentifier;
+        });
+        if (startIdx === -1) startIdx = sorted.length;
+      }
+      const page = sorted.slice(startIdx, startIdx + maxItems);
+      const isTruncated = startIdx + maxItems < sorted.length;
+      const toView = (set: (typeof sorted)[0]) => ({
+        Name: set.Name,
+        Type: set.Type,
+        ...(set.TTL !== undefined ? { TTL: set.TTL } : {}),
+        ...(set.ResourceRecords !== undefined
+          ? {
+              ResourceRecords: set.ResourceRecords.map((r) => ({
+                Value: r.Value,
+              })),
+            }
+          : {}),
+        ...(set.AliasTarget !== undefined
+          ? { AliasTarget: set.AliasTarget }
+          : {}),
+        ...(set.SetIdentifier !== undefined
+          ? { SetIdentifier: set.SetIdentifier }
+          : {}),
+        ...(set.Weight !== undefined ? { Weight: set.Weight } : {}),
+        ...(set.Failover !== undefined ? { Failover: set.Failover } : {}),
+        ...(set.GeoLocation !== undefined
+          ? { GeoLocation: set.GeoLocation }
+          : {}),
+        ...(set.Region !== undefined ? { Region: set.Region } : {}),
+        ...(set.MultiValueAnswer !== undefined
+          ? { MultiValueAnswer: set.MultiValueAnswer }
+          : {}),
+        ...(set.HealthCheckId !== undefined
+          ? { HealthCheckId: set.HealthCheckId }
+          : {}),
+      });
+      const next = isTruncated ? sorted[startIdx + maxItems] : undefined;
       return {
-        ResourceRecordSets: sorted.map((set) => ({
-          Name: set.Name,
-          Type: set.Type,
-          ...(set.TTL !== undefined ? { TTL: set.TTL } : {}),
-          ...(set.ResourceRecords !== undefined
-            ? {
-                ResourceRecords: set.ResourceRecords.map((r) => ({
-                  Value: r.Value,
-                })),
-              }
-            : {}),
-          ...(set.AliasTarget !== undefined
-            ? { AliasTarget: set.AliasTarget }
-            : {}),
-          ...(set.SetIdentifier !== undefined
-            ? { SetIdentifier: set.SetIdentifier }
-            : {}),
-          ...(set.Weight !== undefined ? { Weight: set.Weight } : {}),
-          ...(set.Failover !== undefined ? { Failover: set.Failover } : {}),
-          ...(set.GeoLocation !== undefined
-            ? { GeoLocation: set.GeoLocation }
-            : {}),
-          ...(set.Region !== undefined ? { Region: set.Region } : {}),
-          ...(set.MultiValueAnswer !== undefined
-            ? { MultiValueAnswer: set.MultiValueAnswer }
-            : {}),
-          ...(set.HealthCheckId !== undefined
-            ? { HealthCheckId: set.HealthCheckId }
-            : {}),
-        })),
-        IsTruncated: false,
-        MaxItems: "100",
+        ResourceRecordSets: page.map(toView),
+        IsTruncated: isTruncated,
+        MaxItems: String(maxItems),
+        ...(next !== undefined
+          ? {
+              NextRecordName: next.Name,
+              NextRecordType: next.Type,
+              ...(next.SetIdentifier !== undefined
+                ? { NextRecordIdentifier: next.SetIdentifier }
+                : {}),
+            }
+          : {}),
       };
     },
     AssociateVPCWithHostedZone: (input, ctx) => {
@@ -1108,11 +1177,10 @@ const route53: ServiceDefinition = {
         .filter((entry) => entry.key.startsWith(healthKeyPrefix))
         .find((entry) => entry.value.callerReference === callerReference);
       if (existing !== undefined) {
-        throw awsError(
-          "HealthCheckAlreadyExists",
-          `A health check with CallerReference ${callerReference} already exists`,
-          409,
-        );
+        return {
+          HealthCheck: healthCheckView(existing.value),
+          Location: `https://route53.amazonaws.com${healthPrefix}/${existing.value.id}`,
+        };
       }
       const id = generateHealthCheckId();
       const check: HealthCheck = {
@@ -1480,7 +1548,19 @@ const route53: ServiceDefinition = {
       if (typeof trafficPolicyId !== "string" || trafficPolicyId === "") {
         throw awsError("InvalidInput", "TrafficPolicyId is required", 400);
       }
+      if (
+        !Number.isInteger(trafficPolicyVersion) ||
+        trafficPolicyVersion < 1 ||
+        trafficPolicyVersion > 1000
+      ) {
+        throw awsError(
+          "InvalidInput",
+          "TrafficPolicyVersion must be between 1 and 1000",
+          400,
+        );
+      }
       const tp = getTrafficPolicy(ctx, trafficPolicyId);
+      getTrafficPolicyVersion(ctx, tp.id, trafficPolicyVersion);
       const id = generateUUID();
       const tpi: TrafficPolicyInstance = {
         id,

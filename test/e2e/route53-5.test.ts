@@ -164,6 +164,25 @@ test("Route53 HealthCheckId association with resource record set", async () => {
   expect(www).toBeDefined();
   expect(www?.HealthCheckId).toBe(checkId);
 
+  await client.send(
+    new ChangeResourceRecordSetsCommand({
+      HostedZoneId: zoneId,
+      ChangeBatch: {
+        Changes: [
+          {
+            Action: "DELETE",
+            ResourceRecordSet: {
+              Name: "www.hc-assoc-e2e.example.com.",
+              Type: "A",
+              TTL: 60,
+              ResourceRecords: [{ Value: "10.1.2.3" }],
+              HealthCheckId: checkId,
+            },
+          },
+        ],
+      },
+    }),
+  );
   await client.send(new DeleteHostedZoneCommand({ Id: zoneId }));
   await client.send(new DeleteHealthCheckCommand({ HealthCheckId: checkId }));
 });

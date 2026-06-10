@@ -15,6 +15,7 @@ const jobPrefix = "job:" as const;
 const permPrefix = "perm:" as const;
 const permRevPrefix = "permrev:" as const;
 const tagsPrefix = "tags:" as const;
+const tokenPrefix = "token:" as const;
 
 type StoredProfile = {
   profileName: string;
@@ -28,7 +29,6 @@ type StoredProfile = {
   overrides: Record<string, unknown> | undefined;
   signingParameters: Record<string, unknown> | undefined;
   status: string;
-  tags: Record<string, unknown> | undefined;
   revocationRecord: Record<string, unknown> | undefined;
 };
 
@@ -92,6 +92,7 @@ const permKey = (profileName: string): string => `${permPrefix}${profileName}`;
 const permRevKey = (profileName: string): string =>
   `${permRevPrefix}${profileName}`;
 const tagsKey = (arn: string): string => `${tagsPrefix}${arn}`;
+const tokenKey = (token: string): string => `${tokenPrefix}${token}`;
 
 const profileArn = (ctx: ServiceContext, name: string): string =>
   `arn:aws:signer:${ctx.region}:${ctx.account}:/signing-profiles/${name}`;
@@ -113,7 +114,37 @@ const decodeToken = (token: string): number => {
   }
 };
 
-const profileView = (profile: StoredProfile): Record<string, unknown> => ({
+const profileNameFromArn = (arn: string): string | undefined => {
+  const parts = arn.split("/signing-profiles/");
+  if (parts.length < 2) return undefined;
+  const name = parts[1].split("/")[0];
+  return name || undefined;
+};
+
+const computeSignatureExpiresAt = (
+  signatureValidityPeriod: Record<string, unknown> | undefined,
+): number => {
+  const value =
+    typeof signatureValidityPeriod?.["value"] === "number"
+      ? (signatureValidityPeriod["value"] as number)
+      : 135;
+  const type =
+    typeof signatureValidityPeriod?.["type"] === "string"
+      ? (signatureValidityPeriod["type"] as string)
+      : "MONTHS";
+  const now = Date.now();
+  if (type === "DAYS") {
+    return now + value * 24 * 60 * 60 * 1000;
+  }
+  const d = new Date(now);
+  d.setMonth(d.getMonth() + value);
+  return d.getTime();
+};
+
+const profileView = (
+  profile: StoredProfile,
+  tags: Record<string, unknown>,
+): Record<string, unknown> => ({
   profileName: profile.profileName,
   profileVersion: profile.profileVersion,
   profileVersionArn: profile.profileVersionArn,
@@ -125,11 +156,14 @@ const profileView = (profile: StoredProfile): Record<string, unknown> => ({
   overrides: profile.overrides,
   signingParameters: profile.signingParameters,
   status: profile.status,
-  tags: profile.tags,
+  tags,
   revocationRecord: profile.revocationRecord,
 });
 
-const profileSummary = (profile: StoredProfile): Record<string, unknown> => ({
+const profileSummary = (
+  profile: StoredProfile,
+  tags: Record<string, unknown>,
+): Record<string, unknown> => ({
   profileName: profile.profileName,
   profileVersion: profile.profileVersion,
   profileVersionArn: profile.profileVersionArn,
@@ -140,7 +174,7 @@ const profileSummary = (profile: StoredProfile): Record<string, unknown> => ({
   signatureValidityPeriod: profile.signatureValidityPeriod,
   signingParameters: profile.signingParameters,
   status: profile.status,
-  tags: profile.tags,
+  tags,
   revocationRecord: profile.revocationRecord,
 });
 
@@ -166,6 +200,24 @@ const requireJob = (ctx: ServiceContext, id: string): StoredJob => {
     );
   }
   return job;
+};
+
+const requireTaggableProfile = (ctx: ServiceContext, arn: string): void => {
+  const name = profileNameFromArn(arn);
+  if (!name) {
+    throw awsError("NotFoundException", `Resource ${arn} not found.`, 404);
+  }
+  const profile = ctx.store.get<StoredProfile>(profileKey(name));
+  if (profile === undefined) {
+    throw awsError("NotFoundException", `Resource ${arn} not found.`, 404);
+  }
+  if (profile.status === "Canceled") {
+    throw awsError(
+      "BadRequestException",
+      `Profile ${name} is in Canceled state.`,
+      400,
+    );
+  }
 };
 
 const PLATFORMS = [
@@ -220,6 +272,14 @@ const PLATFORMS = [
 const PutSigningProfile: OperationHandler = (input, ctx) => {
   const name = requireString(input, "profileName");
   const platformId = requireString(input, "platformId");
+  const platform = PLATFORMS.find((p) => p.platformId === platformId);
+  if (platform === undefined) {
+    throw awsError(
+      "ValidationException",
+      `Unknown platformId: ${platformId}.`,
+      400,
+    );
+  }
   const version = Date.now().toString(36).toUpperCase().padStart(10, "0");
   const arn = profileArn(ctx, name);
   const profileVersionArn = `${arn}/${version}`;
@@ -237,10 +297,10 @@ const PutSigningProfile: OperationHandler = (input, ctx) => {
     overrides: recordOrUndefined(input["overrides"]),
     signingParameters: recordOrUndefined(input["signingParameters"]),
     status: "Active",
-    tags: recordOrUndefined(input["tags"]),
     revocationRecord: undefined,
   };
   ctx.store.set(profileKey(name), profile);
+  ctx.store.set(tagsKey(arn), recordOrUndefined(input["tags"]) ?? {});
   return {
     arn,
     profileVersion: version,
@@ -250,7 +310,10 @@ const PutSigningProfile: OperationHandler = (input, ctx) => {
 
 const GetSigningProfile: OperationHandler = (input, ctx) => {
   const name = requireString(input, "profileName");
-  return profileView(requireProfile(ctx, name));
+  const profile = requireProfile(ctx, name);
+  const tags =
+    ctx.store.get<Record<string, unknown>>(tagsKey(profile.arn)) ?? {};
+  return profileView(profile, tags);
 };
 
 const ListSigningProfiles: OperationHandler = (input, ctx) => {
@@ -289,7 +352,12 @@ const ListSigningProfiles: OperationHandler = (input, ctx) => {
   const hasMore =
     maxResults !== undefined && offset + maxResults < profiles.length;
   return {
-    profiles: page.map(profileSummary),
+    profiles: page.map((profile) =>
+      profileSummary(
+        profile,
+        ctx.store.get<Record<string, unknown>>(tagsKey(profile.arn)) ?? {},
+      ),
+    ),
     nextToken: hasMore ? encodeToken(offset + maxResults) : undefined,
   };
 };
@@ -304,12 +372,33 @@ const CancelSigningProfile: OperationHandler = (input, ctx) => {
 const StartSigningJob: OperationHandler = (input, ctx) => {
   const profileName = requireString(input, "profileName");
   const profile = requireProfile(ctx, profileName);
+  const clientRequestToken = stringOrUndefined(input["clientRequestToken"]);
+
+  if (clientRequestToken !== undefined) {
+    const existing = ctx.store.get<{ jobId: string; jobOwner: string }>(
+      tokenKey(clientRequestToken),
+    );
+    if (existing !== undefined) {
+      return { jobId: existing.jobId, jobOwner: existing.jobOwner };
+    }
+  }
+
   const id = newId();
   const owner = stringOrUndefined(input["profileOwner"]) ?? ctx.account;
+  const destination = recordOrUndefined(input["destination"]);
+  const destS3 = destination ? recordOrUndefined(destination["s3"]) : undefined;
+  const destBucket = destS3
+    ? stringOrUndefined(destS3["bucketName"])
+    : undefined;
+  const destPrefix = destS3 ? stringOrUndefined(destS3["prefix"]) : undefined;
+  const signedObject = destBucket
+    ? { s3: { bucketName: destBucket, key: `${destPrefix ?? ""}${id}` } }
+    : undefined;
+
   const job: StoredJob = {
     jobId: id,
     source: recordOrUndefined(input["source"]),
-    destination: recordOrUndefined(input["destination"]),
+    destination,
     profileName,
     profileVersion: profile.profileVersion,
     platformId: profile.platformId,
@@ -325,11 +414,18 @@ const StartSigningJob: OperationHandler = (input, ctx) => {
     jobOwner: owner,
     jobInvoker: ctx.account,
     revocationRecord: undefined,
-    signedObject: undefined,
-    signatureExpiresAt: undefined,
+    signedObject,
+    signatureExpiresAt: computeSignatureExpiresAt(
+      profile.signatureValidityPeriod,
+    ),
     isPayload: false,
   };
   ctx.store.set(jobKey(id), job);
+
+  if (clientRequestToken !== undefined) {
+    ctx.store.set(tokenKey(clientRequestToken), { jobId: id, jobOwner: owner });
+  }
+
   return { jobId: id, jobOwner: owner };
 };
 
@@ -472,7 +568,9 @@ const SignPayload: OperationHandler = (input, ctx) => {
     jobInvoker: ctx.account,
     revocationRecord: undefined,
     signedObject: undefined,
-    signatureExpiresAt: undefined,
+    signatureExpiresAt: computeSignatureExpiresAt(
+      profile.signatureValidityPeriod,
+    ),
     isPayload: true,
   };
   ctx.store.set(jobKey(id), job);
@@ -506,8 +604,19 @@ const RevokeSignature: OperationHandler = (input, ctx) => {
 const RevokeSigningProfile: OperationHandler = (input, ctx) => {
   const name = requireString(input, "profileName");
   const profile = requireProfile(ctx, name);
-  const reason = stringOrUndefined(input["reason"]) ?? "Profile revoked";
+  const inputProfileVersion = requireString(input, "profileVersion");
+  const reason = requireString(input, "reason");
   const effectiveTime = input["effectiveTime"];
+  if (effectiveTime === undefined || effectiveTime === null) {
+    throw awsError("ValidationException", "effectiveTime is required.", 400);
+  }
+  if (inputProfileVersion !== profile.profileVersion) {
+    throw awsError(
+      "ValidationException",
+      `Profile version ${inputProfileVersion} does not match current version ${profile.profileVersion}.`,
+      400,
+    );
+  }
   const revocationEffectiveFrom =
     typeof effectiveTime === "number"
       ? effectiveTime
@@ -573,8 +682,72 @@ const ListSigningPlatforms: OperationHandler = (input) => {
   return { platforms };
 };
 
-const GetRevocationStatus: OperationHandler = (_input, _ctx) => {
-  return { revokedEntities: [] };
+const GetRevocationStatus: OperationHandler = (input, ctx) => {
+  requireString(input, "platformId");
+  requireString(input, "profileVersionArn");
+  requireString(input, "jobArn");
+  if (!Array.isArray(input["certificateHashes"])) {
+    throw awsError(
+      "ValidationException",
+      "certificateHashes is required.",
+      400,
+    );
+  }
+  const signatureTimestampRaw = input["signatureTimestamp"];
+  if (signatureTimestampRaw === undefined || signatureTimestampRaw === null) {
+    throw awsError(
+      "ValidationException",
+      "signatureTimestamp is required.",
+      400,
+    );
+  }
+  const signatureTimestamp =
+    typeof signatureTimestampRaw === "number"
+      ? signatureTimestampRaw
+      : Number(signatureTimestampRaw);
+
+  const pvArn = input["profileVersionArn"] as string;
+  const inputJobArn = input["jobArn"] as string;
+  const revokedEntities: string[] = [];
+
+  const pvParts = pvArn.split("/signing-profiles/");
+  if (pvParts.length >= 2) {
+    const [profileNamePart, versionPart] = pvParts[1].split("/");
+    if (profileNamePart) {
+      const p = ctx.store.get<StoredProfile>(profileKey(profileNamePart));
+      if (
+        p?.revocationRecord &&
+        p.profileVersion === versionPart &&
+        typeof p.revocationRecord["revocationEffectiveFrom"] === "number"
+      ) {
+        if (
+          signatureTimestamp >=
+          (p.revocationRecord["revocationEffectiveFrom"] as number)
+        ) {
+          revokedEntities.push(pvArn);
+        }
+      }
+    }
+  }
+
+  const jobParts = inputJobArn.split("/signing-jobs/");
+  if (jobParts.length >= 2) {
+    const jobId = jobParts[1].split("/")[0];
+    if (jobId) {
+      const j = ctx.store.get<StoredJob>(jobKey(jobId));
+      if (j?.revocationRecord) {
+        const revokedAt =
+          typeof j.revocationRecord["revokedAt"] === "number"
+            ? (j.revocationRecord["revokedAt"] as number)
+            : 0;
+        if (signatureTimestamp * 1000 >= revokedAt) {
+          revokedEntities.push(inputJobArn);
+        }
+      }
+    }
+  }
+
+  return { revokedEntities };
 };
 
 const AddProfilePermission: OperationHandler = (input, ctx) => {
@@ -583,7 +756,30 @@ const AddProfilePermission: OperationHandler = (input, ctx) => {
   const statementId = requireString(input, "statementId");
   const action = requireString(input, "action");
   const principal = requireString(input, "principal");
+  const inputRevisionId = stringOrUndefined(input["revisionId"]);
+  const storedRevisionId = ctx.store.get<string>(permRevKey(profileName));
+
+  if (
+    inputRevisionId !== undefined &&
+    inputRevisionId !== (storedRevisionId ?? "")
+  ) {
+    throw awsError(
+      "ConflictException",
+      `Revision ID ${inputRevisionId} does not match current revision.`,
+      409,
+    );
+  }
+
   const perms = ctx.store.get<StoredPermissions>(permKey(profileName)) ?? {};
+
+  if (perms[statementId] !== undefined) {
+    throw awsError(
+      "ConflictException",
+      `Statement ID ${statementId} already exists.`,
+      409,
+    );
+  }
+
   const rev = newId();
   perms[statementId] = {
     statementId,
@@ -628,6 +824,7 @@ const ListProfilePermissions: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
+  requireTaggableProfile(ctx, arn);
   const newTags = recordOrUndefined(input["tags"]) ?? {};
   const existing = ctx.store.get<Record<string, unknown>>(tagsKey(arn)) ?? {};
   ctx.store.set(tagsKey(arn), { ...existing, ...newTags });
@@ -636,6 +833,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
+  requireTaggableProfile(ctx, arn);
   const tagKeys = Array.isArray(input["tagKeys"])
     ? (input["tagKeys"] as string[])
     : [];
@@ -649,6 +847,7 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
+  requireTaggableProfile(ctx, arn);
   const tags = ctx.store.get<Record<string, unknown>>(tagsKey(arn)) ?? {};
   return { tags };
 };

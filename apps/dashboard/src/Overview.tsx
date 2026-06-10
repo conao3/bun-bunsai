@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { RequestLogEntry, ServiceSummary } from "./api";
+import { buildResourceSvcPath, router } from "./router";
 import {
   EmptyState,
   Ico,
@@ -297,7 +298,7 @@ export function Overview({
                   resCount={svc.resourceCount}
                   callCount={svc.callCount}
                   errCount={p.errs}
-                  onOpen={() => setScreen("resources")}
+                  onOpen={() => router.push(buildResourceSvcPath(svc.name))}
                 />
               );
             })}

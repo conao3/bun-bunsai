@@ -10,7 +10,10 @@ import {
   CreateGroupCommand,
   CreateUserPoolClientCommand,
   CreateUserPoolCommand,
+  DeleteUserPoolCommand,
+  ListTagsForResourceCommand,
   ListUsersCommand,
+  TagResourceCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 
 const { endpoint, requestHandler, gwFetch } = startApp();
@@ -442,5 +445,47 @@ describe("cognito-idp fidelity e2e", () => {
     expect(groups.indexOf("high-priority")).toBeLessThan(
       groups.indexOf("low-priority"),
     );
+  });
+
+  test("UserPoolTags round-trip: CreateUserPool with tags → ListTagsForResource", async () => {
+    const client = cognito();
+    const pool = await client.send(
+      new CreateUserPoolCommand({
+        PoolName: "tagged-pool",
+        UserPoolTags: { env: "test", owner: "alice" },
+      }),
+    );
+    const poolArn = pool.UserPool?.Arn;
+    expect(typeof poolArn).toBe("string");
+
+    const tags = await client.send(
+      new ListTagsForResourceCommand({ ResourceArn: poolArn }),
+    );
+    expect(tags.Tags).toMatchObject({ env: "test", owner: "alice" });
+  });
+
+  test("DeletionProtection guard: ACTIVE pool rejects DeleteUserPool", async () => {
+    const client = cognito();
+    const pool = await client.send(
+      new CreateUserPoolCommand({
+        PoolName: "protected-pool",
+        DeletionProtection: "ACTIVE",
+      }),
+    );
+    const poolId = pool.UserPool?.Id;
+
+    const res = await cognitoPost("DeleteUserPool", { UserPoolId: poolId });
+    expect(res.status).toBe(400);
+    expect(res.body["__type"]).toBe("InvalidParameterException");
+  });
+
+  test("TagResource ref validation: missing pool ARN → ResourceNotFoundException", async () => {
+    const res = await cognitoPost("TagResource", {
+      ResourceArn:
+        "arn:aws:cognito-idp:us-east-1:123456789012:userpool/nonexistent-pool",
+      Tags: { key: "value" },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body["__type"]).toBe("ResourceNotFoundException");
   });
 });

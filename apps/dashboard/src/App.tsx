@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import "./App.css";
 import type { RequestLogEntry, ResourceEntry, ServiceSummary } from "./api";
+import "./App.css";
 import { fetchLogs, fetchResources, fetchServices, openLogStream } from "./api";
 import { GlobalBar, Sidebar } from "./Chrome";
 import { Overview } from "./Overview";

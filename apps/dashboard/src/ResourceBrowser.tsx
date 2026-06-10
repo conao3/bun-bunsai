@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ResourceEntry } from "./api";
-import { fetchResources } from "./api";
 import {
   CodeBlock,
   EmptyState,
@@ -145,41 +144,24 @@ function ResourceDetail({
 export function ResourceBrowser({
   scope,
   connected,
-  refreshToken,
+  resources,
+  loaded,
   sel,
   onSelect,
 }: {
   scope: Scope;
   connected: boolean;
-  refreshToken: number;
+  resources: ResourceEntry[];
+  loaded: boolean;
   sel: Selection | null;
   onSelect: (s: Selection | null, replace?: boolean) => void;
 }) {
-  const [entries, setEntries] = useState<ResourceEntry[]>([]);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetchResources()
-      .then((rows) => {
-        if (cancelled) return;
-        setEntries(rows);
-        setLoaded(true);
-      })
-      .catch(() => {
-        if (!cancelled) setLoaded(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshToken]);
-
   const scoped = useMemo(
     () =>
-      entries.filter(
+      resources.filter(
         (e) => e.account === scope.account && e.region === scope.region,
       ),
-    [entries, scope],
+    [resources, scope],
   );
 
   const grouped = useMemo(() => {

@@ -54,7 +54,7 @@ export function App() {
   const [resources, setResources] = useState<ResourceEntry[]>([]);
   const [requests, setRequests] = useState<RequestLogEntry[]>([]);
   const [connected, setConnected] = useState(false);
-  const [resourceToken, setResourceToken] = useState(0);
+  const [resourcesLoaded, setResourcesLoaded] = useState(false);
 
   const liveRef = useRef(live);
   liveRef.current = live;
@@ -163,11 +163,13 @@ export function App() {
           setServices(svcs);
           setResources(res);
           setConnected(true);
+          setResourcesLoaded(true);
           delay = 4000;
         })
         .catch(() => {
           if (cancelled) return;
           setConnected(false);
+          setResourcesLoaded(true);
           delay = Math.min(delay * 2, POLL_MAX);
         })
         .finally(() => {
@@ -215,10 +217,6 @@ export function App() {
   }, []);
 
   const clearRequests = useCallback(() => setRequests([]), []);
-
-  useEffect(() => {
-    setResourceToken((t) => t + 1);
-  }, [resources.length]);
 
   const accounts = useMemo(() => {
     const set = new Set<string>([scope.account, defaultScope.account]);
@@ -318,7 +316,8 @@ export function App() {
           <ResourceBrowser
             scope={scope}
             connected={connected}
-            refreshToken={resourceToken}
+            resources={resources}
+            loaded={resourcesLoaded}
             sel={sel}
             onSelect={setSel}
           />

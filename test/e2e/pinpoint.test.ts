@@ -661,3 +661,66 @@ test("HIGH-4: DeleteJourney rejects ACTIVE state", async () => {
   );
   await client.send(new DeleteAppCommand({ ApplicationId: appId }));
 });
+
+test("MEDIUM-1: CreateSmsTemplate duplicate name throws BadRequestException", async () => {
+  const client = pinpoint();
+  const name = `dup-tpl-${Date.now()}`;
+  await client.send(
+    new CreateSmsTemplateCommand({
+      TemplateName: name,
+      SMSTemplateRequest: { Body: "hello" },
+    }),
+  );
+  await expect(
+    client.send(
+      new CreateSmsTemplateCommand({
+        TemplateName: name,
+        SMSTemplateRequest: { Body: "hello again" },
+      }),
+    ),
+  ).rejects.toThrow();
+  await client.send(new DeleteSmsTemplateCommand({ TemplateName: name }));
+});
+
+test("MEDIUM-2: TagResource / UntagResource with nonexistent ARN throws NotFoundException", async () => {
+  const client = pinpoint();
+  const fakeArn =
+    "arn:aws:mobiletargeting:us-east-1:000000000000:apps/nonexistent-app-id";
+  await expect(
+    client.send(
+      new TagResourceCommand({
+        ResourceArn: fakeArn,
+        TagsModel: { tags: { k: "v" } },
+      }),
+    ),
+  ).rejects.toThrow();
+  await expect(
+    client.send(
+      new UntagResourceCommand({
+        ResourceArn: fakeArn,
+        TagKeys: ["k"],
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("MEDIUM-3: GetCampaigns invalid PageSize throws BadRequestException", async () => {
+  const client = pinpoint();
+  const app = await client.send(
+    new CreateAppCommand({
+      CreateApplicationRequest: { Name: `pagesize-test-${Date.now()}` },
+    }),
+  );
+  const appId = app.ApplicationResponse?.Id ?? "";
+  await expect(
+    client.send(
+      new GetCampaignsCommand({ ApplicationId: appId, PageSize: "0" }),
+    ),
+  ).rejects.toThrow();
+  await expect(
+    client.send(
+      new GetCampaignsCommand({ ApplicationId: appId, PageSize: "501" }),
+    ),
+  ).rejects.toThrow();
+  await client.send(new DeleteAppCommand({ ApplicationId: appId }));
+});

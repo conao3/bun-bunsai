@@ -318,11 +318,18 @@ const paginateList = <T>(
   token: unknown,
   pageSize: unknown,
 ): { items: T[]; nextToken: string | undefined } => {
-  const size =
-    typeof pageSize === "string" && pageSize !== ""
-      ? parseInt(pageSize, 10)
-      : 0;
-  const limit = size > 0 ? size : 100;
+  let limit = 100;
+  if (typeof pageSize === "string" && pageSize !== "") {
+    const size = parseInt(pageSize, 10);
+    if (!Number.isInteger(size) || size < 1 || size > 500) {
+      throw awsError(
+        "BadRequestException",
+        `PageSize must be an integer between 1 and 500.`,
+        400,
+      );
+    }
+    limit = size;
+  }
   const start =
     typeof token === "string" && token !== "" ? parseInt(token, 10) : 0;
   const page = items.slice(start, start + limit);
@@ -589,6 +596,13 @@ const makeTemplateCreate =
   (input, ctx) => {
     const name = requireString(input, "TemplateName");
     const meta = templateMeta[tplType];
+    if (ctx.store.get(templateKey(name, tplType))) {
+      throw awsError(
+        "BadRequestException",
+        `A template named ${name} already exists.`,
+        400,
+      );
+    }
     const body = asRecord(input[meta.requestKey]) ?? {};
     const nowStr = new Date().toISOString();
     const tpl: StoredTemplate = {
@@ -1702,6 +1716,7 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
+  requireResourceByArn(ctx, arn);
   const body = asRecord(input["TagsModel"]) ?? {};
   const newTags = stringMapFrom(body["tags"]);
   const existing = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
@@ -1711,6 +1726,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceArn");
+  requireResourceByArn(ctx, arn);
   const tagKeys = Array.isArray(input["TagKeys"])
     ? (input["TagKeys"] as unknown[]).filter(
         (k): k is string => typeof k === "string",

@@ -31,6 +31,7 @@ type StoredGroup = {
   retentionInDays?: number;
   tags?: Record<string, string>;
   kmsKeyId?: string;
+  logGroupClass?: string;
   deletionProtectionEnabled?: boolean;
   dataProtectionStatus?: string;
 };
@@ -397,6 +398,34 @@ const requireStream = (group: StoredGroup, name: string): StoredStream => {
 const sequenceTokenOf = (stream: StoredStream): string =>
   String(stream.events.length);
 
+const nameFromIdentifier = (identifier: string): string => {
+  const m = identifier.match(/^arn:aws:logs:[^:]+:[^:]+:log-group:([^:]+)/);
+  return m ? m[1] : identifier;
+};
+
+const resolveGroupRef = (
+  input: Record<string, unknown>,
+  ctx: ServiceContext,
+): StoredGroup => {
+  const name = optionalString(input, "logGroupName");
+  const identifier = optionalString(input, "logGroupIdentifier");
+  if (name !== undefined && identifier !== undefined) {
+    throw awsError(
+      "InvalidParameterException",
+      "You cannot specify both logGroupName and logGroupIdentifier.",
+      400,
+    );
+  }
+  if (name === undefined && identifier === undefined) {
+    throw awsError(
+      "InvalidParameterException",
+      "logGroupName or logGroupIdentifier is required.",
+      400,
+    );
+  }
+  return requireGroup(ctx, name ?? nameFromIdentifier(identifier!));
+};
+
 const tagsFor = (ctx: ServiceContext, arn: string): Record<string, string> => {
   const stored = ctx.store.get<Record<string, string>>(`${tagsPrefix}${arn}`);
   return stored ?? {};
@@ -410,6 +439,11 @@ const setTagsFor = (
   ctx.store.set(`${tagsPrefix}${arn}`, tags);
 };
 
+const requireResourceByArn = (ctx: ServiceContext, arn: string): void => {
+  const m = arn.match(/^arn:aws:logs:[^:]+:[^:]+:log-group:([^:]+)/);
+  if (m) requireGroup(ctx, m[1]);
+};
+
 const CreateLogGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "logGroupName");
   if (ctx.store.get<StoredGroup>(name) !== undefined) {
@@ -419,20 +453,59 @@ const CreateLogGroup: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const arn = groupArnOf(ctx.region, ctx.account, name);
   const group: StoredGroup = {
     logGroupName: name,
     creationTime: Date.now(),
-    arn: groupArnOf(ctx.region, ctx.account, name),
+    arn,
     streams: {},
   };
+  const kmsKeyId = optionalString(input, "kmsKeyId");
+  if (kmsKeyId !== undefined) group.kmsKeyId = kmsKeyId;
+  const logGroupClass = optionalString(input, "logGroupClass");
+  if (logGroupClass !== undefined) group.logGroupClass = logGroupClass;
+  if (input["deletionProtectionEnabled"] === true) {
+    group.deletionProtectionEnabled = true;
+  }
   ctx.store.set(name, group);
+  const rawTags = input["tags"];
+  if (rawTags !== null && typeof rawTags === "object") {
+    const tags: Record<string, string> = {};
+    for (const [k, v] of Object.entries(rawTags as Record<string, unknown>)) {
+      if (typeof v === "string") tags[k] = v;
+    }
+    if (Object.keys(tags).length > 0) setTagsFor(ctx, arn, tags);
+  }
   return {};
 };
 
 const DeleteLogGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "logGroupName");
-  requireGroup(ctx, name);
+  const group = requireGroup(ctx, name);
+  if (group.deletionProtectionEnabled === true) {
+    throw awsError(
+      "ValidationException",
+      "The specified log group has deletion protection enabled.",
+      400,
+    );
+  }
   ctx.store.delete(name);
+  const groupArn = group.arn;
+  const keysToDelete = ctx.store
+    .list()
+    .map((entry) => entry.key)
+    .filter(
+      (key) =>
+        key.startsWith(`${metricFilterPrefix}${name} `) ||
+        key.startsWith(`${subFilterPrefix}${name} `) ||
+        key === `${dpPolicyPrefix}${name}` ||
+        key === `${indexPolicyPrefix}${name}` ||
+        key === `${transformerPrefix}${name}` ||
+        key === `${tagsPrefix}${groupArn}`,
+    );
+  for (const key of keysToDelete) {
+    ctx.store.delete(key);
+  }
   return {};
 };
 
@@ -443,7 +516,7 @@ const logGroupView = (group: StoredGroup): Record<string, unknown> => {
     metricFilterCount: 0,
     arn: group.arn,
     storedBytes: 0,
-    logGroupClass: "STANDARD",
+    logGroupClass: group.logGroupClass ?? "STANDARD",
   };
   if (group.retentionInDays !== undefined) {
     view["retentionInDays"] = group.retentionInDays;
@@ -548,8 +621,8 @@ const logStreamView = (
 };
 
 const DescribeLogStreams: OperationHandler = (input, ctx) => {
-  const groupName = requireString(input, "logGroupName");
-  const group = requireGroup(ctx, groupName);
+  const group = resolveGroupRef(input, ctx);
+  const groupName = group.logGroupName;
   const prefix = optionalString(input, "logStreamNamePrefix");
   const limit = optionalNumber(input, "limit") ?? 50;
   const offset = decodePageToken(input["nextToken"]);
@@ -722,9 +795,8 @@ const PutLogEvents: OperationHandler = (input, ctx) => {
 };
 
 const GetLogEvents: OperationHandler = (input, ctx) => {
-  const groupName = requireString(input, "logGroupName");
+  const group = resolveGroupRef(input, ctx);
   const streamName = requireString(input, "logStreamName");
-  const group = requireGroup(ctx, groupName);
   const stream = requireStream(group, streamName);
   const startTime = optionalNumber(input, "startTime");
   const endTime = optionalNumber(input, "endTime");
@@ -757,8 +829,7 @@ const GetLogEvents: OperationHandler = (input, ctx) => {
 };
 
 const FilterLogEvents: OperationHandler = (input, ctx) => {
-  const groupName = requireString(input, "logGroupName");
-  const group = requireGroup(ctx, groupName);
+  const group = resolveGroupRef(input, ctx);
   const startTime = optionalNumber(input, "startTime");
   const endTime = optionalNumber(input, "endTime");
   const pattern = optionalString(input, "filterPattern");
@@ -951,35 +1022,33 @@ const TagLogGroup: OperationHandler = (input, ctx) => {
   if (rawTags === null || typeof rawTags !== "object") {
     throw awsError("InvalidParameterException", "tags is required.", 400);
   }
-  const tags = { ...(group.tags ?? {}) };
+  const tags = { ...tagsFor(ctx, group.arn) };
   for (const [tagKey, tagValue] of Object.entries(
     rawTags as Record<string, unknown>,
   )) {
     if (typeof tagValue === "string") tags[tagKey] = tagValue;
   }
-  group.tags = tags;
-  ctx.store.set(groupName, group);
+  setTagsFor(ctx, group.arn, tags);
   return {};
 };
 
 const ListTagsLogGroup: OperationHandler = (input, ctx) => {
   const groupName = requireString(input, "logGroupName");
   const group = requireGroup(ctx, groupName);
-  return { tags: { ...(group.tags ?? {}) } };
+  return { tags: tagsFor(ctx, group.arn) };
 };
 
 const UntagLogGroup: OperationHandler = (input, ctx) => {
   const groupName = requireString(input, "logGroupName");
   const group = requireGroup(ctx, groupName);
   const rawTags = input["tags"];
-  const tags = { ...(group.tags ?? {}) };
+  const tags = { ...tagsFor(ctx, group.arn) };
   if (Array.isArray(rawTags)) {
     for (const tagKey of rawTags) {
       if (typeof tagKey === "string") delete tags[tagKey];
     }
   }
-  group.tags = tags;
-  ctx.store.set(groupName, group);
+  setTagsFor(ctx, group.arn, tags);
   return {};
 };
 
@@ -2100,11 +2169,14 @@ const StartQuery: OperationHandler = (input, ctx) => {
   const queryString = requireString(input, "queryString");
   const singleName = optionalString(input, "logGroupName");
   const namesInput = input["logGroupNames"];
+  const identifiersInput = input["logGroupIdentifiers"];
   const groupNames: string[] = singleName
     ? [singleName]
     : Array.isArray(namesInput)
       ? (namesInput as string[])
-      : [];
+      : Array.isArray(identifiersInput)
+        ? (identifiersInput as string[]).map(nameFromIdentifier)
+        : [];
   for (const name of groupNames) {
     requireGroup(ctx, name);
   }
@@ -2214,8 +2286,7 @@ const DescribeQueries: OperationHandler = (input, ctx) => {
 };
 
 const GetLogGroupFields: OperationHandler = (input, ctx) => {
-  const groupName = requireString(input, "logGroupName");
-  requireGroup(ctx, groupName);
+  resolveGroupRef(input, ctx);
   return {
     logGroupFields: [
       { name: "@timestamp", percent: 100 },
@@ -2658,11 +2729,13 @@ const TestTransformer: OperationHandler = (input, _ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
+  requireResourceByArn(ctx, arn);
   return { tags: tagsFor(ctx, arn) };
 };
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
+  requireResourceByArn(ctx, arn);
   const rawTags = input["tags"];
   const existing = tagsFor(ctx, arn);
   if (typeof rawTags === "object" && rawTags !== null) {
@@ -2676,6 +2749,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
+  requireResourceByArn(ctx, arn);
   const rawKeys = input["tagKeys"];
   const existing = tagsFor(ctx, arn);
   if (Array.isArray(rawKeys)) {

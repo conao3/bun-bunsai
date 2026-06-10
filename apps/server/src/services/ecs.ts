@@ -633,6 +633,7 @@ const DeleteCluster: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(clusterKey(name));
+  ctx.store.delete(tagKey(cluster.clusterArn));
   return { cluster: { ...clusterView(cluster), status: "INACTIVE" } };
 };
 
@@ -673,7 +674,15 @@ const RegisterTaskDefinition: OperationHandler = (input, ctx) => {
 const DescribeTaskDefinition: OperationHandler = (input, ctx) => {
   const identifier = requireString(input, "taskDefinition");
   const taskDef = resolveTaskDefinition(ctx, identifier);
-  return { taskDefinition: taskDefinitionView(taskDef), tags: [] };
+  const include = Array.isArray(input["include"])
+    ? (input["include"] as string[])
+    : [];
+  const tags = include.includes("TAGS")
+    ? (ctx.store.get<Record<string, string>[]>(
+        tagKey(taskDef.taskDefinitionArn),
+      ) ?? [])
+    : [];
+  return { taskDefinition: taskDefinitionView(taskDef), tags };
 };
 
 const RunTask: OperationHandler = (input, ctx) => {
@@ -1055,6 +1064,7 @@ const DeleteService: OperationHandler = (input, ctx) => {
     )
     .forEach((e) => ctx.store.delete(e.key));
   ctx.store.delete(serviceKey(clusterName, name));
+  ctx.store.delete(tagKey(service.serviceArn));
   return {
     service: { ...serviceView(service, 0), status: "DRAINING" },
   };
@@ -1121,6 +1131,7 @@ const DeregisterTaskDefinition: OperationHandler = (input, ctx) => {
   const taskDef = resolveTaskDefinition(ctx, identifier);
   const inactive: StoredTaskDefinition = { ...taskDef, status: "INACTIVE" };
   ctx.store.set(taskDefKey(taskDef.family, taskDef.revision), inactive);
+  ctx.store.delete(tagKey(taskDef.taskDefinitionArn));
   return { taskDefinition: taskDefinitionView(inactive) };
 };
 

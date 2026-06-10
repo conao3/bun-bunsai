@@ -1,15 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import type { RequestLogEntry, ResourceEntry, ServiceSummary } from "./api";
-import { fetchLogs, fetchResources, fetchServices, openLogStream } from "./api";
+import type {
+  RequestLogEntry,
+  ResourceEntry,
+  ServiceSummary,
+  SnapshotMeta,
+} from "./api";
+import {
+  fetchLogs,
+  fetchResources,
+  fetchServices,
+  fetchSnapshots,
+  openLogStream,
+} from "./api";
 import { GlobalBar, Sidebar } from "./Chrome";
 import { Overview } from "./Overview";
 import { RequestLog, statusFilters } from "./RequestLog";
 import type { StatusFilter } from "./RequestLog";
 import { ResourceBrowser } from "./ResourceBrowser";
+import { Snapshots } from "./Snapshots";
 import {
   buildLogPath,
   buildResourcePath,
+  buildSnapshotPath,
   parseRoute,
   router,
   useLocation,
@@ -53,6 +66,7 @@ export function App() {
   const [services, setServices] = useState<ServiceSummary[]>([]);
   const [resources, setResources] = useState<ResourceEntry[]>([]);
   const [requests, setRequests] = useState<RequestLogEntry[]>([]);
+  const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
   const [connected, setConnected] = useState(false);
   const [resourcesLoaded, setResourcesLoaded] = useState(false);
 
@@ -76,6 +90,12 @@ export function App() {
     ls.set("theme", v);
   }, []);
 
+  const refreshSnapshots = useCallback(() => {
+    fetchSnapshots()
+      .then(setSnapshots)
+      .catch(() => {});
+  }, []);
+
   const setScreen = useCallback(
     (v: Screen) => {
       const path =
@@ -83,7 +103,9 @@ export function App() {
           ? "/overview"
           : v === "resources"
             ? buildResourcePath(null)
-            : buildLogPath(null);
+            : v === "snapshots"
+              ? buildSnapshotPath()
+              : buildLogPath(null);
       const url = withQuery(path, loc.query);
       if (url === router.getSnapshot()) return;
       router.push(url);
@@ -185,6 +207,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    refreshSnapshots();
+  }, [refreshSnapshots]);
+
+  useEffect(() => {
     let cancelled = false;
     void fetchLogs()
       .then((rows) => {
@@ -273,6 +299,7 @@ export function App() {
         services={services}
         logCount={requests.length}
         resourceCount={scopedResourceCount}
+        snapshotCount={snapshots.length}
         connected={connected}
         endpoint={endpoint}
       />
@@ -321,6 +348,9 @@ export function App() {
             sel={sel}
             onSelect={setSel}
           />
+        )}
+        {screen === "snapshots" && (
+          <Snapshots snapshots={snapshots} onRefresh={refreshSnapshots} />
         )}
       </div>
     </div>

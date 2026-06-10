@@ -9,12 +9,14 @@ const navItems = [
   { id: "overview", label: "Overview", ico: Ico.overview },
   { id: "log", label: "Request Log", ico: Ico.log },
   { id: "resources", label: "Resource Browser", ico: Ico.browser },
+  { id: "snapshots", label: "Snapshots", ico: Ico.snapshot },
 ] as const;
 
 const screenTitles: Record<Screen, string> = {
   overview: "Overview",
   log: "Request Log",
   resources: "Resource Browser",
+  snapshots: "State Snapshots",
 } as const;
 
 export function Sidebar({
@@ -23,6 +25,7 @@ export function Sidebar({
   services,
   logCount,
   resourceCount,
+  snapshotCount,
   connected,
   endpoint,
 }: {
@@ -31,6 +34,7 @@ export function Sidebar({
   services: ServiceSummary[];
   logCount: number;
   resourceCount: number;
+  snapshotCount: number;
   connected: boolean;
   endpoint: string;
 }) {
@@ -45,6 +49,7 @@ export function Sidebar({
     overview: null,
     log: logCount || null,
     resources: resourceCount || null,
+    snapshots: snapshotCount || null,
   };
   return (
     <aside className="sidebar">

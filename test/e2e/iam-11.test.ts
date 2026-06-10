@@ -15,7 +15,6 @@ import {
   ListAttachedGroupPoliciesCommand,
   ListPoliciesCommand,
   ListRolesCommand,
-  ListRoleTags,
   ListRoleTagsCommand,
   ListUserTagsCommand,
   ListUsersCommand,

@@ -16,7 +16,12 @@ import {
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
-const client = new GlueClient({ endpoint, region, credentials, requestHandler });
+const client = new GlueClient({
+  endpoint,
+  region,
+  credentials,
+  requestHandler,
+});
 
 test("GetConnections: Filter.ConnectionType narrows results", async () => {
   const prefix = "con2039_ct_";
@@ -25,7 +30,11 @@ test("GetConnections: Filter.ConnectionType narrows results", async () => {
       ConnectionInput: {
         Name: `${prefix}jdbc`,
         ConnectionType: "JDBC",
-        ConnectionProperties: { JDBC_CONNECTION_URL: "jdbc://host/db", USERNAME: "u", PASSWORD: "p" },
+        ConnectionProperties: {
+          JDBC_CONNECTION_URL: "jdbc://host/db",
+          USERNAME: "u",
+          PASSWORD: "p",
+        },
       },
     }),
   );
@@ -61,7 +70,11 @@ test("GetConnections: Filter.MatchCriteria filters by criteria", async () => {
       ConnectionInput: {
         Name: `${prefix}alpha`,
         ConnectionType: "JDBC",
-        ConnectionProperties: { JDBC_CONNECTION_URL: "jdbc://host/db", USERNAME: "u", PASSWORD: "p" },
+        ConnectionProperties: {
+          JDBC_CONNECTION_URL: "jdbc://host/db",
+          USERNAME: "u",
+          PASSWORD: "p",
+        },
         MatchCriteria: ["alpha", "common"],
       },
     }),
@@ -71,7 +84,11 @@ test("GetConnections: Filter.MatchCriteria filters by criteria", async () => {
       ConnectionInput: {
         Name: `${prefix}beta`,
         ConnectionType: "JDBC",
-        ConnectionProperties: { JDBC_CONNECTION_URL: "jdbc://host/db", USERNAME: "u", PASSWORD: "p" },
+        ConnectionProperties: {
+          JDBC_CONNECTION_URL: "jdbc://host/db",
+          USERNAME: "u",
+          PASSWORD: "p",
+        },
         MatchCriteria: ["beta"],
       },
     }),
@@ -99,7 +116,11 @@ test("GetConnections: NextToken/MaxResults pagination", async () => {
         ConnectionInput: {
           Name: `${prefix}${i}`,
           ConnectionType: "JDBC",
-          ConnectionProperties: { JDBC_CONNECTION_URL: "jdbc://host/db", USERNAME: "u", PASSWORD: "p" },
+          ConnectionProperties: {
+            JDBC_CONNECTION_URL: "jdbc://host/db",
+            USERNAME: "u",
+            PASSWORD: "p",
+          },
         },
       }),
     );
@@ -138,7 +159,9 @@ test("GetDatabases: ResourceShareType=FOREIGN returns empty list", async () => {
 
 test("GetDatabases: ResourceShareType=ALL returns local databases", async () => {
   const name = "con2039_db_all";
-  await client.send(new CreateDatabaseCommand({ DatabaseInput: { Name: name } }));
+  await client.send(
+    new CreateDatabaseCommand({ DatabaseInput: { Name: name } }),
+  );
   const res = await client.send(
     new GetDatabasesCommand({ ResourceShareType: "ALL" }),
   );

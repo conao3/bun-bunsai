@@ -35,7 +35,10 @@ const disableAndDelete = async (
     new UpdateDistributionCommand({
       Id: id,
       IfMatch: cfg.ETag,
-      DistributionConfig: { ...cfg.DistributionConfig, Enabled: false } as DistributionConfig,
+      DistributionConfig: {
+        ...cfg.DistributionConfig,
+        Enabled: false,
+      } as DistributionConfig,
     }),
   );
   await client.send(new DeleteDistributionCommand({ Id: id }));

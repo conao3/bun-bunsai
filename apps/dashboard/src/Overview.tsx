@@ -223,7 +223,7 @@ export function Overview({
         <StatCard
           label="累計リクエスト"
           value={total.toLocaleString()}
-          sub={total ? "live + paused 合算" : "受信待ち"}
+          sub={total ? "累計受信" : "受信待ち"}
         />
         <StatCard
           label="エラー率"

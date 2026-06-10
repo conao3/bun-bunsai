@@ -113,6 +113,7 @@ type StoredMaintenanceWindow = {
   CreatedDate: string;
   ModifiedDate: string;
   NextExecutionTime: string;
+  ClientToken?: string;
 };
 
 type StoredMWTarget = {
@@ -168,6 +169,7 @@ type StoredPatchBaseline = {
   PatchGroups: string[];
   DefaultBaseline: boolean;
   Tags: { Key: string; Value: string }[];
+  ClientToken?: string;
 };
 
 type StoredOpsItem = {
@@ -1262,6 +1264,7 @@ const ModifyDocumentPermission: OperationHandler = (input, ctx) => {
 
 const CreateAssociation: OperationHandler = (input, ctx) => {
   const name = requireName(input);
+  requireDoc(ctx, name);
   const id = newId();
   const now = nowIso();
   const assoc: StoredAssociation = {
@@ -1465,6 +1468,21 @@ const StartAssociationsOnce: OperationHandler = (input, ctx) => {
 
 const CreateMaintenanceWindow: OperationHandler = (input, ctx) => {
   const name = requireName(input);
+  const clientToken =
+    typeof input["ClientToken"] === "string" && input["ClientToken"] !== ""
+      ? input["ClientToken"]
+      : undefined;
+  if (clientToken !== undefined) {
+    const existing = ctx.store
+      .list<StoredMaintenanceWindow>()
+      .find(
+        (e) =>
+          e.key.startsWith("__mw__/") && e.value.ClientToken === clientToken,
+      );
+    if (existing !== undefined) {
+      return { WindowId: existing.value.WindowId };
+    }
+  }
   const id = `mw-${newId().replace(/-/g, "").slice(0, 17)}`;
   const now = nowIso();
   const mw: StoredMaintenanceWindow = {
@@ -1487,6 +1505,7 @@ const CreateMaintenanceWindow: OperationHandler = (input, ctx) => {
     CreatedDate: now,
     ModifiedDate: now,
     NextExecutionTime: now,
+    ...(clientToken !== undefined ? { ClientToken: clientToken } : {}),
   };
   ctx.store.set(mwKey(id), mw);
   return { WindowId: id };
@@ -1931,6 +1950,21 @@ const CancelMaintenanceWindowExecution: OperationHandler = (input, ctx) => {
 
 const CreatePatchBaseline: OperationHandler = (input, ctx) => {
   const name = requireName(input);
+  const clientToken =
+    typeof input["ClientToken"] === "string" && input["ClientToken"] !== ""
+      ? input["ClientToken"]
+      : undefined;
+  if (clientToken !== undefined) {
+    const existing = ctx.store
+      .list<StoredPatchBaseline>()
+      .find(
+        (e) =>
+          e.key.startsWith("__pb__/") && e.value.ClientToken === clientToken,
+      );
+    if (existing !== undefined) {
+      return { BaselineId: existing.value.BaselineId };
+    }
+  }
   const id = `pb-${newId().replace(/-/g, "").slice(0, 17)}`;
   const now = nowIso();
   const pb: StoredPatchBaseline = {
@@ -1974,6 +2008,7 @@ const CreatePatchBaseline: OperationHandler = (input, ctx) => {
     Tags: Array.isArray(input["Tags"])
       ? (input["Tags"] as { Key: string; Value: string }[])
       : [],
+    ...(clientToken !== undefined ? { ClientToken: clientToken } : {}),
   };
   ctx.store.set(pbKey(id), pb);
   return { BaselineId: id };
@@ -2600,6 +2635,7 @@ const UpdateResourceDataSync: OperationHandler = (input, ctx) => {
 const SendCommand: OperationHandler = (input, ctx) => {
   const docName =
     typeof input["DocumentName"] === "string" ? input["DocumentName"] : "";
+  requireDoc(ctx, docName);
   const cmdId = newId();
   const now = nowIso();
   const targets = Array.isArray(input["Targets"])

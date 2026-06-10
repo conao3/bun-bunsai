@@ -138,16 +138,25 @@ describe("ssm e2e", () => {
 
   test("Association lifecycle", async () => {
     const client = ssm();
+    const docName = "BunsaiE2EAssocDoc";
+
+    await client.send(
+      new CreateDocumentCommand({
+        Name: docName,
+        Content: JSON.stringify({ schemaVersion: "2.2" }),
+        DocumentType: "Command",
+      }),
+    );
 
     const created = await client.send(
       new CreateAssociationCommand({
-        Name: "AWS-RunShellScript",
+        Name: docName,
         AssociationName: "BunsaiE2EAssoc",
       }),
     );
     const assocId = created.AssociationDescription?.AssociationId;
     expect(typeof assocId).toBe("string");
-    expect(created.AssociationDescription?.Name).toBe("AWS-RunShellScript");
+    expect(created.AssociationDescription?.Name).toBe(docName);
 
     const described = await client.send(
       new DescribeAssociationCommand({ AssociationId: assocId }),
@@ -155,6 +164,7 @@ describe("ssm e2e", () => {
     expect(described.AssociationDescription?.AssociationId).toBe(assocId);
 
     await client.send(new DeleteAssociationCommand({ AssociationId: assocId }));
+    await client.send(new DeleteDocumentCommand({ Name: docName }));
   });
 
   test("Maintenance Window lifecycle", async () => {
@@ -812,17 +822,26 @@ describe("ssm e2e", () => {
   test("SendCommand and GetCommandInvocation lifecycle", async () => {
     const client = ssm();
     const instanceId = "i-0abcdef1234567890";
+    const docName = "BunsaiE2ESendCmdDoc";
+
+    await client.send(
+      new CreateDocumentCommand({
+        Name: docName,
+        Content: JSON.stringify({ schemaVersion: "2.2" }),
+        DocumentType: "Command",
+      }),
+    );
 
     const sent = await client.send(
       new SendCommandCommand({
-        DocumentName: "AWS-RunShellScript",
+        DocumentName: docName,
         InstanceIds: [instanceId],
         Comment: "e2e-test",
       }),
     );
     const commandId = sent.Command?.CommandId;
     expect(typeof commandId).toBe("string");
-    expect(sent.Command?.DocumentName).toBe("AWS-RunShellScript");
+    expect(sent.Command?.DocumentName).toBe(docName);
 
     const invocation = await client.send(
       new GetCommandInvocationCommand({
@@ -845,5 +864,83 @@ describe("ssm e2e", () => {
     expect(invocations.CommandInvocations?.length).toBeGreaterThan(0);
 
     await client.send(new CancelCommandCommand({ CommandId: commandId! }));
+    await client.send(new DeleteDocumentCommand({ Name: docName }));
+  });
+
+  test("CreatePatchBaseline ClientToken idempotency", async () => {
+    const client = ssm();
+    const token = "e2e-idempotency-token-pb";
+
+    const first = await client.send(
+      new CreatePatchBaselineCommand({
+        Name: "BunsaiE2EIdempotentBaseline",
+        ClientToken: token,
+      }),
+    );
+    const second = await client.send(
+      new CreatePatchBaselineCommand({
+        Name: "BunsaiE2EIdempotentBaseline",
+        ClientToken: token,
+      }),
+    );
+    expect(first.BaselineId).toBe(second.BaselineId);
+
+    await client.send(
+      new DeletePatchBaselineCommand({ BaselineId: first.BaselineId! }),
+    );
+  });
+
+  test("CreateMaintenanceWindow ClientToken idempotency", async () => {
+    const client = ssm();
+    const token = "e2e-idempotency-token-mw";
+
+    const first = await client.send(
+      new CreateMaintenanceWindowCommand({
+        Name: "BunsaiE2EIdempotentWindow",
+        Schedule: "cron(0 0 * * ? *)",
+        Duration: 1,
+        Cutoff: 0,
+        AllowUnassociatedTargets: false,
+        ClientToken: token,
+      }),
+    );
+    const second = await client.send(
+      new CreateMaintenanceWindowCommand({
+        Name: "BunsaiE2EIdempotentWindow",
+        Schedule: "cron(0 0 * * ? *)",
+        Duration: 1,
+        Cutoff: 0,
+        AllowUnassociatedTargets: false,
+        ClientToken: token,
+      }),
+    );
+    expect(first.WindowId).toBe(second.WindowId);
+
+    await client.send(
+      new DeleteMaintenanceWindowCommand({ WindowId: first.WindowId! }),
+    );
+  });
+
+  test("CreateAssociation rejects missing DocumentName", async () => {
+    const client = ssm();
+
+    await expect(
+      client.send(
+        new CreateAssociationCommand({ Name: "NonExistentDoc-e2e-test" }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  test("SendCommand rejects missing DocumentName", async () => {
+    const client = ssm();
+
+    await expect(
+      client.send(
+        new SendCommandCommand({
+          DocumentName: "NonExistentDoc-e2e-test",
+          InstanceIds: ["i-test"],
+        }),
+      ),
+    ).rejects.toThrow();
   });
 });

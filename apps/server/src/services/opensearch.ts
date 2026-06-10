@@ -33,6 +33,7 @@ type StoredApplication = {
   appConfigs: unknown[];
   createdAt: number;
   lastUpdatedAt: number;
+  clientToken?: string;
 };
 
 type StoredPackage = {
@@ -46,6 +47,7 @@ type StoredPackage = {
   availablePackageVersion: string;
   engineVersion: string;
   associatedDomains: string[];
+  arn: string;
 };
 
 type StoredVpcEndpoint = {
@@ -55,6 +57,7 @@ type StoredVpcEndpoint = {
   vpcOptions: Record<string, unknown>;
   status: string;
   endpoint: string;
+  arn: string;
 };
 
 type StoredConnection = {
@@ -98,6 +101,8 @@ const directQueryKey = (name: string): string =>
 const indexKey = (domain: string, name: string): string =>
   `index/${domain}/${name}`;
 const tagKey = (arn: string): string => `tags/${arn}`;
+const clientTokenKey = (token: string): string =>
+  `clientToken/application/${token}`;
 const capabilityKey = (appId: string, cap: string): string =>
   `capability/${appId}/${cap}`;
 const vpcAccessKey = (domain: string): string => `vpcAccess/${domain}`;
@@ -321,6 +326,18 @@ const CreateDomain: OperationHandler = (input, ctx) => {
     advancedOptions: advancedOptionsFromInput(input["AdvancedOptions"]),
   };
   ctx.store.set(domainKey(domainName), domain);
+  const inputTagList = Array.isArray(input["TagList"])
+    ? (input["TagList"] as { Key?: string; Value?: string }[])
+    : [];
+  if (inputTagList.length > 0) {
+    const tags: Record<string, string> = {};
+    for (const tag of inputTagList) {
+      if (tag.Key !== undefined && tag.Value !== undefined) {
+        tags[tag.Key] = tag.Value;
+      }
+    }
+    ctx.store.set(tagKey(domain.arn), tags);
+  }
   return { DomainStatus: domainStatusView(domain) };
 };
 
@@ -371,6 +388,7 @@ const DeleteDomain: OperationHandler = (input, ctx) => {
   }
   const domain = requireDomain(ctx, domainName);
   ctx.store.delete(domainKey(domainName));
+  ctx.store.delete(tagKey(domain.arn));
   return {
     DomainStatus: {
       ...domainStatusView(domain),
@@ -778,7 +796,36 @@ const DescribeInsightDetails: OperationHandler = (input, _ctx) => ({
   UpdatedAt: Math.floor(Date.now() / 1000),
 });
 
+const appTagListFromStore = (
+  arn: string,
+  ctx: { store: { get: <T>(key: string) => T | undefined } },
+): { Key: string; Value: string }[] => {
+  const tags =
+    ctx.store.get<Record<string, string>>(tagKey(arn)) ?? {};
+  return Object.entries(tags).map(([Key, Value]) => ({ Key, Value }));
+};
+
 const CreateApplication: OperationHandler = (input, ctx) => {
+  const clientToken = stringOrUndefined(input["clientToken"]);
+  if (clientToken !== undefined) {
+    const existingId = ctx.store.get<string>(clientTokenKey(clientToken));
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredApplication>(appKey(existingId));
+      if (existing !== undefined) {
+        return {
+          id: existing.id,
+          name: existing.name,
+          arn: existing.arn,
+          dataSources: existing.dataSources,
+          iamIdentityCenterOptions: existing.iamIdentityCenterOptions,
+          appConfigs: existing.appConfigs,
+          tagList: appTagListFromStore(existing.arn, ctx),
+          createdAt: existing.createdAt,
+          kmsKeyArn: undefined,
+        };
+      }
+    }
+  }
   const id = hex(12);
   const name = stringOrUndefined(input["name"]) ?? `app-${id}`;
   const now = Math.floor(Date.now() / 1000);
@@ -796,8 +843,24 @@ const CreateApplication: OperationHandler = (input, ctx) => {
       : [],
     createdAt: now,
     lastUpdatedAt: now,
+    clientToken,
   };
   ctx.store.set(appKey(id), app);
+  if (clientToken !== undefined) {
+    ctx.store.set(clientTokenKey(clientToken), id);
+  }
+  const inputTagList = Array.isArray(input["tagList"])
+    ? (input["tagList"] as { Key?: string; Value?: string }[])
+    : [];
+  if (inputTagList.length > 0) {
+    const tags: Record<string, string> = {};
+    for (const tag of inputTagList) {
+      if (tag.Key !== undefined && tag.Value !== undefined) {
+        tags[tag.Key] = tag.Value;
+      }
+    }
+    ctx.store.set(tagKey(app.arn), tags);
+  }
   return {
     id: app.id,
     name: app.name,
@@ -805,7 +868,7 @@ const CreateApplication: OperationHandler = (input, ctx) => {
     dataSources: app.dataSources,
     iamIdentityCenterOptions: app.iamIdentityCenterOptions,
     appConfigs: app.appConfigs,
-    tagList: [],
+    tagList: appTagListFromStore(app.arn, ctx),
     createdAt: app.createdAt,
     kmsKeyArn: undefined,
   };
@@ -879,7 +942,8 @@ const UpdateApplication: OperationHandler = (input, ctx) => {
 
 const DeleteApplication: OperationHandler = (input, ctx) => {
   const id = stringOrUndefined(input["id"]) ?? "";
-  if (ctx.store.get(appKey(id)) === undefined) {
+  const app = ctx.store.get<StoredApplication>(appKey(id));
+  if (app === undefined) {
     throw awsError(
       "ResourceNotFoundException",
       `Application not found: ${id}`,
@@ -887,6 +951,10 @@ const DeleteApplication: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(appKey(id));
+  ctx.store.delete(tagKey(app.arn));
+  if (app.clientToken !== undefined) {
+    ctx.store.delete(clientTokenKey(app.clientToken));
+  }
   return {};
 };
 
@@ -967,6 +1035,7 @@ const CreatePackage: OperationHandler = (input, ctx) => {
     availablePackageVersion: "1.0.0",
     engineVersion: stringOrUndefined(input["EngineVersion"]) ?? "",
     associatedDomains: [],
+    arn: `arn:aws:es:${ctx.region}:${ctx.account}:packages/${packageId}`,
   };
   ctx.store.set(pkgKey(packageId), pkg);
   return { PackageDetails: packageDetailsView(pkg) };
@@ -983,6 +1052,7 @@ const DeletePackage: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(pkgKey(packageId));
+  ctx.store.delete(tagKey(pkg.arn));
   return {
     PackageDetails: { ...packageDetailsView(pkg), PackageStatus: "DELETING" },
   };
@@ -1206,11 +1276,12 @@ const CreateVpcEndpoint: OperationHandler = (input, ctx) => {
     vpcEndpointOwner: ctx.account,
     domainArn,
     vpcOptions: recordOrEmpty(input["VpcOptions"]),
-    status: "ACTIVE",
+    status: "CREATING",
     endpoint: `${vpcEndpointId}.${ctx.region}.aoss.amazonaws.com`,
+    arn: `arn:aws:es:${ctx.region}:${ctx.account}:vpc-endpoints/${vpcEndpointId}`,
   };
   ctx.store.set(vpcKey(vpcEndpointId), ep);
-  return { VpcEndpoint: vpcEndpointView({ ...ep, status: "CREATING" }) };
+  return { VpcEndpoint: vpcEndpointView(ep) };
 };
 
 const DeleteVpcEndpoint: OperationHandler = (input, ctx) => {
@@ -1223,8 +1294,16 @@ const DeleteVpcEndpoint: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  if (ep.status === "CREATING" || ep.status === "DELETING") {
+    throw awsError(
+      "DisabledOperationException",
+      `VPC endpoint ${vpcEndpointId} cannot be deleted in ${ep.status} state`,
+      409,
+    );
+  }
   ep.status = "DELETING";
   ctx.store.set(vpcKey(vpcEndpointId), ep);
+  ctx.store.delete(tagKey(ep.arn));
   return {
     VpcEndpointSummary: vpcEndpointSummaryView(ep),
   };
@@ -1235,9 +1314,16 @@ const DescribeVpcEndpoints: OperationHandler = (input, ctx) => {
     ? (input["VpcEndpointIds"] as string[])
     : [];
   const endpoints = ids
-    .map((id) => ctx.store.get<StoredVpcEndpoint>(vpcKey(id)))
-    .filter((ep): ep is StoredVpcEndpoint => ep !== undefined)
-    .map(vpcEndpointView);
+    .map((id) => {
+      const ep = ctx.store.get<StoredVpcEndpoint>(vpcKey(id));
+      if (ep === undefined) return undefined;
+      if (ep.status === "CREATING") {
+        ep.status = "ACTIVE";
+        ctx.store.set(vpcKey(id), ep);
+      }
+      return vpcEndpointView(ep);
+    })
+    .filter((ep): ep is Record<string, unknown> => ep !== undefined);
   return { VpcEndpoints: endpoints, VpcEndpointErrors: [] };
 };
 
@@ -1334,8 +1420,8 @@ const CreateOutboundConnection: OperationHandler = (input, ctx) => {
     localDomainInfo: recordOrEmpty(input["LocalDomainInfo"]),
     remoteDomainInfo: recordOrEmpty(input["RemoteDomainInfo"]),
     connectionStatus: {
-      StatusCode: "PENDING_ACCEPTANCE",
-      Message: "Pending acceptance",
+      StatusCode: "VALIDATING",
+      Message: "Validating connection",
     },
     connectionMode: stringOrUndefined(input["ConnectionMode"]) ?? "DIRECT",
     connectionAlias: stringOrUndefined(input["ConnectionAlias"]) ?? "",
@@ -1403,8 +1489,19 @@ const DescribeOutboundConnections: OperationHandler = (input, ctx) => {
       }
     }
   }
+  const transitioned = conns.map((conn) => {
+    const status = conn.connectionStatus as Record<string, unknown>;
+    if (status["StatusCode"] === "VALIDATING") {
+      conn.connectionStatus = {
+        StatusCode: "PENDING_ACCEPTANCE",
+        Message: "Pending acceptance",
+      };
+      ctx.store.set(outboundKey(conn.connectionId), conn);
+    }
+    return outboundConnectionView(conn);
+  });
   return {
-    Connections: conns.map(outboundConnectionView),
+    Connections: transitioned,
     NextToken: undefined,
   };
 };

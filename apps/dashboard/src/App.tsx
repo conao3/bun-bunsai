@@ -150,30 +150,43 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
-    const load = () => {
-      void fetchServices().then((s) => {
-        if (!cancelled) {
-          setServices(s);
+    let timer: ReturnType<typeof setTimeout>;
+    let delay = 4000;
+    const POLL_MAX = 30000;
+
+    const poll = () => {
+      Promise.all([fetchServices(), fetchResources()])
+        .then(([svcs, res]) => {
+          if (cancelled) return;
+          setServices(svcs);
+          setResources(res);
           setConnected(true);
-        }
-      });
-      void fetchResources().then((r) => {
-        if (!cancelled) setResources(r);
-      });
+          delay = 4000;
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setConnected(false);
+          delay = Math.min(delay * 2, POLL_MAX);
+        })
+        .finally(() => {
+          if (!cancelled) timer = setTimeout(poll, delay);
+        });
     };
-    load();
-    const timer = setInterval(load, 4000);
+
+    poll();
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    void fetchLogs().then((rows) => {
-      if (!cancelled && rows.length) setRequests(rows.slice(-maxLogs));
-    });
+    void fetchLogs()
+      .then((rows) => {
+        if (!cancelled && rows.length) setRequests(rows.slice(-maxLogs));
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -192,7 +205,9 @@ export function App() {
             : next;
         });
       },
-      () => {},
+      () => {
+        setConnected(false);
+      },
     );
     return close;
   }, []);

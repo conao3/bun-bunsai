@@ -125,13 +125,19 @@ test("CreateStateMachineAlias idempotency: same params returns existing resource
   ];
 
   const first = await client.send(
-    new CreateStateMachineAliasCommand({ name: aliasName, routingConfiguration }),
+    new CreateStateMachineAliasCommand({
+      name: aliasName,
+      routingConfiguration,
+    }),
   );
   expect(first.stateMachineAliasArn).toContain(aliasName);
   const aliasArn = first.stateMachineAliasArn ?? "";
 
   const second = await client.send(
-    new CreateStateMachineAliasCommand({ name: aliasName, routingConfiguration }),
+    new CreateStateMachineAliasCommand({
+      name: aliasName,
+      routingConfiguration,
+    }),
   );
   expect(second.stateMachineAliasArn).toBe(aliasArn);
   expect(second.creationDate).toEqual(first.creationDate);
@@ -157,7 +163,10 @@ test("CreateStateMachineAlias idempotency: different routingConfiguration throws
   ];
 
   await client.send(
-    new CreateStateMachineAliasCommand({ name: aliasName, routingConfiguration }),
+    new CreateStateMachineAliasCommand({
+      name: aliasName,
+      routingConfiguration,
+    }),
   );
 
   await expect(

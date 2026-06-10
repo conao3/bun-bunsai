@@ -72,6 +72,7 @@ export function App() {
 
   const liveRef = useRef(live);
   liveRef.current = live;
+  const pendingRef = useRef<RequestLogEntry[]>([]);
 
   const screen: Screen = route ? route.screen : "log";
   const selId = route && route.screen === "log" ? route.requestId : null;
@@ -225,21 +226,41 @@ export function App() {
   useEffect(() => {
     const close = openLogStream(
       (entry) => {
-        if (!liveRef.current) return;
         setConnected(true);
-        setRequests((prev) => {
-          if (prev.some((r) => r.id === entry.id)) return prev;
-          const next = [...prev, entry];
-          return next.length > maxLogs
-            ? next.slice(next.length - maxLogs)
-            : next;
-        });
+        pendingRef.current.push(entry);
       },
       () => {
         setConnected(false);
       },
     );
     return close;
+  }, []);
+
+  useEffect(() => {
+    let rafId: number;
+    const flush = () => {
+      if (liveRef.current && pendingRef.current.length > 0) {
+        const batch = pendingRef.current.splice(0);
+        setRequests((prev) => {
+          const seen = new Set(prev.map((r) => r.id));
+          const fresh: RequestLogEntry[] = [];
+          for (const e of batch) {
+            if (!seen.has(e.id)) {
+              seen.add(e.id);
+              fresh.push(e);
+            }
+          }
+          if (!fresh.length) return prev;
+          const next = [...prev, ...fresh];
+          return next.length > maxLogs
+            ? next.slice(next.length - maxLogs)
+            : next;
+        });
+      }
+      rafId = requestAnimationFrame(flush);
+    };
+    rafId = requestAnimationFrame(flush);
+    return () => cancelAnimationFrame(rafId);
   }, []);
 
   const clearRequests = useCallback(() => setRequests([]), []);

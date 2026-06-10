@@ -238,8 +238,7 @@ const storeTags = (
   rawTags: unknown,
 ): void => {
   if (!Array.isArray(rawTags)) return;
-  const existing =
-    ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
+  const existing = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
   for (const tag of rawTags) {
     if (typeof tag !== "object" || tag === null) continue;
     const t = tag as Record<string, unknown>;
@@ -594,9 +593,7 @@ const DescribeAlarms: OperationHandler = (input, ctx) => {
     input["MaxRecords"],
   );
   return {
-    MetricAlarms: paged
-      .filter((x) => x.kind === "metric")
-      .map((x) => x.item),
+    MetricAlarms: paged.filter((x) => x.kind === "metric").map((x) => x.item),
     CompositeAlarms: paged
       .filter((x) => x.kind === "composite")
       .map((x) => x.item),

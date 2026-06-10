@@ -312,7 +312,9 @@ test("NetworkManager core network create/get/policy", async () => {
   );
   expect(policy.CoreNetworkPolicy?.PolicyVersionId).toBeDefined();
 
-  await client.send(new DeleteCoreNetworkCommand({ CoreNetworkId: cnId ?? "" }));
+  await client.send(
+    new DeleteCoreNetworkCommand({ CoreNetworkId: cnId ?? "" }),
+  );
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
 
@@ -353,9 +355,7 @@ test("NetworkManager VPC attachment create/accept/get", async () => {
   const allAtts = await client.send(new ListAttachmentsCommand({}));
   expect(allAtts.Attachments?.some((a) => a.AttachmentId === attId)).toBe(true);
 
-  await client.send(
-    new DeleteAttachmentCommand({ AttachmentId: attId ?? "" }),
-  );
+  await client.send(new DeleteAttachmentCommand({ AttachmentId: attId ?? "" }));
   await client.send(new DeleteCoreNetworkCommand({ CoreNetworkId: cnId }));
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
@@ -468,7 +468,9 @@ test("NetworkManager GetSites SiteIds filter and pagination", async () => {
   expect(page2.NextToken).toBeUndefined();
 
   for (const sid of [sid1, sid2, sid3]) {
-    await client.send(new DeleteSiteCommand({ GlobalNetworkId: gid, SiteId: sid }));
+    await client.send(
+      new DeleteSiteCommand({ GlobalNetworkId: gid, SiteId: sid }),
+    );
   }
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });
@@ -695,8 +697,12 @@ test("NetworkManager DeleteGlobalNetwork rejects when child resources exist", as
     client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid })),
   ).rejects.toThrow();
 
-  const sites = await client.send(new GetSitesCommand({ GlobalNetworkId: gid }));
+  const sites = await client.send(
+    new GetSitesCommand({ GlobalNetworkId: gid }),
+  );
   const sid = sites.Sites?.[0]?.SiteId ?? "";
-  await client.send(new DeleteSiteCommand({ GlobalNetworkId: gid, SiteId: sid }));
+  await client.send(
+    new DeleteSiteCommand({ GlobalNetworkId: gid, SiteId: sid }),
+  );
   await client.send(new DeleteGlobalNetworkCommand({ GlobalNetworkId: gid }));
 });

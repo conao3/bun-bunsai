@@ -1380,7 +1380,8 @@ const CreateCoreNetwork: OperationHandler = (input, ctx) => {
       const existing = ctx.store.get<StoredCoreNetwork>(
         coreNetworkKey(existingId),
       );
-      if (existing !== undefined) return { CoreNetwork: coreNetworkView(existing) };
+      if (existing !== undefined)
+        return { CoreNetwork: coreNetworkView(existing) };
     }
   }
   const cnId = `core-network-${shortId().slice(0, 10)}`;
@@ -1399,8 +1400,7 @@ const CreateCoreNetwork: OperationHandler = (input, ctx) => {
     PolicyVersionCounter: 0,
   };
   ctx.store.set(coreNetworkKey(cnId), cn);
-  if (cn.Tags.length > 0)
-    ctx.store.set(tagsKey(cn.CoreNetworkArn), cn.Tags);
+  if (cn.Tags.length > 0) ctx.store.set(tagsKey(cn.CoreNetworkArn), cn.Tags);
   if (token !== undefined)
     ctx.store.set(idempotencyKey("core-network", token), cnId);
   return { CoreNetwork: coreNetworkView(cn) };
@@ -1926,10 +1926,9 @@ const CreateTransitGatewayRouteTableAttachment: OperationHandler = (
       idempotencyKey("tgwrt-attachment", token),
     );
     if (existingId !== undefined) {
-      const existing =
-        ctx.store.get<StoredTransitGatewayRouteTableAttachment>(
-          attachmentKey(existingId),
-        );
+      const existing = ctx.store.get<StoredTransitGatewayRouteTableAttachment>(
+        attachmentKey(existingId),
+      );
       if (existing !== undefined)
         return {
           TransitGatewayRouteTableAttachment: {
@@ -1955,10 +1954,7 @@ const CreateTransitGatewayRouteTableAttachment: OperationHandler = (
   };
   ctx.store.set(attachmentKey(att.AttachmentId), att);
   if (token !== undefined)
-    ctx.store.set(
-      idempotencyKey("tgwrt-attachment", token),
-      att.AttachmentId,
-    );
+    ctx.store.set(idempotencyKey("tgwrt-attachment", token), att.AttachmentId);
   return {
     TransitGatewayRouteTableAttachment: {
       Attachment: attachmentBaseView(att),
@@ -2032,10 +2028,7 @@ const CreateDirectConnectGatewayAttachment: OperationHandler = (input, ctx) => {
   };
   ctx.store.set(attachmentKey(att.AttachmentId), att);
   if (token !== undefined)
-    ctx.store.set(
-      idempotencyKey("dcgw-attachment", token),
-      att.AttachmentId,
-    );
+    ctx.store.set(idempotencyKey("dcgw-attachment", token), att.AttachmentId);
   return {
     DirectConnectGatewayAttachment: {
       Attachment: attachmentBaseView(att),
@@ -2149,7 +2142,8 @@ const CreateConnectPeer: OperationHandler = (input, ctx) => {
       const existing = ctx.store.get<StoredConnectPeer>(
         connectPeerKey(existingId),
       );
-      if (existing !== undefined) return { ConnectPeer: connectPeerView(existing) };
+      if (existing !== undefined)
+        return { ConnectPeer: connectPeerView(existing) };
     }
   }
   const cpId = `connect-peer-${shortId().slice(0, 10)}`;

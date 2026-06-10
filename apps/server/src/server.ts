@@ -4,7 +4,7 @@ import { createRequestLog, recordLog } from "./core/log.ts";
 import { buildParsedRequest, routeRequest } from "./core/router.ts";
 import { createStateStore } from "./core/state.ts";
 import type { Protocol } from "./core/types.ts";
-import { handleManagement } from "./management/api.ts";
+import { createSnapshotRegistry, handleManagement } from "./management/api.ts";
 import { findService } from "./services/index.ts";
 import { virtualHostBucket } from "./services/s3.ts";
 import { handleCognitoDiscovery } from "./services/cognito-idp.ts";
@@ -22,6 +22,7 @@ const bodyTextForLog = (body: string | Uint8Array): string => {
 export function createBunsaiApp() {
   const store = createStateStore();
   const log = createRequestLog();
+  const snapshots = createSnapshotRegistry();
 
   const gatewayFetch = async (req: Request): Promise<Response> => {
     const start = performance.now();
@@ -141,9 +142,9 @@ export function createBunsaiApp() {
     });
   };
 
-  const managementFetch = (req: Request): Response => {
+  const managementFetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
-    const managed = handleManagement(req, url, { store, log });
+    const managed = await handleManagement(req, url, { store, log, snapshots });
     return managed ?? new Response("not found", { status: 404 });
   };
 

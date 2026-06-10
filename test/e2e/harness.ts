@@ -24,7 +24,7 @@ export type TestApp = {
     updateHttpClientConfig(): void;
     httpHandlerConfigs(): Record<string, never>;
   };
-  uiFetch(path: string): Promise<Response>;
+  uiFetch(path: string, init?: RequestInit): Promise<Response>;
   gwFetch(url: string, init?: RequestInit): Promise<Response>;
 };
 
@@ -72,9 +72,9 @@ export function startApp(): TestApp {
         return {};
       },
     },
-    uiFetch(path) {
+    uiFetch(path, init) {
       return Promise.resolve(
-        app.managementFetch(new Request(`${origin}${path}`)),
+        app.managementFetch(new Request(`${origin}${path}`, init)),
       );
     },
     gwFetch(url, init) {

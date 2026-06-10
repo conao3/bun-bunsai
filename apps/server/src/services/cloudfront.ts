@@ -253,7 +253,9 @@ const isCachePolicyInUse = (ctx: ServiceContext, policyId: string): boolean =>
     const dcb = asRecord(dist.config["DefaultCacheBehavior"]);
     if (dcb["CachePolicyId"] === policyId) return true;
     const cbs = asRecord(dist.config["CacheBehaviors"]);
-    const items = Array.isArray(cbs["Items"]) ? (cbs["Items"] as unknown[]) : [];
+    const items = Array.isArray(cbs["Items"])
+      ? (cbs["Items"] as unknown[])
+      : [];
     return items.some((item) => asRecord(item)["CachePolicyId"] === policyId);
   });
 

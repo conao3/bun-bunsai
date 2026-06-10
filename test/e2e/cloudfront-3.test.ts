@@ -28,9 +28,7 @@ const disableAndDelete = async (
   client: CloudFrontClient,
   id: string,
 ): Promise<void> => {
-  const cfg = await client.send(
-    new GetDistributionConfigCommand({ Id: id }),
-  );
+  const cfg = await client.send(new GetDistributionConfigCommand({ Id: id }));
   await client.send(
     new UpdateDistributionCommand({
       Id: id,

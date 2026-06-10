@@ -65,7 +65,9 @@ test("HIGH-9: DeleteDistribution with Enabled=true → DistributionNotDisabled 4
   const callerRef = `del-enabled-${Date.now()}`;
 
   const created = await client.send(
-    new CreateDistributionCommand({ DistributionConfig: baseConfig(callerRef) }),
+    new CreateDistributionCommand({
+      DistributionConfig: baseConfig(callerRef),
+    }),
   );
   const id = created.Distribution?.Id!;
 

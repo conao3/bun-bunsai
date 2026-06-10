@@ -570,6 +570,7 @@ const ConfigureLogsForPlaybackConfiguration: OperationHandler = (
 const CreateChannel: OperationHandler = (input, ctx) => {
   const channelName = requireString(input, "ChannelName");
   const t = now();
+  const tags = stringRecordOrUndefined(input["Tags"]);
   const channel: StoredChannel = {
     Arn: channelArn(ctx, channelName),
     ChannelName: channelName,
@@ -579,19 +580,35 @@ const CreateChannel: OperationHandler = (input, ctx) => {
     LastModifiedTime: t,
     Outputs: arrayOrEmpty(input["Outputs"]),
     PlaybackMode: requireString(input, "PlaybackMode"),
-    Tags: stringRecordOrUndefined(input["Tags"]),
+    Tags: tags,
     Tier: stringOrUndefined(input["Tier"]),
     TimeShiftConfiguration: recordOrUndefined(input["TimeShiftConfiguration"]),
     Audiences: stringArrayOrUndefined(input["Audiences"]),
   };
   ctx.store.set(channelKey(channelName), channel);
+  if (tags !== undefined) {
+    ctx.store.set(tagsKey(channel.Arn), tags as Record<string, string>);
+  }
   return channelView(channel);
 };
 
 const DeleteChannel: OperationHandler = (input, ctx) => {
   const channelName = requireString(input, "ChannelName");
-  requireChannel(ctx, channelName);
+  const channel = requireChannel(ctx, channelName);
+  const hasPrograms = ctx.store
+    .list()
+    .some((e) => e.key.startsWith(`${programPrefix}${channelName}:`));
+  if (hasPrograms) {
+    throw awsError(
+      "ResourceInUseException",
+      `Channel ${channelName} has associated programs. Delete them before deleting the channel.`,
+      409,
+    );
+  }
   ctx.store.delete(channelKey(channelName));
+  ctx.store.delete(tagsKey(channel.Arn));
+  ctx.store.delete(`${channelLogsPrefix}${channelName}`);
+  ctx.store.delete(`${channelPolicyPrefix}${channelName}`);
   return {};
 };
 
@@ -830,8 +847,22 @@ const CreateSourceLocation: OperationHandler = (input, ctx) => {
 
 const DeleteSourceLocation: OperationHandler = (input, ctx) => {
   const sourceLocationName = requireString(input, "SourceLocationName");
-  requireSourceLocation(ctx, sourceLocationName);
+  const sl = requireSourceLocation(ctx, sourceLocationName);
+  const hasLiveSources = ctx.store
+    .list()
+    .some((e) => e.key.startsWith(`${liveSourcePrefix}${sourceLocationName}:`));
+  const hasVodSources = ctx.store
+    .list()
+    .some((e) => e.key.startsWith(`${vodSourcePrefix}${sourceLocationName}:`));
+  if (hasLiveSources || hasVodSources) {
+    throw awsError(
+      "ResourceInUseException",
+      `Source location ${sourceLocationName} has associated sources. Delete them before deleting the source location.`,
+      409,
+    );
+  }
   ctx.store.delete(sourceLocationKey(sourceLocationName));
+  ctx.store.delete(tagsKey(sl.Arn));
   return {};
 };
 
@@ -1114,8 +1145,23 @@ const GetFunction: OperationHandler = (input, ctx) => {
 
 const DeleteFunction: OperationHandler = (input, ctx) => {
   const functionId = requireString(input, "FunctionId");
-  requireFunction(ctx, functionId);
+  const fn = requireFunction(ctx, functionId);
+  const referencedByConfig = ctx.store
+    .list<StoredConfiguration>()
+    .some(
+      (e) =>
+        e.key.startsWith(configurationPrefix) &&
+        JSON.stringify(e.value).includes(fn.Arn),
+    );
+  if (referencedByConfig) {
+    throw awsError(
+      "ResourceInUseException",
+      `Function ${functionId} is referenced by a playback configuration. Update the configuration before deleting the function.`,
+      409,
+    );
+  }
   ctx.store.delete(functionKey(functionId));
+  ctx.store.delete(tagsKey(fn.Arn));
   return {};
 };
 

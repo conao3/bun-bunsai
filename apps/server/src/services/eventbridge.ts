@@ -228,6 +228,7 @@ const PutRule: OperationHandler = (input, ctx) => {
     targets: existing?.targets ?? {},
   };
   ctx.store.set(key, rule);
+  applyInputTags(ctx, arn, input);
   cancelScheduleTimer(key);
   if (rule.State === "ENABLED" && rule.ScheduleExpression !== undefined) {
     startScheduleTimer(key, rule.ScheduleExpression, ctx);
@@ -238,8 +239,17 @@ const PutRule: OperationHandler = (input, ctx) => {
 const DeleteRule: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   const busName = busNameOf(input);
-  cancelScheduleTimer(ruleKey(busName, name));
-  ctx.store.delete(ruleKey(busName, name));
+  const key = ruleKey(busName, name);
+  const rule = ctx.store.get<StoredRule>(key);
+  if (rule !== undefined && Object.keys(rule.targets).length > 0) {
+    throw awsError(
+      "ResourceInUseException",
+      `Rule ${name} has targets. Remove all targets before deleting the rule.`,
+      400,
+    );
+  }
+  cancelScheduleTimer(key);
+  ctx.store.delete(key);
   return {};
 };
 
@@ -656,6 +666,7 @@ const CreateEventBus: OperationHandler = (input, ctx) => {
     LastModifiedTime: now,
   };
   ctx.store.set(key, bus);
+  applyInputTags(ctx, arn, input);
   return {
     EventBusArn: arn,
     Description: bus.Description,
@@ -711,6 +722,16 @@ const ListEventBuses: OperationHandler = (input, ctx) => {
 
 const DeleteEventBus: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
+  const hasRules = ctx.store
+    .list<StoredRule>()
+    .some((entry) => entry.value.EventBusName === name);
+  if (hasRules) {
+    throw awsError(
+      "ResourceInUseException",
+      `Event bus ${name} has existing rules. Delete all rules before deleting the event bus.`,
+      400,
+    );
+  }
   ctx.store.delete(busStoreKey(name));
   return {};
 };
@@ -1133,6 +1154,11 @@ const CreateApiDestination: OperationHandler = (input, ctx) => {
       409,
     );
   }
+  const connectionArn = requireString(input, "ConnectionArn");
+  const connectionName = connectionArn.slice(
+    connectionArn.lastIndexOf("/") + 1,
+  );
+  requireConnection(ctx, connectionName);
   const arn = apiDestArnOf(ctx, name);
   const now = Date.now();
   const rateLimit = input["InvocationRateLimitPerSecond"];
@@ -1141,7 +1167,7 @@ const CreateApiDestination: OperationHandler = (input, ctx) => {
     ApiDestinationArn: arn,
     Description: stringOrUndefined(input["Description"]),
     ApiDestinationState: "ACTIVE",
-    ConnectionArn: requireString(input, "ConnectionArn"),
+    ConnectionArn: connectionArn,
     InvocationEndpoint: requireString(input, "InvocationEndpoint"),
     HttpMethod: requireString(input, "HttpMethod"),
     InvocationRateLimitPerSecond:
@@ -1979,6 +2005,25 @@ const ListReplays: OperationHandler = (input, ctx) => {
 
 const tagsPrefix = "tags#";
 const tagsStoreKey = (arn: string): string => `${tagsPrefix}${arn}`;
+
+const applyInputTags = (
+  ctx: ServiceContext,
+  arn: string,
+  input: Record<string, unknown>,
+): void => {
+  const tags = Array.isArray(input["Tags"])
+    ? (input["Tags"] as Record<string, unknown>[])
+    : [];
+  if (tags.length === 0) return;
+  const key = tagsStoreKey(arn);
+  const existing = ctx.store.get<Record<string, string>>(key) ?? {};
+  for (const tag of tags) {
+    const k = stringOrUndefined(tag["Key"]);
+    const v = stringOrUndefined(tag["Value"]);
+    if (k !== undefined && v !== undefined) existing[k] = v;
+  }
+  ctx.store.set(key, existing);
+};
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceARN");

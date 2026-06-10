@@ -1,3 +1,4 @@
+import type { DistributionConfig } from "@aws-sdk/client-cloudfront";
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
@@ -54,7 +55,7 @@ const disableAndDelete = async (client: CloudFrontClient, id: string) => {
     new UpdateDistributionCommand({
       Id: id,
       IfMatch: cfg.ETag,
-      DistributionConfig: { ...cfg.DistributionConfig, Enabled: false },
+      DistributionConfig: { ...cfg.DistributionConfig, Enabled: false } as DistributionConfig,
     }),
   );
   await client.send(new DeleteDistributionCommand({ Id: id }));

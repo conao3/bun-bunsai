@@ -178,12 +178,19 @@ export function App() {
   );
 
   useEffect(() => {
-    const path = route === null || loc.path === "/" ? "/log" : loc.path;
-    const next = new URLSearchParams(loc.query);
+    const snap = router.getSnapshot();
+    const qIdx = snap.indexOf("?");
+    const snapPath = qIdx === -1 ? snap : snap.slice(0, qIdx);
+    const snapQuery = new URLSearchParams(
+      qIdx === -1 ? "" : snap.slice(qIdx + 1),
+    );
+    const normPath =
+      parseRoute(snapPath) === null || snapPath === "/" ? "/log" : snapPath;
+    const next = new URLSearchParams(snapQuery);
     if (!next.has("account")) next.set("account", scope.account);
     if (!next.has("region")) next.set("region", scope.region);
-    const url = withQuery(path, next);
-    if (url !== router.getSnapshot()) router.replace(url);
+    const url = withQuery(normPath, next);
+    if (url !== snap) router.replace(url);
   }, [route, loc.path, loc.query, scope.account, scope.region]);
 
   useEffect(() => {

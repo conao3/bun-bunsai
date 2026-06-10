@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ResourceEntry } from "./api";
+import { decideAutoSelect } from "./autoSelect";
+import type { Selection } from "./autoSelect";
 import { useLocation } from "./router";
 import {
   CodeBlock,
@@ -321,7 +323,6 @@ function SecretsManagerDetail({ value }: { value: SecretShape }) {
 }
 
 type Scope = { account: string; region: string };
-type Selection = { service: string; key: string };
 
 function ResourceTree({
   scope,
@@ -515,28 +516,9 @@ export function ResourceBrowser({
 
   useEffect(() => {
     if (!loaded) return;
-    if (
-      sel &&
-      scoped.some((e) => e.service === sel.service && e.key === sel.key)
-    )
-      return;
-    if (sel && scoped.length === 0) return;
-    if (svcHint && scoped.length === 0) return;
-    if (svcHint) {
-      const svcResources = scoped.filter((e) => e.service === svcHint);
-      if (svcResources.length > 0) {
-        onSelectRef.current(
-          { service: svcResources[0].service, key: svcResources[0].key },
-          true,
-        );
-        return;
-      }
-    }
-    const first = scoped[0];
-    onSelectRef.current(
-      first ? { service: first.service, key: first.key } : null,
-      true,
-    );
+    const next = decideAutoSelect(sel, scoped, svcHint);
+    if (next === null) return;
+    onSelectRef.current(next, true);
   }, [scoped, sel, loaded, svcHint]);
 
   const selEntry = sel

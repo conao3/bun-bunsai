@@ -26,6 +26,7 @@ type StoredCluster = {
   certificateAuthority: Record<string, unknown>;
   identity: Record<string, unknown>;
   connectorConfig: Record<string, unknown> | undefined;
+  clientRequestToken: string | undefined;
 };
 
 type StoredNodegroup = {
@@ -46,6 +47,7 @@ type StoredNodegroup = {
   labels: Record<string, string>;
   diskSize: number | undefined;
   tags: Record<string, string>;
+  clientRequestToken: string | undefined;
 };
 
 type StoredFargateProfile = {
@@ -59,6 +61,7 @@ type StoredFargateProfile = {
   status: string;
   tags: Record<string, string>;
   health: Record<string, unknown>;
+  clientRequestToken: string | undefined;
 };
 
 type StoredAddon = {
@@ -73,6 +76,7 @@ type StoredAddon = {
   serviceAccountRoleArn: string | undefined;
   tags: Record<string, string>;
   configurationValues: string | undefined;
+  clientRequestToken: string | undefined;
 };
 
 type StoredAccessEntry = {
@@ -86,6 +90,7 @@ type StoredAccessEntry = {
   username: string;
   type: string;
   accessPolicies: StoredAssociatedAccessPolicy[];
+  clientRequestToken: string | undefined;
 };
 
 type StoredAssociatedAccessPolicy = {
@@ -108,6 +113,7 @@ type StoredPodIdentityAssociation = {
   disableSessionTags: boolean | undefined;
   targetRoleArn: string | undefined;
   policy: string | undefined;
+  clientRequestToken: string | undefined;
 };
 
 type StoredIdentityProviderConfig = {
@@ -189,6 +195,7 @@ type StoredCapability = {
   createdAt: number;
   modifiedAt: number;
   deletePropagationPolicy: string | undefined;
+  clientRequestToken: string | undefined;
 };
 
 const clusterKey = (name: string): string => `cluster/${name}`;
@@ -522,7 +529,15 @@ const storeUpdate = (
 const CreateCluster: OperationHandler = (input, ctx) => {
   const name = requireString(input, "name");
   const roleArn = requireString(input, "roleArn");
-  if (ctx.store.get<StoredCluster>(clusterKey(name)) !== undefined) {
+  const clientRequestToken = stringOrUndefined(input["clientRequestToken"]);
+  const existingCluster = ctx.store.get<StoredCluster>(clusterKey(name));
+  if (existingCluster !== undefined) {
+    if (
+      clientRequestToken !== undefined &&
+      existingCluster.clientRequestToken === clientRequestToken
+    ) {
+      return { cluster: clusterView(existingCluster) };
+    }
     throw awsError(
       "ResourceInUseException",
       `Cluster already exists with name: ${name}.`,
@@ -546,6 +561,7 @@ const CreateCluster: OperationHandler = (input, ctx) => {
     certificateAuthority: { data: btoa(`bunsai-ca-${name}`) },
     identity: { oidc: { issuer: endpointOf(ctx, id) } },
     connectorConfig: undefined,
+    clientRequestToken,
   };
   ctx.store.set(clusterKey(name), cluster);
   return { cluster: clusterView(cluster) };
@@ -616,11 +632,18 @@ const CreateNodegroup: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   const nodegroupName = requireString(input, "nodegroupName");
   const nodeRole = requireString(input, "nodeRole");
+  const clientRequestToken = stringOrUndefined(input["clientRequestToken"]);
   requireCluster(ctx, clusterName);
-  if (
-    ctx.store.get<StoredNodegroup>(nodegroupKey(clusterName, nodegroupName)) !==
-    undefined
-  ) {
+  const existing = ctx.store.get<StoredNodegroup>(
+    nodegroupKey(clusterName, nodegroupName),
+  );
+  if (existing !== undefined) {
+    if (
+      clientRequestToken !== undefined &&
+      existing.clientRequestToken === clientRequestToken
+    ) {
+      return { nodegroup: nodegroupView(existing) };
+    }
     throw awsError(
       "ResourceInUseException",
       `NodeGroup already exists with name ${nodegroupName} and cluster name ${clusterName}.`,
@@ -650,6 +673,7 @@ const CreateNodegroup: OperationHandler = (input, ctx) => {
     labels: stringMapFrom(input["labels"]),
     diskSize: numberOrUndefined(input["diskSize"]) ?? 20,
     tags: stringMapFrom(input["tags"]),
+    clientRequestToken,
   };
   ctx.store.set(nodegroupKey(clusterName, nodegroupName), nodegroup);
   return { nodegroup: nodegroupView(nodegroup) };
@@ -786,12 +810,18 @@ const CreateFargateProfile: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   const fargateProfileName = requireString(input, "fargateProfileName");
   const podExecutionRoleArn = requireString(input, "podExecutionRoleArn");
+  const clientRequestToken = stringOrUndefined(input["clientRequestToken"]);
   requireCluster(ctx, clusterName);
-  if (
-    ctx.store.get<StoredFargateProfile>(
-      fargateKey(clusterName, fargateProfileName),
-    ) !== undefined
-  ) {
+  const existing = ctx.store.get<StoredFargateProfile>(
+    fargateKey(clusterName, fargateProfileName),
+  );
+  if (existing !== undefined) {
+    if (
+      clientRequestToken !== undefined &&
+      existing.clientRequestToken === clientRequestToken
+    ) {
+      return { fargateProfile: fargateProfileView(existing) };
+    }
     throw awsError(
       "ResourceInUseException",
       `FargateProfile already exists with name ${fargateProfileName} and cluster name ${clusterName}.`,
@@ -809,6 +839,7 @@ const CreateFargateProfile: OperationHandler = (input, ctx) => {
     status: "CREATING",
     tags: stringMapFrom(input["tags"]),
     health: { issues: [] },
+    clientRequestToken,
   };
   ctx.store.set(fargateKey(clusterName, fargateProfileName), profile);
   return { fargateProfile: fargateProfileView(profile) };
@@ -880,10 +911,16 @@ const DeleteFargateProfile: OperationHandler = (input, ctx) => {
 const CreateAddon: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   const addonName = requireString(input, "addonName");
+  const clientRequestToken = stringOrUndefined(input["clientRequestToken"]);
   requireCluster(ctx, clusterName);
-  if (
-    ctx.store.get<StoredAddon>(addonKey(clusterName, addonName)) !== undefined
-  ) {
+  const existing = ctx.store.get<StoredAddon>(addonKey(clusterName, addonName));
+  if (existing !== undefined) {
+    if (
+      clientRequestToken !== undefined &&
+      existing.clientRequestToken === clientRequestToken
+    ) {
+      return { addon: addonView(existing) };
+    }
     throw awsError(
       "ResourceInUseException",
       `Addon already exists with name ${addonName} and cluster name ${clusterName}.`,
@@ -904,6 +941,7 @@ const CreateAddon: OperationHandler = (input, ctx) => {
     serviceAccountRoleArn: stringOrUndefined(input["serviceAccountRoleArn"]),
     tags: stringMapFrom(input["tags"]),
     configurationValues: stringOrUndefined(input["configurationValues"]),
+    clientRequestToken,
   };
   ctx.store.set(addonKey(clusterName, addonName), addon);
   return { addon: addonView(addon) };
@@ -1065,12 +1103,18 @@ const DescribeAddonConfiguration: OperationHandler = (input, _ctx) => {
 const CreateAccessEntry: OperationHandler = (input, ctx) => {
   const clusterName = requireString(input, "clusterName");
   const principalArn = requireString(input, "principalArn");
+  const clientRequestToken = stringOrUndefined(input["clientRequestToken"]);
   requireCluster(ctx, clusterName);
-  if (
-    ctx.store.get<StoredAccessEntry>(
-      accessEntryKey(clusterName, principalArn),
-    ) !== undefined
-  ) {
+  const existing = ctx.store.get<StoredAccessEntry>(
+    accessEntryKey(clusterName, principalArn),
+  );
+  if (existing !== undefined) {
+    if (
+      clientRequestToken !== undefined &&
+      existing.clientRequestToken === clientRequestToken
+    ) {
+      return { accessEntry: accessEntryView(existing) };
+    }
     throw awsError(
       "ResourceInUseException",
       `Access entry already exists for principal: ${principalArn}.`,
@@ -1089,6 +1133,7 @@ const CreateAccessEntry: OperationHandler = (input, ctx) => {
     username: stringOrUndefined(input["username"]) ?? "",
     type: stringOrUndefined(input["type"]) ?? "STANDARD",
     accessPolicies: [],
+    clientRequestToken,
   };
   ctx.store.set(accessEntryKey(clusterName, principalArn), entry);
   return { accessEntry: accessEntryView(entry) };
@@ -1285,7 +1330,20 @@ const CreatePodIdentityAssociation: OperationHandler = (input, ctx) => {
   const namespace = requireString(input, "namespace");
   const serviceAccount = requireString(input, "serviceAccount");
   const roleArn = requireString(input, "roleArn");
+  const clientRequestToken = stringOrUndefined(input["clientRequestToken"]);
   requireCluster(ctx, clusterName);
+  if (clientRequestToken !== undefined) {
+    const prior = ctx.store
+      .list<StoredPodIdentityAssociation>()
+      .find(
+        (e) =>
+          e.key.startsWith(`pod-identity/${clusterName}/`) &&
+          e.value.clientRequestToken === clientRequestToken,
+      );
+    if (prior !== undefined) {
+      return { association: podIdentityView(prior.value) };
+    }
+  }
   const associationId = crypto.randomUUID();
   const at = nowSeconds();
   const assoc: StoredPodIdentityAssociation = {
@@ -1301,6 +1359,7 @@ const CreatePodIdentityAssociation: OperationHandler = (input, ctx) => {
     disableSessionTags: boolOrUndefined(input["disableSessionTags"]),
     targetRoleArn: stringOrUndefined(input["targetRoleArn"]),
     policy: stringOrUndefined(input["policy"]),
+    clientRequestToken,
   };
   ctx.store.set(podIdentityKey(clusterName, associationId), assoc);
   return { association: podIdentityView(assoc) };
@@ -1632,6 +1691,7 @@ const RegisterCluster: OperationHandler = (input, ctx) => {
       provider: stringOrUndefined(connectorConfig["provider"]) ?? "OTHER",
       roleArn: stringOrUndefined(connectorConfig["roleArn"]) ?? "",
     },
+    clientRequestToken: undefined,
   };
   ctx.store.set(clusterKey(name), cluster);
   return { cluster: clusterView(cluster) };
@@ -1740,7 +1800,24 @@ const CreateCapability: OperationHandler = (input, ctx) => {
     input,
     "deletePropagationPolicy",
   );
+  const clientRequestToken = stringOrUndefined(input["clientRequestToken"]);
   requireCluster(ctx, clusterName);
+  const existing = ctx.store.get<StoredCapability>(
+    capabilityKey(clusterName, capabilityName),
+  );
+  if (existing !== undefined) {
+    if (
+      clientRequestToken !== undefined &&
+      existing.clientRequestToken === clientRequestToken
+    ) {
+      return { capability: capabilityView(existing) };
+    }
+    throw awsError(
+      "ResourceInUseException",
+      `Capability already exists with name ${capabilityName} and cluster name ${clusterName}.`,
+      409,
+    );
+  }
   const at = nowSeconds();
   const cap: StoredCapability = {
     capabilityName,
@@ -1754,6 +1831,7 @@ const CreateCapability: OperationHandler = (input, ctx) => {
     createdAt: at,
     modifiedAt: at,
     deletePropagationPolicy,
+    clientRequestToken,
   };
   ctx.store.set(capabilityKey(clusterName, capabilityName), cap);
   return { capability: capabilityView(cap) };

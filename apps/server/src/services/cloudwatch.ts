@@ -320,6 +320,47 @@ const computeStatistic = (statistic: string, values: number[]): number => {
   return values.reduce((acc, v) => acc + v, 0) / values.length;
 };
 
+const compareThreshold = (
+  op: string,
+  value: number,
+  threshold: number,
+): boolean => {
+  if (op === "GreaterThanThreshold") return value > threshold;
+  if (op === "GreaterThanOrEqualToThreshold") return value >= threshold;
+  if (op === "LessThanThreshold") return value < threshold;
+  if (op === "LessThanOrEqualToThreshold") return value <= threshold;
+  return false;
+};
+
+const evaluateMetricAlarmState = (
+  alarm: StoredAlarm,
+  ctx: ServiceContext,
+): string => {
+  if (
+    !alarm.MetricName ||
+    !alarm.Namespace ||
+    !alarm.Statistic ||
+    alarm.Period <= 0 ||
+    alarm.EvaluationPeriods <= 0
+  ) {
+    return alarm.StateValue;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const windowStart = now - alarm.EvaluationPeriods * alarm.Period;
+  const series = ctx.store.get<StoredSeries>(
+    seriesKey(alarm.Namespace, alarm.MetricName, alarm.Dimensions),
+  );
+  const points = (series?.Points ?? []).filter(
+    (p) => p.Timestamp >= windowStart && p.Timestamp <= now,
+  );
+  if (points.length === 0) return alarm.StateValue;
+  const values = points.map((p) => p.Value);
+  const stat = computeStatistic(alarm.Statistic, values);
+  return compareThreshold(alarm.ComparisonOperator, stat, alarm.Threshold)
+    ? "ALARM"
+    : "OK";
+};
+
 const GetMetricStatistics: OperationHandler = (input, ctx) => {
   const namespace = requireString(input, "Namespace");
   const metricName = requireString(input, "MetricName");
@@ -373,6 +414,7 @@ const ListMetrics: OperationHandler = (input, ctx) => {
     typeof input["MetricName"] === "string"
       ? (input["MetricName"] as string)
       : undefined;
+  const dimensionsFilter = toDimensions(input["Dimensions"]);
   const allMetrics = ctx.store
     .list<StoredSeries>()
     .filter((entry) => entry.key.startsWith("metric/"))
@@ -385,6 +427,15 @@ const ListMetrics: OperationHandler = (input, ctx) => {
       (entry) =>
         metricNameFilter === undefined ||
         entry.value.MetricName === metricNameFilter,
+    )
+    .filter(
+      (entry) =>
+        dimensionsFilter.length === 0 ||
+        dimensionsFilter.every((df) =>
+          entry.value.Dimensions.some(
+            (d) => d.Name === df.Name && d.Value === df.Value,
+          ),
+        ),
     )
     .map((entry) => ({
       Namespace: entry.value.Namespace,
@@ -549,7 +600,15 @@ const DescribeAlarms: OperationHandler = (input, ctx) => {
           (entry) =>
             childNames === undefined || childNames.has(entry.value.AlarmName),
         )
-        .map((entry) => toMetricAlarm(entry.value))
+        .map((entry) => {
+          const alarm = entry.value;
+          const evaluated = evaluateMetricAlarmState(alarm, ctx);
+          if (evaluated !== alarm.StateValue) {
+            alarm.StateValue = evaluated;
+            ctx.store.set(entry.key, alarm);
+          }
+          return toMetricAlarm(alarm);
+        })
     : [];
 
   const compositeAlarms = alarmTypes.includes("CompositeAlarm")

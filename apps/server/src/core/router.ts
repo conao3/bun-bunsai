@@ -1,4 +1,4 @@
-import type { ParsedRequest, Protocol } from "./types.ts";
+import type { ParsedRequest, Protocol, ServiceDefinition } from "./types.ts";
 
 const defaultAccount = "000000000000" as const;
 const defaultRegion = "us-east-1" as const;
@@ -102,6 +102,17 @@ export const routeRequest = (req: Request, url: URL): RouteResult => {
     presignedExpired:
       url.searchParams.has("X-Amz-Credential") && presignedIsExpired(url),
   };
+};
+
+export const pickService = (
+  candidates: ServiceDefinition[],
+  path: string,
+): ServiceDefinition | undefined => {
+  if (candidates.length === 0) return undefined;
+  if (candidates.length === 1) return candidates[0];
+  const ctx = { path } as ParsedRequest;
+  const matched = candidates.find((s) => s.matches?.(ctx) === true);
+  return matched ?? candidates.find((s) => s.matches === undefined);
 };
 
 export const buildParsedRequest = (

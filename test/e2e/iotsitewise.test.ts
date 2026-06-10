@@ -592,7 +592,9 @@ test("IoTSiteWise DeleteAssetModel rejects when child assets exist", async () =>
   const client = iotsitewise();
 
   const model = await client.send(
-    new CreateAssetModelCommand({ assetModelName: `model-guard-${Date.now()}` }),
+    new CreateAssetModelCommand({
+      assetModelName: `model-guard-${Date.now()}`,
+    }),
   );
   const assetModelId = model.assetModelId ?? "";
 
@@ -618,7 +620,10 @@ test("IoTSiteWise DeletePortal rejects when child projects exist", async () => {
   const portalId = portal.portalId ?? "";
 
   await client.send(
-    new CreateProjectCommand({ portalId, projectName: `proj-guard-${Date.now()}` }),
+    new CreateProjectCommand({
+      portalId,
+      projectName: `proj-guard-${Date.now()}`,
+    }),
   );
 
   await expect(

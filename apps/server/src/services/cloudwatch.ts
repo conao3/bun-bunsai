@@ -68,6 +68,7 @@ type StoredCompositeAlarm = {
 };
 
 type StoredAnomalyDetector = {
+  Arn: string;
   detectorKey: string;
   Namespace: string;
   MetricName: string;
@@ -202,6 +203,53 @@ const metricStreamArnOf = (
 const muteRuleArnOf = (region: string, account: string, name: string): string =>
   `arn:aws:cloudwatch:${region}:${account}:alarm-mute-rule:${name}`;
 
+const anomalyDetectorArnOf = (
+  region: string,
+  account: string,
+  key: string,
+): string =>
+  `arn:aws:cloudwatch:${region}:${account}:anomaly-detector:${encodeURIComponent(key)}`;
+
+const paginateList = <T>(
+  items: T[],
+  nextToken: unknown,
+  maxResults: unknown,
+  defaultPageSize = 100,
+): { items: T[]; nextToken: string | undefined } => {
+  const pageSize =
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : defaultPageSize;
+  const startIndex =
+    typeof nextToken === "string" && nextToken !== ""
+      ? parseInt(nextToken, 10)
+      : 0;
+  const page = items.slice(startIndex, startIndex + pageSize);
+  const newNextToken =
+    startIndex + pageSize < items.length
+      ? String(startIndex + pageSize)
+      : undefined;
+  return { items: page, nextToken: newNextToken };
+};
+
+const storeTags = (
+  ctx: ServiceContext,
+  arn: string,
+  rawTags: unknown,
+): void => {
+  if (!Array.isArray(rawTags)) return;
+  const existing =
+    ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
+  for (const tag of rawTags) {
+    if (typeof tag !== "object" || tag === null) continue;
+    const t = tag as Record<string, unknown>;
+    const k = typeof t["Key"] === "string" ? (t["Key"] as string) : "";
+    const v = typeof t["Value"] === "string" ? (t["Value"] as string) : "";
+    if (k !== "") existing[k] = v;
+  }
+  ctx.store.set(tagsKey(arn), existing);
+};
+
 const anomalyDetectorKeyFromInput = (
   input: Record<string, unknown>,
 ): string => {
@@ -326,7 +374,7 @@ const ListMetrics: OperationHandler = (input, ctx) => {
     typeof input["MetricName"] === "string"
       ? (input["MetricName"] as string)
       : undefined;
-  const metrics = ctx.store
+  const allMetrics = ctx.store
     .list<StoredSeries>()
     .filter((entry) => entry.key.startsWith("metric/"))
     .filter(
@@ -344,7 +392,12 @@ const ListMetrics: OperationHandler = (input, ctx) => {
       MetricName: entry.value.MetricName,
       Dimensions: entry.value.Dimensions,
     }));
-  return { Metrics: metrics };
+  const { items, nextToken } = paginateList(
+    allMetrics,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { Metrics: items, NextToken: nextToken };
 };
 
 const PutMetricAlarm: OperationHandler = (input, ctx) => {
@@ -393,6 +446,7 @@ const PutMetricAlarm: OperationHandler = (input, ctx) => {
     ConfigurationUpdated: Math.floor(Date.now() / 1000),
   };
   ctx.store.set(alarmKey(alarmName), alarm);
+  storeTags(ctx, alarm.AlarmArn, input["Tags"]);
   return {};
 };
 
@@ -432,6 +486,11 @@ const toCompositeAlarm = (
   StateUpdatedTimestamp: alarm.ConfigurationUpdated,
 });
 
+const extractAlarmNamesFromRule = (rule: string): Set<string> => {
+  const matches = rule.matchAll(/(ALARM|OK|INSUFFICIENT_DATA)\(([^)]+)\)/g);
+  return new Set([...matches].map((m) => m[2]));
+};
+
 const DescribeAlarms: OperationHandler = (input, ctx) => {
   const names = Array.isArray(input["AlarmNames"])
     ? (input["AlarmNames"] as unknown[]).filter(
@@ -447,6 +506,29 @@ const DescribeAlarms: OperationHandler = (input, ctx) => {
         (t): t is string => typeof t === "string",
       )
     : ["MetricAlarm", "CompositeAlarm"];
+  const stateValue =
+    typeof input["StateValue"] === "string"
+      ? (input["StateValue"] as string)
+      : undefined;
+  const childrenOf =
+    typeof input["ChildrenOfAlarmName"] === "string"
+      ? (input["ChildrenOfAlarmName"] as string)
+      : undefined;
+  const parentsOf =
+    typeof input["ParentsOfAlarmName"] === "string"
+      ? (input["ParentsOfAlarmName"] as string)
+      : undefined;
+
+  let childNames: Set<string> | undefined;
+  if (childrenOf !== undefined) {
+    const parentAlarm = ctx.store.get<StoredCompositeAlarm>(
+      compositeAlarmKey(childrenOf),
+    );
+    childNames =
+      parentAlarm !== undefined
+        ? extractAlarmNamesFromRule(parentAlarm.AlarmRule)
+        : new Set<string>();
+  }
 
   const metricAlarms = alarmTypes.includes("MetricAlarm")
     ? ctx.store
@@ -459,6 +541,14 @@ const DescribeAlarms: OperationHandler = (input, ctx) => {
         .filter(
           (entry) =>
             prefix === undefined || entry.value.AlarmName.startsWith(prefix),
+        )
+        .filter(
+          (entry) =>
+            stateValue === undefined || entry.value.StateValue === stateValue,
+        )
+        .filter(
+          (entry) =>
+            childNames === undefined || childNames.has(entry.value.AlarmName),
         )
         .map((entry) => toMetricAlarm(entry.value))
     : [];
@@ -475,10 +565,43 @@ const DescribeAlarms: OperationHandler = (input, ctx) => {
           (entry) =>
             prefix === undefined || entry.value.AlarmName.startsWith(prefix),
         )
+        .filter(
+          (entry) =>
+            stateValue === undefined || entry.value.StateValue === stateValue,
+        )
+        .filter(
+          (entry) =>
+            childNames === undefined || childNames.has(entry.value.AlarmName),
+        )
+        .filter(
+          (entry) =>
+            parentsOf === undefined ||
+            extractAlarmNamesFromRule(entry.value.AlarmRule).has(parentsOf),
+        )
         .map((entry) => toCompositeAlarm(entry.value))
     : [];
 
-  return { MetricAlarms: metricAlarms, CompositeAlarms: compositeAlarms };
+  type AlarmEntry =
+    | { kind: "metric"; item: Record<string, unknown> }
+    | { kind: "composite"; item: Record<string, unknown> };
+  const combined: AlarmEntry[] = [
+    ...metricAlarms.map((item) => ({ kind: "metric" as const, item })),
+    ...compositeAlarms.map((item) => ({ kind: "composite" as const, item })),
+  ];
+  const { items: paged, nextToken } = paginateList(
+    combined,
+    input["NextToken"],
+    input["MaxRecords"],
+  );
+  return {
+    MetricAlarms: paged
+      .filter((x) => x.kind === "metric")
+      .map((x) => x.item),
+    CompositeAlarms: paged
+      .filter((x) => x.kind === "composite")
+      .map((x) => x.item),
+    NextToken: nextToken,
+  };
 };
 
 const DeleteAlarms: OperationHandler = (input, ctx) => {
@@ -488,8 +611,10 @@ const DeleteAlarms: OperationHandler = (input, ctx) => {
   }
   for (const name of names) {
     if (typeof name === "string") {
+      const arn = alarmArnOf(ctx.region, ctx.account, name);
       ctx.store.delete(alarmKey(name));
       ctx.store.delete(compositeAlarmKey(name));
+      ctx.store.delete(tagsKey(arn));
     }
   }
   return {};
@@ -531,7 +656,7 @@ const ListDashboards: OperationHandler = (input, ctx) => {
     typeof input["DashboardNamePrefix"] === "string"
       ? (input["DashboardNamePrefix"] as string)
       : undefined;
-  const entries = ctx.store
+  const allEntries = ctx.store
     .list<StoredDashboard>()
     .filter((entry) => entry.key.startsWith("dashboard/"))
     .filter(
@@ -544,7 +669,12 @@ const ListDashboards: OperationHandler = (input, ctx) => {
       LastModified: entry.value.LastModified,
       Size: entry.value.Size,
     }));
-  return { DashboardEntries: entries };
+  const { items, nextToken } = paginateList(
+    allEntries,
+    input["NextToken"],
+    undefined,
+  );
+  return { DashboardEntries: items, NextToken: nextToken };
 };
 
 const DeleteDashboards: OperationHandler = (input, ctx) => {
@@ -553,7 +683,10 @@ const DeleteDashboards: OperationHandler = (input, ctx) => {
     throw awsError("MissingParameter", "DashboardNames is required.", 400);
   }
   for (const name of names) {
-    if (typeof name === "string") ctx.store.delete(dashboardKey(name));
+    if (typeof name === "string") {
+      ctx.store.delete(dashboardKey(name));
+      ctx.store.delete(tagsKey(dashboardArnOf(ctx.account, name)));
+    }
   }
   return {};
 };
@@ -1041,6 +1174,7 @@ const PutCompositeAlarm: OperationHandler = (input, ctx) => {
     ConfigurationUpdated: Math.floor(Date.now() / 1000),
   };
   ctx.store.set(compositeAlarmKey(alarmName), alarm);
+  storeTags(ctx, alarm.AlarmArn, input["Tags"]);
   return {};
 };
 
@@ -1178,8 +1312,8 @@ const DeleteAlarmMuteRule: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const ListAlarmMuteRules: OperationHandler = (_input, ctx) => {
-  const entries = ctx.store
+const ListAlarmMuteRules: OperationHandler = (input, ctx) => {
+  const allEntries = ctx.store
     .list<StoredMuteRule>()
     .filter((entry) => entry.key.startsWith("mute-rule/"))
     .map((entry) => ({
@@ -1189,12 +1323,18 @@ const ListAlarmMuteRules: OperationHandler = (_input, ctx) => {
       MuteType: entry.value.MuteType,
       LastUpdatedTimestamp: entry.value.LastUpdatedTimestamp,
     }));
-  return { AlarmMuteRuleSummaries: entries };
+  const { items, nextToken } = paginateList(
+    allEntries,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { AlarmMuteRuleSummaries: items, NextToken: nextToken };
 };
 
 const PutAnomalyDetector: OperationHandler = (input, ctx) => {
   const key = anomalyDetectorKeyFromInput(input);
   const detector: StoredAnomalyDetector = {
+    Arn: anomalyDetectorArnOf(ctx.region, ctx.account, key),
     detectorKey: key,
     Namespace:
       typeof input["Namespace"] === "string"
@@ -1274,6 +1414,7 @@ const DeleteAnomalyDetector: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(anomalyDetectorKey(key));
+  ctx.store.delete(tagsKey(existing.Arn));
   return {};
 };
 
@@ -1479,12 +1620,14 @@ const GetMetricStream: OperationHandler = (input, ctx) => {
 
 const DeleteMetricStream: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
+  const arn = metricStreamArnOf(ctx.region, ctx.account, name);
   ctx.store.delete(metricStreamKey(name));
+  ctx.store.delete(tagsKey(arn));
   return {};
 };
 
-const ListMetricStreams: OperationHandler = (_input, ctx) => {
-  const entries = ctx.store
+const ListMetricStreams: OperationHandler = (input, ctx) => {
+  const allEntries = ctx.store
     .list<StoredMetricStream>()
     .filter((entry) => entry.key.startsWith("metric-stream/"))
     .map((entry) => ({
@@ -1496,7 +1639,12 @@ const ListMetricStreams: OperationHandler = (_input, ctx) => {
       State: entry.value.State,
       OutputFormat: entry.value.OutputFormat,
     }));
-  return { Entries: entries };
+  const { items, nextToken } = paginateList(
+    allEntries,
+    input["NextToken"],
+    input["MaxResults"],
+  );
+  return { Entries: items, NextToken: nextToken };
 };
 
 const StartMetricStreams: OperationHandler = (input, ctx) => {

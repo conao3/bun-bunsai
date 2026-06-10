@@ -762,3 +762,172 @@ test("CloudWatch GetMetricData with Expression metric math", async () => {
   expect(exprResult?.StatusCode).toBe("Complete");
   expect(exprResult?.Values?.[0]).toBe(40);
 });
+
+test("CloudWatch PutMetricAlarm with Tags round-trip and DeleteAlarms tag cleanup", async () => {
+  const client = cw();
+  const alarmName = "bunsai-e2e-tag-roundtrip";
+
+  await client.send(
+    new PutMetricAlarmCommand({
+      AlarmName: alarmName,
+      Namespace: "bunsai/e2e",
+      MetricName: "TagRoundTrip",
+      Statistic: "Sum",
+      Period: 300,
+      EvaluationPeriods: 1,
+      Threshold: 1,
+      ComparisonOperator: "GreaterThanThreshold",
+      Tags: [
+        { Key: "env", Value: "e2e" },
+        { Key: "tier", Value: "18" },
+      ],
+    }),
+  );
+
+  const described = await client.send(
+    new DescribeAlarmsCommand({ AlarmNames: [alarmName] }),
+  );
+  const alarmArn = described.MetricAlarms?.[0]?.AlarmArn ?? "";
+  expect(alarmArn).toContain(alarmName);
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: alarmArn }),
+  );
+  const tagMap = Object.fromEntries(
+    (listed.Tags ?? []).map((t) => [t.Key, t.Value]),
+  );
+  expect(tagMap["env"]).toBe("e2e");
+  expect(tagMap["tier"]).toBe("18");
+
+  await client.send(new DeleteAlarmsCommand({ AlarmNames: [alarmName] }));
+
+  const afterDelete = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: alarmArn }),
+  );
+  expect(afterDelete.Tags).toHaveLength(0);
+});
+
+test("CloudWatch DescribeAlarms pagination with MaxRecords", async () => {
+  const client = cw();
+  const prefix = "bunsai-e2e-paginate-";
+
+  for (let i = 0; i < 5; i++) {
+    await client.send(
+      new PutMetricAlarmCommand({
+        AlarmName: `${prefix}${i}`,
+        Namespace: "bunsai/e2e",
+        MetricName: "PaginateMetric",
+        Statistic: "Sum",
+        Period: 300,
+        EvaluationPeriods: 1,
+        Threshold: 100,
+        ComparisonOperator: "GreaterThanThreshold",
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new DescribeAlarmsCommand({
+      AlarmNamePrefix: prefix,
+      AlarmTypes: ["MetricAlarm"],
+      MaxRecords: 3,
+    }),
+  );
+  expect(page1.MetricAlarms?.length).toBe(3);
+  expect(page1.NextToken).toBeDefined();
+
+  const page2 = await client.send(
+    new DescribeAlarmsCommand({
+      AlarmNamePrefix: prefix,
+      AlarmTypes: ["MetricAlarm"],
+      MaxRecords: 3,
+      NextToken: page1.NextToken,
+    }),
+  );
+  expect(page2.MetricAlarms?.length).toBe(2);
+  expect(page2.NextToken).toBeUndefined();
+
+  await client.send(
+    new DeleteAlarmsCommand({
+      AlarmNames: Array.from({ length: 5 }, (_, i) => `${prefix}${i}`),
+    }),
+  );
+});
+
+test("CloudWatch DescribeAlarms StateValue filter and Children/Parents", async () => {
+  const client = cw();
+  const childA = "bunsai-e2e-filter-child-a";
+  const childB = "bunsai-e2e-filter-child-b";
+  const composite = "bunsai-e2e-filter-composite";
+
+  for (const name of [childA, childB]) {
+    await client.send(
+      new PutMetricAlarmCommand({
+        AlarmName: name,
+        Namespace: "bunsai/e2e",
+        MetricName: "FilterMetric",
+        Statistic: "Sum",
+        Period: 300,
+        EvaluationPeriods: 1,
+        Threshold: 100,
+        ComparisonOperator: "GreaterThanThreshold",
+      }),
+    );
+  }
+  await client.send(
+    new PutCompositeAlarmCommand({
+      AlarmName: composite,
+      AlarmRule: `ALARM(${childA}) OR ALARM(${childB})`,
+    }),
+  );
+
+  await client.send(
+    new SetAlarmStateCommand({
+      AlarmName: childA,
+      StateValue: "ALARM",
+      StateReason: "e2e filter test",
+    }),
+  );
+
+  const alarmOnly = await client.send(
+    new DescribeAlarmsCommand({
+      AlarmNamePrefix: "bunsai-e2e-filter-child",
+      AlarmTypes: ["MetricAlarm"],
+      StateValue: "ALARM",
+    }),
+  );
+  expect(alarmOnly.MetricAlarms?.length).toBe(1);
+  expect(alarmOnly.MetricAlarms?.[0]?.AlarmName).toBe(childA);
+
+  const okOnly = await client.send(
+    new DescribeAlarmsCommand({
+      AlarmNamePrefix: "bunsai-e2e-filter-child",
+      AlarmTypes: ["MetricAlarm"],
+      StateValue: "OK",
+    }),
+  );
+  expect(okOnly.MetricAlarms?.length).toBe(0);
+
+  const children = await client.send(
+    new DescribeAlarmsCommand({
+      ChildrenOfAlarmName: composite,
+      AlarmTypes: ["MetricAlarm"],
+    }),
+  );
+  const childNames = children.MetricAlarms?.map((a) => a.AlarmName) ?? [];
+  expect(childNames).toContain(childA);
+  expect(childNames).toContain(childB);
+
+  const parents = await client.send(
+    new DescribeAlarmsCommand({
+      ParentsOfAlarmName: childA,
+      AlarmTypes: ["CompositeAlarm"],
+    }),
+  );
+  expect(parents.CompositeAlarms?.length).toBe(1);
+  expect(parents.CompositeAlarms?.[0]?.AlarmName).toBe(composite);
+
+  await client.send(
+    new DeleteAlarmsCommand({ AlarmNames: [childA, childB, composite] }),
+  );
+});

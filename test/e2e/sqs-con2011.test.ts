@@ -98,10 +98,7 @@ describe("CON-2011: SQS fidelity gaps", () => {
       expect(page2.QueueUrls?.length).toBe(1);
       expect(page2.NextToken).toBeUndefined();
 
-      const allUrls = [
-        ...(page1.QueueUrls ?? []),
-        ...(page2.QueueUrls ?? []),
-      ];
+      const allUrls = [...(page1.QueueUrls ?? []), ...(page2.QueueUrls ?? [])];
       expect(allUrls.length).toBe(3);
     });
 

@@ -473,7 +473,10 @@ const ListQueues: OperationHandler = (input, ctx) => {
       ? Buffer.from(String(startIndex + maxResults)).toString("base64")
       : undefined;
 
-  return { QueueUrls: page, ...(newNextToken !== undefined ? { NextToken: newNextToken } : {}) };
+  return {
+    QueueUrls: page,
+    ...(newNextToken !== undefined ? { NextToken: newNextToken } : {}),
+  };
 };
 
 const GetQueueUrl: OperationHandler = (input, ctx) => {

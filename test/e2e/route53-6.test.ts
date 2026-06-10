@@ -156,7 +156,7 @@ test("ListResourceRecordSets pagination with MaxItems and StartRecordName", asyn
   );
 
   const page1 = await client.send(
-    new ListResourceRecordSetsCommand({ HostedZoneId: zoneId, MaxItems: "3" }),
+    new ListResourceRecordSetsCommand({ HostedZoneId: zoneId, MaxItems: 3 }),
   );
   expect(page1.IsTruncated).toBe(true);
   expect(page1.ResourceRecordSets?.length).toBe(3);
@@ -166,7 +166,7 @@ test("ListResourceRecordSets pagination with MaxItems and StartRecordName", asyn
   const page2 = await client.send(
     new ListResourceRecordSetsCommand({
       HostedZoneId: zoneId,
-      MaxItems: "10",
+      MaxItems: 10,
       StartRecordName: page1.NextRecordName,
       StartRecordType: page1.NextRecordType,
     }),

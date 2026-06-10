@@ -172,7 +172,7 @@ test("ListResourceRecordSets pagination with MaxItems and StartRecordName", asyn
     }),
   );
   expect(page2.IsTruncated).toBe(false);
-  expect((page2.ResourceRecordSets?.length ?? 0)).toBeGreaterThan(0);
+  expect(page2.ResourceRecordSets?.length ?? 0).toBeGreaterThan(0);
 
   const allNames = [
     ...(page1.ResourceRecordSets ?? []),

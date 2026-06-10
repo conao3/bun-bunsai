@@ -854,3 +854,222 @@ test("AppRunner UpdateService rejects unknown Observability ARN", async () => {
 
   await client.send(new DeleteServiceCommand({ ServiceArn: serviceArn }));
 });
+
+test("AppRunner paginate default page size 20", async () => {
+  const client = apprunner();
+  const ts = Date.now();
+  const arns: string[] = [];
+  for (let i = 0; i < 21; i++) {
+    const r = await client.send(
+      new CreateAutoScalingConfigurationCommand({
+        AutoScalingConfigurationName: `bunsai-pg20-${ts}-${i}`,
+      }),
+    );
+    arns.push(r.AutoScalingConfiguration?.AutoScalingConfigurationArn ?? "");
+  }
+
+  const page = await client.send(new ListAutoScalingConfigurationsCommand({}));
+  expect(
+    (page.AutoScalingConfigurationSummaryList ?? []).length,
+  ).toBeLessThanOrEqual(20);
+  expect(page.NextToken).toBeDefined();
+
+  for (const arn of arns) {
+    await client.send(
+      new DeleteAutoScalingConfigurationCommand({
+        AutoScalingConfigurationArn: arn,
+      }),
+    );
+  }
+});
+
+test("AppRunner AutoScaling revision bump and LatestOnly filter", async () => {
+  const client = apprunner();
+  const name = `bunsai-rev-asc-${Date.now()}`;
+
+  const r1 = await client.send(
+    new CreateAutoScalingConfigurationCommand({
+      AutoScalingConfigurationName: name,
+    }),
+  );
+  expect(r1.AutoScalingConfiguration?.AutoScalingConfigurationRevision).toBe(1);
+  expect(r1.AutoScalingConfiguration?.Latest).toBe(true);
+
+  const r2 = await client.send(
+    new CreateAutoScalingConfigurationCommand({
+      AutoScalingConfigurationName: name,
+    }),
+  );
+  expect(r2.AutoScalingConfiguration?.AutoScalingConfigurationRevision).toBe(2);
+  expect(r2.AutoScalingConfiguration?.Latest).toBe(true);
+
+  const arn1 = r1.AutoScalingConfiguration?.AutoScalingConfigurationArn ?? "";
+  const arn2 = r2.AutoScalingConfiguration?.AutoScalingConfigurationArn ?? "";
+
+  const d1 = await client.send(
+    new DescribeAutoScalingConfigurationCommand({
+      AutoScalingConfigurationArn: arn1,
+    }),
+  );
+  expect(d1.AutoScalingConfiguration?.Latest).toBe(false);
+
+  const listLatest = await client.send(
+    new ListAutoScalingConfigurationsCommand({
+      AutoScalingConfigurationName: name,
+      LatestOnly: true,
+    }),
+  );
+  expect((listLatest.AutoScalingConfigurationSummaryList ?? []).length).toBe(1);
+  expect(
+    listLatest.AutoScalingConfigurationSummaryList?.[0]
+      ?.AutoScalingConfigurationRevision,
+  ).toBe(2);
+
+  const listAll = await client.send(
+    new ListAutoScalingConfigurationsCommand({
+      AutoScalingConfigurationName: name,
+      LatestOnly: false,
+    }),
+  );
+  expect((listAll.AutoScalingConfigurationSummaryList ?? []).length).toBe(2);
+
+  await client.send(
+    new DeleteAutoScalingConfigurationCommand({
+      AutoScalingConfigurationArn: arn1,
+    }),
+  );
+  await client.send(
+    new DeleteAutoScalingConfigurationCommand({
+      AutoScalingConfigurationArn: arn2,
+    }),
+  );
+});
+
+test("AppRunner Observability revision bump and LatestOnly filter", async () => {
+  const client = apprunner();
+  const name = `bunsai-rev-obs-${Date.now()}`;
+
+  const r1 = await client.send(
+    new CreateObservabilityConfigurationCommand({
+      ObservabilityConfigurationName: name,
+    }),
+  );
+  expect(
+    r1.ObservabilityConfiguration?.ObservabilityConfigurationRevision,
+  ).toBe(1);
+  expect(r1.ObservabilityConfiguration?.Latest).toBe(true);
+
+  const r2 = await client.send(
+    new CreateObservabilityConfigurationCommand({
+      ObservabilityConfigurationName: name,
+    }),
+  );
+  expect(
+    r2.ObservabilityConfiguration?.ObservabilityConfigurationRevision,
+  ).toBe(2);
+  expect(r2.ObservabilityConfiguration?.Latest).toBe(true);
+
+  const arn1 =
+    r1.ObservabilityConfiguration?.ObservabilityConfigurationArn ?? "";
+  const arn2 =
+    r2.ObservabilityConfiguration?.ObservabilityConfigurationArn ?? "";
+
+  const d1 = await client.send(
+    new DescribeObservabilityConfigurationCommand({
+      ObservabilityConfigurationArn: arn1,
+    }),
+  );
+  expect(d1.ObservabilityConfiguration?.Latest).toBe(false);
+
+  const listLatest = await client.send(
+    new ListObservabilityConfigurationsCommand({
+      ObservabilityConfigurationName: name,
+      LatestOnly: true,
+    }),
+  );
+  expect((listLatest.ObservabilityConfigurationSummaryList ?? []).length).toBe(
+    1,
+  );
+
+  const listAll = await client.send(
+    new ListObservabilityConfigurationsCommand({
+      ObservabilityConfigurationName: name,
+      LatestOnly: false,
+    }),
+  );
+  expect((listAll.ObservabilityConfigurationSummaryList ?? []).length).toBe(2);
+
+  await client.send(
+    new DeleteObservabilityConfigurationCommand({
+      ObservabilityConfigurationArn: arn1,
+    }),
+  );
+  await client.send(
+    new DeleteObservabilityConfigurationCommand({
+      ObservabilityConfigurationArn: arn2,
+    }),
+  );
+});
+
+test("AppRunner VpcConnector revision bump", async () => {
+  const client = apprunner();
+  const name = `bunsai-rev-vc-${Date.now()}`;
+
+  const r1 = await client.send(
+    new CreateVpcConnectorCommand({
+      VpcConnectorName: name,
+      Subnets: ["subnet-aaa"],
+    }),
+  );
+  expect(r1.VpcConnector?.VpcConnectorRevision).toBe(1);
+
+  const r2 = await client.send(
+    new CreateVpcConnectorCommand({
+      VpcConnectorName: name,
+      Subnets: ["subnet-bbb"],
+    }),
+  );
+  expect(r2.VpcConnector?.VpcConnectorRevision).toBe(2);
+
+  await client.send(
+    new DeleteVpcConnectorCommand({
+      VpcConnectorArn: r1.VpcConnector?.VpcConnectorArn ?? "",
+    }),
+  );
+  await client.send(
+    new DeleteVpcConnectorCommand({
+      VpcConnectorArn: r2.VpcConnector?.VpcConnectorArn ?? "",
+    }),
+  );
+});
+
+test("AppRunner ListServices excludes DELETED services", async () => {
+  const client = apprunner();
+  const name = `bunsai-del-svc-${Date.now()}`;
+
+  const created = await client.send(
+    new CreateServiceCommand({
+      ServiceName: name,
+      SourceConfiguration: {
+        ImageRepository: {
+          ImageIdentifier:
+            "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageRepositoryType: "ECR_PUBLIC",
+        },
+      },
+    }),
+  );
+  const arn = created.Service?.ServiceArn ?? "";
+
+  const beforeDelete = await client.send(new ListServicesCommand({}));
+  expect(
+    (beforeDelete.ServiceSummaryList ?? []).some((s) => s.ServiceArn === arn),
+  ).toBe(true);
+
+  await client.send(new DeleteServiceCommand({ ServiceArn: arn }));
+
+  const afterDelete = await client.send(new ListServicesCommand({}));
+  expect(
+    (afterDelete.ServiceSummaryList ?? []).some((s) => s.ServiceArn === arn),
+  ).toBe(false);
+});

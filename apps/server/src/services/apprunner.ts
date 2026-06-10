@@ -124,9 +124,7 @@ const paginate = <T>(
 ): { items: T[]; NextToken: string | undefined } => {
   const offset = typeof nextToken === "string" ? decodeCursor(nextToken) : 0;
   const max =
-    typeof maxResults === "number" && maxResults > 0
-      ? maxResults
-      : items.length;
+    typeof maxResults === "number" && maxResults > 0 ? maxResults : 20;
   const page = items.slice(offset, offset + max);
   const token =
     offset + max < items.length ? encodeCursor(offset + max) : undefined;
@@ -604,10 +602,16 @@ const DescribeService: OperationHandler = (input, ctx) => {
 };
 
 const ListServices: OperationHandler = (input, ctx) => {
+  const filterStatus = stringOrUndefined(input["Status"]);
   const all = ctx.store
     .list<StoredService>()
     .filter((entry) => entry.key.startsWith(servicePrefix))
     .map((entry) => entry.value)
+    .filter((svc) =>
+      filterStatus !== undefined
+        ? svc.Status === filterStatus
+        : svc.Status !== "DELETED",
+    )
     .sort((a, b) =>
       a.ServiceName < b.ServiceName
         ? -1
@@ -859,7 +863,25 @@ const ListOperations: OperationHandler = (input, ctx) => {
 const CreateAutoScalingConfiguration: OperationHandler = (input, ctx) => {
   const name = requireString(input, "AutoScalingConfigurationName");
   const region = ctx.region;
-  const rev = 1;
+  const existing = ctx.store
+    .list<StoredAutoScalingConfig>()
+    .filter((entry) => entry.key.startsWith(autoScalingPrefix))
+    .map((entry) => entry.value)
+    .filter((cfg) => cfg.AutoScalingConfigurationName === name);
+  for (const cfg of existing) {
+    if (cfg.Latest) {
+      ctx.store.set(`${autoScalingPrefix}${cfg.AutoScalingConfigurationArn}`, {
+        ...cfg,
+        Latest: false,
+      });
+    }
+  }
+  const rev =
+    existing.length > 0
+      ? Math.max(
+          ...existing.map((cfg) => cfg.AutoScalingConfigurationRevision),
+        ) + 1
+      : 1;
   const id = crypto.randomUUID().replace(/-/g, "");
   const arn = `arn:aws:apprunner:${region}:${ctx.account}:autoscalingconfiguration/${name}/${rev}/${id}`;
   const now = nowSeconds();
@@ -916,6 +938,7 @@ const DescribeAutoScalingConfiguration: OperationHandler = (input, ctx) => {
 
 const ListAutoScalingConfigurations: OperationHandler = (input, ctx) => {
   const filterName = stringOrUndefined(input["AutoScalingConfigurationName"]);
+  const latestOnly = input["LatestOnly"] !== false;
   const all = ctx.store
     .list<StoredAutoScalingConfig>()
     .filter((entry) => entry.key.startsWith(autoScalingPrefix))
@@ -924,7 +947,8 @@ const ListAutoScalingConfigurations: OperationHandler = (input, ctx) => {
       (cfg) =>
         filterName === undefined ||
         cfg.AutoScalingConfigurationName === filterName,
-    );
+    )
+    .filter((cfg) => !latestOnly || cfg.Latest);
   const { items, NextToken } = paginate(
     all,
     input["MaxResults"],
@@ -1034,7 +1058,25 @@ const ListConnections: OperationHandler = (input, ctx) => {
 const CreateObservabilityConfiguration: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ObservabilityConfigurationName");
   const region = ctx.region;
-  const rev = 1;
+  const existing = ctx.store
+    .list<StoredObservabilityConfig>()
+    .filter((entry) => entry.key.startsWith(observabilityPrefix))
+    .map((entry) => entry.value)
+    .filter((cfg) => cfg.ObservabilityConfigurationName === name);
+  for (const cfg of existing) {
+    if (cfg.Latest) {
+      ctx.store.set(
+        `${observabilityPrefix}${cfg.ObservabilityConfigurationArn}`,
+        { ...cfg, Latest: false },
+      );
+    }
+  }
+  const rev =
+    existing.length > 0
+      ? Math.max(
+          ...existing.map((cfg) => cfg.ObservabilityConfigurationRevision),
+        ) + 1
+      : 1;
   const id = crypto.randomUUID().replace(/-/g, "");
   const arn = `arn:aws:apprunner:${region}:${ctx.account}:observabilityconfiguration/${name}/${rev}/${id}`;
   const now = nowSeconds();
@@ -1077,6 +1119,7 @@ const DescribeObservabilityConfiguration: OperationHandler = (input, ctx) => {
 
 const ListObservabilityConfigurations: OperationHandler = (input, ctx) => {
   const filterName = stringOrUndefined(input["ObservabilityConfigurationName"]);
+  const latestOnly = input["LatestOnly"] !== false;
   const all = ctx.store
     .list<StoredObservabilityConfig>()
     .filter((entry) => entry.key.startsWith(observabilityPrefix))
@@ -1085,7 +1128,8 @@ const ListObservabilityConfigurations: OperationHandler = (input, ctx) => {
       (cfg) =>
         filterName === undefined ||
         cfg.ObservabilityConfigurationName === filterName,
-    );
+    )
+    .filter((cfg) => !latestOnly || cfg.Latest);
   const { items, NextToken } = paginate(
     all,
     input["MaxResults"],
@@ -1106,7 +1150,15 @@ const CreateVpcConnector: OperationHandler = (input, ctx) => {
     (s): s is string => typeof s === "string",
   );
   const region = ctx.region;
-  const rev = 1;
+  const existing = ctx.store
+    .list<StoredVpcConnector>()
+    .filter((entry) => entry.key.startsWith(vpcConnectorPrefix))
+    .map((entry) => entry.value)
+    .filter((vc) => vc.VpcConnectorName === name);
+  const rev =
+    existing.length > 0
+      ? Math.max(...existing.map((vc) => vc.VpcConnectorRevision)) + 1
+      : 1;
   const id = crypto.randomUUID().replace(/-/g, "");
   const arn = `arn:aws:apprunner:${region}:${ctx.account}:vpcconnector/${name}/${rev}/${id}`;
   const now = nowSeconds();

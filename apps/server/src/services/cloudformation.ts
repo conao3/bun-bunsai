@@ -6,6 +6,7 @@ import type {
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
+import { serviceBaseUrl } from "./_endpoint.ts";
 
 const model = loadServiceModel(cloudformationModel);
 
@@ -409,7 +410,7 @@ const provisionSqsQueue = (
   props: Record<string, unknown>,
 ): string => {
   const name = physicalNameOf(stackName, logicalId, props, "QueueName");
-  const url = `http://localhost:4566/${ctx.account}/${name}`;
+  const url = `${serviceBaseUrl()}/${ctx.account}/${name}`;
   const sqs = ctx.storeFor("sqs");
   if (sqs.get(name) !== undefined) return url;
   const now = Date.now();

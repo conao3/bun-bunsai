@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { serviceBaseUrl } from "../../apps/server/src/services/_endpoint.ts";
 import { startApp } from "./harness.ts";
 import {
   AddPermissionCommand,
@@ -221,5 +222,33 @@ describe("SQS batch ops e2e", () => {
     expect(entryAfter).toBeDefined();
 
     await client.send(new DeleteQueueCommand({ QueueUrl: queueUrl }));
+  });
+});
+
+describe("serviceBaseUrl unit", () => {
+  test("uses BUNSAI_PORT when set", () => {
+    const original = process.env.BUNSAI_PORT;
+    try {
+      process.env.BUNSAI_PORT = "9999";
+      expect(serviceBaseUrl()).toBe("http://localhost:9999");
+    } finally {
+      if (original === undefined) {
+        delete process.env.BUNSAI_PORT;
+      } else {
+        process.env.BUNSAI_PORT = original;
+      }
+    }
+  });
+
+  test("defaults to port 4566 when BUNSAI_PORT is unset", () => {
+    const original = process.env.BUNSAI_PORT;
+    try {
+      delete process.env.BUNSAI_PORT;
+      expect(serviceBaseUrl()).toBe("http://localhost:4566");
+    } finally {
+      if (original !== undefined) {
+        process.env.BUNSAI_PORT = original;
+      }
+    }
   });
 });

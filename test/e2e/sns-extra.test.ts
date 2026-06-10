@@ -5,8 +5,10 @@ import {
   DeleteTopicCommand,
   GetTopicAttributesCommand,
   ListTagsForResourceCommand,
+  PublishCommand,
   SetTopicAttributesCommand,
   SNSClient,
+  SubscribeCommand,
   TagResourceCommand,
   UntagResourceCommand,
 } from "@aws-sdk/client-sns";
@@ -90,6 +92,99 @@ test("SNS tag/untag/list lifecycle", async () => {
   );
   expect(remaining.has("env")).toBe(false);
   expect(remaining.get("team")).toBe("platform");
+
+  await client.send(new DeleteTopicCommand({ TopicArn: topicArn }));
+});
+
+test("SNS CreateTopic with Tags round-trip", async () => {
+  const client = sns();
+
+  const created = await client.send(
+    new CreateTopicCommand({
+      Name: "bunsai-e2e-tag-roundtrip",
+      Tags: [
+        { Key: "env", Value: "staging" },
+        { Key: "owner", Value: "platform" },
+      ],
+    }),
+  );
+  const topicArn = created.TopicArn;
+  expect(topicArn).toBeDefined();
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: topicArn }),
+  );
+  const tagMap = new Map((listed.Tags ?? []).map((t) => [t.Key, t.Value]));
+  expect(tagMap.get("env")).toBe("staging");
+  expect(tagMap.get("owner")).toBe("platform");
+
+  await client.send(new DeleteTopicCommand({ TopicArn: topicArn }));
+});
+
+test("SNS Subscribe ReturnSubscriptionArn=true returns ARN when pending", async () => {
+  const client = sns();
+
+  const created = await client.send(
+    new CreateTopicCommand({ Name: "bunsai-e2e-return-sub-arn" }),
+  );
+  const topicArn = created.TopicArn;
+  expect(topicArn).toBeDefined();
+
+  const sub = await client.send(
+    new SubscribeCommand({
+      TopicArn: topicArn,
+      Protocol: "https",
+      Endpoint: "https://example.com/hook",
+      ReturnSubscriptionArn: true,
+    }),
+  );
+  expect(sub.SubscriptionArn).not.toBe("pending confirmation");
+  expect(sub.SubscriptionArn).toMatch(/^arn:aws:sns:/);
+
+  await client.send(new DeleteTopicCommand({ TopicArn: topicArn }));
+});
+
+test("SNS FIFO Publish deduplicates by MessageDeduplicationId", async () => {
+  const client = sns();
+
+  const created = await client.send(
+    new CreateTopicCommand({
+      Name: "bunsai-e2e-fifo.fifo",
+      Attributes: { FifoTopic: "true", ContentBasedDeduplication: "false" },
+    }),
+  );
+  const topicArn = created.TopicArn;
+  expect(topicArn).toBeDefined();
+
+  const first = await client.send(
+    new PublishCommand({
+      TopicArn: topicArn,
+      Message: "hello",
+      MessageDeduplicationId: "dedup-1",
+      MessageGroupId: "group-1",
+    }),
+  );
+  expect(first.MessageId).toBeDefined();
+
+  const second = await client.send(
+    new PublishCommand({
+      TopicArn: topicArn,
+      Message: "hello again",
+      MessageDeduplicationId: "dedup-1",
+      MessageGroupId: "group-1",
+    }),
+  );
+  expect(second.MessageId).toBe(first.MessageId);
+
+  const third = await client.send(
+    new PublishCommand({
+      TopicArn: topicArn,
+      Message: "different dedupId",
+      MessageDeduplicationId: "dedup-2",
+      MessageGroupId: "group-1",
+    }),
+  );
+  expect(third.MessageId).not.toBe(first.MessageId);
 
   await client.send(new DeleteTopicCommand({ TopicArn: topicArn }));
 });

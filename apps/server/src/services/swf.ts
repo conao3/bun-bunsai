@@ -541,7 +541,9 @@ const ListActivityTypes: OperationHandler = (input, ctx) => {
     }))
     .sort((a, b) => {
       const n = a.activityType.name.localeCompare(b.activityType.name);
-      return n !== 0 ? n : a.activityType.version.localeCompare(b.activityType.version);
+      return n !== 0
+        ? n
+        : a.activityType.version.localeCompare(b.activityType.version);
     });
   const ordered = reverseOrder ? [...allInfos].reverse() : allInfos;
   const { items: typeInfos, nextPageToken: newToken } = applyPageToken(
@@ -688,7 +690,9 @@ const ListWorkflowTypes: OperationHandler = (input, ctx) => {
     }))
     .sort((a, b) => {
       const n = a.workflowType.name.localeCompare(b.workflowType.name);
-      return n !== 0 ? n : a.workflowType.version.localeCompare(b.workflowType.version);
+      return n !== 0
+        ? n
+        : a.workflowType.version.localeCompare(b.workflowType.version);
     });
   const ordered = reverseOrder ? [...allInfos].reverse() : allInfos;
   const { items: typeInfos, nextPageToken: newToken } = applyPageToken(

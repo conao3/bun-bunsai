@@ -1160,7 +1160,11 @@ test("SWF reverseOrder on ListWorkflowTypes", async () => {
 
 test("SWF reverseOrder on ListDomains", async () => {
   const client = swf();
-  for (const name of ["bunsai-ro-d-alpha", "bunsai-ro-d-beta", "bunsai-ro-d-gamma"]) {
+  for (const name of [
+    "bunsai-ro-d-alpha",
+    "bunsai-ro-d-beta",
+    "bunsai-ro-d-gamma",
+  ]) {
     await client.send(
       new RegisterDomainCommand({
         name,
@@ -1180,7 +1184,10 @@ test("SWF reverseOrder on ListDomains", async () => {
   ]);
 
   const desc = await client.send(
-    new ListDomainsCommand({ registrationStatus: "REGISTERED", reverseOrder: true }),
+    new ListDomainsCommand({
+      registrationStatus: "REGISTERED",
+      reverseOrder: true,
+    }),
   );
   const descNames = (desc.domainInfos ?? []).map((d) => d.name);
   const descFiltered = descNames.filter((n) => n?.startsWith("bunsai-ro-d-"));

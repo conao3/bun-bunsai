@@ -362,6 +362,21 @@ const CreateKey: OperationHandler = (input, ctx) => {
     typeof input["KeySpec"] === "string"
       ? (input["KeySpec"] as string)
       : "SYMMETRIC_DEFAULT";
+  const rawTags = input["Tags"];
+  const tags: StoredTag[] = Array.isArray(rawTags)
+    ? rawTags
+        .filter(
+          (t) =>
+            t !== null &&
+            typeof t === "object" &&
+            typeof t["TagKey"] === "string" &&
+            typeof t["TagValue"] === "string",
+        )
+        .map((t) => ({
+          TagKey: t["TagKey"] as string,
+          TagValue: t["TagValue"] as string,
+        }))
+    : [];
   const key: StoredKey = {
     KeyId: keyId,
     Arn: arnOf(ctx.region, ctx.account, keyId),
@@ -374,7 +389,7 @@ const CreateKey: OperationHandler = (input, ctx) => {
     Origin: "AWS_KMS",
     KeyManager: "CUSTOMER",
     KeySpec: keySpec,
-    Tags: [],
+    Tags: tags,
     Policy: defaultPolicy,
     Rotations: [],
   };
@@ -388,14 +403,45 @@ const DescribeKey: OperationHandler = (input, ctx) => {
   return { KeyMetadata: keyMetadataOf(key) };
 };
 
+const applyPagination = <T>(
+  items: T[],
+  input: Record<string, unknown>,
+): { page: T[]; Truncated: boolean; NextMarker?: string } => {
+  const limit =
+    typeof input["Limit"] === "number" ? (input["Limit"] as number) : undefined;
+  const markerRaw =
+    typeof input["Marker"] === "string"
+      ? (input["Marker"] as string)
+      : undefined;
+  const offset = markerRaw
+    ? parseInt(Buffer.from(markerRaw, "base64").toString("utf8"), 10)
+    : 0;
+  const start = isNaN(offset) ? 0 : offset;
+  const sliced =
+    limit !== undefined
+      ? items.slice(start, start + limit)
+      : items.slice(start);
+  const hasMore = start + sliced.length < items.length;
+  const nextOffset = start + sliced.length;
+  return {
+    page: sliced,
+    Truncated: hasMore,
+    NextMarker: hasMore
+      ? Buffer.from(String(nextOffset)).toString("base64")
+      : undefined,
+  };
+};
+
 const ListKeys: OperationHandler = (input, ctx) => {
   const entries = listStoredKeys(ctx);
+  const { page, Truncated, NextMarker } = applyPagination(entries, input);
   return {
-    Keys: entries.map((entry) => ({
+    Keys: page.map((entry) => ({
       KeyId: entry.value.KeyId,
       KeyArn: entry.value.Arn,
     })),
-    Truncated: false,
+    Truncated,
+    NextMarker,
   };
 };
 
@@ -616,15 +662,17 @@ const ListAliases: OperationHandler = (input, ctx) => {
     .filter(
       (alias) => keyIdFilter === undefined || alias.TargetKeyId === keyIdFilter,
     );
+  const { page, Truncated, NextMarker } = applyPagination(aliases, input);
   return {
-    Aliases: aliases.map((alias) => ({
+    Aliases: page.map((alias) => ({
       AliasName: alias.AliasName,
       AliasArn: alias.AliasArn,
       TargetKeyId: alias.TargetKeyId,
       CreationDate: alias.CreationDate,
       LastUpdatedDate: alias.LastUpdatedDate,
     })),
-    Truncated: false,
+    Truncated,
+    NextMarker,
   };
 };
 
@@ -740,12 +788,14 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListResourceTags: OperationHandler = (input, ctx) => {
   const key = requireKey(ctx, requireString(input, "KeyId"));
+  const { page, Truncated, NextMarker } = applyPagination(key.Tags, input);
   return {
-    Tags: key.Tags.map((tag) => ({
+    Tags: page.map((tag) => ({
       TagKey: tag.TagKey,
       TagValue: tag.TagValue,
     })),
-    Truncated: false,
+    Truncated,
+    NextMarker,
   };
 };
 
@@ -809,11 +859,21 @@ const ListGrants: OperationHandler = (input, ctx) => {
     typeof input["GrantId"] === "string"
       ? (input["GrantId"] as string)
       : undefined;
+  const granteePrincipalFilter =
+    typeof input["GranteePrincipal"] === "string"
+      ? (input["GranteePrincipal"] as string)
+      : undefined;
   const grants = listStoredGrants(ctx)
     .map((e) => e.value)
     .filter((g) => g.KeyId === key.KeyId && !g.Retired)
-    .filter((g) => grantIdFilter === undefined || g.GrantId === grantIdFilter);
-  return { Grants: grants.map(grantEntryOf), Truncated: false };
+    .filter((g) => grantIdFilter === undefined || g.GrantId === grantIdFilter)
+    .filter(
+      (g) =>
+        granteePrincipalFilter === undefined ||
+        g.GranteePrincipal === granteePrincipalFilter,
+    );
+  const { page, Truncated, NextMarker } = applyPagination(grants, input);
+  return { Grants: page.map(grantEntryOf), Truncated, NextMarker };
 };
 
 const RevokeGrant: OperationHandler = (input, ctx) => {
@@ -884,7 +944,8 @@ const ListRetirableGrants: OperationHandler = (input, ctx) => {
         retiringPrincipal === undefined ||
         g.RetiringPrincipal === retiringPrincipal,
     );
-  return { Grants: grants.map(grantEntryOf), Truncated: false };
+  const { page, Truncated, NextMarker } = applyPagination(grants, input);
+  return { Grants: page.map(grantEntryOf), Truncated, NextMarker };
 };
 
 // Key policy
@@ -906,7 +967,9 @@ const PutKeyPolicy: OperationHandler = (input, ctx) => {
 const ListKeyPolicies: OperationHandler = (input, ctx) => {
   const keyId = requireString(input, "KeyId");
   requireKey(ctx, keyId);
-  return { PolicyNames: ["default"], Truncated: false };
+  const policyNames = ["default"];
+  const { page, Truncated, NextMarker } = applyPagination(policyNames, input);
+  return { PolicyNames: page, Truncated, NextMarker };
 };
 
 // Rotation
@@ -949,7 +1012,8 @@ const ListKeyRotations: OperationHandler = (input, ctx) => {
     RotationType: r.RotationType,
     KeyMaterialId: r.KeyMaterialId,
   }));
-  return { Rotations: rotations, Truncated: false };
+  const { page, Truncated, NextMarker } = applyPagination(rotations, input);
+  return { Rotations: page, Truncated, NextMarker };
 };
 
 const RotateKeyOnDemand: OperationHandler = (input, ctx) => {

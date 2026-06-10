@@ -35,6 +35,7 @@ type StoredConsumer = {
   ConsumerStatus: string;
   ConsumerCreationTimestamp: number;
   StreamARN: string;
+  tags: Record<string, string>;
 };
 
 type StoredStream = {
@@ -251,6 +252,14 @@ const CreateStream: OperationHandler = (input, ctx) => {
       ? (input["ShardCount"] as number)
       : 1;
   const shards = makeInitialShards(shardCount, 0);
+  const inputTags =
+    typeof input["Tags"] === "object" && input["Tags"] !== null
+      ? (input["Tags"] as Record<string, unknown>)
+      : {};
+  const initialTags: Record<string, string> = {};
+  for (const [key, value] of Object.entries(inputTags)) {
+    initialTags[key] = typeof value === "string" ? value : String(value);
+  }
   const stream: StoredStream = {
     StreamName: name,
     StreamARN: streamArnOf(ctx.region, ctx.account, name),
@@ -261,7 +270,7 @@ const CreateStream: OperationHandler = (input, ctx) => {
     nextShardIndex: shardCount,
     shards,
     records: [],
-    tags: {},
+    tags: initialTags,
     shardLevelMetrics: [],
     encryptionType: "NONE",
     keyId: undefined,
@@ -275,7 +284,21 @@ const CreateStream: OperationHandler = (input, ctx) => {
 
 const DeleteStream: OperationHandler = (input, ctx) => {
   const name = resolveStreamName(input);
-  requireStream(ctx, name);
+  const stream = requireStream(ctx, name);
+  const enforceConsumerDeletion = input["EnforceConsumerDeletion"] === true;
+  const consumerEntries = ctx.store
+    .list<StoredConsumer>()
+    .filter((entry) => entry.key.startsWith(`consumer/${stream.StreamARN}/`));
+  if (!enforceConsumerDeletion && consumerEntries.length > 0) {
+    throw awsError(
+      "ResourceInUseException",
+      `Stream ${name} has registered consumers. Set EnforceConsumerDeletion to true to delete.`,
+      400,
+    );
+  }
+  for (const entry of consumerEntries) {
+    ctx.store.delete(entry.key);
+  }
   ctx.store.delete(streamKey(name));
   return {};
 };
@@ -361,7 +384,11 @@ const PutRecord: OperationHandler = (input, ctx) => {
   const name = resolveStreamName(input);
   const stream = requireStream(ctx, name);
   const partitionKey = requireString(input, "PartitionKey");
-  const hashKey = partitionKeyToHashKey(partitionKey);
+  const explicitHashKey = input["ExplicitHashKey"];
+  const hashKey =
+    typeof explicitHashKey === "string" && explicitHashKey !== ""
+      ? BigInt(explicitHashKey)
+      : partitionKeyToHashKey(partitionKey);
   const shard = findShardForHashKey(stream.shards, hashKey);
   const record = appendRecord(
     stream,
@@ -388,7 +415,11 @@ const PutRecords: OperationHandler = (input, ctx) => {
       typeof entry["PartitionKey"] === "string"
         ? (entry["PartitionKey"] as string)
         : "";
-    const hashKey = partitionKeyToHashKey(partitionKey);
+    const explicitHashKey = entry["ExplicitHashKey"];
+    const hashKey =
+      typeof explicitHashKey === "string" && explicitHashKey !== ""
+        ? BigInt(explicitHashKey)
+        : partitionKeyToHashKey(partitionKey);
     const shard = findShardForHashKey(stream.shards, hashKey);
     const record = appendRecord(
       stream,
@@ -612,6 +643,13 @@ const ListShards: OperationHandler = (input, ctx) => {
 const MergeShards: OperationHandler = (input, ctx) => {
   const name = resolveStreamName(input);
   const stream = requireStream(ctx, name);
+  if (stream.StreamStatus !== "ACTIVE") {
+    throw awsError(
+      "ResourceInUseException",
+      `Stream ${name} is in state ${stream.StreamStatus}.`,
+      400,
+    );
+  }
   const shardToMerge = requireString(input, "ShardToMerge");
   const adjacentShardToMerge = requireString(input, "AdjacentShardToMerge");
   const shard1 = stream.shards.find(
@@ -657,6 +695,13 @@ const MergeShards: OperationHandler = (input, ctx) => {
 const SplitShard: OperationHandler = (input, ctx) => {
   const name = resolveStreamName(input);
   const stream = requireStream(ctx, name);
+  if (stream.StreamStatus !== "ACTIVE") {
+    throw awsError(
+      "ResourceInUseException",
+      `Stream ${name} is in state ${stream.StreamStatus}.`,
+      400,
+    );
+  }
   const shardToSplit = requireString(input, "ShardToSplit");
   const newStartingHashKey = requireString(input, "NewStartingHashKey");
   const shard = stream.shards.find(
@@ -756,12 +801,21 @@ const RegisterStreamConsumer: OperationHandler = (input, ctx) => {
     );
   }
   const timestamp = Math.floor(Date.now() / 1000);
+  const consumerInputTags =
+    typeof input["Tags"] === "object" && input["Tags"] !== null
+      ? (input["Tags"] as Record<string, unknown>)
+      : {};
+  const consumerTags: Record<string, string> = {};
+  for (const [key, value] of Object.entries(consumerInputTags)) {
+    consumerTags[key] = typeof value === "string" ? value : String(value);
+  }
   const consumer: StoredConsumer = {
     ConsumerName: consumerName,
     ConsumerARN: consumerArnOf(streamArn, consumerName, timestamp),
     ConsumerStatus: "ACTIVE",
     ConsumerCreationTimestamp: timestamp,
     StreamARN: streamArn,
+    tags: consumerTags,
   };
   ctx.store.set(consumerKey(streamArn, consumerName), consumer);
   return {

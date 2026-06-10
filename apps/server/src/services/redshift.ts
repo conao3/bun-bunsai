@@ -726,6 +726,53 @@ const idcApplicationArnOf = (
 ): string =>
   `arn:aws:redshift:${region}:${account}:redshiftidcapplication/${name}`;
 
+const clusterArnOf = (region: string, account: string, id: string): string =>
+  `arn:aws:redshift:${region}:${account}:cluster:${id}`;
+
+const snapshotArnOf = (
+  region: string,
+  account: string,
+  clusterId: string,
+  snapshotId: string,
+): string =>
+  `arn:aws:redshift:${region}:${account}:snapshot:${clusterId}/${snapshotId}`;
+
+const paramgroupArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:redshift:${region}:${account}:parametergroup:${name}`;
+
+const secgroupArnOf = (
+  region: string,
+  account: string,
+  name: string,
+): string =>
+  `arn:aws:redshift:${region}:${account}:securitygroup:${name}`;
+
+const applyMarkerPagination = <T>(
+  items: T[],
+  getId: (item: T) => string,
+  input: Record<string, unknown>,
+): { items: T[]; marker: string | undefined } => {
+  const maxRecords = numberOr(input, "MaxRecords", 100);
+  const marker = optionalString(input, "Marker");
+  let startIdx = 0;
+  if (marker !== undefined) {
+    const idx = items.findIndex((item) => getId(item) === marker);
+    if (idx !== -1) {
+      startIdx = idx + 1;
+    }
+  }
+  const page = items.slice(startIdx, startIdx + maxRecords);
+  const nextMarker =
+    startIdx + maxRecords < items.length
+      ? getId(page[page.length - 1])
+      : undefined;
+  return { items: page, marker: nextMarker };
+};
+
 const requireIntegration = (
   ctx: ServiceContext,
   arn: string,
@@ -991,6 +1038,10 @@ const CreateCluster: OperationHandler = (input, ctx) => {
     IamRoles: [],
   };
   ctx.store.set(clusterKey(id), cluster);
+  const tags = tagList(input);
+  if (tags.length > 0) {
+    ctx.store.set(tagsKey(clusterArnOf(ctx.region, ctx.account, id)), tags);
+  }
   return { Cluster: presentCluster(cluster) };
 };
 
@@ -1023,6 +1074,7 @@ const DeleteCluster: OperationHandler = (input, ctx) => {
   const cluster = requireCluster(ctx, id);
   const presented = presentCluster(cluster);
   ctx.store.delete(clusterKey(id));
+  ctx.store.delete(tagsKey(clusterArnOf(ctx.region, ctx.account, id)));
   return { Cluster: { ...presented, ClusterStatus: "deleting" } };
 };
 
@@ -1437,6 +1489,16 @@ const DeleteClusterSnapshot: OperationHandler = (input, ctx) => {
   const snapshotId = requireString(input, "SnapshotIdentifier");
   const snapshot = requireSnapshot(ctx, snapshotId);
   ctx.store.delete(snapshotKey(snapshotId));
+  ctx.store.delete(
+    tagsKey(
+      snapshotArnOf(
+        ctx.region,
+        ctx.account,
+        snapshot.ClusterIdentifier,
+        snapshotId,
+      ),
+    ),
+  );
   return { Snapshot: { ...presentSnapshot(snapshot), Status: "deleted" } };
 };
 
@@ -1469,7 +1531,12 @@ const DescribeClusterSnapshots: OperationHandler = (input, ctx) => {
         clusterId === undefined || entry.value.ClusterIdentifier === clusterId,
     )
     .map((entry) => presentSnapshot(advanceSnapshotStatus(entry.value, ctx)));
-  return { Snapshots: snapshots };
+  const paginated = applyMarkerPagination(
+    snapshots,
+    (s) => s.SnapshotIdentifier,
+    input,
+  );
+  return { Snapshots: paginated.items, Marker: paginated.marker };
 };
 
 const CopyClusterSnapshot: OperationHandler = (input, ctx) => {
@@ -1639,6 +1706,7 @@ const DeleteClusterParameterGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ParameterGroupName");
   requireParameterGroup(ctx, name);
   ctx.store.delete(paramGroupKey(name));
+  ctx.store.delete(tagsKey(paramgroupArnOf(ctx.region, ctx.account, name)));
   return {};
 };
 
@@ -1648,11 +1716,33 @@ const DescribeClusterParameterGroups: OperationHandler = (input, ctx) => {
     const group = requireParameterGroup(ctx, name);
     return { ParameterGroups: [presentParameterGroup(group)] };
   }
-  const groups = ctx.store
+  const tagKeys = stringList(input, "TagKeys");
+  const tagValues = stringList(input, "TagValues");
+  let groups = ctx.store
     .list<StoredParameterGroup>()
     .filter((entry) => entry.key.startsWith("paramgroup/"))
-    .map((entry) => presentParameterGroup(entry.value));
-  return { ParameterGroups: groups };
+    .map((entry) => entry.value);
+  if (tagKeys.length > 0 || tagValues.length > 0) {
+    groups = groups.filter((g) => {
+      const arn = paramgroupArnOf(ctx.region, ctx.account, g.ParameterGroupName);
+      const tags =
+        ctx.store.get<{ Key: string; Value: string }[]>(tagsKey(arn)) ?? [];
+      if (tagKeys.length > 0 && !tags.some((t) => tagKeys.includes(t.Key)))
+        return false;
+      if (
+        tagValues.length > 0 &&
+        !tags.some((t) => tagValues.includes(t.Value))
+      )
+        return false;
+      return true;
+    });
+  }
+  const paginated = applyMarkerPagination(
+    groups.map(presentParameterGroup),
+    (g) => g.ParameterGroupName,
+    input,
+  );
+  return { ParameterGroups: paginated.items, Marker: paginated.marker };
 };
 
 const DescribeClusterParameters: OperationHandler = (input, ctx) => {
@@ -1777,6 +1867,7 @@ const DeleteClusterSecurityGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "ClusterSecurityGroupName");
   requireSecurityGroup(ctx, name);
   ctx.store.delete(secGroupKey(name));
+  ctx.store.delete(tagsKey(secgroupArnOf(ctx.region, ctx.account, name)));
   return {};
 };
 
@@ -1786,11 +1877,37 @@ const DescribeClusterSecurityGroups: OperationHandler = (input, ctx) => {
     const group = requireSecurityGroup(ctx, name);
     return { ClusterSecurityGroups: [presentSecurityGroup(group)] };
   }
-  const groups = ctx.store
+  const tagKeys = stringList(input, "TagKeys");
+  const tagValues = stringList(input, "TagValues");
+  let groups = ctx.store
     .list<StoredSecurityGroup>()
     .filter((entry) => entry.key.startsWith("secgroup/"))
-    .map((entry) => presentSecurityGroup(entry.value));
-  return { ClusterSecurityGroups: groups };
+    .map((entry) => entry.value);
+  if (tagKeys.length > 0 || tagValues.length > 0) {
+    groups = groups.filter((g) => {
+      const arn = secgroupArnOf(
+        ctx.region,
+        ctx.account,
+        g.ClusterSecurityGroupName,
+      );
+      const tags =
+        ctx.store.get<{ Key: string; Value: string }[]>(tagsKey(arn)) ?? [];
+      if (tagKeys.length > 0 && !tags.some((t) => tagKeys.includes(t.Key)))
+        return false;
+      if (
+        tagValues.length > 0 &&
+        !tags.some((t) => tagValues.includes(t.Value))
+      )
+        return false;
+      return true;
+    });
+  }
+  const paginated = applyMarkerPagination(
+    groups.map(presentSecurityGroup),
+    (g) => g.ClusterSecurityGroupName,
+    input,
+  );
+  return { ClusterSecurityGroups: paginated.items, Marker: paginated.marker };
 };
 
 const AuthorizeClusterSecurityGroupIngress: OperationHandler = (input, ctx) => {

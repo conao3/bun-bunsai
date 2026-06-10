@@ -748,3 +748,109 @@ test("AppRunner tags", async () => {
     }),
   );
 });
+
+test("AppRunner CreateService rejects unknown AutoScaling ARN", async () => {
+  const client = apprunner();
+  await expect(
+    client.send(
+      new CreateServiceCommand({
+        ServiceName: `bunsai-invalid-asc-${Date.now()}`,
+        SourceConfiguration: {
+          ImageRepository: {
+            ImageIdentifier:
+              "public.ecr.aws/aws-containers/hello-app-runner:latest",
+            ImageRepositoryType: "ECR_PUBLIC",
+          },
+        },
+        AutoScalingConfigurationArn:
+          "arn:aws:apprunner:us-east-1:123456789012:autoscalingconfiguration/Unknown/1/nonexistent",
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("AppRunner CreateService rejects unknown Observability ARN", async () => {
+  const client = apprunner();
+  await expect(
+    client.send(
+      new CreateServiceCommand({
+        ServiceName: `bunsai-invalid-obs-${Date.now()}`,
+        SourceConfiguration: {
+          ImageRepository: {
+            ImageIdentifier:
+              "public.ecr.aws/aws-containers/hello-app-runner:latest",
+            ImageRepositoryType: "ECR_PUBLIC",
+          },
+        },
+        ObservabilityConfiguration: {
+          ObservabilityEnabled: true,
+          ObservabilityConfigurationArn:
+            "arn:aws:apprunner:us-east-1:123456789012:observabilityconfiguration/Unknown/1/nonexistent",
+        },
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("AppRunner UpdateService rejects unknown AutoScaling ARN", async () => {
+  const client = apprunner();
+  const created = await client.send(
+    new CreateServiceCommand({
+      ServiceName: `bunsai-upd-asc-${Date.now()}`,
+      SourceConfiguration: {
+        ImageRepository: {
+          ImageIdentifier:
+            "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageRepositoryType: "ECR_PUBLIC",
+        },
+      },
+    }),
+  );
+  const serviceArn = created.Service?.ServiceArn;
+  expect(serviceArn).toBeDefined();
+
+  await expect(
+    client.send(
+      new UpdateServiceCommand({
+        ServiceArn: serviceArn,
+        AutoScalingConfigurationArn:
+          "arn:aws:apprunner:us-east-1:123456789012:autoscalingconfiguration/Unknown/1/nonexistent",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteServiceCommand({ ServiceArn: serviceArn }));
+});
+
+test("AppRunner UpdateService rejects unknown Observability ARN", async () => {
+  const client = apprunner();
+  const created = await client.send(
+    new CreateServiceCommand({
+      ServiceName: `bunsai-upd-obs-${Date.now()}`,
+      SourceConfiguration: {
+        ImageRepository: {
+          ImageIdentifier:
+            "public.ecr.aws/aws-containers/hello-app-runner:latest",
+          ImageRepositoryType: "ECR_PUBLIC",
+        },
+      },
+    }),
+  );
+  const serviceArn = created.Service?.ServiceArn;
+  expect(serviceArn).toBeDefined();
+
+  await expect(
+    client.send(
+      new UpdateServiceCommand({
+        ServiceArn: serviceArn,
+        ObservabilityConfiguration: {
+          ObservabilityEnabled: true,
+          ObservabilityConfigurationArn:
+            "arn:aws:apprunner:us-east-1:123456789012:observabilityconfiguration/Unknown/1/nonexistent",
+        },
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteServiceCommand({ ServiceArn: serviceArn }));
+});

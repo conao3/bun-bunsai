@@ -506,6 +506,23 @@ const CreateService: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const inputAutoScalingArn = stringOrUndefined(
+    input["AutoScalingConfigurationArn"],
+  );
+  if (inputAutoScalingArn !== undefined) {
+    getAutoScalingByArn(ctx, inputAutoScalingArn);
+  }
+  const observabilityInput = recordOrUndefined(
+    input["ObservabilityConfiguration"],
+  );
+  if (observabilityInput !== undefined) {
+    const obsArn = stringOrUndefined(
+      observabilityInput["ObservabilityConfigurationArn"],
+    );
+    if (obsArn !== undefined) {
+      getObservabilityByArn(ctx, obsArn);
+    }
+  }
   const serviceId = crypto.randomUUID().replace(/-/g, "");
   const region = ctx.region;
   const arn = `arn:aws:apprunner:${region}:${ctx.account}:service/${name}/${serviceId}`;
@@ -703,6 +720,20 @@ const UpdateService: OperationHandler = (input, ctx) => {
   const newAutoScalingArn = stringOrUndefined(
     input["AutoScalingConfigurationArn"],
   );
+  if (newAutoScalingArn !== undefined) {
+    getAutoScalingByArn(ctx, newAutoScalingArn);
+  }
+  const newObservabilityInput = recordOrUndefined(
+    input["ObservabilityConfiguration"],
+  );
+  if (newObservabilityInput !== undefined) {
+    const newObsArn = stringOrUndefined(
+      newObservabilityInput["ObservabilityConfigurationArn"],
+    );
+    if (newObsArn !== undefined) {
+      getObservabilityByArn(ctx, newObsArn);
+    }
+  }
   const updated: StoredService = {
     ...service,
     UpdatedAt: now,

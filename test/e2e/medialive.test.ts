@@ -91,6 +91,11 @@ import {
   DeleteNetworkCommand,
   DescribeNetworkCommand,
   ListNetworksCommand,
+  ListTagsForResourceCommand,
+  StartChannelCommand,
+  StopChannelCommand,
+  StartMultiplexCommand,
+  StopMultiplexCommand,
 } from "@aws-sdk/client-medialive";
 
 const { endpoint, requestHandler } = startApp();
@@ -858,4 +863,169 @@ test("ListAlerts ChannelId filter and persistence", async () => {
   expect(alertTypes).toContain("RESOURCE_CREATED");
 
   await client.send(new DeleteChannelCommand({ ChannelId: channelId }));
+});
+
+test("HIGH-1: RequestId idempotency on CreateChannel", async () => {
+  const client = medialive();
+
+  const r1 = await client.send(
+    new CreateChannelCommand({ Name: "idem-ch", RequestId: "req-idem-ch-1" }),
+  );
+  const r2 = await client.send(
+    new CreateChannelCommand({ Name: "idem-ch", RequestId: "req-idem-ch-1" }),
+  );
+  expect(r1.Channel?.Id).toBe(r2.Channel?.Id);
+
+  const listed = await client.send(new ListChannelsCommand({}));
+  const matching = (listed.Channels ?? []).filter(
+    (c) => c.Id === r1.Channel?.Id,
+  );
+  expect(matching).toHaveLength(1);
+
+  await client.send(new DeleteChannelCommand({ ChannelId: r1.Channel!.Id! }));
+});
+
+test("HIGH-2: Tags round-trip and ARN validation", async () => {
+  const client = medialive();
+
+  const created = await client.send(
+    new CreateChannelCommand({
+      Name: "tags-ch",
+      Tags: { env: "dev", team: "bunsai" },
+    }),
+  );
+  const arn = created.Channel!.Arn!;
+  const id = created.Channel!.Id!;
+
+  const tags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: arn }),
+  );
+  expect(tags.Tags?.["env"]).toBe("dev");
+  expect(tags.Tags?.["team"]).toBe("bunsai");
+
+  await client.send(new DeleteChannelCommand({ ChannelId: id }));
+
+  await expect(
+    client.send(new ListTagsForResourceCommand({ ResourceArn: arn })),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new ListTagsForResourceCommand({
+        ResourceArn: "arn:aws:medialive:us-east-1:000000000000:channel:999",
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("HIGH-3: Channel state machine guards", async () => {
+  const client = medialive();
+
+  const created = await client.send(
+    new CreateChannelCommand({ Name: "state-ch" }),
+  );
+  const id = created.Channel!.Id!;
+
+  const starting = await client.send(
+    new StartChannelCommand({ ChannelId: id }),
+  );
+  expect(starting.State).toBe("STARTING");
+
+  await expect(
+    client.send(new DeleteChannelCommand({ ChannelId: id })),
+  ).rejects.toThrow();
+
+  const running = await client.send(
+    new DescribeChannelCommand({ ChannelId: id }),
+  );
+  expect(running.State).toBe("RUNNING");
+
+  await client.send(new StopChannelCommand({ ChannelId: id }));
+
+  const described = await client.send(
+    new DescribeChannelCommand({ ChannelId: id }),
+  );
+  expect(described.State).toBe("IDLE");
+
+  await client.send(new DeleteChannelCommand({ ChannelId: id }));
+});
+
+test("HIGH-4: Channel config persistence", async () => {
+  const client = medialive();
+
+  const encoderSettings = {
+    AudioDescriptions: [],
+    OutputGroups: [],
+    TimecodeConfig: { Source: "EMBEDDED" },
+    VideoDescriptions: [],
+  };
+
+  const created = await client.send(
+    new CreateChannelCommand({
+      Name: "config-ch",
+      EncoderSettings: encoderSettings,
+      InputSpecification: {
+        Codec: "AVC",
+        MaximumBitrate: "MAX_10_MBPS",
+        Resolution: "HD",
+      },
+      LogLevel: "INFO",
+      RoleArn: "arn:aws:iam::000000000000:role/MediaLiveRole",
+    }),
+  );
+  const id = created.Channel!.Id!;
+
+  const described = await client.send(
+    new DescribeChannelCommand({ ChannelId: id }),
+  );
+  expect(described.EncoderSettings).toBeDefined();
+  expect(
+    (described.EncoderSettings as Record<string, unknown>)?.["TimecodeConfig"],
+  ).toBeDefined();
+  expect(described.InputSpecification?.Codec).toBe("AVC");
+  expect(described.LogLevel).toBe("INFO");
+  expect(described.RoleArn).toBe(
+    "arn:aws:iam::000000000000:role/MediaLiveRole",
+  );
+
+  await client.send(new DeleteChannelCommand({ ChannelId: id }));
+});
+
+test("HIGH-5: Input attachment tracking", async () => {
+  const client = medialive();
+
+  const inputCreated = await client.send(
+    new CreateInputCommand({ Name: "attach-input", Type: "UDP_PUSH" }),
+  );
+  const inputId = inputCreated.Input!.Id!;
+
+  const channelCreated = await client.send(
+    new CreateChannelCommand({
+      Name: "attach-ch",
+      InputAttachments: [
+        { InputId: inputId, InputAttachmentName: "main-input" },
+      ],
+    }),
+  );
+  const channelId = channelCreated.Channel!.Id!;
+
+  const describedInput = await client.send(
+    new DescribeInputCommand({ InputId: inputId }),
+  );
+  expect(describedInput.State).toBe("ATTACHED");
+  expect(describedInput.AttachedChannels).toContain(channelId);
+
+  await expect(
+    client.send(new DeleteInputCommand({ InputId: inputId })),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteChannelCommand({ ChannelId: channelId }));
+
+  const describedAfter = await client.send(
+    new DescribeInputCommand({ InputId: inputId }),
+  );
+  expect(describedAfter.State).toBe("DETACHED");
+  expect(describedAfter.AttachedChannels ?? []).not.toContain(channelId);
+
+  await client.send(new DeleteInputCommand({ InputId: inputId }));
 });

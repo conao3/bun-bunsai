@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ResourceEntry } from "./api";
 import { useLocation } from "./router";
 import {
@@ -56,6 +56,44 @@ type SecretShape = {
 
 function isPlainObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function buildArn(
+  service: string,
+  account: string,
+  region: string,
+  key: string,
+): string | null {
+  switch (service) {
+    case "s3":
+      return `arn:aws:s3:::${key}`;
+    case "sqs":
+      return `arn:aws:sqs:${region}:${account}:${key}`;
+    case "dynamodb":
+      return `arn:aws:dynamodb:${region}:${account}:table/${key}`;
+    case "secretsmanager":
+      return `arn:aws:secretsmanager:${region}:${account}:secret:${key}`;
+    case "lambda":
+      return `arn:aws:lambda:${region}:${account}:function:${key}`;
+    case "sns":
+      return `arn:aws:sns:${region}:${account}:${key}`;
+    case "kinesis":
+      return `arn:aws:kinesis:${region}:${account}:stream/${key}`;
+    default:
+      return null;
+  }
+}
+
+function extractArnFromValue(value: unknown): string | null {
+  if (!isPlainObj(value)) return null;
+  if (typeof value["Arn"] === "string") return value["Arn"];
+  if (typeof value["arn"] === "string") return value["arn"];
+  if (typeof value["ResourceArn"] === "string") return value["ResourceArn"];
+  if (isPlainObj(value["Attributes"])) {
+    const attrs = value["Attributes"] as Record<string, unknown>;
+    if (typeof attrs["QueueArn"] === "string") return attrs["QueueArn"];
+  }
+  return null;
 }
 
 function isS3Bucket(v: Record<string, unknown>): v is S3BucketShape {
@@ -376,6 +414,9 @@ function ResourceDetail({
       ? (entry.value as Record<string, unknown>)
       : null;
   const s = svcInfo(entry.service);
+  const arn =
+    extractArnFromValue(entry.value) ??
+    buildArn(entry.service, entry.account, entry.region, entry.key);
   return (
     <div className="res-detail">
       <div className="res-detail-head">
@@ -391,6 +432,14 @@ function ResourceDetail({
         >
           {s.name} · {entry.account} · {entry.region}
         </div>
+        {arn && (
+          <div
+            className="mono"
+            style={{ fontSize: 11, color: "var(--muted-soft)", marginTop: 2 }}
+          >
+            {arn}
+          </div>
+        )}
       </div>
 
       {obj && entry.service === "s3" && isS3Bucket(obj) ? (
@@ -461,6 +510,9 @@ export function ResourceBrowser({
     return m;
   }, [scoped]);
 
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+
   useEffect(() => {
     if (!loaded) return;
     if (
@@ -473,7 +525,7 @@ export function ResourceBrowser({
     if (svcHint) {
       const svcResources = scoped.filter((e) => e.service === svcHint);
       if (svcResources.length > 0) {
-        onSelect(
+        onSelectRef.current(
           { service: svcResources[0].service, key: svcResources[0].key },
           true,
         );
@@ -481,8 +533,11 @@ export function ResourceBrowser({
       }
     }
     const first = scoped[0];
-    onSelect(first ? { service: first.service, key: first.key } : null, true);
-  }, [scoped, sel, loaded, onSelect, svcHint]);
+    onSelectRef.current(
+      first ? { service: first.service, key: first.key } : null,
+      true,
+    );
+  }, [scoped, sel, loaded, svcHint]);
 
   const selEntry = sel
     ? (scoped.find((e) => e.service === sel.service && e.key === sel.key) ??

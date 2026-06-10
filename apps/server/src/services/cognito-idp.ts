@@ -29,6 +29,7 @@ type StoredUser = {
   mfaPreferences: Record<string, unknown>;
   userSettings: Record<string, unknown>;
   softwareTokenVerified?: boolean;
+  totpSecret?: string;
 };
 
 type StoredDevice = {
@@ -294,6 +295,47 @@ type MfaChallengeSession = {
 const mfaChallengeKey = (session: string): string => `mfachallenge#${session}`;
 
 const MFA_VALID_CODE = "123456" as const;
+
+const base32Decode = (encoded: string): Buffer => {
+  const CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const s = encoded.toUpperCase().replace(/=+$/, "");
+  let bits = 0;
+  let acc = 0;
+  const bytes: number[] = [];
+  for (const ch of s) {
+    const val = CHARS.indexOf(ch);
+    if (val === -1) continue;
+    acc = (acc << 5) | val;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((acc >> bits) & 0xff);
+    }
+  }
+  return Buffer.from(bytes);
+};
+
+const computeTotp = (secret: string, stepOffset = 0): string => {
+  const key = base32Decode(secret);
+  const step = Math.floor(Date.now() / 1000 / 30) + stepOffset;
+  const buf = Buffer.alloc(8);
+  buf.writeBigUInt64BE(BigInt(step));
+  const hmac = createHmac("sha1", key).update(buf).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const code =
+    ((hmac[offset] & 0x7f) << 24) |
+    ((hmac[offset + 1] & 0xff) << 16) |
+    ((hmac[offset + 2] & 0xff) << 8) |
+    (hmac[offset + 3] & 0xff);
+  return String(code % 1_000_000).padStart(6, "0");
+};
+
+const verifyTotp = (secret: string, code: string): boolean => {
+  for (const offset of [-1, 0, 1]) {
+    if (computeTotp(secret, offset) === code) return true;
+  }
+  return false;
+};
 
 const poolArn = (region: string, account: string, poolId: string): string =>
   `arn:aws:cognito-idp:${region}:${account}:userpool/${poolId}`;
@@ -2270,7 +2312,12 @@ const AdminRespondToAuthChallenge: OperationHandler = async (input, ctx) => {
     }
     ctx.store.delete(mfaChallengeKey(sessionToken));
     const code = challengeResponses["SOFTWARE_TOKEN_MFA_CODE"] ?? "";
-    if (code !== MFA_VALID_CODE) {
+    const adminMfaUser = pool.users[username];
+    const adminTotpOk =
+      (adminMfaUser?.totpSecret !== undefined &&
+        verifyTotp(adminMfaUser.totpSecret, code)) ||
+      code === MFA_VALID_CODE;
+    if (!adminTotpOk) {
       throw awsError(
         "CodeMismatchException",
         "The provided code does not match what the server was expecting.",
@@ -2282,7 +2329,7 @@ const AdminRespondToAuthChallenge: OperationHandler = async (input, ctx) => {
         poolId,
         username,
         clientId,
-        user: pool.users[username],
+        user: adminMfaUser,
         ctx,
       }),
     };
@@ -2488,20 +2535,25 @@ const RespondToAuthChallenge: OperationHandler = async (input, ctx) => {
     }
     ctx.store.delete(mfaChallengeKey(sessionToken));
     const code = challengeResponses["SOFTWARE_TOKEN_MFA_CODE"] ?? "";
-    if (code !== MFA_VALID_CODE) {
+    const mfaPool = ctx.store.get<StoredPool>(pending.poolId);
+    const mfaUser = mfaPool?.users[pending.username];
+    const totpOk =
+      (mfaUser?.totpSecret !== undefined &&
+        verifyTotp(mfaUser.totpSecret, code)) ||
+      code === MFA_VALID_CODE;
+    if (!totpOk) {
       throw awsError(
         "CodeMismatchException",
         "The provided code does not match what the server was expecting.",
         400,
       );
     }
-    const mfaPool = ctx.store.get<StoredPool>(pending.poolId);
     return {
       AuthenticationResult: await issueTokens({
         poolId: pending.poolId,
         username: pending.username,
         clientId: pending.clientId,
-        user: mfaPool?.users[pending.username],
+        user: mfaUser,
         ctx,
       }),
     };
@@ -2975,8 +3027,10 @@ const AssociateSoftwareToken: OperationHandler = async (input, ctx) => {
     typeof input["AccessToken"] === "string" ? input["AccessToken"] : undefined;
   const session =
     typeof input["Session"] === "string" ? input["Session"] : undefined;
+  const secretCode = "BUNSAISIMTOTP000000000000000000";
   if (accessToken !== undefined && accessToken !== "") {
-    await validateAccessToken(accessToken, ctx);
+    const { user: tokenUser } = await validateAccessToken(accessToken, ctx);
+    tokenUser.totpSecret = secretCode;
   } else if (session !== undefined && session !== "") {
     const pending = ctx.store.get<MfaChallengeSession>(
       mfaChallengeKey(session),
@@ -2991,7 +3045,7 @@ const AssociateSoftwareToken: OperationHandler = async (input, ctx) => {
       400,
     );
   }
-  return { SecretCode: "BUNSAISIMTOTP000000000000000000" };
+  return { SecretCode: secretCode };
 };
 
 const VerifySoftwareToken: OperationHandler = async (input, ctx) => {

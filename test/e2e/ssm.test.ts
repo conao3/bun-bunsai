@@ -943,4 +943,28 @@ describe("ssm e2e", () => {
       ),
     ).rejects.toThrow();
   });
+
+  test("DeleteParameter cleans up orphaned tag entries", async () => {
+    const client = ssm();
+    const name = `/bunsai/e2e/tag-cleanup/${Date.now()}`;
+
+    await client.send(
+      new PutParameterCommand({
+        Name: name,
+        Value: "v",
+        Type: "String",
+        Tags: [{ Key: "Env", Value: "test" }],
+      }),
+    );
+
+    await client.send(new DeleteParameterCommand({ Name: name }));
+
+    const tags = await client.send(
+      new ListTagsForResourceCommand({
+        ResourceType: "Parameter",
+        ResourceId: name,
+      }),
+    );
+    expect(tags.TagList ?? []).toHaveLength(0);
+  });
 });

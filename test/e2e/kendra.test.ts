@@ -508,3 +508,88 @@ test("Kendra ListIndices pagination", async () => {
     await client.send(new DeleteIndexCommand({ Id: id }));
   }
 });
+
+test("Kendra ClientToken idempotency", async () => {
+  const client = kendra();
+  const token = `idem-token-${Date.now()}`;
+
+  const first = await client.send(
+    new CreateIndexCommand({
+      Name: "idem-index",
+      RoleArn: "arn:aws:iam::000000000000:role/kendra",
+      ClientToken: token,
+    }),
+  );
+  const second = await client.send(
+    new CreateIndexCommand({
+      Name: "idem-index-2",
+      RoleArn: "arn:aws:iam::000000000000:role/kendra",
+      ClientToken: token,
+    }),
+  );
+  expect(first.Id).toBe(second.Id);
+
+  await client.send(new DeleteIndexCommand({ Id: first.Id! }));
+});
+
+test("Kendra tag round-trip", async () => {
+  const client = kendra();
+
+  const { Id: id } = await client.send(
+    new CreateIndexCommand({
+      Name: "tag-index",
+      RoleArn: "arn:aws:iam::000000000000:role/kendra",
+      Tags: [{ Key: "env", Value: "test" }],
+    }),
+  );
+  const arn = `arn:aws:kendra:us-east-1:000000000000:index/${id}`;
+
+  const listed = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: arn }),
+  );
+  expect(listed.Tags).toEqual([{ Key: "env", Value: "test" }]);
+
+  await client.send(
+    new TagResourceCommand({
+      ResourceARN: arn,
+      Tags: [{ Key: "team", Value: "qa" }],
+    }),
+  );
+  const after = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: arn }),
+  );
+  expect(after.Tags?.find((t) => t.Key === "team")?.Value).toBe("qa");
+
+  await client.send(new DeleteIndexCommand({ Id: id! }));
+
+  const afterDelete = await client.send(
+    new ListTagsForResourceCommand({ ResourceARN: arn }),
+  );
+  expect(afterDelete.Tags ?? []).toEqual([]);
+});
+
+test("Kendra DELETING lifecycle", async () => {
+  const client = kendra();
+
+  const { Id: id } = await client.send(
+    new CreateIndexCommand({
+      Name: "delete-lifecycle-index",
+      RoleArn: "arn:aws:iam::000000000000:role/kendra",
+    }),
+  );
+  await client.send(new DescribeIndexCommand({ Id: id }));
+
+  await client.send(new DeleteIndexCommand({ Id: id! }));
+
+  const deleting = await client.send(new DescribeIndexCommand({ Id: id! }));
+  expect(deleting.Status).toBe("DELETING");
+
+  await expect(
+    client.send(new DescribeIndexCommand({ Id: id! })),
+  ).rejects.toThrow();
+
+  const listed = await client.send(new ListIndicesCommand({}));
+  expect(
+    (listed.IndexConfigurationSummaryItems ?? []).some((i) => i.Id === id),
+  ).toBe(false);
+});

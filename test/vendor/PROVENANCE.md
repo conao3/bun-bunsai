@@ -178,6 +178,7 @@ aws-models/
   ram.json              # botocore/data/ram/2018-01-04/service-2.json              (protocol rest-json, endpointPrefix ram, signingName ram)
   network-firewall.json # botocore/data/network-firewall/2020-11-12/service-2.json (protocol json, endpointPrefix network-firewall, signingName network-firewall, targetPrefix NetworkFirewall_20201112)
   schemas.json          # botocore/data/schemas/2019-12-02/service-2.json          (protocol rest-json, endpointPrefix schemas, signingName schemas)
+  pipes.json            # botocore/data/pipes/2015-10-07/service-2.json             (protocol rest-json, signingName pipes; Amazon EventBridge Pipes)
 ```
 
 ### Notes

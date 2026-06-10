@@ -539,7 +539,8 @@ const GetDetectors: OperationHandler = (input, ctx) => {
 
 const DeleteDetector: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "detectorId");
-  if (ctx.store.get<StoredDetector>(detectorKey(detectorId)) === undefined) {
+  const detector = ctx.store.get<StoredDetector>(detectorKey(detectorId));
+  if (detector === undefined) {
     throw awsError(
       "ResourceNotFoundException",
       `Detector not found: ${detectorId}`,
@@ -547,6 +548,7 @@ const DeleteDetector: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(detectorKey(detectorId));
+  ctx.store.delete(tagsKey(detector.arn));
   return {};
 };
 
@@ -628,6 +630,13 @@ const UpdateDetectorVersion: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "detectorId");
   const detectorVersionId = requireString(input, "detectorVersionId");
   const dv = requireDetectorVersion(ctx, detectorId, detectorVersionId);
+  if (dv.status !== "DRAFT") {
+    throw awsError(
+      "ConflictException",
+      `Cannot update detector version in status ${dv.status}. Only DRAFT versions are updatable.`,
+      409,
+    );
+  }
   const now = new Date().toISOString();
   const updated: StoredDetectorVersion = {
     ...dv,
@@ -680,8 +689,16 @@ const UpdateDetectorVersionStatus: OperationHandler = (input, ctx) => {
 const DeleteDetectorVersion: OperationHandler = (input, ctx) => {
   const detectorId = requireString(input, "detectorId");
   const detectorVersionId = requireString(input, "detectorVersionId");
-  requireDetectorVersion(ctx, detectorId, detectorVersionId);
+  const dv = requireDetectorVersion(ctx, detectorId, detectorVersionId);
+  if (dv.status === "ACTIVE") {
+    throw awsError(
+      "ConflictException",
+      `Cannot delete detector version in ACTIVE status. Update status first.`,
+      409,
+    );
+  }
   ctx.store.delete(detectorVersionKey(detectorId, detectorVersionId));
+  ctx.store.delete(tagsKey(dv.arn));
   return {};
 };
 

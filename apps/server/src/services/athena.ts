@@ -115,6 +115,35 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 const asArray = (value: unknown): unknown[] =>
   Array.isArray(value) ? value : [];
 
+const stringOrUndefined = (value: unknown): string | undefined =>
+  typeof value === "string" && value !== "" ? value : undefined;
+
+const idempotencyKey = (prefix: string, token: string): string =>
+  `idp:${prefix}:${token}`;
+
+const paginate = <T>(
+  items: T[],
+  maxResults: number | undefined,
+  nextToken: string | undefined,
+): { items: T[]; nextToken: string | undefined } => {
+  const start = nextToken !== undefined ? parseInt(atob(nextToken), 10) : 0;
+  const limit =
+    maxResults !== undefined && maxResults > 0 ? maxResults : items.length;
+  const sliced = items.slice(start, start + limit);
+  const newNextToken =
+    start + limit < items.length ? btoa(String(start + limit)) : undefined;
+  return { items: sliced, nextToken: newNextToken };
+};
+
+const tagsFromInput = (value: unknown): StoredTag[] =>
+  asArray(value).map((t) => {
+    const tag = asRecord(t);
+    return {
+      Key: typeof tag["Key"] === "string" ? (tag["Key"] as string) : "",
+      Value: typeof tag["Value"] === "string" ? (tag["Value"] as string) : "",
+    };
+  });
+
 const requireString = (
   input: Record<string, unknown>,
   field: string,
@@ -348,6 +377,15 @@ const calcView = (
 });
 
 const StartQueryExecution: OperationHandler = (input, ctx) => {
+  const clientRequestToken = stringOrUndefined(input["ClientRequestToken"]);
+  if (clientRequestToken !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("qe", clientRequestToken),
+    );
+    if (existingId !== undefined) {
+      return { QueryExecutionId: existingId };
+    }
+  }
   const query = requireString(input, "QueryString");
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
@@ -380,6 +418,9 @@ const StartQueryExecution: OperationHandler = (input, ctx) => {
     CompletionDateTime: 0,
   };
   ctx.store.set(`${executionPrefix}${id}`, execution);
+  if (clientRequestToken !== undefined) {
+    ctx.store.set(idempotencyKey("qe", clientRequestToken), id);
+  }
   return { QueryExecutionId: id };
 };
 
@@ -416,10 +457,12 @@ const StopQueryExecution: OperationHandler = (input, ctx) => {
 };
 
 const ListQueryExecutions: OperationHandler = (input, ctx) => {
-  const workGroup =
-    typeof input["WorkGroup"] === "string"
-      ? (input["WorkGroup"] as string)
+  const workGroup = stringOrUndefined(input["WorkGroup"]);
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
       : undefined;
+  const nextToken = stringOrUndefined(input["NextToken"]);
   const ids = ctx.store
     .list<StoredQueryExecution>()
     .filter((entry) => entry.key.startsWith(executionPrefix))
@@ -428,7 +471,8 @@ const ListQueryExecutions: OperationHandler = (input, ctx) => {
     )
     .sort((a, b) => b.value.SubmissionDateTime - a.value.SubmissionDateTime)
     .map((entry) => entry.value.QueryExecutionId);
-  return { QueryExecutionIds: ids };
+  const { items, nextToken: next } = paginate(ids, maxResults, nextToken);
+  return { QueryExecutionIds: items, ...(next !== undefined ? { NextToken: next } : {}) };
 };
 
 const GetQueryResults: OperationHandler = (input, ctx) => {
@@ -521,6 +565,11 @@ const CreateWorkGroup: OperationHandler = (input, ctx) => {
     CreationTime: Math.floor(Date.now() / 1000),
   };
   ctx.store.set(`${workGroupPrefix}${name}`, workGroup);
+  const tags = tagsFromInput(input["Tags"]);
+  if (tags.length > 0) {
+    const arn = `arn:aws:athena:${ctx.region}:${ctx.account}:workgroup/${name}`;
+    ctx.store.set(`${tagsPrefix}${arn}`, tags);
+  }
   return {};
 };
 
@@ -618,7 +667,12 @@ const UpdateWorkGroup: OperationHandler = (input, ctx) => {
 };
 
 const ListWorkGroups: OperationHandler = (input, ctx) => {
-  const workGroups = ctx.store
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const all = ctx.store
     .list<StoredWorkGroup>()
     .filter((entry) => entry.key.startsWith(workGroupPrefix))
     .map((entry) => ({
@@ -627,7 +681,8 @@ const ListWorkGroups: OperationHandler = (input, ctx) => {
       Description: entry.value.Description,
       CreationTime: entry.value.CreationTime,
     }));
-  return { WorkGroups: workGroups };
+  const { items, nextToken: next } = paginate(all, maxResults, nextToken);
+  return { WorkGroups: items, ...(next !== undefined ? { NextToken: next } : {}) };
 };
 
 const CreateDataCatalog: OperationHandler = (input, ctx) => {
@@ -653,6 +708,11 @@ const CreateDataCatalog: OperationHandler = (input, ctx) => {
     Parameters: asRecord(input["Parameters"]),
   };
   ctx.store.set(`${dataCatalogPrefix}${name}`, catalog);
+  const tags = tagsFromInput(input["Tags"]);
+  if (tags.length > 0) {
+    const arn = `arn:aws:athena:${ctx.region}:${ctx.account}:datacatalog/${name}`;
+    ctx.store.set(`${tagsPrefix}${arn}`, tags);
+  }
   return {};
 };
 
@@ -730,6 +790,15 @@ const UpdateDataCatalog: OperationHandler = (input, ctx) => {
 };
 
 const CreateNamedQuery: OperationHandler = (input, ctx) => {
+  const clientRequestToken = stringOrUndefined(input["ClientRequestToken"]);
+  if (clientRequestToken !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("nq", clientRequestToken),
+    );
+    if (existingId !== undefined) {
+      return { NamedQueryId: existingId };
+    }
+  }
   const name = requireString(input, "Name");
   const database = requireString(input, "Database");
   const queryString = requireString(input, "QueryString");
@@ -749,6 +818,9 @@ const CreateNamedQuery: OperationHandler = (input, ctx) => {
         : "primary",
   };
   ctx.store.set(`${namedQueryPrefix}${id}`, query);
+  if (clientRequestToken !== undefined) {
+    ctx.store.set(idempotencyKey("nq", clientRequestToken), id);
+  }
   return { NamedQueryId: id };
 };
 
@@ -1029,6 +1101,20 @@ const ListNotebookSessions: OperationHandler = (input, ctx) => {
 };
 
 const StartSession: OperationHandler = (input, ctx) => {
+  const clientRequestToken = stringOrUndefined(input["ClientRequestToken"]);
+  if (clientRequestToken !== undefined) {
+    const existingId = ctx.store.get<string>(
+      idempotencyKey("sess", clientRequestToken),
+    );
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredSession>(
+        `${sessionPrefix}${existingId}`,
+      );
+      if (existing !== undefined) {
+        return { SessionId: existing.SessionId, State: existing.State };
+      }
+    }
+  }
   const workGroup = requireString(input, "WorkGroup");
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
@@ -1045,6 +1131,14 @@ const StartSession: OperationHandler = (input, ctx) => {
     CreationTime: now,
   };
   ctx.store.set(`${sessionPrefix}${id}`, sess);
+  const tags = tagsFromInput(input["Tags"]);
+  if (tags.length > 0) {
+    const arn = `arn:aws:athena:${ctx.region}:${ctx.account}:session/${id}`;
+    ctx.store.set(`${tagsPrefix}${arn}`, tags);
+  }
+  if (clientRequestToken !== undefined) {
+    ctx.store.set(idempotencyKey("sess", clientRequestToken), id);
+  }
   return { SessionId: id, State: "IDLE" };
 };
 
@@ -1079,17 +1173,27 @@ const GetSessionStatus: OperationHandler = (input, ctx) => {
 
 const ListSessions: OperationHandler = (input, ctx) => {
   const workGroup = requireString(input, "WorkGroup");
-  const sessions = ctx.store
+  const stateFilter = stringOrUndefined(input["StateFilter"]);
+  const maxResults =
+    typeof input["MaxResults"] === "number"
+      ? (input["MaxResults"] as number)
+      : undefined;
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const all = ctx.store
     .list<StoredSession>()
     .filter((entry) => entry.key.startsWith(sessionPrefix))
     .filter((entry) => entry.value.WorkGroup === workGroup)
+    .filter(
+      (entry) => stateFilter === undefined || entry.value.State === stateFilter,
+    )
     .map((entry) => ({
       SessionId: entry.value.SessionId,
       Description: entry.value.Description,
       EngineConfiguration: entry.value.EngineConfiguration,
       Status: sessionStatusView(entry.value),
     }));
-  return { Sessions: sessions };
+  const { items, nextToken: next } = paginate(all, maxResults, nextToken);
+  return { Sessions: items, ...(next !== undefined ? { NextToken: next } : {}) };
 };
 
 const TerminateSession: OperationHandler = (input, ctx) => {
@@ -1196,6 +1300,15 @@ const ListCalculationExecutions: OperationHandler = (input, ctx) => {
 };
 
 const CreateCapacityReservation: OperationHandler = (input, ctx) => {
+  const clientRequestToken = stringOrUndefined(input["ClientRequestToken"]);
+  if (clientRequestToken !== undefined) {
+    const existingName = ctx.store.get<string>(
+      idempotencyKey("cr", clientRequestToken),
+    );
+    if (existingName !== undefined) {
+      return {};
+    }
+  }
   const name = requireString(input, "Name");
   const targetDpus = requireNumber(input, "TargetDpus");
   if (
@@ -1217,6 +1330,14 @@ const CreateCapacityReservation: OperationHandler = (input, ctx) => {
     CreationTime: Math.floor(Date.now() / 1000),
   };
   ctx.store.set(`${capacityReservationPrefix}${name}`, cr);
+  const tags = tagsFromInput(input["Tags"]);
+  if (tags.length > 0) {
+    const arn = `arn:aws:athena:${ctx.region}:${ctx.account}:capacity-reservation/${name}`;
+    ctx.store.set(`${tagsPrefix}${arn}`, tags);
+  }
+  if (clientRequestToken !== undefined) {
+    ctx.store.set(idempotencyKey("cr", clientRequestToken), name);
+  }
   return {};
 };
 

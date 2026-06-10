@@ -469,10 +469,7 @@ const issueTokens = async (
   const exp = now + 3600;
   const iss = issuerForPool(token.poolId);
   const extra = idClaimsFromUser(token.user);
-  const sub =
-    typeof extra["sub"] === "string"
-      ? (extra["sub"] as string)
-      : token.username;
+  const sub = extra["sub"] as string;
   const groupEntries = token.ctx?.store.list<StoredGroup>() ?? [];
   const userGroups = groupEntries
     .filter(
@@ -1897,9 +1894,13 @@ const AdminCreateUser: OperationHandler = (input, ctx) => {
     );
   }
   const now = Math.floor(Date.now() / 1000);
+  const userSub = crypto.randomUUID();
   const user: StoredUser = {
     Username: username,
-    Attributes: toAttributes(input["UserAttributes"]),
+    Attributes: [
+      { Name: "sub", Value: userSub },
+      ...toAttributes(input["UserAttributes"]),
+    ],
     UserCreateDate: now,
     UserLastModifiedDate: now,
     Enabled: true,
@@ -2640,9 +2641,13 @@ const SignUp: OperationHandler = (input, ctx) => {
     throw awsError("UsernameExistsException", `User already exists.`, 400);
   }
   const now = Math.floor(Date.now() / 1000);
+  const userSub = crypto.randomUUID();
   const user: StoredUser = {
     Username: username,
-    Attributes: toAttributes(input["UserAttributes"]),
+    Attributes: [
+      { Name: "sub", Value: userSub },
+      ...toAttributes(input["UserAttributes"]),
+    ],
     UserCreateDate: now,
     UserLastModifiedDate: now,
     Enabled: true,
@@ -2660,7 +2665,7 @@ const SignUp: OperationHandler = (input, ctx) => {
   ctx.store.set(poolId, pool);
   return {
     UserConfirmed: false,
-    UserSub: crypto.randomUUID(),
+    UserSub: userSub,
   };
 };
 

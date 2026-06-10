@@ -266,6 +266,13 @@ test("FraudDetector detector-version lifecycle", async () => {
   expect(summary?.status).toBe("ACTIVE");
 
   await client.send(
+    new UpdateDetectorVersionStatusCommand({
+      detectorId,
+      detectorVersionId: versionId,
+      status: "INACTIVE",
+    }),
+  );
+  await client.send(
     new DeleteDetectorVersionCommand({
       detectorId,
       detectorVersionId: versionId,
@@ -604,6 +611,13 @@ test("FraudDetector GetEventPrediction evaluates rules", async () => {
   ).toBe(true);
 
   await client.send(
+    new UpdateDetectorVersionStatusCommand({
+      detectorId,
+      detectorVersionId,
+      status: "INACTIVE",
+    }),
+  );
+  await client.send(
     new DeleteDetectorVersionCommand({ detectorId, detectorVersionId }),
   );
   await client.send(new DeleteDetectorCommand({ detectorId }));
@@ -692,6 +706,13 @@ test("FraudDetector GetEventPredictionMetadata", async () => {
   expect(summary?.eventId).toBe(eventId);
   expect(summary?.detectorId).toBe(detectorId);
 
+  await client.send(
+    new UpdateDetectorVersionStatusCommand({
+      detectorId,
+      detectorVersionId,
+      status: "INACTIVE",
+    }),
+  );
   await client.send(
     new DeleteDetectorVersionCommand({ detectorId, detectorVersionId }),
   );

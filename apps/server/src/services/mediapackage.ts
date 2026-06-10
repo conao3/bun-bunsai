@@ -97,7 +97,11 @@ const requireString = (
 ): string => {
   const value = stringOrUndefined(input[field]);
   if (value === undefined) {
-    throw awsError("ValidationException", `${field} is required.`, 422);
+    throw awsError(
+      "UnprocessableEntityException",
+      `${field} is required.`,
+      422,
+    );
   }
   return value;
 };
@@ -112,7 +116,7 @@ const paginateItems = <T>(
   items: T[],
   maxResults: unknown,
   nextToken: unknown,
-  maxCap = 200,
+  maxCap = 1000,
 ): { page: T[]; nextToken: string | undefined } => {
   const max =
     typeof maxResults === "number" && maxResults > 0
@@ -193,6 +197,18 @@ const defaultIngestEndpoints = (
   },
 ];
 
+const resolveChannelTags = (
+  ctx: ServiceContext,
+  channel: StoredChannel,
+): Record<string, unknown> =>
+  ctx.store.get<Record<string, string>>(tagKey(channel.Arn)) ?? channel.Tags;
+
+const resolveEndpointTags = (
+  ctx: ServiceContext,
+  endpoint: StoredOriginEndpoint,
+): Record<string, unknown> =>
+  ctx.store.get<Record<string, string>>(tagKey(endpoint.Arn)) ?? endpoint.Tags;
+
 const CreateChannel: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
   if (ctx.store.get<StoredChannel>(channelKey(id)) !== undefined) {
@@ -212,24 +228,24 @@ const CreateChannel: OperationHandler = (input, ctx) => {
     HlsIngest: { IngestEndpoints: defaultIngestEndpoints(ctx, id) },
   };
   ctx.store.set(channelKey(id), channel);
-  if (Object.keys(tags).length > 0) {
-    const existing =
-      ctx.store.get<Record<string, string>>(tagKey(channel.Arn)) ?? {};
-    ctx.store.set(tagKey(channel.Arn), { ...existing, ...tags });
-  }
+  ctx.store.set(tagKey(channel.Arn), tags);
   return channel;
 };
 
 const DescribeChannel: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
-  return requireChannel(ctx, id);
+  const channel = requireChannel(ctx, id);
+  return { ...channel, Tags: resolveChannelTags(ctx, channel) };
 };
 
 const ListChannels: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredChannel>()
     .filter((entry) => entry.key.startsWith(channelPrefix))
-    .map((entry) => entry.value)
+    .map((entry) => {
+      const c = entry.value;
+      return { ...c, Tags: resolveChannelTags(ctx, c) };
+    })
     .sort((a, b) => (a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0));
   const { page, nextToken } = paginateItems(
     all,
@@ -241,7 +257,22 @@ const ListChannels: OperationHandler = (input, ctx) => {
 
 const DeleteChannel: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
-  requireChannel(ctx, id);
+  const channel = requireChannel(ctx, id);
+  const hasEndpoints = ctx.store
+    .list<StoredOriginEndpoint>()
+    .some(
+      (entry) =>
+        entry.key.startsWith(originEndpointPrefix) &&
+        entry.value.ChannelId === id,
+    );
+  if (hasEndpoints) {
+    throw awsError(
+      "UnprocessableEntityException",
+      `Channel ${id} has attached OriginEndpoints.`,
+      422,
+    );
+  }
+  ctx.store.delete(tagKey(channel.Arn));
   ctx.store.delete(channelKey(id));
   return {};
 };
@@ -262,14 +293,10 @@ const ConfigureLogs: OperationHandler = (input, ctx) => {
   const channel = requireChannel(ctx, id);
   const updated: StoredChannel = {
     ...channel,
-    EgressAccessLogs:
-      input["EgressAccessLogs"] !== undefined
-        ? (input["EgressAccessLogs"] as EgressAccessLogs)
-        : channel.EgressAccessLogs,
-    IngressAccessLogs:
-      input["IngressAccessLogs"] !== undefined
-        ? (input["IngressAccessLogs"] as IngressAccessLogs)
-        : channel.IngressAccessLogs,
+    EgressAccessLogs: input["EgressAccessLogs"] as EgressAccessLogs | undefined,
+    IngressAccessLogs: input["IngressAccessLogs"] as
+      | IngressAccessLogs
+      | undefined,
   };
   ctx.store.set(channelKey(id), updated);
   return updated;
@@ -366,17 +393,14 @@ const CreateOriginEndpoint: OperationHandler = (input, ctx) => {
     MssPackage: input["MssPackage"],
   };
   ctx.store.set(originEndpointKey(id), endpoint);
-  if (Object.keys(epTags).length > 0) {
-    const existing =
-      ctx.store.get<Record<string, string>>(tagKey(endpoint.Arn)) ?? {};
-    ctx.store.set(tagKey(endpoint.Arn), { ...existing, ...epTags });
-  }
+  ctx.store.set(tagKey(endpoint.Arn), epTags);
   return endpoint;
 };
 
 const DescribeOriginEndpoint: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
-  return requireOriginEndpoint(ctx, id);
+  const endpoint = requireOriginEndpoint(ctx, id);
+  return { ...endpoint, Tags: resolveEndpointTags(ctx, endpoint) };
 };
 
 const ListOriginEndpoints: OperationHandler = (input, ctx) => {
@@ -384,7 +408,10 @@ const ListOriginEndpoints: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredOriginEndpoint>()
     .filter((entry) => entry.key.startsWith(originEndpointPrefix))
-    .map((entry) => entry.value)
+    .map((entry) => {
+      const ep = entry.value;
+      return { ...ep, Tags: resolveEndpointTags(ctx, ep) };
+    })
     .filter((ep) => channelId === undefined || ep.ChannelId === channelId)
     .sort((a, b) => (a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0));
   const { page, nextToken } = paginateItems(
@@ -444,7 +471,8 @@ const UpdateOriginEndpoint: OperationHandler = (input, ctx) => {
 
 const DeleteOriginEndpoint: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
-  requireOriginEndpoint(ctx, id);
+  const endpoint = requireOriginEndpoint(ctx, id);
+  ctx.store.delete(tagKey(endpoint.Arn));
   ctx.store.delete(originEndpointKey(id));
   return {};
 };
@@ -453,6 +481,13 @@ const CreateHarvestJob: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
   const originEndpointId = requireString(input, "OriginEndpointId");
   const endpoint = requireOriginEndpoint(ctx, originEndpointId);
+  if ((endpoint.StartoverWindowSeconds ?? 0) <= 0) {
+    throw awsError(
+      "UnprocessableEntityException",
+      "OriginEndpoint must have StartoverWindowSeconds enabled.",
+      422,
+    );
+  }
   if (ctx.store.get<StoredHarvestJob>(harvestJobKey(id)) !== undefined) {
     throw awsError(
       "UnprocessableEntityException",
@@ -469,8 +504,26 @@ const CreateHarvestJob: OperationHandler = (input, ctx) => {
   const roleArn = stringOrUndefined(s3Raw["RoleArn"]);
   if (!bucketName || !manifestKey || !roleArn) {
     throw awsError(
-      "ValidationException",
+      "UnprocessableEntityException",
       "S3Destination requires BucketName, ManifestKey, and RoleArn.",
+      422,
+    );
+  }
+  const startTime = requireString(input, "StartTime");
+  const endTime = requireString(input, "EndTime");
+  const startMs = Date.parse(startTime);
+  const endMs = Date.parse(endTime);
+  if (isNaN(startMs) || isNaN(endMs)) {
+    throw awsError(
+      "UnprocessableEntityException",
+      "StartTime and EndTime must be valid ISO 8601 timestamps.",
+      422,
+    );
+  }
+  if (endMs <= startMs) {
+    throw awsError(
+      "UnprocessableEntityException",
+      "EndTime must be after StartTime.",
       422,
     );
   }
@@ -485,9 +538,9 @@ const CreateHarvestJob: OperationHandler = (input, ctx) => {
     ChannelId: endpoint.ChannelId,
     OriginEndpointId: originEndpointId,
     S3Destination: s3Dest,
-    StartTime: requireString(input, "StartTime"),
-    EndTime: requireString(input, "EndTime"),
-    Status: "SUCCEEDED",
+    StartTime: startTime,
+    EndTime: endTime,
+    Status: "IN_PROGRESS",
     CreatedAt: new Date().toISOString(),
   };
   ctx.store.set(harvestJobKey(id), job);
@@ -496,7 +549,13 @@ const CreateHarvestJob: OperationHandler = (input, ctx) => {
 
 const DescribeHarvestJob: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
-  return requireHarvestJob(ctx, id);
+  const job = requireHarvestJob(ctx, id);
+  if (job.Status === "IN_PROGRESS") {
+    const completed = { ...job, Status: "SUCCEEDED" };
+    ctx.store.set(harvestJobKey(id), completed);
+    return completed;
+  }
+  return job;
 };
 
 const ListHarvestJobs: OperationHandler = (input, ctx) => {
@@ -505,7 +564,15 @@ const ListHarvestJobs: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredHarvestJob>()
     .filter((entry) => entry.key.startsWith(harvestJobPrefix))
-    .map((entry) => entry.value)
+    .map((entry) => {
+      const job = entry.value;
+      if (job.Status === "IN_PROGRESS") {
+        const completed = { ...job, Status: "SUCCEEDED" };
+        ctx.store.set(harvestJobKey(job.Id), completed);
+        return completed;
+      }
+      return job;
+    })
     .filter(
       (job) =>
         includeChannelId === undefined || job.ChannelId === includeChannelId,

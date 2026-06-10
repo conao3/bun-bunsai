@@ -1125,6 +1125,26 @@ body {
     opacity: 1;
   }
 }
+.detail.bottom-panel {
+  width: 100%;
+  height: 340px;
+  flex: 0 0 340px;
+  border-top: 1px solid var(--hairline);
+  animation: bottomPanelIn 0.2s ease both;
+}
+@keyframes bottomPanelIn {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.log-main.log-main-bottom {
+  flex-direction: column;
+}
 
 .detail-head {
   display: flex;

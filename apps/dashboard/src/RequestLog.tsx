@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { RequestLogEntry } from "./api";
+import type { LogLayout } from "./types";
 import {
   CodeBlock,
   EmptyState,
@@ -83,9 +84,11 @@ function parsedError(text: string): { code: string; message: string } | null {
 function RequestDetail({
   req,
   onClose,
+  logLayout,
 }: {
   req: RequestLogEntry;
   onClose: () => void;
+  logLayout: LogLayout;
 }) {
   const [tab, setTab] = useState<DetailTab>("interpreted");
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -120,7 +123,7 @@ function RequestDetail({
     req.responseBodyText.trim().startsWith("[");
   return (
     <div
-      className="detail drawer"
+      className={`detail ${logLayout === "bottom" ? "bottom-panel" : "drawer"}`}
       role="dialog"
       aria-modal="true"
       aria-label={`${req.operation} (${req.service})`}
@@ -300,7 +303,15 @@ function RequestDetail({
   );
 }
 
-function RequestNotFound({ id, onClose }: { id: string; onClose: () => void }) {
+function RequestNotFound({
+  id,
+  onClose,
+  logLayout,
+}: {
+  id: string;
+  onClose: () => void;
+  logLayout: LogLayout;
+}) {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
@@ -314,7 +325,7 @@ function RequestNotFound({ id, onClose }: { id: string; onClose: () => void }) {
 
   return (
     <div
-      className="detail drawer"
+      className={`detail ${logLayout === "bottom" ? "bottom-panel" : "drawer"}`}
       role="dialog"
       aria-modal="true"
       aria-label="リクエストが見つかりません"
@@ -360,6 +371,7 @@ export function RequestLog({
   onStatusFilter,
   q,
   onQ,
+  logLayout,
 }: {
   requests: RequestLogEntry[];
   scope: { account: string; region: string };
@@ -375,6 +387,7 @@ export function RequestLog({
   onStatusFilter: (v: StatusFilter) => void;
   q: string;
   onQ: (v: string) => void;
+  logLayout: LogLayout;
 }) {
   const [qInput, setQInput] = useState(q);
   const [stick, setStick] = useState(true);
@@ -524,7 +537,9 @@ export function RequestLog({
         </button>
       </div>
 
-      <div className="log-main">
+      <div
+        className={`log-main${logLayout === "bottom" ? " log-main-bottom" : ""}`}
+      >
         <div className="log-table-wrap">
           {requests.length === 0 ? (
             <EmptyState
@@ -599,9 +614,17 @@ export function RequestLog({
         </div>
 
         {sel ? (
-          <RequestDetail req={sel} onClose={() => onSelect(null)} />
+          <RequestDetail
+            req={sel}
+            onClose={() => onSelect(null)}
+            logLayout={logLayout}
+          />
         ) : selId ? (
-          <RequestNotFound id={selId} onClose={() => onSelect(null)} />
+          <RequestNotFound
+            id={selId}
+            onClose={() => onSelect(null)}
+            logLayout={logLayout}
+          />
         ) : null}
       </div>
     </div>

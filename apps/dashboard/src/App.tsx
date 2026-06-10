@@ -30,7 +30,7 @@ import {
   useLocation,
   withQuery,
 } from "./router";
-import type { Screen, Theme } from "./types";
+import type { Density, LogLayout, Screen, Theme } from "./types";
 
 type Scope = { account: string; region: string };
 
@@ -63,6 +63,12 @@ export function App() {
   const [theme, setThemeState] = useState<Theme>(() =>
     ls.get<Theme>("theme", "dark"),
   );
+  const [density, setDensityState] = useState<Density>(() =>
+    ls.get<Density>("density", "compact"),
+  );
+  const [logLayout, setLogLayoutState] = useState<LogLayout>(() =>
+    ls.get<LogLayout>("logLayout", "drawer"),
+  );
   const [live, setLive] = useState(true);
 
   const [services, setServices] = useState<ServiceSummary[]>([]);
@@ -91,6 +97,16 @@ export function App() {
   const setTheme = useCallback((v: Theme) => {
     setThemeState(v);
     ls.set("theme", v);
+  }, []);
+
+  const setDensity = useCallback((v: Density) => {
+    setDensityState(v);
+    ls.set("density", v);
+  }, []);
+
+  const setLogLayout = useCallback((v: LogLayout) => {
+    setLogLayoutState(v);
+    ls.set("logLayout", v);
   }, []);
 
   const refreshSnapshots = useCallback(() => {
@@ -174,8 +190,8 @@ export function App() {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
   useEffect(() => {
-    document.documentElement.setAttribute("data-density", "compact");
-  }, []);
+    document.documentElement.setAttribute("data-density", density);
+  }, [density]);
 
   useEffect(() => {
     let cancelled = false;
@@ -364,6 +380,7 @@ export function App() {
             onStatusFilter={onStatusFilter}
             q={q}
             onQ={onQ}
+            logLayout={logLayout}
           />
         )}
         {screen === "resources" && (
@@ -383,6 +400,10 @@ export function App() {
           <Settings
             theme={theme}
             setTheme={setTheme}
+            density={density}
+            setDensity={setDensity}
+            logLayout={logLayout}
+            setLogLayout={setLogLayout}
             scope={scope}
             setScope={setScope}
             accounts={accounts}

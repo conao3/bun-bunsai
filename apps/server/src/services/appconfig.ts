@@ -1142,11 +1142,11 @@ const StartDeployment: OperationHandler = (input, ctx) => {
     GrowthType: strategy.GrowthType,
     GrowthFactor: strategy.GrowthFactor,
     FinalBakeTimeInMinutes: strategy.FinalBakeTimeInMinutes,
-    State: "COMPLETE",
+    State: "DEPLOYING",
     EventLog: [],
-    PercentageComplete: 100.0,
+    PercentageComplete: 0,
     StartedAt: now,
-    CompletedAt: now,
+    CompletedAt: undefined,
     AppliedExtensions: [],
     KmsKeyArn: undefined,
     KmsKeyIdentifier: stringOrUndefined(input["KmsKeyIdentifier"]),
@@ -1317,7 +1317,7 @@ const GetConfiguration: OperationHandler = (input, ctx) => {
         e.key.startsWith(
           `${deploymentPrefix}${application.Id}/${environment.Id}/`,
         ) &&
-        e.value.State === "COMPLETE" &&
+        (e.value.State === "COMPLETE" || e.value.State === "DEPLOYING") &&
         e.value.ConfigurationProfileId === profile.Id,
     )
     .map((e) => e.value)

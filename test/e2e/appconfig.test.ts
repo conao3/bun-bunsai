@@ -327,7 +327,7 @@ test("AppConfig deployment lifecycle", async () => {
     }),
   );
   expect(dep.DeploymentNumber).toBe(1);
-  expect(dep.State).toBe("COMPLETE");
+  expect(dep.State).toBe("DEPLOYING");
 
   const got = await client.send(
     new GetDeploymentCommand({
@@ -562,7 +562,7 @@ test("AppConfig GetConfiguration returns deployed content", async () => {
       ConfigurationVersion: "1",
     }),
   );
-  expect(dep.State).toBe("COMPLETE");
+  expect(dep.State).toBe("DEPLOYING");
   expect(dep.VersionLabel).toBe("v1.0");
 
   const config = await client.send(
@@ -732,7 +732,7 @@ test("AppConfig StopDeployment AllowRevert and terminal-state rejection", async 
       AllowRevert: true,
     }),
   );
-  expect(stopped.State).toBe("REVERTED");
+  expect(stopped.State).toBe("ROLLED_BACK");
 
   await expect(
     client.send(

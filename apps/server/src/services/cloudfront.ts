@@ -234,6 +234,49 @@ const getMonitoringSub = (
   return found;
 };
 
+const getDistributions = (ctx: ServiceContext): StoredDistribution[] =>
+  ctx.store
+    .list<StoredDistribution>()
+    .filter(
+      (e) =>
+        !e.key.startsWith(cachePolicyKey) &&
+        !e.key.startsWith(publicKeyKey) &&
+        !e.key.startsWith(oaiKey) &&
+        !e.key.startsWith(oacKey) &&
+        !e.key.startsWith(invalidationKey) &&
+        !e.key.startsWith(monsubKey),
+    )
+    .map((e) => e.value);
+
+const isCachePolicyInUse = (ctx: ServiceContext, policyId: string): boolean =>
+  getDistributions(ctx).some((dist) => {
+    const dcb = asRecord(dist.config["DefaultCacheBehavior"]);
+    if (dcb["CachePolicyId"] === policyId) return true;
+    const cbs = asRecord(dist.config["CacheBehaviors"]);
+    const items = Array.isArray(cbs["Items"]) ? (cbs["Items"] as unknown[]) : [];
+    return items.some((item) => asRecord(item)["CachePolicyId"] === policyId);
+  });
+
+const isPublicKeyInUse = (ctx: ServiceContext, keyId: string): boolean =>
+  getDistributions(ctx).some((dist) =>
+    JSON.stringify(dist.config).includes(keyId),
+  );
+
+const isOAIInUse = (ctx: ServiceContext, oaiId: string): boolean => {
+  const oaiPath = `origin-access-identity/cloudfront/${oaiId}`;
+  return getDistributions(ctx).some((dist) => {
+    const origins = asRecord(dist.config["Origins"]);
+    const items = Array.isArray(origins["Items"])
+      ? (origins["Items"] as unknown[])
+      : [];
+    return items.some(
+      (item) =>
+        asRecord(asRecord(item)["S3OriginConfig"])["OriginAccessIdentity"] ===
+        oaiPath,
+    );
+  });
+};
+
 const distributionView = (entry: StoredDistribution) => ({
   Id: entry.id,
   ARN: entry.arn,
@@ -455,6 +498,23 @@ const cloudfront: ServiceDefinition = {
       if (typeof callerReference !== "string" || callerReference === "") {
         throw awsError("InvalidArgument", "CallerReference is required", 400);
       }
+      const existingDist = getDistributions(ctx).find(
+        (d) => d.config["CallerReference"] === callerReference,
+      );
+      if (existingDist !== undefined) {
+        if (JSON.stringify(existingDist.config) === JSON.stringify(config)) {
+          return {
+            Distribution: distributionView(existingDist),
+            Location: `https://cloudfront.amazonaws.com${apiPrefix}/${existingDist.id}`,
+            ETag: existingDist.etag,
+          };
+        }
+        throw awsError(
+          "DistributionAlreadyExists",
+          "The caller reference you attempted to create the distribution with is associated with another distribution.",
+          409,
+        );
+      }
       const id = generateId("E");
       const domainName = `${id.toLowerCase()}.cloudfront.net`;
       const entry: StoredDistribution = {
@@ -646,7 +706,14 @@ const cloudfront: ServiceDefinition = {
       if (id === undefined || id === "") {
         throw awsError("InvalidArgument", "Id is required", 400);
       }
-      getDistribution(ctx, id);
+      const entry = getDistribution(ctx, id);
+      if (entry.config["Enabled"] === true) {
+        throw awsError(
+          "DistributionNotDisabled",
+          "The specified CloudFront distribution is not disabled. You must disable the distribution before you can delete it.",
+          409,
+        );
+      }
       ctx.store.delete(id);
       return undefined;
     },
@@ -966,6 +1033,13 @@ const cloudfront: ServiceDefinition = {
         throw awsError("InvalidArgument", "Id is required", 400);
       }
       getCachePolicyEntry(ctx, id);
+      if (isCachePolicyInUse(ctx, id)) {
+        throw awsError(
+          "CachePolicyInUse",
+          "The specified cache policy is currently associated with a distribution.",
+          409,
+        );
+      }
       ctx.store.delete(cachePolicyKey + id);
       return undefined;
     },
@@ -1031,6 +1105,13 @@ const cloudfront: ServiceDefinition = {
         throw awsError("InvalidArgument", "Id is required", 400);
       }
       getPublicKeyEntry(ctx, id);
+      if (isPublicKeyInUse(ctx, id)) {
+        throw awsError(
+          "PublicKeyInUse",
+          "The specified public key is currently associated with a distribution.",
+          409,
+        );
+      }
       ctx.store.delete(publicKeyKey + id);
       return undefined;
     },
@@ -1039,6 +1120,20 @@ const cloudfront: ServiceDefinition = {
       const callerReference = config["CallerReference"];
       if (typeof callerReference !== "string" || callerReference === "") {
         throw awsError("InvalidArgument", "CallerReference is required", 400);
+      }
+      const existingOAIs = ctx.store
+        .list<StoredOAI>()
+        .filter((e) => e.key.startsWith(oaiKey))
+        .map((e) => e.value);
+      const existingOAI = existingOAIs.find(
+        (o) => o.config["CallerReference"] === callerReference,
+      );
+      if (existingOAI !== undefined) {
+        throw awsError(
+          "CloudFrontOriginAccessIdentityAlreadyExists",
+          "If you are attempting to create a new origin access identity, the caller reference you specified is already an origin access identity.",
+          409,
+        );
       }
       const id = generateId("OAI");
       const entry: StoredOAI = {
@@ -1100,6 +1195,13 @@ const cloudfront: ServiceDefinition = {
         throw awsError("InvalidArgument", "Id is required", 400);
       }
       getOAI(ctx, id);
+      if (isOAIInUse(ctx, id)) {
+        throw awsError(
+          "CloudFrontOriginAccessIdentityInUse",
+          "The specified origin access identity is currently associated with a distribution.",
+          409,
+        );
+      }
       ctx.store.delete(oaiKey + id);
       return undefined;
     },

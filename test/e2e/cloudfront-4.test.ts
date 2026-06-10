@@ -25,6 +25,23 @@ const cloudfront = () =>
     requestHandler,
   });
 
+const disableAndDelete = async (
+  client: CloudFrontClient,
+  id: string,
+): Promise<void> => {
+  const cfg = await client.send(
+    new GetDistributionConfigCommand({ Id: id }),
+  );
+  await client.send(
+    new UpdateDistributionCommand({
+      Id: id,
+      IfMatch: cfg.ETag,
+      DistributionConfig: { ...cfg.DistributionConfig, Enabled: false },
+    }),
+  );
+  await client.send(new DeleteDistributionCommand({ Id: id }));
+};
+
 test("CloudFront distribution fidelity: 2 origins + CacheBehavior round-trip", async () => {
   const client = cloudfront();
   const callerRef = `fidelity-e2e-${Date.now()}`;
@@ -224,7 +241,7 @@ test("CloudFront distribution fidelity: 2 origins + CacheBehavior round-trip", a
   expect(dist).toBeDefined();
   expect(dist?.CacheBehaviors?.Quantity).toBe(1);
 
-  await client.send(new DeleteDistributionCommand({ Id: id }));
+  await disableAndDelete(client, id!);
 });
 
 test("CloudFront missing distribution → NoSuchDistribution", async () => {

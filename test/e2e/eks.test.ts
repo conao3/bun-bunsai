@@ -139,7 +139,9 @@ test("EKS clientRequestToken idempotency", async () => {
       clientRequestToken: ngToken,
     }),
   );
-  expect(ngSecond.nodegroup?.nodegroupArn).toBe(ngFirst.nodegroup?.nodegroupArn);
+  expect(ngSecond.nodegroup?.nodegroupArn).toBe(
+    ngFirst.nodegroup?.nodegroupArn,
+  );
 
   const fpToken = crypto.randomUUID();
   const fpFirst = await client.send(

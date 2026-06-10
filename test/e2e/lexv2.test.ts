@@ -687,7 +687,9 @@ test("Lex v2 CreateBot botTags and testBotAliasTags", async () => {
   );
   expect(testAliasTagsResult.tags?.stage).toBe("test");
 
-  await client.send(new DeleteBotCommand({ botId, skipResourceInUseCheck: true }));
+  await client.send(
+    new DeleteBotCommand({ botId, skipResourceInUseCheck: true }),
+  );
 });
 
 test("Lex v2 DeleteBot skipResourceInUseCheck", async () => {
@@ -749,7 +751,9 @@ test("Lex v2 ListBots filters and sortBy", async () => {
 
   const filterEq = await client.send(
     new ListBotsCommand({
-      filters: [{ name: "BotName", values: [`${prefix}-alpha`], operator: "EQ" }],
+      filters: [
+        { name: "BotName", values: [`${prefix}-alpha`], operator: "EQ" },
+      ],
     }),
   );
   const eqIds = (filterEq.botSummaries ?? []).map((b) => b.botId);

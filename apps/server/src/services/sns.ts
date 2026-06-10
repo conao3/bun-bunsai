@@ -75,6 +75,9 @@ const sandboxPhoneKey = (phone: string): string => `sandbox/${phone}`;
 
 const pendingTokenKey = (token: string): string => `pendingtoken/${token}`;
 
+const fifoDedupKey = (topicArn: string, dedupId: string): string =>
+  `fifodedup/${topicArn}/${dedupId}`;
+
 const PROTOCOLS_NEEDING_CONFIRMATION = new Set([
   "http",
   "https",
@@ -491,6 +494,19 @@ const CreateTopic: OperationHandler = (input, ctx) => {
     Attributes: { ...attributes },
   };
   ctx.store.set(topicKey(name), topic);
+  const rawTags = input["Tags"];
+  if (Array.isArray(rawTags) && rawTags.length > 0) {
+    const tagsMap: Record<string, string> = {};
+    for (const tag of rawTags) {
+      if (typeof tag === "object" && tag !== null) {
+        const t = tag as Record<string, unknown>;
+        if (typeof t["Key"] === "string" && typeof t["Value"] === "string") {
+          tagsMap[t["Key"]] = t["Value"];
+        }
+      }
+    }
+    ctx.store.set(tagsKey(arn), { ResourceArn: arn, Tags: tagsMap });
+  }
   return { TopicArn: arn };
 };
 
@@ -507,12 +523,18 @@ const DeleteTopic: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const ListTopics: OperationHandler = (_input, ctx) => {
-  const topics = ctx.store
+const ListTopics: OperationHandler = (input, ctx) => {
+  const all = ctx.store
     .list<StoredTopic>()
     .filter((entry) => entry.key.startsWith("topic/"))
     .map((entry) => ({ TopicArn: entry.value.TopicArn }));
-  return { Topics: topics };
+  const offset = decodePageToken(input["NextToken"]);
+  const page = all.slice(offset, offset + subscriptionListPageSize);
+  const nextOffset = offset + subscriptionListPageSize;
+  if (nextOffset < all.length) {
+    return { Topics: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { Topics: page };
 };
 
 const Publish: OperationHandler = async (input, ctx) => {
@@ -579,6 +601,40 @@ const Publish: OperationHandler = async (input, ctx) => {
       }
     }
   }
+  const dedupId =
+    typeof input["MessageDeduplicationId"] === "string"
+      ? (input["MessageDeduplicationId"] as string)
+      : undefined;
+  if (
+    typeof topicArn === "string" &&
+    topicArn.endsWith(".fifo") &&
+    dedupId !== undefined
+  ) {
+    const dedupKey = fifoDedupKey(topicArn, dedupId);
+    const existing = ctx.store.get<{ messageId: string }>(dedupKey);
+    if (existing !== undefined) {
+      return { MessageId: existing.messageId };
+    }
+    const newId = crypto.randomUUID();
+    ctx.store.set(dedupKey, { messageId: newId });
+    await fanout(ctx, ctx.store, (candidate) => candidate === topicArn, {
+      messageId: newId,
+      message,
+      messageStructure:
+        typeof messageStructure === "string" && messageStructure === "json"
+          ? "json"
+          : undefined,
+      subject:
+        typeof input["Subject"] === "string"
+          ? (input["Subject"] as string)
+          : undefined,
+      messageAttributes:
+        typeof attributes === "object" && attributes !== null
+          ? (attributes as Record<string, unknown>)
+          : undefined,
+    });
+    return { MessageId: newId };
+  }
   const messageId = crypto.randomUUID();
   if (typeof topicArn === "string" && topicArn !== "") {
     await fanout(ctx, ctx.store, (candidate) => candidate === topicArn, {
@@ -634,7 +690,10 @@ const Subscribe: OperationHandler = (input, ctx) => {
   if (needsConfirmation) {
     const token = crypto.randomUUID();
     ctx.store.set(pendingTokenKey(token), { subscriptionArn });
-    return { SubscriptionArn: "pending confirmation" };
+    const returnArn = input["ReturnSubscriptionArn"] === true;
+    return {
+      SubscriptionArn: returnArn ? subscriptionArn : "pending confirmation",
+    };
   }
   return { SubscriptionArn: subscriptionArn };
 };
@@ -672,7 +731,7 @@ const ListSubscriptions: OperationHandler = (input, ctx) => {
 const ListSubscriptionsByTopic: OperationHandler = (input, ctx) => {
   const topicArn = requireString(input, "TopicArn");
   requireTopic(ctx, topicArn);
-  const subscriptions = ctx.store
+  const all = ctx.store
     .list<StoredSubscription>()
     .filter(
       (entry) =>
@@ -686,7 +745,13 @@ const ListSubscriptionsByTopic: OperationHandler = (input, ctx) => {
       Endpoint: entry.value.Endpoint,
       TopicArn: entry.value.TopicArn,
     }));
-  return { Subscriptions: subscriptions };
+  const offset = decodePageToken(input["NextToken"]);
+  const page = all.slice(offset, offset + subscriptionListPageSize);
+  const nextOffset = offset + subscriptionListPageSize;
+  if (nextOffset < all.length) {
+    return { Subscriptions: page, NextToken: encodePageToken(nextOffset) };
+  }
+  return { Subscriptions: page };
 };
 
 const GetTopicAttributes: OperationHandler = (input, ctx) => {
@@ -1065,6 +1130,22 @@ const PublishBatch: OperationHandler = (input, ctx) => {
         Message: "Message is required.",
         SenderFault: true,
       });
+      continue;
+    }
+    const entryDedupId =
+      typeof e["MessageDeduplicationId"] === "string"
+        ? (e["MessageDeduplicationId"] as string)
+        : undefined;
+    if (topicArn.endsWith(".fifo") && entryDedupId !== undefined) {
+      const dedupKey = fifoDedupKey(topicArn, entryDedupId);
+      const existing = ctx.store.get<{ messageId: string }>(dedupKey);
+      if (existing !== undefined) {
+        successful.push({ Id: id, MessageId: existing.messageId });
+        continue;
+      }
+      const newId = crypto.randomUUID();
+      ctx.store.set(dedupKey, { messageId: newId });
+      successful.push({ Id: id, MessageId: newId });
       continue;
     }
     successful.push({ Id: id, MessageId: crypto.randomUUID() });

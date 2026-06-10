@@ -117,6 +117,10 @@ export function buildSnapshotPath(): string {
   return "/snapshots";
 }
 
+export function buildResourceSvcPath(svc: string): string {
+  return withQuery("/resources", new URLSearchParams({ svc }));
+}
+
 export function buildSettingsPath(): string {
   return "/settings";
 }

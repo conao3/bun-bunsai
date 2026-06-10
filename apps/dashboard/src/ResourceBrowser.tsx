@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ResourceEntry } from "./api";
+import { useLocation } from "./router";
 import {
   CodeBlock,
   EmptyState,
@@ -439,6 +440,9 @@ export function ResourceBrowser({
   sel: Selection | null;
   onSelect: (s: Selection | null, replace?: boolean) => void;
 }) {
+  const loc = useLocation();
+  const svcHint = loc.query.get("svc");
+
   const scoped = useMemo(
     () =>
       resources.filter(
@@ -465,9 +469,20 @@ export function ResourceBrowser({
     )
       return;
     if (sel && scoped.length === 0) return;
+    if (svcHint && scoped.length === 0) return;
+    if (svcHint) {
+      const svcResources = scoped.filter((e) => e.service === svcHint);
+      if (svcResources.length > 0) {
+        onSelect(
+          { service: svcResources[0].service, key: svcResources[0].key },
+          true,
+        );
+        return;
+      }
+    }
     const first = scoped[0];
     onSelect(first ? { service: first.service, key: first.key } : null, true);
-  }, [scoped, sel, loaded, onSelect]);
+  }, [scoped, sel, loaded, onSelect, svcHint]);
 
   const selEntry = sel
     ? (scoped.find((e) => e.service === sel.service && e.key === sel.key) ??

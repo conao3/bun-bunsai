@@ -59,9 +59,7 @@ test("CreateHostedZone with valid DelegationSetId associates the delegation set"
   expect(ids).toContain(zoneId);
 
   await client.send(new DeleteHostedZoneCommand({ Id: zoneId }));
-  await client.send(
-    new DeleteReusableDelegationSetCommand({ Id: dsId }),
-  );
+  await client.send(new DeleteReusableDelegationSetCommand({ Id: dsId }));
 });
 
 test("ListHostedZones HostedZoneType filter", async () => {

@@ -803,7 +803,9 @@ const route53: ServiceDefinition = {
       const filterDelegationSetId = stripPrefix(input["DelegationSetId"]);
       if (filterDelegationSetId !== undefined) {
         getReusableDelegationSet(ctx, filterDelegationSetId);
-        zones = zones.filter((z) => z.delegationSetId === filterDelegationSetId);
+        zones = zones.filter(
+          (z) => z.delegationSetId === filterDelegationSetId,
+        );
       }
       const hostedZoneType = input["HostedZoneType"];
       if (hostedZoneType === "PrivateHostedZone") {
@@ -818,9 +820,7 @@ const route53: ServiceDefinition = {
             ? Math.max(1, parseInt(maxItemsRaw, 10) || 100)
             : 100;
       const startIndex =
-        marker === ""
-          ? 0
-          : zones.findIndex((z) => z.id === marker);
+        marker === "" ? 0 : zones.findIndex((z) => z.id === marker);
       const sliced =
         startIndex === -1 ? [] : zones.slice(startIndex, startIndex + maxItems);
       const isTruncated =

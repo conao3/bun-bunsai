@@ -252,14 +252,19 @@ test("Forecast auto predictor lifecycle", async () => {
 test("Forecast predictor lifecycle", async () => {
   const client = forecast();
 
+  const dsg = await client.send(
+    new CreateDatasetGroupCommand({
+      DatasetGroupName: "bunsai_e2e_dsg_for_pred",
+      Domain: "CUSTOM",
+    }),
+  );
+  const DatasetGroupArn = dsg.DatasetGroupArn as string;
+
   const created = await client.send(
     new CreatePredictorCommand({
       PredictorName: "bunsai_e2e_predictor",
       ForecastHorizon: 10,
-      InputDataConfig: {
-        DatasetGroupArn:
-          "arn:aws:forecast:us-east-1:000000000000:dataset-group/fake",
-      },
+      InputDataConfig: { DatasetGroupArn },
       FeaturizationConfig: { ForecastFrequency: "D" },
     }),
   );
@@ -273,6 +278,7 @@ test("Forecast predictor lifecycle", async () => {
   expect(described.ForecastHorizon).toBe(10);
 
   await client.send(new DeletePredictorCommand({ PredictorArn }));
+  await client.send(new DeleteDatasetGroupCommand({ DatasetGroupArn }));
 });
 
 test("Forecast forecast lifecycle", async () => {
@@ -755,16 +761,46 @@ test("Forecast stop and resume resource", async () => {
   const stopped = await client.send(
     new DescribeAutoPredictorCommand({ PredictorArn }),
   );
-  expect(stopped.Status).toBe("STOPPED");
+  expect(stopped.Status).toBe("CREATE_STOPPED");
 
-  await client.send(new ResumeResourceCommand({ ResourceArn: PredictorArn }));
-
-  const resumed = await client.send(
-    new DescribeAutoPredictorCommand({ PredictorArn }),
-  );
-  expect(resumed.Status).toBe("ACTIVE");
+  try {
+    await client.send(new ResumeResourceCommand({ ResourceArn: PredictorArn }));
+    expect(true).toBe(false);
+  } catch (e) {
+    expect((e as Error).name).toBe("ResourceNotFoundException");
+  }
 
   await client.send(new DeletePredictorCommand({ PredictorArn }));
+
+  const pred2 = await client.send(
+    new CreateAutoPredictorCommand({
+      PredictorName: "bunsai_e2e_pred_for_mon_stop",
+    }),
+  );
+  const monitor = await client.send(
+    new CreateMonitorCommand({
+      MonitorName: "bunsai_e2e_mon_for_stop",
+      ResourceArn: pred2.PredictorArn as string,
+    }),
+  );
+  const MonitorArn = monitor.MonitorArn as string;
+
+  await client.send(new StopResourceCommand({ ResourceArn: MonitorArn }));
+  const stoppedMonitor = await client.send(
+    new DescribeMonitorCommand({ MonitorArn }),
+  );
+  expect(stoppedMonitor.Status).toBe("ACTIVE_STOPPED");
+
+  await client.send(new ResumeResourceCommand({ ResourceArn: MonitorArn }));
+  const resumedMonitor = await client.send(
+    new DescribeMonitorCommand({ MonitorArn }),
+  );
+  expect(resumedMonitor.Status).toBe("ACTIVE");
+
+  await client.send(new DeleteMonitorCommand({ MonitorArn }));
+  await client.send(
+    new DeletePredictorCommand({ PredictorArn: pred2.PredictorArn as string }),
+  );
 });
 
 test("Forecast delete resource tree", async () => {
@@ -859,6 +895,170 @@ test("Forecast ListDatasets pagination", async () => {
     new ListDatasetsCommand({ MaxResults: 2, NextToken: page1.NextToken }),
   );
   expect((page2.Datasets ?? []).length).toBeGreaterThan(0);
+
+  for (const arn of arns) {
+    await client.send(new DeleteDatasetCommand({ DatasetArn: arn }));
+  }
+});
+
+test("Forecast Create* Tags persisted and deleted with resource", async () => {
+  const client = forecast();
+
+  const created = await client.send(
+    new CreateDatasetCommand({
+      DatasetName: "bunsai_e2e_tagged_ds",
+      Domain: "CUSTOM",
+      DatasetType: "TARGET_TIME_SERIES",
+      Schema: {
+        Attributes: [
+          { AttributeName: "timestamp", AttributeType: "timestamp" },
+        ],
+      },
+      Tags: [{ Key: "env", Value: "dev" }],
+    }),
+  );
+  const DatasetArn = created.DatasetArn as string;
+
+  const tags = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: DatasetArn }),
+  );
+  expect(tags.Tags).toEqual([{ Key: "env", Value: "dev" }]);
+
+  await client.send(new DeleteDatasetCommand({ DatasetArn }));
+
+  const afterDelete = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: DatasetArn }),
+  );
+  expect(afterDelete.Tags).toEqual([]);
+});
+
+test("Forecast Create* duplicate rejects with ResourceAlreadyExistsException", async () => {
+  const client = forecast();
+
+  await client.send(
+    new CreateDatasetCommand({
+      DatasetName: "bunsai_e2e_dup_ds",
+      Domain: "CUSTOM",
+      DatasetType: "TARGET_TIME_SERIES",
+      Schema: {
+        Attributes: [
+          { AttributeName: "timestamp", AttributeType: "timestamp" },
+        ],
+      },
+    }),
+  );
+
+  try {
+    await client.send(
+      new CreateDatasetCommand({
+        DatasetName: "bunsai_e2e_dup_ds",
+        Domain: "CUSTOM",
+        DatasetType: "TARGET_TIME_SERIES",
+        Schema: {
+          Attributes: [
+            { AttributeName: "timestamp", AttributeType: "timestamp" },
+          ],
+        },
+      }),
+    );
+    expect(true).toBe(false);
+  } catch (e) {
+    expect((e as Error).name).toBe("ResourceAlreadyExistsException");
+  }
+
+  const ds = await client.send(new ListDatasetsCommand({}));
+  const dupsArn = (ds.Datasets ?? [])
+    .filter((d) => d.DatasetName === "bunsai_e2e_dup_ds")
+    .map((d) => d.DatasetArn as string);
+  expect(dupsArn.length).toBe(1);
+  await client.send(new DeleteDatasetCommand({ DatasetArn: dupsArn[0] }));
+});
+
+test("Forecast DeleteResourceTree cascades to children", async () => {
+  const client = forecast();
+
+  const pred = await client.send(
+    new CreateAutoPredictorCommand({
+      PredictorName: "bunsai_e2e_pred_for_cascade",
+    }),
+  );
+  const PredictorArn = pred.PredictorArn as string;
+
+  const fc = await client.send(
+    new CreateForecastCommand({
+      ForecastName: "bunsai_e2e_fc_for_cascade",
+      PredictorArn,
+    }),
+  );
+  const ForecastArn = fc.ForecastArn as string;
+
+  await client.send(
+    new DeleteResourceTreeCommand({ ResourceArn: PredictorArn }),
+  );
+
+  try {
+    await client.send(new DescribeForecastCommand({ ForecastArn }));
+    expect(true).toBe(false);
+  } catch (e) {
+    expect((e as Error).name).toBe("ResourceNotFoundException");
+  }
+
+  try {
+    await client.send(new DescribeAutoPredictorCommand({ PredictorArn }));
+    expect(true).toBe(false);
+  } catch (e) {
+    expect((e as Error).name).toBe("ResourceNotFoundException");
+  }
+});
+
+test("Forecast CreatePredictor rejects nonexistent DatasetGroupArn", async () => {
+  const client = forecast();
+
+  try {
+    await client.send(
+      new CreatePredictorCommand({
+        PredictorName: "bunsai_e2e_pred_bad_dsg",
+        ForecastHorizon: 10,
+        InputDataConfig: {
+          DatasetGroupArn:
+            "arn:aws:forecast:us-east-1:000000000000:dataset-group/nonexistent",
+        },
+        FeaturizationConfig: { ForecastFrequency: "D" },
+      }),
+    );
+    expect(true).toBe(false);
+  } catch (e) {
+    expect((e as Error).name).toBe("ResourceNotFoundException");
+  }
+});
+
+test("Forecast paginateList default page size is 100", async () => {
+  const client = forecast();
+
+  const names = Array.from({ length: 11 }, (_, i) => `bunsai_pg100_ds${i}`);
+  const arns: string[] = [];
+  for (const name of names) {
+    const r = await client.send(
+      new CreateDatasetCommand({
+        DatasetName: name,
+        Domain: "CUSTOM",
+        DatasetType: "TARGET_TIME_SERIES",
+        Schema: {
+          Attributes: [
+            { AttributeName: "timestamp", AttributeType: "timestamp" },
+          ],
+        },
+      }),
+    );
+    arns.push(r.DatasetArn as string);
+  }
+
+  const page = await client.send(new ListDatasetsCommand({}));
+  const returnedArns = (page.Datasets ?? []).map((d) => d.DatasetArn as string);
+  for (const arn of arns) {
+    expect(returnedArns).toContain(arn);
+  }
+  expect(page.NextToken).toBeUndefined();
 
   for (const arn of arns) {
     await client.send(new DeleteDatasetCommand({ DatasetArn: arn }));

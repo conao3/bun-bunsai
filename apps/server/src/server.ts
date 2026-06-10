@@ -199,13 +199,13 @@ export function createBunsaiServers(options: {
       ? Bun.serve({
           port: options.uiPort,
           idleTimeout: 0,
-          development: { hmr: options.hmr ?? false },
+          development: options.hmr ? { hmr: true } : false,
           routes: { "/__bunsai/*": app.managementFetch },
         })
       : Bun.serve({
           port: options.uiPort,
           idleTimeout: 0,
-          development: { hmr: options.hmr ?? false },
+          development: options.hmr ? { hmr: true } : false,
           routes: {
             "/__bunsai/*": app.managementFetch,
             "/*": options.dashboard,

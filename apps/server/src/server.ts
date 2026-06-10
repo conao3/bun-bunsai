@@ -51,7 +51,9 @@ export function createBunsaiApp() {
     }
     const bodyBytes = new Uint8Array(await req.arrayBuffer());
     const service =
-      route.service === undefined ? undefined : findService(route.service);
+      route.service === undefined
+        ? undefined
+        : findService(route.service, url.pathname);
 
     if (route.service === undefined || service === undefined) {
       const protocol: Protocol = "json";

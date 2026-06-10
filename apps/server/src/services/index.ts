@@ -1,3 +1,4 @@
+import { pickService } from "../core/router.ts";
 import type { ServiceDefinition } from "../core/types.ts";
 import sts from "./sts.ts";
 import s3 from "./s3.ts";
@@ -235,9 +236,15 @@ export const services: ServiceDefinition[] = [
   pipes,
 ];
 
-export const findService = (name: string): ServiceDefinition | undefined =>
-  services.find(
+export const findService = (
+  name: string,
+  path?: string,
+): ServiceDefinition | undefined => {
+  const candidates = services.filter(
     (s) =>
       s.name === name ||
       s.model?.metadata?.targetPrefix?.toLowerCase() === name,
   );
+  if (path === undefined || candidates.length <= 1) return candidates[0];
+  return pickService(candidates, path);
+};

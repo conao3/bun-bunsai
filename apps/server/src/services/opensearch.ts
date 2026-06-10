@@ -800,8 +800,7 @@ const appTagListFromStore = (
   arn: string,
   ctx: { store: { get: <T>(key: string) => T | undefined } },
 ): { Key: string; Value: string }[] => {
-  const tags =
-    ctx.store.get<Record<string, string>>(tagKey(arn)) ?? {};
+  const tags = ctx.store.get<Record<string, string>>(tagKey(arn)) ?? {};
   return Object.entries(tags).map(([Key, Value]) => ({ Key, Value }));
 };
 

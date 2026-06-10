@@ -29,6 +29,8 @@ import {
   DescribeRecordCommand,
   DescribeServiceActionCommand,
   DescribeTagOptionCommand,
+  DisassociatePrincipalFromPortfolioCommand,
+  DisassociateProductFromPortfolioCommand,
   DisassociateTagOptionFromResourceCommand,
   EnableAWSOrganizationsAccessCommand,
   GetAWSOrganizationsAccessStatusCommand,
@@ -385,6 +387,18 @@ test("ServiceCatalog product + provisioning-artifact lifecycle", async () => {
     new DeleteProvisioningArtifactCommand({
       ProvisioningArtifactId: paId,
       ProductId: productId,
+    }),
+  );
+  await client.send(
+    new DisassociateProductFromPortfolioCommand({
+      PortfolioId: portfolioId,
+      ProductId: productId,
+    }),
+  );
+  await client.send(
+    new DisassociatePrincipalFromPortfolioCommand({
+      PortfolioId: portfolioId,
+      PrincipalARN: "arn:aws:iam::123456789012:role/Admin",
     }),
   );
   await client.send(new DeleteProductCommand({ Id: productId }));

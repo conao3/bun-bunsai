@@ -502,6 +502,26 @@ const DescribePortfolio: OperationHandler = (input, ctx) => {
 const DeletePortfolio: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
   requirePortfolio(ctx, id);
+  const hasProducts = ctx.store
+    .list()
+    .some((entry) => entry.key.startsWith(`assoc/pp/${id}/`));
+  if (hasProducts) {
+    throw awsError(
+      "ResourceInUseException",
+      `Portfolio ${id} has associated products. Disassociate them before deleting.`,
+      400,
+    );
+  }
+  const hasPrincipals = ctx.store
+    .list()
+    .some((entry) => entry.key.startsWith(`assoc/prin/${id}/`));
+  if (hasPrincipals) {
+    throw awsError(
+      "ResourceInUseException",
+      `Portfolio ${id} has associated principals. Disassociate them before deleting.`,
+      400,
+    );
+  }
   ctx.store.delete(portfolioKey(id));
   return {};
 };
@@ -875,6 +895,19 @@ const UpdateProduct: OperationHandler = (input, ctx) => {
 const DeleteProduct: OperationHandler = (input, ctx) => {
   const id = requireString(input, "Id");
   requireProduct(ctx, id);
+  const hasPortfolioAssoc = ctx.store
+    .list()
+    .some(
+      (entry) =>
+        entry.key.startsWith("assoc/pp/") && entry.key.endsWith(`/${id}`),
+    );
+  if (hasPortfolioAssoc) {
+    throw awsError(
+      "ResourceInUseException",
+      `Product ${id} is associated with one or more portfolios. Disassociate before deleting.`,
+      400,
+    );
+  }
   ctx.store.delete(productKey(id));
   return {};
 };

@@ -21,6 +21,7 @@ import ec2 from "./ec2.ts";
 import rds from "./rds.ts";
 import ecr from "./ecr.ts";
 import cognitoIdp from "./cognito-idp.ts";
+import cognitoIdentity from "./cognito-identity.ts";
 import athena from "./athena.ts";
 import glue from "./glue.ts";
 import elasticache from "./elasticache.ts";
@@ -112,6 +113,7 @@ import smsVoice from "./pinpoint-sms-voice-v2.ts";
 import ram from "./ram.ts";
 import networkFirewall from "./network-firewall.ts";
 import schemas from "./schemas.ts";
+import autoscaling from "./autoscaling.ts";
 import pipes from "./pipes.ts";
 
 export const services: ServiceDefinition[] = [
@@ -137,6 +139,7 @@ export const services: ServiceDefinition[] = [
   rds,
   ecr,
   cognitoIdp,
+  cognitoIdentity,
   athena,
   glue,
   elasticache,
@@ -228,8 +231,13 @@ export const services: ServiceDefinition[] = [
   ram,
   networkFirewall,
   schemas,
+  autoscaling,
   pipes,
 ];
 
 export const findService = (name: string): ServiceDefinition | undefined =>
-  services.find((s) => s.name === name);
+  services.find(
+    (s) =>
+      s.name === name ||
+      s.model?.metadata?.targetPrefix?.toLowerCase() === name,
+  );

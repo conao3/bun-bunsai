@@ -547,6 +547,15 @@ const CreateBot: OperationHandler = (input, ctx) => {
     lastUpdatedDateTime: now,
   };
   ctx.store.set(botKey(bot.botId), bot);
+  const botArn = `arn:aws:lex:${ctx.region}:${ctx.account}:bot/${bot.botId}`;
+  const botTags = recordOrUndefined(request.botTags);
+  if (botTags !== undefined) {
+    ctx.store.set(tagKey(botArn), botTags);
+  }
+  const testBotAliasTags = recordOrUndefined(request.testBotAliasTags);
+  if (testBotAliasTags !== undefined) {
+    ctx.store.set(tagKey(`${botArn}/botaliases/TSTALIASID`), testBotAliasTags);
+  }
   return {
     botId: bot.botId,
     botName: bot.botName,
@@ -584,10 +593,48 @@ const DescribeBot: OperationHandler = (input, ctx) => {
 
 const ListBots: OperationHandler = (input, ctx) => {
   const request = input as Record<string, unknown>;
-  const allBots = ctx.store
+  let allBots = ctx.store
     .list<StoredBot>()
     .filter((entry) => entry.key.startsWith("bot:"))
     .map((entry) => entry.value);
+  const filters = Array.isArray(request.filters)
+    ? (request.filters as Array<Record<string, unknown>>)
+    : [];
+  for (const filter of filters) {
+    const name = stringOrUndefined(filter.name);
+    const values = Array.isArray(filter.values)
+      ? (filter.values as string[])
+      : [];
+    const operator = stringOrUndefined(filter.operator);
+    if (name === "BotName") {
+      allBots = allBots.filter((bot) => {
+        if (operator === "EQ") return values.some((v) => bot.botName === v);
+        if (operator === "CO")
+          return values.some((v) => bot.botName.includes(v));
+        if (operator === "NE") return values.every((v) => bot.botName !== v);
+        return true;
+      });
+    } else if (name === "BotType") {
+      allBots = allBots.filter((bot) => {
+        if (operator === "EQ") return values.some((v) => bot.botType === v);
+        if (operator === "CO")
+          return values.some((v) => bot.botType.includes(v));
+        if (operator === "NE") return values.every((v) => bot.botType !== v);
+        return true;
+      });
+    }
+  }
+  const sortBy = recordOrUndefined(request.sortBy);
+  if (sortBy !== undefined) {
+    const attribute = stringOrUndefined(sortBy.attribute);
+    const order = stringOrUndefined(sortBy.order);
+    if (attribute === "BotName") {
+      allBots = [...allBots].sort((a, b) => {
+        const cmp = a.botName.localeCompare(b.botName);
+        return order === "Descending" ? -cmp : cmp;
+      });
+    }
+  }
   const { items: bots, nextToken } = paginateList(
     allBots,
     request.nextToken,
@@ -610,6 +657,23 @@ const DeleteBot: OperationHandler = (input, ctx) => {
   const request = input as Record<string, unknown>;
   const botId = requireString(request, "botId");
   const bot = requireBot(ctx, botId);
+  if (request.skipResourceInUseCheck !== true) {
+    const aliasPrefix = `alias:${botId}:`;
+    const hasActiveAlias = ctx.store
+      .list<StoredBotAlias>()
+      .some(
+        (e) =>
+          e.key.startsWith(aliasPrefix) &&
+          e.value.botAliasStatus !== "Deleting",
+      );
+    if (hasActiveAlias) {
+      throw awsError(
+        "ConflictException",
+        `Bot ${botId} has aliases and cannot be deleted.`,
+        409,
+      );
+    }
+  }
   ctx.store.set(botKey(botId), { ...bot, botStatus: "Deleting" });
   return {
     botId: bot.botId,

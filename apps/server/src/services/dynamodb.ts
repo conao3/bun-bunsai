@@ -649,7 +649,11 @@ const CreateTable: OperationHandler = (input, ctx) => {
   ctx.store.set(name, table);
   setTimeout(() => {
     const stored = ctx.store.get<StoredTable>(name);
-    if (stored !== undefined && !hasKind(stored) && stored.status === "CREATING") {
+    if (
+      stored !== undefined &&
+      !hasKind(stored) &&
+      stored.status === "CREATING"
+    ) {
       ctx.store.set(name, { ...stored, status: "ACTIVE" });
     }
   }, 0);

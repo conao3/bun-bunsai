@@ -753,6 +753,16 @@ const ListBackupVaults: OperationHandler = (input, ctx) => {
 const DeleteBackupVault: OperationHandler = (input, ctx) => {
   const name = requireString(input, "BackupVaultName");
   const vault = requireVault(ctx, name);
+  const remaining = ctx.store
+    .list<StoredRecoveryPoint>()
+    .filter((e) => e.key.startsWith(recvptKeyPrefix(name)));
+  if (remaining.length > 0) {
+    throw awsError(
+      "InvalidRequestException",
+      `Backup vault ${name} cannot be deleted because it has ${remaining.length} recovery points.`,
+      400,
+    );
+  }
   ctx.store.delete(vaultKey(name));
   ctx.store.delete(tagKey(vault.BackupVaultArn));
   return {};

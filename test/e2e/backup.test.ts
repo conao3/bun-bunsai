@@ -561,6 +561,12 @@ test("BackupJob lifecycle: CREATED → complete on describe", async () => {
   expect(Object.keys(meta.RestoreMetadata ?? {}).length).toBeGreaterThan(0);
 
   await client.send(
+    new DeleteRecoveryPointCommand({
+      BackupVaultName: vaultName,
+      RecoveryPointArn: rpArn,
+    }),
+  );
+  await client.send(
     new DeleteBackupVaultCommand({ BackupVaultName: vaultName }),
   );
 });
@@ -619,6 +625,12 @@ test("StartCopyJob: IamRoleArn required", async () => {
     copyJob.CopyJobId,
   );
 
+  await client.send(
+    new DeleteRecoveryPointCommand({
+      BackupVaultName: srcVault,
+      RecoveryPointArn: started.RecoveryPointArn!,
+    }),
+  );
   await client.send(
     new DeleteBackupVaultCommand({ BackupVaultName: srcVault }),
   );
@@ -680,6 +692,18 @@ test("ListBackupJobs filters and pagination", async () => {
   );
 
   await client.send(
+    new DeleteRecoveryPointCommand({
+      BackupVaultName: vaultName,
+      RecoveryPointArn: j1.RecoveryPointArn!,
+    }),
+  );
+  await client.send(
+    new DeleteRecoveryPointCommand({
+      BackupVaultName: vaultName,
+      RecoveryPointArn: j2.RecoveryPointArn!,
+    }),
+  );
+  await client.send(
     new DeleteBackupVaultCommand({ BackupVaultName: vaultName }),
   );
 });
@@ -724,6 +748,12 @@ test("RestoreJob lifecycle: PENDING → complete on describe", async () => {
   expect(described.Status).toBe("COMPLETED");
   expect(described.CompletionDate).toBeDefined();
 
+  await client.send(
+    new DeleteRecoveryPointCommand({
+      BackupVaultName: vaultName,
+      RecoveryPointArn: bj.RecoveryPointArn!,
+    }),
+  );
   await client.send(
     new DeleteBackupVaultCommand({ BackupVaultName: vaultName }),
   );

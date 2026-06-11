@@ -3,8 +3,10 @@ import { startApp } from "./harness.ts";
 import {
   AthenaClient,
   CreateWorkGroupCommand,
+  DeleteWorkGroupCommand,
   GetQueryExecutionCommand,
   GetQueryResultsCommand,
+  GetWorkGroupCommand,
   ListQueryExecutionsCommand,
   ListWorkGroupsCommand,
   StartQueryExecutionCommand,
@@ -78,5 +80,26 @@ describe("athena e2e", () => {
     const listed = await client.send(new ListWorkGroupsCommand({}));
     const names = (listed.WorkGroups ?? []).map((w) => w.Name);
     expect(names).toContain(name);
+  });
+
+  test("primary workgroup exists, is gettable, and cannot be deleted", async () => {
+    const client = athena();
+
+    const listed = await client.send(new ListWorkGroupsCommand({}));
+    const names = (listed.WorkGroups ?? []).map((w) => w.Name);
+    expect(names).toContain("primary");
+
+    const got = await client.send(
+      new GetWorkGroupCommand({ WorkGroup: "primary" }),
+    );
+    expect(got.WorkGroup?.Name).toBe("primary");
+    expect(got.WorkGroup?.State).toBe("ENABLED");
+    expect(got.WorkGroup?.Configuration?.EnforceWorkGroupConfiguration).toBe(
+      false,
+    );
+
+    await expect(
+      client.send(new DeleteWorkGroupCommand({ WorkGroup: "primary" })),
+    ).rejects.toThrow();
   });
 });

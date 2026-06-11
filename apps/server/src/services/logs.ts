@@ -686,6 +686,10 @@ const jsonCompare = (
     ? selector.slice(2)
     : selector.slice(1);
   const actual = jsonSelectorGet(path, obj);
+  if (op === "IS" && rawValue === "NULL") return actual === null;
+  if (op === "NOT" && rawValue === "EXISTS") return actual === undefined;
+  if (op === "IS" && rawValue === "TRUE") return actual === true;
+  if (op === "IS" && rawValue === "FALSE") return actual === false;
   if (rawValue.startsWith('"') && rawValue.endsWith('"')) {
     const sv = rawValue.slice(1, -1);
     const av = typeof actual === "string" ? actual : String(actual ?? "");

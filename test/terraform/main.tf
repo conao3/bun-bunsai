@@ -23,7 +23,6 @@ provider "aws" {
 
   endpoints {
     sqs      = "http://localhost:${var.bunsai_port}"
-    sns      = "http://localhost:${var.bunsai_port}"
     iam      = "http://localhost:${var.bunsai_port}"
     dynamodb = "http://localhost:${var.bunsai_port}"
   }
@@ -31,16 +30,6 @@ provider "aws" {
 
 resource "aws_sqs_queue" "smoke" {
   name = "tf-smoke-queue"
-}
-
-resource "aws_sns_topic" "smoke" {
-  name = "tf-smoke-topic"
-}
-
-resource "aws_sns_topic_subscription" "smoke_sqs" {
-  topic_arn = aws_sns_topic.smoke.arn
-  protocol  = "sqs"
-  endpoint  = aws_sqs_queue.smoke.arn
 }
 
 resource "aws_iam_role" "smoke" {

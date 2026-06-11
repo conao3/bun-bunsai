@@ -134,6 +134,8 @@ import verifiedpermissions from "./verifiedpermissions.ts";
 import mediaconvert from "./mediaconvert.ts";
 import kafka from "./kafka.ts";
 import ce from "./ce.ts";
+import ssoAdmin from "./sso-admin.ts";
+import identitystore from "./identitystore.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -270,6 +272,8 @@ export const services: ServiceDefinition[] = [
   verifiedpermissions,
   kafka,
   ce,
+  ssoAdmin,
+  identitystore,
 ];
 
 export const findService = (

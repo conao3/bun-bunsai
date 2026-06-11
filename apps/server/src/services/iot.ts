@@ -70,6 +70,30 @@ const allAuthorizersKey = "allAuthorizers";
 const defaultAuthorizerKey = "defaultAuthorizer";
 const domainConfigKey = (name: string) => `domainConfig:${name}`;
 const allDomainConfigsKey = "allDomainConfigs";
+const auditConfigKey = "auditConfig";
+const auditTaskKey = (id: string) => `auditTask:${id}`;
+const allAuditTasksKey = "allAuditTasks";
+const auditFindingKey = (id: string) => `auditFinding:${id}`;
+const allAuditFindingsKey = "allAuditFindings";
+const auditSuppressionKey = (checkName: string, resourceId: string) =>
+  `auditSuppression:${checkName}:${resourceId}`;
+const allAuditSuppressionsKey = "allAuditSuppressions";
+const mitigationActionKey = (name: string) => `mitigationAction:${name}`;
+const allMitigationActionsKey = "allMitigationActions";
+const auditMitigationTaskKey = (id: string) => `auditMitigationTask:${id}`;
+const allAuditMitigationTasksKey = "allAuditMitigationTasks";
+const scheduledAuditKey = (name: string) => `scheduledAudit:${name}`;
+const allScheduledAuditsKey = "allScheduledAudits";
+const securityProfileKey = (name: string) => `securityProfile:${name}`;
+const allSecurityProfilesKey = "allSecurityProfiles";
+const securityProfileTargetsKey = (name: string) =>
+  `securityProfileTargets:${name}`;
+const customMetricKey = (name: string) => `customMetric:${name}`;
+const allCustomMetricsKey = "allCustomMetrics";
+const dimensionKey = (name: string) => `dimension:${name}`;
+const allDimensionsKey = "allDimensions";
+const detectTaskKey = (id: string) => `detectTask:${id}`;
+const allDetectTasksKey = "allDetectTasks";
 
 type StoredThing = {
   thingName: string;
@@ -265,6 +289,118 @@ type StoredDomainConfiguration = {
   lastModifiedDate: number;
 };
 
+type StoredAccountAuditConfig = {
+  roleArn?: string;
+  auditNotificationTargetConfigurations?: unknown;
+  auditCheckConfigurations?: unknown;
+};
+
+type StoredAuditTask = {
+  taskId: string;
+  taskType: string;
+  taskStatus: string;
+  taskStartTime: number;
+  scheduledAuditName?: string;
+  auditDetails?: unknown;
+};
+
+type StoredAuditFinding = {
+  findingId: string;
+  checkName: string;
+  taskId: string;
+  findingTime: number;
+  severity: string;
+  resourceIdentifier: unknown;
+  nonCompliantResource?: unknown;
+  relatedResources?: unknown[];
+  reasonForNonCompliance?: string;
+  reasonForNonComplianceCode?: string;
+  isSuppressed?: boolean;
+};
+
+type StoredAuditSuppression = {
+  checkName: string;
+  resourceIdentifier: unknown;
+  expirationDate?: number;
+  suppressIndefinitely?: boolean;
+  description?: string;
+  createdAt: number;
+  lastModifiedDate: number;
+};
+
+type StoredMitigationAction = {
+  actionName: string;
+  actionArn: string;
+  actionId: string;
+  roleArn: string;
+  actionParams: unknown;
+  createdDate: number;
+  lastModifiedDate: number;
+};
+
+type StoredAuditMitigationActionsTask = {
+  taskId: string;
+  target: unknown;
+  auditCheckToActionsMapping: unknown;
+  taskStatus: string;
+  startTime: number;
+  endTime?: number;
+};
+
+type StoredScheduledAudit = {
+  scheduledAuditName: string;
+  scheduledAuditArn: string;
+  frequency: string;
+  dayOfMonth?: string;
+  dayOfWeek?: string;
+  targetCheckNames: string[];
+  createdAt: number;
+  lastModifiedDate: number;
+};
+
+type StoredSecurityProfile = {
+  securityProfileName: string;
+  securityProfileArn: string;
+  securityProfileDescription?: string;
+  behaviors?: unknown[];
+  alertTargets?: unknown;
+  additionalMetricsToRetainV2?: unknown[];
+  metricsExportConfig?: unknown;
+  version: number;
+  createdAt: number;
+  lastModifiedDate: number;
+};
+
+type StoredCustomMetric = {
+  metricName: string;
+  metricArn: string;
+  displayName?: string;
+  metricType: string;
+  createdAt: number;
+  lastModifiedDate: number;
+};
+
+type StoredDimension = {
+  name: string;
+  arn: string;
+  type: string;
+  stringValues: string[];
+  createdAt: number;
+  lastModifiedDate: number;
+};
+
+type StoredDetectMitigationActionsTask = {
+  taskId: string;
+  target: unknown;
+  actions: string[];
+  violationEventOccurrenceRange?: unknown;
+  includeOnlyActiveViolations?: boolean;
+  includeSuppressedAlerts?: boolean;
+  taskStatus: string;
+  taskStartTime: number;
+  taskEndTime?: number;
+};
+
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
 const thingArn = (ctx: ServiceContext, name: string) =>
@@ -297,6 +433,16 @@ const authorizerArn = (ctx: ServiceContext, name: string) =>
   `arn:aws:iot:${ctx.region}:${ctx.account}:authorizer/${name}`;
 const domainConfigArn = (ctx: ServiceContext, name: string) =>
   `arn:aws:iot:${ctx.region}:${ctx.account}:domainconfiguration/${name}/V1`;
+const mitigationActionArn = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:mitigationaction/${name}`;
+const scheduledAuditArn = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:scheduledaudit/${name}`;
+const securityProfileArn = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:securityprofile/${name}`;
+const customMetricArn = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:custommetric/${name}`;
+const dimensionArn = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:dimension/${name}`;
 
 const pemOf = (id: string): string =>
   `-----BEGIN CERTIFICATE-----\n${Buffer.from(id, "utf8").toString("base64")}\n-----END CERTIFICATE-----`;
@@ -475,6 +621,153 @@ const requireDomainConfig = (
       404,
     );
   return stored;
+};
+
+const requireAuditTask = (ctx: ServiceContext, id: string): StoredAuditTask => {
+  const stored = ctx.store.get<StoredAuditTask>(auditTaskKey(id));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Audit task ${id} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireAuditSuppression = (
+  ctx: ServiceContext,
+  checkName: string,
+  resourceId: string,
+): StoredAuditSuppression => {
+  const stored = ctx.store.get<StoredAuditSuppression>(
+    auditSuppressionKey(checkName, resourceId),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Audit suppression for check ${checkName} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireMitigationAction = (
+  ctx: ServiceContext,
+  name: string,
+): StoredMitigationAction => {
+  const stored = ctx.store.get<StoredMitigationAction>(
+    mitigationActionKey(name),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Mitigation action ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireAuditMitigationTask = (
+  ctx: ServiceContext,
+  id: string,
+): StoredAuditMitigationActionsTask => {
+  const stored = ctx.store.get<StoredAuditMitigationActionsTask>(
+    auditMitigationTaskKey(id),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Audit mitigation actions task ${id} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireScheduledAudit = (
+  ctx: ServiceContext,
+  name: string,
+): StoredScheduledAudit => {
+  const stored = ctx.store.get<StoredScheduledAudit>(scheduledAuditKey(name));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Scheduled audit ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireSecurityProfile = (
+  ctx: ServiceContext,
+  name: string,
+): StoredSecurityProfile => {
+  const stored = ctx.store.get<StoredSecurityProfile>(securityProfileKey(name));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Security profile ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireCustomMetric = (
+  ctx: ServiceContext,
+  name: string,
+): StoredCustomMetric => {
+  const stored = ctx.store.get<StoredCustomMetric>(customMetricKey(name));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Custom metric ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireDimension = (
+  ctx: ServiceContext,
+  name: string,
+): StoredDimension => {
+  const stored = ctx.store.get<StoredDimension>(dimensionKey(name));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Dimension ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireDetectMitigationTask = (
+  ctx: ServiceContext,
+  id: string,
+): StoredDetectMitigationActionsTask => {
+  const stored = ctx.store.get<StoredDetectMitigationActionsTask>(
+    detectTaskKey(id),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Detect mitigation actions task ${id} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const resourceIdKey = (resourceIdentifier: unknown): string => {
+  const r = resourceIdentifier as Record<string, unknown>;
+  return JSON.stringify(
+    Object.keys(r)
+      .sort()
+      .reduce(
+        (acc, k) => {
+          acc[k] = r[k];
+          return acc;
+        },
+        {} as Record<string, unknown>,
+      ),
+  );
 };
 
 const getList = <T>(ctx: ServiceContext, key: string): T[] =>
@@ -3316,6 +3609,1006 @@ const ListDomainConfigurations: OperationHandler = (input, ctx) => {
   };
 };
 
+const DescribeAccountAuditConfiguration: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<StoredAccountAuditConfig>(auditConfigKey) ?? {};
+  return {
+    roleArn: stored.roleArn,
+    auditNotificationTargetConfigurations:
+      stored.auditNotificationTargetConfigurations,
+    auditCheckConfigurations: stored.auditCheckConfigurations,
+  };
+};
+
+const UpdateAccountAuditConfiguration: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const existing =
+    ctx.store.get<StoredAccountAuditConfig>(auditConfigKey) ?? {};
+  const updated: StoredAccountAuditConfig = {
+    roleArn: str(data["roleArn"]) ?? existing.roleArn,
+    auditNotificationTargetConfigurations:
+      data["auditNotificationTargetConfigurations"] ??
+      existing.auditNotificationTargetConfigurations,
+    auditCheckConfigurations:
+      data["auditCheckConfigurations"] ?? existing.auditCheckConfigurations,
+  };
+  ctx.store.set(auditConfigKey, updated);
+  return {};
+};
+
+const DeleteAccountAuditConfiguration: OperationHandler = (_input, ctx) => {
+  ctx.store.set(auditConfigKey, undefined);
+  return {};
+};
+
+const StartOnDemandAuditTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const targetCheckNames = data["targetCheckNames"] as string[] | undefined;
+  if (!targetCheckNames || targetCheckNames.length === 0)
+    throw awsError(
+      "InvalidRequestException",
+      "targetCheckNames is required.",
+      400,
+    );
+  const taskId = `audit-${nowSeconds()}-${Math.random().toString(36).slice(2, 8)}`;
+  const now = nowSeconds();
+  const stored: StoredAuditTask = {
+    taskId,
+    taskType: "ON_DEMAND_AUDIT_TASK",
+    taskStatus: "COMPLETED",
+    taskStartTime: now,
+    auditDetails: Object.fromEntries(
+      targetCheckNames.map((c) => [
+        c,
+        {
+          checkRunStatus: "COMPLETED_COMPLIANT",
+          checkCompliant: true,
+          totalResourcesCount: 0,
+          nonCompliantResourcesCount: 0,
+        },
+      ]),
+    ),
+  };
+  ctx.store.set(auditTaskKey(taskId), stored);
+  addToList(ctx, allAuditTasksKey, taskId);
+  return { taskId };
+};
+
+const CancelAuditTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const taskId = requireStr(data, "taskId");
+  const stored = requireAuditTask(ctx, taskId);
+  stored.taskStatus = "CANCELLED";
+  ctx.store.set(auditTaskKey(taskId), stored);
+  return {};
+};
+
+const DescribeAuditTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const taskId = requireStr(data, "taskId");
+  const stored = requireAuditTask(ctx, taskId);
+  return {
+    taskStatus: stored.taskStatus,
+    taskType: stored.taskType,
+    taskStartTime: stored.taskStartTime,
+    scheduledAuditName: stored.scheduledAuditName,
+    auditDetails: stored.auditDetails,
+    taskStatistics: {
+      totalChecks: 0,
+      inProgressChecks: 0,
+      waitingForDataCollectionChecks: 0,
+      compliantChecksCount: 0,
+      nonCompliantChecksCount: 0,
+      failedChecksCount: 0,
+      canceledChecksCount: 0,
+    },
+  };
+};
+
+const ListAuditTasks: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["nextToken"]);
+  const allIds = getList<string>(ctx, allAuditTasksKey);
+  const tasks = allIds
+    .map((id) => ctx.store.get<StoredAuditTask>(auditTaskKey(id)))
+    .filter((t): t is StoredAuditTask => t !== undefined);
+  const { items, nextMarker } = paginateList(tasks, marker);
+  return {
+    tasks: items.map((t) => ({
+      taskId: t.taskId,
+      taskStatus: t.taskStatus,
+      taskType: t.taskType,
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const DescribeAuditFinding: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const findingId = requireStr(data, "findingId");
+  const stored = ctx.store.get<StoredAuditFinding>(auditFindingKey(findingId));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Audit finding ${findingId} not found.`,
+      404,
+    );
+  return { finding: stored };
+};
+
+const ListAuditFindings: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["nextToken"]);
+  const allIds = getList<string>(ctx, allAuditFindingsKey);
+  const findings = allIds
+    .map((id) => ctx.store.get<StoredAuditFinding>(auditFindingKey(id)))
+    .filter((f): f is StoredAuditFinding => f !== undefined);
+  const { items, nextMarker } = paginateList(findings, marker);
+  return { findings: items, nextToken: nextMarker };
+};
+
+const CreateAuditSuppression: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const checkName = requireStr(data, "checkName");
+  const resourceIdentifier = data["resourceIdentifier"];
+  if (!resourceIdentifier)
+    throw awsError(
+      "InvalidRequestException",
+      "resourceIdentifier is required.",
+      400,
+    );
+  const rid = resourceIdKey(resourceIdentifier);
+  const existingKey = auditSuppressionKey(checkName, rid);
+  if (ctx.store.get(existingKey) !== undefined)
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Audit suppression for check ${checkName} already exists.`,
+      409,
+    );
+  const now = nowSeconds();
+  const stored: StoredAuditSuppression = {
+    checkName,
+    resourceIdentifier,
+    expirationDate: data["expirationDate"] as number | undefined,
+    suppressIndefinitely: data["suppressIndefinitely"] as boolean | undefined,
+    description: str(data["description"]),
+    createdAt: now,
+    lastModifiedDate: now,
+  };
+  ctx.store.set(existingKey, stored);
+  addToList(ctx, allAuditSuppressionsKey, `${checkName}:${rid}`);
+  return {};
+};
+
+const DeleteAuditSuppression: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const checkName = requireStr(data, "checkName");
+  const resourceIdentifier = data["resourceIdentifier"];
+  if (!resourceIdentifier)
+    throw awsError(
+      "InvalidRequestException",
+      "resourceIdentifier is required.",
+      400,
+    );
+  const rid = resourceIdKey(resourceIdentifier);
+  ctx.store.set(auditSuppressionKey(checkName, rid), undefined);
+  removeFromList<string>(
+    ctx,
+    allAuditSuppressionsKey,
+    (k) => k === `${checkName}:${rid}`,
+  );
+  return {};
+};
+
+const DescribeAuditSuppression: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const checkName = requireStr(data, "checkName");
+  const resourceIdentifier = data["resourceIdentifier"];
+  if (!resourceIdentifier)
+    throw awsError(
+      "InvalidRequestException",
+      "resourceIdentifier is required.",
+      400,
+    );
+  const rid = resourceIdKey(resourceIdentifier);
+  const stored = requireAuditSuppression(ctx, checkName, rid);
+  return {
+    checkName: stored.checkName,
+    resourceIdentifier: stored.resourceIdentifier,
+    expirationDate: stored.expirationDate,
+    suppressIndefinitely: stored.suppressIndefinitely,
+    description: stored.description,
+  };
+};
+
+const UpdateAuditSuppression: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const checkName = requireStr(data, "checkName");
+  const resourceIdentifier = data["resourceIdentifier"];
+  if (!resourceIdentifier)
+    throw awsError(
+      "InvalidRequestException",
+      "resourceIdentifier is required.",
+      400,
+    );
+  const rid = resourceIdKey(resourceIdentifier);
+  const stored = requireAuditSuppression(ctx, checkName, rid);
+  if (data["expirationDate"] !== undefined)
+    stored.expirationDate = data["expirationDate"] as number;
+  if (data["suppressIndefinitely"] !== undefined)
+    stored.suppressIndefinitely = data["suppressIndefinitely"] as boolean;
+  if (data["description"] !== undefined)
+    stored.description = str(data["description"]);
+  stored.lastModifiedDate = nowSeconds();
+  ctx.store.set(auditSuppressionKey(checkName, rid), stored);
+  return {};
+};
+
+const ListAuditSuppressions: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["nextToken"]);
+  const allKeys = getList<string>(ctx, allAuditSuppressionsKey);
+  const suppressions = allKeys
+    .map((k) => {
+      const [cn, ...rest] = k.split(":");
+      const rid = rest.join(":");
+      return ctx.store.get<StoredAuditSuppression>(
+        auditSuppressionKey(cn ?? "", rid),
+      );
+    })
+    .filter((s): s is StoredAuditSuppression => s !== undefined);
+  const { items, nextMarker } = paginateList(suppressions, marker);
+  return { suppressions: items, nextToken: nextMarker };
+};
+
+const CreateMitigationAction: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const actionName = requireStr(data, "actionName");
+  if (ctx.store.get(mitigationActionKey(actionName)) !== undefined)
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Mitigation action ${actionName} already exists.`,
+      409,
+    );
+  const roleArn = requireStr(data, "roleArn");
+  const actionParams = data["actionParams"];
+  if (!actionParams)
+    throw awsError("InvalidRequestException", "actionParams is required.", 400);
+  const arn = mitigationActionArn(ctx, actionName);
+  const actionId = `action-${nowSeconds()}`;
+  const now = nowSeconds();
+  const stored: StoredMitigationAction = {
+    actionName,
+    actionArn: arn,
+    actionId,
+    roleArn,
+    actionParams,
+    createdDate: now,
+    lastModifiedDate: now,
+  };
+  ctx.store.set(mitigationActionKey(actionName), stored);
+  addToList(ctx, allMitigationActionsKey, actionName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { actionArn: arn, actionId };
+};
+
+const DeleteMitigationAction: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const actionName = requireStr(data, "actionName");
+  requireMitigationAction(ctx, actionName);
+  ctx.store.set(mitigationActionKey(actionName), undefined);
+  removeFromList<string>(ctx, allMitigationActionsKey, (n) => n === actionName);
+  return {};
+};
+
+const DescribeMitigationAction: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const actionName = requireStr(data, "actionName");
+  const stored = requireMitigationAction(ctx, actionName);
+  return {
+    actionName: stored.actionName,
+    actionType: "UPDATE_DEVICE_CERTIFICATE",
+    actionArn: stored.actionArn,
+    actionId: stored.actionId,
+    roleArn: stored.roleArn,
+    actionParams: stored.actionParams,
+    creationDate: stored.createdDate,
+    lastModifiedDate: stored.lastModifiedDate,
+  };
+};
+
+const UpdateMitigationAction: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const actionName = requireStr(data, "actionName");
+  const stored = requireMitigationAction(ctx, actionName);
+  if (data["roleArn"]) stored.roleArn = requireStr(data, "roleArn");
+  if (data["actionParams"]) stored.actionParams = data["actionParams"];
+  stored.lastModifiedDate = nowSeconds();
+  ctx.store.set(mitigationActionKey(actionName), stored);
+  return { actionArn: stored.actionArn, actionId: stored.actionId };
+};
+
+const ListMitigationActions: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["nextToken"]);
+  const allNames = getList<string>(ctx, allMitigationActionsKey);
+  const actions = allNames
+    .map((n) => ctx.store.get<StoredMitigationAction>(mitigationActionKey(n)))
+    .filter((a): a is StoredMitigationAction => a !== undefined);
+  const { items, nextMarker } = paginateList(actions, marker);
+  return {
+    actionIdentifiers: items.map((a) => ({
+      actionName: a.actionName,
+      actionArn: a.actionArn,
+      creationDate: a.createdDate,
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const StartAuditMitigationActionsTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const taskId = requireStr(data, "taskId");
+  if (ctx.store.get(auditMitigationTaskKey(taskId)) !== undefined)
+    throw awsError(
+      "TaskAlreadyExistsException",
+      `Task ${taskId} already exists.`,
+      400,
+    );
+  const target = data["target"];
+  const auditCheckToActionsMapping = data["auditCheckToActionsMapping"];
+  if (!target || !auditCheckToActionsMapping)
+    throw awsError(
+      "InvalidRequestException",
+      "target and auditCheckToActionsMapping are required.",
+      400,
+    );
+  const now = nowSeconds();
+  const stored: StoredAuditMitigationActionsTask = {
+    taskId,
+    target,
+    auditCheckToActionsMapping,
+    taskStatus: "COMPLETED",
+    startTime: now,
+    endTime: now,
+  };
+  ctx.store.set(auditMitigationTaskKey(taskId), stored);
+  addToList(ctx, allAuditMitigationTasksKey, taskId);
+  return { taskId };
+};
+
+const CancelAuditMitigationActionsTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const taskId = requireStr(data, "taskId");
+  const stored = requireAuditMitigationTask(ctx, taskId);
+  stored.taskStatus = "CANCELLED";
+  ctx.store.set(auditMitigationTaskKey(taskId), stored);
+  return {};
+};
+
+const DescribeAuditMitigationActionsTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const taskId = requireStr(data, "taskId");
+  const stored = requireAuditMitigationTask(ctx, taskId);
+  return {
+    taskStatus: stored.taskStatus,
+    startTime: stored.startTime,
+    endTime: stored.endTime,
+    target: stored.target,
+    auditCheckToActionsMapping: stored.auditCheckToActionsMapping,
+    actionsDefinition: [],
+    taskStatistics: {},
+  };
+};
+
+const ListAuditMitigationActionsTasks: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["nextToken"]);
+  const allIds = getList<string>(ctx, allAuditMitigationTasksKey);
+  const tasks = allIds
+    .map((id) =>
+      ctx.store.get<StoredAuditMitigationActionsTask>(
+        auditMitigationTaskKey(id),
+      ),
+    )
+    .filter((t): t is StoredAuditMitigationActionsTask => t !== undefined);
+  const { items, nextMarker } = paginateList(tasks, marker);
+  return {
+    tasks: items.map((t) => ({
+      taskId: t.taskId,
+      startTime: t.startTime,
+      taskStatus: t.taskStatus,
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const ListAuditMitigationActionsExecutions: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { actionsExecutions: [], nextToken: undefined };
+};
+
+const CreateScheduledAudit: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const scheduledAuditName = requireStr(data, "scheduledAuditName");
+  if (ctx.store.get(scheduledAuditKey(scheduledAuditName)) !== undefined)
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Scheduled audit ${scheduledAuditName} already exists.`,
+      409,
+    );
+  const frequency = requireStr(data, "frequency");
+  const targetCheckNames = data["targetCheckNames"] as string[] | undefined;
+  if (!targetCheckNames || targetCheckNames.length === 0)
+    throw awsError(
+      "InvalidRequestException",
+      "targetCheckNames is required.",
+      400,
+    );
+  const arn = scheduledAuditArn(ctx, scheduledAuditName);
+  const now = nowSeconds();
+  const stored: StoredScheduledAudit = {
+    scheduledAuditName,
+    scheduledAuditArn: arn,
+    frequency,
+    dayOfMonth: str(data["dayOfMonth"]),
+    dayOfWeek: str(data["dayOfWeek"]),
+    targetCheckNames,
+    createdAt: now,
+    lastModifiedDate: now,
+  };
+  ctx.store.set(scheduledAuditKey(scheduledAuditName), stored);
+  addToList(ctx, allScheduledAuditsKey, scheduledAuditName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { scheduledAuditArn: arn };
+};
+
+const DeleteScheduledAudit: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const scheduledAuditName = requireStr(data, "scheduledAuditName");
+  requireScheduledAudit(ctx, scheduledAuditName);
+  ctx.store.set(scheduledAuditKey(scheduledAuditName), undefined);
+  removeFromList<string>(
+    ctx,
+    allScheduledAuditsKey,
+    (n) => n === scheduledAuditName,
+  );
+  return {};
+};
+
+const DescribeScheduledAudit: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const scheduledAuditName = requireStr(data, "scheduledAuditName");
+  const stored = requireScheduledAudit(ctx, scheduledAuditName);
+  return {
+    frequency: stored.frequency,
+    dayOfMonth: stored.dayOfMonth,
+    dayOfWeek: stored.dayOfWeek,
+    targetCheckNames: stored.targetCheckNames,
+    scheduledAuditName: stored.scheduledAuditName,
+    scheduledAuditArn: stored.scheduledAuditArn,
+  };
+};
+
+const UpdateScheduledAudit: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const scheduledAuditName = requireStr(data, "scheduledAuditName");
+  const stored = requireScheduledAudit(ctx, scheduledAuditName);
+  if (data["frequency"]) stored.frequency = requireStr(data, "frequency");
+  if (data["dayOfMonth"] !== undefined)
+    stored.dayOfMonth = str(data["dayOfMonth"]);
+  if (data["dayOfWeek"] !== undefined)
+    stored.dayOfWeek = str(data["dayOfWeek"]);
+  if (data["targetCheckNames"])
+    stored.targetCheckNames = data["targetCheckNames"] as string[];
+  stored.lastModifiedDate = nowSeconds();
+  ctx.store.set(scheduledAuditKey(scheduledAuditName), stored);
+  return { scheduledAuditArn: stored.scheduledAuditArn };
+};
+
+const ListScheduledAudits: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["nextToken"]);
+  const allNames = getList<string>(ctx, allScheduledAuditsKey);
+  const audits = allNames
+    .map((n) => ctx.store.get<StoredScheduledAudit>(scheduledAuditKey(n)))
+    .filter((a): a is StoredScheduledAudit => a !== undefined);
+  const { items, nextMarker } = paginateList(audits, marker);
+  return {
+    scheduledAudits: items.map((a) => ({
+      scheduledAuditName: a.scheduledAuditName,
+      scheduledAuditArn: a.scheduledAuditArn,
+      frequency: a.frequency,
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const CreateSecurityProfile: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const securityProfileName = requireStr(data, "securityProfileName");
+  if (ctx.store.get(securityProfileKey(securityProfileName)) !== undefined)
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Security profile ${securityProfileName} already exists.`,
+      409,
+    );
+  const arn = securityProfileArn(ctx, securityProfileName);
+  const now = nowSeconds();
+  const stored: StoredSecurityProfile = {
+    securityProfileName,
+    securityProfileArn: arn,
+    securityProfileDescription: str(data["securityProfileDescription"]),
+    behaviors: data["behaviors"] as unknown[] | undefined,
+    alertTargets: data["alertTargets"],
+    additionalMetricsToRetainV2: data["additionalMetricsToRetainV2"] as
+      | unknown[]
+      | undefined,
+    metricsExportConfig: data["metricsExportConfig"],
+    version: 1,
+    createdAt: now,
+    lastModifiedDate: now,
+  };
+  ctx.store.set(securityProfileKey(securityProfileName), stored);
+  addToList(ctx, allSecurityProfilesKey, securityProfileName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return {
+    securityProfileName: stored.securityProfileName,
+    securityProfileArn: stored.securityProfileArn,
+  };
+};
+
+const DeleteSecurityProfile: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const securityProfileName = requireStr(data, "securityProfileName");
+  requireSecurityProfile(ctx, securityProfileName);
+  ctx.store.set(securityProfileKey(securityProfileName), undefined);
+  ctx.store.set(securityProfileTargetsKey(securityProfileName), undefined);
+  removeFromList<string>(
+    ctx,
+    allSecurityProfilesKey,
+    (n) => n === securityProfileName,
+  );
+  return {};
+};
+
+const DescribeSecurityProfile: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const securityProfileName = requireStr(data, "securityProfileName");
+  const stored = requireSecurityProfile(ctx, securityProfileName);
+  return {
+    securityProfileName: stored.securityProfileName,
+    securityProfileArn: stored.securityProfileArn,
+    securityProfileDescription: stored.securityProfileDescription,
+    behaviors: stored.behaviors ?? [],
+    alertTargets: stored.alertTargets ?? {},
+    additionalMetricsToRetainV2: stored.additionalMetricsToRetainV2 ?? [],
+    metricsExportConfig: stored.metricsExportConfig,
+    version: stored.version,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedDate,
+  };
+};
+
+const UpdateSecurityProfile: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const securityProfileName = requireStr(data, "securityProfileName");
+  const stored = requireSecurityProfile(ctx, securityProfileName);
+  if (data["securityProfileDescription"] !== undefined)
+    stored.securityProfileDescription = str(data["securityProfileDescription"]);
+  if (data["behaviors"] !== undefined)
+    stored.behaviors = data["behaviors"] as unknown[];
+  if (data["alertTargets"] !== undefined)
+    stored.alertTargets = data["alertTargets"];
+  if (data["additionalMetricsToRetainV2"] !== undefined)
+    stored.additionalMetricsToRetainV2 = data[
+      "additionalMetricsToRetainV2"
+    ] as unknown[];
+  if (data["metricsExportConfig"] !== undefined)
+    stored.metricsExportConfig = data["metricsExportConfig"];
+  stored.version += 1;
+  stored.lastModifiedDate = nowSeconds();
+  ctx.store.set(securityProfileKey(securityProfileName), stored);
+  return {
+    securityProfileName: stored.securityProfileName,
+    securityProfileArn: stored.securityProfileArn,
+    securityProfileDescription: stored.securityProfileDescription,
+    behaviors: stored.behaviors ?? [],
+    alertTargets: stored.alertTargets ?? {},
+    additionalMetricsToRetainV2: stored.additionalMetricsToRetainV2 ?? [],
+    version: stored.version,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedDate,
+  };
+};
+
+const ListSecurityProfiles: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["nextToken"]);
+  const allNames = getList<string>(ctx, allSecurityProfilesKey);
+  const profiles = allNames
+    .map((n) => ctx.store.get<StoredSecurityProfile>(securityProfileKey(n)))
+    .filter((p): p is StoredSecurityProfile => p !== undefined);
+  const { items, nextMarker } = paginateList(profiles, marker);
+  return {
+    securityProfileIdentifiers: items.map((p) => ({
+      name: p.securityProfileName,
+      arn: p.securityProfileArn,
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const AttachSecurityProfile: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const securityProfileName = requireStr(data, "securityProfileName");
+  requireSecurityProfile(ctx, securityProfileName);
+  const securityProfileTargetArn = requireStr(data, "securityProfileTargetArn");
+  const targets = getList<string>(
+    ctx,
+    securityProfileTargetsKey(securityProfileName),
+  );
+  if (!targets.includes(securityProfileTargetArn)) {
+    addToList(
+      ctx,
+      securityProfileTargetsKey(securityProfileName),
+      securityProfileTargetArn,
+    );
+  }
+  return {};
+};
+
+const DetachSecurityProfile: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const securityProfileName = requireStr(data, "securityProfileName");
+  requireSecurityProfile(ctx, securityProfileName);
+  const securityProfileTargetArn = requireStr(data, "securityProfileTargetArn");
+  removeFromList<string>(
+    ctx,
+    securityProfileTargetsKey(securityProfileName),
+    (t) => t === securityProfileTargetArn,
+  );
+  return {};
+};
+
+const ListSecurityProfilesForTarget: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["nextToken"]);
+  const targetArn = requireStr(data, "securityProfileTargetArn");
+  const allNames = getList<string>(ctx, allSecurityProfilesKey);
+  const matching = allNames.filter((n) => {
+    const targets = getList<string>(ctx, securityProfileTargetsKey(n));
+    return targets.includes(targetArn);
+  });
+  const profiles = matching
+    .map((n) => ctx.store.get<StoredSecurityProfile>(securityProfileKey(n)))
+    .filter((p): p is StoredSecurityProfile => p !== undefined);
+  const { items, nextMarker } = paginateList(profiles, marker);
+  return {
+    securityProfileTargetMappings: items.map((p) => ({
+      securityProfileIdentifier: {
+        name: p.securityProfileName,
+        arn: p.securityProfileArn,
+      },
+      target: { arn: targetArn },
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const ListTargetsForSecurityProfile: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const securityProfileName = requireStr(data, "securityProfileName");
+  requireSecurityProfile(ctx, securityProfileName);
+  const marker = str(data["nextToken"]);
+  const targets = getList<string>(
+    ctx,
+    securityProfileTargetsKey(securityProfileName),
+  );
+  const { items, nextMarker } = paginateList(targets, marker);
+  return {
+    securityProfileTargets: items.map((arn) => ({ arn })),
+    nextToken: nextMarker,
+  };
+};
+
+const ValidateSecurityProfileBehaviors: OperationHandler = (input, _ctx) => {
+  const data = input as Record<string, unknown>;
+  const behaviors = (data["behaviors"] as unknown[]) ?? [];
+  return {
+    valid: true,
+    validationErrors:
+      behaviors.length === 0
+        ? [{ errorMessage: "behaviors must not be empty." }]
+        : [],
+  };
+};
+
+const CreateCustomMetric: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const metricName = requireStr(data, "metricName");
+  if (ctx.store.get(customMetricKey(metricName)) !== undefined)
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Custom metric ${metricName} already exists.`,
+      409,
+    );
+  const metricType = requireStr(data, "metricType");
+  const arn = customMetricArn(ctx, metricName);
+  const now = nowSeconds();
+  const stored: StoredCustomMetric = {
+    metricName,
+    metricArn: arn,
+    displayName: str(data["displayName"]),
+    metricType,
+    createdAt: now,
+    lastModifiedDate: now,
+  };
+  ctx.store.set(customMetricKey(metricName), stored);
+  addToList(ctx, allCustomMetricsKey, metricName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { metricName: stored.metricName, metricArn: stored.metricArn };
+};
+
+const DeleteCustomMetric: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const metricName = requireStr(data, "metricName");
+  requireCustomMetric(ctx, metricName);
+  ctx.store.set(customMetricKey(metricName), undefined);
+  removeFromList<string>(ctx, allCustomMetricsKey, (n) => n === metricName);
+  return {};
+};
+
+const DescribeCustomMetric: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const metricName = requireStr(data, "metricName");
+  const stored = requireCustomMetric(ctx, metricName);
+  return {
+    metricName: stored.metricName,
+    metricArn: stored.metricArn,
+    metricType: stored.metricType,
+    displayName: stored.displayName,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedDate,
+  };
+};
+
+const UpdateCustomMetric: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const metricName = requireStr(data, "metricName");
+  const stored = requireCustomMetric(ctx, metricName);
+  if (data["displayName"] !== undefined)
+    stored.displayName = str(data["displayName"]);
+  stored.lastModifiedDate = nowSeconds();
+  ctx.store.set(customMetricKey(metricName), stored);
+  return {
+    metricName: stored.metricName,
+    metricArn: stored.metricArn,
+    metricType: stored.metricType,
+    displayName: stored.displayName,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedDate,
+  };
+};
+
+const ListCustomMetrics: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["nextToken"]);
+  const allNames = getList<string>(ctx, allCustomMetricsKey);
+  const { items, nextMarker } = paginateList(allNames, marker);
+  return { metricNames: items, nextToken: nextMarker };
+};
+
+const CreateDimension: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const name = requireStr(data, "name");
+  if (ctx.store.get(dimensionKey(name)) !== undefined)
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Dimension ${name} already exists.`,
+      409,
+    );
+  const type = requireStr(data, "type");
+  const stringValues = data["stringValues"] as string[] | undefined;
+  if (!stringValues || stringValues.length === 0)
+    throw awsError("InvalidRequestException", "stringValues is required.", 400);
+  const arn = dimensionArn(ctx, name);
+  const now = nowSeconds();
+  const stored: StoredDimension = {
+    name,
+    arn,
+    type,
+    stringValues,
+    createdAt: now,
+    lastModifiedDate: now,
+  };
+  ctx.store.set(dimensionKey(name), stored);
+  addToList(ctx, allDimensionsKey, name);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { name: stored.name, arn: stored.arn };
+};
+
+const DeleteDimension: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const name = requireStr(data, "name");
+  requireDimension(ctx, name);
+  ctx.store.set(dimensionKey(name), undefined);
+  removeFromList<string>(ctx, allDimensionsKey, (n) => n === name);
+  return {};
+};
+
+const DescribeDimension: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const name = requireStr(data, "name");
+  const stored = requireDimension(ctx, name);
+  return {
+    name: stored.name,
+    arn: stored.arn,
+    type: stored.type,
+    stringValues: stored.stringValues,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedDate,
+  };
+};
+
+const UpdateDimension: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const name = requireStr(data, "name");
+  const stored = requireDimension(ctx, name);
+  if (data["stringValues"])
+    stored.stringValues = data["stringValues"] as string[];
+  stored.lastModifiedDate = nowSeconds();
+  ctx.store.set(dimensionKey(name), stored);
+  return {
+    name: stored.name,
+    arn: stored.arn,
+    type: stored.type,
+    stringValues: stored.stringValues,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedDate,
+  };
+};
+
+const ListDimensions: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["nextToken"]);
+  const allNames = getList<string>(ctx, allDimensionsKey);
+  const { items, nextMarker } = paginateList(allNames, marker);
+  return { dimensionNames: items, nextToken: nextMarker };
+};
+
+const StartDetectMitigationActionsTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const taskId = requireStr(data, "taskId");
+  if (ctx.store.get(detectTaskKey(taskId)) !== undefined)
+    throw awsError(
+      "TaskAlreadyExistsException",
+      `Task ${taskId} already exists.`,
+      400,
+    );
+  const target = data["target"];
+  const actions = data["actions"] as string[] | undefined;
+  if (!target || !actions || actions.length === 0)
+    throw awsError(
+      "InvalidRequestException",
+      "target and actions are required.",
+      400,
+    );
+  const now = nowSeconds();
+  const stored: StoredDetectMitigationActionsTask = {
+    taskId,
+    target,
+    actions,
+    violationEventOccurrenceRange: data["violationEventOccurrenceRange"],
+    includeOnlyActiveViolations: data["includeOnlyActiveViolations"] as
+      | boolean
+      | undefined,
+    includeSuppressedAlerts: data["includeSuppressedAlerts"] as
+      | boolean
+      | undefined,
+    taskStatus: "SUCCESSFUL",
+    taskStartTime: now,
+    taskEndTime: now,
+  };
+  ctx.store.set(detectTaskKey(taskId), stored);
+  addToList(ctx, allDetectTasksKey, taskId);
+  return { taskId };
+};
+
+const CancelDetectMitigationActionsTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const taskId = requireStr(data, "taskId");
+  const stored = requireDetectMitigationTask(ctx, taskId);
+  stored.taskStatus = "CANCELED";
+  ctx.store.set(detectTaskKey(taskId), stored);
+  return {};
+};
+
+const DescribeDetectMitigationActionsTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const taskId = requireStr(data, "taskId");
+  const stored = requireDetectMitigationTask(ctx, taskId);
+  return {
+    taskSummary: {
+      taskId: stored.taskId,
+      taskStatus: stored.taskStatus,
+      taskStartTime: stored.taskStartTime,
+      taskEndTime: stored.taskEndTime,
+      target: stored.target,
+      actions: stored.actions,
+      violationEventOccurrenceRange: stored.violationEventOccurrenceRange,
+      includeOnlyActiveViolations: stored.includeOnlyActiveViolations,
+      includeSuppressedAlerts: stored.includeSuppressedAlerts,
+      actionsDefinition: [],
+      taskStatistics: {
+        actionsExecuted: 0,
+        actionsSkipped: 0,
+        actionsFailed: 0,
+      },
+    },
+  };
+};
+
+const ListDetectMitigationActionsTasks: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["nextToken"]);
+  const allIds = getList<string>(ctx, allDetectTasksKey);
+  const tasks = allIds
+    .map((id) =>
+      ctx.store.get<StoredDetectMitigationActionsTask>(detectTaskKey(id)),
+    )
+    .filter((t): t is StoredDetectMitigationActionsTask => t !== undefined);
+  const { items, nextMarker } = paginateList(tasks, marker);
+  return {
+    tasks: items.map((t) => ({
+      taskId: t.taskId,
+      taskStatus: t.taskStatus,
+      taskStartTime: t.taskStartTime,
+      taskEndTime: t.taskEndTime,
+      target: t.target,
+      actions: t.actions,
+      actionsDefinition: [],
+      taskStatistics: {
+        actionsExecuted: 0,
+        actionsSkipped: 0,
+        actionsFailed: 0,
+      },
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const ListDetectMitigationActionsExecutions: OperationHandler = (
+  _input,
+  _ctx,
+) => {
+  return { actionsExecutions: [], nextToken: undefined };
+};
+
+const ListActiveViolations: OperationHandler = (_input, _ctx) => {
+  return { activeViolations: [], nextToken: undefined };
+};
+
+const ListViolationEvents: OperationHandler = (_input, _ctx) => {
+  return { violationEvents: [], nextToken: undefined };
+};
+
+const PutVerificationStateOnViolation: OperationHandler = (input, _ctx) => {
+  const data = input as Record<string, unknown>;
+  requireStr(data, "violationId");
+  return {};
+};
+
+const GetBehaviorModelTrainingSummaries: OperationHandler = (_input, _ctx) => {
+  return { summaries: [], nextToken: undefined };
+};
+
 // === resolveOperation ===
 
 const idFromArn2 = (arn: string): string => {
@@ -3805,6 +5098,228 @@ export default {
       return undefined;
     }
 
+    if (parts[0] === "audit" && parts[1] === "configuration") {
+      if (req.method === "GET") return "DescribeAccountAuditConfiguration";
+      if (req.method === "PATCH") return "UpdateAccountAuditConfiguration";
+      if (req.method === "DELETE") return "DeleteAccountAuditConfiguration";
+      return undefined;
+    }
+
+    if (parts[0] === "audit" && parts[1] === "tasks") {
+      if (parts.length === 2) {
+        if (req.method === "POST") return "StartOnDemandAuditTask";
+        if (req.method === "GET") return "ListAuditTasks";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (req.method === "GET") return "DescribeAuditTask";
+        return undefined;
+      }
+      if (parts.length === 4 && parts[3] === "cancel") {
+        if (req.method === "PUT") return "CancelAuditTask";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "audit" && parts[1] === "findings") {
+      if (parts.length === 2) {
+        if (req.method === "POST") return "ListAuditFindings";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (req.method === "GET") return "DescribeAuditFinding";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "audit" && parts[1] === "suppressions") {
+      if (parts[2] === "create" && req.method === "POST")
+        return "CreateAuditSuppression";
+      if (parts[2] === "delete" && req.method === "POST")
+        return "DeleteAuditSuppression";
+      if (parts[2] === "describe" && req.method === "POST")
+        return "DescribeAuditSuppression";
+      if (parts[2] === "update" && req.method === "PATCH")
+        return "UpdateAuditSuppression";
+      if (parts[2] === "list" && req.method === "POST")
+        return "ListAuditSuppressions";
+      return undefined;
+    }
+
+    if (
+      parts[0] === "audit" &&
+      parts[1] === "mitigationactions" &&
+      parts[2] === "tasks"
+    ) {
+      if (parts.length === 3) {
+        if (req.method === "GET") return "ListAuditMitigationActionsTasks";
+        return undefined;
+      }
+      if (parts.length === 4) {
+        if (req.method === "POST") return "StartAuditMitigationActionsTask";
+        if (req.method === "GET") return "DescribeAuditMitigationActionsTask";
+        return undefined;
+      }
+      if (parts.length === 5 && parts[4] === "cancel") {
+        if (req.method === "PUT") return "CancelAuditMitigationActionsTask";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (
+      parts[0] === "audit" &&
+      parts[1] === "mitigationactions" &&
+      parts[2] === "executions"
+    ) {
+      if (req.method === "GET") return "ListAuditMitigationActionsExecutions";
+      return undefined;
+    }
+
+    if (parts[0] === "audit" && parts[1] === "scheduledaudits") {
+      if (parts.length === 2) {
+        if (req.method === "GET") return "ListScheduledAudits";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (req.method === "POST") return "CreateScheduledAudit";
+        if (req.method === "GET") return "DescribeScheduledAudit";
+        if (req.method === "PATCH") return "UpdateScheduledAudit";
+        if (req.method === "DELETE") return "DeleteScheduledAudit";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "mitigationactions" && parts[1] === "actions") {
+      if (parts.length === 2) {
+        if (req.method === "GET") return "ListMitigationActions";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (req.method === "POST") return "CreateMitigationAction";
+        if (req.method === "GET") return "DescribeMitigationAction";
+        if (req.method === "PATCH") return "UpdateMitigationAction";
+        if (req.method === "DELETE") return "DeleteMitigationAction";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "security-profiles") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListSecurityProfiles";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateSecurityProfile";
+        if (req.method === "GET") return "DescribeSecurityProfile";
+        if (req.method === "PATCH") return "UpdateSecurityProfile";
+        if (req.method === "DELETE") return "DeleteSecurityProfile";
+        return undefined;
+      }
+      if (parts.length === 3 && parts[2] === "targets") {
+        if (req.method === "PUT") return "AttachSecurityProfile";
+        if (req.method === "DELETE") return "DetachSecurityProfile";
+        if (req.method === "GET") return "ListTargetsForSecurityProfile";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "security-profiles-for-target") {
+      if (req.method === "GET") return "ListSecurityProfilesForTarget";
+      return undefined;
+    }
+
+    if (parts[0] === "security-profile-behaviors" && parts[1] === "validate") {
+      if (req.method === "POST") return "ValidateSecurityProfileBehaviors";
+      return undefined;
+    }
+
+    if (parts[0] === "custom-metric") {
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateCustomMetric";
+        if (req.method === "GET") return "DescribeCustomMetric";
+        if (req.method === "PATCH") return "UpdateCustomMetric";
+        if (req.method === "DELETE") return "DeleteCustomMetric";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "custom-metrics") {
+      if (req.method === "GET") return "ListCustomMetrics";
+      return undefined;
+    }
+
+    if (parts[0] === "dimensions") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListDimensions";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateDimension";
+        if (req.method === "GET") return "DescribeDimension";
+        if (req.method === "PATCH") return "UpdateDimension";
+        if (req.method === "DELETE") return "DeleteDimension";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (
+      parts[0] === "detect" &&
+      parts[1] === "mitigationactions" &&
+      parts[2] === "tasks"
+    ) {
+      if (parts.length === 3) {
+        if (req.method === "GET") return "ListDetectMitigationActionsTasks";
+        return undefined;
+      }
+      if (parts.length === 4) {
+        if (req.method === "PUT") return "StartDetectMitigationActionsTask";
+        if (req.method === "GET") return "DescribeDetectMitigationActionsTask";
+        return undefined;
+      }
+      if (parts.length === 5 && parts[4] === "cancel") {
+        if (req.method === "PUT") return "CancelDetectMitigationActionsTask";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (
+      parts[0] === "detect" &&
+      parts[1] === "mitigationactions" &&
+      parts[2] === "executions"
+    ) {
+      if (req.method === "GET") return "ListDetectMitigationActionsExecutions";
+      return undefined;
+    }
+
+    if (parts[0] === "active-violations") {
+      if (req.method === "GET") return "ListActiveViolations";
+      return undefined;
+    }
+
+    if (parts[0] === "violation-events") {
+      if (req.method === "GET") return "ListViolationEvents";
+      return undefined;
+    }
+
+    if (parts[0] === "violations" && parts[2] === "verification-state") {
+      if (req.method === "POST") return "PutVerificationStateOnViolation";
+      return undefined;
+    }
+
+    if (parts[0] === "behavior-model-training" && parts[1] === "summaries") {
+      if (req.method === "GET") return "GetBehaviorModelTrainingSummaries";
+      return undefined;
+    }
+
     return undefined;
   },
   operations: {
@@ -3941,6 +5456,64 @@ export default {
     GetCommandExecution,
     DeleteCommandExecution,
     ListCommandExecutions,
+    DescribeAccountAuditConfiguration,
+    UpdateAccountAuditConfiguration,
+    DeleteAccountAuditConfiguration,
+    StartOnDemandAuditTask,
+    CancelAuditTask,
+    DescribeAuditTask,
+    ListAuditTasks,
+    DescribeAuditFinding,
+    ListAuditFindings,
+    CreateAuditSuppression,
+    DeleteAuditSuppression,
+    DescribeAuditSuppression,
+    UpdateAuditSuppression,
+    ListAuditSuppressions,
+    CreateMitigationAction,
+    DeleteMitigationAction,
+    DescribeMitigationAction,
+    UpdateMitigationAction,
+    ListMitigationActions,
+    StartAuditMitigationActionsTask,
+    CancelAuditMitigationActionsTask,
+    DescribeAuditMitigationActionsTask,
+    ListAuditMitigationActionsTasks,
+    ListAuditMitigationActionsExecutions,
+    CreateScheduledAudit,
+    DeleteScheduledAudit,
+    DescribeScheduledAudit,
+    UpdateScheduledAudit,
+    ListScheduledAudits,
+    CreateSecurityProfile,
+    DeleteSecurityProfile,
+    DescribeSecurityProfile,
+    UpdateSecurityProfile,
+    ListSecurityProfiles,
+    AttachSecurityProfile,
+    DetachSecurityProfile,
+    ListSecurityProfilesForTarget,
+    ListTargetsForSecurityProfile,
+    ValidateSecurityProfileBehaviors,
+    CreateCustomMetric,
+    DeleteCustomMetric,
+    DescribeCustomMetric,
+    UpdateCustomMetric,
+    ListCustomMetrics,
+    CreateDimension,
+    DeleteDimension,
+    DescribeDimension,
+    UpdateDimension,
+    ListDimensions,
+    StartDetectMitigationActionsTask,
+    CancelDetectMitigationActionsTask,
+    DescribeDetectMitigationActionsTask,
+    ListDetectMitigationActionsTasks,
+    ListDetectMitigationActionsExecutions,
+    ListActiveViolations,
+    ListViolationEvents,
+    PutVerificationStateOnViolation,
+    GetBehaviorModelTrainingSummaries,
   },
   model,
 } as const satisfies ServiceDefinition;

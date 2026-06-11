@@ -124,6 +124,7 @@ import applicationAutoscaling from "./application-autoscaling.ts";
 import xray from "./xray.ts";
 import bedrock from "./bedrock.ts";
 import bedrockRuntime from "./bedrock-runtime.ts";
+import textract from "./textract.ts";
 import dms from "./dms.ts";
 import kinesisanalyticsv2 from "./kinesisanalyticsv2.ts";
 
@@ -252,6 +253,7 @@ export const services: ServiceDefinition[] = [
   xray,
   bedrockRuntime,
   bedrock,
+  textract,
   dms,
   kinesisanalyticsv2,
 ];

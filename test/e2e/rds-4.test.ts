@@ -188,7 +188,18 @@ test("option group lifecycle", async () => {
   const listed = await client.send(new DescribeOptionGroupsCommand({}));
   expect(listed.OptionGroupsList?.length).toBeGreaterThanOrEqual(1);
 
-  await client.send(new ModifyOptionGroupCommand({ OptionGroupName: ogName }));
+  expect(
+    client.send(new ModifyOptionGroupCommand({ OptionGroupName: ogName })),
+  ).rejects.toMatchObject({ name: "InvalidParameterCombination" });
+
+  await client.send(
+    new ModifyOptionGroupCommand({
+      OptionGroupName: ogName,
+      OptionsToInclude: [],
+      OptionsToRemove: [],
+      ApplyImmediately: true,
+    }),
+  );
 
   const options = await client.send(
     new DescribeOptionGroupOptionsCommand({ EngineName: "mysql" }),

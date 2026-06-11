@@ -1,0 +1,102 @@
+{
+  "clientPackage": "@aws-sdk/client-rds",
+  "clientName": "RDSClient",
+  "steps": [
+    {
+      "command": "CreateOptionGroupCommand",
+      "input": {
+        "OptionGroupName": "parity-og-inc",
+        "EngineName": "mysql",
+        "MajorEngineVersion": "5.6",
+        "OptionGroupDescription": "parity include test"
+      },
+      "expected": {
+        "OptionGroup": {
+          "OptionGroupName": "parity-og-inc",
+          "Options": []
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ModifyOptionGroupCommand",
+      "input": {
+        "OptionGroupName": "parity-og-inc",
+        "OptionsToInclude": [{ "OptionName": "MARIADB_AUDIT_PLUGIN" }],
+        "OptionsToRemove": [],
+        "ApplyImmediately": true
+      },
+      "expected": {
+        "OptionGroup": {
+          "OptionGroupName": "parity-og-inc",
+          "EngineName": "mysql"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ModifyOptionGroupCommand",
+      "input": {
+        "OptionGroupName": "parity-og-inc",
+        "OptionsToInclude": [
+          {
+            "OptionName": "MARIADB_AUDIT_PLUGIN",
+            "OptionSettings": [
+              { "Name": "SERVER_AUDIT_FILE_ROTATE_SIZE", "Value": "1000" }
+            ]
+          }
+        ],
+        "ApplyImmediately": true
+      },
+      "expected": {
+        "OptionGroup": {
+          "OptionGroupName": "parity-og-inc",
+          "Options": [
+            {
+              "OptionName": "MARIADB_AUDIT_PLUGIN",
+              "OptionSettings": [
+                { "Name": "SERVER_AUDIT_FILE_ROTATE_SIZE", "Value": "1000" }
+              ]
+            }
+          ]
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "OptionGroup.Options.0.Permanent",
+        "OptionGroup.Options.0.Persistent"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ModifyOptionGroupCommand",
+      "input": {
+        "OptionGroupName": "parity-og-inc",
+        "OptionsToRemove": ["MARIADB_AUDIT_PLUGIN"],
+        "ApplyImmediately": true
+      },
+      "expected": {
+        "OptionGroup": {
+          "OptionGroupName": "parity-og-inc",
+          "Options": []
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteOptionGroupCommand",
+      "input": { "OptionGroupName": "parity-og-inc" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -6,6 +6,7 @@ description = "Vendored upstream test data is byte-for-byte copies of botocore a
 paths = [
   '''test/vendor/.*''',
   '''apps/server/src/services/acm\.ts''',
+  '''apps/server/src/services/acm-pca\.ts''',
   '''apps/server/src/services/ec2\.ts''',
   '''test/e2e/.*''',
 ]

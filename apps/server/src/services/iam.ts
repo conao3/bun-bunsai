@@ -477,14 +477,29 @@ const GetRole: OperationHandler = (input, ctx) => {
 const DeleteRole: OperationHandler = (input, ctx) => {
   const name = requireString(input, "RoleName");
   requireRole(ctx, name);
+  const hasAttachment = ctx.store
+    .list<StoredAttachment>()
+    .some((e) => e.key.startsWith("attachment/") && e.value.RoleName === name);
+  if (hasAttachment) {
+    throw awsError(
+      "DeleteConflict",
+      "Cannot delete entity, must detach all policies first.",
+      409,
+    );
+  }
+  const hasInlinePolicy = ctx.store
+    .list()
+    .some((e) => e.key.startsWith(`rolepolicy/${name}/`));
+  if (hasInlinePolicy) {
+    throw awsError(
+      "DeleteConflict",
+      "Cannot delete entity, must detach all policies first.",
+      409,
+    );
+  }
   ctx.store.delete(roleKey(name));
   for (const entry of ctx.store.list()) {
-    if (
-      (entry.key.startsWith("attachment/") &&
-        (entry.value as StoredAttachment).RoleName === name) ||
-      entry.key.startsWith(`roletag/${name}/`) ||
-      entry.key.startsWith(`rolepolicy/${name}/`)
-    ) {
+    if (entry.key.startsWith(`roletag/${name}/`)) {
       ctx.store.delete(entry.key);
     }
   }
@@ -2767,6 +2782,24 @@ const UpdateServiceSpecificCredential: OperationHandler = (input, ctx) => {
 const DeletePolicy: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "PolicyArn");
   requirePolicy(ctx, arn);
+  const isAttached = ctx.store
+    .list()
+    .some(
+      (e) =>
+        (e.key.startsWith("attachment/") &&
+          (e.value as StoredAttachment).PolicyArn === arn) ||
+        (e.key.startsWith("userattachment/") &&
+          (e.value as StoredUserAttachment).PolicyArn === arn) ||
+        (e.key.startsWith("groupattachment/") &&
+          (e.value as StoredGroupAttachment).PolicyArn === arn),
+    );
+  if (isAttached) {
+    throw awsError(
+      "DeleteConflict",
+      "Cannot delete entity, must detach all policies first.",
+      409,
+    );
+  }
   ctx.store.delete(policyKey(arn));
   for (const entry of ctx.store.list()) {
     if (

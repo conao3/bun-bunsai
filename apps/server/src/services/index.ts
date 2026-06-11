@@ -117,6 +117,7 @@ import networkFirewall from "./network-firewall.ts";
 import schemas from "./schemas.ts";
 import autoscaling from "./autoscaling.ts";
 import pipes from "./pipes.ts";
+import route53resolver from "./route53resolver.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -236,6 +237,7 @@ export const services: ServiceDefinition[] = [
   schemas,
   autoscaling,
   pipes,
+  route53resolver,
 ];
 
 export const findService = (

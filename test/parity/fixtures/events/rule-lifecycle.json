@@ -1,0 +1,74 @@
+{
+  "clientPackage": "@aws-sdk/client-eventbridge",
+  "clientName": "EventBridgeClient",
+  "steps": [
+    {
+      "command": "PutRuleCommand",
+      "input": {
+        "Name": "parity-rule",
+        "EventPattern": "{\"source\":[\"parity.test\"],\"detail-type\":[\"parity.event\"]}",
+        "State": "ENABLED"
+      },
+      "expected": { "RuleArn": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeRuleCommand",
+      "input": { "Name": "parity-rule" },
+      "expected": {
+        "Name": "parity-rule",
+        "Arn": "<ANY>",
+        "State": "ENABLED",
+        "EventBusName": "default"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListRulesCommand",
+      "input": { "NamePrefix": "parity-rule" },
+      "expected": {
+        "Rules": [
+          {
+            "Name": "parity-rule",
+            "Arn": "<ANY>",
+            "State": "ENABLED"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DisableRuleCommand",
+      "input": { "Name": "parity-rule" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeRuleCommand",
+      "input": { "Name": "parity-rule" },
+      "expected": {
+        "Name": "parity-rule",
+        "State": "DISABLED"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteRuleCommand",
+      "input": { "Name": "parity-rule" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

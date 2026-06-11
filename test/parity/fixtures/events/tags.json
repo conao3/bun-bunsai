@@ -1,0 +1,67 @@
+{
+  "clientPackage": "@aws-sdk/client-eventbridge",
+  "clientName": "EventBridgeClient",
+  "steps": [
+    {
+      "command": "CreateEventBusCommand",
+      "input": {
+        "Name": "parity-tags-bus",
+        "Tags": [{ "Key": "env", "Value": "test" }]
+      },
+      "expected": { "EventBusArn": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "bus",
+      "refs": {}
+    },
+    {
+      "command": "ListTagsForResourceCommand",
+      "input": { "ResourceARN": "${bus.EventBusArn}" },
+      "expected": {
+        "Tags": [{ "Key": "env", "Value": "test" }]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "bus.EventBusArn": "bus" }
+    },
+    {
+      "command": "TagResourceCommand",
+      "input": {
+        "ResourceARN": "${bus.EventBusArn}",
+        "Tags": [{ "Key": "stage", "Value": "prod" }]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "bus.EventBusArn": "bus" }
+    },
+    {
+      "command": "UntagResourceCommand",
+      "input": {
+        "ResourceARN": "${bus.EventBusArn}",
+        "TagKeys": ["env"]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "bus.EventBusArn": "bus" }
+    },
+    {
+      "command": "ListTagsForResourceCommand",
+      "input": { "ResourceARN": "${bus.EventBusArn}" },
+      "expected": {
+        "Tags": [{ "Key": "stage", "Value": "prod" }]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "bus.EventBusArn": "bus" }
+    },
+    {
+      "command": "DeleteEventBusCommand",
+      "input": { "Name": "parity-tags-bus" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

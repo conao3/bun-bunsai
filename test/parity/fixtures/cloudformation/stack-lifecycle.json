@@ -1,0 +1,51 @@
+{
+  "clientPackage": "@aws-sdk/client-cloudformation",
+  "clientName": "CloudFormationClient",
+  "steps": [
+    {
+      "command": "CreateStackCommand",
+      "input": {
+        "StackName": "parity-cfn-stack",
+        "TemplateBody": "{\"AWSTemplateFormatVersion\":\"2010-09-09\",\"Resources\":{\"Topic\":{\"Type\":\"AWS::SNS::Topic\"}}}"
+      },
+      "expected": { "StackId": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "stack",
+      "refs": {}
+    },
+    {
+      "command": "DescribeStacksCommand",
+      "input": { "StackName": "parity-cfn-stack" },
+      "expected": {
+        "Stacks": [
+          {
+            "StackName": "parity-cfn-stack",
+            "StackId": "<ANY>",
+            "StackStatus": "CREATE_COMPLETE"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetTemplateCommand",
+      "input": { "StackName": "parity-cfn-stack" },
+      "expected": {
+        "TemplateBody": "{\"AWSTemplateFormatVersion\":\"2010-09-09\",\"Resources\":{\"Topic\":{\"Type\":\"AWS::SNS::Topic\"}}}"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteStackCommand",
+      "input": { "StackName": "parity-cfn-stack" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

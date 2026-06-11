@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { RequestLogEntry, ServiceSummary } from "./api";
+import { aggregateServices } from "./aggregateServices";
 import { buildResourceSvcPath, router } from "./router";
 import {
   EmptyState,
@@ -196,6 +197,8 @@ export function Overview({
     ? (scopedRequests.reduce((a, r) => a + r.latencyMs, 0) / total).toFixed(1)
     : "—";
 
+  const aggregated = aggregateServices(services);
+
   const perSvc = new Map<string, { calls: number; errs: number }>();
   for (const r of scopedRequests) {
     const cur = perSvc.get(r.service) ?? { calls: 0, errs: 0 };
@@ -227,7 +230,7 @@ export function Overview({
       <div className="ov-stats">
         <StatCard
           label="稼働サービス"
-          value={services.length}
+          value={aggregated.length}
           sub={connected ? "registered" : "接続待ち"}
         />
         <StatCard
@@ -280,16 +283,16 @@ export function Overview({
         <div className="flex aic" style={{ marginBottom: 12 }}>
           <span className="uppercase-label">起動中のサービス</span>
           <span className="badge pill mono" style={{ marginLeft: 10 }}>
-            {services.length} 稼働
+            {aggregated.length} 稼働
           </span>
         </div>
-        {services.length === 0 ? (
+        {aggregated.length === 0 ? (
           <div className="card">
             <div className="svc-empty">登録済みサービスがありません</div>
           </div>
         ) : (
           <div className="svc-grid">
-            {services.map((svc) => {
+            {aggregated.map((svc) => {
               const p = perSvc.get(svc.name) ?? { calls: 0, errs: 0 };
               return (
                 <ServiceCard

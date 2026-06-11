@@ -18,6 +18,7 @@ import ses from "./ses.ts";
 import route53 from "./route53.ts";
 import cloudFormation from "./cloudformation.ts";
 import apiGateway from "./apigateway.ts";
+import apiGatewayV2 from "./apigatewayv2.ts";
 import ec2 from "./ec2.ts";
 import rds from "./rds.ts";
 import ecr from "./ecr.ts";
@@ -140,6 +141,7 @@ export const services: ServiceDefinition[] = [
   route53,
   cloudFormation,
   apiGateway,
+  apiGatewayV2,
   ec2,
   rds,
   ecr,

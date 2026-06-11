@@ -182,6 +182,7 @@ aws-models/
   autoscaling.json      # botocore/data/autoscaling/2011-01-01/service-2.json      (protocol query, signingName autoscaling)
   cognito-identity.json # botocore/data/cognito-identity/2014-06-30/service-2.json  (protocol json, signingName cognito-identity)
   pipes.json            # botocore/data/pipes/2015-10-07/service-2.json             (protocol rest-json, signingName pipes; Amazon EventBridge Pipes)
+  apigatewayv2.json     # botocore/data/apigatewayv2/2018-11-29/service-2.json      (protocol rest-json, signingName apigateway; API Gateway v2)
   route53resolver.json  # botocore/data/route53resolver/2018-04-01/service-2.json   (protocol json, signingName route53resolver)
   application-autoscaling.json # botocore/data/application-autoscaling/2016-02-06/service-2.json (protocol json, signingName application-autoscaling, targetPrefix AnyScaleFrontendService)
   xray.json             # botocore/data/xray/2016-04-12/service-2.json             (protocol rest-json, signingName xray)

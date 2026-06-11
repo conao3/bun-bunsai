@@ -69,6 +69,10 @@ import {
   UpdateTaskProtectionCommand,
   UpdateTaskSetCommand,
 } from "@aws-sdk/client-ecs";
+import {
+  CreateTargetGroupCommand,
+  ElasticLoadBalancingV2Client,
+} from "@aws-sdk/client-elastic-load-balancing-v2";
 
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
@@ -77,6 +81,13 @@ const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 describe("ecs service and task definition e2e", () => {
   const ecs = () =>
     new ECSClient({ endpoint, region, credentials, requestHandler });
+  const elbv2 = () =>
+    new ElasticLoadBalancingV2Client({
+      endpoint,
+      region,
+      credentials,
+      requestHandler,
+    });
 
   test("register, list and deregister task definitions", async () => {
     const client = ecs();
@@ -729,6 +740,7 @@ describe("ecs service and task definition e2e", () => {
 
   test("service load-balancer + deployment config lifecycle", async () => {
     const client = ecs();
+    const elbClient = elbv2();
     const clusterName = "bunsai-e2e-lb-cluster";
     const serviceName = "bunsai-e2e-lb-service";
     const family = "bunsai-e2e-lb-td";
@@ -755,6 +767,17 @@ describe("ecs service and task definition e2e", () => {
     );
     const td2Arn = td2.taskDefinition?.taskDefinitionArn!;
 
+    const { TargetGroups: lbTgs } = await elbClient.send(
+      new CreateTargetGroupCommand({
+        Name: "bunsai-e2e-lb-tg",
+        Protocol: "HTTP",
+        Port: 80,
+        VpcId: "vpc-bunsai-lb",
+        TargetType: "ip",
+      }),
+    );
+    const lbTgArn = lbTgs?.[0]?.TargetGroupArn ?? "";
+
     const created = await client.send(
       new CreateServiceCommand({
         cluster: clusterName,
@@ -763,8 +786,7 @@ describe("ecs service and task definition e2e", () => {
         desiredCount: 2,
         loadBalancers: [
           {
-            targetGroupArn:
-              "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/my-tg/abc123",
+            targetGroupArn: lbTgArn,
             containerName: "app",
             containerPort: 80,
           },

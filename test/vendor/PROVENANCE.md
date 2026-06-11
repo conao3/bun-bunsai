@@ -198,6 +198,7 @@ aws-models/
   verifiedpermissions.json # botocore/data/verifiedpermissions/2021-12-01/service-2.json (protocol json, signingName verifiedpermissions, targetPrefix VerifiedPermissions)
   mediaconvert.json     # botocore/data/mediaconvert/2017-08-29/service-2.json      (protocol rest-json, signingName mediaconvert)
   kafka.json            # botocore/data/kafka/2018-11-14/service-2.json            (protocol rest-json, signingName kafka; Amazon MSK)
+  ce.json               # botocore/data/ce/2017-10-25/service-2.json               (protocol json, signingName ce, endpointPrefix ce, targetPrefix AWSInsightsIndexService)
 ```
 
 ### Notes

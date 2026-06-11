@@ -223,8 +223,12 @@ test("fleet indexing and search", async () => {
     new GetIndexingConfigurationCommand({}),
   );
   expect(
-    (afterUpdate.thingIndexingConfiguration as Record<string, unknown>)
-      ?.thingIndexingMode,
+    (
+      afterUpdate.thingIndexingConfiguration as unknown as Record<
+        string,
+        unknown
+      >
+    )?.thingIndexingMode,
   ).toBe("REGISTRY");
 
   const searchResult = await client.send(

@@ -118,9 +118,10 @@ describe("EFS scenario e2e", () => {
       new DeleteFileSystemCommand({ FileSystemId: fileSystemId }),
     );
 
-    const afterFsDelete = await client.send(
-      new DescribeFileSystemsCommand({ FileSystemId: fileSystemId }),
-    );
-    expect(afterFsDelete.FileSystems ?? []).toHaveLength(0);
+    await expect(
+      client.send(
+        new DescribeFileSystemsCommand({ FileSystemId: fileSystemId }),
+      ),
+    ).rejects.toMatchObject({ name: "FileSystemNotFound" });
   });
 });

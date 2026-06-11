@@ -1,0 +1,74 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-backup",
+  "clientName": "BackupClient",
+  "steps": [
+    {
+      "command": "CreateBackupPlanCommand",
+      "input": {
+        "BackupPlan": {
+          "BackupPlanName": "parity-backup-plan",
+          "Rules": [
+            {
+              "RuleName": "parity-rule",
+              "TargetBackupVaultName": "Default",
+              "ScheduleExpression": "cron(0 12 * * ? *)",
+              "StartWindowMinutes": 60,
+              "CompletionWindowMinutes": 120,
+              "Lifecycle": {
+                "DeleteAfterDays": 30
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "BackupPlanId": "<ANY>",
+        "BackupPlanArn": "<ANY>",
+        "VersionId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "CreationDate", "AdvancedBackupSettings"],
+      "saveAs": "plan",
+      "refs": {}
+    },
+    {
+      "command": "GetBackupPlanCommand",
+      "input": {
+        "BackupPlanId": "${plan.BackupPlanId}"
+      },
+      "expected": {
+        "BackupPlan": {
+          "BackupPlanName": "parity-backup-plan"
+        },
+        "BackupPlanId": "<ANY>",
+        "BackupPlanArn": "<ANY>",
+        "VersionId": "<ANY>"
+      },
+      "ignorePaths": [
+        "$metadata",
+        "BackupPlan.Rules",
+        "BackupPlan.AdvancedBackupSettings",
+        "CreationDate",
+        "CreatorRequestId",
+        "AdvancedBackupSettings",
+        "LastExecutionDate"
+      ],
+      "saveAs": null,
+      "refs": { "plan.BackupPlanId": "plan" }
+    },
+    {
+      "command": "DeleteBackupPlanCommand",
+      "input": {
+        "BackupPlanId": "${plan.BackupPlanId}"
+      },
+      "expected": {
+        "BackupPlanId": "<ANY>",
+        "BackupPlanArn": "<ANY>",
+        "VersionId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "DeletionDate"],
+      "saveAs": null,
+      "refs": { "plan.BackupPlanId": "plan" }
+    }
+  ]
+}

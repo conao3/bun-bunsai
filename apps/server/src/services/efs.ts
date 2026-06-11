@@ -430,6 +430,9 @@ const DescribeFileSystems: OperationHandler = (input, ctx) => {
   const marker = stringOrUndefined(input["Marker"]);
   const maxItems =
     typeof input["MaxItems"] === "number" ? input["MaxItems"] : undefined;
+  if (fileSystemId !== undefined) {
+    requireFileSystem(ctx, fileSystemId);
+  }
   const filtered = ctx.store
     .list<StoredFileSystem>()
     .filter((entry) => entry.key.startsWith("fs/"))

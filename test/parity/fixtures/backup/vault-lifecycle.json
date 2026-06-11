@@ -1,0 +1,76 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-backup",
+  "clientName": "BackupClient",
+  "steps": [
+    {
+      "command": "CreateBackupVaultCommand",
+      "input": {
+        "BackupVaultName": "parity-backup-vault"
+      },
+      "expected": {
+        "BackupVaultName": "parity-backup-vault",
+        "BackupVaultArn": "<ANY>",
+        "CreationDate": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "vault",
+      "refs": {}
+    },
+    {
+      "command": "DescribeBackupVaultCommand",
+      "input": {
+        "BackupVaultName": "parity-backup-vault"
+      },
+      "expected": {
+        "BackupVaultName": "parity-backup-vault",
+        "BackupVaultArn": "<ANY>",
+        "VaultType": "BACKUP_VAULT",
+        "VaultState": "AVAILABLE",
+        "NumberOfRecoveryPoints": 0,
+        "Locked": false
+      },
+      "ignorePaths": [
+        "$metadata",
+        "CreationDate",
+        "EncryptionKeyArn",
+        "CreatorRequestId",
+        "MinRetentionDays",
+        "MaxRetentionDays"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListBackupVaultsCommand",
+      "input": {},
+      "expected": {},
+      "ignorePaths": ["$metadata", "BackupVaultList", "NextToken"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteBackupVaultCommand",
+      "input": {
+        "BackupVaultName": "parity-backup-vault"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeBackupVaultCommand",
+      "input": {
+        "BackupVaultName": "parity-backup-vault"
+      },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 404
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

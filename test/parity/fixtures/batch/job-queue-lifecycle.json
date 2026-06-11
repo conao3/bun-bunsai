@@ -1,0 +1,119 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-batch",
+  "clientName": "BatchClient",
+  "steps": [
+    {
+      "command": "CreateComputeEnvironmentCommand",
+      "input": {
+        "computeEnvironmentName": "parity-batch-ce-jq",
+        "type": "UNMANAGED",
+        "state": "ENABLED"
+      },
+      "expected": {
+        "computeEnvironmentName": "parity-batch-ce-jq",
+        "computeEnvironmentArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "ce",
+      "refs": {}
+    },
+    {
+      "command": "CreateJobQueueCommand",
+      "input": {
+        "jobQueueName": "parity-batch-jq",
+        "state": "ENABLED",
+        "priority": 10,
+        "computeEnvironmentOrder": [
+          {
+            "order": 1,
+            "computeEnvironment": "parity-batch-ce-jq"
+          }
+        ]
+      },
+      "expected": {
+        "jobQueueName": "parity-batch-jq",
+        "jobQueueArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "jq",
+      "refs": {}
+    },
+    {
+      "command": "DescribeJobQueuesCommand",
+      "input": {
+        "jobQueues": ["parity-batch-jq"]
+      },
+      "expected": {
+        "jobQueues": [
+          {
+            "jobQueueName": "parity-batch-jq",
+            "state": "ENABLED",
+            "status": "VALID",
+            "statusReason": "JobQueue Healthy",
+            "priority": 10
+          }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "nextToken",
+        "jobQueues[0].jobQueueArn",
+        "jobQueues[0].schedulingPolicyArn",
+        "jobQueues[0].computeEnvironmentOrder",
+        "jobQueues[0].jobQueueType",
+        "jobQueues[0].tags"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UpdateJobQueueCommand",
+      "input": {
+        "jobQueue": "parity-batch-jq",
+        "state": "DISABLED"
+      },
+      "expected": {
+        "jobQueueName": "parity-batch-jq",
+        "jobQueueArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteJobQueueCommand",
+      "input": {
+        "jobQueue": "parity-batch-jq"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UpdateComputeEnvironmentCommand",
+      "input": {
+        "computeEnvironment": "parity-batch-ce-jq",
+        "state": "DISABLED"
+      },
+      "expected": {
+        "computeEnvironmentName": "parity-batch-ce-jq",
+        "computeEnvironmentArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteComputeEnvironmentCommand",
+      "input": {
+        "computeEnvironment": "parity-batch-ce-jq"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

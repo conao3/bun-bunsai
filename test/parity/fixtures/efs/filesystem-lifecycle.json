@@ -1,0 +1,102 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-efs",
+  "clientName": "EFSClient",
+  "steps": [
+    {
+      "command": "CreateFileSystemCommand",
+      "input": {
+        "CreationToken": "parity-efs-token",
+        "PerformanceMode": "generalPurpose",
+        "ThroughputMode": "bursting",
+        "Encrypted": false,
+        "Tags": [{ "Key": "Name", "Value": "parity-efs" }]
+      },
+      "expected": {
+        "FileSystemId": "<ANY>",
+        "FileSystemArn": "<ANY>",
+        "CreationToken": "parity-efs-token",
+        "LifeCycleState": "creating",
+        "PerformanceMode": "generalPurpose",
+        "ThroughputMode": "bursting",
+        "Encrypted": false,
+        "NumberOfMountTargets": 0
+      },
+      "ignorePaths": [
+        "$metadata",
+        "OwnerId",
+        "CreationTime",
+        "SizeInBytes",
+        "Tags",
+        "Name",
+        "KmsKeyId",
+        "ProvisionedThroughputInMibps",
+        "AvailabilityZoneName",
+        "AvailabilityZoneId",
+        "FileSystemProtection"
+      ],
+      "saveAs": "fs",
+      "refs": {}
+    },
+    {
+      "command": "DescribeFileSystemsCommand",
+      "input": {
+        "FileSystemId": "${fs.FileSystemId}"
+      },
+      "expected": {
+        "FileSystems": [
+          {
+            "FileSystemId": "<ANY>",
+            "CreationToken": "parity-efs-token",
+            "LifeCycleState": "available",
+            "PerformanceMode": "generalPurpose",
+            "ThroughputMode": "bursting",
+            "Encrypted": false,
+            "NumberOfMountTargets": 0
+          }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Marker",
+        "NextMarker",
+        "FileSystems[0].OwnerId",
+        "FileSystems[0].FileSystemArn",
+        "FileSystems[0].CreationTime",
+        "FileSystems[0].SizeInBytes",
+        "FileSystems[0].Tags",
+        "FileSystems[0].Name",
+        "FileSystems[0].KmsKeyId",
+        "FileSystems[0].ProvisionedThroughputInMibps",
+        "FileSystems[0].AvailabilityZoneName",
+        "FileSystems[0].AvailabilityZoneId",
+        "FileSystems[0].FileSystemProtection"
+      ],
+      "saveAs": null,
+      "refs": { "fs.FileSystemId": "fs" }
+    },
+    {
+      "command": "DeleteFileSystemCommand",
+      "input": {
+        "FileSystemId": "${fs.FileSystemId}"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "fs.FileSystemId": "fs" }
+    },
+    {
+      "command": "DescribeFileSystemsCommand",
+      "input": {
+        "FileSystemId": "${fs.FileSystemId}"
+      },
+      "expectedError": {
+        "name": "FileSystemNotFound",
+        "statusCode": 404
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "fs.FileSystemId": "fs" }
+    }
+  ]
+}

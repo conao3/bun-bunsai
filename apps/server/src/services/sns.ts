@@ -8,6 +8,7 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 import { deliverToArn, registerTarget } from "../core/events.ts";
+import { parseArn, resourceName } from "../core/arn.ts";
 import { serviceBaseUrl } from "./_endpoint.ts";
 
 const model = loadServiceModel(snsModel);
@@ -447,7 +448,7 @@ const fanout = async (
       selectedMessage === delivery.message
         ? delivery
         : { ...delivery, message: selectedMessage };
-    await deliverToArn(ctx, subscription.Endpoint, {
+    const deliveryPayload = {
       body:
         isSqs && !raw
           ? buildEnvelope(subscription.TopicArn, resolvedDelivery)
@@ -458,7 +459,37 @@ const fanout = async (
         resolvedDelivery,
       ),
       messageAttributes: raw ? delivery.messageAttributes : undefined,
-    });
+    };
+    let delivered = false;
+    try {
+      await deliverToArn(ctx, subscription.Endpoint, deliveryPayload);
+      const parsed = parseArn(subscription.Endpoint);
+      if (parsed?.service === "sqs") {
+        delivered =
+          ctx
+            .storeFor(parsed.service)
+            .get<unknown>(resourceName(parsed.resource)) !== undefined;
+      } else {
+        delivered = true;
+      }
+    } catch {
+      delivered = false;
+    }
+    if (!delivered) {
+      const redriveStr = attributes["RedrivePolicy"];
+      if (typeof redriveStr === "string") {
+        try {
+          const redrive = JSON.parse(redriveStr) as Record<string, unknown>;
+          const dlqArn =
+            typeof redrive.deadLetterTargetArn === "string"
+              ? redrive.deadLetterTargetArn
+              : undefined;
+          if (dlqArn !== undefined) {
+            await deliverToArn(ctx, dlqArn, deliveryPayload);
+          }
+        } catch {}
+      }
+    }
   }
 };
 
@@ -888,6 +919,17 @@ const GetSubscriptionAttributes: OperationHandler = (input, ctx) => {
     Endpoint: subscription.Endpoint,
     Owner: subscription.Owner,
   };
+  if (attributes["PendingConfirmation"] === "true") {
+    for (const entry of ctx.store.list<{ subscriptionArn: string }>()) {
+      if (
+        entry.key.startsWith("pendingtoken/") &&
+        entry.value.subscriptionArn === subscriptionArn
+      ) {
+        attributes["PendingToken"] = entry.key.slice("pendingtoken/".length);
+        break;
+      }
+    }
+  }
   return { Attributes: attributes };
 };
 

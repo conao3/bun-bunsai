@@ -75,12 +75,95 @@ type StoredSuppressedDestination = {
   LastUpdateTime: string;
 };
 
+type TopicPreference = {
+  TopicName: string;
+  SubscriptionStatus: string;
+};
+
+type StoredContactList = {
+  ContactListName: string;
+  Topics: {
+    TopicName: string;
+    DisplayName: string;
+    DefaultSubscriptionStatus: string;
+    Description?: string;
+  }[];
+  Description?: string;
+  CreatedTimestamp: string;
+  LastUpdatedTimestamp: string;
+  Tags: Tag[];
+};
+
+type StoredContact = {
+  EmailAddress: string;
+  ContactListName: string;
+  TopicPreferences: TopicPreference[];
+  UnsubscribeAll: boolean;
+  CreatedTimestamp: string;
+  LastUpdatedTimestamp: string;
+};
+
+type StoredCustomVerificationEmailTemplate = {
+  TemplateName: string;
+  FromEmailAddress: string;
+  TemplateSubject: string;
+  TemplateContent: string;
+  SuccessRedirectionURL: string;
+  FailureRedirectionURL: string;
+};
+
+type StoredExportJob = {
+  JobId: string;
+  ExportDataSource: Record<string, unknown>;
+  ExportDestination: Record<string, unknown>;
+  JobStatus: string;
+  CreatedTimestamp: string;
+  CompletedTimestamp: string;
+};
+
+type StoredImportJob = {
+  JobId: string;
+  ImportDataSource: Record<string, unknown>;
+  ImportDestination: Record<string, unknown>;
+  JobStatus: string;
+  CreatedTimestamp: string;
+  CompletedTimestamp: string;
+  ProcessedRecordsCount: number;
+  FailedRecordsCount: number;
+};
+
+type StoredDeliverabilityTestReport = {
+  ReportId: string;
+  ReportName: string;
+  Subject: string;
+  FromEmailAddress: string;
+  CreateDate: string;
+  DeliverabilityTestStatus: string;
+};
+
+type StoredSentMessage = {
+  MessageId: string;
+  FromEmailAddress?: string;
+  Timestamp: string;
+};
+
 const v1IdentityKey = (identity: string): string => `identity/${identity}`;
 const identityKey = (identity: string): string => `v2identity/${identity}`;
 const configSetKey = (name: string): string => `v2configset/${name}`;
 const templateKey = (name: string): string => `v2template/${name}`;
 const suppressedKey = (email: string): string => `v2suppressed/${email}`;
 const tagsKey = (arn: string): string => `v2tags/${arn}`;
+const contactListKey = (name: string): string => `v2contactlist/${name}`;
+const contactKey = (listName: string, email: string): string =>
+  `v2contact/${listName}/${email}`;
+const customVerifTemplateKey = (name: string): string =>
+  `v2cvtemplate/${name}`;
+const identityPoliciesKey = (identity: string): string =>
+  `v2identitypolicies/${identity}`;
+const exportJobKey = (jobId: string): string => `v2exportjob/${jobId}`;
+const importJobKey = (jobId: string): string => `v2importjob/${jobId}`;
+const delivTestKey = (reportId: string): string => `v2delivtest/${reportId}`;
+const sentMessageKey = (messageId: string): string => `v2sent/${messageId}`;
 
 const identityTypeOf = (identity: string): string =>
   identity.includes("@") ? "EMAIL_ADDRESS" : "DOMAIN";
@@ -109,6 +192,38 @@ const requireTemplate = (
     throw awsError(
       "NotFoundException",
       `Template ${name} does not exist.`,
+      404,
+    );
+  }
+  return t;
+};
+
+const requireContactList = (
+  ctx: ServiceContext,
+  name: string,
+): StoredContactList => {
+  const cl = ctx.store.get<StoredContactList>(contactListKey(name));
+  if (cl === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Contact list ${name} does not exist.`,
+      404,
+    );
+  }
+  return cl;
+};
+
+const requireCustomVerifTemplate = (
+  ctx: ServiceContext,
+  name: string,
+): StoredCustomVerificationEmailTemplate => {
+  const t = ctx.store.get<StoredCustomVerificationEmailTemplate>(
+    customVerifTemplateKey(name),
+  );
+  if (t === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Custom verification email template ${name} does not exist.`,
       404,
     );
   }
@@ -333,7 +448,13 @@ const SendEmail: OperationHandler = (input, ctx) => {
     }
   }
 
-  return { MessageId: `sesv2-${crypto.randomUUID()}` };
+  const messageId = `sesv2-${crypto.randomUUID()}`;
+  ctx.store.set(sentMessageKey(messageId), {
+    MessageId: messageId,
+    FromEmailAddress: fromEmail,
+    Timestamp: new Date().toISOString(),
+  } satisfies StoredSentMessage);
+  return { MessageId: messageId };
 };
 
 const CreateConfigurationSet: OperationHandler = (input, ctx) => {
@@ -802,6 +923,543 @@ const UntagResource: OperationHandler = (input, _ctx, req) => {
   return {};
 };
 
+const CreateContactList: OperationHandler = (input, ctx) => {
+  const name = input["ContactListName"] as string;
+  if (ctx.store.get(contactListKey(name)) !== undefined) {
+    throw awsError("AlreadyExistsException", `Contact list ${name} already exists.`, 400);
+  }
+  const now = new Date().toISOString();
+  const stored: StoredContactList = {
+    ContactListName: name,
+    Topics: (input["Topics"] as StoredContactList["Topics"] | undefined) ?? [],
+    Description: input["Description"] as string | undefined,
+    CreatedTimestamp: now,
+    LastUpdatedTimestamp: now,
+    Tags: (input["Tags"] as Tag[] | undefined) ?? [],
+  };
+  ctx.store.set(contactListKey(name), stored);
+  return {};
+};
+
+const GetContactList: OperationHandler = (input, ctx) => {
+  const name = input["ContactListName"] as string;
+  const stored = requireContactList(ctx, name);
+  return {
+    ContactListName: stored.ContactListName,
+    Topics: stored.Topics,
+    Description: stored.Description,
+    CreatedTimestamp: stored.CreatedTimestamp,
+    LastUpdatedTimestamp: stored.LastUpdatedTimestamp,
+    Tags: stored.Tags,
+  };
+};
+
+const DeleteContactList: OperationHandler = (input, ctx) => {
+  const name = input["ContactListName"] as string;
+  requireContactList(ctx, name);
+  ctx.store.delete(contactListKey(name));
+  ctx.store
+    .list()
+    .filter((e) => e.key.startsWith(`v2contact/${name}/`))
+    .forEach((e) => ctx.store.delete(e.key));
+  return {};
+};
+
+const UpdateContactList: OperationHandler = (input, ctx) => {
+  const name = input["ContactListName"] as string;
+  const stored = requireContactList(ctx, name);
+  const updated: StoredContactList = {
+    ...stored,
+    Topics:
+      (input["Topics"] as StoredContactList["Topics"] | undefined) ??
+      stored.Topics,
+    Description:
+      input["Description"] !== undefined
+        ? (input["Description"] as string)
+        : stored.Description,
+    LastUpdatedTimestamp: new Date().toISOString(),
+  };
+  ctx.store.set(contactListKey(name), updated);
+  return {};
+};
+
+const ListContactLists: OperationHandler = (_input, ctx) => {
+  const lists = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith("v2contactlist/"))
+    .map((e) => {
+      const s = e.value as StoredContactList;
+      return {
+        ContactListName: s.ContactListName,
+        LastUpdatedTimestamp: s.LastUpdatedTimestamp,
+      };
+    });
+  return { ContactLists: lists };
+};
+
+const CreateContact: OperationHandler = (input, ctx) => {
+  const listName = input["ContactListName"] as string;
+  requireContactList(ctx, listName);
+  const email = input["EmailAddress"] as string;
+  if (ctx.store.get(contactKey(listName, email)) !== undefined) {
+    throw awsError("AlreadyExistsException", `Contact ${email} already exists.`, 400);
+  }
+  const now = new Date().toISOString();
+  const stored: StoredContact = {
+    EmailAddress: email,
+    ContactListName: listName,
+    TopicPreferences:
+      (input["TopicPreferences"] as TopicPreference[] | undefined) ?? [],
+    UnsubscribeAll: (input["UnsubscribeAll"] as boolean | undefined) ?? false,
+    CreatedTimestamp: now,
+    LastUpdatedTimestamp: now,
+  };
+  ctx.store.set(contactKey(listName, email), stored);
+  return {};
+};
+
+const GetContact: OperationHandler = (input, ctx) => {
+  const listName = input["ContactListName"] as string;
+  const email = input["EmailAddress"] as string;
+  const stored = ctx.store.get<StoredContact>(contactKey(listName, email));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Contact ${email} not found.`, 404);
+  }
+  return {
+    ContactListName: stored.ContactListName,
+    EmailAddress: stored.EmailAddress,
+    TopicPreferences: stored.TopicPreferences,
+    UnsubscribeAll: stored.UnsubscribeAll,
+    CreatedTimestamp: stored.CreatedTimestamp,
+    LastUpdatedTimestamp: stored.LastUpdatedTimestamp,
+  };
+};
+
+const DeleteContact: OperationHandler = (input, ctx) => {
+  const listName = input["ContactListName"] as string;
+  const email = input["EmailAddress"] as string;
+  if (ctx.store.get(contactKey(listName, email)) === undefined) {
+    throw awsError("NotFoundException", `Contact ${email} not found.`, 404);
+  }
+  ctx.store.delete(contactKey(listName, email));
+  return {};
+};
+
+const UpdateContact: OperationHandler = (input, ctx) => {
+  const listName = input["ContactListName"] as string;
+  const email = input["EmailAddress"] as string;
+  const stored = ctx.store.get<StoredContact>(contactKey(listName, email));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Contact ${email} not found.`, 404);
+  }
+  const updated: StoredContact = {
+    ...stored,
+    TopicPreferences:
+      (input["TopicPreferences"] as TopicPreference[] | undefined) ??
+      stored.TopicPreferences,
+    UnsubscribeAll:
+      input["UnsubscribeAll"] !== undefined
+        ? (input["UnsubscribeAll"] as boolean)
+        : stored.UnsubscribeAll,
+    LastUpdatedTimestamp: new Date().toISOString(),
+  };
+  ctx.store.set(contactKey(listName, email), updated);
+  return {};
+};
+
+const ListContacts: OperationHandler = (input, ctx) => {
+  const listName = input["ContactListName"] as string;
+  requireContactList(ctx, listName);
+  const prefix = `v2contact/${listName}/`;
+  const contacts = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith(prefix))
+    .map((e) => {
+      const s = e.value as StoredContact;
+      return {
+        EmailAddress: s.EmailAddress,
+        TopicPreferences: s.TopicPreferences,
+        UnsubscribeAll: s.UnsubscribeAll,
+        LastUpdatedTimestamp: s.LastUpdatedTimestamp,
+      };
+    });
+  return { Contacts: contacts };
+};
+
+const CreateCustomVerificationEmailTemplate: OperationHandler = (input, ctx) => {
+  const name = input["TemplateName"] as string;
+  if (ctx.store.get(customVerifTemplateKey(name)) !== undefined) {
+    throw awsError("AlreadyExistsException", `Template ${name} already exists.`, 400);
+  }
+  const stored: StoredCustomVerificationEmailTemplate = {
+    TemplateName: name,
+    FromEmailAddress: input["FromEmailAddress"] as string,
+    TemplateSubject: input["TemplateSubject"] as string,
+    TemplateContent: input["TemplateContent"] as string,
+    SuccessRedirectionURL: input["SuccessRedirectionURL"] as string,
+    FailureRedirectionURL: input["FailureRedirectionURL"] as string,
+  };
+  ctx.store.set(customVerifTemplateKey(name), stored);
+  return {};
+};
+
+const GetCustomVerificationEmailTemplate: OperationHandler = (input, ctx) => {
+  const name = input["TemplateName"] as string;
+  const stored = requireCustomVerifTemplate(ctx, name);
+  return { ...stored };
+};
+
+const DeleteCustomVerificationEmailTemplate: OperationHandler = (input, ctx) => {
+  const name = input["TemplateName"] as string;
+  requireCustomVerifTemplate(ctx, name);
+  ctx.store.delete(customVerifTemplateKey(name));
+  return {};
+};
+
+const UpdateCustomVerificationEmailTemplate: OperationHandler = (input, ctx) => {
+  const name = input["TemplateName"] as string;
+  const stored = requireCustomVerifTemplate(ctx, name);
+  const updated: StoredCustomVerificationEmailTemplate = {
+    ...stored,
+    FromEmailAddress:
+      (input["FromEmailAddress"] as string | undefined) ??
+      stored.FromEmailAddress,
+    TemplateSubject:
+      (input["TemplateSubject"] as string | undefined) ?? stored.TemplateSubject,
+    TemplateContent:
+      (input["TemplateContent"] as string | undefined) ?? stored.TemplateContent,
+    SuccessRedirectionURL:
+      (input["SuccessRedirectionURL"] as string | undefined) ??
+      stored.SuccessRedirectionURL,
+    FailureRedirectionURL:
+      (input["FailureRedirectionURL"] as string | undefined) ??
+      stored.FailureRedirectionURL,
+  };
+  ctx.store.set(customVerifTemplateKey(name), updated);
+  return {};
+};
+
+const ListCustomVerificationEmailTemplates: OperationHandler = (_input, ctx) => {
+  const templates = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith("v2cvtemplate/"))
+    .map((e) => {
+      const s = e.value as StoredCustomVerificationEmailTemplate;
+      return {
+        TemplateName: s.TemplateName,
+        FromEmailAddress: s.FromEmailAddress,
+        TemplateSubject: s.TemplateSubject,
+        SuccessRedirectionURL: s.SuccessRedirectionURL,
+        FailureRedirectionURL: s.FailureRedirectionURL,
+      };
+    });
+  return { CustomVerificationEmailTemplates: templates };
+};
+
+const SendCustomVerificationEmail: OperationHandler = (input, ctx) => {
+  const templateName = input["TemplateName"] as string;
+  requireCustomVerifTemplate(ctx, templateName);
+  const messageId = `sesv2-cve-${crypto.randomUUID()}`;
+  ctx.store.set(sentMessageKey(messageId), {
+    MessageId: messageId,
+    Timestamp: new Date().toISOString(),
+  } satisfies StoredSentMessage);
+  return { MessageId: messageId };
+};
+
+const CreateEmailIdentityPolicy: OperationHandler = (input, ctx) => {
+  const identity = input["EmailIdentity"] as string;
+  requireIdentity(ctx, identity);
+  const policyName = input["PolicyName"] as string;
+  const policies =
+    ctx.store.get<Record<string, string>>(identityPoliciesKey(identity)) ?? {};
+  if (policies[policyName] !== undefined) {
+    throw awsError("AlreadyExistsException", `Policy ${policyName} already exists.`, 400);
+  }
+  policies[policyName] = input["Policy"] as string;
+  ctx.store.set(identityPoliciesKey(identity), policies);
+  return {};
+};
+
+const DeleteEmailIdentityPolicy: OperationHandler = (input, ctx) => {
+  const identity = input["EmailIdentity"] as string;
+  requireIdentity(ctx, identity);
+  const policyName = input["PolicyName"] as string;
+  const policies =
+    ctx.store.get<Record<string, string>>(identityPoliciesKey(identity)) ?? {};
+  if (policies[policyName] === undefined) {
+    throw awsError("NotFoundException", `Policy ${policyName} not found.`, 404);
+  }
+  delete policies[policyName];
+  ctx.store.set(identityPoliciesKey(identity), policies);
+  return {};
+};
+
+const UpdateEmailIdentityPolicy: OperationHandler = (input, ctx) => {
+  const identity = input["EmailIdentity"] as string;
+  requireIdentity(ctx, identity);
+  const policyName = input["PolicyName"] as string;
+  const policies =
+    ctx.store.get<Record<string, string>>(identityPoliciesKey(identity)) ?? {};
+  if (policies[policyName] === undefined) {
+    throw awsError("NotFoundException", `Policy ${policyName} not found.`, 404);
+  }
+  policies[policyName] = input["Policy"] as string;
+  ctx.store.set(identityPoliciesKey(identity), policies);
+  return {};
+};
+
+const GetEmailIdentityPolicies: OperationHandler = (input, ctx) => {
+  const identity = input["EmailIdentity"] as string;
+  requireIdentity(ctx, identity);
+  const policies =
+    ctx.store.get<Record<string, string>>(identityPoliciesKey(identity)) ?? {};
+  return { Policies: policies };
+};
+
+const CreateExportJob: OperationHandler = (input, ctx) => {
+  const jobId = `export-${crypto.randomUUID()}`;
+  const now = new Date().toISOString();
+  const stored: StoredExportJob = {
+    JobId: jobId,
+    ExportDataSource:
+      (input["ExportDataSource"] as Record<string, unknown>) ?? {},
+    ExportDestination:
+      (input["ExportDestination"] as Record<string, unknown>) ?? {},
+    JobStatus: "COMPLETED",
+    CreatedTimestamp: now,
+    CompletedTimestamp: now,
+  };
+  ctx.store.set(exportJobKey(jobId), stored);
+  return { JobId: jobId };
+};
+
+const CancelExportJob: OperationHandler = (input, ctx) => {
+  const jobId = input["JobId"] as string;
+  const stored = ctx.store.get<StoredExportJob>(exportJobKey(jobId));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Export job ${jobId} not found.`, 404);
+  }
+  ctx.store.set(exportJobKey(jobId), { ...stored, JobStatus: "CANCELLED" });
+  return {};
+};
+
+const GetExportJob: OperationHandler = (input, ctx) => {
+  const jobId = input["JobId"] as string;
+  const stored = ctx.store.get<StoredExportJob>(exportJobKey(jobId));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Export job ${jobId} not found.`, 404);
+  }
+  return { ...stored };
+};
+
+const ListExportJobs: OperationHandler = (_input, ctx) => {
+  const jobs = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith("v2exportjob/"))
+    .map((e) => {
+      const s = e.value as StoredExportJob;
+      return {
+        JobId: s.JobId,
+        ExportDataSource: s.ExportDataSource,
+        ExportDestination: s.ExportDestination,
+        JobStatus: s.JobStatus,
+        CreatedTimestamp: s.CreatedTimestamp,
+        CompletedTimestamp: s.CompletedTimestamp,
+      };
+    });
+  return { ExportJobs: jobs };
+};
+
+const CreateImportJob: OperationHandler = (input, ctx) => {
+  const jobId = `import-${crypto.randomUUID()}`;
+  const now = new Date().toISOString();
+  const stored: StoredImportJob = {
+    JobId: jobId,
+    ImportDataSource:
+      (input["ImportDataSource"] as Record<string, unknown>) ?? {},
+    ImportDestination:
+      (input["ImportDestination"] as Record<string, unknown>) ?? {},
+    JobStatus: "COMPLETED",
+    CreatedTimestamp: now,
+    CompletedTimestamp: now,
+    ProcessedRecordsCount: 0,
+    FailedRecordsCount: 0,
+  };
+  ctx.store.set(importJobKey(jobId), stored);
+  return { JobId: jobId };
+};
+
+const GetImportJob: OperationHandler = (input, ctx) => {
+  const jobId = input["JobId"] as string;
+  const stored = ctx.store.get<StoredImportJob>(importJobKey(jobId));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Import job ${jobId} not found.`, 404);
+  }
+  return { ...stored };
+};
+
+const ListImportJobs: OperationHandler = (_input, ctx) => {
+  const jobs = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith("v2importjob/"))
+    .map((e) => {
+      const s = e.value as StoredImportJob;
+      return {
+        JobId: s.JobId,
+        ImportDataSource: s.ImportDataSource,
+        ImportDestination: s.ImportDestination,
+        JobStatus: s.JobStatus,
+        CreatedTimestamp: s.CreatedTimestamp,
+        CompletedTimestamp: s.CompletedTimestamp,
+        ProcessedRecordsCount: s.ProcessedRecordsCount,
+        FailedRecordsCount: s.FailedRecordsCount,
+      };
+    });
+  return { ImportJobs: jobs };
+};
+
+const CreateDeliverabilityTestReport: OperationHandler = (input, ctx) => {
+  const reportId = `delivtest-${crypto.randomUUID()}`;
+  const now = new Date().toISOString();
+  const stored: StoredDeliverabilityTestReport = {
+    ReportId: reportId,
+    ReportName: (input["ReportName"] as string | undefined) ?? "",
+    Subject: (input["Content"] as Record<string, unknown> | undefined)
+      ? "test"
+      : "test",
+    FromEmailAddress: (input["FromEmailAddress"] as string | undefined) ?? "",
+    CreateDate: now,
+    DeliverabilityTestStatus: "COMPLETED",
+  };
+  ctx.store.set(delivTestKey(reportId), stored);
+  return {
+    ReportId: reportId,
+    DeliverabilityTestStatus: stored.DeliverabilityTestStatus,
+  };
+};
+
+const GetDeliverabilityTestReport: OperationHandler = (input, ctx) => {
+  const reportId = input["ReportId"] as string;
+  const stored = ctx.store.get<StoredDeliverabilityTestReport>(
+    delivTestKey(reportId),
+  );
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Report ${reportId} not found.`, 404);
+  }
+  return {
+    DeliverabilityTestReport: {
+      ReportId: stored.ReportId,
+      ReportName: stored.ReportName,
+      Subject: stored.Subject,
+      FromEmailAddress: stored.FromEmailAddress,
+      CreateDate: stored.CreateDate,
+      DeliverabilityTestStatus: stored.DeliverabilityTestStatus,
+    },
+    OverallPlacement: { InboxPercentage: 1.0, SpamPercentage: 0.0, MissingPercentage: 0.0, SpfPercentage: 1.0, DkimPercentage: 1.0 },
+    IspPlacements: [],
+    Message: stored.Subject,
+    Tags: [],
+  };
+};
+
+const ListDeliverabilityTestReports: OperationHandler = (_input, ctx) => {
+  const reports = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith("v2delivtest/"))
+    .map((e) => {
+      const s = e.value as StoredDeliverabilityTestReport;
+      return {
+        ReportId: s.ReportId,
+        ReportName: s.ReportName,
+        Subject: s.Subject,
+        FromEmailAddress: s.FromEmailAddress,
+        CreateDate: s.CreateDate,
+        DeliverabilityTestStatus: s.DeliverabilityTestStatus,
+      };
+    });
+  return { DeliverabilityTestReports: reports };
+};
+
+const SendBulkEmail: OperationHandler = (input, ctx) => {
+  const entries =
+    (input["BulkEmailEntries"] as Array<Record<string, unknown>>) ?? [];
+  const fromEmail = input["FromEmailAddress"] as string | undefined;
+  if (fromEmail !== undefined) {
+    const identity =
+      getIdentityFromStore(ctx, fromEmail) ??
+      getIdentityFromStore(ctx, fromEmail.replace(/^[^@]+@/, ""));
+    if (identity === undefined) {
+      throw awsError(
+        "MailFromDomainNotVerifiedException",
+        `Email address not verified: ${fromEmail}`,
+        400,
+      );
+    }
+  }
+  const now = new Date().toISOString();
+  const bulkEmailEntryResults = entries.map(() => {
+    const messageId = `sesv2-bulk-${crypto.randomUUID()}`;
+    ctx.store.set(sentMessageKey(messageId), {
+      MessageId: messageId,
+      FromEmailAddress: fromEmail,
+      Timestamp: now,
+    } satisfies StoredSentMessage);
+    return { MessageId: messageId, Status: "SUCCESS", Error: undefined };
+  });
+  return { BulkEmailEntryResults: bulkEmailEntryResults };
+};
+
+const TestRenderEmailTemplate: OperationHandler = (input, ctx) => {
+  const name = input["TemplateName"] as string;
+  const stored = requireTemplate(ctx, name);
+  const html = stored.TemplateContent.Html ?? "";
+  const text = stored.TemplateContent.Text ?? "";
+  const subject = stored.TemplateContent.Subject ?? "";
+  return {
+    RenderedTemplate: JSON.stringify({ Subject: subject, Html: html, Text: text }),
+  };
+};
+
+const BatchGetMetricData: OperationHandler = (_input, _ctx) => {
+  return { Results: [], Errors: [] };
+};
+
+const GetMessageInsights: OperationHandler = (input, ctx) => {
+  const messageId = input["MessageId"] as string;
+  const stored = ctx.store.get<StoredSentMessage>(sentMessageKey(messageId));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Message ${messageId} not found.`, 404);
+  }
+  return {
+    MessageId: stored.MessageId,
+    FromEmailAddress: stored.FromEmailAddress,
+    Subject: "",
+    EmailTags: [],
+    Insights: [],
+  };
+};
+
+const GetEmailAddressInsights: OperationHandler = (input, ctx) => {
+  const email = input["EmailAddress"] as string;
+  const hasSent = ctx.store
+    .list()
+    .some(
+      (e) =>
+        e.key.startsWith("v2sent/") &&
+        (e.value as StoredSentMessage).FromEmailAddress === email,
+    );
+  if (!hasSent) {
+    throw awsError("NotFoundException", `No insights for ${email}.`, 404);
+  }
+  return {
+    EmailAddress: email,
+    Domain: email.split("@")[1] ?? "",
+    NetworkAttributes: {},
+    SendingData: { MessageInsightsFilters: {} },
+  };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((p) => p !== "");
 
@@ -825,6 +1483,14 @@ const sesv2: ServiceDefinition = {
       if (parts.length === 4) {
         if (m === "GET") return "GetEmailIdentity";
         if (m === "DELETE") return "DeleteEmailIdentity";
+      }
+      if (parts.length === 5 && parts[4] === "policies") {
+        if (m === "GET") return "GetEmailIdentityPolicies";
+      }
+      if (parts.length === 6 && parts[4] === "policies") {
+        if (m === "POST") return "CreateEmailIdentityPolicy";
+        if (m === "DELETE") return "DeleteEmailIdentityPolicy";
+        if (m === "PUT") return "UpdateEmailIdentityPolicy";
       }
     }
 
@@ -889,6 +1555,95 @@ const sesv2: ServiceDefinition = {
       if (m === "DELETE") return "UntagResource";
     }
 
+    if (parts[2] === "contact-lists") {
+      if (parts.length === 3) {
+        if (m === "GET") return "ListContactLists";
+        if (m === "POST") return "CreateContactList";
+      }
+      if (parts.length === 4) {
+        if (m === "GET") return "GetContactList";
+        if (m === "DELETE") return "DeleteContactList";
+        if (m === "PUT") return "UpdateContactList";
+      }
+      if (parts.length === 5 && parts[4] === "contacts") {
+        if (m === "POST") return "CreateContact";
+      }
+      if (parts.length === 6 && parts[4] === "contacts") {
+        if (parts[5] === "list" && m === "POST") return "ListContacts";
+        if (m === "GET") return "GetContact";
+        if (m === "DELETE") return "DeleteContact";
+        if (m === "PUT") return "UpdateContact";
+      }
+    }
+
+    if (parts[2] === "custom-verification-email-templates") {
+      if (parts.length === 3) {
+        if (m === "GET") return "ListCustomVerificationEmailTemplates";
+        if (m === "POST") return "CreateCustomVerificationEmailTemplate";
+      }
+      if (parts.length === 4) {
+        if (m === "GET") return "GetCustomVerificationEmailTemplate";
+        if (m === "DELETE") return "DeleteCustomVerificationEmailTemplate";
+        if (m === "PUT") return "UpdateCustomVerificationEmailTemplate";
+      }
+    }
+
+    if (
+      parts[2] === "outbound-custom-verification-emails" &&
+      m === "POST"
+    ) {
+      return "SendCustomVerificationEmail";
+    }
+
+    if (parts[2] === "export-jobs") {
+      if (parts.length === 3 && m === "POST") return "CreateExportJob";
+      if (parts.length === 4 && m === "GET") return "GetExportJob";
+      if (parts.length === 5 && parts[4] === "cancel" && m === "PUT")
+        return "CancelExportJob";
+    }
+
+    if (parts[2] === "list-export-jobs" && m === "POST")
+      return "ListExportJobs";
+
+    if (parts[2] === "import-jobs") {
+      if (parts.length === 3 && m === "POST") return "CreateImportJob";
+      if (parts.length === 4 && m === "GET") return "GetImportJob";
+    }
+
+    if (parts[2] === "import-jobs" && parts[3] === "list" && m === "POST")
+      return "ListImportJobs";
+
+    if (parts[2] === "deliverability-dashboard") {
+      if (parts[3] === "test" && m === "POST")
+        return "CreateDeliverabilityTestReport";
+      if (parts[3] === "test-reports") {
+        if (parts.length === 4 && m === "GET")
+          return "ListDeliverabilityTestReports";
+        if (parts.length === 5 && m === "GET")
+          return "GetDeliverabilityTestReport";
+      }
+    }
+
+    if (parts[2] === "outbound-bulk-emails" && m === "POST")
+      return "SendBulkEmail";
+
+    if (
+      parts[2] === "templates" &&
+      parts.length === 5 &&
+      parts[4] === "render" &&
+      m === "POST"
+    ) {
+      return "TestRenderEmailTemplate";
+    }
+
+    if (parts[2] === "metrics" && parts[3] === "batch" && m === "POST")
+      return "BatchGetMetricData";
+
+    if (parts[2] === "insights" && m === "GET") return "GetMessageInsights";
+
+    if (parts[2] === "email-address-insights" && m === "POST")
+      return "GetEmailAddressInsights";
+
     return undefined;
   },
   operations: {
@@ -922,6 +1677,41 @@ const sesv2: ServiceDefinition = {
     ListTagsForResource,
     TagResource,
     UntagResource,
+    CreateContactList,
+    GetContactList,
+    DeleteContactList,
+    UpdateContactList,
+    ListContactLists,
+    CreateContact,
+    GetContact,
+    DeleteContact,
+    UpdateContact,
+    ListContacts,
+    CreateCustomVerificationEmailTemplate,
+    GetCustomVerificationEmailTemplate,
+    DeleteCustomVerificationEmailTemplate,
+    UpdateCustomVerificationEmailTemplate,
+    ListCustomVerificationEmailTemplates,
+    SendCustomVerificationEmail,
+    CreateEmailIdentityPolicy,
+    DeleteEmailIdentityPolicy,
+    UpdateEmailIdentityPolicy,
+    GetEmailIdentityPolicies,
+    CreateExportJob,
+    CancelExportJob,
+    GetExportJob,
+    ListExportJobs,
+    CreateImportJob,
+    GetImportJob,
+    ListImportJobs,
+    CreateDeliverabilityTestReport,
+    GetDeliverabilityTestReport,
+    ListDeliverabilityTestReports,
+    SendBulkEmail,
+    TestRenderEmailTemplate,
+    BatchGetMetricData,
+    GetMessageInsights,
+    GetEmailAddressInsights,
   },
   model,
 } as const satisfies ServiceDefinition;

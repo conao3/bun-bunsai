@@ -492,7 +492,7 @@ const PutMetricAlarm: OperationHandler = (input, ctx) => {
         : "",
     Dimensions: dimensions,
     StateValue: "INSUFFICIENT_DATA",
-    StateReason: "",
+    StateReason: "Unchecked: Initial alarm creation",
     ConfigurationUpdated: Math.floor(Date.now() / 1000),
   };
   ctx.store.set(alarmKey(alarmName), alarm);

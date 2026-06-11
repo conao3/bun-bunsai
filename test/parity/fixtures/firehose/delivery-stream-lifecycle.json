@@ -1,0 +1,42 @@
+{
+  "clientPackage": "@aws-sdk/client-firehose",
+  "clientName": "FirehoseClient",
+  "steps": [
+    {
+      "command": "CreateDeliveryStreamCommand",
+      "input": { "DeliveryStreamName": "parity-firehose-lifecycle" },
+      "expected": { "DeliveryStreamARN": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeDeliveryStreamCommand",
+      "input": { "DeliveryStreamName": "parity-firehose-lifecycle" },
+      "expected": {
+        "DeliveryStreamDescription": {
+          "DeliveryStreamName": "parity-firehose-lifecycle",
+          "DeliveryStreamARN": "<ANY>",
+          "DeliveryStreamStatus": "ACTIVE",
+          "DeliveryStreamType": "DirectPut",
+          "VersionId": "1",
+          "CreateTimestamp": "<ANY>",
+          "LastUpdateTimestamp": "<ANY>",
+          "Destinations": [],
+          "HasMoreDestinations": false
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteDeliveryStreamCommand",
+      "input": { "DeliveryStreamName": "parity-firehose-lifecycle" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

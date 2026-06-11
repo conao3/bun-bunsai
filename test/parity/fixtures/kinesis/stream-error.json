@@ -1,0 +1,17 @@
+{
+  "clientPackage": "@aws-sdk/client-kinesis",
+  "clientName": "KinesisClient",
+  "steps": [
+    {
+      "command": "DescribeStreamSummaryCommand",
+      "input": { "StreamName": "parity-kinesis-nonexistent" },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

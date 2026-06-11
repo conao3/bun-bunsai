@@ -1,0 +1,47 @@
+{
+  "clientPackage": "@aws-sdk/client-cloudwatch",
+  "clientName": "CloudWatchClient",
+  "steps": [
+    {
+      "command": "PutMetricDataCommand",
+      "input": {
+        "Namespace": "ParityTest/Statistics",
+        "MetricData": [
+          {
+            "MetricName": "parity-stat-metric",
+            "Value": 42,
+            "Timestamp": 1000000000
+          }
+        ]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetMetricStatisticsCommand",
+      "input": {
+        "Namespace": "ParityTest/Statistics",
+        "MetricName": "parity-stat-metric",
+        "StartTime": 999999000,
+        "EndTime": 1000001000,
+        "Period": 3600,
+        "Statistics": ["Average"]
+      },
+      "expected": {
+        "Label": "parity-stat-metric",
+        "Datapoints": [
+          {
+            "Timestamp": "<ANY>",
+            "Unit": "None",
+            "Average": 42
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

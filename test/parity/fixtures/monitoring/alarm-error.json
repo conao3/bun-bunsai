@@ -1,0 +1,18 @@
+{
+  "clientPackage": "@aws-sdk/client-cloudwatch",
+  "clientName": "CloudWatchClient",
+  "steps": [
+    {
+      "command": "SetAlarmStateCommand",
+      "input": {
+        "AlarmName": "parity-cw-nonexistent-alarm",
+        "StateValue": "ALARM",
+        "StateReason": "testing"
+      },
+      "expectedError": { "name": "ResourceNotFound", "statusCode": 404 },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

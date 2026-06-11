@@ -1,0 +1,42 @@
+{
+  "clientPackage": "@aws-sdk/client-kinesis",
+  "clientName": "KinesisClient",
+  "steps": [
+    {
+      "command": "CreateStreamCommand",
+      "input": { "StreamName": "parity-kinesis-stream", "ShardCount": 1 },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeStreamSummaryCommand",
+      "input": { "StreamName": "parity-kinesis-stream" },
+      "expected": {
+        "StreamDescriptionSummary": {
+          "StreamName": "parity-kinesis-stream",
+          "StreamARN": "<ANY>",
+          "StreamStatus": "ACTIVE",
+          "RetentionPeriodHours": 24,
+          "StreamCreationTimestamp": "<ANY>",
+          "EnhancedMonitoring": [{ "ShardLevelMetrics": [] }],
+          "EncryptionType": "NONE",
+          "OpenShardCount": 1,
+          "ConsumerCount": 0
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteStreamCommand",
+      "input": { "StreamName": "parity-kinesis-stream" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

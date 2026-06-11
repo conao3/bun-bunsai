@@ -1,0 +1,74 @@
+{
+  "clientPackage": "@aws-sdk/client-kinesis",
+  "clientName": "KinesisClient",
+  "steps": [
+    {
+      "command": "CreateStreamCommand",
+      "input": { "StreamName": "parity-kinesis-records", "ShardCount": 1 },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutRecordCommand",
+      "input": {
+        "StreamName": "parity-kinesis-records",
+        "Data": { "$base64": "cGFyaXR5LXRlc3Q=" },
+        "PartitionKey": "pk1"
+      },
+      "expected": {
+        "ShardId": "shardId-000000000000",
+        "SequenceNumber": "<ANY>",
+        "EncryptionType": "NONE"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetShardIteratorCommand",
+      "input": {
+        "StreamName": "parity-kinesis-records",
+        "ShardId": "shardId-000000000000",
+        "ShardIteratorType": "TRIM_HORIZON"
+      },
+      "expected": {
+        "ShardIterator": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "iter",
+      "refs": {}
+    },
+    {
+      "command": "GetRecordsCommand",
+      "input": {
+        "ShardIterator": "${iter.ShardIterator}"
+      },
+      "expected": {
+        "Records": [
+          {
+            "SequenceNumber": "<ANY>",
+            "ApproximateArrivalTimestamp": "<ANY>",
+            "Data": "<ANY>",
+            "PartitionKey": "pk1",
+            "EncryptionType": "NONE"
+          }
+        ],
+        "NextShardIterator": "<ANY>",
+        "MillisBehindLatest": 0
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "iter.ShardIterator": "iter" }
+    },
+    {
+      "command": "DeleteStreamCommand",
+      "input": { "StreamName": "parity-kinesis-records" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -38,6 +38,7 @@ import cloudfront from "./cloudfront.ts";
 import batch from "./batch.ts";
 import redshift from "./redshift.ts";
 import acm from "./acm.ts";
+import acmPca from "./acm-pca.ts";
 import cloudtrail from "./cloudtrail.ts";
 import opensearch from "./opensearch.ts";
 import wafv2 from "./wafv2.ts";
@@ -166,6 +167,7 @@ export const services: ServiceDefinition[] = [
   batch,
   redshift,
   acm,
+  acmPca,
   cloudtrail,
   opensearch,
   wafv2,

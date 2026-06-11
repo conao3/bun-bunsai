@@ -100,6 +100,7 @@ aws-models/
   batch.json           # botocore/data/batch/2016-08-10/service-2.json          (protocol rest-json)
   redshift.json        # botocore/data/redshift/2012-12-01/service-2.json       (protocol query)
   acm.json             # botocore/data/acm/2015-12-08/service-2.json            (protocol json)
+  acm-pca.json         # botocore/data/acm-pca/2017-08-22/service-2.json        (protocol json, signingName acm-pca, endpointPrefix acm-pca)
   cloudtrail.json      # botocore/data/cloudtrail/2013-11-01/service-2.json     (protocol json)
   opensearch.json      # botocore/data/opensearch/2021-01-01/service-2.json      (protocol rest-json)
   wafv2.json           # botocore/data/wafv2/2019-07-29/service-2.json           (protocol json)

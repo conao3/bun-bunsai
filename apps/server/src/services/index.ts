@@ -118,6 +118,7 @@ import schemas from "./schemas.ts";
 import autoscaling from "./autoscaling.ts";
 import pipes from "./pipes.ts";
 import route53resolver from "./route53resolver.ts";
+import applicationAutoscaling from "./application-autoscaling.ts";
 import xray from "./xray.ts";
 
 export const services: ServiceDefinition[] = [
@@ -239,6 +240,7 @@ export const services: ServiceDefinition[] = [
   autoscaling,
   pipes,
   route53resolver,
+  applicationAutoscaling,
   xray,
 ];
 

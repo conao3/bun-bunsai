@@ -4,6 +4,7 @@ import {
   AllocateAddressCommand,
   AssociateAddressCommand,
   CreateNatGatewayCommand,
+  CreateRouteTableCommand,
   CreateSubnetCommand,
   CreateVpcCommand,
   CreateVpcEndpointCommand,
@@ -138,4 +139,81 @@ test("VPC endpoint create/describe/delete lifecycle", async () => {
     new DescribeVpcEndpointsCommand({ VpcEndpointIds: [epId] }),
   );
   expect(afterDelete.VpcEndpoints ?? []).toHaveLength(0);
+});
+
+test("CreateNatGateway validates AllocationId", async () => {
+  const vpc = await client.send(
+    new CreateVpcCommand({ CidrBlock: "10.202.0.0/16" }),
+  );
+  const vpcId = vpc.Vpc?.VpcId ?? "";
+
+  const subnet = await client.send(
+    new CreateSubnetCommand({ VpcId: vpcId, CidrBlock: "10.202.1.0/24" }),
+  );
+  const subnetId = subnet.Subnet?.SubnetId ?? "";
+
+  await expect(
+    client.send(
+      new CreateNatGatewayCommand({
+        SubnetId: subnetId,
+        AllocationId: "eipalloc-nonexistent",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidAllocationID.NotFound" });
+
+  const eip = await client.send(new AllocateAddressCommand({ Domain: "vpc" }));
+  const eipAllocId = eip.AllocationId ?? "";
+  const eipPublicIp = eip.PublicIp ?? "";
+
+  const nat = await client.send(
+    new CreateNatGatewayCommand({
+      SubnetId: subnetId,
+      AllocationId: eipAllocId,
+    }),
+  );
+  const gwAddr = (nat.NatGateway?.NatGatewayAddresses ?? [])[0];
+  expect(gwAddr?.AllocationId).toBe(eipAllocId);
+  expect(gwAddr?.PublicIp).toBe(eipPublicIp);
+});
+
+test("CreateVpcEndpoint validates VpcId and RouteTableIds", async () => {
+  await expect(
+    client.send(
+      new CreateVpcEndpointCommand({
+        VpcId: "vpc-nonexistent",
+        ServiceName: "com.amazonaws.us-east-1.s3",
+        VpcEndpointType: "Gateway",
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidVpcID.NotFound" });
+
+  const vpc = await client.send(
+    new CreateVpcCommand({ CidrBlock: "10.203.0.0/16" }),
+  );
+  const vpcId = vpc.Vpc?.VpcId ?? "";
+
+  await expect(
+    client.send(
+      new CreateVpcEndpointCommand({
+        VpcId: vpcId,
+        ServiceName: "com.amazonaws.us-east-1.s3",
+        VpcEndpointType: "Gateway",
+        RouteTableIds: ["rtb-nonexistent"],
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidRouteTableID.NotFound" });
+
+  const rt = await client.send(new CreateRouteTableCommand({ VpcId: vpcId }));
+  const rtId = rt.RouteTable?.RouteTableId ?? "";
+
+  const ep = await client.send(
+    new CreateVpcEndpointCommand({
+      VpcId: vpcId,
+      ServiceName: "com.amazonaws.us-east-1.s3",
+      VpcEndpointType: "Gateway",
+      RouteTableIds: [rtId],
+    }),
+  );
+  expect(ep.VpcEndpoint?.VpcId).toBe(vpcId);
+  expect(ep.VpcEndpoint?.RouteTableIds).toContain(rtId);
 });

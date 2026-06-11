@@ -15,6 +15,10 @@ const presetPrefix = "preset:" as const;
 const jobTemplatePrefix = "jobTemplate:" as const;
 const jobPrefix = "job:" as const;
 const tagsPrefix = "tags:" as const;
+const certificatePrefix = "certificate:" as const;
+const jobsQueryPrefix = "jobsQuery:" as const;
+const jobTokenPrefix = "jobToken:" as const;
+const resourceSharePrefix = "resourceShare:" as const;
 
 type StoredQueue = {
   Arn: string;
@@ -72,6 +76,12 @@ type StoredJob = {
   UserMetadata: Record<string, string> | undefined;
   CancelledAt: number | undefined;
   IsCancelled: boolean;
+};
+
+type StoredJobsQuery = {
+  FilterList: unknown[] | undefined;
+  Order: string | undefined;
+  MaxResults: number | undefined;
 };
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -294,6 +304,76 @@ const jobView = (job: StoredJob): Record<string, unknown> => ({
 });
 
 const tagsKey = (arn: string): string => `${tagsPrefix}${arn}`;
+const certificateKey = (arn: string): string => `${certificatePrefix}${arn}`;
+const jobsQueryKey = (id: string): string => `${jobsQueryPrefix}${id}`;
+const jobTokenKey = (token: string): string => `${jobTokenPrefix}${token}`;
+
+const resolveQueue = (ctx: ServiceContext, nameOrArn: string): StoredQueue => {
+  const name = nameOrArn.startsWith("arn:")
+    ? nameOrArn.split("/").pop()!
+    : nameOrArn;
+  return requireQueue(ctx, name);
+};
+
+const resolveJobTemplate = (
+  ctx: ServiceContext,
+  nameOrArn: string,
+): StoredJobTemplate => {
+  const name = nameOrArn.startsWith("arn:")
+    ? nameOrArn.split("/").pop()!
+    : nameOrArn;
+  return requireJobTemplate(ctx, name);
+};
+
+const requireResourceByArn = (ctx: ServiceContext, arn: string): void => {
+  const segments = arn.split(":");
+  if (segments.length < 6) {
+    throw awsError("NotFoundException", `Resource ${arn} does not exist.`, 404);
+  }
+  const resourcePath = segments.slice(5).join(":");
+  const slashIdx = resourcePath.indexOf("/");
+  if (slashIdx === -1) {
+    throw awsError("NotFoundException", `Resource ${arn} does not exist.`, 404);
+  }
+  const resourceType = resourcePath.slice(0, slashIdx);
+  const resourceName = resourcePath.slice(slashIdx + 1);
+  let found = false;
+  if (resourceType === "queues")
+    found = ctx.store.get(queueKey(resourceName)) !== undefined;
+  else if (resourceType === "presets")
+    found = ctx.store.get(presetKey(resourceName)) !== undefined;
+  else if (resourceType === "jobTemplates")
+    found = ctx.store.get(jobTemplateKey(resourceName)) !== undefined;
+  else if (resourceType === "jobs")
+    found = ctx.store.get(jobKey(resourceName)) !== undefined;
+  if (!found) {
+    throw awsError("NotFoundException", `Resource ${arn} does not exist.`, 404);
+  }
+};
+
+const matchesQueueFilter = (
+  job: StoredJob,
+  queueFilter: string,
+  ctx: ServiceContext,
+): boolean => {
+  if (job.Queue === undefined) return false;
+  if (job.Queue === queueFilter) return true;
+  if (!queueFilter.startsWith("arn:")) {
+    const q = ctx.store.get<StoredQueue>(queueKey(queueFilter));
+    return q !== undefined && job.Queue === q.Arn;
+  }
+  const queueName = queueFilter.split("/").pop()!;
+  const q = ctx.store.get<StoredQueue>(queueKey(queueName));
+  return q !== undefined && job.Queue === q.Name;
+};
+
+const matchesInputFile = (job: StoredJob, inputFile: string): boolean => {
+  const inputs = (job.Settings["Inputs"] as unknown[] | undefined) ?? [];
+  return inputs.some((inp) => {
+    const fi = (inp as Record<string, unknown>)["FileInput"];
+    return typeof fi === "string" && fi.includes(inputFile);
+  });
+};
 
 const DescribeEndpoints: OperationHandler = (input, ctx) => {
   const host = `${ctx.account}.mediaconvert.${ctx.region}.amazonaws.com`;
@@ -342,11 +422,23 @@ const GetQueue: OperationHandler = (input, ctx) => {
 
 const ListQueues: OperationHandler = (input, ctx) => {
   getOrCreateDefaultQueue(ctx);
+  const listBy = stringOrUndefined(input["ListBy"]);
+  const order = stringOrUndefined(input["Order"]);
   const items = ctx.store
     .list<StoredQueue>()
     .filter((entry) => entry.key.startsWith(queuePrefix))
     .map((entry) => entry.value)
-    .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0))
+    .sort((a, b) => {
+      const cmp =
+        listBy === "NAME"
+          ? a.Name < b.Name
+            ? -1
+            : a.Name > b.Name
+              ? 1
+              : 0
+          : a.CreatedAt - b.CreatedAt;
+      return order === "DESCENDING" ? -cmp : cmp;
+    })
     .map(queueView);
   const { page, nextToken } = paginateItems(
     items,
@@ -393,6 +485,7 @@ const DeleteQueue: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(queueKey(name));
+  ctx.store.delete(tagsKey(q.Arn));
   return {};
 };
 
@@ -435,11 +528,28 @@ const GetPreset: OperationHandler = (input, ctx) => {
 };
 
 const ListPresets: OperationHandler = (input, ctx) => {
-  const items = ctx.store
+  const listBy = stringOrUndefined(input["ListBy"]);
+  const order = stringOrUndefined(input["Order"]);
+  const category = stringOrUndefined(input["Category"]);
+  let presets = ctx.store
     .list<StoredPreset>()
     .filter((entry) => entry.key.startsWith(presetPrefix))
-    .map((entry) => entry.value)
-    .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0))
+    .map((entry) => entry.value);
+  if (category !== undefined) {
+    presets = presets.filter((p) => p.Category === category);
+  }
+  const items = presets
+    .sort((a, b) => {
+      const cmp =
+        listBy === "NAME"
+          ? a.Name < b.Name
+            ? -1
+            : a.Name > b.Name
+              ? 1
+              : 0
+          : a.CreatedAt - b.CreatedAt;
+      return order === "DESCENDING" ? -cmp : cmp;
+    })
     .map(presetView);
   const { page, nextToken } = paginateItems(
     items,
@@ -481,6 +591,7 @@ const DeletePreset: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(presetKey(name));
+  ctx.store.delete(tagsKey(p.Arn));
   return {};
 };
 
@@ -524,11 +635,28 @@ const GetJobTemplate: OperationHandler = (input, ctx) => {
 };
 
 const ListJobTemplates: OperationHandler = (input, ctx) => {
-  const items = ctx.store
+  const listBy = stringOrUndefined(input["ListBy"]);
+  const order = stringOrUndefined(input["Order"]);
+  const category = stringOrUndefined(input["Category"]);
+  let templates = ctx.store
     .list<StoredJobTemplate>()
     .filter((entry) => entry.key.startsWith(jobTemplatePrefix))
-    .map((entry) => entry.value)
-    .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0))
+    .map((entry) => entry.value);
+  if (category !== undefined) {
+    templates = templates.filter((jt) => jt.Category === category);
+  }
+  const items = templates
+    .sort((a, b) => {
+      const cmp =
+        listBy === "NAME"
+          ? a.Name < b.Name
+            ? -1
+            : a.Name > b.Name
+              ? 1
+              : 0
+          : a.CreatedAt - b.CreatedAt;
+      return order === "DESCENDING" ? -cmp : cmp;
+    })
     .map(jobTemplateView);
   const { page, nextToken } = paginateItems(
     items,
@@ -580,24 +708,45 @@ const DeleteJobTemplate: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(jobTemplateKey(name));
+  ctx.store.delete(tagsKey(jt.Arn));
   return {};
 };
 
 const CreateJob: OperationHandler = (input, ctx) => {
+  const token = stringOrUndefined(input["ClientRequestToken"]);
+  if (token !== undefined) {
+    const existingId = ctx.store.get<string>(jobTokenKey(token));
+    if (existingId !== undefined) {
+      const existing = ctx.store.get<StoredJob>(jobKey(existingId));
+      if (existing !== undefined) return { Job: jobView(existing) };
+    }
+  }
+
   const role = requireString(input, "Role");
-  const settings = recordOrUndefined(input["Settings"]);
+
+  const jtName = stringOrUndefined(input["JobTemplate"]);
+  const jt = jtName !== undefined ? resolveJobTemplate(ctx, jtName) : undefined;
+
+  const settings = recordOrUndefined(input["Settings"]) ?? jt?.Settings;
   if (settings === undefined) {
     throw awsError("BadRequestException", "Settings is required.", 400);
   }
+
+  const queueInput = stringOrUndefined(input["Queue"]) ?? jt?.Queue;
+  const resolvedQueue =
+    queueInput !== undefined
+      ? resolveQueue(ctx, queueInput)
+      : getOrCreateDefaultQueue(ctx);
+
   const id = `${now()}-${Math.random().toString(36).slice(2, 9)}`;
   const tags = stringRecordOrUndefined(input["Tags"]);
   const job: StoredJob = {
     Arn: jobArn(ctx, id),
     CreatedAt: now(),
     Id: id,
-    JobTemplate: stringOrUndefined(input["JobTemplate"]),
-    Priority: numberOrUndefined(input["Priority"]) ?? 0,
-    Queue: stringOrUndefined(input["Queue"]),
+    JobTemplate: jtName,
+    Priority: numberOrUndefined(input["Priority"]) ?? jt?.Priority ?? 0,
+    Queue: resolvedQueue.Arn,
     Role: role,
     Settings: settings,
     Tags: tags,
@@ -609,6 +758,9 @@ const CreateJob: OperationHandler = (input, ctx) => {
   if (tags !== undefined) {
     ctx.store.set(tagsKey(job.Arn), tags);
   }
+  if (token !== undefined) {
+    ctx.store.set(jobTokenKey(token), id);
+  }
   return { Job: jobView(job) };
 };
 
@@ -618,11 +770,25 @@ const GetJob: OperationHandler = (input, ctx) => {
 };
 
 const ListJobs: OperationHandler = (input, ctx) => {
-  const items = ctx.store
+  const statusFilter = stringOrUndefined(input["Status"]);
+  const queueFilter = stringOrUndefined(input["Queue"]);
+  const order = stringOrUndefined(input["Order"]);
+  let jobs = ctx.store
     .list<StoredJob>()
     .filter((entry) => entry.key.startsWith(jobPrefix))
-    .map((entry) => entry.value)
-    .sort((a, b) => b.CreatedAt - a.CreatedAt)
+    .map((entry) => entry.value);
+  if (statusFilter !== undefined) {
+    jobs = jobs.filter((job) => jobStatus(job) === statusFilter);
+  }
+  if (queueFilter !== undefined) {
+    jobs = jobs.filter((job) => matchesQueueFilter(job, queueFilter, ctx));
+  }
+  const items = jobs
+    .sort((a, b) =>
+      order === "ASCENDING"
+        ? a.CreatedAt - b.CreatedAt
+        : b.CreatedAt - a.CreatedAt,
+    )
     .map(jobView);
   const { page, nextToken } = paginateItems(
     items,
@@ -654,12 +820,14 @@ const CancelJob: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "Arn");
+  requireResourceByArn(ctx, arn);
   const tags = ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
   return { ResourceTags: { Arn: arn, Tags: tags } };
 };
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "Arn");
+  requireResourceByArn(ctx, arn);
   const newTags = stringRecordOrUndefined(input["Tags"]);
   if (newTags === undefined) {
     throw awsError("BadRequestException", "Tags is required.", 400);
@@ -671,6 +839,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "Arn");
+  requireResourceByArn(ctx, arn);
   const keysToRemove = Array.isArray(input["TagKeys"])
     ? (input["TagKeys"] as string[])
     : [];
@@ -683,9 +852,30 @@ const UntagResource: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const AssociateCertificate: OperationHandler = () => ({});
-const DisassociateCertificate: OperationHandler = () => ({});
-const CreateResourceShare: OperationHandler = () => ({});
+const AssociateCertificate: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "Arn");
+  ctx.store.set(certificateKey(arn), { Arn: arn });
+  return {};
+};
+
+const DisassociateCertificate: OperationHandler = (input, ctx) => {
+  const arn = requireString(input, "Arn");
+  if (ctx.store.get(certificateKey(arn)) === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Certificate with ARN ${arn} is not associated.`,
+      404,
+    );
+  }
+  ctx.store.delete(certificateKey(arn));
+  return {};
+};
+
+const CreateResourceShare: OperationHandler = (input, ctx) => {
+  const id = `rs-${now()}-${Math.random().toString(36).slice(2, 9)}`;
+  ctx.store.set(`${resourceSharePrefix}${id}`, { Id: id, ...input });
+  return {};
+};
 
 const GetPolicy: OperationHandler = (_, ctx) => {
   const policy = ctx.store.get<Record<string, unknown>>("policy") ?? {};
@@ -705,9 +895,91 @@ const DeletePolicy: OperationHandler = (_, ctx) => {
 
 const ListVersions: OperationHandler = () => ({ Versions: [] });
 const Probe: OperationHandler = () => ({ ProbeResults: [] });
-const SearchJobs: OperationHandler = () => ({ Jobs: [] });
-const StartJobsQuery: OperationHandler = () => ({});
-const GetJobsQueryResults: OperationHandler = () => ({ Jobs: [] });
+
+const SearchJobs: OperationHandler = (input, ctx) => {
+  const statusFilter = stringOrUndefined(input["Status"]);
+  const queueFilter = stringOrUndefined(input["Queue"]);
+  const inputFileFilter = stringOrUndefined(input["InputFile"]);
+  const order = stringOrUndefined(input["Order"]);
+  let jobs = ctx.store
+    .list<StoredJob>()
+    .filter((entry) => entry.key.startsWith(jobPrefix))
+    .map((entry) => entry.value);
+  if (statusFilter !== undefined) {
+    jobs = jobs.filter((job) => jobStatus(job) === statusFilter);
+  }
+  if (queueFilter !== undefined) {
+    jobs = jobs.filter((job) => matchesQueueFilter(job, queueFilter, ctx));
+  }
+  if (inputFileFilter !== undefined) {
+    jobs = jobs.filter((job) => matchesInputFile(job, inputFileFilter));
+  }
+  const items = jobs
+    .sort((a, b) =>
+      order === "ASCENDING"
+        ? a.CreatedAt - b.CreatedAt
+        : b.CreatedAt - a.CreatedAt,
+    )
+    .map(jobView);
+  const { page, nextToken } = paginateItems(
+    items,
+    input["MaxResults"],
+    input["NextToken"],
+  );
+  return { Jobs: page, NextToken: nextToken };
+};
+
+const StartJobsQuery: OperationHandler = (input, ctx) => {
+  const id = `jq-${now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const query: StoredJobsQuery = {
+    FilterList: arrayOrUndefined(input["FilterList"]),
+    Order: stringOrUndefined(input["Order"]),
+    MaxResults: numberOrUndefined(input["MaxResults"]),
+  };
+  ctx.store.set(jobsQueryKey(id), query);
+  return { Id: id };
+};
+
+const GetJobsQueryResults: OperationHandler = (input, ctx) => {
+  const id = requireString(input, "Id");
+  const query = ctx.store.get<StoredJobsQuery>(jobsQueryKey(id));
+  if (query === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Jobs query with id ${id} does not exist.`,
+      404,
+    );
+  }
+  let jobs = ctx.store
+    .list<StoredJob>()
+    .filter((entry) => entry.key.startsWith(jobPrefix))
+    .map((entry) => entry.value);
+  const filterList = query.FilterList as
+    | Array<{ Key?: string; Values?: string[] }>
+    | undefined;
+  if (filterList !== undefined && filterList.length > 0) {
+    jobs = jobs.filter((job) =>
+      filterList.some((filter) => {
+        const values = filter.Values ?? [];
+        if (filter.Key === "status") return values.includes(jobStatus(job));
+        if (filter.Key === "queue")
+          return values.some((v) => matchesQueueFilter(job, v, ctx));
+        if (filter.Key === "fileInput")
+          return values.some((v) => matchesInputFile(job, v));
+        return false;
+      }),
+    );
+  }
+  const items = jobs
+    .sort((a, b) =>
+      query.Order === "ASCENDING"
+        ? a.CreatedAt - b.CreatedAt
+        : b.CreatedAt - a.CreatedAt,
+    )
+    .map(jobView);
+  const { page, nextToken } = paginateItems(items, query.MaxResults, undefined);
+  return { Jobs: page, NextToken: nextToken, Status: "COMPLETE" };
+};
 
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((part) => part !== "");

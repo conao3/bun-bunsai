@@ -2763,6 +2763,18 @@ const CreateNatGateway: OperationHandler = (input, ctx) => {
     typeof input["AllocationId"] === "string"
       ? input["AllocationId"]
       : undefined;
+  let eipPublicIp: string | undefined;
+  if (allocationId !== undefined) {
+    const address = ctx.store.get<StoredAddress>(addressKey(allocationId));
+    if (address === undefined) {
+      throw awsError(
+        "InvalidAllocationID.NotFound",
+        `The allocation ID '${allocationId}' does not exist`,
+        400,
+      );
+    }
+    eipPublicIp = address.PublicIp;
+  }
   const id = hexId("nat");
   const gateway: StoredNatGateway = {
     NatGatewayId: id,
@@ -2774,7 +2786,7 @@ const CreateNatGateway: OperationHandler = (input, ctx) => {
     NatGatewayAddresses: [
       {
         AllocationId: allocationId,
-        PublicIp: randomIpv4(),
+        PublicIp: eipPublicIp ?? randomIpv4(),
         PrivateIp: "10.0.0.10",
         NetworkInterfaceId: hexId("eni"),
       },
@@ -7512,6 +7524,14 @@ const CreateVpcEncryptionControl: OperationHandler = (input, ctx) => {
 
 const CreateVpcEndpoint: OperationHandler = (input, ctx) => {
   const vpcId = typeof input["VpcId"] === "string" ? input["VpcId"] : "";
+  const vpc = ctx.store.get<StoredVpc>(vpcKey(vpcId));
+  if (vpc === undefined) {
+    throw awsError(
+      "InvalidVpcID.NotFound",
+      `The vpc ID '${vpcId}' does not exist`,
+      400,
+    );
+  }
   const serviceName =
     typeof input["ServiceName"] === "string" ? input["ServiceName"] : "";
   const endpointType =
@@ -7519,6 +7539,16 @@ const CreateVpcEndpoint: OperationHandler = (input, ctx) => {
       ? input["VpcEndpointType"]
       : "Interface";
   const routeTableIds = stringList(input["RouteTableIds"]);
+  for (const rtId of routeTableIds) {
+    const rt = ctx.store.get<StoredRouteTable>(routeTableKey(rtId));
+    if (rt === undefined) {
+      throw awsError(
+        "InvalidRouteTableID.NotFound",
+        `The routeTable ID '${rtId}' does not exist`,
+        400,
+      );
+    }
+  }
   const subnetIds = stringList(input["SubnetIds"]);
   const securityGroupIds = stringList(input["SecurityGroupIds"]);
   const ipAddressType =

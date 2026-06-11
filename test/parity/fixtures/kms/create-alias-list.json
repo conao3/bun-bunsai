@@ -1,0 +1,55 @@
+{
+  "clientPackage": "@aws-sdk/client-kms",
+  "clientName": "KMSClient",
+  "steps": [
+    {
+      "command": "CreateKeyCommand",
+      "input": { "Description": "parity-kms-chain-alias" },
+      "expected": {
+        "KeyMetadata": {
+          "AWSAccountId": "000000000000",
+          "Arn": "<ANY>",
+          "KeyId": "<ANY>",
+          "Description": "parity-kms-chain-alias",
+          "Enabled": true,
+          "KeyUsage": "ENCRYPT_DECRYPT",
+          "KeyState": "Enabled",
+          "Origin": "AWS_KMS",
+          "KeyManager": "CUSTOMER",
+          "KeySpec": "SYMMETRIC_DEFAULT"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "key",
+      "refs": {}
+    },
+    {
+      "command": "CreateAliasCommand",
+      "input": {
+        "AliasName": "alias/parity-kms-chain",
+        "TargetKeyId": "${key.KeyMetadata.KeyId}"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListAliasesCommand",
+      "input": { "KeyId": "${key.KeyMetadata.KeyId}" },
+      "expected": {
+        "Aliases": [
+          {
+            "AliasArn": "<ANY>",
+            "AliasName": "alias/parity-kms-chain",
+            "TargetKeyId": "<ANY>"
+          }
+        ],
+        "Truncated": false
+      },
+      "ignorePaths": ["$metadata", "NextMarker"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -36,6 +36,7 @@ function collectFixtures(dir: string): string[] {
 }
 
 function materialize(value: unknown): unknown {
+  if (value instanceof Uint8Array) return value;
   if (
     value !== null &&
     typeof value === "object" &&
@@ -61,12 +62,35 @@ function resolveRefs(
   input: Record<string, unknown>,
   saved: Record<string, Record<string, unknown>>,
 ): Record<string, unknown> {
+  const resolvePath = (name: string, rest: string): unknown => {
+    const obj = saved[name];
+    if (obj === undefined) return undefined;
+    const path = rest.slice(1).split(".");
+    let current: unknown = obj;
+    for (const key of path) {
+      if (
+        current !== null &&
+        typeof current === "object" &&
+        !(current instanceof Uint8Array)
+      ) {
+        current = (current as Record<string, unknown>)[key];
+      } else {
+        return undefined;
+      }
+    }
+    return current;
+  };
+
   const substitute = (value: unknown): unknown => {
     if (typeof value === "string") {
-      return value.replace(/\$\{(\w+)\.(\w+)\}/g, (_m, name, field) => {
-        const obj = saved[name];
-        return obj !== undefined ? String(obj[field] ?? "") : "";
-      });
+      const exactMatch = /^\$\{(\w+)((?:\.\w+)+)\}$/.exec(value);
+      if (exactMatch) {
+        const resolved = resolvePath(exactMatch[1], exactMatch[2]);
+        return resolved ?? "";
+      }
+      return value.replace(/\$\{(\w+)((?:\.\w+)+)\}/g, (_m, name, rest) =>
+        String(resolvePath(name, rest) ?? ""),
+      );
     }
     if (Array.isArray(value)) return value.map(substitute);
     if (value !== null && typeof value === "object") {

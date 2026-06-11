@@ -1,0 +1,56 @@
+{
+  "clientPackage": "@aws-sdk/client-kms",
+  "clientName": "KMSClient",
+  "steps": [
+    {
+      "command": "CreateKeyCommand",
+      "input": { "Description": "parity-kms-chain-encrypt" },
+      "expected": {
+        "KeyMetadata": {
+          "AWSAccountId": "000000000000",
+          "Arn": "<ANY>",
+          "KeyId": "<ANY>",
+          "Description": "parity-kms-chain-encrypt",
+          "Enabled": true,
+          "KeyUsage": "ENCRYPT_DECRYPT",
+          "KeyState": "Enabled",
+          "Origin": "AWS_KMS",
+          "KeyManager": "CUSTOMER",
+          "KeySpec": "SYMMETRIC_DEFAULT"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "key",
+      "refs": {}
+    },
+    {
+      "command": "EncryptCommand",
+      "input": {
+        "KeyId": "${key.KeyMetadata.KeyId}",
+        "Plaintext": { "$base64": "aGVsbG8=" }
+      },
+      "expected": {
+        "CiphertextBlob": "<ANY>",
+        "EncryptionAlgorithm": "SYMMETRIC_DEFAULT",
+        "KeyId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "enc",
+      "refs": {}
+    },
+    {
+      "command": "DecryptCommand",
+      "input": {
+        "CiphertextBlob": "${enc.CiphertextBlob}"
+      },
+      "expected": {
+        "EncryptionAlgorithm": "SYMMETRIC_DEFAULT",
+        "KeyId": "<ANY>",
+        "Plaintext": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

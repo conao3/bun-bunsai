@@ -1,0 +1,48 @@
+{
+  "clientPackage": "@aws-sdk/client-kms",
+  "clientName": "KMSClient",
+  "steps": [
+    {
+      "command": "CreateKeyCommand",
+      "input": { "Description": "parity-kms-chain-describe" },
+      "expected": {
+        "KeyMetadata": {
+          "AWSAccountId": "000000000000",
+          "Arn": "<ANY>",
+          "KeyId": "<ANY>",
+          "Description": "parity-kms-chain-describe",
+          "Enabled": true,
+          "KeyUsage": "ENCRYPT_DECRYPT",
+          "KeyState": "Enabled",
+          "Origin": "AWS_KMS",
+          "KeyManager": "CUSTOMER",
+          "KeySpec": "SYMMETRIC_DEFAULT"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "key",
+      "refs": {}
+    },
+    {
+      "command": "DescribeKeyCommand",
+      "input": { "KeyId": "${key.KeyMetadata.KeyId}" },
+      "expected": {
+        "KeyMetadata": {
+          "AWSAccountId": "000000000000",
+          "Arn": "<ANY>",
+          "KeyId": "<ANY>",
+          "Description": "parity-kms-chain-describe",
+          "Enabled": true,
+          "KeyUsage": "ENCRYPT_DECRYPT",
+          "KeyState": "Enabled",
+          "Origin": "AWS_KMS",
+          "KeyManager": "CUSTOMER",
+          "KeySpec": "SYMMETRIC_DEFAULT"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
   ACMPCAClient,
+  CertificateAuthorityType,
+  CertificateAuthorityStatus,
   CreateCertificateAuthorityCommand,
   DeleteCertificateAuthorityCommand,
   DescribeCertificateAuthorityCommand,
@@ -10,12 +12,16 @@ import {
   GetCertificateCommand,
   ImportCertificateAuthorityCertificateCommand,
   IssueCertificateCommand,
+  KeyAlgorithm,
   ListCertificateAuthoritiesCommand,
   ListTagsCommand,
+  RevocationReason,
   RevokeCertificateCommand,
+  SigningAlgorithm,
   TagCertificateAuthorityCommand,
   UntagCertificateAuthorityCommand,
   UpdateCertificateAuthorityCommand,
+  ValidityPeriodType,
 } from "@aws-sdk/client-acm-pca";
 
 const { endpoint, requestHandler } = startApp();
@@ -31,8 +37,8 @@ const acmPca = () =>
   });
 
 const caConfig = {
-  KeyAlgorithm: "RSA_2048",
-  SigningAlgorithm: "SHA256WITHRSA",
+  KeyAlgorithm: KeyAlgorithm.RSA_2048,
+  SigningAlgorithm: SigningAlgorithm.SHA256WITHRSA,
   Subject: { CommonName: "bunsai-e2e-ca.example.com" },
 };
 
@@ -42,7 +48,7 @@ test("ACM PCA CA lifecycle: PENDING_CERTIFICATE → import → ACTIVE → issue 
   const created = await client.send(
     new CreateCertificateAuthorityCommand({
       CertificateAuthorityConfiguration: caConfig,
-      CertificateAuthorityType: "ROOT",
+      CertificateAuthorityType: CertificateAuthorityType.ROOT,
     }),
   );
   const caArn = created.CertificateAuthorityArn;
@@ -90,8 +96,8 @@ test("ACM PCA CA lifecycle: PENDING_CERTIFICATE → import → ACTIVE → issue 
     new IssueCertificateCommand({
       CertificateAuthorityArn: caArn,
       Csr: Buffer.from(csrResult.Csr ?? ""),
-      SigningAlgorithm: "SHA256WITHRSA",
-      Validity: { Type: "DAYS", Value: 365 },
+      SigningAlgorithm: SigningAlgorithm.SHA256WITHRSA,
+      Validity: { Type: ValidityPeriodType.DAYS, Value: 365 },
     }),
   );
   const certArn = issued.CertificateArn;
@@ -102,8 +108,8 @@ test("ACM PCA CA lifecycle: PENDING_CERTIFICATE → import → ACTIVE → issue 
     new IssueCertificateCommand({
       CertificateAuthorityArn: caArn,
       Csr: Buffer.from(csrResult.Csr ?? ""),
-      SigningAlgorithm: "SHA256WITHRSA",
-      Validity: { Type: "DAYS", Value: 365 },
+      SigningAlgorithm: SigningAlgorithm.SHA256WITHRSA,
+      Validity: { Type: ValidityPeriodType.DAYS, Value: 365 },
       IdempotencyToken: "token-abc",
     }),
   );
@@ -112,8 +118,8 @@ test("ACM PCA CA lifecycle: PENDING_CERTIFICATE → import → ACTIVE → issue 
     new IssueCertificateCommand({
       CertificateAuthorityArn: caArn,
       Csr: Buffer.from(csrResult.Csr ?? ""),
-      SigningAlgorithm: "SHA256WITHRSA",
-      Validity: { Type: "DAYS", Value: 365 },
+      SigningAlgorithm: SigningAlgorithm.SHA256WITHRSA,
+      Validity: { Type: ValidityPeriodType.DAYS, Value: 365 },
       IdempotencyToken: "token-abc",
     }),
   );
@@ -133,7 +139,7 @@ test("ACM PCA CA lifecycle: PENDING_CERTIFICATE → import → ACTIVE → issue 
     new RevokeCertificateCommand({
       CertificateAuthorityArn: caArn,
       CertificateSerial: serial,
-      RevocationReason: "KEY_COMPROMISE",
+      RevocationReason: RevocationReason.KEY_COMPROMISE,
     }),
   );
 
@@ -142,7 +148,7 @@ test("ACM PCA CA lifecycle: PENDING_CERTIFICATE → import → ACTIVE → issue 
       new RevokeCertificateCommand({
         CertificateAuthorityArn: caArn,
         CertificateSerial: serial,
-        RevocationReason: "KEY_COMPROMISE",
+        RevocationReason: RevocationReason.KEY_COMPROMISE,
       }),
     ),
   ).rejects.toMatchObject({ name: "RequestAlreadyProcessedException" });
@@ -154,7 +160,7 @@ test("ACM PCA tags round-trip", async () => {
   const created = await client.send(
     new CreateCertificateAuthorityCommand({
       CertificateAuthorityConfiguration: caConfig,
-      CertificateAuthorityType: "ROOT",
+      CertificateAuthorityType: CertificateAuthorityType.ROOT,
       Tags: [{ Key: "env", Value: "test" }],
     }),
   );
@@ -199,7 +205,7 @@ test("ACM PCA delete/restore lifecycle", async () => {
   const created = await client.send(
     new CreateCertificateAuthorityCommand({
       CertificateAuthorityConfiguration: caConfig,
-      CertificateAuthorityType: "ROOT",
+      CertificateAuthorityType: CertificateAuthorityType.ROOT,
     }),
   );
   const caArn = created.CertificateAuthorityArn!;
@@ -217,8 +223,8 @@ test("ACM PCA delete/restore lifecycle", async () => {
       new IssueCertificateCommand({
         CertificateAuthorityArn: caArn,
         Csr: Buffer.from("dummy"),
-        SigningAlgorithm: "SHA256WITHRSA",
-        Validity: { Type: "DAYS", Value: 1 },
+        SigningAlgorithm: SigningAlgorithm.SHA256WITHRSA,
+        Validity: { Type: ValidityPeriodType.DAYS, Value: 1 },
       }),
     ),
   ).rejects.toMatchObject({ name: "InvalidStateException" });
@@ -230,7 +236,7 @@ test("ACM PCA update CA status", async () => {
   const created = await client.send(
     new CreateCertificateAuthorityCommand({
       CertificateAuthorityConfiguration: caConfig,
-      CertificateAuthorityType: "ROOT",
+      CertificateAuthorityType: CertificateAuthorityType.ROOT,
     }),
   );
   const caArn = created.CertificateAuthorityArn!;
@@ -245,7 +251,7 @@ test("ACM PCA update CA status", async () => {
   await client.send(
     new UpdateCertificateAuthorityCommand({
       CertificateAuthorityArn: caArn,
-      Status: "DISABLED",
+      Status: CertificateAuthorityStatus.DISABLED,
     }),
   );
 

@@ -124,6 +124,7 @@ import applicationAutoscaling from "./application-autoscaling.ts";
 import xray from "./xray.ts";
 import bedrock from "./bedrock.ts";
 import bedrockRuntime from "./bedrock-runtime.ts";
+import dms from "./dms.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -250,6 +251,7 @@ export const services: ServiceDefinition[] = [
   xray,
   bedrockRuntime,
   bedrock,
+  dms,
 ];
 
 export const findService = (

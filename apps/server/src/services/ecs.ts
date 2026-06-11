@@ -632,6 +632,35 @@ const DeleteCluster: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const activeTasks = ctx.store
+    .list<StoredTask>()
+    .filter((entry) => entry.key.startsWith("task#"))
+    .map((entry) => entry.value)
+    .filter((t) => t.clusterName === name && t.lastStatus !== "STOPPED");
+  if (activeTasks.length > 0) {
+    throw awsError(
+      "ClusterContainsTasksException",
+      `The cluster cannot be deleted because it contains active tasks.`,
+      400,
+    );
+  }
+  const activeServices = ctx.store
+    .list<StoredService>()
+    .filter((entry) => entry.key.startsWith("service#"))
+    .map((entry) => entry.value)
+    .filter(
+      (s) =>
+        s.clusterName === name &&
+        s.status !== "INACTIVE" &&
+        s.status !== "DRAINING",
+    );
+  if (activeServices.length > 0) {
+    throw awsError(
+      "ClusterContainsServicesException",
+      `The cluster cannot be deleted because it contains active services.`,
+      400,
+    );
+  }
   ctx.store.delete(clusterKey(name));
   ctx.store.delete(tagKey(cluster.clusterArn));
   return { cluster: { ...clusterView(cluster), status: "INACTIVE" } };

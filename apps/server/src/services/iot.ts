@@ -94,6 +94,18 @@ const dimensionKey = (name: string) => `dimension:${name}`;
 const allDimensionsKey = "allDimensions";
 const detectTaskKey = (id: string) => `detectTask:${id}`;
 const allDetectTasksKey = "allDetectTasks";
+const billingGroupKey = (name: string) => `billingGroup:${name}`;
+const allBillingGroupsKey = "allBillingGroups";
+const billingGroupMembersKey = (name: string) => `billingGroupMembers:${name}`;
+const billingGroupForThingKey = (thingName: string) =>
+  `billingGroupForThing:${thingName}`;
+const dynamicThingGroupKey = (name: string) => `dynamicThingGroup:${name}`;
+const allDynamicThingGroupsKey = "allDynamicThingGroups";
+const fleetMetricKey = (name: string) => `fleetMetric:${name}`;
+const allFleetMetricsKey = "allFleetMetrics";
+const indexingConfigKey = "indexingConfig";
+const registrationTaskKey = (id: string) => `registrationTask:${id}`;
+const allRegistrationTasksKey = "allRegistrationTasks";
 
 type StoredThing = {
   thingName: string;
@@ -401,6 +413,59 @@ type StoredDetectMitigationActionsTask = {
   taskEndTime?: number;
 };
 
+type StoredBillingGroup = {
+  billingGroupName: string;
+  billingGroupArn: string;
+  billingGroupId: string;
+  billingGroupDescription?: string;
+  version: number;
+  createdAt: number;
+};
+
+type StoredDynamicThingGroup = {
+  thingGroupName: string;
+  thingGroupArn: string;
+  thingGroupId: string;
+  thingGroupDescription?: string;
+  indexName: string;
+  queryString: string;
+  queryVersion: string;
+  version: number;
+  createdAt: number;
+};
+
+type StoredFleetMetric = {
+  metricName: string;
+  metricArn: string;
+  queryString: string;
+  aggregationType: unknown;
+  period: number;
+  aggregationField: string;
+  description?: string;
+  queryVersion?: string;
+  indexName: string;
+  unit?: string;
+  version: number;
+  createdAt: number;
+  lastModifiedDate: number;
+};
+
+type StoredIndexingConfig = {
+  thingIndexingConfiguration?: unknown;
+  thingGroupIndexingConfiguration?: unknown;
+};
+
+type StoredRegistrationTask = {
+  taskId: string;
+  templateBody: string;
+  inputFileBucket: string;
+  inputFileKey: string;
+  roleArn: string;
+  status: string;
+  createdAt: number;
+  lastModifiedDate: number;
+};
+
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
 const thingArn = (ctx: ServiceContext, name: string) =>
@@ -443,6 +508,10 @@ const customMetricArn = (ctx: ServiceContext, name: string) =>
   `arn:aws:iot:${ctx.region}:${ctx.account}:custommetric/${name}`;
 const dimensionArn = (ctx: ServiceContext, name: string) =>
   `arn:aws:iot:${ctx.region}:${ctx.account}:dimension/${name}`;
+const billingGroupArn = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:billinggroup/${name}`;
+const fleetMetricArn = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:fleetmetric/${name}`;
 
 const pemOf = (id: string): string =>
   `-----BEGIN CERTIFICATE-----\n${Buffer.from(id, "utf8").toString("base64")}\n-----END CERTIFICATE-----`;
@@ -4609,6 +4678,633 @@ const GetBehaviorModelTrainingSummaries: OperationHandler = (_input, _ctx) => {
   return { summaries: [], nextToken: undefined };
 };
 
+const requireBillingGroup = (
+  ctx: ServiceContext,
+  name: string,
+): StoredBillingGroup => {
+  const stored = ctx.store.get<StoredBillingGroup>(billingGroupKey(name));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `BillingGroup ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireDynamicThingGroup = (
+  ctx: ServiceContext,
+  name: string,
+): StoredDynamicThingGroup => {
+  const stored = ctx.store.get<StoredDynamicThingGroup>(
+    dynamicThingGroupKey(name),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `DynamicThingGroup ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireFleetMetric = (
+  ctx: ServiceContext,
+  name: string,
+): StoredFleetMetric => {
+  const stored = ctx.store.get<StoredFleetMetric>(fleetMetricKey(name));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `FleetMetric ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireRegistrationTask = (
+  ctx: ServiceContext,
+  id: string,
+): StoredRegistrationTask => {
+  const stored = ctx.store.get<StoredRegistrationTask>(registrationTaskKey(id));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `RegistrationTask ${id} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const CreateBillingGroup: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const billingGroupName = requireStr(data, "billingGroupName");
+  if (ctx.store.get(billingGroupKey(billingGroupName)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `BillingGroup ${billingGroupName} already exists.`,
+      409,
+    );
+  }
+  const billingGroupId = crypto.randomUUID();
+  const arn = billingGroupArn(ctx, billingGroupName);
+  const props = data["billingGroupProperties"] as
+    | Record<string, unknown>
+    | undefined;
+  const stored: StoredBillingGroup = {
+    billingGroupName,
+    billingGroupArn: arn,
+    billingGroupId,
+    billingGroupDescription: str(props?.["billingGroupDescription"]),
+    version: 1,
+    createdAt: nowSeconds(),
+  };
+  ctx.store.set(billingGroupKey(billingGroupName), stored);
+  addToList(ctx, allBillingGroupsKey, billingGroupName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { billingGroupName, billingGroupArn: arn, billingGroupId };
+};
+
+const DescribeBillingGroup: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const billingGroupName = requireStr(data, "billingGroupName");
+  const stored = requireBillingGroup(ctx, billingGroupName);
+  return {
+    billingGroupName: stored.billingGroupName,
+    billingGroupId: stored.billingGroupId,
+    billingGroupArn: stored.billingGroupArn,
+    version: stored.version,
+    billingGroupProperties: {
+      billingGroupDescription: stored.billingGroupDescription,
+    },
+    billingGroupMetadata: {
+      creationDate: stored.createdAt,
+    },
+  };
+};
+
+const UpdateBillingGroup: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const billingGroupName = requireStr(data, "billingGroupName");
+  const stored = requireBillingGroup(ctx, billingGroupName);
+  const expectedVersion = data["expectedVersion"];
+  if (
+    expectedVersion !== undefined &&
+    Number(expectedVersion) !== stored.version
+  ) {
+    throw awsError(
+      "VersionConflictException",
+      `Version conflict for billing group ${billingGroupName}.`,
+      409,
+    );
+  }
+  const props = data["billingGroupProperties"] as
+    | Record<string, unknown>
+    | undefined;
+  const updated = {
+    ...stored,
+    billingGroupDescription:
+      str(props?.["billingGroupDescription"]) ?? stored.billingGroupDescription,
+    version: stored.version + 1,
+  };
+  ctx.store.set(billingGroupKey(billingGroupName), updated);
+  return { version: updated.version };
+};
+
+const DeleteBillingGroup: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const billingGroupName = requireStr(data, "billingGroupName");
+  const stored = requireBillingGroup(ctx, billingGroupName);
+  const expectedVersion = data["expectedVersion"];
+  if (
+    expectedVersion !== undefined &&
+    Number(expectedVersion) !== stored.version
+  ) {
+    throw awsError(
+      "VersionConflictException",
+      `Version conflict for billing group ${billingGroupName}.`,
+      409,
+    );
+  }
+  const members = getList<string>(
+    ctx,
+    billingGroupMembersKey(billingGroupName),
+  );
+  for (const thingName of members) {
+    ctx.store.set(billingGroupForThingKey(thingName), undefined);
+  }
+  ctx.store.set(billingGroupMembersKey(billingGroupName), undefined);
+  ctx.store.set(tagsKey(stored.billingGroupArn), undefined);
+  ctx.store.set(billingGroupKey(billingGroupName), undefined);
+  removeFromList<string>(
+    ctx,
+    allBillingGroupsKey,
+    (n) => n === billingGroupName,
+  );
+  return {};
+};
+
+const ListBillingGroups: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const prefix = str(data["namePrefixFilter"]);
+  let names = getList<string>(ctx, allBillingGroupsKey);
+  if (prefix) names = names.filter((n) => n.startsWith(prefix));
+  const { items, nextMarker } = paginateList(
+    names,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  const billingGroups = items.map((name) => {
+    const bg = ctx.store.get<StoredBillingGroup>(billingGroupKey(name));
+    return { groupName: name, groupArn: bg?.billingGroupArn };
+  });
+  return { billingGroups, nextToken: nextMarker };
+};
+
+const AddThingToBillingGroup: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const billingGroupName = requireStr(data, "billingGroupName");
+  const thingName = requireStr(data, "thingName");
+  requireBillingGroup(ctx, billingGroupName);
+  requireThing(ctx, thingName);
+  ctx.store.set(billingGroupForThingKey(thingName), billingGroupName);
+  addToList(ctx, billingGroupMembersKey(billingGroupName), thingName);
+  return {};
+};
+
+const RemoveThingFromBillingGroup: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const billingGroupName = requireStr(data, "billingGroupName");
+  const thingName = requireStr(data, "thingName");
+  requireBillingGroup(ctx, billingGroupName);
+  ctx.store.set(billingGroupForThingKey(thingName), undefined);
+  removeFromList<string>(
+    ctx,
+    billingGroupMembersKey(billingGroupName),
+    (n) => n === thingName,
+  );
+  return {};
+};
+
+const ListThingsInBillingGroup: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const billingGroupName = requireStr(data, "billingGroupName");
+  requireBillingGroup(ctx, billingGroupName);
+  const members = getList<string>(
+    ctx,
+    billingGroupMembersKey(billingGroupName),
+  );
+  const { items, nextMarker } = paginateList(
+    members,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  return { things: items, nextToken: nextMarker };
+};
+
+const CreateDynamicThingGroup: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const thingGroupName = requireStr(data, "thingGroupName");
+  const queryString = requireStr(data, "queryString");
+  if (ctx.store.get(dynamicThingGroupKey(thingGroupName)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `DynamicThingGroup ${thingGroupName} already exists.`,
+      409,
+    );
+  }
+  const thingGroupId = crypto.randomUUID();
+  const arn = thingGroupArn(ctx, thingGroupName);
+  const props = data["thingGroupProperties"] as
+    | Record<string, unknown>
+    | undefined;
+  const stored: StoredDynamicThingGroup = {
+    thingGroupName,
+    thingGroupArn: arn,
+    thingGroupId,
+    thingGroupDescription: str(props?.["thingGroupDescription"]),
+    indexName: str(data["indexName"]) ?? "AWS_Things",
+    queryString,
+    queryVersion: str(data["queryVersion"]) ?? "2017-09-30",
+    version: 1,
+    createdAt: nowSeconds(),
+  };
+  ctx.store.set(dynamicThingGroupKey(thingGroupName), stored);
+  addToList(ctx, allDynamicThingGroupsKey, thingGroupName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return {
+    thingGroupName,
+    thingGroupArn: arn,
+    thingGroupId,
+    indexName: stored.indexName,
+    queryString,
+    queryVersion: stored.queryVersion,
+  };
+};
+
+const UpdateDynamicThingGroup: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const thingGroupName = requireStr(data, "thingGroupName");
+  const stored = requireDynamicThingGroup(ctx, thingGroupName);
+  const expectedVersion = data["expectedVersion"];
+  if (
+    expectedVersion !== undefined &&
+    Number(expectedVersion) !== stored.version
+  ) {
+    throw awsError(
+      "VersionConflictException",
+      `Version conflict for dynamic thing group ${thingGroupName}.`,
+      409,
+    );
+  }
+  const props = data["thingGroupProperties"] as
+    | Record<string, unknown>
+    | undefined;
+  const updated: StoredDynamicThingGroup = {
+    ...stored,
+    thingGroupDescription:
+      str(props?.["thingGroupDescription"]) ?? stored.thingGroupDescription,
+    queryString: str(data["queryString"]) ?? stored.queryString,
+    queryVersion: str(data["queryVersion"]) ?? stored.queryVersion,
+    indexName: str(data["indexName"]) ?? stored.indexName,
+    version: stored.version + 1,
+  };
+  ctx.store.set(dynamicThingGroupKey(thingGroupName), updated);
+  return { version: updated.version };
+};
+
+const DeleteDynamicThingGroup: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const thingGroupName = requireStr(data, "thingGroupName");
+  const stored = requireDynamicThingGroup(ctx, thingGroupName);
+  const expectedVersion = data["expectedVersion"];
+  if (
+    expectedVersion !== undefined &&
+    Number(expectedVersion) !== stored.version
+  ) {
+    throw awsError(
+      "VersionConflictException",
+      `Version conflict for dynamic thing group ${thingGroupName}.`,
+      409,
+    );
+  }
+  ctx.store.set(tagsKey(stored.thingGroupArn), undefined);
+  ctx.store.set(dynamicThingGroupKey(thingGroupName), undefined);
+  removeFromList<string>(
+    ctx,
+    allDynamicThingGroupsKey,
+    (n) => n === thingGroupName,
+  );
+  return {};
+};
+
+const CreateFleetMetric: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const metricName = requireStr(data, "metricName");
+  if (ctx.store.get(fleetMetricKey(metricName)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `FleetMetric ${metricName} already exists.`,
+      409,
+    );
+  }
+  const arn = fleetMetricArn(ctx, metricName);
+  const stored: StoredFleetMetric = {
+    metricName,
+    metricArn: arn,
+    queryString: requireStr(data, "queryString"),
+    aggregationType: data["aggregationType"],
+    period: Number(data["period"]),
+    aggregationField: requireStr(data, "aggregationField"),
+    description: str(data["description"]),
+    queryVersion: str(data["queryVersion"]),
+    indexName: str(data["indexName"]) ?? "AWS_Things",
+    unit: str(data["unit"]),
+    version: 1,
+    createdAt: nowSeconds(),
+    lastModifiedDate: nowSeconds(),
+  };
+  ctx.store.set(fleetMetricKey(metricName), stored);
+  addToList(ctx, allFleetMetricsKey, metricName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { metricName, metricArn: arn };
+};
+
+const DescribeFleetMetric: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const metricName = requireStr(data, "metricName");
+  const stored = requireFleetMetric(ctx, metricName);
+  return {
+    metricName: stored.metricName,
+    queryString: stored.queryString,
+    aggregationType: stored.aggregationType,
+    period: stored.period,
+    aggregationField: stored.aggregationField,
+    description: stored.description,
+    queryVersion: stored.queryVersion,
+    indexName: stored.indexName,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedDate,
+    version: stored.version,
+    metricArn: stored.metricArn,
+    unit: stored.unit,
+  };
+};
+
+const UpdateFleetMetric: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const metricName = requireStr(data, "metricName");
+  const stored = requireFleetMetric(ctx, metricName);
+  const expectedVersion = data["expectedVersion"];
+  if (
+    expectedVersion !== undefined &&
+    Number(expectedVersion) !== stored.version
+  ) {
+    throw awsError(
+      "VersionConflictException",
+      `Version conflict for fleet metric ${metricName}.`,
+      409,
+    );
+  }
+  const updated: StoredFleetMetric = {
+    ...stored,
+    queryString: str(data["queryString"]) ?? stored.queryString,
+    aggregationType: data["aggregationType"] ?? stored.aggregationType,
+    period:
+      data["period"] !== undefined ? Number(data["period"]) : stored.period,
+    aggregationField: str(data["aggregationField"]) ?? stored.aggregationField,
+    description: str(data["description"]) ?? stored.description,
+    queryVersion: str(data["queryVersion"]) ?? stored.queryVersion,
+    indexName: str(data["indexName"]) ?? stored.indexName,
+    unit: str(data["unit"]) ?? stored.unit,
+    version: stored.version + 1,
+    lastModifiedDate: nowSeconds(),
+  };
+  ctx.store.set(fleetMetricKey(metricName), updated);
+  return {};
+};
+
+const DeleteFleetMetric: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const metricName = requireStr(data, "metricName");
+  const stored = requireFleetMetric(ctx, metricName);
+  const expectedVersion = data["expectedVersion"];
+  if (
+    expectedVersion !== undefined &&
+    Number(expectedVersion) !== stored.version
+  ) {
+    throw awsError(
+      "VersionConflictException",
+      `Version conflict for fleet metric ${metricName}.`,
+      409,
+    );
+  }
+  ctx.store.set(tagsKey(stored.metricArn), undefined);
+  ctx.store.set(fleetMetricKey(metricName), undefined);
+  removeFromList<string>(ctx, allFleetMetricsKey, (n) => n === metricName);
+  return {};
+};
+
+const ListFleetMetrics: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const names = getList<string>(ctx, allFleetMetricsKey);
+  const { items, nextMarker } = paginateList(
+    names,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  const fleetMetrics = items.map((name) => {
+    const fm = ctx.store.get<StoredFleetMetric>(fleetMetricKey(name));
+    return { metricName: name, metricArn: fm?.metricArn };
+  });
+  return { fleetMetrics, nextToken: nextMarker };
+};
+
+const GetIndexingConfiguration: OperationHandler = (_input, ctx) => {
+  const config = ctx.store.get<StoredIndexingConfig>(indexingConfigKey) ?? {};
+  return {
+    thingIndexingConfiguration: config.thingIndexingConfiguration ?? {
+      thingIndexingMode: "OFF",
+    },
+    thingGroupIndexingConfiguration: config.thingGroupIndexingConfiguration ?? {
+      thingGroupIndexingMode: "OFF",
+    },
+  };
+};
+
+const UpdateIndexingConfiguration: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const existing = ctx.store.get<StoredIndexingConfig>(indexingConfigKey) ?? {};
+  const updated: StoredIndexingConfig = {
+    thingIndexingConfiguration:
+      data["thingIndexingConfiguration"] ?? existing.thingIndexingConfiguration,
+    thingGroupIndexingConfiguration:
+      data["thingGroupIndexingConfiguration"] ??
+      existing.thingGroupIndexingConfiguration,
+  };
+  ctx.store.set(indexingConfigKey, updated);
+  return {};
+};
+
+const DescribeIndex: OperationHandler = (input, _ctx) => {
+  const data = input as Record<string, unknown>;
+  const indexName = requireStr(data, "indexName");
+  if (indexName !== "AWS_Things" && indexName !== "AWS_ThingGroups") {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Index ${indexName} not found.`,
+      404,
+    );
+  }
+  return { indexName, indexStatus: "ACTIVE", schema: "REGISTRY" };
+};
+
+const ListIndices: OperationHandler = (_input, _ctx) => {
+  return { indexNames: ["AWS_Things"] };
+};
+
+const searchThings = (
+  ctx: ServiceContext,
+  queryString: string,
+): Record<string, unknown>[] => {
+  const allNames = getList<string>(ctx, allThingsKey);
+  const thingNameMatch = queryString.match(/^thingName:(\S+)$/);
+  return allNames
+    .filter((name) => {
+      if (thingNameMatch) {
+        const pattern = thingNameMatch[1] ?? "";
+        if (pattern.endsWith("*")) return name.startsWith(pattern.slice(0, -1));
+        return name === pattern;
+      }
+      return true;
+    })
+    .map((name) => {
+      const t = ctx.store.get<StoredThing>(thingKey(name));
+      return {
+        thingName: name,
+        thingId: t?.thingId,
+        thingTypeName: t?.thingTypeName,
+        attributes: t?.attributes ?? {},
+      };
+    });
+};
+
+const SearchIndex: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const queryString = requireStr(data, "queryString");
+  const things = searchThings(ctx, queryString);
+  return { things, thingGroups: [] };
+};
+
+const GetStatistics: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const queryString = requireStr(data, "queryString");
+  const things = searchThings(ctx, queryString);
+  return { statistics: { count: things.length } };
+};
+
+const GetCardinality: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const queryString = requireStr(data, "queryString");
+  const things = searchThings(ctx, queryString);
+  return { cardinality: things.length };
+};
+
+const GetPercentiles: OperationHandler = (_input, _ctx) => {
+  return { percentiles: [] };
+};
+
+const GetBucketsAggregation: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const queryString = requireStr(data, "queryString");
+  const things = searchThings(ctx, queryString);
+  return { totalCount: things.length, buckets: [] };
+};
+
+const StartThingRegistrationTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const templateBody = requireStr(data, "templateBody");
+  const inputFileBucket = requireStr(data, "inputFileBucket");
+  const inputFileKey = requireStr(data, "inputFileKey");
+  const roleArn = requireStr(data, "roleArn");
+  const taskId = crypto.randomUUID();
+  const stored: StoredRegistrationTask = {
+    taskId,
+    templateBody,
+    inputFileBucket,
+    inputFileKey,
+    roleArn,
+    status: "Completed",
+    createdAt: nowSeconds(),
+    lastModifiedDate: nowSeconds(),
+  };
+  ctx.store.set(registrationTaskKey(taskId), stored);
+  addToList(ctx, allRegistrationTasksKey, taskId);
+  return { taskId };
+};
+
+const StopThingRegistrationTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const taskId = requireStr(data, "taskId");
+  const stored = requireRegistrationTask(ctx, taskId);
+  const updated = { ...stored, status: "Cancelled" };
+  ctx.store.set(registrationTaskKey(taskId), updated);
+  return {};
+};
+
+const DescribeThingRegistrationTask: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const taskId = requireStr(data, "taskId");
+  const stored = requireRegistrationTask(ctx, taskId);
+  return {
+    taskId: stored.taskId,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedDate,
+    templateBody: stored.templateBody,
+    inputFileBucket: stored.inputFileBucket,
+    inputFileKey: stored.inputFileKey,
+    roleArn: stored.roleArn,
+    status: stored.status,
+    successCount: 0,
+    failureCount: 0,
+    percentageProgress: 100,
+  };
+};
+
+const ListThingRegistrationTasks: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const statusFilter = str(data["status"]);
+  let taskIds = getList<string>(ctx, allRegistrationTasksKey);
+  if (statusFilter) {
+    taskIds = taskIds.filter((id) => {
+      const t = ctx.store.get<StoredRegistrationTask>(registrationTaskKey(id));
+      return t?.status === statusFilter;
+    });
+  }
+  const { items, nextMarker } = paginateList(
+    taskIds,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  return { taskIds: items, nextToken: nextMarker };
+};
+
+const ListThingRegistrationTaskReports: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const taskId = requireStr(data, "taskId");
+  requireRegistrationTask(ctx, taskId);
+  const reportType = str(data["reportType"]) ?? "ERRORS";
+  const { items, nextMarker } = paginateList(
+    [] as string[],
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  return { resourceLinks: items, reportType, nextToken: nextMarker };
+};
+
 // === resolveOperation ===
 
 const idFromArn2 = (arn: string): string => {
@@ -5320,6 +6016,111 @@ export default {
       return undefined;
     }
 
+    if (parts[0] === "billing-groups") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListBillingGroups";
+        return undefined;
+      }
+      if (parts[1] === "addThingToBillingGroup") {
+        if (req.method === "PUT") return "AddThingToBillingGroup";
+        return undefined;
+      }
+      if (parts[1] === "removeThingFromBillingGroup") {
+        if (req.method === "PUT") return "RemoveThingFromBillingGroup";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateBillingGroup";
+        if (req.method === "GET") return "DescribeBillingGroup";
+        if (req.method === "PATCH") return "UpdateBillingGroup";
+        if (req.method === "DELETE") return "DeleteBillingGroup";
+        return undefined;
+      }
+      if (parts.length === 3 && parts[2] === "things") {
+        if (req.method === "GET") return "ListThingsInBillingGroup";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "dynamic-thing-groups") {
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateDynamicThingGroup";
+        if (req.method === "PATCH") return "UpdateDynamicThingGroup";
+        if (req.method === "DELETE") return "DeleteDynamicThingGroup";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "fleet-metric") {
+      if (parts.length === 2) {
+        if (req.method === "PUT") return "CreateFleetMetric";
+        if (req.method === "GET") return "DescribeFleetMetric";
+        if (req.method === "PATCH") return "UpdateFleetMetric";
+        if (req.method === "DELETE") return "DeleteFleetMetric";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "fleet-metrics") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListFleetMetrics";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "indexing" && parts[1] === "config") {
+      if (req.method === "GET") return "GetIndexingConfiguration";
+      if (req.method === "POST") return "UpdateIndexingConfiguration";
+      return undefined;
+    }
+
+    if (parts[0] === "indices") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListIndices";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (parts[1] === "search" && req.method === "POST")
+          return "SearchIndex";
+        if (parts[1] === "statistics" && req.method === "POST")
+          return "GetStatistics";
+        if (parts[1] === "cardinality" && req.method === "POST")
+          return "GetCardinality";
+        if (parts[1] === "percentiles" && req.method === "POST")
+          return "GetPercentiles";
+        if (parts[1] === "buckets" && req.method === "POST")
+          return "GetBucketsAggregation";
+        if (req.method === "GET") return "DescribeIndex";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "thing-registration-tasks") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "StartThingRegistrationTask";
+        if (req.method === "GET") return "ListThingRegistrationTasks";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "DescribeThingRegistrationTask";
+        return undefined;
+      }
+      if (parts.length === 3 && parts[2] === "cancel") {
+        if (req.method === "PUT") return "StopThingRegistrationTask";
+        return undefined;
+      }
+      if (parts.length === 3 && parts[2] === "reports") {
+        if (req.method === "GET") return "ListThingRegistrationTaskReports";
+        return undefined;
+      }
+      return undefined;
+    }
+
     return undefined;
   },
   operations: {
@@ -5514,6 +6315,36 @@ export default {
     ListViolationEvents,
     PutVerificationStateOnViolation,
     GetBehaviorModelTrainingSummaries,
+    CreateBillingGroup,
+    DescribeBillingGroup,
+    UpdateBillingGroup,
+    DeleteBillingGroup,
+    ListBillingGroups,
+    AddThingToBillingGroup,
+    RemoveThingFromBillingGroup,
+    ListThingsInBillingGroup,
+    CreateDynamicThingGroup,
+    UpdateDynamicThingGroup,
+    DeleteDynamicThingGroup,
+    CreateFleetMetric,
+    DescribeFleetMetric,
+    UpdateFleetMetric,
+    DeleteFleetMetric,
+    ListFleetMetrics,
+    GetIndexingConfiguration,
+    UpdateIndexingConfiguration,
+    DescribeIndex,
+    ListIndices,
+    SearchIndex,
+    GetStatistics,
+    GetCardinality,
+    GetPercentiles,
+    GetBucketsAggregation,
+    StartThingRegistrationTask,
+    StopThingRegistrationTask,
+    DescribeThingRegistrationTask,
+    ListThingRegistrationTasks,
+    ListThingRegistrationTaskReports,
   },
   model,
 } as const satisfies ServiceDefinition;

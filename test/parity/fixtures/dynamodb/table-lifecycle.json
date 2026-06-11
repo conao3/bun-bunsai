@@ -20,7 +20,12 @@
           "TableName": "parity-ddb-table",
           "TableArn": "<ANY>",
           "TableStatus": "<ANY>",
-          "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }]
+          "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }],
+          "ProvisionedThroughput": {
+            "ReadCapacityUnits": 5,
+            "WriteCapacityUnits": 5,
+            "NumberOfDecreasesToday": 0
+          }
         }
       },
       "ignorePaths": ["$metadata"],
@@ -35,7 +40,12 @@
           "TableName": "parity-ddb-table",
           "TableArn": "<ANY>",
           "TableStatus": "<ANY>",
-          "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }]
+          "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }],
+          "ProvisionedThroughput": {
+            "ReadCapacityUnits": 5,
+            "WriteCapacityUnits": 5,
+            "NumberOfDecreasesToday": 0
+          }
         }
       },
       "ignorePaths": ["$metadata"],

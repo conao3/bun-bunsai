@@ -106,6 +106,24 @@ const allFleetMetricsKey = "allFleetMetrics";
 const indexingConfigKey = "indexingConfig";
 const registrationTaskKey = (id: string) => `registrationTask:${id}`;
 const allRegistrationTasksKey = "allRegistrationTasks";
+const packageKey = (name: string) => `package:${name}`;
+const packageVersionKey = (name: string, version: string) =>
+  `pkgVersion:${name}:${version}`;
+const packageVersionsKey = (name: string) => `pkgVersions:${name}`;
+const allPackagesKey = "allPackages";
+const pkgConfigKey = "pkgConfig";
+const otaUpdateKey = (id: string) => `otaUpdate:${id}`;
+const allOTAUpdatesKey = "allOTAUpdates";
+const streamKey = (id: string) => `stream:${id}`;
+const allStreamsKey = "allStreams";
+const destinationKey = (arn: string) => `destination:${arn}`;
+const allDestinationsKey = "allDestinations";
+const destinationConfirmKey = (token: string) => `destConfirm:${token}`;
+const v2LoggingOptionsKey = "v2LoggingOptions";
+const v2LoggingLevelsKey = "v2LoggingLevels";
+const loggingOptionsKey = "loggingOptions";
+const eventConfigKey = "eventConfig";
+const encryptionConfigKey = "encryptionConfig";
 
 type StoredThing = {
   thingName: string;
@@ -466,6 +484,98 @@ type StoredRegistrationTask = {
   lastModifiedDate: number;
 };
 
+type StoredPackage = {
+  packageName: string;
+  packageArn: string;
+  description?: string;
+  defaultVersionName?: string;
+  createdAt: number;
+  lastModifiedAt: number;
+};
+
+type StoredPackageVersion = {
+  packageVersionArn: string;
+  packageName: string;
+  versionName: string;
+  description?: string;
+  attributes?: Record<string, string>;
+  artifact?: unknown;
+  recipe?: string;
+  status: string;
+  sbomValidationStatus?: string;
+  createdAt: number;
+  lastModifiedAt: number;
+};
+
+type StoredOTAUpdate = {
+  otaUpdateId: string;
+  otaUpdateArn: string;
+  awsIotJobId: string;
+  awsIotJobArn: string;
+  description?: string;
+  targets: string[];
+  protocols?: string[];
+  targetSelection?: string;
+  files: unknown[];
+  roleArn: string;
+  additionalParameters?: Record<string, string>;
+  otaUpdateStatus: string;
+  createdAt: number;
+  lastModifiedAt: number;
+};
+
+type StoredStream = {
+  streamId: string;
+  streamArn: string;
+  description?: string;
+  streamVersion: number;
+  files: unknown[];
+  roleArn: string;
+  createdAt: number;
+  lastUpdatedAt: number;
+};
+
+type StoredDestination = {
+  arn: string;
+  status: string;
+  createdAt: number;
+  lastUpdatedAt: number;
+  statusReason?: string;
+  httpUrlProperties?: unknown;
+  vpcProperties?: unknown;
+};
+
+type StoredV2LoggingOptions = {
+  roleArn?: string;
+  defaultLogLevel?: string;
+  disableAllLogs?: boolean;
+  eventConfigurations?: unknown;
+};
+
+type StoredV2LoggingLevel = {
+  targetType: string;
+  targetName: string;
+  logLevel: string;
+};
+
+type StoredLoggingOptions = {
+  roleArn?: string;
+  logLevel?: string;
+};
+
+type StoredEventConfig = {
+  eventConfigurations?: unknown;
+  createdAt: number;
+  lastModifiedAt: number;
+};
+
+type StoredEncryptionConfig = {
+  encryptionType: string;
+  kmsKeyArn?: string;
+  kmsAccessRoleArn?: string;
+  lastModifiedAt: number;
+};
+
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
 const thingArn = (ctx: ServiceContext, name: string) =>
@@ -512,6 +622,22 @@ const billingGroupArn = (ctx: ServiceContext, name: string) =>
   `arn:aws:iot:${ctx.region}:${ctx.account}:billinggroup/${name}`;
 const fleetMetricArn = (ctx: ServiceContext, name: string) =>
   `arn:aws:iot:${ctx.region}:${ctx.account}:fleetmetric/${name}`;
+const packageArnOf = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:package/${name}`;
+const packageVersionArnOf = (
+  ctx: ServiceContext,
+  name: string,
+  version: string,
+) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:package/${name}/version/${version}`;
+const otaUpdateArnOf = (ctx: ServiceContext, id: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:otaupdate/${id}`;
+const otaJobArnOf = (ctx: ServiceContext, id: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:job/AFT-OTA-${id}`;
+const streamArnOf = (ctx: ServiceContext, id: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:stream/${id}`;
+const destinationArnOf = (ctx: ServiceContext, id: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:ruledestination/http/${id}`;
 
 const pemOf = (id: string): string =>
   `-----BEGIN CERTIFICATE-----\n${Buffer.from(id, "utf8").toString("base64")}\n-----END CERTIFICATE-----`;
@@ -5305,6 +5431,1071 @@ const ListThingRegistrationTaskReports: OperationHandler = (input, ctx) => {
   return { resourceLinks: items, reportType, nextToken: nextMarker };
 };
 
+// === Package operations ===
+
+const CreatePackage: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  if (ctx.store.get(packageKey(packageName))) {
+    throw awsError(
+      "ConflictException",
+      `Package ${packageName} already exists.`,
+      409,
+    );
+  }
+  const now = nowSeconds();
+  const stored: StoredPackage = {
+    packageName,
+    packageArn: packageArnOf(ctx, packageName),
+    description: str(data["description"]),
+    createdAt: now,
+    lastModifiedAt: now,
+  };
+  ctx.store.set(packageKey(packageName), stored);
+  addToList(ctx, allPackagesKey, packageName);
+  return {
+    packageName: stored.packageName,
+    packageArn: stored.packageArn,
+    description: stored.description,
+  };
+};
+
+const DeletePackage: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  ctx.store.set(packageKey(packageName), undefined);
+  removeFromList<string>(ctx, allPackagesKey, (n) => n === packageName);
+  return {};
+};
+
+const GetPackage: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  const stored = ctx.store.get<StoredPackage>(packageKey(packageName));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Package ${packageName} not found.`,
+      404,
+    );
+  return {
+    packageName: stored.packageName,
+    packageArn: stored.packageArn,
+    description: stored.description,
+    defaultVersionName: stored.defaultVersionName,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedAt,
+  };
+};
+
+const UpdatePackage: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  const stored = ctx.store.get<StoredPackage>(packageKey(packageName));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Package ${packageName} not found.`,
+      404,
+    );
+  const unsetDefault = data["unsetDefaultVersion"] === true;
+  ctx.store.set(packageKey(packageName), {
+    ...stored,
+    description:
+      data["description"] !== undefined
+        ? str(data["description"])
+        : stored.description,
+    defaultVersionName: unsetDefault
+      ? undefined
+      : (str(data["defaultVersionName"]) ?? stored.defaultVersionName),
+    lastModifiedAt: nowSeconds(),
+  });
+  return {};
+};
+
+const ListPackages: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const names = getList<string>(ctx, allPackagesKey);
+  const { items, nextMarker } = paginateList(
+    names,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  const packageSummaries = items.map((name) => {
+    const p = ctx.store.get<StoredPackage>(packageKey(name));
+    return {
+      packageName: p?.packageName,
+      packageArn: p?.packageArn,
+      description: p?.description,
+      defaultVersionName: p?.defaultVersionName,
+      creationDate: p?.createdAt,
+      lastModifiedDate: p?.lastModifiedAt,
+    };
+  });
+  return { packageSummaries, nextToken: nextMarker };
+};
+
+const GetPackageConfiguration: OperationHandler = (_input, ctx) => {
+  const cfg = ctx.store.get<Record<string, unknown>>(pkgConfigKey);
+  return { versionUpdateByJobsConfig: cfg?.["versionUpdateByJobsConfig"] };
+};
+
+const UpdatePackageConfiguration: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const existing = ctx.store.get<Record<string, unknown>>(pkgConfigKey) ?? {};
+  ctx.store.set(pkgConfigKey, {
+    ...existing,
+    versionUpdateByJobsConfig:
+      data["versionUpdateByJobsConfig"] ??
+      existing["versionUpdateByJobsConfig"],
+  });
+  return {};
+};
+
+const requirePackage = (ctx: ServiceContext, name: string): StoredPackage => {
+  const stored = ctx.store.get<StoredPackage>(packageKey(name));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Package ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const CreatePackageVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  const versionName = requireStr(data, "versionName");
+  requirePackage(ctx, packageName);
+  if (ctx.store.get(packageVersionKey(packageName, versionName))) {
+    throw awsError(
+      "ConflictException",
+      `PackageVersion ${packageName}:${versionName} already exists.`,
+      409,
+    );
+  }
+  const now = nowSeconds();
+  const stored: StoredPackageVersion = {
+    packageVersionArn: packageVersionArnOf(ctx, packageName, versionName),
+    packageName,
+    versionName,
+    description: str(data["description"]),
+    attributes: data["attributes"] as Record<string, string> | undefined,
+    artifact: data["artifact"],
+    recipe: str(data["recipe"]),
+    status: "DRAFT",
+    createdAt: now,
+    lastModifiedAt: now,
+  };
+  ctx.store.set(packageVersionKey(packageName, versionName), stored);
+  addToList(ctx, packageVersionsKey(packageName), versionName);
+  return {
+    packageVersionArn: stored.packageVersionArn,
+    packageName: stored.packageName,
+    versionName: stored.versionName,
+    description: stored.description,
+    attributes: stored.attributes,
+    status: stored.status,
+  };
+};
+
+const DeletePackageVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  const versionName = requireStr(data, "versionName");
+  ctx.store.set(packageVersionKey(packageName, versionName), undefined);
+  removeFromList<string>(
+    ctx,
+    packageVersionsKey(packageName),
+    (v) => v === versionName,
+  );
+  return {};
+};
+
+const GetPackageVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  const versionName = requireStr(data, "versionName");
+  const stored = ctx.store.get<StoredPackageVersion>(
+    packageVersionKey(packageName, versionName),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `PackageVersion ${packageName}:${versionName} not found.`,
+      404,
+    );
+  return {
+    packageVersionArn: stored.packageVersionArn,
+    packageName: stored.packageName,
+    versionName: stored.versionName,
+    description: stored.description,
+    attributes: stored.attributes,
+    artifact: stored.artifact,
+    recipe: stored.recipe,
+    status: stored.status,
+    sbomValidationStatus: stored.sbomValidationStatus,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedAt,
+  };
+};
+
+const UpdatePackageVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  const versionName = requireStr(data, "versionName");
+  const stored = ctx.store.get<StoredPackageVersion>(
+    packageVersionKey(packageName, versionName),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `PackageVersion ${packageName}:${versionName} not found.`,
+      404,
+    );
+  ctx.store.set(packageVersionKey(packageName, versionName), {
+    ...stored,
+    description:
+      data["description"] !== undefined
+        ? str(data["description"])
+        : stored.description,
+    attributes:
+      data["attributes"] !== undefined
+        ? (data["attributes"] as Record<string, string>)
+        : stored.attributes,
+    artifact: data["artifact"] ?? stored.artifact,
+    recipe: data["recipe"] !== undefined ? str(data["recipe"]) : stored.recipe,
+    status: str(data["action"]) === "PUBLISH" ? "PUBLISHED" : stored.status,
+    lastModifiedAt: nowSeconds(),
+  });
+  return {};
+};
+
+const ListPackageVersions: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  requirePackage(ctx, packageName);
+  const statusFilter = str(data["status"]);
+  let versions = getList<string>(ctx, packageVersionsKey(packageName));
+  if (statusFilter) {
+    versions = versions.filter((v) => {
+      const pv = ctx.store.get<StoredPackageVersion>(
+        packageVersionKey(packageName, v),
+      );
+      return pv?.status === statusFilter;
+    });
+  }
+  const { items, nextMarker } = paginateList(
+    versions,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  const packageVersionSummaries = items.map((v) => {
+    const pv = ctx.store.get<StoredPackageVersion>(
+      packageVersionKey(packageName, v),
+    );
+    return {
+      packageVersionArn: pv?.packageVersionArn,
+      versionName: pv?.versionName,
+      description: pv?.description,
+      status: pv?.status,
+      creationDate: pv?.createdAt,
+      lastModifiedDate: pv?.lastModifiedAt,
+    };
+  });
+  return { packageVersionSummaries, nextToken: nextMarker };
+};
+
+const AssociateSbomWithPackageVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  const versionName = requireStr(data, "versionName");
+  const stored = ctx.store.get<StoredPackageVersion>(
+    packageVersionKey(packageName, versionName),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `PackageVersion ${packageName}:${versionName} not found.`,
+      404,
+    );
+  ctx.store.set(packageVersionKey(packageName, versionName), {
+    ...stored,
+    sbomValidationStatus: "IN_PROGRESS",
+    lastModifiedAt: nowSeconds(),
+  });
+  return {
+    packageName,
+    versionName,
+    packageVersionArn: stored.packageVersionArn,
+    sbom: data["sbom"],
+    sbomValidationStatus: "IN_PROGRESS",
+  };
+};
+
+const DisassociateSbomFromPackageVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  const versionName = requireStr(data, "versionName");
+  const stored = ctx.store.get<StoredPackageVersion>(
+    packageVersionKey(packageName, versionName),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `PackageVersion ${packageName}:${versionName} not found.`,
+      404,
+    );
+  ctx.store.set(packageVersionKey(packageName, versionName), {
+    ...stored,
+    sbomValidationStatus: undefined,
+    lastModifiedAt: nowSeconds(),
+  });
+  return {};
+};
+
+const ListSbomValidationResults: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const packageName = requireStr(data, "packageName");
+  const versionName = requireStr(data, "versionName");
+  const stored = ctx.store.get<StoredPackageVersion>(
+    packageVersionKey(packageName, versionName),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `PackageVersion ${packageName}:${versionName} not found.`,
+      404,
+    );
+  const { items, nextMarker } = paginateList(
+    [] as unknown[],
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  return { validationResultSummaries: items, nextToken: nextMarker };
+};
+
+// === OTA Update operations ===
+
+const CreateOTAUpdate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const otaUpdateId = requireStr(data, "otaUpdateId");
+  if (ctx.store.get(otaUpdateKey(otaUpdateId))) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `OTAUpdate ${otaUpdateId} already exists.`,
+      409,
+    );
+  }
+  const now = nowSeconds();
+  const arn = otaUpdateArnOf(ctx, otaUpdateId);
+  const jobId = `AFT-OTA-${otaUpdateId}`;
+  const jobArn = otaJobArnOf(ctx, otaUpdateId);
+  const stored: StoredOTAUpdate = {
+    otaUpdateId,
+    otaUpdateArn: arn,
+    awsIotJobId: jobId,
+    awsIotJobArn: jobArn,
+    description: str(data["description"]),
+    targets: (data["targets"] as string[]) ?? [],
+    protocols: data["protocols"] as string[] | undefined,
+    targetSelection: str(data["targetSelection"]),
+    files: (data["files"] as unknown[]) ?? [],
+    roleArn: requireStr(data, "roleArn"),
+    additionalParameters: data["additionalParameters"] as
+      | Record<string, string>
+      | undefined,
+    otaUpdateStatus: "CREATE_COMPLETE",
+    createdAt: now,
+    lastModifiedAt: now,
+  };
+  ctx.store.set(otaUpdateKey(otaUpdateId), stored);
+  addToList(ctx, allOTAUpdatesKey, otaUpdateId);
+  return {
+    otaUpdateId: stored.otaUpdateId,
+    awsIotJobId: stored.awsIotJobId,
+    otaUpdateArn: stored.otaUpdateArn,
+    awsIotJobArn: stored.awsIotJobArn,
+    otaUpdateStatus: stored.otaUpdateStatus,
+  };
+};
+
+const DeleteOTAUpdate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const otaUpdateId = requireStr(data, "otaUpdateId");
+  if (!ctx.store.get(otaUpdateKey(otaUpdateId)))
+    throw awsError(
+      "ResourceNotFoundException",
+      `OTAUpdate ${otaUpdateId} not found.`,
+      404,
+    );
+  ctx.store.set(otaUpdateKey(otaUpdateId), undefined);
+  removeFromList<string>(ctx, allOTAUpdatesKey, (id) => id === otaUpdateId);
+  return {};
+};
+
+const GetOTAUpdate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const otaUpdateId = requireStr(data, "otaUpdateId");
+  const stored = ctx.store.get<StoredOTAUpdate>(otaUpdateKey(otaUpdateId));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `OTAUpdate ${otaUpdateId} not found.`,
+      404,
+    );
+  return {
+    otaUpdateInfo: {
+      otaUpdateId: stored.otaUpdateId,
+      otaUpdateArn: stored.otaUpdateArn,
+      awsIotJobId: stored.awsIotJobId,
+      awsIotJobArn: stored.awsIotJobArn,
+      description: stored.description,
+      targets: stored.targets,
+      protocols: stored.protocols,
+      targetSelection: stored.targetSelection,
+      files: stored.files,
+      roleArn: stored.roleArn,
+      additionalParameters: stored.additionalParameters,
+      otaUpdateStatus: stored.otaUpdateStatus,
+      creationDate: stored.createdAt,
+      lastModifiedDate: stored.lastModifiedAt,
+    },
+  };
+};
+
+const ListOTAUpdates: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const statusFilter = str(data["otaUpdateStatus"]);
+  let ids = getList<string>(ctx, allOTAUpdatesKey);
+  if (statusFilter) {
+    ids = ids.filter((id) => {
+      const o = ctx.store.get<StoredOTAUpdate>(otaUpdateKey(id));
+      return o?.otaUpdateStatus === statusFilter;
+    });
+  }
+  const { items, nextMarker } = paginateList(
+    ids,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  const otaUpdates = items.map((id) => {
+    const o = ctx.store.get<StoredOTAUpdate>(otaUpdateKey(id));
+    return {
+      otaUpdateId: o?.otaUpdateId,
+      otaUpdateArn: o?.otaUpdateArn,
+    };
+  });
+  return { otaUpdates, nextToken: nextMarker };
+};
+
+// === Stream operations ===
+
+const CreateStream: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const streamId = requireStr(data, "streamId");
+  if (ctx.store.get(streamKey(streamId))) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Stream ${streamId} already exists.`,
+      409,
+    );
+  }
+  const now = nowSeconds();
+  const stored: StoredStream = {
+    streamId,
+    streamArn: streamArnOf(ctx, streamId),
+    description: str(data["description"]),
+    streamVersion: 1,
+    files: (data["files"] as unknown[]) ?? [],
+    roleArn: requireStr(data, "roleArn"),
+    createdAt: now,
+    lastUpdatedAt: now,
+  };
+  ctx.store.set(streamKey(streamId), stored);
+  addToList(ctx, allStreamsKey, streamId);
+  return {
+    streamId: stored.streamId,
+    streamArn: stored.streamArn,
+    description: stored.description,
+    streamVersion: stored.streamVersion,
+  };
+};
+
+const DeleteStream: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const streamId = requireStr(data, "streamId");
+  if (!ctx.store.get(streamKey(streamId)))
+    throw awsError(
+      "ResourceNotFoundException",
+      `Stream ${streamId} not found.`,
+      404,
+    );
+  ctx.store.set(streamKey(streamId), undefined);
+  removeFromList<string>(ctx, allStreamsKey, (id) => id === streamId);
+  return {};
+};
+
+const DescribeStream: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const streamId = requireStr(data, "streamId");
+  const stored = ctx.store.get<StoredStream>(streamKey(streamId));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Stream ${streamId} not found.`,
+      404,
+    );
+  return {
+    streamInfo: {
+      streamId: stored.streamId,
+      streamArn: stored.streamArn,
+      streamVersion: stored.streamVersion,
+      description: stored.description,
+      files: stored.files,
+      createdAt: stored.createdAt,
+      lastUpdatedAt: stored.lastUpdatedAt,
+      roleArn: stored.roleArn,
+    },
+  };
+};
+
+const UpdateStream: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const streamId = requireStr(data, "streamId");
+  const stored = ctx.store.get<StoredStream>(streamKey(streamId));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Stream ${streamId} not found.`,
+      404,
+    );
+  ctx.store.set(streamKey(streamId), {
+    ...stored,
+    description:
+      data["description"] !== undefined
+        ? str(data["description"])
+        : stored.description,
+    files:
+      data["files"] !== undefined ? (data["files"] as unknown[]) : stored.files,
+    roleArn: str(data["roleArn"]) ?? stored.roleArn,
+    streamVersion: stored.streamVersion + 1,
+    lastUpdatedAt: nowSeconds(),
+  });
+  const updated = ctx.store.get<StoredStream>(streamKey(streamId))!;
+  return {
+    streamId: updated.streamId,
+    streamArn: updated.streamArn,
+    description: updated.description,
+    streamVersion: updated.streamVersion,
+  };
+};
+
+const ListStreams: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const ids = getList<string>(ctx, allStreamsKey);
+  const { items, nextMarker } = paginateList(
+    ids,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  const streams = items.map((id) => {
+    const s = ctx.store.get<StoredStream>(streamKey(id));
+    return {
+      streamId: s?.streamId,
+      streamArn: s?.streamArn,
+      streamVersion: s?.streamVersion,
+      description: s?.description,
+    };
+  });
+  return { streams, nextToken: nextMarker };
+};
+
+// === Topic Rule Destination operations ===
+
+const CreateTopicRuleDestination: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const cfg = data["destinationConfiguration"] as
+    | Record<string, unknown>
+    | undefined;
+  const id = `${nowSeconds()}-dest`;
+  const arn = destinationArnOf(ctx, id);
+  const now = nowSeconds();
+  const httpUrlCfg = cfg?.["httpUrlConfiguration"] as
+    | Record<string, unknown>
+    | undefined;
+  const stored: StoredDestination = {
+    arn,
+    status: "IN_PROGRESS",
+    createdAt: now,
+    lastUpdatedAt: now,
+    httpUrlProperties: httpUrlCfg
+      ? { confirmationUrl: httpUrlCfg["confirmationUrl"] }
+      : undefined,
+    vpcProperties: cfg?.["vpcConfiguration"],
+  };
+  ctx.store.set(destinationKey(arn), stored);
+  addToList(ctx, allDestinationsKey, arn);
+  ctx.store.set(destinationConfirmKey(arn), arn);
+  return {
+    topicRuleDestination: {
+      arn: stored.arn,
+      status: stored.status,
+      createdAt: stored.createdAt,
+      lastUpdatedAt: stored.lastUpdatedAt,
+      httpUrlProperties: stored.httpUrlProperties,
+      vpcProperties: stored.vpcProperties,
+    },
+  };
+};
+
+const DeleteTopicRuleDestination: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const arn = requireStr(data, "arn");
+  ctx.store.set(destinationKey(arn), undefined);
+  removeFromList<string>(ctx, allDestinationsKey, (a) => a === arn);
+  return {};
+};
+
+const GetTopicRuleDestination: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const arn = requireStr(data, "arn");
+  const stored = ctx.store.get<StoredDestination>(destinationKey(arn));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `TopicRuleDestination ${arn} not found.`,
+      404,
+    );
+  return {
+    topicRuleDestination: {
+      arn: stored.arn,
+      status: stored.status,
+      createdAt: stored.createdAt,
+      lastUpdatedAt: stored.lastUpdatedAt,
+      statusReason: stored.statusReason,
+      httpUrlProperties: stored.httpUrlProperties,
+      vpcProperties: stored.vpcProperties,
+    },
+  };
+};
+
+const ListTopicRuleDestinations: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const arns = getList<string>(ctx, allDestinationsKey);
+  const { items, nextMarker } = paginateList(
+    arns,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  const destinationSummaries = items.map((arn) => {
+    const d = ctx.store.get<StoredDestination>(destinationKey(arn));
+    return {
+      arn: d?.arn,
+      status: d?.status,
+      createdAt: d?.createdAt,
+      lastUpdatedAt: d?.lastUpdatedAt,
+      httpUrlSummary: d?.httpUrlProperties
+        ? {
+            confirmationUrl: (d.httpUrlProperties as Record<string, unknown>)[
+              "confirmationUrl"
+            ],
+          }
+        : undefined,
+    };
+  });
+  return { destinationSummaries, nextToken: nextMarker };
+};
+
+const UpdateTopicRuleDestination: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const arn = requireStr(data, "arn");
+  const stored = ctx.store.get<StoredDestination>(destinationKey(arn));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `TopicRuleDestination ${arn} not found.`,
+      404,
+    );
+  const newStatus = str(data["status"]) ?? stored.status;
+  ctx.store.set(destinationKey(arn), {
+    ...stored,
+    status: newStatus,
+    lastUpdatedAt: nowSeconds(),
+  });
+  return {};
+};
+
+const ConfirmTopicRuleDestination: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const confirmationToken = requireStr(data, "confirmationToken");
+  const arn = ctx.store.get<string>(
+    destinationConfirmKey(decodeURIComponent(confirmationToken)),
+  );
+  if (!arn)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Destination confirm token not found.`,
+      404,
+    );
+  const stored = ctx.store.get<StoredDestination>(destinationKey(arn));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `TopicRuleDestination not found.`,
+      404,
+    );
+  ctx.store.set(destinationKey(arn), {
+    ...stored,
+    status: "ENABLED",
+    lastUpdatedAt: nowSeconds(),
+  });
+  return {};
+};
+
+// === Logging operations ===
+
+const SetV2LoggingOptions: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const existing =
+    ctx.store.get<StoredV2LoggingOptions>(v2LoggingOptionsKey) ?? {};
+  ctx.store.set(v2LoggingOptionsKey, {
+    ...existing,
+    roleArn: str(data["roleArn"]) ?? existing.roleArn,
+    defaultLogLevel: str(data["defaultLogLevel"]) ?? existing.defaultLogLevel,
+    disableAllLogs:
+      data["disableAllLogs"] !== undefined
+        ? Boolean(data["disableAllLogs"])
+        : existing.disableAllLogs,
+    eventConfigurations:
+      data["eventConfigurations"] ?? existing.eventConfigurations,
+  });
+  return {};
+};
+
+const GetV2LoggingOptions: OperationHandler = (_input, ctx) => {
+  const stored =
+    ctx.store.get<StoredV2LoggingOptions>(v2LoggingOptionsKey) ?? {};
+  return {
+    roleArn: stored.roleArn,
+    defaultLogLevel: stored.defaultLogLevel,
+    disableAllLogs: stored.disableAllLogs ?? false,
+    eventConfigurations: stored.eventConfigurations,
+  };
+};
+
+const SetV2LoggingLevel: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const logTarget = data["logTarget"] as Record<string, unknown> | undefined;
+  const targetType = requireStr(logTarget ?? {}, "targetType");
+  const targetName = requireStr(logTarget ?? {}, "targetName");
+  const logLevel = requireStr(data, "logLevel");
+  const key = `${targetType}:${targetName}`;
+  const levels =
+    ctx.store.get<StoredV2LoggingLevel[]>(v2LoggingLevelsKey) ?? [];
+  const existing = levels.findIndex(
+    (l) => l.targetType === targetType && l.targetName === targetName,
+  );
+  if (existing >= 0) {
+    levels[existing] = { targetType, targetName, logLevel };
+    ctx.store.set(v2LoggingLevelsKey, levels);
+  } else {
+    ctx.store.set(v2LoggingLevelsKey, [
+      ...levels,
+      { targetType, targetName, logLevel },
+    ]);
+  }
+  void key;
+  return {};
+};
+
+const ListV2LoggingLevels: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const targetType = str(data["targetType"]);
+  let levels = ctx.store.get<StoredV2LoggingLevel[]>(v2LoggingLevelsKey) ?? [];
+  if (targetType) {
+    levels = levels.filter((l) => l.targetType === targetType);
+  }
+  const { items, nextMarker } = paginateList(
+    levels,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  const logTargetConfigurations = items.map((l) => ({
+    logTarget: { targetType: l.targetType, targetName: l.targetName },
+    logLevel: l.logLevel,
+  }));
+  return { logTargetConfigurations, nextToken: nextMarker };
+};
+
+const DeleteV2LoggingLevel: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const targetType = requireStr(data, "targetType");
+  const targetName = requireStr(data, "targetName");
+  const levels =
+    ctx.store.get<StoredV2LoggingLevel[]>(v2LoggingLevelsKey) ?? [];
+  ctx.store.set(
+    v2LoggingLevelsKey,
+    levels.filter(
+      (l) => !(l.targetType === targetType && l.targetName === targetName),
+    ),
+  );
+  return {};
+};
+
+const SetLoggingOptions: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const payload = data["loggingOptionsPayload"] as
+    | Record<string, unknown>
+    | undefined;
+  const existing = ctx.store.get<StoredLoggingOptions>(loggingOptionsKey) ?? {};
+  ctx.store.set(loggingOptionsKey, {
+    ...existing,
+    roleArn: str(payload?.["roleArn"] ?? data["roleArn"]) ?? existing.roleArn,
+    logLevel:
+      str(payload?.["logLevel"] ?? data["logLevel"]) ?? existing.logLevel,
+  });
+  return {};
+};
+
+const GetLoggingOptions: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<StoredLoggingOptions>(loggingOptionsKey) ?? {};
+  return {
+    roleArn: stored.roleArn,
+    logLevel: stored.logLevel,
+  };
+};
+
+// === Event / Encryption configuration operations ===
+
+const DescribeEventConfigurations: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<StoredEventConfig>(eventConfigKey);
+  return {
+    eventConfigurations: stored?.eventConfigurations ?? {},
+    creationDate: stored?.createdAt,
+    lastModifiedDate: stored?.lastModifiedAt,
+  };
+};
+
+const UpdateEventConfigurations: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const existing = ctx.store.get<StoredEventConfig>(eventConfigKey);
+  const now = nowSeconds();
+  ctx.store.set(eventConfigKey, {
+    eventConfigurations:
+      data["eventConfigurations"] ?? existing?.eventConfigurations ?? {},
+    createdAt: existing?.createdAt ?? now,
+    lastModifiedAt: now,
+  });
+  return {};
+};
+
+const DescribeEncryptionConfiguration: OperationHandler = (_input, ctx) => {
+  const stored = ctx.store.get<StoredEncryptionConfig>(encryptionConfigKey);
+  return {
+    encryptionType: stored?.encryptionType ?? "AWS_OWNED_KMS_KEY",
+    kmsKeyArn: stored?.kmsKeyArn,
+    kmsAccessRoleArn: stored?.kmsAccessRoleArn,
+    configurationDetails: {},
+    lastModifiedDate: stored?.lastModifiedAt,
+  };
+};
+
+const UpdateEncryptionConfiguration: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const encryptionType = requireStr(data, "encryptionType");
+  const existing = ctx.store.get<StoredEncryptionConfig>(encryptionConfigKey);
+  ctx.store.set(encryptionConfigKey, {
+    encryptionType,
+    kmsKeyArn: str(data["kmsKeyArn"]) ?? existing?.kmsKeyArn,
+    kmsAccessRoleArn:
+      str(data["kmsAccessRoleArn"]) ?? existing?.kmsAccessRoleArn,
+    lastModifiedAt: nowSeconds(),
+  });
+  return {};
+};
+
+// === Remaining operations ===
+
+const GetEffectivePolicies: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const thingName = str(data["thingName"]);
+  if (thingName) requireThing(ctx, thingName);
+  return { effectivePolicies: [] };
+};
+
+const GetThingConnectivityData: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const thingName = requireStr(data, "thingName");
+  requireThing(ctx, thingName);
+  return {
+    thingName,
+    connected: false,
+    timestamp: nowSeconds(),
+    disconnectReason: "UNKNOWN",
+  };
+};
+
+const ListMetricValues: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const thingName = requireStr(data, "thingName");
+  requireThing(ctx, thingName);
+  const { items, nextMarker } = paginateList(
+    [] as unknown[],
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  return { metricDatumList: items, nextToken: nextMarker };
+};
+
+const ListPrincipalThingsV2: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const principal =
+    (input as Record<string, unknown>)["principal"] ?? data["principal"];
+  const principals = getList<string>(
+    ctx,
+    principalThingsKey(String(principal ?? "")),
+  );
+  const { items, nextMarker } = paginateList(
+    principals,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  const principalThingObjects = items.map((thingName) => ({
+    thingName,
+    thingPrincipalType: "NON_EXCLUSIVE_THING",
+  }));
+  return { principalThingObjects, nextToken: nextMarker };
+};
+
+const ListRelatedResourcesForAuditFinding: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const findingId = requireStr(data, "findingId");
+  const stored = ctx.store.get<StoredAuditFinding>(auditFindingKey(findingId));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `AuditFinding ${findingId} not found.`,
+      404,
+    );
+  const { items, nextMarker } = paginateList(
+    (stored.relatedResources as unknown[]) ?? [],
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  return { relatedResources: items, nextToken: nextMarker };
+};
+
+const ListThingPrincipalsV2: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const thingName = requireStr(data, "thingName");
+  requireThing(ctx, thingName);
+  const principals = getList<string>(ctx, thingPrincipalsKey(thingName));
+  const { items, nextMarker } = paginateList(
+    principals,
+    str(data["nextToken"]),
+    data["maxResults"] ? Number(data["maxResults"]) : undefined,
+  );
+  const thingPrincipalObjects = items.map((principal) => ({
+    principal,
+    thingPrincipalType: "NON_EXCLUSIVE_THING",
+  }));
+  return { thingPrincipalObjects, nextToken: nextMarker };
+};
+
+const RegisterThing: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const templateBody = requireStr(data, "templateBody");
+  const thingName = `registered-thing-${nowSeconds()}`;
+  const id = `reg-${nowSeconds()}`;
+  const now = nowSeconds();
+  const stored: StoredThing = {
+    thingName,
+    thingArn: thingArn(ctx, thingName),
+    thingId: id,
+    attributes: {},
+    version: 1,
+    createdAt: now,
+  };
+  ctx.store.set(thingKey(thingName), stored);
+  addToList(ctx, allThingsKey, thingName);
+  void templateBody;
+  return {
+    certificatePem: pemOf(id),
+    resourceArns: {
+      thing: stored.thingArn,
+    },
+  };
+};
+
+const TestAuthorization: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const authInfos = (data["authInfos"] as unknown[]) ?? [];
+  void ctx;
+  const authResults = authInfos.map((info) => ({
+    authInfo: info,
+    allowed: { policies: [] },
+    denied: { implicitDeny: { policies: [] }, explicitDeny: { policies: [] } },
+    authDecision: "ALLOWED",
+    missingContextValues: [],
+  }));
+  return { authResults };
+};
+
+const UpdateThingGroupsForThing: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const thingName = str(data["thingName"]);
+  if (thingName) requireThing(ctx, thingName);
+  const groupsToAdd = (data["thingGroupsToAdd"] as string[]) ?? [];
+  const groupsToRemove = (data["thingGroupsToRemove"] as string[]) ?? [];
+  if (thingName) {
+    const existing = getList<string>(ctx, thingGroupsForThingKey(thingName));
+    const updated = [
+      ...existing.filter((g) => !groupsToRemove.includes(g)),
+      ...groupsToAdd.filter((g) => !existing.includes(g)),
+    ];
+    ctx.store.set(thingGroupsForThingKey(thingName), updated);
+    for (const g of groupsToAdd) {
+      addToList(ctx, thingGroupMembersKey(g), thingName);
+    }
+    for (const g of groupsToRemove) {
+      removeFromList<string>(
+        ctx,
+        thingGroupMembersKey(g),
+        (n) => n === thingName,
+      );
+    }
+  }
+  return {};
+};
+
+const UpdateThingType: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const thingTypeName = requireStr(data, "thingTypeName");
+  const stored = ctx.store.get<StoredThingType>(thingTypeKey(thingTypeName));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `ThingType ${thingTypeName} not found.`,
+      404,
+    );
+  ctx.store.set(thingTypeKey(thingTypeName), {
+    ...stored,
+    thingTypeDescription:
+      (data["thingTypeProperties"] as Record<string, unknown> | undefined)?.[
+        "thingTypeDescription"
+      ] !== undefined
+        ? str(
+            (data["thingTypeProperties"] as Record<string, unknown>)[
+              "thingTypeDescription"
+            ],
+          )
+        : stored.thingTypeDescription,
+  });
+  return {};
+};
+
 // === resolveOperation ===
 
 const idFromArn2 = (arn: string): string => {
@@ -5324,6 +6515,7 @@ export default {
     if (parts[0] === "things") {
       if (parts.length === 1) {
         if (req.method === "GET") return "ListThings";
+        if (req.method === "POST") return "RegisterThing";
         return undefined;
       }
       if (parts.length === 2) {
@@ -5340,8 +6532,16 @@ export default {
           if (req.method === "GET") return "ListThingPrincipals";
           return undefined;
         }
+        if (parts[2] === "principals-v2") {
+          if (req.method === "GET") return "ListThingPrincipalsV2";
+          return undefined;
+        }
         if (parts[2] === "thing-groups") {
           if (req.method === "GET") return "ListThingGroupsForThing";
+          return undefined;
+        }
+        if (parts[2] === "connectivity-data") {
+          if (req.method === "POST") return "GetThingConnectivityData";
           return undefined;
         }
         if (parts[2] === "jobs") {
@@ -5384,6 +6584,7 @@ export default {
       if (parts.length === 2) {
         if (req.method === "POST") return "CreateThingType";
         if (req.method === "GET") return "DescribeThingType";
+        if (req.method === "PATCH") return "UpdateThingType";
         if (req.method === "DELETE") return "DeleteThingType";
         return undefined;
       }
@@ -5405,6 +6606,10 @@ export default {
       }
       if (parts[1] === "removeThingFromThingGroup") {
         if (req.method === "PUT") return "RemoveThingFromThingGroup";
+        return undefined;
+      }
+      if (parts[1] === "updateThingGroupsForThing") {
+        if (req.method === "PUT") return "UpdateThingGroupsForThing";
         return undefined;
       }
       if (parts.length === 2) {
@@ -5674,6 +6879,11 @@ export default {
 
     if (parts[0] === "principals" && parts[1] === "things") {
       if (req.method === "GET") return "ListPrincipalThings";
+      return undefined;
+    }
+
+    if (parts[0] === "principals" && parts[1] === "things-v2") {
+      if (req.method === "GET") return "ListPrincipalThingsV2";
       return undefined;
     }
 
@@ -6100,6 +7310,156 @@ export default {
       return undefined;
     }
 
+    if (parts[0] === "packages") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListPackages";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "PUT") return "CreatePackage";
+        if (req.method === "GET") return "GetPackage";
+        if (req.method === "PATCH") return "UpdatePackage";
+        if (req.method === "DELETE") return "DeletePackage";
+        return undefined;
+      }
+      if (parts.length === 3 && parts[2] === "versions") {
+        if (req.method === "GET") return "ListPackageVersions";
+        return undefined;
+      }
+      if (parts.length === 4 && parts[2] === "versions") {
+        if (req.method === "PUT") return "CreatePackageVersion";
+        if (req.method === "GET") return "GetPackageVersion";
+        if (req.method === "PATCH") return "UpdatePackageVersion";
+        if (req.method === "DELETE") return "DeletePackageVersion";
+        return undefined;
+      }
+      if (
+        parts.length === 5 &&
+        parts[2] === "versions" &&
+        parts[4] === "sbom"
+      ) {
+        if (req.method === "PUT") return "AssociateSbomWithPackageVersion";
+        if (req.method === "DELETE")
+          return "DisassociateSbomFromPackageVersion";
+        return undefined;
+      }
+      if (
+        parts.length === 5 &&
+        parts[2] === "versions" &&
+        parts[4] === "sbom-validation-results"
+      ) {
+        if (req.method === "GET") return "ListSbomValidationResults";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "package-configuration") {
+      if (req.method === "GET") return "GetPackageConfiguration";
+      if (req.method === "PATCH") return "UpdatePackageConfiguration";
+      return undefined;
+    }
+
+    if (parts[0] === "otaUpdates") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListOTAUpdates";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateOTAUpdate";
+        if (req.method === "GET") return "GetOTAUpdate";
+        if (req.method === "DELETE") return "DeleteOTAUpdate";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "streams") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListStreams";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateStream";
+        if (req.method === "GET") return "DescribeStream";
+        if (req.method === "PUT") return "UpdateStream";
+        if (req.method === "DELETE") return "DeleteStream";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "destinations") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "CreateTopicRuleDestination";
+        if (req.method === "GET") return "ListTopicRuleDestinations";
+        if (req.method === "PATCH") return "UpdateTopicRuleDestination";
+        return undefined;
+      }
+      if (parts.length >= 2) {
+        if (req.method === "GET") return "GetTopicRuleDestination";
+        if (req.method === "DELETE") return "DeleteTopicRuleDestination";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "confirmdestination") {
+      if (req.method === "GET") return "ConfirmTopicRuleDestination";
+      return undefined;
+    }
+
+    if (parts[0] === "v2LoggingOptions") {
+      if (req.method === "POST") return "SetV2LoggingOptions";
+      if (req.method === "GET") return "GetV2LoggingOptions";
+      return undefined;
+    }
+
+    if (parts[0] === "v2LoggingLevel") {
+      if (req.method === "POST") return "SetV2LoggingLevel";
+      if (req.method === "GET") return "ListV2LoggingLevels";
+      if (req.method === "DELETE") return "DeleteV2LoggingLevel";
+      return undefined;
+    }
+
+    if (parts[0] === "loggingOptions") {
+      if (req.method === "POST") return "SetLoggingOptions";
+      if (req.method === "GET") return "GetLoggingOptions";
+      return undefined;
+    }
+
+    if (parts[0] === "event-configurations") {
+      if (req.method === "GET") return "DescribeEventConfigurations";
+      if (req.method === "PATCH") return "UpdateEventConfigurations";
+      return undefined;
+    }
+
+    if (parts[0] === "encryption-configuration") {
+      if (req.method === "GET") return "DescribeEncryptionConfiguration";
+      if (req.method === "PATCH") return "UpdateEncryptionConfiguration";
+      return undefined;
+    }
+
+    if (parts[0] === "effective-policies") {
+      if (req.method === "POST") return "GetEffectivePolicies";
+      return undefined;
+    }
+
+    if (parts[0] === "test-authorization") {
+      if (req.method === "POST") return "TestAuthorization";
+      return undefined;
+    }
+
+    if (parts[0] === "metric-values") {
+      if (req.method === "GET") return "ListMetricValues";
+      return undefined;
+    }
+
+    if (parts[0] === "audit" && parts[1] === "relatedResources") {
+      if (req.method === "GET") return "ListRelatedResourcesForAuditFinding";
+      return undefined;
+    }
+
     if (parts[0] === "thing-registration-tasks") {
       if (parts.length === 1) {
         if (req.method === "POST") return "StartThingRegistrationTask";
@@ -6345,6 +7705,57 @@ export default {
     DescribeThingRegistrationTask,
     ListThingRegistrationTasks,
     ListThingRegistrationTaskReports,
+    CreatePackage,
+    DeletePackage,
+    GetPackage,
+    UpdatePackage,
+    ListPackages,
+    GetPackageConfiguration,
+    UpdatePackageConfiguration,
+    CreatePackageVersion,
+    DeletePackageVersion,
+    GetPackageVersion,
+    UpdatePackageVersion,
+    ListPackageVersions,
+    AssociateSbomWithPackageVersion,
+    DisassociateSbomFromPackageVersion,
+    ListSbomValidationResults,
+    CreateOTAUpdate,
+    DeleteOTAUpdate,
+    GetOTAUpdate,
+    ListOTAUpdates,
+    CreateStream,
+    DeleteStream,
+    DescribeStream,
+    UpdateStream,
+    ListStreams,
+    CreateTopicRuleDestination,
+    DeleteTopicRuleDestination,
+    GetTopicRuleDestination,
+    ListTopicRuleDestinations,
+    UpdateTopicRuleDestination,
+    ConfirmTopicRuleDestination,
+    SetV2LoggingOptions,
+    GetV2LoggingOptions,
+    SetV2LoggingLevel,
+    ListV2LoggingLevels,
+    DeleteV2LoggingLevel,
+    SetLoggingOptions,
+    GetLoggingOptions,
+    DescribeEventConfigurations,
+    UpdateEventConfigurations,
+    DescribeEncryptionConfiguration,
+    UpdateEncryptionConfiguration,
+    GetEffectivePolicies,
+    GetThingConnectivityData,
+    ListMetricValues,
+    ListPrincipalThingsV2,
+    ListRelatedResourcesForAuditFinding,
+    ListThingPrincipalsV2,
+    RegisterThing,
+    TestAuthorization,
+    UpdateThingGroupsForThing,
+    UpdateThingType,
   },
   model,
 } as const satisfies ServiceDefinition;

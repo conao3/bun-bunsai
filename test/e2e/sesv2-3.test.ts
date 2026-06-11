@@ -181,12 +181,7 @@ test("multi-region endpoint lifecycle", async () => {
     new CreateMultiRegionEndpointCommand({
       EndpointName: "myendpoint",
       Details: {
-        RoutesDetails: [
-          {
-            Region: "us-east-1",
-            ResourceArn: "arn:aws:ses:us-east-1:123:identity/example.com",
-          },
-        ],
+        RoutesDetails: [{ Region: "us-east-2" }],
       },
     }),
   );

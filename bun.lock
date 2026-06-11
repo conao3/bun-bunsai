@@ -9,6 +9,7 @@
         "@aws-sdk/client-apigatewayv2": "^3.1066.0",
         "@aws-sdk/client-codedeploy": "^3.1066.0",
         "@aws-sdk/client-cognito-identity": "^3.1066.0",
+        "@aws-sdk/client-cost-explorer": "^3.1066.0",
         "@aws-sdk/client-kinesis-analytics-v2": "^3.1066.0",
         "@aws-sdk/client-sesv2": "^3.1066.0",
         "@aws-sdk/client-textract": "^3.1066.0",
@@ -248,6 +249,8 @@
     "@aws-sdk/client-config-service": ["@aws-sdk/client-config-service@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-LhTR0J+XpWFCExe/hwLV46856TRt9AzD4k6FG9T5wJf75mVJwvcnGYhy0diCFevhhQczpxxLKBMNbTl5zx44Xg=="],
 
     "@aws-sdk/client-connect": ["@aws-sdk/client-connect@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-aHHcCbCcFNl4fXCxusWOqtyBqpBnxAZQf6ubIvvZM7Zfcb8yFHSu4WLEee7xWD4SBqJjMxMKLhas5JAUGxCWzA=="],
+
+    "@aws-sdk/client-cost-explorer": ["@aws-sdk/client-cost-explorer@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-Mvf/ajSBz92DfcGMamRPDclOjKUXrJPBsfjh3Q6XtExChCCY/LDcVWJL3fKS5hRIw/8hPC2A2KQcBxjruEbPQw=="],
 
     "@aws-sdk/client-data-pipeline": ["@aws-sdk/client-data-pipeline@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-5KTI/xyy15U2g7WG6htcVXit52mFsXxrmh+ePgvgyIfRkE5OKXrS3yNFWgza2Pi54N8v+8Cyg3b2Ul5j9k1EmQ=="],
 

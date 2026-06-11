@@ -222,6 +222,8 @@ bun maint/bin/coverage.ts          # per-service coverage table
 bun maint/bin/missing.ts <service> # list unimplemented operations
 ```
 
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to record parity fixtures against real AWS.
+
 > AWS service models under `test/vendor/aws-models/` are vendored verbatim from [botocore](https://github.com/boto/botocore) (tag `1.43.19`, Apache-2.0). See `test/vendor/PROVENANCE.md`.
 
 ## License

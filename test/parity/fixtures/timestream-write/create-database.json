@@ -1,0 +1,47 @@
+{
+  "clientPackage": "@aws-sdk/client-timestream-write",
+  "clientName": "TimestreamWriteClient",
+  "clientConfig": { "disableHostPrefix": true },
+  "steps": [
+    {
+      "command": "CreateDatabaseCommand",
+      "input": { "DatabaseName": "parity-tsdb" },
+      "expected": {
+        "Database": {
+          "DatabaseName": "parity-tsdb",
+          "TableCount": 0,
+          "Arn": "<ANY>",
+          "CreationTime": "<ANY>",
+          "LastUpdatedTime": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "db",
+      "refs": {}
+    },
+    {
+      "command": "DescribeDatabaseCommand",
+      "input": { "DatabaseName": "parity-tsdb" },
+      "expected": {
+        "Database": {
+          "DatabaseName": "parity-tsdb",
+          "TableCount": 0,
+          "Arn": "<ANY>",
+          "CreationTime": "<ANY>",
+          "LastUpdatedTime": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteDatabaseCommand",
+      "input": { "DatabaseName": "parity-tsdb" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

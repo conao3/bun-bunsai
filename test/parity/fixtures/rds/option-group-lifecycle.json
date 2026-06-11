@@ -1,0 +1,54 @@
+{
+  "clientPackage": "@aws-sdk/client-rds",
+  "clientName": "RDSClient",
+  "steps": [
+    {
+      "command": "CreateOptionGroupCommand",
+      "input": {
+        "OptionGroupName": "parity-og",
+        "EngineName": "mysql",
+        "MajorEngineVersion": "5.6",
+        "OptionGroupDescription": "parity test"
+      },
+      "expected": {
+        "OptionGroup": {
+          "OptionGroupName": "parity-og",
+          "EngineName": "mysql",
+          "MajorEngineVersion": "5.6",
+          "OptionGroupDescription": "parity test",
+          "Options": [],
+          "AllowsVpcAndNonVpcInstanceMemberships": true,
+          "OptionGroupArn": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "og",
+      "refs": {}
+    },
+    {
+      "command": "DescribeOptionGroupsCommand",
+      "input": { "OptionGroupName": "parity-og" },
+      "expected": {
+        "OptionGroupsList": [
+          {
+            "OptionGroupName": "parity-og",
+            "EngineName": "mysql",
+            "Options": [],
+            "OptionGroupArn": "<ANY>"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteOptionGroupCommand",
+      "input": { "OptionGroupName": "parity-og" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

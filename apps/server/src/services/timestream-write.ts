@@ -127,7 +127,7 @@ const requireTable = (
   if (table === undefined) {
     throw awsError(
       "ResourceNotFoundException",
-      `The table ${tableName} does not exist in database ${dbName}.`,
+      `The table ${tableName} does not exist.`,
       400,
     );
   }

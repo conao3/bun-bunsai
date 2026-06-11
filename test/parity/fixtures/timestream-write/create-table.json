@@ -1,0 +1,79 @@
+{
+  "clientPackage": "@aws-sdk/client-timestream-write",
+  "clientName": "TimestreamWriteClient",
+  "clientConfig": { "disableHostPrefix": true },
+  "steps": [
+    {
+      "command": "CreateDatabaseCommand",
+      "input": { "DatabaseName": "parity-tsdb2" },
+      "expected": { "Database": { "DatabaseName": "parity-tsdb2" } },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "DatabaseName": "parity-tsdb2",
+        "TableName": "parity-tbl"
+      },
+      "expected": {
+        "Table": {
+          "TableName": "parity-tbl",
+          "DatabaseName": "parity-tsdb2",
+          "TableStatus": "ACTIVE",
+          "RetentionProperties": {
+            "MemoryStoreRetentionPeriodInHours": 6,
+            "MagneticStoreRetentionPeriodInDays": 73000
+          },
+          "Arn": "<ANY>",
+          "CreationTime": "<ANY>",
+          "LastUpdatedTime": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeTableCommand",
+      "input": {
+        "DatabaseName": "parity-tsdb2",
+        "TableName": "parity-tbl"
+      },
+      "expected": {
+        "Table": {
+          "TableName": "parity-tbl",
+          "DatabaseName": "parity-tsdb2",
+          "TableStatus": "ACTIVE",
+          "RetentionProperties": {
+            "MemoryStoreRetentionPeriodInHours": 6,
+            "MagneticStoreRetentionPeriodInDays": 73000
+          }
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": {
+        "DatabaseName": "parity-tsdb2",
+        "TableName": "parity-tbl"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteDatabaseCommand",
+      "input": { "DatabaseName": "parity-tsdb2" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

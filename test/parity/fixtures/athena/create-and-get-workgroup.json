@@ -1,0 +1,58 @@
+{
+  "clientPackage": "@aws-sdk/client-athena",
+  "clientName": "AthenaClient",
+  "steps": [
+    {
+      "command": "CreateWorkGroupCommand",
+      "input": {
+        "Name": "parity-wg",
+        "Description": "Test work group",
+        "Configuration": {
+          "ResultConfiguration": {
+            "OutputLocation": "s3://bucket-name/prefix/"
+          }
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetWorkGroupCommand",
+      "input": { "WorkGroup": "parity-wg" },
+      "expected": {
+        "WorkGroup": {
+          "Name": "parity-wg",
+          "State": "ENABLED",
+          "Description": "Test work group",
+          "Configuration": {
+            "ResultConfiguration": {
+              "OutputLocation": "s3://bucket-name/prefix/"
+            },
+            "EnforceWorkGroupConfiguration": true,
+            "PublishCloudWatchMetricsEnabled": false,
+            "RequesterPaysEnabled": false,
+            "EngineVersion": {
+              "SelectedEngineVersion": "AUTO",
+              "EffectiveEngineVersion": "Athena engine version 3"
+            },
+            "EnableMinimumEncryptionConfiguration": false
+          },
+          "CreationTime": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteWorkGroupCommand",
+      "input": { "WorkGroup": "parity-wg" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

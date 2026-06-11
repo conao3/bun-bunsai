@@ -16,7 +16,7 @@ type StoredScalableTarget = {
   MinCapacity: number | undefined;
   MaxCapacity: number | undefined;
   RoleARN: string | undefined;
-  SuspendedState: unknown | undefined;
+  SuspendedState: SuspendedStateFlags;
   ScalableTargetARN: string;
   CreationTime: number;
 };
@@ -63,12 +63,19 @@ type StoredScalingActivity = {
 
 type StoredTag = { Key: string; Value: string };
 
+type SuspendedStateFlags = {
+  DynamicScalingInSuspended: boolean;
+  DynamicScalingOutSuspended: boolean;
+  ScheduledScalingSuspended: boolean;
+};
+
 const targetKey = (ns: string, resourceId: string, dimension: string): string =>
   `target/${ns}/${resourceId}/${dimension}`;
 
 const policyKey = (arn: string): string => `policy/${arn}`;
 const scheduledActionKey = (arn: string): string => `saction/${arn}`;
 const tagKey = (arn: string): string => `tags/${arn}`;
+const activityKey = (id: string): string => `activity/${id}`;
 
 let counter = 0;
 const nextId = (): string => {
@@ -76,14 +83,8 @@ const nextId = (): string => {
   return String(counter).padStart(12, "0");
 };
 
-const targetArn = (
-  region: string,
-  account: string,
-  ns: string,
-  resourceId: string,
-  dimension: string,
-): string =>
-  `arn:aws:application-autoscaling:${region}:${account}:scalable-target/${nextId()}-${ns}-${resourceId}-${dimension}`;
+const targetArn = (region: string, account: string): string =>
+  `arn:aws:application-autoscaling:${region}:${account}:scalable-target/${crypto.randomUUID().replace(/-/g, "")}`;
 
 const policyArn = (
   region: string,
@@ -108,9 +109,24 @@ const paginateList = <T>(
   items: T[],
   nextToken: unknown,
   maxResults: unknown,
+  defaultPageSize = 50,
+  maxPageSize?: number,
 ): { items: T[]; nextToken: string | undefined } => {
+  if (
+    maxPageSize !== undefined &&
+    typeof maxResults === "number" &&
+    maxResults > maxPageSize
+  ) {
+    throw awsError(
+      "ValidationException",
+      `MaxResults must be between 1 and ${maxPageSize}.`,
+      400,
+    );
+  }
   const pageSize =
-    typeof maxResults === "number" && maxResults > 0 ? maxResults : 50;
+    typeof maxResults === "number" && maxResults > 0
+      ? maxResults
+      : defaultPageSize;
   let startIndex = 0;
   if (typeof nextToken === "string" && nextToken !== "") {
     const parsed = parseInt(nextToken, 10);
@@ -139,6 +155,26 @@ const requireString = (input: Record<string, unknown>, key: string): string => {
   return value;
 };
 
+const getTargetByArn = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredScalableTarget => {
+  const target = ctx.store
+    .list<StoredScalableTarget>()
+    .filter((e) => e.key.startsWith("target/"))
+    .map((e) => e.value)
+    .find((t) => t.ScalableTargetARN === arn);
+  if (target === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource ARN not found: ${arn}`,
+      400,
+      { ResourceName: arn },
+    );
+  }
+  return target;
+};
+
 const getTarget = (
   ctx: ServiceContext,
   ns: string,
@@ -158,6 +194,36 @@ const getTarget = (
   return target;
 };
 
+const mergeSuspendedState = (
+  input: unknown,
+  existing: SuspendedStateFlags,
+): SuspendedStateFlags => {
+  if (input === null || typeof input !== "object") {
+    return existing;
+  }
+  const patch = input as Record<string, unknown>;
+  return {
+    DynamicScalingInSuspended:
+      typeof patch["DynamicScalingInSuspended"] === "boolean"
+        ? patch["DynamicScalingInSuspended"]
+        : existing.DynamicScalingInSuspended,
+    DynamicScalingOutSuspended:
+      typeof patch["DynamicScalingOutSuspended"] === "boolean"
+        ? patch["DynamicScalingOutSuspended"]
+        : existing.DynamicScalingOutSuspended,
+    ScheduledScalingSuspended:
+      typeof patch["ScheduledScalingSuspended"] === "boolean"
+        ? patch["ScheduledScalingSuspended"]
+        : existing.ScheduledScalingSuspended,
+  };
+};
+
+const defaultSuspendedState = (): SuspendedStateFlags => ({
+  DynamicScalingInSuspended: false,
+  DynamicScalingOutSuspended: false,
+  ScheduledScalingSuspended: false,
+});
+
 const RegisterScalableTarget: OperationHandler = (input, ctx) => {
   const ns = requireString(input, "ServiceNamespace");
   const resourceId = requireString(input, "ResourceId");
@@ -166,32 +232,87 @@ const RegisterScalableTarget: OperationHandler = (input, ctx) => {
   const key = targetKey(ns, resourceId, dimension);
   const existing = ctx.store.get<StoredScalableTarget>(key);
 
-  const arn =
-    existing?.ScalableTargetARN ??
-    targetArn(ctx.region, ctx.account, ns, resourceId, dimension);
+  if (existing === undefined) {
+    if (typeof input["MinCapacity"] !== "number") {
+      throw awsError(
+        "ValidationException",
+        "MinCapacity is required when registering a new scalable target.",
+        400,
+      );
+    }
+    if (typeof input["MaxCapacity"] !== "number") {
+      throw awsError(
+        "ValidationException",
+        "MaxCapacity is required when registering a new scalable target.",
+        400,
+      );
+    }
+  }
+
+  const newMin =
+    typeof input["MinCapacity"] === "number"
+      ? input["MinCapacity"]
+      : existing?.MinCapacity;
+  const newMax =
+    typeof input["MaxCapacity"] === "number"
+      ? input["MaxCapacity"]
+      : existing?.MaxCapacity;
+
+  if (
+    typeof newMin === "number" &&
+    typeof newMax === "number" &&
+    newMin > newMax
+  ) {
+    throw awsError(
+      "ValidationException",
+      "MinCapacity must be less than or equal to MaxCapacity.",
+      400,
+    );
+  }
+
+  const arn = existing?.ScalableTargetARN ?? targetArn(ctx.region, ctx.account);
+
+  const suspendedState = mergeSuspendedState(
+    input["SuspendedState"],
+    existing?.SuspendedState ?? defaultSuspendedState(),
+  );
 
   const target: StoredScalableTarget = {
     ServiceNamespace: ns,
     ResourceId: resourceId,
     ScalableDimension: dimension,
-    MinCapacity:
-      typeof input["MinCapacity"] === "number"
-        ? input["MinCapacity"]
-        : existing?.MinCapacity,
-    MaxCapacity:
-      typeof input["MaxCapacity"] === "number"
-        ? input["MaxCapacity"]
-        : existing?.MaxCapacity,
+    MinCapacity: newMin,
+    MaxCapacity: newMax,
     RoleARN:
       typeof input["RoleARN"] === "string"
         ? input["RoleARN"]
         : existing?.RoleARN,
-    SuspendedState: input["SuspendedState"] ?? existing?.SuspendedState,
+    SuspendedState: suspendedState,
     ScalableTargetARN: arn,
     CreationTime: existing?.CreationTime ?? Date.now() / 1000,
   };
 
   ctx.store.set(key, target);
+
+  if (
+    existing !== undefined &&
+    (newMin !== existing.MinCapacity || newMax !== existing.MaxCapacity)
+  ) {
+    const activityId = crypto.randomUUID().replace(/-/g, "");
+    const activity: StoredScalingActivity = {
+      ActivityId: activityId,
+      ServiceNamespace: ns,
+      ResourceId: resourceId,
+      ScalableDimension: dimension,
+      Description: `Updating capacity from min=${existing.MinCapacity},max=${existing.MaxCapacity} to min=${newMin},max=${newMax}`,
+      Cause: "RegisterScalableTarget",
+      StartTime: Date.now() / 1000,
+      EndTime: Date.now() / 1000,
+      StatusCode: "Successful",
+      StatusMessage: undefined,
+    };
+    ctx.store.set(activityKey(activityId), activity);
+  }
 
   if (input["Tags"] !== undefined && typeof input["Tags"] === "object") {
     const tags = Object.entries(input["Tags"] as Record<string, string>).map(
@@ -315,6 +436,45 @@ const PutScalingPolicy: OperationHandler = (input, ctx) => {
         p.PolicyName === policyName,
     );
 
+  const policyType =
+    typeof input["PolicyType"] === "string"
+      ? input["PolicyType"]
+      : (existing?.PolicyType ?? "StepScaling");
+
+  if (
+    policyType === "StepScaling" &&
+    input["StepScalingPolicyConfiguration"] === undefined &&
+    existing?.StepScalingPolicyConfiguration === undefined
+  ) {
+    throw awsError(
+      "ValidationException",
+      "StepScalingPolicyConfiguration is required for PolicyType StepScaling.",
+      400,
+    );
+  }
+  if (
+    policyType === "TargetTrackingScaling" &&
+    input["TargetTrackingScalingPolicyConfiguration"] === undefined &&
+    existing?.TargetTrackingScalingPolicyConfiguration === undefined
+  ) {
+    throw awsError(
+      "ValidationException",
+      "TargetTrackingScalingPolicyConfiguration is required for PolicyType TargetTrackingScaling.",
+      400,
+    );
+  }
+  if (
+    policyType === "PredictiveScaling" &&
+    input["PredictiveScalingPolicyConfiguration"] === undefined &&
+    existing?.PredictiveScalingPolicyConfiguration === undefined
+  ) {
+    throw awsError(
+      "ValidationException",
+      "PredictiveScalingPolicyConfiguration is required for PolicyType PredictiveScaling.",
+      400,
+    );
+  }
+
   const arn =
     existing?.PolicyARN ??
     policyArn(ctx.region, ctx.account, ns, resourceId, dimension, policyName);
@@ -325,10 +485,7 @@ const PutScalingPolicy: OperationHandler = (input, ctx) => {
     ServiceNamespace: ns,
     ResourceId: resourceId,
     ScalableDimension: dimension,
-    PolicyType:
-      typeof input["PolicyType"] === "string"
-        ? input["PolicyType"]
-        : (existing?.PolicyType ?? "StepScaling"),
+    PolicyType: policyType,
     StepScalingPolicyConfiguration:
       input["StepScalingPolicyConfiguration"] ??
       existing?.StepScalingPolicyConfiguration,
@@ -379,6 +536,8 @@ const DescribeScalingPolicies: OperationHandler = (input, ctx) => {
     filtered,
     input["NextToken"],
     input["MaxResults"],
+    10,
+    10,
   );
 
   const policies = items.map((p) => ({
@@ -578,6 +737,7 @@ const DescribeScalingActivities: OperationHandler = (input, ctx) => {
     typeof input["ScalableDimension"] === "string"
       ? input["ScalableDimension"]
       : undefined;
+  const includeNotScaled = input["IncludeNotScaledActivities"] === true;
 
   const all = ctx.store
     .list<StoredScalingActivity>()
@@ -585,6 +745,9 @@ const DescribeScalingActivities: OperationHandler = (input, ctx) => {
     .map((e) => e.value);
 
   let filtered = all.filter((a) => a.ServiceNamespace === ns);
+  if (!includeNotScaled) {
+    filtered = filtered.filter((a) => a.StatusCode !== "NotScaled");
+  }
   if (resourceId !== undefined) {
     filtered = filtered.filter((a) => a.ResourceId === resourceId);
   }
@@ -616,7 +779,7 @@ const DescribeScalingActivities: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceARN");
-  void ctx;
+  getTargetByArn(ctx, arn);
   const tags = ctx.store.get<StoredTag[]>(tagKey(arn)) ?? [];
   const tagMap = Object.fromEntries(tags.map((t) => [t.Key, t.Value]));
   return { Tags: tagMap };
@@ -624,6 +787,7 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceARN");
+  getTargetByArn(ctx, arn);
   const newTags =
     input["Tags"] !== undefined && typeof input["Tags"] === "object"
       ? Object.entries(input["Tags"] as Record<string, string>).map(
@@ -641,6 +805,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "ResourceARN");
+  getTargetByArn(ctx, arn);
   const tagKeys = Array.isArray(input["TagKeys"])
     ? (input["TagKeys"] as unknown[]).filter(
         (v): v is string => typeof v === "string",
@@ -656,6 +821,14 @@ const GetPredictiveScalingForecast: OperationHandler = (input, ctx) => {
   const ns = requireString(input, "ServiceNamespace");
   const resourceId = requireString(input, "ResourceId");
   const dimension = requireString(input, "ScalableDimension");
+  requireString(input, "PolicyName");
+
+  if (typeof input["StartTime"] !== "number") {
+    throw awsError("ValidationException", "StartTime is required.", 400);
+  }
+  if (typeof input["EndTime"] !== "number") {
+    throw awsError("ValidationException", "EndTime is required.", 400);
+  }
 
   getTarget(ctx, ns, resourceId, dimension);
 

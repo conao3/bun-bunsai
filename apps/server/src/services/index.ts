@@ -1,3 +1,4 @@
+import { pickService } from "../core/router.ts";
 import type { ServiceDefinition } from "../core/types.ts";
 import sts from "./sts.ts";
 import s3 from "./s3.ts";
@@ -44,6 +45,7 @@ import mq from "./mq.ts";
 import eks from "./eks.ts";
 import appsync from "./appsync.ts";
 import codebuild from "./codebuild.ts";
+import codedeploy from "./codedeploy.ts";
 import codepipeline from "./codepipeline.ts";
 import transfer from "./transfer.ts";
 import codecommit from "./codecommit.ts";
@@ -115,6 +117,7 @@ import networkFirewall from "./network-firewall.ts";
 import schemas from "./schemas.ts";
 import autoscaling from "./autoscaling.ts";
 import pipes from "./pipes.ts";
+import route53resolver from "./route53resolver.ts";
 import applicationAutoscaling from "./application-autoscaling.ts";
 
 export const services: ServiceDefinition[] = [
@@ -163,6 +166,7 @@ export const services: ServiceDefinition[] = [
   eks,
   appsync,
   codebuild,
+  codedeploy,
   codepipeline,
   transfer,
   codecommit,
@@ -234,12 +238,19 @@ export const services: ServiceDefinition[] = [
   schemas,
   autoscaling,
   pipes,
+  route53resolver,
   applicationAutoscaling,
 ];
 
-export const findService = (name: string): ServiceDefinition | undefined =>
-  services.find(
+export const findService = (
+  name: string,
+  path?: string,
+): ServiceDefinition | undefined => {
+  const candidates = services.filter(
     (s) =>
       s.name === name ||
       s.model?.metadata?.targetPrefix?.toLowerCase() === name,
   );
+  if (path === undefined || candidates.length <= 1) return candidates[0];
+  return pickService(candidates, path);
+};

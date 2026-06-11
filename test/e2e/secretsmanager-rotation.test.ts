@@ -99,6 +99,7 @@ test("RotateSecret with lambda invokes all 4 steps in order with correct payload
       new RotateSecretCommand({ SecretId: name, RotationLambdaARN: lambdaArn }),
     );
     expect(rotated.VersionId).not.toBe(v1Id);
+    const newVersionId = rotated.VersionId!;
 
     const recorded = readFileSync(join(tmpDir, "steps.ndjson"), "utf-8");
     const events = recorded
@@ -122,13 +123,13 @@ test("RotateSecret with lambda invokes all 4 steps in order with correct payload
 
     for (const e of events) {
       expect(e.SecretId).toBeDefined();
-      expect(e.ClientRequestToken).toBe(rotated.VersionId);
+      expect(e.ClientRequestToken).toBe(newVersionId);
     }
 
     const current = await client.send(
       new GetSecretValueCommand({ SecretId: name }),
     );
-    expect(current.VersionId).toBe(rotated.VersionId);
+    expect(current.VersionId).toBe(newVersionId);
     expect(current.VersionStages).toContain("AWSCURRENT");
 
     const previous = await client.send(

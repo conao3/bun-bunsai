@@ -140,6 +140,7 @@ import ce from "./ce.ts";
 import ssoAdmin from "./sso-admin.ts";
 import identitystore from "./identitystore.ts";
 import serverlessrepo from "./serverlessrepo.ts";
+import fis from "./fis.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -282,6 +283,7 @@ export const services: ServiceDefinition[] = [
   ssoAdmin,
   identitystore,
   serverlessrepo,
+  fis,
 ];
 
 export const findService = (

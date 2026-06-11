@@ -203,6 +203,7 @@ aws-models/
   sso-admin.json        # botocore/data/sso-admin/2020-07-20/service-2.json         (protocol json, signingName sso, endpointPrefix sso, targetPrefix SWBExternalService)
   identitystore.json    # botocore/data/identitystore/2020-06-15/service-2.json     (protocol json, signingName identitystore, endpointPrefix identitystore, targetPrefix AWSIdentityStore)
   serverlessrepo.json   # botocore/data/serverlessrepo/2017-09-08/service-2.json   (protocol rest-json, endpointPrefix serverlessrepo, signingName serverlessrepo)
+  fis.json              # botocore/data/fis/2020-12-01/service-2.json              (protocol rest-json, signingName fis; AWS Fault Injection Service)
 ```
 
 ### Notes

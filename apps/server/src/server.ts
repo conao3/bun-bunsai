@@ -53,7 +53,7 @@ export function createBunsaiApp() {
     const service =
       route.service === undefined
         ? undefined
-        : findService(route.service, url.pathname);
+        : findService(route.service, url.pathname, route.target);
 
     if (route.service === undefined || service === undefined) {
       const protocol: Protocol = "json";

@@ -1,5 +1,5 @@
 import { pickService } from "../core/router.ts";
-import type { ServiceDefinition } from "../core/types.ts";
+import type { ParsedRequest, ServiceDefinition } from "../core/types.ts";
 import sts from "./sts.ts";
 import s3 from "./s3.ts";
 import sqs from "./sqs.ts";
@@ -126,6 +126,8 @@ import bedrock from "./bedrock.ts";
 import bedrockRuntime from "./bedrock-runtime.ts";
 import textract from "./textract.ts";
 import dms from "./dms.ts";
+import timestreamWrite from "./timestream-write.ts";
+import timestreamQuery from "./timestream-query.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -254,17 +256,26 @@ export const services: ServiceDefinition[] = [
   bedrock,
   textract,
   dms,
+  timestreamWrite,
+  timestreamQuery,
 ];
 
 export const findService = (
   name: string,
   path?: string,
+  target?: string,
 ): ServiceDefinition | undefined => {
   const candidates = services.filter(
     (s) =>
       s.name === name ||
       s.model?.metadata?.targetPrefix?.toLowerCase() === name,
   );
-  if (path === undefined || candidates.length <= 1) return candidates[0];
+  if (candidates.length <= 1) return candidates[0];
+  if (target !== undefined) {
+    const req = { path: path ?? "/", target } as ParsedRequest;
+    const matched = candidates.find((s) => s.matches?.(req) === true);
+    if (matched !== undefined) return matched;
+  }
+  if (path === undefined) return candidates[0];
   return pickService(candidates, path);
 };

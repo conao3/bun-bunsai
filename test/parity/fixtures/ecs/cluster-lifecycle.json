@@ -1,0 +1,101 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-ecs",
+  "clientName": "ECSClient",
+  "steps": [
+    {
+      "command": "CreateClusterCommand",
+      "input": { "clusterName": "parity-ecs-cluster" },
+      "expected": {
+        "cluster": {
+          "clusterName": "parity-ecs-cluster",
+          "status": "ACTIVE",
+          "registeredContainerInstancesCount": 0,
+          "runningTasksCount": 0,
+          "pendingTasksCount": 0,
+          "activeServicesCount": 0,
+          "statistics": [],
+          "tags": [],
+          "settings": [],
+          "capacityProviders": [],
+          "defaultCapacityProviderStrategy": []
+        }
+      },
+      "ignorePaths": ["$metadata", "cluster.clusterArn"],
+      "saveAs": "c1",
+      "refs": {}
+    },
+    {
+      "command": "DescribeClustersCommand",
+      "input": { "clusters": ["parity-ecs-cluster"] },
+      "expected": {
+        "clusters": [
+          {
+            "clusterName": "parity-ecs-cluster",
+            "status": "ACTIVE"
+          }
+        ],
+        "failures": []
+      },
+      "ignorePaths": [
+        "$metadata",
+        "clusters.0.clusterArn",
+        "clusters.0.registeredContainerInstancesCount",
+        "clusters.0.runningTasksCount",
+        "clusters.0.pendingTasksCount",
+        "clusters.0.activeServicesCount",
+        "clusters.0.statistics",
+        "clusters.0.tags",
+        "clusters.0.settings",
+        "clusters.0.capacityProviders",
+        "clusters.0.defaultCapacityProviderStrategy"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListClustersCommand",
+      "input": {},
+      "expected": {},
+      "ignorePaths": ["$metadata", "clusterArns"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteClusterCommand",
+      "input": { "cluster": "parity-ecs-cluster" },
+      "expected": {
+        "cluster": {
+          "clusterName": "parity-ecs-cluster",
+          "status": "INACTIVE"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "cluster.clusterArn",
+        "cluster.registeredContainerInstancesCount",
+        "cluster.runningTasksCount",
+        "cluster.pendingTasksCount",
+        "cluster.activeServicesCount",
+        "cluster.statistics",
+        "cluster.tags",
+        "cluster.settings",
+        "cluster.capacityProviders",
+        "cluster.defaultCapacityProviderStrategy"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteClusterCommand",
+      "input": { "cluster": "parity-ecs-cluster" },
+      "expectedError": {
+        "name": "ClusterNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

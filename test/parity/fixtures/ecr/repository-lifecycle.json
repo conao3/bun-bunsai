@@ -1,0 +1,95 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-ecr",
+  "clientName": "ECRClient",
+  "steps": [
+    {
+      "command": "CreateRepositoryCommand",
+      "input": {
+        "repositoryName": "parity-ecr-repo",
+        "imageTagMutability": "MUTABLE",
+        "imageScanningConfiguration": { "scanOnPush": false }
+      },
+      "expected": {
+        "repository": {
+          "repositoryName": "parity-ecr-repo",
+          "registryId": "000000000000",
+          "imageTagMutability": "MUTABLE",
+          "imageScanningConfiguration": { "scanOnPush": false }
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "repository.repositoryArn",
+        "repository.repositoryUri",
+        "repository.createdAt",
+        "repository.imageTagMutabilityExclusionFilters"
+      ],
+      "saveAs": "repo1",
+      "refs": {}
+    },
+    {
+      "command": "DescribeRepositoriesCommand",
+      "input": { "repositoryNames": ["parity-ecr-repo"] },
+      "expected": {
+        "repositories": [
+          {
+            "repositoryName": "parity-ecr-repo",
+            "registryId": "000000000000"
+          }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "repositories.0.repositoryArn",
+        "repositories.0.repositoryUri",
+        "repositories.0.createdAt",
+        "repositories.0.imageTagMutability",
+        "repositories.0.imageTagMutabilityExclusionFilters",
+        "repositories.0.imageScanningConfiguration"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListImagesCommand",
+      "input": { "repositoryName": "parity-ecr-repo" },
+      "expected": { "imageIds": [] },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteRepositoryCommand",
+      "input": { "repositoryName": "parity-ecr-repo" },
+      "expected": {
+        "repository": {
+          "repositoryName": "parity-ecr-repo"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "repository.repositoryArn",
+        "repository.repositoryUri",
+        "repository.registryId",
+        "repository.createdAt",
+        "repository.imageTagMutability",
+        "repository.imageTagMutabilityExclusionFilters",
+        "repository.imageScanningConfiguration"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeRepositoriesCommand",
+      "input": { "repositoryNames": ["parity-ecr-repo"] },
+      "expectedError": {
+        "name": "RepositoryNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

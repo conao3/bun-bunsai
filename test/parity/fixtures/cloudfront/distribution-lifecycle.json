@@ -1,0 +1,150 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-cloudfront",
+  "clientName": "CloudFrontClient",
+  "steps": [
+    {
+      "command": "CreateDistributionCommand",
+      "input": {
+        "DistributionConfig": {
+          "CallerReference": "parity-cf-ref-1",
+          "Comment": "parity test distribution",
+          "Enabled": true,
+          "Origins": {
+            "Quantity": 1,
+            "Items": [
+              {
+                "Id": "parity-origin",
+                "DomainName": "example.com",
+                "S3OriginConfig": { "OriginAccessIdentity": "" }
+              }
+            ]
+          },
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "parity-origin",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "TrustedSigners": { "Enabled": false, "Quantity": 0 },
+            "ForwardedValues": {
+              "QueryString": false,
+              "Cookies": { "Forward": "none" }
+            },
+            "MinTTL": 0
+          }
+        }
+      },
+      "expected": {
+        "Distribution": {
+          "Status": "Deployed",
+          "InProgressInvalidationBatches": 0,
+          "ActiveTrustedSigners": { "Enabled": false, "Quantity": 0 },
+          "ActiveTrustedKeyGroups": { "Enabled": false, "Quantity": 0 }
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Distribution.Id",
+        "Distribution.ARN",
+        "Distribution.LastModifiedTime",
+        "Distribution.DomainName",
+        "Distribution.DistributionConfig",
+        "ETag",
+        "Location"
+      ],
+      "saveAs": "d1",
+      "refs": {}
+    },
+    {
+      "command": "GetDistributionCommand",
+      "input": { "Id": "${d1.Distribution.Id}" },
+      "expected": {
+        "Distribution": {
+          "Status": "Deployed"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Distribution.Id",
+        "Distribution.ARN",
+        "Distribution.LastModifiedTime",
+        "Distribution.DomainName",
+        "Distribution.InProgressInvalidationBatches",
+        "Distribution.ActiveTrustedSigners",
+        "Distribution.ActiveTrustedKeyGroups",
+        "Distribution.DistributionConfig",
+        "ETag"
+      ],
+      "saveAs": "gd1",
+      "refs": {}
+    },
+    {
+      "command": "ListDistributionsCommand",
+      "input": {},
+      "expected": {},
+      "ignorePaths": ["$metadata", "DistributionList"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UpdateDistributionCommand",
+      "input": {
+        "Id": "${d1.Distribution.Id}",
+        "IfMatch": "${gd1.ETag}",
+        "DistributionConfig": {
+          "CallerReference": "parity-cf-ref-1",
+          "Comment": "parity test distribution",
+          "Enabled": false,
+          "Origins": {
+            "Quantity": 1,
+            "Items": [
+              {
+                "Id": "parity-origin",
+                "DomainName": "example.com",
+                "S3OriginConfig": { "OriginAccessIdentity": "" }
+              }
+            ]
+          },
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "parity-origin",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "TrustedSigners": { "Enabled": false, "Quantity": 0 },
+            "ForwardedValues": {
+              "QueryString": false,
+              "Cookies": { "Forward": "none" }
+            },
+            "MinTTL": 0
+          }
+        }
+      },
+      "expected": {
+        "Distribution": {
+          "Status": "Deployed"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Distribution.Id",
+        "Distribution.ARN",
+        "Distribution.LastModifiedTime",
+        "Distribution.DomainName",
+        "Distribution.InProgressInvalidationBatches",
+        "Distribution.ActiveTrustedSigners",
+        "Distribution.ActiveTrustedKeyGroups",
+        "Distribution.DistributionConfig",
+        "ETag"
+      ],
+      "saveAs": "ud1",
+      "refs": {}
+    },
+    {
+      "command": "DeleteDistributionCommand",
+      "input": {
+        "Id": "${d1.Distribution.Id}",
+        "IfMatch": "${ud1.ETag}"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

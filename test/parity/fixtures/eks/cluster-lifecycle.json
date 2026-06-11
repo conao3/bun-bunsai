@@ -1,0 +1,118 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-eks",
+  "clientName": "EKSClient",
+  "steps": [
+    {
+      "command": "CreateClusterCommand",
+      "input": {
+        "name": "parity-eks-cluster",
+        "roleArn": "arn:aws:iam::000000000000:role/eks-cluster-role",
+        "resourcesVpcConfig": {
+          "subnetIds": ["subnet-00000001"],
+          "securityGroupIds": []
+        },
+        "version": "1.31"
+      },
+      "expected": {
+        "cluster": {
+          "name": "parity-eks-cluster",
+          "status": "CREATING",
+          "version": "1.31",
+          "platformVersion": "eks.1"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "cluster.arn",
+        "cluster.createdAt",
+        "cluster.endpoint",
+        "cluster.roleArn",
+        "cluster.resourcesVpcConfig",
+        "cluster.kubernetesNetworkConfig",
+        "cluster.logging",
+        "cluster.identity",
+        "cluster.certificateAuthority",
+        "cluster.tags",
+        "cluster.connectorConfig"
+      ],
+      "saveAs": "cl1",
+      "refs": {}
+    },
+    {
+      "command": "DescribeClusterCommand",
+      "input": { "name": "parity-eks-cluster" },
+      "expected": {
+        "cluster": {
+          "name": "parity-eks-cluster",
+          "status": "ACTIVE",
+          "version": "1.31"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "cluster.arn",
+        "cluster.createdAt",
+        "cluster.endpoint",
+        "cluster.roleArn",
+        "cluster.resourcesVpcConfig",
+        "cluster.kubernetesNetworkConfig",
+        "cluster.logging",
+        "cluster.identity",
+        "cluster.certificateAuthority",
+        "cluster.platformVersion",
+        "cluster.tags",
+        "cluster.connectorConfig"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListClustersCommand",
+      "input": {},
+      "expected": {},
+      "ignorePaths": ["$metadata", "clusters", "nextToken"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteClusterCommand",
+      "input": { "name": "parity-eks-cluster" },
+      "expected": {
+        "cluster": {
+          "name": "parity-eks-cluster",
+          "status": "DELETING"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "cluster.arn",
+        "cluster.createdAt",
+        "cluster.endpoint",
+        "cluster.roleArn",
+        "cluster.resourcesVpcConfig",
+        "cluster.kubernetesNetworkConfig",
+        "cluster.logging",
+        "cluster.identity",
+        "cluster.certificateAuthority",
+        "cluster.platformVersion",
+        "cluster.version",
+        "cluster.tags",
+        "cluster.connectorConfig"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeClusterCommand",
+      "input": { "name": "parity-eks-cluster" },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 404
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

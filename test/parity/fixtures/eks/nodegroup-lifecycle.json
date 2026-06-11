@@ -1,0 +1,164 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-eks",
+  "clientName": "EKSClient",
+  "steps": [
+    {
+      "command": "CreateClusterCommand",
+      "input": {
+        "name": "parity-eks-ng-cluster",
+        "roleArn": "arn:aws:iam::000000000000:role/eks-cluster-role",
+        "resourcesVpcConfig": {
+          "subnetIds": ["subnet-00000001"],
+          "securityGroupIds": []
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata", "cluster"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeClusterCommand",
+      "input": { "name": "parity-eks-ng-cluster" },
+      "expected": { "cluster": { "status": "ACTIVE" } },
+      "ignorePaths": [
+        "$metadata",
+        "cluster.name",
+        "cluster.arn",
+        "cluster.createdAt",
+        "cluster.version",
+        "cluster.endpoint",
+        "cluster.roleArn",
+        "cluster.resourcesVpcConfig",
+        "cluster.kubernetesNetworkConfig",
+        "cluster.logging",
+        "cluster.identity",
+        "cluster.certificateAuthority",
+        "cluster.platformVersion",
+        "cluster.tags",
+        "cluster.connectorConfig"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateNodegroupCommand",
+      "input": {
+        "clusterName": "parity-eks-ng-cluster",
+        "nodegroupName": "parity-ng",
+        "nodeRole": "arn:aws:iam::000000000000:role/eks-node-role",
+        "subnets": ["subnet-00000001"],
+        "scalingConfig": { "minSize": 1, "maxSize": 2, "desiredSize": 1 }
+      },
+      "expected": {
+        "nodegroup": {
+          "nodegroupName": "parity-ng",
+          "clusterName": "parity-eks-ng-cluster",
+          "status": "CREATING",
+          "capacityType": "ON_DEMAND",
+          "amiType": "AL2_x86_64",
+          "diskSize": 20
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "nodegroup.nodegroupArn",
+        "nodegroup.createdAt",
+        "nodegroup.modifiedAt",
+        "nodegroup.version",
+        "nodegroup.releaseVersion",
+        "nodegroup.scalingConfig",
+        "nodegroup.instanceTypes",
+        "nodegroup.subnets",
+        "nodegroup.nodeRole",
+        "nodegroup.labels",
+        "nodegroup.tags"
+      ],
+      "saveAs": "ng1",
+      "refs": {}
+    },
+    {
+      "command": "DescribeNodegroupCommand",
+      "input": {
+        "clusterName": "parity-eks-ng-cluster",
+        "nodegroupName": "parity-ng"
+      },
+      "expected": {
+        "nodegroup": {
+          "nodegroupName": "parity-ng",
+          "clusterName": "parity-eks-ng-cluster",
+          "status": "ACTIVE"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "nodegroup.nodegroupArn",
+        "nodegroup.createdAt",
+        "nodegroup.modifiedAt",
+        "nodegroup.version",
+        "nodegroup.releaseVersion",
+        "nodegroup.capacityType",
+        "nodegroup.scalingConfig",
+        "nodegroup.instanceTypes",
+        "nodegroup.subnets",
+        "nodegroup.amiType",
+        "nodegroup.nodeRole",
+        "nodegroup.labels",
+        "nodegroup.diskSize",
+        "nodegroup.tags"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListNodegroupsCommand",
+      "input": { "clusterName": "parity-eks-ng-cluster" },
+      "expected": { "nodegroups": ["parity-ng"] },
+      "ignorePaths": ["$metadata", "nextToken"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteNodegroupCommand",
+      "input": {
+        "clusterName": "parity-eks-ng-cluster",
+        "nodegroupName": "parity-ng"
+      },
+      "expected": {
+        "nodegroup": {
+          "nodegroupName": "parity-ng",
+          "status": "DELETING"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "nodegroup.nodegroupArn",
+        "nodegroup.clusterName",
+        "nodegroup.createdAt",
+        "nodegroup.modifiedAt",
+        "nodegroup.version",
+        "nodegroup.releaseVersion",
+        "nodegroup.capacityType",
+        "nodegroup.scalingConfig",
+        "nodegroup.instanceTypes",
+        "nodegroup.subnets",
+        "nodegroup.amiType",
+        "nodegroup.nodeRole",
+        "nodegroup.labels",
+        "nodegroup.diskSize",
+        "nodegroup.tags"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteClusterCommand",
+      "input": { "name": "parity-eks-ng-cluster" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "cluster"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

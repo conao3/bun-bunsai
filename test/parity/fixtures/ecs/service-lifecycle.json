@@ -1,0 +1,138 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-ecs",
+  "clientName": "ECSClient",
+  "steps": [
+    {
+      "command": "CreateClusterCommand",
+      "input": { "clusterName": "parity-ecs-svc-cluster" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "cluster"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "RegisterTaskDefinitionCommand",
+      "input": {
+        "family": "parity-ecs-svc-task",
+        "containerDefinitions": [
+          {
+            "name": "app",
+            "image": "nginx:latest",
+            "cpu": 256,
+            "memory": 512,
+            "essential": true
+          }
+        ]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata", "taskDefinition", "tags"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateServiceCommand",
+      "input": {
+        "serviceName": "parity-ecs-service",
+        "cluster": "parity-ecs-svc-cluster",
+        "taskDefinition": "parity-ecs-svc-task",
+        "desiredCount": 1
+      },
+      "expected": {
+        "service": {
+          "serviceName": "parity-ecs-service",
+          "status": "ACTIVE",
+          "desiredCount": 1,
+          "schedulingStrategy": "REPLICA",
+          "loadBalancers": [],
+          "serviceRegistries": [],
+          "capacityProviderStrategy": [],
+          "placementConstraints": [],
+          "placementStrategy": [],
+          "tags": [],
+          "enableECSManagedTags": false,
+          "enableExecuteCommand": false
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "service.serviceArn",
+        "service.clusterArn",
+        "service.taskDefinition",
+        "service.runningCount",
+        "service.pendingCount",
+        "service.createdAt",
+        "service.deployments",
+        "service.events"
+      ],
+      "saveAs": "svc1",
+      "refs": {}
+    },
+    {
+      "command": "DescribeServicesCommand",
+      "input": {
+        "cluster": "parity-ecs-svc-cluster",
+        "services": ["parity-ecs-service"]
+      },
+      "expected": {
+        "failures": []
+      },
+      "ignorePaths": ["$metadata", "services"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListServicesCommand",
+      "input": { "cluster": "parity-ecs-svc-cluster" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "serviceArns"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteServiceCommand",
+      "input": {
+        "cluster": "parity-ecs-svc-cluster",
+        "service": "parity-ecs-service",
+        "force": true
+      },
+      "expected": {
+        "service": {
+          "serviceName": "parity-ecs-service",
+          "status": "DRAINING"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "service.serviceArn",
+        "service.clusterArn",
+        "service.taskDefinition",
+        "service.desiredCount",
+        "service.runningCount",
+        "service.pendingCount",
+        "service.schedulingStrategy",
+        "service.createdAt",
+        "service.loadBalancers",
+        "service.serviceRegistries",
+        "service.capacityProviderStrategy",
+        "service.deployments",
+        "service.events",
+        "service.placementConstraints",
+        "service.placementStrategy",
+        "service.tags",
+        "service.enableECSManagedTags",
+        "service.enableExecuteCommand"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteClusterCommand",
+      "input": { "cluster": "parity-ecs-svc-cluster" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "cluster"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

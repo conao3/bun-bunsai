@@ -1,0 +1,129 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-elasticache",
+  "clientName": "ElastiCacheClient",
+  "steps": [
+    {
+      "command": "CreateCacheClusterCommand",
+      "input": {
+        "CacheClusterId": "parity-cache-cluster",
+        "CacheNodeType": "cache.t3.micro",
+        "Engine": "redis",
+        "NumCacheNodes": 1
+      },
+      "expected": {
+        "CacheCluster": {
+          "CacheClusterId": "parity-cache-cluster",
+          "CacheNodeType": "cache.t3.micro",
+          "Engine": "redis",
+          "CacheClusterStatus": "creating",
+          "NumCacheNodes": 1
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "CacheCluster.EngineVersion",
+        "CacheCluster.PreferredAvailabilityZone",
+        "CacheCluster.CacheClusterCreateTime",
+        "CacheCluster.ReplicationGroupId",
+        "CacheCluster.ConfigurationEndpoint",
+        "CacheCluster.CacheNodes",
+        "CacheCluster.ARN"
+      ],
+      "saveAs": "cc1",
+      "refs": {}
+    },
+    {
+      "command": "DescribeCacheClustersCommand",
+      "input": { "CacheClusterId": "parity-cache-cluster" },
+      "expected": {
+        "CacheClusters": [
+          {
+            "CacheClusterId": "parity-cache-cluster",
+            "CacheNodeType": "cache.t3.micro",
+            "Engine": "redis",
+            "CacheClusterStatus": "available",
+            "NumCacheNodes": 1
+          }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "CacheClusters.0.EngineVersion",
+        "CacheClusters.0.PreferredAvailabilityZone",
+        "CacheClusters.0.CacheClusterCreateTime",
+        "CacheClusters.0.ReplicationGroupId",
+        "CacheClusters.0.ConfigurationEndpoint",
+        "CacheClusters.0.CacheNodes",
+        "CacheClusters.0.ARN",
+        "Marker"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteCacheClusterCommand",
+      "input": { "CacheClusterId": "parity-cache-cluster" },
+      "expected": {
+        "CacheCluster": {
+          "CacheClusterId": "parity-cache-cluster",
+          "CacheClusterStatus": "deleting"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "CacheCluster.CacheNodeType",
+        "CacheCluster.Engine",
+        "CacheCluster.EngineVersion",
+        "CacheCluster.NumCacheNodes",
+        "CacheCluster.PreferredAvailabilityZone",
+        "CacheCluster.CacheClusterCreateTime",
+        "CacheCluster.ReplicationGroupId",
+        "CacheCluster.ConfigurationEndpoint",
+        "CacheCluster.CacheNodes",
+        "CacheCluster.ARN"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeCacheClustersCommand",
+      "input": { "CacheClusterId": "parity-cache-cluster" },
+      "expected": {
+        "CacheClusters": [
+          {
+            "CacheClusterId": "parity-cache-cluster",
+            "CacheClusterStatus": "deleting"
+          }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "CacheClusters.0.CacheNodeType",
+        "CacheClusters.0.Engine",
+        "CacheClusters.0.EngineVersion",
+        "CacheClusters.0.NumCacheNodes",
+        "CacheClusters.0.PreferredAvailabilityZone",
+        "CacheClusters.0.CacheClusterCreateTime",
+        "CacheClusters.0.ReplicationGroupId",
+        "CacheClusters.0.ConfigurationEndpoint",
+        "CacheClusters.0.CacheNodes",
+        "CacheClusters.0.ARN",
+        "Marker"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeCacheClustersCommand",
+      "input": { "CacheClusterId": "parity-cache-cluster" },
+      "expectedError": {
+        "name": "CacheClusterNotFoundFault",
+        "statusCode": 404
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

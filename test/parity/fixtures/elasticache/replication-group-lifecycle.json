@@ -1,0 +1,94 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-elasticache",
+  "clientName": "ElastiCacheClient",
+  "steps": [
+    {
+      "command": "CreateReplicationGroupCommand",
+      "input": {
+        "ReplicationGroupId": "parity-rg",
+        "ReplicationGroupDescription": "Parity test replication group",
+        "CacheNodeType": "cache.t3.micro",
+        "Engine": "redis",
+        "NumCacheClusters": 1
+      },
+      "expected": {
+        "ReplicationGroup": {
+          "ReplicationGroupId": "parity-rg",
+          "Description": "Parity test replication group",
+          "Status": "creating",
+          "Engine": "redis",
+          "CacheNodeType": "cache.t3.micro",
+          "AutomaticFailover": "disabled",
+          "MultiAZ": "disabled",
+          "ClusterEnabled": false
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "ReplicationGroup.MemberClusters",
+        "ReplicationGroup.NumNodeGroups",
+        "ReplicationGroup.ReplicationGroupCreateTime",
+        "ReplicationGroup.ConfigurationEndpoint",
+        "ReplicationGroup.ARN"
+      ],
+      "saveAs": "rg1",
+      "refs": {}
+    },
+    {
+      "command": "DescribeReplicationGroupsCommand",
+      "input": { "ReplicationGroupId": "parity-rg" },
+      "expected": {
+        "ReplicationGroups": [
+          {
+            "ReplicationGroupId": "parity-rg",
+            "Status": "available"
+          }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "ReplicationGroups.0.Description",
+        "ReplicationGroups.0.MemberClusters",
+        "ReplicationGroups.0.AutomaticFailover",
+        "ReplicationGroups.0.MultiAZ",
+        "ReplicationGroups.0.CacheNodeType",
+        "ReplicationGroups.0.ClusterEnabled",
+        "ReplicationGroups.0.NumNodeGroups",
+        "ReplicationGroups.0.Engine",
+        "ReplicationGroups.0.ReplicationGroupCreateTime",
+        "ReplicationGroups.0.ConfigurationEndpoint",
+        "ReplicationGroups.0.ARN",
+        "Marker"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteReplicationGroupCommand",
+      "input": { "ReplicationGroupId": "parity-rg" },
+      "expected": {
+        "ReplicationGroup": {
+          "ReplicationGroupId": "parity-rg",
+          "Status": "deleting"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "ReplicationGroup.Description",
+        "ReplicationGroup.MemberClusters",
+        "ReplicationGroup.AutomaticFailover",
+        "ReplicationGroup.MultiAZ",
+        "ReplicationGroup.CacheNodeType",
+        "ReplicationGroup.ClusterEnabled",
+        "ReplicationGroup.NumNodeGroups",
+        "ReplicationGroup.Engine",
+        "ReplicationGroup.ReplicationGroupCreateTime",
+        "ReplicationGroup.ConfigurationEndpoint",
+        "ReplicationGroup.ARN"
+      ],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

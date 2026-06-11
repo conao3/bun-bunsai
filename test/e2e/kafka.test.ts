@@ -4,26 +4,39 @@ import {
   CreateClusterCommand,
   CreateClusterV2Command,
   CreateConfigurationCommand,
+  CreateReplicatorCommand,
+  CreateTopicCommand,
+  CreateVpcConnectionCommand,
   DeleteClusterCommand,
   DeleteConfigurationCommand,
+  DeleteTopicCommand,
   DescribeClusterCommand,
   DescribeClusterOperationCommand,
+  DescribeClusterOperationV2Command,
   DescribeClusterV2Command,
   DescribeConfigurationCommand,
   DescribeConfigurationRevisionCommand,
+  DescribeReplicatorCommand,
+  DescribeTopicCommand,
+  DescribeVpcConnectionCommand,
   GetBootstrapBrokersCommand,
   KafkaClient,
+  ListClientVpcConnectionsCommand,
   ListClusterOperationsCommand,
+  ListClusterOperationsV2Command,
   ListClustersCommand,
   ListClustersV2Command,
   ListConfigurationRevisionsCommand,
   ListConfigurationsCommand,
   ListTagsForResourceCommand,
+  ListTopicsCommand,
+  RejectClientVpcConnectionCommand,
   TagResourceCommand,
   UntagResourceCommand,
   UpdateBrokerCountCommand,
   UpdateClusterConfigurationCommand,
   UpdateConfigurationCommand,
+  UpdateReplicationInfoCommand,
 } from "@aws-sdk/client-kafka";
 
 const { endpoint, requestHandler } = startApp();
@@ -284,4 +297,365 @@ test("MSK UpdateClusterConfiguration links to cluster operation", async () => {
   );
   expect(result.ClusterArn).toBe(cluster.ClusterArn);
   expect(result.ClusterOperationArn).toBeDefined();
+});
+
+test("KAFKA-01: topic lifecycle (create/list/describe/update/delete)", async () => {
+  const client = kafka();
+  const clusterName = `bunsai-topic-${Date.now()}`;
+
+  const cluster = await client.send(
+    new CreateClusterCommand({
+      ClusterName: clusterName,
+      KafkaVersion: "2.8.1",
+      NumberOfBrokerNodes: 3,
+      BrokerNodeGroupInfo: {
+        InstanceType: "kafka.m5.large",
+        ClientSubnets: ["subnet-aaaa", "subnet-bbbb", "subnet-cccc"],
+      },
+    }),
+  );
+  const clusterArn = cluster.ClusterArn!;
+
+  const created = await client.send(
+    new CreateTopicCommand({
+      ClusterArn: clusterArn,
+      TopicName: "t1",
+      PartitionCount: 3,
+      ReplicationFactor: 2,
+    }),
+  );
+  expect(created.TopicName).toBe("t1");
+  expect(created.TopicArn).toContain("t1");
+  expect(created.Status).toBe("ACTIVE");
+
+  const listed = await client.send(
+    new ListTopicsCommand({ ClusterArn: clusterArn }),
+  );
+  expect(listed.Topics?.length).toBe(1);
+  expect(listed.Topics![0].TopicName).toBe("t1");
+  expect(listed.Topics![0].PartitionCount).toBe(3);
+
+  const described = await client.send(
+    new DescribeTopicCommand({ ClusterArn: clusterArn, TopicName: "t1" }),
+  );
+  expect(described.TopicName).toBe("t1");
+  expect(described.ReplicationFactor).toBe(2);
+  expect(described.PartitionCount).toBe(3);
+
+  await expect(
+    client.send(
+      new CreateTopicCommand({
+        ClusterArn: clusterArn,
+        TopicName: "t1",
+        PartitionCount: 1,
+        ReplicationFactor: 1,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteTopicCommand({
+      ClusterArn: clusterArn,
+      TopicName: "t1",
+    }),
+  );
+
+  await expect(
+    client.send(
+      new DescribeTopicCommand({ ClusterArn: clusterArn, TopicName: "t1" }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("KAFKA-02: RejectClientVpcConnection sets REJECTED state", async () => {
+  const client = kafka();
+  const clusterName = `bunsai-vpc-${Date.now()}`;
+
+  const cluster = await client.send(
+    new CreateClusterCommand({
+      ClusterName: clusterName,
+      KafkaVersion: "2.8.1",
+      NumberOfBrokerNodes: 3,
+      BrokerNodeGroupInfo: {
+        InstanceType: "kafka.m5.large",
+        ClientSubnets: ["subnet-aaaa", "subnet-bbbb", "subnet-cccc"],
+      },
+    }),
+  );
+  const clusterArn = cluster.ClusterArn!;
+  await client.send(new DescribeClusterCommand({ ClusterArn: clusterArn }));
+
+  const vpc = await client.send(
+    new CreateVpcConnectionCommand({
+      TargetClusterArn: clusterArn,
+      Authentication: "SASL_IAM",
+      VpcId: "vpc-00000001",
+      ClientSubnets: ["subnet-aaaa"],
+      SecurityGroups: ["sg-00000001"],
+    }),
+  );
+  expect(vpc.State).toBe("AVAILABLE");
+
+  await client.send(
+    new RejectClientVpcConnectionCommand({
+      ClusterArn: clusterArn,
+      VpcConnectionArn: vpc.VpcConnectionArn!,
+    }),
+  );
+
+  const listed = await client.send(
+    new ListClientVpcConnectionsCommand({ ClusterArn: clusterArn }),
+  );
+  const found = listed.ClientVpcConnections?.find(
+    (c) => c.VpcConnectionArn === vpc.VpcConnectionArn,
+  );
+  expect(found?.State).toBe("REJECTED");
+
+  const described = await client.send(
+    new DescribeVpcConnectionCommand({ Arn: vpc.VpcConnectionArn! }),
+  );
+  expect(described.State).toBe("REJECTED");
+});
+
+test("KAFKA-03: UpdateReplicationInfo persists to DescribeReplicator", async () => {
+  const client = kafka();
+  const clusterName1 = `bunsai-src-${Date.now()}`;
+  const clusterName2 = `bunsai-tgt-${Date.now()}`;
+
+  const src = await client.send(
+    new CreateClusterCommand({
+      ClusterName: clusterName1,
+      KafkaVersion: "2.8.1",
+      NumberOfBrokerNodes: 3,
+      BrokerNodeGroupInfo: {
+        InstanceType: "kafka.m5.large",
+        ClientSubnets: ["subnet-aaaa", "subnet-bbbb", "subnet-cccc"],
+      },
+    }),
+  );
+  const tgt = await client.send(
+    new CreateClusterCommand({
+      ClusterName: clusterName2,
+      KafkaVersion: "2.8.1",
+      NumberOfBrokerNodes: 3,
+      BrokerNodeGroupInfo: {
+        InstanceType: "kafka.m5.large",
+        ClientSubnets: ["subnet-aaaa", "subnet-bbbb", "subnet-cccc"],
+      },
+    }),
+  );
+
+  const replicator = await client.send(
+    new CreateReplicatorCommand({
+      ReplicatorName: `rep-${Date.now()}`,
+      KafkaClusters: [
+        {
+          AmazonMskCluster: { MskClusterArn: src.ClusterArn! },
+          VpcConfig: { SubnetIds: ["subnet-aaaa"], SecurityGroupIds: ["sg-1"] },
+        },
+        {
+          AmazonMskCluster: { MskClusterArn: tgt.ClusterArn! },
+          VpcConfig: { SubnetIds: ["subnet-bbbb"], SecurityGroupIds: ["sg-2"] },
+        },
+      ],
+      ReplicationInfoList: [
+        {
+          SourceKafkaClusterArn: src.ClusterArn!,
+          TargetKafkaClusterArn: tgt.ClusterArn!,
+          TopicReplication: { TopicsToReplicate: ["a"] },
+          ConsumerGroupReplication: { ConsumerGroupsToReplicate: ["cg1"] },
+          TargetCompressionType: "NONE",
+        },
+      ],
+      ServiceExecutionRoleArn: "arn:aws:iam::123456789012:role/test",
+    }),
+  );
+
+  await client.send(
+    new UpdateReplicationInfoCommand({
+      ReplicatorArn: replicator.ReplicatorArn!,
+      SourceKafkaClusterArn: src.ClusterArn!,
+      TargetKafkaClusterArn: tgt.ClusterArn!,
+      TopicReplication: {
+        TopicsToReplicate: ["a", "b"],
+        TopicsToExclude: [],
+        CopyTopicConfigurations: true,
+        DetectAndCopyNewTopics: false,
+        CopyAccessControlListsForTopics: false,
+      },
+      ConsumerGroupReplication: {
+        ConsumerGroupsToReplicate: ["cg1"],
+        ConsumerGroupsToExclude: [],
+        SynchroniseConsumerGroupOffsets: false,
+        DetectAndCopyNewConsumerGroups: false,
+      },
+      CurrentVersion: "1",
+    }),
+  );
+
+  const desc = await client.send(
+    new DescribeReplicatorCommand({ ReplicatorArn: replicator.ReplicatorArn! }),
+  );
+  const info = desc.ReplicationInfoList?.[0];
+  expect(info?.TopicReplication?.TopicsToReplicate).toContain("b");
+});
+
+test("KAFKA-04: CurrentVersion mismatch rejects Update*", async () => {
+  const client = kafka();
+  const clusterName = `bunsai-cv-${Date.now()}`;
+
+  const cluster = await client.send(
+    new CreateClusterCommand({
+      ClusterName: clusterName,
+      KafkaVersion: "2.8.1",
+      NumberOfBrokerNodes: 3,
+      BrokerNodeGroupInfo: {
+        InstanceType: "kafka.m5.large",
+        ClientSubnets: ["subnet-aaaa", "subnet-bbbb", "subnet-cccc"],
+      },
+    }),
+  );
+  await client.send(
+    new DescribeClusterCommand({ ClusterArn: cluster.ClusterArn! }),
+  );
+
+  await expect(
+    client.send(
+      new UpdateBrokerCountCommand({
+        ClusterArn: cluster.ClusterArn!,
+        CurrentVersion: "wrong-version",
+        TargetNumberOfBrokerNodes: 6,
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("KAFKA-05: DeleteConfiguration blocked when in use", async () => {
+  const client = kafka();
+  const configName = `bunsai-cfgdel-${Date.now()}`;
+  const clusterName = `bunsai-cfgdel-cl-${Date.now()}`;
+
+  const cfg = await client.send(
+    new CreateConfigurationCommand({
+      Name: configName,
+      ServerProperties: Buffer.from("auto.create.topics.enable=true"),
+    }),
+  );
+
+  const cluster = await client.send(
+    new CreateClusterCommand({
+      ClusterName: clusterName,
+      KafkaVersion: "2.8.1",
+      NumberOfBrokerNodes: 3,
+      BrokerNodeGroupInfo: {
+        InstanceType: "kafka.m5.large",
+        ClientSubnets: ["subnet-aaaa", "subnet-bbbb", "subnet-cccc"],
+      },
+      ConfigurationInfo: { Arn: cfg.Arn!, Revision: 1 },
+    }),
+  );
+  await client.send(
+    new DescribeClusterCommand({ ClusterArn: cluster.ClusterArn! }),
+  );
+
+  await expect(
+    client.send(new DeleteConfigurationCommand({ Arn: cfg.Arn! })),
+  ).rejects.toThrow();
+});
+
+test("KAFKA-06: CreateVpcConnection requires valid cluster + consistent state", async () => {
+  const client = kafka();
+  const clusterName = `bunsai-vpcstate-${Date.now()}`;
+
+  const cluster = await client.send(
+    new CreateClusterCommand({
+      ClusterName: clusterName,
+      KafkaVersion: "2.8.1",
+      NumberOfBrokerNodes: 3,
+      BrokerNodeGroupInfo: {
+        InstanceType: "kafka.m5.large",
+        ClientSubnets: ["subnet-aaaa", "subnet-bbbb", "subnet-cccc"],
+      },
+    }),
+  );
+  await client.send(
+    new DescribeClusterCommand({ ClusterArn: cluster.ClusterArn! }),
+  );
+
+  await expect(
+    client.send(
+      new CreateVpcConnectionCommand({
+        TargetClusterArn:
+          "arn:aws:kafka:us-east-1:123456789012:cluster/nonexistent/fake",
+        Authentication: "SASL_IAM",
+        VpcId: "vpc-00000001",
+        ClientSubnets: ["subnet-aaaa"],
+        SecurityGroups: ["sg-00000001"],
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const vpc = await client.send(
+    new CreateVpcConnectionCommand({
+      TargetClusterArn: cluster.ClusterArn!,
+      Authentication: "SASL_IAM",
+      VpcId: "vpc-00000001",
+      ClientSubnets: ["subnet-aaaa"],
+      SecurityGroups: ["sg-00000001"],
+    }),
+  );
+  expect(vpc.State).toBe("AVAILABLE");
+
+  const described = await client.send(
+    new DescribeVpcConnectionCommand({ Arn: vpc.VpcConnectionArn! }),
+  );
+  expect(described.State).toBe("AVAILABLE");
+});
+
+test("KAFKA-08: V2 cluster operation response has startTime and clusterType", async () => {
+  const client = kafka();
+  const clusterName = `bunsai-v2op-${Date.now()}`;
+
+  const cluster = await client.send(
+    new CreateClusterV2Command({
+      ClusterName: clusterName,
+      Provisioned: {
+        KafkaVersion: "2.8.1",
+        NumberOfBrokerNodes: 3,
+        BrokerNodeGroupInfo: {
+          InstanceType: "kafka.m5.large",
+          ClientSubnets: ["subnet-aaaa", "subnet-bbbb", "subnet-cccc"],
+        },
+      },
+    }),
+  );
+  const desc = await client.send(
+    new DescribeClusterV2Command({ ClusterArn: cluster.ClusterArn! }),
+  );
+  const currentVersion = desc.ClusterInfo?.CurrentVersion!;
+
+  const updated = await client.send(
+    new UpdateBrokerCountCommand({
+      ClusterArn: cluster.ClusterArn!,
+      CurrentVersion: currentVersion,
+      TargetNumberOfBrokerNodes: 6,
+    }),
+  );
+
+  const ops = await client.send(
+    new ListClusterOperationsV2Command({ ClusterArn: cluster.ClusterArn! }),
+  );
+  expect(ops.ClusterOperationInfoList?.length).toBeGreaterThan(0);
+  const op = ops.ClusterOperationInfoList![0] as Record<string, unknown>;
+  expect(op["StartTime"]).toBeDefined();
+  expect(op["ClusterType"]).toBe("PROVISIONED");
+
+  const opV2 = await client.send(
+    new DescribeClusterOperationV2Command({
+      ClusterOperationArn: updated.ClusterOperationArn!,
+    }),
+  );
+  const info = opV2.ClusterOperationInfo as Record<string, unknown> | undefined;
+  expect(info?.["StartTime"]).toBeDefined();
+  expect(info?.["ClusterType"]).toBe("PROVISIONED");
 });

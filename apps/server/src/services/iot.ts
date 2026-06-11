@@ -52,6 +52,24 @@ const allJobsKey = "allJobs";
 const allJobTemplatesKey = "allJobTemplates";
 const allCommandsKey = "allCommands";
 const allCommandExecutionsKey = "allCommandExecutions";
+const caCertKey = (id: string) => `caCert:${id}`;
+const allCACertsKey = "allCACerts";
+const registrationCodeKey = "registrationCode";
+const certProviderKey = (name: string) => `certProvider:${name}`;
+const allCertProvidersKey = "allCertProviders";
+const provisioningTemplateKey = (name: string) => `provTemplate:${name}`;
+const provisioningTemplateVersionKey = (name: string, versionId: number) =>
+  `provTemplateV:${name}:${versionId}`;
+const provisioningTemplateVersionsKey = (name: string) =>
+  `provTemplateVersions:${name}`;
+const allProvisioningTemplatesKey = "allProvisioningTemplates";
+const roleAliasKey = (alias: string) => `roleAlias:${alias}`;
+const allRoleAliasesKey = "allRoleAliases";
+const authorizerKey = (name: string) => `authorizer:${name}`;
+const allAuthorizersKey = "allAuthorizers";
+const defaultAuthorizerKey = "defaultAuthorizer";
+const domainConfigKey = (name: string) => `domainConfig:${name}`;
+const allDomainConfigsKey = "allDomainConfigs";
 
 type StoredThing = {
   thingName: string;
@@ -176,6 +194,77 @@ type StoredCommandExecution = {
   completedAt?: number;
 };
 
+type StoredCACertificate = {
+  certificateId: string;
+  certificateArn: string;
+  certificatePem: string;
+  status: string;
+  autoRegistrationStatus: string;
+  createdAt: number;
+};
+
+type StoredCertificateProvider = {
+  certificateProviderName: string;
+  certificateProviderArn: string;
+  lambdaFunctionArn: string;
+  accountDefaultForOperations: string[];
+  createdAt: number;
+  lastModifiedAt: number;
+};
+
+type StoredProvisioningTemplate = {
+  templateName: string;
+  templateArn: string;
+  description?: string;
+  templateBody: string;
+  enabled: boolean;
+  provisioningRoleArn: string;
+  defaultVersionId: number;
+  createdAt: number;
+  lastModifiedDate: number;
+  type: string;
+};
+
+type StoredProvisioningTemplateVersion = {
+  versionId: number;
+  templateBody: string;
+  isDefaultVersion: boolean;
+  createdAt: number;
+};
+
+type StoredRoleAlias = {
+  roleAlias: string;
+  roleAliasArn: string;
+  roleArn: string;
+  credentialDurationSeconds: number;
+  createdAt: number;
+  lastModifiedDate: number;
+};
+
+type StoredAuthorizer = {
+  authorizerName: string;
+  authorizerArn: string;
+  authorizerFunctionArn: string;
+  tokenKeyName?: string;
+  tokenSigningPublicKeys?: Record<string, string>;
+  status: string;
+  signingDisabled: boolean;
+  enableCachingForHttp: boolean;
+  createdAt: number;
+  lastModifiedDate: number;
+};
+
+type StoredDomainConfiguration = {
+  domainConfigurationName: string;
+  domainConfigurationArn: string;
+  domainName?: string;
+  serviceType?: string;
+  domainConfigurationStatus: string;
+  domainType: string;
+  createdAt: number;
+  lastModifiedDate: number;
+};
+
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
 const thingArn = (ctx: ServiceContext, name: string) =>
@@ -196,6 +285,18 @@ const jobTemplateArn = (ctx: ServiceContext, id: string) =>
   `arn:aws:iot:${ctx.region}:${ctx.account}:jobtemplate/${id}`;
 const commandArn = (ctx: ServiceContext, id: string) =>
   `arn:aws:iot:${ctx.region}:${ctx.account}:command/${id}`;
+const caCertArn = (ctx: ServiceContext, id: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:cacert/${id}`;
+const certProviderArn = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:certificateprovider/${name}`;
+const provisioningTemplateArn = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:provisioningtemplate/${name}`;
+const roleAliasArn = (ctx: ServiceContext, alias: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:rolealias/${alias}`;
+const authorizerArn = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:authorizer/${name}`;
+const domainConfigArn = (ctx: ServiceContext, name: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:domainconfiguration/${name}/V1`;
 
 const pemOf = (id: string): string =>
   `-----BEGIN CERTIFICATE-----\n${Buffer.from(id, "utf8").toString("base64")}\n-----END CERTIFICATE-----`;
@@ -281,6 +382,96 @@ const requireRule = (ctx: ServiceContext, name: string): StoredTopicRule => {
     throw awsError(
       "ResourceNotFoundException",
       `TopicRule ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireCACert = (
+  ctx: ServiceContext,
+  id: string,
+): StoredCACertificate => {
+  const stored = ctx.store.get<StoredCACertificate>(caCertKey(id));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `CA Certificate ${id} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireCertProvider = (
+  ctx: ServiceContext,
+  name: string,
+): StoredCertificateProvider => {
+  const stored = ctx.store.get<StoredCertificateProvider>(
+    certProviderKey(name),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Certificate provider ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireProvisioningTemplate = (
+  ctx: ServiceContext,
+  name: string,
+): StoredProvisioningTemplate => {
+  const stored = ctx.store.get<StoredProvisioningTemplate>(
+    provisioningTemplateKey(name),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Provisioning template ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireRoleAlias = (
+  ctx: ServiceContext,
+  alias: string,
+): StoredRoleAlias => {
+  const stored = ctx.store.get<StoredRoleAlias>(roleAliasKey(alias));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Role alias ${alias} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireAuthorizer = (
+  ctx: ServiceContext,
+  name: string,
+): StoredAuthorizer => {
+  const stored = ctx.store.get<StoredAuthorizer>(authorizerKey(name));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Authorizer ${name} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireDomainConfig = (
+  ctx: ServiceContext,
+  name: string,
+): StoredDomainConfiguration => {
+  const stored = ctx.store.get<StoredDomainConfiguration>(
+    domainConfigKey(name),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Domain configuration ${name} not found.`,
       404,
     );
   return stored;
@@ -2135,6 +2326,996 @@ const ListCommandExecutions: OperationHandler = (input, ctx) => {
   };
 };
 
+// === Certificate transfer / CA / registration operations ===
+
+const CreateCertificateFromCsr: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  requireStr(data, "certificateSigningRequest");
+  const id = crypto.randomUUID().replace(/-/g, "");
+  const arn = certArn(ctx, id);
+  const status =
+    data["setAsActive"] === true || data["setAsActive"] === "true"
+      ? "ACTIVE"
+      : "INACTIVE";
+  const stored: StoredCertificate = {
+    certificateId: id,
+    certificateArn: arn,
+    certificatePem: pemOf(id),
+    publicKey: publicKeyOf(id),
+    privateKey: privateKeyOf(id),
+    status,
+    createdAt: nowSeconds(),
+  };
+  ctx.store.set(certKey(id), stored);
+  addToList(ctx, allCertsKey, id);
+  return {
+    certificateArn: arn,
+    certificateId: id,
+    certificatePem: stored.certificatePem,
+  };
+};
+
+const AcceptCertificateTransfer: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const certificateId = requireStr(data, "certificateId");
+  const stored = requireCert(ctx, certificateId);
+  if (stored.status !== "PENDING_TRANSFER") {
+    throw awsError(
+      "TransferAlreadyCompletedException",
+      `Certificate ${certificateId} transfer already completed.`,
+      410,
+    );
+  }
+  const newStatus =
+    data["setAsActive"] === true || data["setAsActive"] === "true"
+      ? "ACTIVE"
+      : "INACTIVE";
+  ctx.store.set(certKey(certificateId), { ...stored, status: newStatus });
+  return {};
+};
+
+const CancelCertificateTransfer: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const certificateId = requireStr(data, "certificateId");
+  const stored = requireCert(ctx, certificateId);
+  if (stored.status !== "PENDING_TRANSFER") {
+    throw awsError(
+      "TransferAlreadyCompletedException",
+      `Certificate ${certificateId} transfer already completed.`,
+      410,
+    );
+  }
+  ctx.store.set(certKey(certificateId), { ...stored, status: "INACTIVE" });
+  return {};
+};
+
+const TransferCertificate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const certificateId = requireStr(data, "certificateId");
+  const stored = requireCert(ctx, certificateId);
+  if (stored.status !== "ACTIVE" && stored.status !== "INACTIVE") {
+    throw awsError(
+      "CertificateStateException",
+      `Certificate ${certificateId} cannot be transferred.`,
+      406,
+    );
+  }
+  ctx.store.set(certKey(certificateId), {
+    ...stored,
+    status: "PENDING_TRANSFER",
+  });
+  return { transferredCertificateArn: stored.certificateArn };
+};
+
+const RejectCertificateTransfer: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const certificateId = requireStr(data, "certificateId");
+  const stored = requireCert(ctx, certificateId);
+  if (stored.status !== "PENDING_TRANSFER") {
+    throw awsError(
+      "TransferAlreadyCompletedException",
+      `Certificate ${certificateId} transfer already completed.`,
+      410,
+    );
+  }
+  ctx.store.set(certKey(certificateId), { ...stored, status: "INACTIVE" });
+  return {};
+};
+
+const RegisterCertificate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  requireStr(data, "certificatePem");
+  const id = crypto.randomUUID().replace(/-/g, "");
+  const arn = certArn(ctx, id);
+  const status = str(data["status"]) ?? "INACTIVE";
+  const stored: StoredCertificate = {
+    certificateId: id,
+    certificateArn: arn,
+    certificatePem: str(data["certificatePem"]) ?? pemOf(id),
+    publicKey: publicKeyOf(id),
+    privateKey: privateKeyOf(id),
+    status,
+    createdAt: nowSeconds(),
+  };
+  ctx.store.set(certKey(id), stored);
+  addToList(ctx, allCertsKey, id);
+  return { certificateArn: arn, certificateId: id };
+};
+
+const RegisterCertificateWithoutCA: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  requireStr(data, "certificatePem");
+  const id = crypto.randomUUID().replace(/-/g, "");
+  const arn = certArn(ctx, id);
+  const status = str(data["status"]) ?? "ACTIVE";
+  const stored: StoredCertificate = {
+    certificateId: id,
+    certificateArn: arn,
+    certificatePem: str(data["certificatePem"]) ?? pemOf(id),
+    publicKey: publicKeyOf(id),
+    privateKey: privateKeyOf(id),
+    status,
+    createdAt: nowSeconds(),
+  };
+  ctx.store.set(certKey(id), stored);
+  addToList(ctx, allCertsKey, id);
+  return { certificateArn: arn, certificateId: id };
+};
+
+const ListCertificatesByCA: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const caCertificateId = requireStr(data, "caCertificateId");
+  requireCACert(ctx, caCertificateId);
+  const marker = str(data["marker"]);
+  const allIds = getList<string>(ctx, allCertsKey);
+  const { items: ids, nextMarker } = paginateList(allIds, marker);
+  const certificates = ids
+    .map((id) => ctx.store.get<StoredCertificate>(certKey(id)))
+    .filter(Boolean)
+    .map((c) => ({
+      certificateArn: c!.certificateArn,
+      certificateId: c!.certificateId,
+      status: c!.status,
+      creationDate: c!.createdAt,
+    }));
+  return { certificates, nextMarker };
+};
+
+const ListOutgoingCertificates: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["marker"]);
+  const allIds = getList<string>(ctx, allCertsKey);
+  const allCerts = allIds
+    .map((id) => ctx.store.get<StoredCertificate>(certKey(id)))
+    .filter((c): c is StoredCertificate => c !== undefined)
+    .filter((c) => c.status === "PENDING_TRANSFER");
+  const { items, nextMarker } = paginateList(allCerts, marker);
+  return {
+    outgoingCertificates: items.map((c) => ({
+      certificateArn: c.certificateArn,
+      certificateId: c.certificateId,
+      creationDate: c.createdAt,
+    })),
+    nextMarker,
+  };
+};
+
+// === CA Certificate operations ===
+
+const RegisterCACertificate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  requireStr(data, "caCertificate");
+  const id = crypto.randomUUID().replace(/-/g, "");
+  const arn = caCertArn(ctx, id);
+  const status =
+    data["setAsActive"] === true || data["setAsActive"] === "true"
+      ? "ACTIVE"
+      : "INACTIVE";
+  const stored: StoredCACertificate = {
+    certificateId: id,
+    certificateArn: arn,
+    certificatePem: str(data["caCertificate"]) ?? pemOf(id),
+    status,
+    autoRegistrationStatus:
+      data["allowAutoRegistration"] === true ||
+      data["allowAutoRegistration"] === "true"
+        ? "ENABLE"
+        : "DISABLE",
+    createdAt: nowSeconds(),
+  };
+  ctx.store.set(caCertKey(id), stored);
+  addToList(ctx, allCACertsKey, id);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { certificateArn: arn, certificateId: id };
+};
+
+const DescribeCACertificate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const certificateId = requireStr(data, "caCertificateId");
+  const stored = requireCACert(ctx, certificateId);
+  return {
+    certificateDescription: {
+      certificateArn: stored.certificateArn,
+      certificateId: stored.certificateId,
+      status: stored.status,
+      certificatePem: stored.certificatePem,
+      autoRegistrationStatus: stored.autoRegistrationStatus,
+      creationDate: stored.createdAt,
+      lastModifiedDate: stored.createdAt,
+    },
+    registrationConfig: {},
+  };
+};
+
+const UpdateCACertificate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const certificateId = requireStr(data, "caCertificateId");
+  const stored = requireCACert(ctx, certificateId);
+  const newStatus = str(data["newStatus"]) ?? stored.status;
+  const newAutoReg =
+    str(data["newAutoRegistrationStatus"]) ?? stored.autoRegistrationStatus;
+  ctx.store.set(caCertKey(certificateId), {
+    ...stored,
+    status: newStatus,
+    autoRegistrationStatus: newAutoReg,
+  });
+  return {};
+};
+
+const DeleteCACertificate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const certificateId = requireStr(data, "caCertificateId");
+  requireCACert(ctx, certificateId);
+  ctx.store.set(caCertKey(certificateId), undefined);
+  removeFromList<string>(ctx, allCACertsKey, (id) => id === certificateId);
+  return {};
+};
+
+const ListCACertificates: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["marker"]);
+  const allIds = getList<string>(ctx, allCACertsKey);
+  const { items: ids, nextMarker } = paginateList(allIds, marker);
+  const certificates = ids
+    .map((id) => ctx.store.get<StoredCACertificate>(caCertKey(id)))
+    .filter(Boolean)
+    .map((c) => ({
+      certificateArn: c!.certificateArn,
+      certificateId: c!.certificateId,
+      status: c!.status,
+      creationDate: c!.createdAt,
+    }));
+  return { certificates, nextMarker };
+};
+
+const GetRegistrationCode: OperationHandler = (_input, ctx) => {
+  let code = ctx.store.get<string>(registrationCodeKey);
+  if (!code) {
+    code = crypto.randomUUID().replace(/-/g, "");
+    ctx.store.set(registrationCodeKey, code);
+  }
+  return { registrationCode: code };
+};
+
+const DeleteRegistrationCode: OperationHandler = (_input, ctx) => {
+  const code = ctx.store.get<string>(registrationCodeKey);
+  if (!code)
+    throw awsError(
+      "ResourceNotFoundException",
+      "Registration code not found.",
+      404,
+    );
+  ctx.store.set(registrationCodeKey, undefined);
+  return {};
+};
+
+// === Certificate provider operations ===
+
+const CreateCertificateProvider: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const certificateProviderName = requireStr(data, "certificateProviderName");
+  if (ctx.store.get(certProviderKey(certificateProviderName)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Certificate provider ${certificateProviderName} already exists.`,
+      409,
+    );
+  }
+  const lambdaFunctionArn = requireStr(data, "lambdaFunctionArn");
+  const accountDefaultForOperations =
+    (data["accountDefaultForOperations"] as string[]) ?? [];
+  const arn = certProviderArn(ctx, certificateProviderName);
+  const stored: StoredCertificateProvider = {
+    certificateProviderName,
+    certificateProviderArn: arn,
+    lambdaFunctionArn,
+    accountDefaultForOperations,
+    createdAt: nowSeconds(),
+    lastModifiedAt: nowSeconds(),
+  };
+  ctx.store.set(certProviderKey(certificateProviderName), stored);
+  addToList(ctx, allCertProvidersKey, certificateProviderName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { certificateProviderName, certificateProviderArn: arn };
+};
+
+const DescribeCertificateProvider: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const certificateProviderName = requireStr(data, "certificateProviderName");
+  const stored = requireCertProvider(ctx, certificateProviderName);
+  return {
+    certificateProviderName: stored.certificateProviderName,
+    certificateProviderArn: stored.certificateProviderArn,
+    lambdaFunctionArn: stored.lambdaFunctionArn,
+    accountDefaultForOperations: stored.accountDefaultForOperations,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedAt,
+  };
+};
+
+const UpdateCertificateProvider: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const certificateProviderName = requireStr(data, "certificateProviderName");
+  const stored = requireCertProvider(ctx, certificateProviderName);
+  const lambdaFunctionArn =
+    str(data["lambdaFunctionArn"]) ?? stored.lambdaFunctionArn;
+  const accountDefaultForOperations =
+    (data["accountDefaultForOperations"] as string[] | undefined) ??
+    stored.accountDefaultForOperations;
+  ctx.store.set(certProviderKey(certificateProviderName), {
+    ...stored,
+    lambdaFunctionArn,
+    accountDefaultForOperations,
+    lastModifiedAt: nowSeconds(),
+  });
+  return {
+    certificateProviderName,
+    certificateProviderArn: stored.certificateProviderArn,
+  };
+};
+
+const DeleteCertificateProvider: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const certificateProviderName = requireStr(data, "certificateProviderName");
+  requireCertProvider(ctx, certificateProviderName);
+  ctx.store.set(certProviderKey(certificateProviderName), undefined);
+  removeFromList<string>(
+    ctx,
+    allCertProvidersKey,
+    (n) => n === certificateProviderName,
+  );
+  return {};
+};
+
+const ListCertificateProviders: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const nextToken = str(data["nextToken"]);
+  const allNames = getList<string>(ctx, allCertProvidersKey);
+  const { items: names, nextMarker } = paginateList(allNames, nextToken);
+  const certificateProviders = names
+    .map((n) => ctx.store.get<StoredCertificateProvider>(certProviderKey(n)))
+    .filter(Boolean)
+    .map((p) => ({
+      certificateProviderName: p!.certificateProviderName,
+      certificateProviderArn: p!.certificateProviderArn,
+    }));
+  return { certificateProviders, nextToken: nextMarker };
+};
+
+// === Provisioning template operations ===
+
+const CreateProvisioningTemplate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const templateName = requireStr(data, "templateName");
+  if (ctx.store.get(provisioningTemplateKey(templateName)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Provisioning template ${templateName} already exists.`,
+      409,
+    );
+  }
+  const templateBody = requireStr(data, "templateBody");
+  const provisioningRoleArn = requireStr(data, "provisioningRoleArn");
+  const arn = provisioningTemplateArn(ctx, templateName);
+  const now = nowSeconds();
+  const stored: StoredProvisioningTemplate = {
+    templateName,
+    templateArn: arn,
+    description: str(data["description"]),
+    templateBody,
+    enabled: data["enabled"] !== false,
+    provisioningRoleArn,
+    defaultVersionId: 1,
+    createdAt: now,
+    lastModifiedDate: now,
+    type: str(data["type"]) ?? "FLEET_PROVISIONING",
+  };
+  ctx.store.set(provisioningTemplateKey(templateName), stored);
+  addToList(ctx, allProvisioningTemplatesKey, templateName);
+  const v1: StoredProvisioningTemplateVersion = {
+    versionId: 1,
+    templateBody,
+    isDefaultVersion: true,
+    createdAt: now,
+  };
+  ctx.store.set(provisioningTemplateVersionKey(templateName, 1), v1);
+  ctx.store.set(provisioningTemplateVersionsKey(templateName), [1]);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { templateArn: arn, templateName, defaultVersionId: 1 };
+};
+
+const DescribeProvisioningTemplate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const templateName = requireStr(data, "templateName");
+  const stored = requireProvisioningTemplate(ctx, templateName);
+  return {
+    templateArn: stored.templateArn,
+    templateName: stored.templateName,
+    description: stored.description,
+    creationDate: stored.createdAt,
+    lastModifiedDate: stored.lastModifiedDate,
+    defaultVersionId: stored.defaultVersionId,
+    templateBody: stored.templateBody,
+    enabled: stored.enabled,
+    provisioningRoleArn: stored.provisioningRoleArn,
+    type: stored.type,
+  };
+};
+
+const UpdateProvisioningTemplate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const templateName = requireStr(data, "templateName");
+  const stored = requireProvisioningTemplate(ctx, templateName);
+  ctx.store.set(provisioningTemplateKey(templateName), {
+    ...stored,
+    description:
+      data["description"] !== undefined
+        ? str(data["description"])
+        : stored.description,
+    enabled:
+      data["enabled"] !== undefined
+        ? data["enabled"] !== false
+        : stored.enabled,
+    provisioningRoleArn:
+      str(data["provisioningRoleArn"]) ?? stored.provisioningRoleArn,
+    defaultVersionId:
+      typeof data["defaultVersionId"] === "number"
+        ? data["defaultVersionId"]
+        : stored.defaultVersionId,
+    lastModifiedDate: nowSeconds(),
+  });
+  return {};
+};
+
+const DeleteProvisioningTemplate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const templateName = requireStr(data, "templateName");
+  requireProvisioningTemplate(ctx, templateName);
+  ctx.store.set(provisioningTemplateKey(templateName), undefined);
+  ctx.store.set(provisioningTemplateVersionsKey(templateName), undefined);
+  removeFromList<string>(
+    ctx,
+    allProvisioningTemplatesKey,
+    (n) => n === templateName,
+  );
+  return {};
+};
+
+const ListProvisioningTemplates: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const nextToken = str(data["nextToken"]);
+  const allNames = getList<string>(ctx, allProvisioningTemplatesKey);
+  const { items: names, nextMarker } = paginateList(allNames, nextToken);
+  const templates = names
+    .map((n) =>
+      ctx.store.get<StoredProvisioningTemplate>(provisioningTemplateKey(n)),
+    )
+    .filter(Boolean)
+    .map((t) => ({
+      templateArn: t!.templateArn,
+      templateName: t!.templateName,
+      description: t!.description,
+      creationDate: t!.createdAt,
+      lastModifiedDate: t!.lastModifiedDate,
+      enabled: t!.enabled,
+      type: t!.type,
+    }));
+  return { templates, nextToken: nextMarker };
+};
+
+const CreateProvisioningTemplateVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const templateName = requireStr(data, "templateName");
+  const stored = requireProvisioningTemplate(ctx, templateName);
+  const templateBody = requireStr(data, "templateBody");
+  const setAsDefault = data["setAsDefault"] === true;
+  const existingVersionIds = getList<number>(
+    ctx,
+    provisioningTemplateVersionsKey(templateName),
+  );
+  const newVersionId = Math.max(0, ...existingVersionIds) + 1;
+  const v: StoredProvisioningTemplateVersion = {
+    versionId: newVersionId,
+    templateBody,
+    isDefaultVersion: setAsDefault,
+    createdAt: nowSeconds(),
+  };
+  ctx.store.set(provisioningTemplateVersionKey(templateName, newVersionId), v);
+  addToList(ctx, provisioningTemplateVersionsKey(templateName), newVersionId);
+  if (setAsDefault) {
+    ctx.store.set(provisioningTemplateKey(templateName), {
+      ...stored,
+      defaultVersionId: newVersionId,
+      templateBody,
+      lastModifiedDate: nowSeconds(),
+    });
+  }
+  return {
+    templateArn: stored.templateArn,
+    templateName,
+    versionId: newVersionId,
+  };
+};
+
+const DescribeProvisioningTemplateVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const templateName = requireStr(data, "templateName");
+  requireProvisioningTemplate(ctx, templateName);
+  const versionId = Number(data["versionId"]);
+  const v = ctx.store.get<StoredProvisioningTemplateVersion>(
+    provisioningTemplateVersionKey(templateName, versionId),
+  );
+  if (!v)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Version ${versionId} not found.`,
+      404,
+    );
+  return {
+    versionId: v.versionId,
+    creationDate: v.createdAt,
+    templateBody: v.templateBody,
+    isDefaultVersion: v.isDefaultVersion,
+  };
+};
+
+const DeleteProvisioningTemplateVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const templateName = requireStr(data, "templateName");
+  const stored = requireProvisioningTemplate(ctx, templateName);
+  const versionId = Number(data["versionId"]);
+  if (stored.defaultVersionId === versionId) {
+    throw awsError(
+      "InvalidRequestException",
+      `Cannot delete the default version.`,
+      400,
+    );
+  }
+  const v = ctx.store.get<StoredProvisioningTemplateVersion>(
+    provisioningTemplateVersionKey(templateName, versionId),
+  );
+  if (!v)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Version ${versionId} not found.`,
+      404,
+    );
+  ctx.store.set(
+    provisioningTemplateVersionKey(templateName, versionId),
+    undefined,
+  );
+  removeFromList<number>(
+    ctx,
+    provisioningTemplateVersionsKey(templateName),
+    (id) => id === versionId,
+  );
+  return {};
+};
+
+const ListProvisioningTemplateVersions: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const templateName = requireStr(data, "templateName");
+  requireProvisioningTemplate(ctx, templateName);
+  const nextToken = str(data["nextToken"]);
+  const allVersionIds = getList<number>(
+    ctx,
+    provisioningTemplateVersionsKey(templateName),
+  );
+  const { items: versionIds, nextMarker } = paginateList(
+    allVersionIds,
+    nextToken,
+  );
+  const versions = versionIds
+    .map((id) =>
+      ctx.store.get<StoredProvisioningTemplateVersion>(
+        provisioningTemplateVersionKey(templateName, id),
+      ),
+    )
+    .filter(Boolean)
+    .map((v) => ({
+      versionId: v!.versionId,
+      creationDate: v!.createdAt,
+      isDefaultVersion: v!.isDefaultVersion,
+    }));
+  return { versions, nextToken: nextMarker };
+};
+
+const CreateProvisioningClaim: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const templateName = requireStr(data, "templateName");
+  requireProvisioningTemplate(ctx, templateName);
+  const id = crypto.randomUUID().replace(/-/g, "");
+  return {
+    certificateId: id,
+    certificatePem: pemOf(id),
+    keyPair: {
+      PublicKey: publicKeyOf(id),
+      PrivateKey: privateKeyOf(id),
+    },
+    expiration: nowSeconds() + 300,
+  };
+};
+
+// === Role alias operations ===
+
+const CreateRoleAlias: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const roleAlias = requireStr(data, "roleAlias");
+  if (ctx.store.get(roleAliasKey(roleAlias)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Role alias ${roleAlias} already exists.`,
+      409,
+    );
+  }
+  const roleArn = requireStr(data, "roleArn");
+  const arn = roleAliasArn(ctx, roleAlias);
+  const now = nowSeconds();
+  const stored: StoredRoleAlias = {
+    roleAlias,
+    roleAliasArn: arn,
+    roleArn,
+    credentialDurationSeconds:
+      typeof data["credentialDurationSeconds"] === "number"
+        ? data["credentialDurationSeconds"]
+        : 3600,
+    createdAt: now,
+    lastModifiedDate: now,
+  };
+  ctx.store.set(roleAliasKey(roleAlias), stored);
+  addToList(ctx, allRoleAliasesKey, roleAlias);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { roleAlias, roleAliasArn: arn };
+};
+
+const DescribeRoleAlias: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const roleAlias = requireStr(data, "roleAlias");
+  const stored = requireRoleAlias(ctx, roleAlias);
+  return {
+    roleAliasDescription: {
+      roleAlias: stored.roleAlias,
+      roleAliasArn: stored.roleAliasArn,
+      roleArn: stored.roleArn,
+      credentialDurationSeconds: stored.credentialDurationSeconds,
+      creationDate: stored.createdAt,
+      lastModifiedDate: stored.lastModifiedDate,
+    },
+  };
+};
+
+const UpdateRoleAlias: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const roleAlias = requireStr(data, "roleAlias");
+  const stored = requireRoleAlias(ctx, roleAlias);
+  ctx.store.set(roleAliasKey(roleAlias), {
+    ...stored,
+    roleArn: str(data["roleArn"]) ?? stored.roleArn,
+    credentialDurationSeconds:
+      typeof data["credentialDurationSeconds"] === "number"
+        ? data["credentialDurationSeconds"]
+        : stored.credentialDurationSeconds,
+    lastModifiedDate: nowSeconds(),
+  });
+  return { roleAlias, roleAliasArn: stored.roleAliasArn };
+};
+
+const DeleteRoleAlias: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const roleAlias = requireStr(data, "roleAlias");
+  requireRoleAlias(ctx, roleAlias);
+  ctx.store.set(roleAliasKey(roleAlias), undefined);
+  removeFromList<string>(ctx, allRoleAliasesKey, (a) => a === roleAlias);
+  return {};
+};
+
+const ListRoleAliases: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["marker"]);
+  const allAliases = getList<string>(ctx, allRoleAliasesKey);
+  const { items: aliases, nextMarker } = paginateList(allAliases, marker);
+  return { roleAliases: aliases, nextMarker };
+};
+
+// === Authorizer operations ===
+
+const CreateAuthorizer: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const authorizerName = requireStr(data, "authorizerName");
+  if (ctx.store.get(authorizerKey(authorizerName)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Authorizer ${authorizerName} already exists.`,
+      409,
+    );
+  }
+  const authorizerFunctionArn = requireStr(data, "authorizerFunctionArn");
+  const arn = authorizerArn(ctx, authorizerName);
+  const now = nowSeconds();
+  const stored: StoredAuthorizer = {
+    authorizerName,
+    authorizerArn: arn,
+    authorizerFunctionArn,
+    tokenKeyName: str(data["tokenKeyName"]),
+    tokenSigningPublicKeys:
+      (data["tokenSigningPublicKeys"] as Record<string, string>) ?? undefined,
+    status: str(data["status"]) ?? "ACTIVE",
+    signingDisabled: data["signingDisabled"] === true,
+    enableCachingForHttp: data["enableCachingForHttp"] === true,
+    createdAt: now,
+    lastModifiedDate: now,
+  };
+  ctx.store.set(authorizerKey(authorizerName), stored);
+  addToList(ctx, allAuthorizersKey, authorizerName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { authorizerName, authorizerArn: arn };
+};
+
+const DescribeAuthorizer: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const authorizerName = requireStr(data, "authorizerName");
+  const stored = requireAuthorizer(ctx, authorizerName);
+  return {
+    authorizerDescription: {
+      authorizerName: stored.authorizerName,
+      authorizerArn: stored.authorizerArn,
+      authorizerFunctionArn: stored.authorizerFunctionArn,
+      tokenKeyName: stored.tokenKeyName,
+      tokenSigningPublicKeys: stored.tokenSigningPublicKeys,
+      status: stored.status,
+      signingDisabled: stored.signingDisabled,
+      enableCachingForHttp: stored.enableCachingForHttp,
+      creationDate: stored.createdAt,
+      lastModifiedDate: stored.lastModifiedDate,
+    },
+  };
+};
+
+const UpdateAuthorizer: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const authorizerName = requireStr(data, "authorizerName");
+  const stored = requireAuthorizer(ctx, authorizerName);
+  ctx.store.set(authorizerKey(authorizerName), {
+    ...stored,
+    authorizerFunctionArn:
+      str(data["authorizerFunctionArn"]) ?? stored.authorizerFunctionArn,
+    tokenKeyName:
+      data["tokenKeyName"] !== undefined
+        ? str(data["tokenKeyName"])
+        : stored.tokenKeyName,
+    tokenSigningPublicKeys:
+      (data["tokenSigningPublicKeys"] as Record<string, string> | undefined) ??
+      stored.tokenSigningPublicKeys,
+    status: str(data["status"]) ?? stored.status,
+    enableCachingForHttp:
+      data["enableCachingForHttp"] !== undefined
+        ? data["enableCachingForHttp"] === true
+        : stored.enableCachingForHttp,
+    lastModifiedDate: nowSeconds(),
+  });
+  return { authorizerName, authorizerArn: stored.authorizerArn };
+};
+
+const DeleteAuthorizer: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const authorizerName = requireStr(data, "authorizerName");
+  requireAuthorizer(ctx, authorizerName);
+  const defaultAuth = ctx.store.get<string>(defaultAuthorizerKey);
+  if (defaultAuth === authorizerName) {
+    throw awsError(
+      "DeleteConflictException",
+      `Cannot delete the default authorizer.`,
+      409,
+    );
+  }
+  ctx.store.set(authorizerKey(authorizerName), undefined);
+  removeFromList<string>(ctx, allAuthorizersKey, (n) => n === authorizerName);
+  return {};
+};
+
+const ListAuthorizers: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["marker"]);
+  const statusFilter = str(data["status"]);
+  const allNames = getList<string>(ctx, allAuthorizersKey);
+  let authorizers = allNames
+    .map((n) => ctx.store.get<StoredAuthorizer>(authorizerKey(n)))
+    .filter((a): a is StoredAuthorizer => a !== undefined);
+  if (statusFilter)
+    authorizers = authorizers.filter((a) => a.status === statusFilter);
+  const { items, nextMarker } = paginateList(authorizers, marker);
+  return {
+    authorizers: items.map((a) => ({
+      authorizerName: a.authorizerName,
+      authorizerArn: a.authorizerArn,
+    })),
+    nextMarker,
+  };
+};
+
+const SetDefaultAuthorizer: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const authorizerName = requireStr(data, "authorizerName");
+  const stored = requireAuthorizer(ctx, authorizerName);
+  ctx.store.set(defaultAuthorizerKey, authorizerName);
+  return { authorizerName, authorizerArn: stored.authorizerArn };
+};
+
+const DescribeDefaultAuthorizer: OperationHandler = (_input, ctx) => {
+  const name = ctx.store.get<string>(defaultAuthorizerKey);
+  if (!name)
+    throw awsError(
+      "ResourceNotFoundException",
+      "No default authorizer set.",
+      404,
+    );
+  const stored = requireAuthorizer(ctx, name);
+  return {
+    authorizerDescription: {
+      authorizerName: stored.authorizerName,
+      authorizerArn: stored.authorizerArn,
+      authorizerFunctionArn: stored.authorizerFunctionArn,
+      tokenKeyName: stored.tokenKeyName,
+      status: stored.status,
+      creationDate: stored.createdAt,
+      lastModifiedDate: stored.lastModifiedDate,
+    },
+  };
+};
+
+const ClearDefaultAuthorizer: OperationHandler = (_input, ctx) => {
+  const name = ctx.store.get<string>(defaultAuthorizerKey);
+  if (!name)
+    throw awsError(
+      "ResourceNotFoundException",
+      "No default authorizer set.",
+      404,
+    );
+  ctx.store.set(defaultAuthorizerKey, undefined);
+  return {};
+};
+
+const TestInvokeAuthorizer: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const authorizerName = requireStr(data, "authorizerName");
+  requireAuthorizer(ctx, authorizerName);
+  return {
+    isAuthenticated: true,
+    principalId: "test-principal",
+    policyDocuments: [
+      JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{ Effect: "Allow", Action: "iot:*", Resource: "*" }],
+      }),
+    ],
+    refreshAfterInSeconds: 300,
+    disconnectAfterInSeconds: 86400,
+  };
+};
+
+// === Domain configuration operations ===
+
+const CreateDomainConfiguration: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const domainConfigurationName = requireStr(data, "domainConfigurationName");
+  if (ctx.store.get(domainConfigKey(domainConfigurationName)) !== undefined) {
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Domain configuration ${domainConfigurationName} already exists.`,
+      409,
+    );
+  }
+  const arn = domainConfigArn(ctx, domainConfigurationName);
+  const now = nowSeconds();
+  const stored: StoredDomainConfiguration = {
+    domainConfigurationName,
+    domainConfigurationArn: arn,
+    domainName: str(data["domainName"]),
+    serviceType: str(data["serviceType"]) ?? "DATA",
+    domainConfigurationStatus: "ENABLED",
+    domainType: str(data["domainName"]) ? "CUSTOMER_MANAGED" : "AWS_MANAGED",
+    createdAt: now,
+    lastModifiedDate: now,
+  };
+  ctx.store.set(domainConfigKey(domainConfigurationName), stored);
+  addToList(ctx, allDomainConfigsKey, domainConfigurationName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { domainConfigurationName, domainConfigurationArn: arn };
+};
+
+const DescribeDomainConfiguration: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const domainConfigurationName = requireStr(data, "domainConfigurationName");
+  const stored = requireDomainConfig(ctx, domainConfigurationName);
+  return {
+    domainConfigurationName: stored.domainConfigurationName,
+    domainConfigurationArn: stored.domainConfigurationArn,
+    domainName: stored.domainName,
+    serviceType: stored.serviceType,
+    domainConfigurationStatus: stored.domainConfigurationStatus,
+    domainType: stored.domainType,
+  };
+};
+
+const UpdateDomainConfiguration: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const domainConfigurationName = requireStr(data, "domainConfigurationName");
+  const stored = requireDomainConfig(ctx, domainConfigurationName);
+  ctx.store.set(domainConfigKey(domainConfigurationName), {
+    ...stored,
+    domainConfigurationStatus:
+      str(data["domainConfigurationStatus"]) ??
+      stored.domainConfigurationStatus,
+    lastModifiedDate: nowSeconds(),
+  });
+  return {
+    domainConfigurationName,
+    domainConfigurationArn: stored.domainConfigurationArn,
+  };
+};
+
+const DeleteDomainConfiguration: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const domainConfigurationName = requireStr(data, "domainConfigurationName");
+  requireDomainConfig(ctx, domainConfigurationName);
+  ctx.store.set(domainConfigKey(domainConfigurationName), undefined);
+  removeFromList<string>(
+    ctx,
+    allDomainConfigsKey,
+    (n) => n === domainConfigurationName,
+  );
+  return {};
+};
+
+const ListDomainConfigurations: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const marker = str(data["marker"]);
+  const serviceTypeFilter = str(data["serviceType"]);
+  const allNames = getList<string>(ctx, allDomainConfigsKey);
+  let configs = allNames
+    .map((n) => ctx.store.get<StoredDomainConfiguration>(domainConfigKey(n)))
+    .filter((c): c is StoredDomainConfiguration => c !== undefined);
+  if (serviceTypeFilter)
+    configs = configs.filter((c) => c.serviceType === serviceTypeFilter);
+  const { items, nextMarker } = paginateList(configs, marker);
+  return {
+    domainConfigurations: items.map((c) => ({
+      domainConfigurationName: c.domainConfigurationName,
+      domainConfigurationArn: c.domainConfigurationArn,
+      serviceType: c.serviceType,
+      domainConfigurationStatus: c.domainConfigurationStatus,
+      domainType: c.domainType,
+    })),
+    nextMarker,
+  };
+};
+
 // === resolveOperation ===
 
 const idFromArn2 = (arn: string): string => {
@@ -2256,15 +3437,176 @@ export default {
       return undefined;
     }
 
+    if (parts[0] === "certificate") {
+      if (parts[1] === "register-no-ca" && req.method === "POST")
+        return "RegisterCertificateWithoutCA";
+      if (parts[1] === "register" && req.method === "POST")
+        return "RegisterCertificate";
+      return undefined;
+    }
+
     if (parts[0] === "certificates") {
       if (parts.length === 1) {
         if (req.method === "GET") return "ListCertificates";
+        if (req.method === "POST") return "CreateCertificateFromCsr";
         return undefined;
       }
       if (parts.length === 2) {
         if (req.method === "GET") return "DescribeCertificate";
         if (req.method === "PUT") return "UpdateCertificate";
         if (req.method === "DELETE") return "DeleteCertificate";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "certificates-by-ca") {
+      if (parts.length === 2 && req.method === "GET")
+        return "ListCertificatesByCA";
+      return undefined;
+    }
+
+    if (parts[0] === "certificates-out-going") {
+      if (req.method === "GET") return "ListOutgoingCertificates";
+      return undefined;
+    }
+
+    if (parts[0] === "accept-certificate-transfer") {
+      if (parts.length === 2 && req.method === "PATCH")
+        return "AcceptCertificateTransfer";
+      return undefined;
+    }
+
+    if (parts[0] === "cancel-certificate-transfer") {
+      if (parts.length === 2 && req.method === "PATCH")
+        return "CancelCertificateTransfer";
+      return undefined;
+    }
+
+    if (parts[0] === "transfer-certificate") {
+      if (parts.length === 2 && req.method === "PATCH")
+        return "TransferCertificate";
+      return undefined;
+    }
+
+    if (parts[0] === "reject-certificate-transfer") {
+      if (parts.length === 2 && req.method === "PATCH")
+        return "RejectCertificateTransfer";
+      return undefined;
+    }
+
+    if (parts[0] === "cacertificate") {
+      if (parts.length === 1 && req.method === "POST")
+        return "RegisterCACertificate";
+      if (parts.length === 2) {
+        if (req.method === "GET") return "DescribeCACertificate";
+        if (req.method === "PUT") return "UpdateCACertificate";
+        if (req.method === "DELETE") return "DeleteCACertificate";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "cacertificates") {
+      if (req.method === "GET") return "ListCACertificates";
+      return undefined;
+    }
+
+    if (parts[0] === "registrationcode") {
+      if (req.method === "GET") return "GetRegistrationCode";
+      if (req.method === "DELETE") return "DeleteRegistrationCode";
+      return undefined;
+    }
+
+    if (parts[0] === "certificate-providers") {
+      if (parts.length === 1 && req.method === "GET")
+        return "ListCertificateProviders";
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateCertificateProvider";
+        if (req.method === "GET") return "DescribeCertificateProvider";
+        if (req.method === "PUT") return "UpdateCertificateProvider";
+        if (req.method === "DELETE") return "DeleteCertificateProvider";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "provisioning-templates") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListProvisioningTemplates";
+        if (req.method === "POST") return "CreateProvisioningTemplate";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "DescribeProvisioningTemplate";
+        if (req.method === "PATCH") return "UpdateProvisioningTemplate";
+        if (req.method === "DELETE") return "DeleteProvisioningTemplate";
+        return undefined;
+      }
+      if (parts.length === 3 && parts[2] === "versions") {
+        if (req.method === "GET") return "ListProvisioningTemplateVersions";
+        if (req.method === "POST") return "CreateProvisioningTemplateVersion";
+        return undefined;
+      }
+      if (
+        parts.length === 3 &&
+        parts[2] === "provisioning-claim" &&
+        req.method === "POST"
+      )
+        return "CreateProvisioningClaim";
+      if (parts.length === 4 && parts[2] === "versions") {
+        if (req.method === "GET") return "DescribeProvisioningTemplateVersion";
+        if (req.method === "DELETE") return "DeleteProvisioningTemplateVersion";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "role-aliases") {
+      if (parts.length === 1 && req.method === "GET") return "ListRoleAliases";
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateRoleAlias";
+        if (req.method === "GET") return "DescribeRoleAlias";
+        if (req.method === "PUT") return "UpdateRoleAlias";
+        if (req.method === "DELETE") return "DeleteRoleAlias";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "default-authorizer") {
+      if (req.method === "POST") return "SetDefaultAuthorizer";
+      if (req.method === "GET") return "DescribeDefaultAuthorizer";
+      if (req.method === "DELETE") return "ClearDefaultAuthorizer";
+      return undefined;
+    }
+
+    if (parts[0] === "authorizer") {
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateAuthorizer";
+        if (req.method === "GET") return "DescribeAuthorizer";
+        if (req.method === "PUT") return "UpdateAuthorizer";
+        if (req.method === "DELETE") return "DeleteAuthorizer";
+        return undefined;
+      }
+      if (parts.length === 3 && parts[2] === "test" && req.method === "POST")
+        return "TestInvokeAuthorizer";
+      return undefined;
+    }
+
+    if (parts[0] === "authorizers") {
+      if (req.method === "GET") return "ListAuthorizers";
+      return undefined;
+    }
+
+    if (parts[0] === "domainConfigurations") {
+      if (parts.length === 1 && req.method === "GET")
+        return "ListDomainConfigurations";
+      if (parts.length === 2) {
+        if (req.method === "POST") return "CreateDomainConfiguration";
+        if (req.method === "GET") return "DescribeDomainConfiguration";
+        if (req.method === "PUT") return "UpdateDomainConfiguration";
+        if (req.method === "DELETE") return "DeleteDomainConfiguration";
         return undefined;
       }
       return undefined;
@@ -2486,10 +3828,60 @@ export default {
     RemoveThingFromThingGroup,
     ListThingsInThingGroup,
     CreateKeysAndCertificate,
+    CreateCertificateFromCsr,
+    AcceptCertificateTransfer,
+    CancelCertificateTransfer,
+    TransferCertificate,
+    RejectCertificateTransfer,
+    RegisterCertificate,
+    RegisterCertificateWithoutCA,
+    ListCertificatesByCA,
+    ListOutgoingCertificates,
     DescribeCertificate,
     UpdateCertificate,
     DeleteCertificate,
     ListCertificates,
+    RegisterCACertificate,
+    DescribeCACertificate,
+    UpdateCACertificate,
+    DeleteCACertificate,
+    ListCACertificates,
+    GetRegistrationCode,
+    DeleteRegistrationCode,
+    CreateCertificateProvider,
+    DescribeCertificateProvider,
+    UpdateCertificateProvider,
+    DeleteCertificateProvider,
+    ListCertificateProviders,
+    CreateProvisioningTemplate,
+    DescribeProvisioningTemplate,
+    UpdateProvisioningTemplate,
+    DeleteProvisioningTemplate,
+    ListProvisioningTemplates,
+    CreateProvisioningTemplateVersion,
+    DescribeProvisioningTemplateVersion,
+    DeleteProvisioningTemplateVersion,
+    ListProvisioningTemplateVersions,
+    CreateProvisioningClaim,
+    CreateRoleAlias,
+    DescribeRoleAlias,
+    UpdateRoleAlias,
+    DeleteRoleAlias,
+    ListRoleAliases,
+    CreateAuthorizer,
+    DescribeAuthorizer,
+    UpdateAuthorizer,
+    DeleteAuthorizer,
+    ListAuthorizers,
+    SetDefaultAuthorizer,
+    DescribeDefaultAuthorizer,
+    ClearDefaultAuthorizer,
+    TestInvokeAuthorizer,
+    CreateDomainConfiguration,
+    DescribeDomainConfiguration,
+    UpdateDomainConfiguration,
+    DeleteDomainConfiguration,
+    ListDomainConfigurations,
     CreatePolicy,
     GetPolicy,
     DeletePolicy,

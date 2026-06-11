@@ -10,6 +10,7 @@
         "@aws-sdk/client-codedeploy": "^3.1066.0",
         "@aws-sdk/client-cognito-identity": "^3.1066.0",
         "@aws-sdk/client-kinesis-analytics-v2": "^3.1066.0",
+        "@aws-sdk/client-mediaconvert": "^3.1066.0",
         "@aws-sdk/client-sesv2": "^3.1066.0",
         "@aws-sdk/client-textract": "^3.1066.0",
       },
@@ -339,6 +340,8 @@
     "@aws-sdk/client-lex-models-v2": ["@aws-sdk/client-lex-models-v2@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-9O5rYDbzrBBHztMHZfqrxBCOhcusPLWCDsAnl/V8z7MlivJrPfGua6x5twm3CcScpChUHyoQlw3elxSTErnZwA=="],
 
     "@aws-sdk/client-license-manager": ["@aws-sdk/client-license-manager@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-pz9zu4GnfR3RVkr3JXheIlrn1hb1xrS/3ml9kSlZNlqC8Ljp9mw7DM54V0mWtuNReuTckd41CC2+O6rfY4EFtQ=="],
+
+    "@aws-sdk/client-mediaconvert": ["@aws-sdk/client-mediaconvert@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-VhIPNdNeEGrfYv1tf5Iz+sCq9i8pNW3iRoQo4d+YCX7+jJ0O9892PESY4ffc89JUMkFA2l/WiYqWnM2vsqagYQ=="],
 
     "@aws-sdk/client-medialive": ["@aws-sdk/client-medialive@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-kcpshW6z4vDj/ktucsBpHtPkExuZir6CSDHTAJr6kDCEYlkftVVUTO+uFlInVS1wS0kYC55Ft8Aujuf3OIdqMQ=="],
 

@@ -276,11 +276,8 @@ const integrationResponseKey = (
   integrationId: string,
   id: string,
 ): string => `${integrationResponsePrefix}${apiId}/${integrationId}/${id}`;
-const routeResponseKey = (
-  apiId: string,
-  routeId: string,
-  id: string,
-): string => `${routeResponsePrefix}${apiId}/${routeId}/${id}`;
+const routeResponseKey = (apiId: string, routeId: string, id: string): string =>
+  `${routeResponsePrefix}${apiId}/${routeId}/${id}`;
 const routingRuleKey = (domainName: string, id: string): string =>
   `${routingRulePrefix}${domainName}/${id}`;
 const portalKey = (id: string): string => `${portalPrefix}${id}`;
@@ -1395,10 +1392,7 @@ const UntagResource: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const getDomainName = (
-  name: string,
-  ctx: ServiceContext,
-): StoredDomainName => {
+const getDomainName = (name: string, ctx: ServiceContext): StoredDomainName => {
   const dn = ctx.store.get<StoredDomainName>(domainNameKey(name));
   if (dn === undefined)
     throw awsError(
@@ -1458,7 +1452,9 @@ const UpdateDomainName: OperationHandler = (input, ctx) => {
   const updated: StoredDomainName = {
     ...dn,
     domainNameConfigurations:
-      "DomainNameConfigurations" in input ? configs : dn.domainNameConfigurations,
+      "DomainNameConfigurations" in input
+        ? configs
+        : dn.domainNameConfigurations,
     routingMode:
       "RoutingMode" in input
         ? stringOrUndefined(input["RoutingMode"])
@@ -1511,7 +1507,9 @@ const CreateApiMapping: OperationHandler = (input, ctx) => {
 const GetApiMapping: OperationHandler = (input, ctx) => {
   const domainName = requireString(input, "DomainName");
   const id = requireString(input, "ApiMappingId");
-  const mapping = ctx.store.get<StoredApiMapping>(apiMappingKey(domainName, id));
+  const mapping = ctx.store.get<StoredApiMapping>(
+    apiMappingKey(domainName, id),
+  );
   if (mapping === undefined)
     throw awsError(
       "NotFoundException",
@@ -1534,7 +1532,9 @@ const GetApiMappings: OperationHandler = (input, ctx) => {
 const UpdateApiMapping: OperationHandler = (input, ctx) => {
   const domainName = requireString(input, "DomainName");
   const id = requireString(input, "ApiMappingId");
-  const mapping = ctx.store.get<StoredApiMapping>(apiMappingKey(domainName, id));
+  const mapping = ctx.store.get<StoredApiMapping>(
+    apiMappingKey(domainName, id),
+  );
   if (mapping === undefined)
     throw awsError(
       "NotFoundException",
@@ -1654,7 +1654,11 @@ const formatModel = (m: StoredModel) => ({
   Schema: m.schema,
 });
 
-const getModel = (apiId: string, modelId: string, ctx: ServiceContext): StoredModel => {
+const getModel = (
+  apiId: string,
+  modelId: string,
+  ctx: ServiceContext,
+): StoredModel => {
   const m = ctx.store.get<StoredModel>(modelKey(apiId, modelId));
   if (m === undefined)
     throw awsError(
@@ -1763,9 +1767,8 @@ const CreateIntegrationResponse: OperationHandler = (input, ctx) => {
   const apiId = requireString(input, "ApiId");
   const integrationId = requireString(input, "IntegrationId");
   if (
-    ctx.store.get<StoredIntegration>(
-      integrationKey(apiId, integrationId),
-    ) === undefined
+    ctx.store.get<StoredIntegration>(integrationKey(apiId, integrationId)) ===
+    undefined
   )
     throw awsError(
       "NotFoundException",
@@ -1808,9 +1811,8 @@ const GetIntegrationResponses: OperationHandler = (input, ctx) => {
   const apiId = requireString(input, "ApiId");
   const integrationId = requireString(input, "IntegrationId");
   if (
-    ctx.store.get<StoredIntegration>(
-      integrationKey(apiId, integrationId),
-    ) === undefined
+    ctx.store.get<StoredIntegration>(integrationKey(apiId, integrationId)) ===
+    undefined
   )
     throw awsError(
       "NotFoundException",
@@ -1893,9 +1895,7 @@ const getRouteResponse = (
 const CreateRouteResponse: OperationHandler = (input, ctx) => {
   const apiId = requireString(input, "ApiId");
   const routeId = requireString(input, "RouteId");
-  if (
-    ctx.store.get<StoredRoute>(routeKey(apiId, routeId)) === undefined
-  )
+  if (ctx.store.get<StoredRoute>(routeKey(apiId, routeId)) === undefined)
     throw awsError(
       "NotFoundException",
       `Invalid Route identifier specified`,
@@ -1976,10 +1976,7 @@ const DeleteRouteResponse: OperationHandler = (input, ctx) => {
   return {};
 };
 
-const formatRoutingRule = (
-  r: StoredRoutingRule,
-  ctx: ServiceContext,
-) => ({
+const formatRoutingRule = (r: StoredRoutingRule, ctx: ServiceContext) => ({
   Actions: r.actions,
   Conditions: r.conditions,
   Priority: r.priority,
@@ -2086,7 +2083,7 @@ const ImportApi: OperationHandler = (input, ctx) => {
     disableExecuteApiEndpoint: false,
     disableSchemaValidation: false,
     name: specInfo
-      ? stringOrUndefined(specInfo["title"]) ?? "imported-api"
+      ? (stringOrUndefined(specInfo["title"]) ?? "imported-api")
       : "imported-api",
     protocolType: "HTTP",
     routeSelectionExpression: "${request.method} ${request.path}",
@@ -2138,7 +2135,7 @@ const ReimportApi: OperationHandler = (input, ctx) => {
   const updated: StoredApi = {
     ...api,
     name: specInfo
-      ? stringOrUndefined(specInfo["title"]) ?? api.name
+      ? (stringOrUndefined(specInfo["title"]) ?? api.name)
       : api.name,
     description: specInfo
       ? stringOrUndefined(specInfo["description"])
@@ -2229,7 +2226,11 @@ const formatPortal = (p: StoredPortal, ctx: ServiceContext) => ({
 const getPortal = (id: string, ctx: ServiceContext): StoredPortal => {
   const p = ctx.store.get<StoredPortal>(portalKey(id));
   if (p === undefined)
-    throw awsError("NotFoundException", `Invalid portal identifier specified`, 404);
+    throw awsError(
+      "NotFoundException",
+      `Invalid portal identifier specified`,
+      404,
+    );
   return p;
 };
 
@@ -2240,7 +2241,9 @@ const CreatePortal: OperationHandler = (input, ctx) => {
     portalId: id,
     authorization: asRecord(input["Authorization"]),
     endpointConfiguration: asRecord(input["EndpointConfiguration"]),
-    includedPortalProductArns: asStringArray(input["IncludedPortalProductArns"]),
+    includedPortalProductArns: asStringArray(
+      input["IncludedPortalProductArns"],
+    ),
     logoUri: stringOrUndefined(input["LogoUri"]),
     portalContent: asRecord(input["PortalContent"]),
     rumAppMonitorName: stringOrUndefined(input["RumAppMonitorName"]),

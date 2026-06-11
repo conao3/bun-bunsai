@@ -106,9 +106,7 @@ test("domain names lifecycle", async () => {
   );
   expect(updated.RoutingMode).toBe("API_MAPPING_ONLY");
 
-  await client.send(
-    new DeleteDomainNameCommand({ DomainName: "example.com" }),
-  );
+  await client.send(new DeleteDomainNameCommand({ DomainName: "example.com" }));
   const listAfter = await client.send(new GetDomainNamesCommand({}));
   expect(
     listAfter.Items?.find((d) => d.DomainName === "example.com"),
@@ -235,9 +233,7 @@ test("models lifecycle", async () => {
     }),
   );
 
-  await client.send(
-    new DeleteModelCommand({ ApiId: apiId, ModelId: modelId }),
-  );
+  await client.send(new DeleteModelCommand({ ApiId: apiId, ModelId: modelId }));
 });
 
 test("integration responses lifecycle", async () => {
@@ -382,7 +378,9 @@ test("routing rules lifecycle", async () => {
   const list = await client.send(
     new ListRoutingRulesCommand({ DomainName: "routing-test.com" }),
   );
-  expect(list.RoutingRules?.find((r) => r.RoutingRuleId === ruleId)).toBeDefined();
+  expect(
+    list.RoutingRules?.find((r) => r.RoutingRuleId === ruleId),
+  ).toBeDefined();
 
   await client.send(
     new PutRoutingRuleCommand({
@@ -521,7 +519,9 @@ test("portal product and pages lifecycle", async () => {
   expect(gotProduct.PortalProductId).toBe(ppId);
 
   const listProducts = await client.send(new ListPortalProductsCommand({}));
-  expect(listProducts.Items?.find((p) => p.PortalProductId === ppId)).toBeDefined();
+  expect(
+    listProducts.Items?.find((p) => p.PortalProductId === ppId),
+  ).toBeDefined();
 
   await client.send(
     new UpdatePortalProductCommand({
@@ -546,7 +546,9 @@ test("portal product and pages lifecycle", async () => {
   const listPages = await client.send(
     new ListProductPagesCommand({ PortalProductId: ppId }),
   );
-  expect(listPages.Items?.find((p) => p.ProductPageId === pageId)).toBeDefined();
+  expect(
+    listPages.Items?.find((p) => p.ProductPageId === pageId),
+  ).toBeDefined();
 
   await client.send(
     new UpdateProductPageCommand({
@@ -557,14 +559,22 @@ test("portal product and pages lifecycle", async () => {
   );
 
   await client.send(
-    new DeleteProductPageCommand({ PortalProductId: ppId, ProductPageId: pageId }),
+    new DeleteProductPageCommand({
+      PortalProductId: ppId,
+      ProductPageId: pageId,
+    }),
   );
 
   const restPage = await client.send(
     new CreateProductRestEndpointPageCommand({
       PortalProductId: ppId,
       RestEndpointIdentifier: {
-        IdentifierParts: { RestApiId: "abc", Path: "/", Method: "GET", Stage: "$default" },
+        IdentifierParts: {
+          RestApiId: "abc",
+          Path: "/",
+          Method: "GET",
+          Stage: "$default",
+        },
       },
     }),
   );
@@ -582,7 +592,9 @@ test("portal product and pages lifecycle", async () => {
     new ListProductRestEndpointPagesCommand({ PortalProductId: ppId }),
   );
   expect(
-    listRestPages.Items?.find((p) => p.ProductRestEndpointPageId === restPageId),
+    listRestPages.Items?.find(
+      (p) => p.ProductRestEndpointPageId === restPageId,
+    ),
   ).toBeDefined();
 
   await client.send(
@@ -612,7 +624,5 @@ test("portal product and pages lifecycle", async () => {
   );
   expect(policy.PolicyDocument).toBe('{"Version":"2012-10-17"}');
 
-  await client.send(
-    new DeletePortalProductCommand({ PortalProductId: ppId }),
-  );
+  await client.send(new DeletePortalProductCommand({ PortalProductId: ppId }));
 });

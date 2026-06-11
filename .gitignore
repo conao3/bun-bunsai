@@ -2,3 +2,6 @@
 /apps/*/node_modules/
 /apps/*/dist/
 /log/
+.terraform/
+*.tfstate
+*.tfstate.backup

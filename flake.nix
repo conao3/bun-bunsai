@@ -33,6 +33,7 @@
               git
               gh
               jq
+              terraform
             ];
           };
         };

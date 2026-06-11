@@ -28,3 +28,16 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run fmt:check
+
+  terraform-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun maint/bin/terraform-smoke.ts

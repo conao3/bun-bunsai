@@ -186,6 +186,7 @@ aws-models/
   route53resolver.json  # botocore/data/route53resolver/2018-04-01/service-2.json   (protocol json, signingName route53resolver)
   application-autoscaling.json # botocore/data/application-autoscaling/2016-02-06/service-2.json (protocol json, signingName application-autoscaling, targetPrefix AnyScaleFrontendService)
   xray.json             # botocore/data/xray/2016-04-12/service-2.json             (protocol rest-json, signingName xray)
+  sesv2.json            # botocore/data/sesv2/2019-09-27/service-2.json             (protocol rest-json, endpointPrefix email, signingName ses)
 ```
 
 ### Notes

@@ -2783,6 +2783,11 @@ const DeleteApiKey: OperationHandler = (input, ctx) => {
   if (!id) throw awsError("BadRequestException", "apiKey is required.", 400);
   requireApiKey(ctx, id);
   ctx.store.delete(apiKeyKey(id));
+  for (const entry of ctx.store.list()) {
+    if (entry.key.startsWith("usageplankey/") && entry.key.endsWith(`/${id}`)) {
+      ctx.store.delete(entry.key);
+    }
+  }
   return {};
 };
 
@@ -2811,23 +2816,65 @@ const UpdateApiKey: OperationHandler = (input, ctx) => {
   return apiKeyView(updated);
 };
 
-const ImportApiKeys: OperationHandler = (_input, ctx) => {
-  const id = randomId();
-  const now = new Date();
-  const k: StoredApiKey = {
-    id,
-    value: crypto.randomUUID().replaceAll("-", ""),
-    name: `imported-${id}`,
-    description: undefined,
-    customerId: undefined,
-    enabled: true,
-    createdDate: now,
-    lastUpdatedDate: now,
-    stageKeys: undefined,
-    tags: undefined,
-  };
-  ctx.store.set(apiKeyKey(id), k);
-  return { ids: [id], warnings: [] };
+const ImportApiKeys: OperationHandler = (input, ctx) => {
+  const bodyRaw = input["body"];
+  const bodyText =
+    bodyRaw instanceof Uint8Array
+      ? new TextDecoder().decode(bodyRaw)
+      : typeof bodyRaw === "string"
+        ? bodyRaw
+        : "";
+  const failOnWarnings = input["failOnWarnings"] === true;
+  const ids: string[] = [];
+  const warnings: string[] = [];
+  const lines = bodyText.split(/\r?\n/).filter((l) => l.trim() !== "");
+  if (lines.length === 0) return { ids, warnings };
+  const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const nameIdx = headers.indexOf("name");
+  const keyIdx = headers.indexOf("key");
+  if (nameIdx === -1 || keyIdx === -1) {
+    throw awsError(
+      "BadRequestException",
+      "CSV header must include Name and Key columns.",
+      400,
+    );
+  }
+  const descIdx = headers.indexOf("description");
+  const enabledIdx = headers.indexOf("enabled");
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(",").map((p) => p.trim());
+    const name = parts[nameIdx];
+    const value = parts[keyIdx];
+    if (!name || !value) {
+      const msg = `Row ${i}: missing required Name or Key field.`;
+      if (failOnWarnings) {
+        throw awsError("BadRequestException", msg, 400);
+      }
+      warnings.push(msg);
+      continue;
+    }
+    const id = randomId();
+    const now = new Date();
+    const k: StoredApiKey = {
+      id,
+      value,
+      name,
+      description:
+        descIdx !== -1 && parts[descIdx] ? parts[descIdx] : undefined,
+      customerId: undefined,
+      enabled:
+        enabledIdx !== -1 && parts[enabledIdx] !== undefined
+          ? parts[enabledIdx].toLowerCase() !== "false"
+          : true,
+      createdDate: now,
+      lastUpdatedDate: now,
+      stageKeys: undefined,
+      tags: undefined,
+    };
+    ctx.store.set(apiKeyKey(id), k);
+    ids.push(id);
+  }
+  return { ids, warnings };
 };
 
 const CreateAuthorizer: OperationHandler = (input, ctx) => {
@@ -3495,14 +3542,12 @@ const CreateUsagePlanKey: OperationHandler = (input, ctx) => {
   if (!keyType) {
     throw awsError("BadRequestException", "keyType is required.", 400);
   }
-  const apiKey = ctx.store.get<{ id: string; value: string; name: string }>(
-    apiKeyKey(keyId),
-  );
+  const apiKey = requireApiKey(ctx, keyId);
   const k: StoredUsagePlanKey = {
     id: keyId,
     type: keyType,
-    value: apiKey?.value ?? keyId,
-    name: apiKey?.name ?? keyId,
+    value: apiKey.value,
+    name: apiKey.name,
   };
   ctx.store.set(usagePlanKeyKey(planId, keyId), k);
   return usagePlanKeyView(k);

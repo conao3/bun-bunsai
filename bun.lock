@@ -8,6 +8,7 @@
         "@aws-sdk/client-apigatewayv2": "^3.1066.0",
         "@aws-sdk/client-codedeploy": "^3.1066.0",
         "@aws-sdk/client-cognito-identity": "^3.1066.0",
+        "@aws-sdk/client-kinesis-analytics-v2": "^3.1066.0",
         "@aws-sdk/client-sesv2": "^3.1066.0",
         "@aws-sdk/client-textract": "^3.1066.0",
       },
@@ -322,6 +323,8 @@
     "@aws-sdk/client-keyspaces": ["@aws-sdk/client-keyspaces@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-QTYfUWZtoslr31NaCEtIVSEFl3zhPBVogQc6ytugM1T2aLwEolEqZTEdYdJ5dGGN4KZP/GycpBiq6hv8Xif3iQ=="],
 
     "@aws-sdk/client-kinesis": ["@aws-sdk/client-kinesis@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-60+HBLIDLPExBaGiWBeHJEHSIUR2vwNxCtyCai2oaXQNdBNXrkEXdmWEFHNYg8XnSYd/3jSf9QQlLvLBxATdmw=="],
+
+    "@aws-sdk/client-kinesis-analytics-v2": ["@aws-sdk/client-kinesis-analytics-v2@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-OoopZY0F/3KoV74ZVmjjAA9b0qa3XWVuUWGc8QRZIZBlmwrbvi5To9YS1xv40fKm8H1SRvtQnC+BiRn6o0YVAA=="],
 
     "@aws-sdk/client-kms": ["@aws-sdk/client-kms@3.1066.0", "", { "dependencies": { "@aws-crypto/sha256-browser": "5.2.0", "@aws-crypto/sha256-js": "5.2.0", "@aws-sdk/core": "^3.974.20", "@aws-sdk/credential-provider-node": "^3.972.55", "@aws-sdk/types": "^3.973.12", "@smithy/core": "^3.24.6", "@smithy/fetch-http-handler": "^5.4.6", "@smithy/node-http-handler": "^4.7.6", "@smithy/types": "^4.14.3", "tslib": "^2.6.2" } }, "sha512-qaSA4aFdmh0HX8/1tjYX6oZoFV3ylL9mUgjZhlMkX6P9K4c6Cw8H0B9f4Ap2zMIKpgpvYBMBh/1c8XC/OiQk8Q=="],
 

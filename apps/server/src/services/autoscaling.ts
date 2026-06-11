@@ -74,6 +74,70 @@ type StoredAutoScalingGroup = {
   CreatedTime: string;
   Tags: StoredTag[];
   InstanceIds: string[];
+  SuspendedProcesses: string[];
+  LoadBalancerNames: string[];
+  TargetGroupARNs: string[];
+  TrafficSources: { Identifier: string; Type: string }[];
+  EnabledMetrics: string[];
+};
+
+type StoredScheduledAction = {
+  ScheduledActionName: string;
+  ScheduledActionARN: string;
+  AutoScalingGroupName: string;
+  StartTime: string | undefined;
+  EndTime: string | undefined;
+  Recurrence: string | undefined;
+  TimeZone: string | undefined;
+  MinSize: number | undefined;
+  MaxSize: number | undefined;
+  DesiredCapacity: number | undefined;
+};
+
+type StoredLifecycleHook = {
+  LifecycleHookName: string;
+  AutoScalingGroupName: string;
+  LifecycleTransition: string;
+  RoleARN: string | undefined;
+  NotificationTargetARN: string | undefined;
+  NotificationMetadata: string | undefined;
+  HeartbeatTimeout: number;
+  DefaultResult: string;
+  GlobalTimeout: number;
+};
+
+type StoredInstanceRefresh = {
+  InstanceRefreshId: string;
+  AutoScalingGroupName: string;
+  Status: string;
+  StartTime: string;
+  EndTime: string | undefined;
+  PercentageComplete: number;
+  InstancesToUpdate: number;
+};
+
+type StoredWarmPool = {
+  AutoScalingGroupName: string;
+  MaxGroupPreparedCapacity: number | undefined;
+  MinSize: number;
+  PoolState: string;
+};
+
+type StoredNotification = {
+  AutoScalingGroupName: string;
+  TopicARN: string;
+  NotificationType: string;
+};
+
+type StoredScalingActivity = {
+  ActivityId: string;
+  AutoScalingGroupName: string;
+  Description: string;
+  Cause: string;
+  StartTime: string;
+  EndTime: string | undefined;
+  StatusCode: string;
+  Progress: number;
 };
 
 const lcKey = (name: string): string => `lc/${name}`;
@@ -83,12 +147,48 @@ const policyKey = (asgName: string, policyName: string): string =>
   `policy/${asgName}/${policyName}`;
 const tagKey = (resourceId: string, key: string): string =>
   `tag/${resourceId}/${key}`;
+const scheduledActionKey = (asgName: string, actionName: string): string =>
+  `scheduled/${asgName}/${actionName}`;
+const lifecycleHookKey = (asgName: string, hookName: string): string =>
+  `hook/${asgName}/${hookName}`;
+const instanceRefreshKey = (refreshId: string): string =>
+  `refresh/${refreshId}`;
+const warmPoolKey = (asgName: string): string => `warmpool/${asgName}`;
+const notificationKey = (
+  asgName: string,
+  topicArn: string,
+  type: string,
+): string => `notification/${asgName}/${topicArn}/${type}`;
+const activityKey = (activityId: string): string => `activity/${activityId}`;
 
 let instanceCounter = 0;
+let activityCounter = 0;
+let refreshCounter = 0;
+let scheduledActionCounter = 0;
 
 const nextInstanceId = (): string => {
   instanceCounter += 1;
   return `i-${String(instanceCounter).padStart(17, "0")}`;
+};
+
+const nextActivityId = (): string => {
+  activityCounter += 1;
+  return `activity-${String(activityCounter).padStart(8, "0")}`;
+};
+
+const nextRefreshId = (): string => {
+  refreshCounter += 1;
+  return `refresh-${String(refreshCounter).padStart(8, "0")}`;
+};
+
+const nextScheduledActionArn = (
+  region: string,
+  account: string,
+  asgName: string,
+  actionName: string,
+): string => {
+  scheduledActionCounter += 1;
+  return `arn:aws:autoscaling:${region}:${account}:scheduledUpdateGroupAction:${String(scheduledActionCounter).padStart(8, "0")}:autoScalingGroupName/${asgName}:scheduledActionName/${actionName}`;
 };
 
 const lcArnOf = (region: string, account: string, name: string): string =>
@@ -104,6 +204,26 @@ const policyArnOf = (
   policyName: string,
 ): string =>
   `arn:aws:autoscaling:${region}:${account}:scalingPolicy:00000000-0000-0000-0000-000000000000:autoScalingGroupName/${asgName}:policyName/${policyName}`;
+
+const recordActivity = (
+  ctx: ServiceContext,
+  asgName: string,
+  description: string,
+  cause: string,
+): StoredScalingActivity => {
+  const activity: StoredScalingActivity = {
+    ActivityId: nextActivityId(),
+    AutoScalingGroupName: asgName,
+    Description: description,
+    Cause: cause,
+    StartTime: new Date().toISOString(),
+    EndTime: new Date().toISOString(),
+    StatusCode: "Successful",
+    Progress: 100,
+  };
+  ctx.store.set(activityKey(activity.ActivityId), activity);
+  return activity;
+};
 
 const requireString = (input: Record<string, unknown>, key: string): string => {
   const value = input[key];
@@ -151,7 +271,17 @@ const syncInstances = (
   ctx: ServiceContext,
   asg: StoredAutoScalingGroup,
 ): void => {
-  const current = asg.InstanceIds.length;
+  const activeIds = asg.InstanceIds.filter((id) => {
+    const inst = ctx.store.get<StoredInstance>(instanceKey(id));
+    return inst !== undefined && inst.LifecycleState !== "Standby";
+  });
+
+  const standbyIds = asg.InstanceIds.filter((id) => {
+    const inst = ctx.store.get<StoredInstance>(instanceKey(id));
+    return inst !== undefined && inst.LifecycleState === "Standby";
+  });
+
+  const current = activeIds.length;
   const desired = asg.DesiredCapacity;
   const az =
     asg.AvailabilityZones.length > 0
@@ -171,15 +301,16 @@ const syncInstances = (
         ProtectedFromScaleIn: asg.NewInstancesProtectedFromScaleIn,
       };
       ctx.store.set(instanceKey(id), instance);
-      asg.InstanceIds.push(id);
+      activeIds.push(id);
     }
   } else if (current > desired) {
-    const toRemove = asg.InstanceIds.splice(desired);
+    const toRemove = activeIds.splice(desired);
     for (const id of toRemove) {
       ctx.store.delete(instanceKey(id));
     }
   }
 
+  asg.InstanceIds = [...activeIds, ...standbyIds];
   ctx.store.set(asgKey(asg.AutoScalingGroupName), asg);
 };
 
@@ -214,6 +345,14 @@ const asgToOutput = (
   NewInstancesProtectedFromScaleIn: asg.NewInstancesProtectedFromScaleIn,
   CreatedTime: asg.CreatedTime,
   Tags: asg.Tags,
+  SuspendedProcesses: asg.SuspendedProcesses.map((p) => ({
+    ProcessName: p,
+    SuspensionReason: "User suspended",
+  })),
+  LoadBalancerNames: asg.LoadBalancerNames,
+  TargetGroupARNs: asg.TargetGroupARNs,
+  TrafficSources: asg.TrafficSources,
+  EnabledMetrics: asg.EnabledMetrics.map((m) => ({ Metric: m })),
   Instances: instances.map((inst) => ({
     InstanceId: inst.InstanceId,
     AvailabilityZone: inst.AvailabilityZone,
@@ -406,6 +545,11 @@ const CreateAutoScalingGroup: OperationHandler = (input, ctx) => {
     CreatedTime: new Date().toISOString(),
     Tags: tags,
     InstanceIds: [],
+    SuspendedProcesses: [],
+    LoadBalancerNames: [],
+    TargetGroupARNs: [],
+    TrafficSources: [],
+    EnabledMetrics: [],
   };
 
   for (const tag of tags) {
@@ -937,6 +1081,1058 @@ const DeleteTags: OperationHandler = (input, ctx) => {
   return {};
 };
 
+// --- Static response operations ---
+
+const DescribeAccountLimits: OperationHandler = (_input, _ctx) => ({
+  MaxNumberOfAutoScalingGroups: 200,
+  MaxNumberOfLaunchConfigurations: 200,
+  NumberOfAutoScalingGroups: 0,
+  NumberOfLaunchConfigurations: 0,
+});
+
+const DescribeAdjustmentTypes: OperationHandler = (_input, _ctx) => ({
+  AdjustmentTypes: [
+    { AdjustmentType: "ChangeInCapacity" },
+    { AdjustmentType: "ExactCapacity" },
+    { AdjustmentType: "PercentChangeInCapacity" },
+  ],
+});
+
+const DescribeAutoScalingNotificationTypes: OperationHandler = (
+  _input,
+  _ctx,
+) => ({
+  AutoScalingNotificationTypes: [
+    "autoscaling:EC2_INSTANCE_LAUNCH",
+    "autoscaling:EC2_INSTANCE_LAUNCH_ERROR",
+    "autoscaling:EC2_INSTANCE_TERMINATE",
+    "autoscaling:EC2_INSTANCE_TERMINATE_ERROR",
+    "autoscaling:TEST_NOTIFICATION",
+  ],
+});
+
+const DescribeLifecycleHookTypes: OperationHandler = (_input, _ctx) => ({
+  LifecycleHookTypes: [
+    "autoscaling:EC2_INSTANCE_LAUNCHING",
+    "autoscaling:EC2_INSTANCE_TERMINATING",
+  ],
+});
+
+const DescribeMetricCollectionTypes: OperationHandler = (_input, _ctx) => ({
+  Metrics: [
+    { Metric: "GroupMinSize" },
+    { Metric: "GroupMaxSize" },
+    { Metric: "GroupDesiredCapacity" },
+    { Metric: "GroupInServiceInstances" },
+    { Metric: "GroupPendingInstances" },
+    { Metric: "GroupStandbyInstances" },
+    { Metric: "GroupTerminatingInstances" },
+    { Metric: "GroupTotalInstances" },
+  ],
+  Granularities: [{ Granularity: "1Minute" }],
+});
+
+const DescribeScalingProcessTypes: OperationHandler = (_input, _ctx) => ({
+  Processes: [
+    { ProcessName: "Launch" },
+    { ProcessName: "Terminate" },
+    { ProcessName: "AddToLoadBalancer" },
+    { ProcessName: "AlarmNotification" },
+    { ProcessName: "AZRebalance" },
+    { ProcessName: "HealthCheck" },
+    { ProcessName: "InstanceRefresh" },
+    { ProcessName: "ReplaceUnhealthy" },
+    { ProcessName: "ScheduledActions" },
+  ],
+});
+
+const DescribeTerminationPolicyTypes: OperationHandler = (_input, _ctx) => ({
+  TerminationPolicyTypes: [
+    "AllocationStrategy",
+    "ClosestToNextInstanceHour",
+    "Default",
+    "NewestInstance",
+    "OldestInstance",
+    "OldestLaunchConfiguration",
+    "OldestLaunchTemplate",
+  ],
+});
+
+// --- LoadBalancer / TargetGroup / TrafficSources ---
+
+const AttachLoadBalancers: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const names = Array.isArray(input["LoadBalancerNames"])
+    ? (input["LoadBalancerNames"] as string[])
+    : [];
+  for (const n of names) {
+    if (!asg.LoadBalancerNames.includes(n)) asg.LoadBalancerNames.push(n);
+  }
+  ctx.store.set(asgKey(asgName), asg);
+  return {};
+};
+
+const DetachLoadBalancers: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const names = Array.isArray(input["LoadBalancerNames"])
+    ? (input["LoadBalancerNames"] as string[])
+    : [];
+  const nameSet = new Set(names);
+  asg.LoadBalancerNames = asg.LoadBalancerNames.filter((n) => !nameSet.has(n));
+  ctx.store.set(asgKey(asgName), asg);
+  return { Activities: [] };
+};
+
+const DescribeLoadBalancers: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const offset = decodePageToken(input["NextToken"]);
+  const maxRecords =
+    typeof input["MaxRecords"] === "number" ? input["MaxRecords"] : 100;
+  const page = asg.LoadBalancerNames.slice(offset, offset + maxRecords);
+  const result: Record<string, unknown> = {
+    LoadBalancers: page.map((n) => ({
+      LoadBalancerName: n,
+      State: "Added",
+    })),
+  };
+  if (offset + maxRecords < asg.LoadBalancerNames.length) {
+    result["NextToken"] = encodePageToken(offset + maxRecords);
+  }
+  return result;
+};
+
+const AttachLoadBalancerTargetGroups: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const arns = Array.isArray(input["TargetGroupARNs"])
+    ? (input["TargetGroupARNs"] as string[])
+    : [];
+  for (const arn of arns) {
+    if (!asg.TargetGroupARNs.includes(arn)) asg.TargetGroupARNs.push(arn);
+  }
+  ctx.store.set(asgKey(asgName), asg);
+  return {};
+};
+
+const DetachLoadBalancerTargetGroups: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const arns = Array.isArray(input["TargetGroupARNs"])
+    ? (input["TargetGroupARNs"] as string[])
+    : [];
+  const arnSet = new Set(arns);
+  asg.TargetGroupARNs = asg.TargetGroupARNs.filter((a) => !arnSet.has(a));
+  ctx.store.set(asgKey(asgName), asg);
+  return { Activities: [] };
+};
+
+const DescribeLoadBalancerTargetGroups: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const offset = decodePageToken(input["NextToken"]);
+  const maxRecords =
+    typeof input["MaxRecords"] === "number" ? input["MaxRecords"] : 100;
+  const page = asg.TargetGroupARNs.slice(offset, offset + maxRecords);
+  const result: Record<string, unknown> = {
+    LoadBalancerTargetGroups: page.map((arn) => ({
+      LoadBalancerTargetGroupARN: arn,
+      State: "Added",
+    })),
+  };
+  if (offset + maxRecords < asg.TargetGroupARNs.length) {
+    result["NextToken"] = encodePageToken(offset + maxRecords);
+  }
+  return result;
+};
+
+const AttachTrafficSources: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const sources = Array.isArray(input["TrafficSources"])
+    ? (input["TrafficSources"] as { Identifier: string; Type: string }[])
+    : [];
+  for (const src of sources) {
+    if (!asg.TrafficSources.some((s) => s.Identifier === src.Identifier)) {
+      asg.TrafficSources.push(src);
+    }
+  }
+  ctx.store.set(asgKey(asgName), asg);
+  return {};
+};
+
+const DetachTrafficSources: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const sources = Array.isArray(input["TrafficSources"])
+    ? (input["TrafficSources"] as { Identifier: string }[])
+    : [];
+  const idSet = new Set(sources.map((s) => s.Identifier));
+  asg.TrafficSources = asg.TrafficSources.filter(
+    (s) => !idSet.has(s.Identifier),
+  );
+  ctx.store.set(asgKey(asgName), asg);
+  return {};
+};
+
+const DescribeTrafficSources: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const offset = decodePageToken(input["NextToken"]);
+  const maxRecords =
+    typeof input["MaxRecords"] === "number" ? input["MaxRecords"] : 100;
+  const page = asg.TrafficSources.slice(offset, offset + maxRecords);
+  const result: Record<string, unknown> = {
+    TrafficSources: page.map((s) => ({
+      Identifier: s.Identifier,
+      Type: s.Type,
+      State: "Added",
+    })),
+  };
+  if (offset + maxRecords < asg.TrafficSources.length) {
+    result["NextToken"] = encodePageToken(offset + maxRecords);
+  }
+  return result;
+};
+
+// --- Scheduled actions ---
+
+const PutScheduledUpdateGroupAction: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  requireAsg(ctx, asgName);
+  const actionName = requireString(input, "ScheduledActionName");
+  const arn = nextScheduledActionArn(
+    ctx.region,
+    ctx.account,
+    asgName,
+    actionName,
+  );
+
+  const action: StoredScheduledAction = {
+    ScheduledActionName: actionName,
+    ScheduledActionARN: arn,
+    AutoScalingGroupName: asgName,
+    StartTime:
+      typeof input["StartTime"] === "string" ? input["StartTime"] : undefined,
+    EndTime:
+      typeof input["EndTime"] === "string" ? input["EndTime"] : undefined,
+    Recurrence:
+      typeof input["Recurrence"] === "string" ? input["Recurrence"] : undefined,
+    TimeZone:
+      typeof input["TimeZone"] === "string" ? input["TimeZone"] : undefined,
+    MinSize:
+      typeof input["MinSize"] === "number" ? input["MinSize"] : undefined,
+    MaxSize:
+      typeof input["MaxSize"] === "number" ? input["MaxSize"] : undefined,
+    DesiredCapacity:
+      typeof input["DesiredCapacity"] === "number"
+        ? input["DesiredCapacity"]
+        : undefined,
+  };
+  ctx.store.set(scheduledActionKey(asgName, actionName), action);
+  return {};
+};
+
+const DescribeScheduledActions: OperationHandler = (input, ctx) => {
+  const asgName =
+    typeof input["AutoScalingGroupName"] === "string"
+      ? input["AutoScalingGroupName"]
+      : undefined;
+  const actionNames = Array.isArray(input["ScheduledActionNames"])
+    ? (input["ScheduledActionNames"] as string[])
+    : [];
+  const maxRecords =
+    typeof input["MaxRecords"] === "number" ? input["MaxRecords"] : 50;
+  const offset = decodePageToken(input["NextToken"]);
+
+  let all = ctx.store
+    .list<StoredScheduledAction>()
+    .filter((e) => e.key.startsWith("scheduled/"))
+    .map((e) => e.value);
+
+  if (asgName !== undefined) {
+    all = all.filter((a) => a.AutoScalingGroupName === asgName);
+  }
+  if (actionNames.length > 0) {
+    const nameSet = new Set(actionNames);
+    all = all.filter((a) => nameSet.has(a.ScheduledActionName));
+  }
+
+  const page = all.slice(offset, offset + maxRecords);
+  const result: Record<string, unknown> = {
+    ScheduledUpdateGroupActions: page.map((a) => ({
+      ScheduledActionName: a.ScheduledActionName,
+      ScheduledActionARN: a.ScheduledActionARN,
+      AutoScalingGroupName: a.AutoScalingGroupName,
+      StartTime: a.StartTime,
+      EndTime: a.EndTime,
+      Recurrence: a.Recurrence,
+      TimeZone: a.TimeZone,
+      MinSize: a.MinSize,
+      MaxSize: a.MaxSize,
+      DesiredCapacity: a.DesiredCapacity,
+    })),
+  };
+  if (offset + maxRecords < all.length) {
+    result["NextToken"] = encodePageToken(offset + maxRecords);
+  }
+  return result;
+};
+
+const DeleteScheduledAction: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const actionName = requireString(input, "ScheduledActionName");
+  ctx.store.delete(scheduledActionKey(asgName, actionName));
+  return {};
+};
+
+const BatchPutScheduledUpdateGroupAction: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  requireAsg(ctx, asgName);
+  const actions = Array.isArray(input["ScheduledUpdateGroupActions"])
+    ? (input["ScheduledUpdateGroupActions"] as Record<string, unknown>[])
+    : [];
+
+  const failedScheduledActions: Record<string, unknown>[] = [];
+  for (const raw of actions) {
+    const actionName =
+      typeof raw["ScheduledActionName"] === "string"
+        ? raw["ScheduledActionName"]
+        : undefined;
+    if (actionName === undefined) continue;
+    const arn = nextScheduledActionArn(
+      ctx.region,
+      ctx.account,
+      asgName,
+      actionName,
+    );
+    const action: StoredScheduledAction = {
+      ScheduledActionName: actionName,
+      ScheduledActionARN: arn,
+      AutoScalingGroupName: asgName,
+      StartTime:
+        typeof raw["StartTime"] === "string" ? raw["StartTime"] : undefined,
+      EndTime: typeof raw["EndTime"] === "string" ? raw["EndTime"] : undefined,
+      Recurrence:
+        typeof raw["Recurrence"] === "string" ? raw["Recurrence"] : undefined,
+      TimeZone:
+        typeof raw["TimeZone"] === "string" ? raw["TimeZone"] : undefined,
+      MinSize: typeof raw["MinSize"] === "number" ? raw["MinSize"] : undefined,
+      MaxSize: typeof raw["MaxSize"] === "number" ? raw["MaxSize"] : undefined,
+      DesiredCapacity:
+        typeof raw["DesiredCapacity"] === "number"
+          ? raw["DesiredCapacity"]
+          : undefined,
+    };
+    ctx.store.set(scheduledActionKey(asgName, actionName), action);
+  }
+  return { FailedScheduledUpdateGroupActions: failedScheduledActions };
+};
+
+const BatchDeleteScheduledAction: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const actionNames = Array.isArray(input["ScheduledActionNames"])
+    ? (input["ScheduledActionNames"] as string[])
+    : [];
+  const failedScheduledActions: Record<string, unknown>[] = [];
+  for (const actionName of actionNames) {
+    ctx.store.delete(scheduledActionKey(asgName, actionName));
+  }
+  return { FailedScheduledUpdateGroupActions: failedScheduledActions };
+};
+
+// --- Lifecycle hooks ---
+
+const PutLifecycleHook: OperationHandler = (input, ctx) => {
+  const hookName = requireString(input, "LifecycleHookName");
+  const asgName = requireString(input, "AutoScalingGroupName");
+  requireAsg(ctx, asgName);
+
+  const hook: StoredLifecycleHook = {
+    LifecycleHookName: hookName,
+    AutoScalingGroupName: asgName,
+    LifecycleTransition:
+      typeof input["LifecycleTransition"] === "string"
+        ? input["LifecycleTransition"]
+        : "autoscaling:EC2_INSTANCE_LAUNCHING",
+    RoleARN:
+      typeof input["RoleARN"] === "string" ? input["RoleARN"] : undefined,
+    NotificationTargetARN:
+      typeof input["NotificationTargetARN"] === "string"
+        ? input["NotificationTargetARN"]
+        : undefined,
+    NotificationMetadata:
+      typeof input["NotificationMetadata"] === "string"
+        ? input["NotificationMetadata"]
+        : undefined,
+    HeartbeatTimeout:
+      typeof input["HeartbeatTimeout"] === "number"
+        ? input["HeartbeatTimeout"]
+        : 3600,
+    DefaultResult:
+      typeof input["DefaultResult"] === "string"
+        ? input["DefaultResult"]
+        : "ABANDON",
+    GlobalTimeout: 172800,
+  };
+  ctx.store.set(lifecycleHookKey(asgName, hookName), hook);
+  return {};
+};
+
+const DescribeLifecycleHooks: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const hookNames = Array.isArray(input["LifecycleHookNames"])
+    ? (input["LifecycleHookNames"] as string[])
+    : [];
+
+  let all = ctx.store
+    .list<StoredLifecycleHook>()
+    .filter((e) => e.key.startsWith(`hook/${asgName}/`))
+    .map((e) => e.value);
+
+  if (hookNames.length > 0) {
+    const nameSet = new Set(hookNames);
+    all = all.filter((h) => nameSet.has(h.LifecycleHookName));
+  }
+
+  return {
+    LifecycleHooks: all.map((h) => ({
+      LifecycleHookName: h.LifecycleHookName,
+      AutoScalingGroupName: h.AutoScalingGroupName,
+      LifecycleTransition: h.LifecycleTransition,
+      RoleARN: h.RoleARN,
+      NotificationTargetARN: h.NotificationTargetARN,
+      NotificationMetadata: h.NotificationMetadata,
+      HeartbeatTimeout: h.HeartbeatTimeout,
+      DefaultResult: h.DefaultResult,
+      GlobalTimeout: h.GlobalTimeout,
+    })),
+  };
+};
+
+const DeleteLifecycleHook: OperationHandler = (input, ctx) => {
+  const hookName = requireString(input, "LifecycleHookName");
+  const asgName = requireString(input, "AutoScalingGroupName");
+  ctx.store.delete(lifecycleHookKey(asgName, hookName));
+  return {};
+};
+
+const CompleteLifecycleAction: OperationHandler = (input, ctx) => {
+  requireString(input, "LifecycleHookName");
+  requireString(input, "AutoScalingGroupName");
+  return {};
+};
+
+const RecordLifecycleActionHeartbeat: OperationHandler = (input, ctx) => {
+  requireString(input, "LifecycleHookName");
+  requireString(input, "AutoScalingGroupName");
+  return {};
+};
+
+// --- Process suspend/resume ---
+
+const SuspendProcesses: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const processes = Array.isArray(input["ScalingProcesses"])
+    ? (input["ScalingProcesses"] as string[])
+    : [
+        "Launch",
+        "Terminate",
+        "AddToLoadBalancer",
+        "AlarmNotification",
+        "AZRebalance",
+        "HealthCheck",
+        "InstanceRefresh",
+        "ReplaceUnhealthy",
+        "ScheduledActions",
+      ];
+  for (const p of processes) {
+    if (!asg.SuspendedProcesses.includes(p)) asg.SuspendedProcesses.push(p);
+  }
+  ctx.store.set(asgKey(asgName), asg);
+  return {};
+};
+
+const ResumeProcesses: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const processes = Array.isArray(input["ScalingProcesses"])
+    ? (input["ScalingProcesses"] as string[])
+    : [];
+  if (processes.length === 0) {
+    asg.SuspendedProcesses = [];
+  } else {
+    const processSet = new Set(processes);
+    asg.SuspendedProcesses = asg.SuspendedProcesses.filter(
+      (p) => !processSet.has(p),
+    );
+  }
+  ctx.store.set(asgKey(asgName), asg);
+  return {};
+};
+
+// --- Instance refresh ---
+
+const StartInstanceRefresh: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  requireAsg(ctx, asgName);
+
+  const existing = ctx.store
+    .list<StoredInstanceRefresh>()
+    .filter((e) => e.key.startsWith("refresh/"))
+    .find(
+      (e) =>
+        e.value.AutoScalingGroupName === asgName &&
+        e.value.Status === "InProgress",
+    );
+  if (existing !== undefined) {
+    throw awsError(
+      "InstanceRefreshInProgressFault",
+      `An instance refresh is already in progress for Auto Scaling group ${asgName}.`,
+      400,
+    );
+  }
+
+  const refreshId = nextRefreshId();
+  const refresh: StoredInstanceRefresh = {
+    InstanceRefreshId: refreshId,
+    AutoScalingGroupName: asgName,
+    Status: "InProgress",
+    StartTime: new Date().toISOString(),
+    EndTime: undefined,
+    PercentageComplete: 0,
+    InstancesToUpdate: 0,
+  };
+  ctx.store.set(instanceRefreshKey(refreshId), refresh);
+  return { InstanceRefreshId: refreshId };
+};
+
+const DescribeInstanceRefreshes: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const refreshIds = Array.isArray(input["InstanceRefreshIds"])
+    ? (input["InstanceRefreshIds"] as string[])
+    : [];
+  const maxRecords =
+    typeof input["MaxRecords"] === "number" ? input["MaxRecords"] : 50;
+  const offset = decodePageToken(input["NextToken"]);
+
+  let all = ctx.store
+    .list<StoredInstanceRefresh>()
+    .filter((e) => e.key.startsWith("refresh/"))
+    .map((e) => e.value)
+    .filter((r) => r.AutoScalingGroupName === asgName);
+
+  if (refreshIds.length > 0) {
+    const idSet = new Set(refreshIds);
+    all = all.filter((r) => idSet.has(r.InstanceRefreshId));
+  }
+
+  const page = all.slice(offset, offset + maxRecords);
+  const result: Record<string, unknown> = {
+    InstanceRefreshes: page.map((r) => {
+      const status = r.Status === "InProgress" ? "Successful" : r.Status;
+      return {
+        InstanceRefreshId: r.InstanceRefreshId,
+        AutoScalingGroupName: r.AutoScalingGroupName,
+        Status: status,
+        StartTime: r.StartTime,
+        EndTime: r.EndTime ?? r.StartTime,
+        PercentageComplete:
+          status === "Successful" ? 100 : r.PercentageComplete,
+        InstancesToUpdate: r.InstancesToUpdate,
+      };
+    }),
+  };
+  if (offset + maxRecords < all.length) {
+    result["NextToken"] = encodePageToken(offset + maxRecords);
+  }
+  return result;
+};
+
+const CancelInstanceRefresh: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const entry = ctx.store
+    .list<StoredInstanceRefresh>()
+    .filter((e) => e.key.startsWith("refresh/"))
+    .find(
+      (e) =>
+        e.value.AutoScalingGroupName === asgName &&
+        e.value.Status === "InProgress",
+    );
+  if (entry === undefined) {
+    throw awsError(
+      "ActiveInstanceRefreshNotFound",
+      `No in-progress instance refresh found for Auto Scaling group ${asgName}.`,
+      400,
+    );
+  }
+  const refresh = entry.value;
+  refresh.Status = "Cancelled";
+  refresh.EndTime = new Date().toISOString();
+  ctx.store.set(instanceRefreshKey(refresh.InstanceRefreshId), refresh);
+  return { InstanceRefreshId: refresh.InstanceRefreshId };
+};
+
+const RollbackInstanceRefresh: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const entry = ctx.store
+    .list<StoredInstanceRefresh>()
+    .filter((e) => e.key.startsWith("refresh/"))
+    .find(
+      (e) =>
+        e.value.AutoScalingGroupName === asgName &&
+        (e.value.Status === "InProgress" || e.value.Status === "Successful"),
+    );
+  if (entry === undefined) {
+    throw awsError(
+      "ActiveInstanceRefreshNotFound",
+      `No rollbackable instance refresh found for Auto Scaling group ${asgName}.`,
+      400,
+    );
+  }
+  const refresh = entry.value;
+  refresh.Status = "RollbackSuccessful";
+  refresh.EndTime = new Date().toISOString();
+  ctx.store.set(instanceRefreshKey(refresh.InstanceRefreshId), refresh);
+  return { InstanceRefreshId: refresh.InstanceRefreshId };
+};
+
+// --- Standby ---
+
+const EnterStandby: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const instanceIds = Array.isArray(input["InstanceIds"])
+    ? (input["InstanceIds"] as string[])
+    : asg.InstanceIds.slice();
+  const shouldDecrement =
+    typeof input["ShouldDecrementDesiredCapacity"] === "boolean"
+      ? input["ShouldDecrementDesiredCapacity"]
+      : false;
+
+  const activities: Record<string, unknown>[] = [];
+  for (const id of instanceIds) {
+    const inst = ctx.store.get<StoredInstance>(instanceKey(id));
+    if (inst !== undefined) {
+      inst.LifecycleState = "Standby";
+      ctx.store.set(instanceKey(id), inst);
+      activities.push({
+        ActivityId: nextActivityId(),
+        AutoScalingGroupName: asgName,
+        Description: `Moving EC2 instance to Standby: ${id}`,
+        Cause: "EnterStandby",
+        StartTime: new Date().toISOString(),
+        StatusCode: "Successful",
+        Progress: 100,
+      });
+    }
+  }
+
+  if (shouldDecrement) {
+    asg.DesiredCapacity = Math.max(
+      asg.MinSize,
+      asg.DesiredCapacity - instanceIds.length,
+    );
+    ctx.store.set(asgKey(asgName), asg);
+  }
+
+  return { Activities: activities };
+};
+
+const ExitStandby: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const instanceIds = Array.isArray(input["InstanceIds"])
+    ? (input["InstanceIds"] as string[])
+    : asg.InstanceIds.filter((id) => {
+        const inst = ctx.store.get<StoredInstance>(instanceKey(id));
+        return inst?.LifecycleState === "Standby";
+      });
+
+  const activities: Record<string, unknown>[] = [];
+  for (const id of instanceIds) {
+    const inst = ctx.store.get<StoredInstance>(instanceKey(id));
+    if (inst !== undefined && inst.LifecycleState === "Standby") {
+      inst.LifecycleState = "InService";
+      ctx.store.set(instanceKey(id), inst);
+      asg.DesiredCapacity = Math.min(asg.MaxSize, asg.DesiredCapacity + 1);
+      activities.push({
+        ActivityId: nextActivityId(),
+        AutoScalingGroupName: asgName,
+        Description: `Moving EC2 instance out of Standby: ${id}`,
+        Cause: "ExitStandby",
+        StartTime: new Date().toISOString(),
+        StatusCode: "Successful",
+        Progress: 100,
+      });
+    }
+  }
+
+  ctx.store.set(asgKey(asgName), asg);
+  return { Activities: activities };
+};
+
+// --- SetInstanceHealth / SetInstanceProtection ---
+
+const SetInstanceHealth: OperationHandler = (input, ctx) => {
+  const instanceId = requireString(input, "InstanceId");
+  const healthStatus = requireString(input, "HealthStatus");
+  const inst = ctx.store.get<StoredInstance>(instanceKey(instanceId));
+  if (inst === undefined) {
+    throw awsError("ValidationError", `Instance ${instanceId} not found.`, 400);
+  }
+  inst.HealthStatus = healthStatus;
+  ctx.store.set(instanceKey(instanceId), inst);
+  return {};
+};
+
+const SetInstanceProtection: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  requireAsg(ctx, asgName);
+  const instanceIds = Array.isArray(input["InstanceIds"])
+    ? (input["InstanceIds"] as string[])
+    : [];
+  const protected_ =
+    typeof input["ProtectedFromScaleIn"] === "boolean"
+      ? input["ProtectedFromScaleIn"]
+      : false;
+
+  for (const id of instanceIds) {
+    const inst = ctx.store.get<StoredInstance>(instanceKey(id));
+    if (inst !== undefined) {
+      inst.ProtectedFromScaleIn = protected_;
+      ctx.store.set(instanceKey(id), inst);
+    }
+  }
+  return {};
+};
+
+// --- Warm pool ---
+
+const PutWarmPool: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  requireAsg(ctx, asgName);
+  const warmPool: StoredWarmPool = {
+    AutoScalingGroupName: asgName,
+    MaxGroupPreparedCapacity:
+      typeof input["MaxGroupPreparedCapacity"] === "number"
+        ? input["MaxGroupPreparedCapacity"]
+        : undefined,
+    MinSize: typeof input["MinSize"] === "number" ? input["MinSize"] : 0,
+    PoolState:
+      typeof input["PoolState"] === "string" ? input["PoolState"] : "Stopped",
+  };
+  ctx.store.set(warmPoolKey(asgName), warmPool);
+  return {};
+};
+
+const DescribeWarmPool: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const wp = ctx.store.get<StoredWarmPool>(warmPoolKey(asgName));
+  if (wp === undefined) {
+    return { WarmPoolConfiguration: {}, Instances: [] };
+  }
+  return {
+    WarmPoolConfiguration: {
+      MaxGroupPreparedCapacity: wp.MaxGroupPreparedCapacity,
+      MinSize: wp.MinSize,
+      PoolState: wp.PoolState,
+      Status: "Active",
+    },
+    Instances: [],
+  };
+};
+
+const DeleteWarmPool: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  ctx.store.delete(warmPoolKey(asgName));
+  return {};
+};
+
+// --- Notification configurations ---
+
+const PutNotificationConfiguration: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  requireAsg(ctx, asgName);
+  const topicArn = requireString(input, "TopicARN");
+  const types = Array.isArray(input["NotificationTypes"])
+    ? (input["NotificationTypes"] as string[])
+    : [];
+  for (const type of types) {
+    const notif: StoredNotification = {
+      AutoScalingGroupName: asgName,
+      TopicARN: topicArn,
+      NotificationType: type,
+    };
+    ctx.store.set(notificationKey(asgName, topicArn, type), notif);
+  }
+  return {};
+};
+
+const DescribeNotificationConfigurations: OperationHandler = (input, ctx) => {
+  const asgNames = Array.isArray(input["AutoScalingGroupNames"])
+    ? (input["AutoScalingGroupNames"] as string[])
+    : [];
+  const maxRecords =
+    typeof input["MaxRecords"] === "number" ? input["MaxRecords"] : 50;
+  const offset = decodePageToken(input["NextToken"]);
+
+  let all = ctx.store
+    .list<StoredNotification>()
+    .filter((e) => e.key.startsWith("notification/"))
+    .map((e) => e.value);
+
+  if (asgNames.length > 0) {
+    const nameSet = new Set(asgNames);
+    all = all.filter((n) => nameSet.has(n.AutoScalingGroupName));
+  }
+
+  const page = all.slice(offset, offset + maxRecords);
+  const result: Record<string, unknown> = {
+    NotificationConfigurations: page.map((n) => ({
+      AutoScalingGroupName: n.AutoScalingGroupName,
+      TopicARN: n.TopicARN,
+      NotificationType: n.NotificationType,
+    })),
+  };
+  if (offset + maxRecords < all.length) {
+    result["NextToken"] = encodePageToken(offset + maxRecords);
+  }
+  return result;
+};
+
+const DeleteNotificationConfiguration: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const topicArn = requireString(input, "TopicARN");
+
+  for (const entry of ctx.store.list<StoredNotification>()) {
+    if (
+      entry.key.startsWith(`notification/${asgName}/${topicArn}/`) &&
+      entry.value.AutoScalingGroupName === asgName &&
+      entry.value.TopicARN === topicArn
+    ) {
+      ctx.store.delete(entry.key);
+    }
+  }
+  return {};
+};
+
+// --- Metrics collection ---
+
+const EnableMetricsCollection: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const metrics = Array.isArray(input["Metrics"])
+    ? (input["Metrics"] as string[])
+    : [
+        "GroupMinSize",
+        "GroupMaxSize",
+        "GroupDesiredCapacity",
+        "GroupInServiceInstances",
+        "GroupPendingInstances",
+        "GroupStandbyInstances",
+        "GroupTerminatingInstances",
+        "GroupTotalInstances",
+      ];
+  for (const m of metrics) {
+    if (!asg.EnabledMetrics.includes(m)) asg.EnabledMetrics.push(m);
+  }
+  ctx.store.set(asgKey(asgName), asg);
+  return {};
+};
+
+const DisableMetricsCollection: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const asg = requireAsg(ctx, asgName);
+  const metrics = Array.isArray(input["Metrics"])
+    ? (input["Metrics"] as string[])
+    : [];
+  if (metrics.length === 0) {
+    asg.EnabledMetrics = [];
+  } else {
+    const metricSet = new Set(metrics);
+    asg.EnabledMetrics = asg.EnabledMetrics.filter((m) => !metricSet.has(m));
+  }
+  ctx.store.set(asgKey(asgName), asg);
+  return {};
+};
+
+// --- ExecutePolicy ---
+
+const ExecutePolicy: OperationHandler = (input, ctx) => {
+  const policyNameOrArn = requireString(input, "PolicyName");
+  const asgName =
+    typeof input["AutoScalingGroupName"] === "string"
+      ? input["AutoScalingGroupName"]
+      : undefined;
+
+  let policy: StoredScalingPolicy | undefined;
+  if (asgName !== undefined) {
+    policy = ctx.store.get<StoredScalingPolicy>(
+      policyKey(asgName, policyNameOrArn),
+    );
+  }
+  if (policy === undefined) {
+    for (const entry of ctx.store.list<StoredScalingPolicy>()) {
+      if (
+        entry.key.startsWith("policy/") &&
+        (entry.value.PolicyName === policyNameOrArn ||
+          entry.value.PolicyARN === policyNameOrArn)
+      ) {
+        policy = entry.value;
+        break;
+      }
+    }
+  }
+  if (policy === undefined) {
+    throw awsError(
+      "ValidationError",
+      `Policy ${policyNameOrArn} not found.`,
+      400,
+    );
+  }
+
+  const asg = requireAsg(ctx, policy.AutoScalingGroupName);
+
+  if (
+    policy.PolicyType === "SimpleScaling" &&
+    policy.AdjustmentType !== undefined &&
+    policy.ScalingAdjustment !== undefined
+  ) {
+    let newDesired = asg.DesiredCapacity;
+    if (policy.AdjustmentType === "ChangeInCapacity") {
+      newDesired += policy.ScalingAdjustment;
+    } else if (policy.AdjustmentType === "ExactCapacity") {
+      newDesired = policy.ScalingAdjustment;
+    } else if (policy.AdjustmentType === "PercentChangeInCapacity") {
+      newDesired = Math.round(
+        asg.DesiredCapacity * (1 + policy.ScalingAdjustment / 100),
+      );
+    }
+    asg.DesiredCapacity = Math.min(
+      asg.MaxSize,
+      Math.max(asg.MinSize, newDesired),
+    );
+    ctx.store.set(asgKey(asg.AutoScalingGroupName), asg);
+    syncInstances(ctx, asg);
+    recordActivity(
+      ctx,
+      asg.AutoScalingGroupName,
+      `Executing policy ${policy.PolicyName}`,
+      "ExecutePolicy",
+    );
+  }
+
+  return {};
+};
+
+// --- DescribeScalingActivities ---
+
+const DescribeScalingActivities: OperationHandler = (input, ctx) => {
+  const asgName =
+    typeof input["AutoScalingGroupName"] === "string"
+      ? input["AutoScalingGroupName"]
+      : undefined;
+  const activityIds = Array.isArray(input["ActivityIds"])
+    ? (input["ActivityIds"] as string[])
+    : [];
+  const maxRecords =
+    typeof input["MaxRecords"] === "number" ? input["MaxRecords"] : 100;
+  const offset = decodePageToken(input["NextToken"]);
+
+  let all = ctx.store
+    .list<StoredScalingActivity>()
+    .filter((e) => e.key.startsWith("activity/"))
+    .map((e) => e.value);
+
+  if (asgName !== undefined) {
+    all = all.filter((a) => a.AutoScalingGroupName === asgName);
+  }
+  if (activityIds.length > 0) {
+    const idSet = new Set(activityIds);
+    all = all.filter((a) => idSet.has(a.ActivityId));
+  }
+
+  const page = all.slice(offset, offset + maxRecords);
+  const result: Record<string, unknown> = {
+    Activities: page.map((a) => ({
+      ActivityId: a.ActivityId,
+      AutoScalingGroupName: a.AutoScalingGroupName,
+      Description: a.Description,
+      Cause: a.Cause,
+      StartTime: a.StartTime,
+      EndTime: a.EndTime,
+      StatusCode: a.StatusCode,
+      Progress: a.Progress,
+    })),
+  };
+  if (offset + maxRecords < all.length) {
+    result["NextToken"] = encodePageToken(offset + maxRecords);
+  }
+  return result;
+};
+
+// --- LaunchInstances ---
+
+const LaunchInstances: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  const requestedCapacity = requireNumber(input, "RequestedCapacity");
+  const asg = requireAsg(ctx, asgName);
+
+  const instanceIds: string[] = [];
+  const az = asg.AvailabilityZones[0] ?? "us-east-1a";
+  for (let i = 0; i < requestedCapacity; i++) {
+    const id = nextInstanceId();
+    const instance: StoredInstance = {
+      InstanceId: id,
+      AutoScalingGroupName: asgName,
+      AvailabilityZone: az,
+      LifecycleState: "InService",
+      HealthStatus: "Healthy",
+      LaunchConfigurationName: asg.LaunchConfigurationName,
+      ProtectedFromScaleIn: asg.NewInstancesProtectedFromScaleIn,
+    };
+    ctx.store.set(instanceKey(id), instance);
+    asg.InstanceIds.push(id);
+    instanceIds.push(id);
+  }
+  ctx.store.set(asgKey(asgName), asg);
+
+  return {
+    InstanceIds: instanceIds,
+  };
+};
+
+// --- GetPredictiveScalingForecast ---
+
+const GetPredictiveScalingForecast: OperationHandler = (input, ctx) => {
+  const asgName = requireString(input, "AutoScalingGroupName");
+  requireAsg(ctx, asgName);
+  const now = new Date().toISOString();
+  return {
+    LoadForecast: [
+      {
+        Timestamps: [now],
+        Values: [0],
+        MetricSpecification: {
+          TargetValue: 50,
+          PredefinedLoadMetricSpecification: {
+            PredefinedMetricType: "ASGTotalCPUUtilization",
+          },
+        },
+      },
+    ],
+    CapacityForecast: {
+      Timestamps: [now],
+      Values: [0],
+    },
+    UpdateTime: now,
+  };
+};
+
 const autoscaling = {
   name: "autoscaling",
   protocol: "query",
@@ -959,6 +2155,68 @@ const autoscaling = {
     CreateOrUpdateTags,
     DescribeTags,
     DeleteTags,
+    // Static responses
+    DescribeAccountLimits,
+    DescribeAdjustmentTypes,
+    DescribeAutoScalingNotificationTypes,
+    DescribeLifecycleHookTypes,
+    DescribeMetricCollectionTypes,
+    DescribeScalingProcessTypes,
+    DescribeTerminationPolicyTypes,
+    // LoadBalancer / TargetGroup / TrafficSources
+    AttachLoadBalancers,
+    DetachLoadBalancers,
+    DescribeLoadBalancers,
+    AttachLoadBalancerTargetGroups,
+    DetachLoadBalancerTargetGroups,
+    DescribeLoadBalancerTargetGroups,
+    AttachTrafficSources,
+    DetachTrafficSources,
+    DescribeTrafficSources,
+    // Scheduled actions
+    PutScheduledUpdateGroupAction,
+    DescribeScheduledActions,
+    DeleteScheduledAction,
+    BatchPutScheduledUpdateGroupAction,
+    BatchDeleteScheduledAction,
+    // Lifecycle hooks
+    PutLifecycleHook,
+    DescribeLifecycleHooks,
+    DeleteLifecycleHook,
+    CompleteLifecycleAction,
+    RecordLifecycleActionHeartbeat,
+    // Process suspend/resume
+    SuspendProcesses,
+    ResumeProcesses,
+    // Instance refresh
+    StartInstanceRefresh,
+    DescribeInstanceRefreshes,
+    CancelInstanceRefresh,
+    RollbackInstanceRefresh,
+    // Standby
+    EnterStandby,
+    ExitStandby,
+    // Health / Protection
+    SetInstanceHealth,
+    SetInstanceProtection,
+    // Warm pool
+    PutWarmPool,
+    DescribeWarmPool,
+    DeleteWarmPool,
+    // Notifications
+    PutNotificationConfiguration,
+    DescribeNotificationConfigurations,
+    DeleteNotificationConfiguration,
+    // Metrics
+    EnableMetricsCollection,
+    DisableMetricsCollection,
+    // Policy execution
+    ExecutePolicy,
+    // Activities
+    DescribeScalingActivities,
+    // Launch / Forecast
+    LaunchInstances,
+    GetPredictiveScalingForecast,
   },
   model,
 } as const satisfies ServiceDefinition;

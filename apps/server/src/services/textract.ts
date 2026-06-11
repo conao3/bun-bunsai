@@ -67,7 +67,8 @@ type StoredAdapterVersion = {
   CreationTime: Date;
   Status: string;
   KMSKeyId: string | undefined;
-  OutputConfig: Record<string, unknown> | undefined;
+  OutputConfig: Record<string, unknown>;
+  DatasetConfig: Record<string, unknown>;
   Tags: Record<string, string>;
 };
 
@@ -78,6 +79,8 @@ const lendingAnalysisJobKey = (id: string) => `lending-analysis-job/${id}`;
 const adapterKey = (id: string) => `adapter/${id}`;
 const adapterVersionKey = (id: string, version: string) =>
   `adapter-version/${id}/${version}`;
+const idempotencyKey = (operation: string, token: string) =>
+  `idem/${operation}/${token}`;
 
 const STUB_BLOCKS: Block[] = [
   {
@@ -149,6 +152,34 @@ const STUB_BLOCKS: Block[] = [
 
 const STUB_DOCUMENT_METADATA = { Pages: 1 };
 
+const STUB_EXPENSE_DOCUMENTS = [
+  {
+    ExpenseIndex: 1,
+    SummaryFields: [],
+    LineItemGroups: [],
+    Blocks: STUB_BLOCKS,
+  },
+  {
+    ExpenseIndex: 2,
+    SummaryFields: [],
+    LineItemGroups: [],
+    Blocks: [],
+  },
+];
+
+const STUB_LENDING_RESULTS = [
+  {
+    Page: 1,
+    PageClassification: { PageType: [], PageNumber: [] },
+    Extractions: [],
+  },
+  {
+    Page: 2,
+    PageClassification: { PageType: [], PageNumber: [] },
+    Extractions: [],
+  },
+];
+
 const stringOrUndefined = (v: unknown): string | undefined =>
   typeof v === "string" && v !== "" ? v : undefined;
 
@@ -172,6 +203,64 @@ const requireObject = (
     throw awsError("InvalidParameterException", `${key} is required.`, 400);
   }
   return v as Record<string, unknown>;
+};
+
+const requireStringArray = (
+  input: Record<string, unknown>,
+  key: string,
+): string[] => {
+  const v = input[key];
+  if (!Array.isArray(v) || v.length === 0) {
+    throw awsError(
+      "InvalidParameterException",
+      `${key} is required and must be a non-empty array.`,
+      400,
+    );
+  }
+  return v as string[];
+};
+
+const checkIdempotency = (
+  ctx: ServiceContext,
+  operation: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> | undefined => {
+  const token = stringOrUndefined(input["ClientRequestToken"]);
+  if (token === undefined) return undefined;
+  const key = idempotencyKey(operation, token);
+  const stored = ctx.store.get<{
+    result: Record<string, unknown>;
+    inputHash: string;
+  }>(key);
+  const inputWithoutToken = { ...input };
+  delete inputWithoutToken["ClientRequestToken"];
+  const inputHash = JSON.stringify(inputWithoutToken);
+  if (stored !== undefined) {
+    if (stored.inputHash !== inputHash) {
+      throw awsError(
+        "IdempotentParameterMismatchException",
+        "Client token is already in use for a different request.",
+        400,
+      );
+    }
+    return stored.result;
+  }
+  return undefined;
+};
+
+const storeIdempotency = (
+  ctx: ServiceContext,
+  operation: string,
+  input: Record<string, unknown>,
+  result: Record<string, unknown>,
+): void => {
+  const token = stringOrUndefined(input["ClientRequestToken"]);
+  if (token === undefined) return;
+  const key = idempotencyKey(operation, token);
+  const inputWithoutToken = { ...input };
+  delete inputWithoutToken["ClientRequestToken"];
+  const inputHash = JSON.stringify(inputWithoutToken);
+  ctx.store.set(key, { result, inputHash });
 };
 
 const validateDocument = (
@@ -216,6 +305,37 @@ const validateDocumentLocation = (
   ctx: ServiceContext,
 ): void => {
   const s3Object = location["S3Object"];
+  if (
+    s3Object === null ||
+    typeof s3Object !== "object" ||
+    Array.isArray(s3Object)
+  )
+    return;
+  const s3 = s3Object as Record<string, unknown>;
+  const bucket = stringOrUndefined(s3["Bucket"]);
+  const key = stringOrUndefined(s3["Name"]);
+  if (bucket === undefined || key === undefined) return;
+  const s3Store = ctx.storeFor("s3");
+  const bucketData = s3Store.get<{ objects: Record<string, unknown[]> }>(
+    bucket,
+  );
+  if (
+    bucketData === undefined ||
+    (bucketData.objects[key] ?? []).length === 0
+  ) {
+    throw awsError(
+      "InvalidS3ObjectException",
+      `Unable to get object metadata from S3. Bucket: ${bucket}, Key: ${key}`,
+      400,
+    );
+  }
+};
+
+const validateManifestS3Object = (
+  datasetConfig: Record<string, unknown>,
+  ctx: ServiceContext,
+): void => {
+  const s3Object = datasetConfig["ManifestS3Object"];
   if (
     s3Object === null ||
     typeof s3Object !== "object" ||
@@ -394,6 +514,26 @@ const resolveLendingAnalysisJob = (
   return resolved;
 };
 
+const resolveAdapterVersion = (
+  ctx: ServiceContext,
+  av: StoredAdapterVersion,
+): StoredAdapterVersion => {
+  if (av.Status !== "CREATION_IN_PROGRESS") return av;
+  const resolved: StoredAdapterVersion = { ...av, Status: "ACTIVE" };
+  ctx.store.set(adapterVersionKey(av.AdapterId, av.AdapterVersion), resolved);
+  return resolved;
+};
+
+const nextAdapterVersionNumber = (
+  ctx: ServiceContext,
+  adapterId: string,
+): string => {
+  const count = ctx.store
+    .list<StoredAdapterVersion>()
+    .filter((e) => e.key.startsWith(`adapter-version/${adapterId}/`)).length;
+  return String(count + 1);
+};
+
 const DetectDocumentText: OperationHandler = (input, ctx) => {
   const document = requireObject(input, "Document");
   validateDocument(document, ctx);
@@ -407,6 +547,7 @@ const DetectDocumentText: OperationHandler = (input, ctx) => {
 const AnalyzeDocument: OperationHandler = (input, ctx) => {
   const document = requireObject(input, "Document");
   validateDocument(document, ctx);
+  requireStringArray(input, "FeatureTypes");
   return {
     DocumentMetadata: STUB_DOCUMENT_METADATA,
     Blocks: STUB_BLOCKS,
@@ -453,6 +594,8 @@ const AnalyzeID: OperationHandler = (input) => {
 };
 
 const StartDocumentTextDetection: OperationHandler = (input, ctx) => {
+  const prior = checkIdempotency(ctx, "StartDocumentTextDetection", input);
+  if (prior !== undefined) return prior;
   const location = requireObject(input, "DocumentLocation");
   validateDocumentLocation(location, ctx);
   const jobId = crypto.randomUUID();
@@ -463,7 +606,9 @@ const StartDocumentTextDetection: OperationHandler = (input, ctx) => {
     StatusMessage: undefined,
   };
   ctx.store.set(textDetectionJobKey(jobId), job);
-  return { JobId: jobId };
+  const result = { JobId: jobId };
+  storeIdempotency(ctx, "StartDocumentTextDetection", input, result);
+  return result;
 };
 
 const GetDocumentTextDetection: OperationHandler = (input, ctx) => {
@@ -487,11 +632,11 @@ const GetDocumentTextDetection: OperationHandler = (input, ctx) => {
 };
 
 const StartDocumentAnalysis: OperationHandler = (input, ctx) => {
+  const prior = checkIdempotency(ctx, "StartDocumentAnalysis", input);
+  if (prior !== undefined) return prior;
   const location = requireObject(input, "DocumentLocation");
   validateDocumentLocation(location, ctx);
-  const featureTypes = Array.isArray(input["FeatureTypes"])
-    ? (input["FeatureTypes"] as string[])
-    : [];
+  const featureTypes = requireStringArray(input, "FeatureTypes");
   const jobId = crypto.randomUUID();
   const job: StoredDocumentAnalysisJob = {
     JobId: jobId,
@@ -501,7 +646,9 @@ const StartDocumentAnalysis: OperationHandler = (input, ctx) => {
     StatusMessage: undefined,
   };
   ctx.store.set(documentAnalysisJobKey(jobId), job);
-  return { JobId: jobId };
+  const result = { JobId: jobId };
+  storeIdempotency(ctx, "StartDocumentAnalysis", input, result);
+  return result;
 };
 
 const GetDocumentAnalysis: OperationHandler = (input, ctx) => {
@@ -528,6 +675,8 @@ const GetDocumentAnalysis: OperationHandler = (input, ctx) => {
 };
 
 const StartExpenseAnalysis: OperationHandler = (input, ctx) => {
+  const prior = checkIdempotency(ctx, "StartExpenseAnalysis", input);
+  if (prior !== undefined) return prior;
   const location = requireObject(input, "DocumentLocation");
   validateDocumentLocation(location, ctx);
   const jobId = crypto.randomUUID();
@@ -538,7 +687,9 @@ const StartExpenseAnalysis: OperationHandler = (input, ctx) => {
     StatusMessage: undefined,
   };
   ctx.store.set(expenseAnalysisJobKey(jobId), job);
-  return { JobId: jobId };
+  const result = { JobId: jobId };
+  storeIdempotency(ctx, "StartExpenseAnalysis", input, result);
+  return result;
 };
 
 const GetExpenseAnalysis: OperationHandler = (input, ctx) => {
@@ -549,22 +700,15 @@ const GetExpenseAnalysis: OperationHandler = (input, ctx) => {
     ctx,
     requireExpenseAnalysisJob(ctx, jobId),
   );
-  const { items: _items, nextToken: newNextToken } = applyPagination(
-    [1],
+  const { items, nextToken: newNextToken } = applyPagination(
+    STUB_EXPENSE_DOCUMENTS,
     maxResults,
     nextToken,
   );
   return {
     DocumentMetadata: STUB_DOCUMENT_METADATA,
     JobStatus: job.JobStatus,
-    ExpenseDocuments: [
-      {
-        ExpenseIndex: 1,
-        SummaryFields: [],
-        LineItemGroups: [],
-        Blocks: STUB_BLOCKS,
-      },
-    ],
+    ExpenseDocuments: items,
     NextToken: newNextToken,
     StatusMessage: job.StatusMessage,
     AnalyzeExpenseModelVersion: "1.0",
@@ -572,6 +716,8 @@ const GetExpenseAnalysis: OperationHandler = (input, ctx) => {
 };
 
 const StartLendingAnalysis: OperationHandler = (input, ctx) => {
+  const prior = checkIdempotency(ctx, "StartLendingAnalysis", input);
+  if (prior !== undefined) return prior;
   const location = requireObject(input, "DocumentLocation");
   validateDocumentLocation(location, ctx);
   const jobId = crypto.randomUUID();
@@ -582,7 +728,9 @@ const StartLendingAnalysis: OperationHandler = (input, ctx) => {
     StatusMessage: undefined,
   };
   ctx.store.set(lendingAnalysisJobKey(jobId), job);
-  return { JobId: jobId };
+  const result = { JobId: jobId };
+  storeIdempotency(ctx, "StartLendingAnalysis", input, result);
+  return result;
 };
 
 const GetLendingAnalysis: OperationHandler = (input, ctx) => {
@@ -593,15 +741,15 @@ const GetLendingAnalysis: OperationHandler = (input, ctx) => {
     ctx,
     requireLendingAnalysisJob(ctx, jobId),
   );
-  const { items: _items, nextToken: newNextToken } = applyPagination(
-    [1],
+  const { items, nextToken: newNextToken } = applyPagination(
+    STUB_LENDING_RESULTS,
     maxResults,
     nextToken,
   );
   return {
     DocumentMetadata: STUB_DOCUMENT_METADATA,
     JobStatus: job.JobStatus,
-    Results: [],
+    Results: items,
     NextToken: newNextToken,
     Warnings: [],
     StatusMessage: job.StatusMessage,
@@ -626,10 +774,10 @@ const GetLendingAnalysisSummary: OperationHandler = (input, ctx) => {
 };
 
 const CreateAdapter: OperationHandler = (input, ctx) => {
+  const prior = checkIdempotency(ctx, "CreateAdapter", input);
+  if (prior !== undefined) return prior;
   const adapterName = requireString(input, "AdapterName");
-  const featureTypes = Array.isArray(input["FeatureTypes"])
-    ? (input["FeatureTypes"] as string[])
-    : [];
+  const featureTypes = requireStringArray(input, "FeatureTypes");
   const adapterId = crypto.randomUUID();
   const tags = (input["Tags"] as Record<string, string> | undefined) ?? {};
   const adapter: StoredAdapter = {
@@ -642,7 +790,9 @@ const CreateAdapter: OperationHandler = (input, ctx) => {
     Tags: tags,
   };
   ctx.store.set(adapterKey(adapterId), adapter);
-  return { AdapterId: adapterId };
+  const result = { AdapterId: adapterId };
+  storeIdempotency(ctx, "CreateAdapter", input, result);
+  return result;
 };
 
 const GetAdapter: OperationHandler = (input, ctx) => {
@@ -688,6 +838,16 @@ const UpdateAdapter: OperationHandler = (input, ctx) => {
 const DeleteAdapter: OperationHandler = (input, ctx) => {
   const adapterId = requireString(input, "AdapterId");
   requireAdapter(ctx, adapterId);
+  const hasVersions = ctx.store
+    .list<StoredAdapterVersion>()
+    .some((e) => e.key.startsWith(`adapter-version/${adapterId}/`));
+  if (hasVersions) {
+    throw awsError(
+      "ConflictException",
+      `Adapter ${adapterId} has existing versions. Delete all versions before deleting the adapter.`,
+      400,
+    );
+  }
   ctx.store.delete(adapterKey(adapterId));
   return {};
 };
@@ -695,10 +855,23 @@ const DeleteAdapter: OperationHandler = (input, ctx) => {
 const ListAdapters: OperationHandler = (input, ctx) => {
   const maxResults = numberOrUndefined(input["MaxResults"]);
   const nextToken = stringOrUndefined(input["NextToken"]);
+  const afterCreationTime = stringOrUndefined(input["AfterCreationTime"]);
+  const beforeCreationTime = stringOrUndefined(input["BeforeCreationTime"]);
   const all = ctx.store
     .list<StoredAdapter>()
     .filter((e) => e.key.startsWith("adapter/") && !e.key.includes("/", 8))
-    .map((e) => e.value);
+    .map((e) => e.value)
+    .filter((a) => {
+      if (afterCreationTime !== undefined) {
+        if (new Date(a.CreationTime) <= new Date(afterCreationTime))
+          return false;
+      }
+      if (beforeCreationTime !== undefined) {
+        if (new Date(a.CreationTime) >= new Date(beforeCreationTime))
+          return false;
+      }
+      return true;
+    });
   const { items, nextToken: newNextToken } = applyPagination(
     all,
     maxResults,
@@ -716,31 +889,38 @@ const ListAdapters: OperationHandler = (input, ctx) => {
 };
 
 const CreateAdapterVersion: OperationHandler = (input, ctx) => {
+  const prior = checkIdempotency(ctx, "CreateAdapterVersion", input);
+  if (prior !== undefined) return prior;
   const adapterId = requireString(input, "AdapterId");
   requireAdapter(ctx, adapterId);
-  const version = crypto.randomUUID().slice(0, 8);
+  const datasetConfig = requireObject(input, "DatasetConfig");
+  const outputConfig = requireObject(input, "OutputConfig");
+  validateManifestS3Object(datasetConfig, ctx);
+  const version = nextAdapterVersionNumber(ctx, adapterId);
   const tags = (input["Tags"] as Record<string, string> | undefined) ?? {};
   const av: StoredAdapterVersion = {
     AdapterId: adapterId,
     AdapterVersion: version,
     CreationTime: new Date(),
-    Status: "ACTIVE",
+    Status: "CREATION_IN_PROGRESS",
     KMSKeyId: stringOrUndefined(input["KMSKeyId"]),
-    OutputConfig:
-      input["OutputConfig"] !== undefined &&
-      typeof input["OutputConfig"] === "object"
-        ? (input["OutputConfig"] as Record<string, unknown>)
-        : undefined,
+    OutputConfig: outputConfig,
+    DatasetConfig: datasetConfig,
     Tags: tags,
   };
   ctx.store.set(adapterVersionKey(adapterId, version), av);
-  return { AdapterId: adapterId, AdapterVersion: version };
+  const result = { AdapterId: adapterId, AdapterVersion: version };
+  storeIdempotency(ctx, "CreateAdapterVersion", input, result);
+  return result;
 };
 
 const GetAdapterVersion: OperationHandler = (input, ctx) => {
   const adapterId = requireString(input, "AdapterId");
   const version = requireString(input, "AdapterVersion");
-  const av = requireAdapterVersion(ctx, adapterId, version);
+  const av = resolveAdapterVersion(
+    ctx,
+    requireAdapterVersion(ctx, adapterId, version),
+  );
   return {
     AdapterId: av.AdapterId,
     AdapterVersion: av.AdapterVersion,
@@ -749,6 +929,7 @@ const GetAdapterVersion: OperationHandler = (input, ctx) => {
     Status: av.Status,
     KMSKeyId: av.KMSKeyId,
     OutputConfig: av.OutputConfig,
+    DatasetConfig: av.DatasetConfig,
     Tags: av.Tags,
   };
 };
@@ -765,11 +946,24 @@ const ListAdapterVersions: OperationHandler = (input, ctx) => {
   const adapterId = stringOrUndefined(input["AdapterId"]);
   const maxResults = numberOrUndefined(input["MaxResults"]);
   const nextToken = stringOrUndefined(input["NextToken"]);
+  const afterCreationTime = stringOrUndefined(input["AfterCreationTime"]);
+  const beforeCreationTime = stringOrUndefined(input["BeforeCreationTime"]);
   const all = ctx.store
     .list<StoredAdapterVersion>()
     .filter((e) => e.key.startsWith("adapter-version/"))
-    .map((e) => e.value)
-    .filter((av) => adapterId === undefined || av.AdapterId === adapterId);
+    .map((e) => resolveAdapterVersion(ctx, e.value))
+    .filter((av) => adapterId === undefined || av.AdapterId === adapterId)
+    .filter((av) => {
+      if (afterCreationTime !== undefined) {
+        if (new Date(av.CreationTime) <= new Date(afterCreationTime))
+          return false;
+      }
+      if (beforeCreationTime !== undefined) {
+        if (new Date(av.CreationTime) >= new Date(beforeCreationTime))
+          return false;
+      }
+      return true;
+    });
   const { items, nextToken: newNextToken } = applyPagination(
     all,
     maxResults,
@@ -789,46 +983,59 @@ const ListAdapterVersions: OperationHandler = (input, ctx) => {
   };
 };
 
+const extractAdapterIdFromArn = (arn: string): string | undefined => {
+  const match = arn.match(/adapter\/([^/]+)/);
+  return match?.[1];
+};
+
+const extractAdapterVersionFromArn = (arn: string): string | undefined => {
+  const match = arn.match(/adapter\/[^/]+\/([^/]+)/);
+  return match?.[1];
+};
+
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceARN");
   const adapterId = extractAdapterIdFromArn(resourceArn);
-  const versionPart = extractAdapterVersionFromArn(resourceArn);
-  let tags: Record<string, string> = {};
-  if (adapterId !== undefined && versionPart !== undefined) {
-    const av = ctx.store.get<StoredAdapterVersion>(
-      adapterVersionKey(adapterId, versionPart),
+  if (adapterId === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${resourceArn}`,
+      400,
     );
-    tags = av?.Tags ?? {};
-  } else if (adapterId !== undefined) {
-    const adapter = ctx.store.get<StoredAdapter>(adapterKey(adapterId));
-    tags = adapter?.Tags ?? {};
   }
-  return { Tags: tags };
+  const versionPart = extractAdapterVersionFromArn(resourceArn);
+  if (versionPart !== undefined) {
+    const av = requireAdapterVersion(ctx, adapterId, versionPart);
+    return { Tags: av.Tags };
+  }
+  const adapter = requireAdapter(ctx, adapterId);
+  return { Tags: adapter.Tags };
 };
 
 const TagResource: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceARN");
   const newTags = (input["Tags"] as Record<string, string> | undefined) ?? {};
   const adapterId = extractAdapterIdFromArn(resourceArn);
-  const versionPart = extractAdapterVersionFromArn(resourceArn);
-  if (adapterId !== undefined && versionPart !== undefined) {
-    const av = ctx.store.get<StoredAdapterVersion>(
-      adapterVersionKey(adapterId, versionPart),
+  if (adapterId === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${resourceArn}`,
+      400,
     );
-    if (av !== undefined) {
-      ctx.store.set(adapterVersionKey(adapterId, versionPart), {
-        ...av,
-        Tags: { ...av.Tags, ...newTags },
-      });
-    }
-  } else if (adapterId !== undefined) {
-    const adapter = ctx.store.get<StoredAdapter>(adapterKey(adapterId));
-    if (adapter !== undefined) {
-      ctx.store.set(adapterKey(adapterId), {
-        ...adapter,
-        Tags: { ...adapter.Tags, ...newTags },
-      });
-    }
+  }
+  const versionPart = extractAdapterVersionFromArn(resourceArn);
+  if (versionPart !== undefined) {
+    const av = requireAdapterVersion(ctx, adapterId, versionPart);
+    ctx.store.set(adapterVersionKey(adapterId, versionPart), {
+      ...av,
+      Tags: { ...av.Tags, ...newTags },
+    });
+  } else {
+    const adapter = requireAdapter(ctx, adapterId);
+    ctx.store.set(adapterKey(adapterId), {
+      ...adapter,
+      Tags: { ...adapter.Tags, ...newTags },
+    });
   }
   return {};
 };
@@ -839,43 +1046,34 @@ const UntagResource: OperationHandler = (input, ctx) => {
     ? (input["TagKeys"] as string[])
     : [];
   const adapterId = extractAdapterIdFromArn(resourceArn);
-  const versionPart = extractAdapterVersionFromArn(resourceArn);
-  if (adapterId !== undefined && versionPart !== undefined) {
-    const av = ctx.store.get<StoredAdapterVersion>(
-      adapterVersionKey(adapterId, versionPart),
+  if (adapterId === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource not found: ${resourceArn}`,
+      400,
     );
-    if (av !== undefined) {
-      const filteredTags = Object.fromEntries(
-        Object.entries(av.Tags).filter(([k]) => !tagKeys.includes(k)),
-      );
-      ctx.store.set(adapterVersionKey(adapterId, versionPart), {
-        ...av,
-        Tags: filteredTags,
-      });
-    }
-  } else if (adapterId !== undefined) {
-    const adapter = ctx.store.get<StoredAdapter>(adapterKey(adapterId));
-    if (adapter !== undefined) {
-      const filteredTags = Object.fromEntries(
-        Object.entries(adapter.Tags).filter(([k]) => !tagKeys.includes(k)),
-      );
-      ctx.store.set(adapterKey(adapterId), {
-        ...adapter,
-        Tags: filteredTags,
-      });
-    }
+  }
+  const versionPart = extractAdapterVersionFromArn(resourceArn);
+  if (versionPart !== undefined) {
+    const av = requireAdapterVersion(ctx, adapterId, versionPart);
+    const filteredTags = Object.fromEntries(
+      Object.entries(av.Tags).filter(([k]) => !tagKeys.includes(k)),
+    );
+    ctx.store.set(adapterVersionKey(adapterId, versionPart), {
+      ...av,
+      Tags: filteredTags,
+    });
+  } else {
+    const adapter = requireAdapter(ctx, adapterId);
+    const filteredTags = Object.fromEntries(
+      Object.entries(adapter.Tags).filter(([k]) => !tagKeys.includes(k)),
+    );
+    ctx.store.set(adapterKey(adapterId), {
+      ...adapter,
+      Tags: filteredTags,
+    });
   }
   return {};
-};
-
-const extractAdapterIdFromArn = (arn: string): string | undefined => {
-  const match = arn.match(/adapter\/([^/]+)/);
-  return match?.[1];
-};
-
-const extractAdapterVersionFromArn = (arn: string): string | undefined => {
-  const match = arn.match(/adapter\/[^/]+\/([^/]+)/);
-  return match?.[1];
 };
 
 const textract = {

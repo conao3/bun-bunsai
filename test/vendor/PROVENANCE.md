@@ -198,6 +198,7 @@ aws-models/
   verifiedpermissions.json # botocore/data/verifiedpermissions/2021-12-01/service-2.json (protocol json, signingName verifiedpermissions, targetPrefix VerifiedPermissions)
   mediaconvert.json     # botocore/data/mediaconvert/2017-08-29/service-2.json      (protocol rest-json, signingName mediaconvert)
   kafka.json            # botocore/data/kafka/2018-11-14/service-2.json            (protocol rest-json, signingName kafka; Amazon MSK)
+  cloudcontrol.json     # botocore/data/cloudcontrol/2021-09-30/service-2.json    (protocol json, signingName cloudcontrolapi, endpointPrefix cloudcontrolapi, targetPrefix CloudApiService)
   ce.json               # botocore/data/ce/2017-10-25/service-2.json               (protocol json, signingName ce, endpointPrefix ce, targetPrefix AWSInsightsIndexService)
   sso-admin.json        # botocore/data/sso-admin/2020-07-20/service-2.json         (protocol json, signingName sso, endpointPrefix sso, targetPrefix SWBExternalService)
   identitystore.json    # botocore/data/identitystore/2020-06-15/service-2.json     (protocol json, signingName identitystore, endpointPrefix identitystore, targetPrefix AWSIdentityStore)

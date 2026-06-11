@@ -135,6 +135,7 @@ import kinesisanalyticsv2 from "./kinesisanalyticsv2.ts";
 import verifiedpermissions from "./verifiedpermissions.ts";
 import mediaconvert from "./mediaconvert.ts";
 import kafka from "./kafka.ts";
+import cloudcontrol from "./cloudcontrol.ts";
 import ce from "./ce.ts";
 import ssoAdmin from "./sso-admin.ts";
 import identitystore from "./identitystore.ts";
@@ -275,6 +276,7 @@ export const services: ServiceDefinition[] = [
   kinesisanalyticsv2,
   verifiedpermissions,
   kafka,
+  cloudcontrol,
   ce,
   ssoAdmin,
   identitystore,

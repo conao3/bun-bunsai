@@ -125,6 +125,7 @@ import xray from "./xray.ts";
 import bedrock from "./bedrock.ts";
 import bedrockRuntime from "./bedrock-runtime.ts";
 import textract from "./textract.ts";
+import dms from "./dms.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -252,6 +253,7 @@ export const services: ServiceDefinition[] = [
   bedrockRuntime,
   bedrock,
   textract,
+  dms,
 ];
 
 export const findService = (

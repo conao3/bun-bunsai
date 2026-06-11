@@ -190,6 +190,7 @@ aws-models/
   bedrock.json          # botocore/data/bedrock/2023-04-20/service-2.json           (protocol rest-json, signingName bedrock)
   bedrock-runtime.json  # botocore/data/bedrock-runtime/2023-09-30/service-2.json  (protocol rest-json, signingName bedrock)
   textract.json         # botocore/data/textract/2018-06-27/service-2.json          (protocol json, targetPrefix Textract)
+  dms.json              # botocore/data/dms/2016-01-01/service-2.json               (protocol json, signingName dms, targetPrefix AmazonDMSv20160101)
 ```
 
 ### Notes

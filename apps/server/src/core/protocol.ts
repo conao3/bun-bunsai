@@ -369,5 +369,10 @@ export const serializeError = (
       xmlRoot: opts.xmlRoot,
     });
   }
-  return fallbackSerializeError(protocol, error, opts?.requestId, opts?.xmlRoot);
+  return fallbackSerializeError(
+    protocol,
+    error,
+    opts?.requestId,
+    opts?.xmlRoot,
+  );
 };

@@ -147,6 +147,65 @@ type StoredSentMessage = {
   Timestamp: string;
 };
 
+type StoredDedicatedIpPool = {
+  PoolName: string;
+  ScalingMode: string;
+  Tags: Tag[];
+};
+
+type StoredDedicatedIp = {
+  Ip: string;
+  WarmupStatus: string;
+  WarmupPercentage: number;
+  PoolName: string | undefined;
+};
+
+type StoredAccount = {
+  DedicatedIpAutoWarmupEnabled: boolean;
+  ProductionAccessEnabled: boolean;
+  SendingEnabled: boolean;
+  SuppressionAttributes: Record<string, unknown> | undefined;
+  Details: Record<string, unknown> | undefined;
+  VdmAttributes: Record<string, unknown> | undefined;
+};
+
+type StoredTenant = {
+  TenantName: string;
+  TenantId: string;
+  TenantArn: string;
+  CreatedTimestamp: string;
+  Tags: Tag[];
+  SendingStatus: string;
+  SuppressionAttributes: Record<string, unknown> | undefined;
+};
+
+type StoredTenantResourceAssociation = {
+  TenantName: string;
+  ResourceArn: string;
+};
+
+type StoredMultiRegionEndpoint = {
+  EndpointName: string;
+  EndpointId: string;
+  Details: Record<string, unknown> | undefined;
+  Status: string;
+  CreatedTimestamp: string;
+};
+
+type StoredDeliverabilityDashboard = {
+  DashboardEnabled: boolean;
+  SubscriptionExpiryDate: string | undefined;
+  AccountStatus: string | undefined;
+  ActiveSubscribedDomains: unknown[] | undefined;
+};
+
+type StoredReputationEntity = {
+  ReputationEntityReference: string;
+  ReputationEntityType: string;
+  ReputationManagementPolicy: string | undefined;
+  CustomerManagedStatus: Record<string, unknown> | undefined;
+};
+
 const v1IdentityKey = (identity: string): string => `identity/${identity}`;
 const identityKey = (identity: string): string => `v2identity/${identity}`;
 const configSetKey = (name: string): string => `v2configset/${name}`;
@@ -163,6 +222,17 @@ const exportJobKey = (jobId: string): string => `v2exportjob/${jobId}`;
 const importJobKey = (jobId: string): string => `v2importjob/${jobId}`;
 const delivTestKey = (reportId: string): string => `v2delivtest/${reportId}`;
 const sentMessageKey = (messageId: string): string => `v2sent/${messageId}`;
+const dedicatedIpPoolKey = (name: string): string =>
+  `v2dedicatedippool/${name}`;
+const dedicatedIpKey = (ip: string): string => `v2dedicatedip/${ip}`;
+const accountKey = (): string => `v2account/singleton`;
+const tenantKey = (name: string): string => `v2tenant/${name}`;
+const tenantResourceKey = (tenantName: string, resourceArn: string): string =>
+  `v2tenantresource/${tenantName}/${encodeURIComponent(resourceArn)}`;
+const multiRegionEndpointKey = (name: string): string => `v2mre/${name}`;
+const delivDashboardKey = (): string => `v2delivdashboard/singleton`;
+const reputationEntityKey = (type: string, ref: string): string =>
+  `v2reputation/${type}/${encodeURIComponent(ref)}`;
 
 const identityTypeOf = (identity: string): string =>
   identity.includes("@") ? "EMAIL_ADDRESS" : "DOMAIN";
@@ -1499,6 +1569,776 @@ const GetEmailAddressInsights: OperationHandler = (input, ctx) => {
   };
 };
 
+const CreateDedicatedIpPool: OperationHandler = (input, ctx) => {
+  const name = input["PoolName"] as string;
+  if (ctx.store.get(dedicatedIpPoolKey(name)) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Dedicated IP pool ${name} already exists.`,
+      400,
+    );
+  }
+  const stored: StoredDedicatedIpPool = {
+    PoolName: name,
+    ScalingMode: (input["ScalingMode"] as string | undefined) ?? "STANDARD",
+    Tags: (input["Tags"] as Tag[] | undefined) ?? [],
+  };
+  ctx.store.set(dedicatedIpPoolKey(name), stored);
+  return {};
+};
+
+const DeleteDedicatedIpPool: OperationHandler = (input, ctx) => {
+  const name = input["PoolName"] as string;
+  if (ctx.store.get(dedicatedIpPoolKey(name)) === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Dedicated IP pool ${name} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(dedicatedIpPoolKey(name));
+  return {};
+};
+
+const GetDedicatedIpPool: OperationHandler = (input, ctx) => {
+  const name = input["PoolName"] as string;
+  const stored = ctx.store.get<StoredDedicatedIpPool>(dedicatedIpPoolKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Dedicated IP pool ${name} not found.`,
+      404,
+    );
+  }
+  return {
+    DedicatedIpPool: {
+      PoolName: stored.PoolName,
+      ScalingMode: stored.ScalingMode,
+    },
+  };
+};
+
+const ListDedicatedIpPools: OperationHandler = (input, ctx) => {
+  const all = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith("v2dedicatedippool/"))
+    .map((e) => (e.value as StoredDedicatedIpPool).PoolName);
+
+  const pageSize = input["PageSize"] as number | undefined;
+  const nextToken = input["NextToken"] as string | undefined;
+  let start = 0;
+  if (nextToken !== undefined) {
+    start = parseInt(nextToken, 10);
+    if (isNaN(start)) start = 0;
+  }
+  const page =
+    pageSize !== undefined
+      ? all.slice(start, start + pageSize)
+      : all.slice(start);
+  const hasMore = pageSize !== undefined && start + pageSize < all.length;
+  return {
+    DedicatedIpPools: page,
+    NextToken: hasMore ? String(start + pageSize) : undefined,
+  };
+};
+
+const GetDedicatedIp: OperationHandler = (input, ctx) => {
+  const ip = input["Ip"] as string;
+  const stored = ctx.store.get<StoredDedicatedIp>(dedicatedIpKey(ip));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Dedicated IP ${ip} not found.`, 404);
+  }
+  return {
+    DedicatedIp: {
+      Ip: stored.Ip,
+      WarmupStatus: stored.WarmupStatus,
+      WarmupPercentage: stored.WarmupPercentage,
+      PoolName: stored.PoolName,
+    },
+  };
+};
+
+const GetDedicatedIps: OperationHandler = (input, ctx) => {
+  const poolName = input["PoolName"] as string | undefined;
+  const all = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith("v2dedicatedip/"))
+    .map((e) => e.value as StoredDedicatedIp)
+    .filter((ip) => poolName === undefined || ip.PoolName === poolName)
+    .map((ip) => ({
+      Ip: ip.Ip,
+      WarmupStatus: ip.WarmupStatus,
+      WarmupPercentage: ip.WarmupPercentage,
+      PoolName: ip.PoolName,
+    }));
+
+  const pageSize = input["PageSize"] as number | undefined;
+  const nextToken = input["NextToken"] as string | undefined;
+  let start = 0;
+  if (nextToken !== undefined) {
+    start = parseInt(nextToken, 10);
+    if (isNaN(start)) start = 0;
+  }
+  const page =
+    pageSize !== undefined
+      ? all.slice(start, start + pageSize)
+      : all.slice(start);
+  const hasMore = pageSize !== undefined && start + pageSize < all.length;
+  return {
+    DedicatedIps: page,
+    NextToken: hasMore ? String(start + pageSize) : undefined,
+  };
+};
+
+const PutDedicatedIpInPool: OperationHandler = (input, ctx) => {
+  const ip = input["Ip"] as string;
+  const destPool = input["DestinationPoolName"] as string;
+  if (ctx.store.get(dedicatedIpPoolKey(destPool)) === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Dedicated IP pool ${destPool} not found.`,
+      404,
+    );
+  }
+  const existing = ctx.store.get<StoredDedicatedIp>(dedicatedIpKey(ip));
+  const stored: StoredDedicatedIp = existing ?? {
+    Ip: ip,
+    WarmupStatus: "IN_PROGRESS",
+    WarmupPercentage: 0,
+    PoolName: destPool,
+  };
+  stored.PoolName = destPool;
+  ctx.store.set(dedicatedIpKey(ip), stored);
+  return {};
+};
+
+const PutDedicatedIpPoolScalingAttributes: OperationHandler = (input, ctx) => {
+  const name = input["PoolName"] as string;
+  const stored = ctx.store.get<StoredDedicatedIpPool>(dedicatedIpPoolKey(name));
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Dedicated IP pool ${name} not found.`,
+      404,
+    );
+  }
+  stored.ScalingMode = input["ScalingMode"] as string;
+  ctx.store.set(dedicatedIpPoolKey(name), stored);
+  return {};
+};
+
+const PutDedicatedIpWarmupAttributes: OperationHandler = (input, ctx) => {
+  const ip = input["Ip"] as string;
+  const stored = ctx.store.get<StoredDedicatedIp>(dedicatedIpKey(ip));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Dedicated IP ${ip} not found.`, 404);
+  }
+  stored.WarmupPercentage = input["WarmupPercentage"] as number;
+  ctx.store.set(dedicatedIpKey(ip), stored);
+  return {};
+};
+
+const getAccount = (ctx: ServiceContext): StoredAccount => {
+  const existing = ctx.store.get<StoredAccount>(accountKey());
+  if (existing !== undefined) return existing;
+  const fresh: StoredAccount = {
+    DedicatedIpAutoWarmupEnabled: false,
+    ProductionAccessEnabled: true,
+    SendingEnabled: true,
+    SuppressionAttributes: undefined,
+    Details: undefined,
+    VdmAttributes: undefined,
+  };
+  ctx.store.set(accountKey(), fresh);
+  return fresh;
+};
+
+const PutAccountDedicatedIpWarmupAttributes: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const acc = getAccount(ctx);
+  acc.DedicatedIpAutoWarmupEnabled =
+    (input["AutoWarmupEnabled"] as boolean | undefined) ?? false;
+  ctx.store.set(accountKey(), acc);
+  return {};
+};
+
+const GetAccount: OperationHandler = (_input, ctx) => {
+  const acc = getAccount(ctx);
+  return {
+    DedicatedIpAutoWarmupEnabled: acc.DedicatedIpAutoWarmupEnabled,
+    EnforcementStatus: "HEALTHY",
+    ProductionAccessEnabled: acc.ProductionAccessEnabled,
+    SendQuota: {
+      Max24HourSend: 50000,
+      MaxSendRate: 14,
+      SentLast24Hours: 0,
+    },
+    SendingEnabled: acc.SendingEnabled,
+    SuppressionAttributes: acc.SuppressionAttributes,
+    Details: acc.Details,
+    VdmAttributes: acc.VdmAttributes,
+  };
+};
+
+const PutAccountDetails: OperationHandler = (input, ctx) => {
+  const acc = getAccount(ctx);
+  acc.Details = {
+    MailType: input["MailType"],
+    WebsiteURL: input["WebsiteURL"],
+    ContactLanguage: input["ContactLanguage"],
+    UseCaseDescription: input["UseCaseDescription"],
+    AdditionalContactEmailAddresses: input["AdditionalContactEmailAddresses"],
+    ReviewDetails: input["ReviewDetails"],
+  };
+  ctx.store.set(accountKey(), acc);
+  return {};
+};
+
+const PutAccountSendingAttributes: OperationHandler = (input, ctx) => {
+  const acc = getAccount(ctx);
+  acc.SendingEnabled = (input["SendingEnabled"] as boolean | undefined) ?? true;
+  ctx.store.set(accountKey(), acc);
+  return {};
+};
+
+const PutAccountSuppressionAttributes: OperationHandler = (input, ctx) => {
+  const acc = getAccount(ctx);
+  acc.SuppressionAttributes = {
+    SuppressedReasons: input["SuppressedReasons"],
+  };
+  ctx.store.set(accountKey(), acc);
+  return {};
+};
+
+const PutAccountVdmAttributes: OperationHandler = (input, ctx) => {
+  const acc = getAccount(ctx);
+  acc.VdmAttributes = input["VdmAttributes"] as
+    | Record<string, unknown>
+    | undefined;
+  ctx.store.set(accountKey(), acc);
+  return {};
+};
+
+const PutConfigurationSetArchivingOptions: OperationHandler = (input, ctx) => {
+  const name = input["ConfigurationSetName"] as string;
+  const stored = requireConfigSet(ctx, name);
+  (stored as Record<string, unknown>)["ArchivingOptions"] = {
+    ArchiveArn: input["ArchiveArn"],
+  };
+  ctx.store.set(configSetKey(name), stored);
+  return {};
+};
+
+const PutConfigurationSetVdmOptions: OperationHandler = (input, ctx) => {
+  const name = input["ConfigurationSetName"] as string;
+  const stored = requireConfigSet(ctx, name);
+  stored.VdmOptions = input["VdmOptions"] as
+    | Record<string, unknown>
+    | undefined;
+  ctx.store.set(configSetKey(name), stored);
+  return {};
+};
+
+const PutEmailIdentityConfigurationSetAttributes: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const identity = input["EmailIdentity"] as string;
+  const stored = requireIdentity(ctx, identity);
+  stored.ConfigurationSetName = input["ConfigurationSetName"] as
+    | string
+    | undefined;
+  ctx.store.set(identityKey(identity), stored);
+  return {};
+};
+
+const PutEmailIdentityDkimAttributes: OperationHandler = (input, ctx) => {
+  const identity = input["EmailIdentity"] as string;
+  const stored = requireIdentity(ctx, identity);
+  stored.DkimAttributes.SigningEnabled =
+    (input["SigningEnabled"] as boolean | undefined) ?? false;
+  ctx.store.set(identityKey(identity), stored);
+  return {};
+};
+
+const PutEmailIdentityDkimSigningAttributes: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const identity = input["EmailIdentity"] as string;
+  const stored = requireIdentity(ctx, identity);
+  const origin =
+    (input["SigningAttributesOrigin"] as string | undefined) ?? "AWS_SES";
+  stored.DkimAttributes.SigningAttributesOrigin = origin;
+  ctx.store.set(identityKey(identity), stored);
+  return { DkimStatus: stored.DkimAttributes.Status, DkimTokens: [] };
+};
+
+const PutEmailIdentityFeedbackAttributes: OperationHandler = (input, ctx) => {
+  const identity = input["EmailIdentity"] as string;
+  const stored = requireIdentity(ctx, identity);
+  stored.FeedbackForwardingStatus =
+    (input["EmailForwardingEnabled"] as boolean | undefined) ?? true;
+  ctx.store.set(identityKey(identity), stored);
+  return {};
+};
+
+const PutEmailIdentityMailFromAttributes: OperationHandler = (input, ctx) => {
+  const identity = input["EmailIdentity"] as string;
+  const stored = requireIdentity(ctx, identity);
+  stored.MailFromAttributes.MailFromDomain =
+    (input["MailFromDomain"] as string | undefined) ?? "";
+  stored.MailFromAttributes.BehaviorOnMxFailure =
+    (input["BehaviorOnMxFailure"] as string | undefined) ?? "USE_DEFAULT_VALUE";
+  ctx.store.set(identityKey(identity), stored);
+  return {};
+};
+
+const requireTenant = (ctx: ServiceContext, name: string): StoredTenant => {
+  const stored = ctx.store.get<StoredTenant>(tenantKey(name));
+  if (stored === undefined) {
+    throw awsError("NotFoundException", `Tenant ${name} not found.`, 404);
+  }
+  return stored;
+};
+
+const CreateTenant: OperationHandler = (input, ctx) => {
+  const name = input["TenantName"] as string;
+  if (ctx.store.get(tenantKey(name)) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Tenant ${name} already exists.`,
+      400,
+    );
+  }
+  const tenantId = `tenant-${name}`;
+  const tenantArn = `arn:aws:ses:us-east-1:123456789012:tenant/${name}`;
+  const stored: StoredTenant = {
+    TenantName: name,
+    TenantId: tenantId,
+    TenantArn: tenantArn,
+    CreatedTimestamp: new Date().toISOString(),
+    Tags: (input["Tags"] as Tag[] | undefined) ?? [],
+    SendingStatus: "ENABLED",
+    SuppressionAttributes: input["SuppressionAttributes"] as
+      | Record<string, unknown>
+      | undefined,
+  };
+  ctx.store.set(tenantKey(name), stored);
+  return {
+    TenantName: stored.TenantName,
+    TenantId: stored.TenantId,
+    TenantArn: stored.TenantArn,
+    CreatedTimestamp: stored.CreatedTimestamp,
+    Tags: stored.Tags,
+    SendingStatus: stored.SendingStatus,
+    SuppressionAttributes: stored.SuppressionAttributes,
+  };
+};
+
+const DeleteTenant: OperationHandler = (input, ctx) => {
+  const name = input["TenantName"] as string;
+  requireTenant(ctx, name);
+  ctx.store.delete(tenantKey(name));
+  ctx.store
+    .list()
+    .filter((e) => e.key.startsWith(`v2tenantresource/${name}/`))
+    .forEach((e) => ctx.store.delete(e.key));
+  return {};
+};
+
+const GetTenant: OperationHandler = (input, ctx) => {
+  const name = input["TenantName"] as string;
+  const stored = requireTenant(ctx, name);
+  return {
+    Tenant: {
+      TenantName: stored.TenantName,
+      TenantId: stored.TenantId,
+      TenantArn: stored.TenantArn,
+      CreatedTimestamp: stored.CreatedTimestamp,
+      Tags: stored.Tags,
+      SendingStatus: stored.SendingStatus,
+      SuppressionAttributes: stored.SuppressionAttributes,
+    },
+  };
+};
+
+const ListTenants: OperationHandler = (input, ctx) => {
+  const all = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith("v2tenant/"))
+    .map((e) => {
+      const s = e.value as StoredTenant;
+      return {
+        TenantName: s.TenantName,
+        TenantId: s.TenantId,
+        TenantArn: s.TenantArn,
+        CreatedTimestamp: s.CreatedTimestamp,
+        SendingStatus: s.SendingStatus,
+      };
+    });
+
+  const pageSize = input["PageSize"] as number | undefined;
+  const nextToken = input["NextToken"] as string | undefined;
+  let start = 0;
+  if (nextToken !== undefined) {
+    start = parseInt(nextToken, 10);
+    if (isNaN(start)) start = 0;
+  }
+  const page =
+    pageSize !== undefined
+      ? all.slice(start, start + pageSize)
+      : all.slice(start);
+  const hasMore = pageSize !== undefined && start + pageSize < all.length;
+  return {
+    Tenants: page,
+    NextToken: hasMore ? String(start + pageSize) : undefined,
+  };
+};
+
+const CreateTenantResourceAssociation: OperationHandler = (input, ctx) => {
+  const tenantName = input["TenantName"] as string;
+  const resourceArn = input["ResourceArn"] as string;
+  requireTenant(ctx, tenantName);
+  const key = tenantResourceKey(tenantName, resourceArn);
+  if (ctx.store.get(key) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Resource ${resourceArn} already associated with tenant ${tenantName}.`,
+      400,
+    );
+  }
+  const stored: StoredTenantResourceAssociation = {
+    TenantName: tenantName,
+    ResourceArn: resourceArn,
+  };
+  ctx.store.set(key, stored);
+  return {};
+};
+
+const DeleteTenantResourceAssociation: OperationHandler = (input, ctx) => {
+  const tenantName = input["TenantName"] as string;
+  const resourceArn = input["ResourceArn"] as string;
+  const key = tenantResourceKey(tenantName, resourceArn);
+  if (ctx.store.get(key) === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Resource ${resourceArn} not associated with tenant ${tenantName}.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return {};
+};
+
+const ListTenantResources: OperationHandler = (input, ctx) => {
+  const tenantName = input["TenantName"] as string;
+  requireTenant(ctx, tenantName);
+  const prefix = `v2tenantresource/${tenantName}/`;
+  const all = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith(prefix))
+    .map((e) => ({
+      ResourceArn: (e.value as StoredTenantResourceAssociation).ResourceArn,
+    }));
+
+  const pageSize = input["PageSize"] as number | undefined;
+  const nextToken = input["NextToken"] as string | undefined;
+  let start = 0;
+  if (nextToken !== undefined) {
+    start = parseInt(nextToken, 10);
+    if (isNaN(start)) start = 0;
+  }
+  const page =
+    pageSize !== undefined
+      ? all.slice(start, start + pageSize)
+      : all.slice(start);
+  const hasMore = pageSize !== undefined && start + pageSize < all.length;
+  return {
+    TenantResources: page,
+    NextToken: hasMore ? String(start + pageSize) : undefined,
+  };
+};
+
+const ListResourceTenants: OperationHandler = (input, ctx) => {
+  const resourceArn = input["ResourceArn"] as string;
+  const all = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith("v2tenantresource/"))
+    .map((e) => e.value as StoredTenantResourceAssociation)
+    .filter((a) => a.ResourceArn === resourceArn)
+    .map((a) => ({ TenantName: a.TenantName }));
+
+  const pageSize = input["PageSize"] as number | undefined;
+  const nextToken = input["NextToken"] as string | undefined;
+  let start = 0;
+  if (nextToken !== undefined) {
+    start = parseInt(nextToken, 10);
+    if (isNaN(start)) start = 0;
+  }
+  const page =
+    pageSize !== undefined
+      ? all.slice(start, start + pageSize)
+      : all.slice(start);
+  const hasMore = pageSize !== undefined && start + pageSize < all.length;
+  return {
+    ResourceTenants: page,
+    NextToken: hasMore ? String(start + pageSize) : undefined,
+  };
+};
+
+const PutTenantSuppressionAttributes: OperationHandler = (input, ctx) => {
+  const tenantName = input["TenantName"] as string;
+  const stored = requireTenant(ctx, tenantName);
+  stored.SuppressionAttributes = {
+    SuppressedReasons: input["SuppressedReasons"],
+  };
+  ctx.store.set(tenantKey(tenantName), stored);
+  return {};
+};
+
+const CreateMultiRegionEndpoint: OperationHandler = (input, ctx) => {
+  const name = input["EndpointName"] as string;
+  if (ctx.store.get(multiRegionEndpointKey(name)) !== undefined) {
+    throw awsError(
+      "AlreadyExistsException",
+      `Multi-region endpoint ${name} already exists.`,
+      400,
+    );
+  }
+  const endpointId = `mre-${name}`;
+  const stored: StoredMultiRegionEndpoint = {
+    EndpointName: name,
+    EndpointId: endpointId,
+    Details: input["Details"] as Record<string, unknown> | undefined,
+    Status: "READY",
+    CreatedTimestamp: new Date().toISOString(),
+  };
+  ctx.store.set(multiRegionEndpointKey(name), stored);
+  return { Status: "READY", EndpointId: endpointId };
+};
+
+const DeleteMultiRegionEndpoint: OperationHandler = (input, ctx) => {
+  const name = input["EndpointName"] as string;
+  if (ctx.store.get(multiRegionEndpointKey(name)) === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Multi-region endpoint ${name} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(multiRegionEndpointKey(name));
+  return {};
+};
+
+const GetMultiRegionEndpoint: OperationHandler = (input, ctx) => {
+  const name = input["EndpointName"] as string;
+  const stored = ctx.store.get<StoredMultiRegionEndpoint>(
+    multiRegionEndpointKey(name),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Multi-region endpoint ${name} not found.`,
+      404,
+    );
+  }
+  return {
+    EndpointName: stored.EndpointName,
+    EndpointId: stored.EndpointId,
+    Routes: [],
+    Status: stored.Status,
+    CreatedTimestamp: stored.CreatedTimestamp,
+    LastUpdatedTimestamp: stored.CreatedTimestamp,
+  };
+};
+
+const ListMultiRegionEndpoints: OperationHandler = (input, ctx) => {
+  const all = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith("v2mre/"))
+    .map((e) => {
+      const s = e.value as StoredMultiRegionEndpoint;
+      return {
+        EndpointName: s.EndpointName,
+        EndpointId: s.EndpointId,
+        Status: s.Status,
+        CreatedTimestamp: s.CreatedTimestamp,
+      };
+    });
+
+  const pageSize = input["PageSize"] as number | undefined;
+  const nextToken = input["NextToken"] as string | undefined;
+  let start = 0;
+  if (nextToken !== undefined) {
+    start = parseInt(nextToken, 10);
+    if (isNaN(start)) start = 0;
+  }
+  const page =
+    pageSize !== undefined
+      ? all.slice(start, start + pageSize)
+      : all.slice(start);
+  const hasMore = pageSize !== undefined && start + pageSize < all.length;
+  return {
+    MultiRegionEndpoints: page,
+    NextToken: hasMore ? String(start + pageSize) : undefined,
+  };
+};
+
+const GetDeliverabilityDashboardOptions: OperationHandler = (_input, ctx) => {
+  const stored =
+    ctx.store.get<StoredDeliverabilityDashboard>(delivDashboardKey());
+  return {
+    DashboardEnabled: stored?.DashboardEnabled ?? false,
+    SubscriptionExpiryDate: stored?.SubscriptionExpiryDate,
+    AccountStatus: stored?.AccountStatus,
+    ActiveSubscribedDomains: stored?.ActiveSubscribedDomains ?? [],
+    PendingExpirationSubscribedDomains: [],
+  };
+};
+
+const PutDeliverabilityDashboardOption: OperationHandler = (input, ctx) => {
+  const existing =
+    ctx.store.get<StoredDeliverabilityDashboard>(delivDashboardKey());
+  const stored: StoredDeliverabilityDashboard = existing ?? {
+    DashboardEnabled: false,
+    SubscriptionExpiryDate: undefined,
+    AccountStatus: undefined,
+    ActiveSubscribedDomains: undefined,
+  };
+  stored.DashboardEnabled = (input["DashboardEnabled"] as boolean) ?? false;
+  ctx.store.set(delivDashboardKey(), stored);
+  return {};
+};
+
+const GetDomainDeliverabilityCampaign: OperationHandler = (input, _ctx) => {
+  const campaignId = input["CampaignId"] as string;
+  throw awsError("NotFoundException", `Campaign ${campaignId} not found.`, 404);
+};
+
+const ListDomainDeliverabilityCampaigns: OperationHandler = (_input, _ctx) => {
+  return { DomainDeliverabilityCampaigns: [] };
+};
+
+const GetDomainStatisticsReport: OperationHandler = (_input, _ctx) => {
+  return {
+    OverallVolume: {
+      VolumeStatistics: {
+        InboxRawCount: 0,
+        SpamRawCount: 0,
+        ProjectedInbox: 0,
+        ProjectedSpam: 0,
+      },
+      ReadRatePercent: 0,
+      DomainIspPlacements: [],
+    },
+    DailyVolumes: [],
+  };
+};
+
+const GetBlacklistReports: OperationHandler = (_input, _ctx) => {
+  return { BlacklistReport: {} };
+};
+
+const GetReputationEntity: OperationHandler = (input, ctx) => {
+  const entityType = input["ReputationEntityType"] as string;
+  const entityRef = input["ReputationEntityReference"] as string;
+  const stored = ctx.store.get<StoredReputationEntity>(
+    reputationEntityKey(entityType, entityRef),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "NotFoundException",
+      `Reputation entity ${entityRef} not found.`,
+      404,
+    );
+  }
+  return {
+    ReputationEntity: {
+      ReputationEntityReference: stored.ReputationEntityReference,
+      ReputationEntityType: stored.ReputationEntityType,
+      ReputationManagementPolicy: stored.ReputationManagementPolicy,
+      CustomerManagedStatus: stored.CustomerManagedStatus,
+    },
+  };
+};
+
+const ListReputationEntities: OperationHandler = (input, ctx) => {
+  const all = ctx.store
+    .list()
+    .filter((e) => e.key.startsWith("v2reputation/"))
+    .map((e) => {
+      const s = e.value as StoredReputationEntity;
+      return {
+        ReputationEntityReference: s.ReputationEntityReference,
+        ReputationEntityType: s.ReputationEntityType,
+        ReputationManagementPolicy: s.ReputationManagementPolicy,
+      };
+    });
+
+  const pageSize = input["PageSize"] as number | undefined;
+  const nextToken = input["NextToken"] as string | undefined;
+  let start = 0;
+  if (nextToken !== undefined) {
+    start = parseInt(nextToken, 10);
+    if (isNaN(start)) start = 0;
+  }
+  const page =
+    pageSize !== undefined
+      ? all.slice(start, start + pageSize)
+      : all.slice(start);
+  const hasMore = pageSize !== undefined && start + pageSize < all.length;
+  return {
+    ReputationEntities: page,
+    NextToken: hasMore ? String(start + pageSize) : undefined,
+  };
+};
+
+const UpdateReputationEntityCustomerManagedStatus: OperationHandler = (
+  input,
+  ctx,
+) => {
+  const entityType = input["ReputationEntityType"] as string;
+  const entityRef = input["ReputationEntityReference"] as string;
+  const key = reputationEntityKey(entityType, entityRef);
+  const existing = ctx.store.get<StoredReputationEntity>(key);
+  const stored: StoredReputationEntity = existing ?? {
+    ReputationEntityReference: entityRef,
+    ReputationEntityType: entityType,
+    ReputationManagementPolicy: undefined,
+    CustomerManagedStatus: undefined,
+  };
+  stored.CustomerManagedStatus = input["CustomerManagedStatus"] as
+    | Record<string, unknown>
+    | undefined;
+  ctx.store.set(key, stored);
+  return {};
+};
+
+const UpdateReputationEntityPolicy: OperationHandler = (input, ctx) => {
+  const entityType = input["ReputationEntityType"] as string;
+  const entityRef = input["ReputationEntityReference"] as string;
+  const key = reputationEntityKey(entityType, entityRef);
+  const existing = ctx.store.get<StoredReputationEntity>(key);
+  const stored: StoredReputationEntity = existing ?? {
+    ReputationEntityReference: entityRef,
+    ReputationEntityType: entityType,
+    ReputationManagementPolicy: undefined,
+    CustomerManagedStatus: undefined,
+  };
+  stored.ReputationManagementPolicy = input["ReputationManagementPolicy"] as
+    | string
+    | undefined;
+  ctx.store.set(key, stored);
+  return {};
+};
+
+const ListRecommendations: OperationHandler = (_input, _ctx) => {
+  return { Recommendations: [] };
+};
+
 const pathSegments = (path: string): string[] =>
   path.split("/").filter((p) => p !== "");
 
@@ -1680,6 +2520,155 @@ const sesv2: ServiceDefinition = {
     if (parts[2] === "email-address-insights" && m === "POST")
       return "GetEmailAddressInsights";
 
+    if (parts[2] === "dedicated-ip-pools") {
+      if (parts.length === 3) {
+        if (m === "GET") return "ListDedicatedIpPools";
+        if (m === "POST") return "CreateDedicatedIpPool";
+      }
+      if (parts.length === 4) {
+        if (m === "GET") return "GetDedicatedIpPool";
+        if (m === "DELETE") return "DeleteDedicatedIpPool";
+      }
+      if (parts.length === 5 && parts[4] === "scaling" && m === "PUT")
+        return "PutDedicatedIpPoolScalingAttributes";
+    }
+
+    if (parts[2] === "dedicated-ips") {
+      if (parts.length === 3 && m === "GET") return "GetDedicatedIps";
+      if (parts.length === 4 && m === "GET") return "GetDedicatedIp";
+      if (parts.length === 5 && parts[4] === "pool" && m === "PUT")
+        return "PutDedicatedIpInPool";
+      if (parts.length === 5 && parts[4] === "warmup" && m === "PUT")
+        return "PutDedicatedIpWarmupAttributes";
+    }
+
+    if (parts[2] === "account") {
+      if (parts.length === 3 && m === "GET") return "GetAccount";
+      if (parts.length === 4) {
+        const sub = parts[3];
+        if (sub === "details" && m === "POST") return "PutAccountDetails";
+        if (sub === "sending" && m === "PUT")
+          return "PutAccountSendingAttributes";
+        if (sub === "suppression" && m === "PUT")
+          return "PutAccountSuppressionAttributes";
+        if (sub === "vdm" && m === "PUT") return "PutAccountVdmAttributes";
+      }
+      if (
+        parts.length === 5 &&
+        parts[3] === "dedicated-ips" &&
+        parts[4] === "warmup" &&
+        m === "PUT"
+      )
+        return "PutAccountDedicatedIpWarmupAttributes";
+    }
+
+    if (parts[2] === "configuration-sets" && parts.length === 5) {
+      const sub = parts[4];
+      if (sub === "archiving-options" && m === "PUT")
+        return "PutConfigurationSetArchivingOptions";
+      if (sub === "vdm-options" && m === "PUT")
+        return "PutConfigurationSetVdmOptions";
+    }
+
+    if (parts[2] === "identities" && parts.length === 5) {
+      const sub = parts[4];
+      if (sub === "configuration-set" && m === "PUT")
+        return "PutEmailIdentityConfigurationSetAttributes";
+      if (sub === "dkim" && m === "PUT")
+        return "PutEmailIdentityDkimAttributes";
+      if (sub === "feedback" && m === "PUT")
+        return "PutEmailIdentityFeedbackAttributes";
+      if (sub === "mail-from" && m === "PUT")
+        return "PutEmailIdentityMailFromAttributes";
+    }
+
+    if (
+      parts[2] === "identities" &&
+      parts.length === 6 &&
+      parts[4] === "dkim" &&
+      parts[5] === "signing" &&
+      m === "PUT"
+    )
+      return "PutEmailIdentityDkimSigningAttributes";
+
+    if (parts[2] === "tenants") {
+      if (parts.length === 3 && m === "POST") return "CreateTenant";
+      if (parts.length === 4) {
+        const sub = parts[3];
+        if (sub === "delete" && m === "POST") return "DeleteTenant";
+        if (sub === "get" && m === "POST") return "GetTenant";
+        if (sub === "list" && m === "POST") return "ListTenants";
+      }
+      if (parts.length === 4 && parts[3] === "resources" && m === "POST")
+        return "CreateTenantResourceAssociation";
+      if (parts.length === 5) {
+        const sub = parts[3];
+        if (sub === "resources" && parts[4] === "delete" && m === "POST")
+          return "DeleteTenantResourceAssociation";
+        if (sub === "resources" && parts[4] === "list" && m === "POST")
+          return "ListTenantResources";
+      }
+    }
+
+    if (parts[2] === "tenant" && parts[3] === "suppression" && m === "POST")
+      return "PutTenantSuppressionAttributes";
+
+    if (
+      parts[2] === "resources" &&
+      parts[3] === "tenants" &&
+      parts[4] === "list" &&
+      m === "POST"
+    )
+      return "ListResourceTenants";
+
+    if (parts[2] === "multi-region-endpoints") {
+      if (parts.length === 3) {
+        if (m === "GET") return "ListMultiRegionEndpoints";
+        if (m === "POST") return "CreateMultiRegionEndpoint";
+      }
+      if (parts.length === 4) {
+        if (m === "GET") return "GetMultiRegionEndpoint";
+        if (m === "DELETE") return "DeleteMultiRegionEndpoint";
+      }
+    }
+
+    if (parts[2] === "deliverability-dashboard" && parts.length === 3) {
+      if (m === "GET") return "GetDeliverabilityDashboardOptions";
+      if (m === "PUT") return "PutDeliverabilityDashboardOption";
+    }
+
+    if (parts[2] === "deliverability-dashboard") {
+      if (parts[3] === "campaigns" && parts.length === 4 && m === "GET")
+        return "GetDomainDeliverabilityCampaign";
+      if (
+        parts[3] === "domains" &&
+        parts.length === 5 &&
+        parts[5] === "campaigns" &&
+        m === "GET"
+      )
+        return "ListDomainDeliverabilityCampaigns";
+      if (parts[3] === "statistics-report" && parts.length === 5 && m === "GET")
+        return "GetDomainStatisticsReport";
+      if (parts[3] === "blacklist-report" && parts.length === 4 && m === "GET")
+        return "GetBlacklistReports";
+    }
+
+    if (parts[2] === "reputation" && parts[3] === "entities") {
+      if (parts.length === 4 && m === "POST") return "ListReputationEntities";
+      if (parts.length === 6 && m === "GET") return "GetReputationEntity";
+      if (
+        parts.length === 7 &&
+        parts[6] === "customer-managed-status" &&
+        m === "PUT"
+      )
+        return "UpdateReputationEntityCustomerManagedStatus";
+      if (parts.length === 7 && parts[6] === "policy" && m === "PUT")
+        return "UpdateReputationEntityPolicy";
+    }
+
+    if (parts[2] === "vdm" && parts[3] === "recommendations" && m === "POST")
+      return "ListRecommendations";
+
     return undefined;
   },
   operations: {
@@ -1748,6 +2737,52 @@ const sesv2: ServiceDefinition = {
     BatchGetMetricData,
     GetMessageInsights,
     GetEmailAddressInsights,
+    CreateDedicatedIpPool,
+    DeleteDedicatedIpPool,
+    GetDedicatedIpPool,
+    ListDedicatedIpPools,
+    GetDedicatedIp,
+    GetDedicatedIps,
+    PutDedicatedIpInPool,
+    PutDedicatedIpPoolScalingAttributes,
+    PutDedicatedIpWarmupAttributes,
+    PutAccountDedicatedIpWarmupAttributes,
+    GetAccount,
+    PutAccountDetails,
+    PutAccountSendingAttributes,
+    PutAccountSuppressionAttributes,
+    PutAccountVdmAttributes,
+    PutConfigurationSetArchivingOptions,
+    PutConfigurationSetVdmOptions,
+    PutEmailIdentityConfigurationSetAttributes,
+    PutEmailIdentityDkimAttributes,
+    PutEmailIdentityDkimSigningAttributes,
+    PutEmailIdentityFeedbackAttributes,
+    PutEmailIdentityMailFromAttributes,
+    CreateTenant,
+    DeleteTenant,
+    GetTenant,
+    ListTenants,
+    CreateTenantResourceAssociation,
+    DeleteTenantResourceAssociation,
+    ListTenantResources,
+    ListResourceTenants,
+    PutTenantSuppressionAttributes,
+    CreateMultiRegionEndpoint,
+    DeleteMultiRegionEndpoint,
+    GetMultiRegionEndpoint,
+    ListMultiRegionEndpoints,
+    GetDeliverabilityDashboardOptions,
+    PutDeliverabilityDashboardOption,
+    GetDomainDeliverabilityCampaign,
+    ListDomainDeliverabilityCampaigns,
+    GetDomainStatisticsReport,
+    GetBlacklistReports,
+    GetReputationEntity,
+    ListReputationEntities,
+    UpdateReputationEntityCustomerManagedStatus,
+    UpdateReputationEntityPolicy,
+    ListRecommendations,
   },
   model,
 } as const satisfies ServiceDefinition;

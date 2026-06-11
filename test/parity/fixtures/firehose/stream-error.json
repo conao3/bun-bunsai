@@ -1,0 +1,17 @@
+{
+  "clientPackage": "@aws-sdk/client-firehose",
+  "clientName": "FirehoseClient",
+  "steps": [
+    {
+      "command": "DescribeDeliveryStreamCommand",
+      "input": { "DeliveryStreamName": "parity-firehose-nonexistent" },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

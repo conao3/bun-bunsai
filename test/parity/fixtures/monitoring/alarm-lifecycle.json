@@ -1,0 +1,65 @@
+{
+  "clientPackage": "@aws-sdk/client-cloudwatch",
+  "clientName": "CloudWatchClient",
+  "steps": [
+    {
+      "command": "PutMetricAlarmCommand",
+      "input": {
+        "AlarmName": "parity-cw-alarm-lifecycle",
+        "ComparisonOperator": "GreaterThanThreshold",
+        "EvaluationPeriods": 1,
+        "MetricName": "parity-metric",
+        "Namespace": "ParityTest",
+        "Period": 60,
+        "Statistic": "Sum",
+        "Threshold": 100
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeAlarmsCommand",
+      "input": {
+        "AlarmNames": ["parity-cw-alarm-lifecycle"]
+      },
+      "expected": {
+        "MetricAlarms": [
+          {
+            "AlarmName": "parity-cw-alarm-lifecycle",
+            "AlarmArn": "<ANY>",
+            "AlarmDescription": "",
+            "AlarmConfigurationUpdatedTimestamp": "<ANY>",
+            "ActionsEnabled": true,
+            "StateValue": "INSUFFICIENT_DATA",
+            "StateReason": "Unchecked: Initial alarm creation",
+            "StateUpdatedTimestamp": "<ANY>",
+            "MetricName": "parity-metric",
+            "Namespace": "ParityTest",
+            "Statistic": "Sum",
+            "Dimensions": [],
+            "Period": 60,
+            "EvaluationPeriods": 1,
+            "Threshold": 100,
+            "ComparisonOperator": "GreaterThanThreshold"
+          }
+        ],
+        "CompositeAlarms": []
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteAlarmsCommand",
+      "input": {
+        "AlarmNames": ["parity-cw-alarm-lifecycle"]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

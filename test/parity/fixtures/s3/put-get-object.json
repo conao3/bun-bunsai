@@ -6,8 +6,8 @@
     {
       "command": "CreateBucketCommand",
       "input": { "Bucket": "parity-s3-obj" },
-      "expected": {},
-      "ignorePaths": ["$metadata", "Location"],
+      "expected": { "Location": "/parity-s3-obj" },
+      "ignorePaths": ["$metadata"],
       "saveAs": null,
       "refs": {}
     },
@@ -31,15 +31,10 @@
         "ETag": "\"ef2a02275b08a52915d74cba1e1f4e3e\"",
         "ContentType": "text/plain",
         "ContentLength": 12,
-        "Body": "<ANY>"
+        "Body": "<ANY>",
+        "ServerSideEncryption": "AES256"
       },
-      "ignorePaths": [
-        "$metadata",
-        "LastModified",
-        "Metadata",
-        "AcceptRanges",
-        "ServerSideEncryption"
-      ],
+      "ignorePaths": ["$metadata", "LastModified", "Metadata", "AcceptRanges"],
       "saveAs": null,
       "refs": {}
     },
@@ -49,15 +44,10 @@
       "expected": {
         "ETag": "\"ef2a02275b08a52915d74cba1e1f4e3e\"",
         "ContentType": "text/plain",
-        "ContentLength": 12
+        "ContentLength": 12,
+        "ServerSideEncryption": "AES256"
       },
-      "ignorePaths": [
-        "$metadata",
-        "LastModified",
-        "Metadata",
-        "AcceptRanges",
-        "ServerSideEncryption"
-      ],
+      "ignorePaths": ["$metadata", "LastModified", "Metadata", "AcceptRanges"],
       "saveAs": null,
       "refs": {}
     },

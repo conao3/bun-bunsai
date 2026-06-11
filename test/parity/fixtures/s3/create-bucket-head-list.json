@@ -6,16 +6,16 @@
     {
       "command": "CreateBucketCommand",
       "input": { "Bucket": "parity-s3-create" },
-      "expected": {},
-      "ignorePaths": ["$metadata", "Location"],
+      "expected": { "Location": "/parity-s3-create" },
+      "ignorePaths": ["$metadata"],
       "saveAs": "b1",
       "refs": {}
     },
     {
       "command": "HeadBucketCommand",
       "input": { "Bucket": "parity-s3-create" },
-      "expected": { "BucketRegion": "us-east-1" },
-      "ignorePaths": ["$metadata", "AccessPointAlias"],
+      "expected": { "BucketRegion": "us-east-1", "AccessPointAlias": false },
+      "ignorePaths": ["$metadata"],
       "saveAs": null,
       "refs": {}
     },

@@ -30,6 +30,7 @@ type S3Object = {
   expires?: number;
   retention?: { Mode: string; RetainUntilDate: number };
   legalHold?: string;
+  serverSideEncryption?: string;
 };
 
 type S3Tag = {
@@ -114,6 +115,12 @@ const hashWithPrefix = (prefix: string, body: Uint8Array): string =>
   hashBody(concatBytes([new TextEncoder().encode(prefix), body]));
 
 const generateVersionId = (): string => crypto.randomUUID().replace(/-/g, "");
+
+const matchesNullVersion = (
+  requested: string | undefined,
+  stored: string | undefined,
+): boolean =>
+  requested === stored || (requested === "null" && stored === undefined);
 
 const getCurrentObject = (
   versions: S3Object[] | undefined,
@@ -528,7 +535,7 @@ const s3: ServiceDefinition = {
         objectLock: undefined,
         acl: undefined,
       });
-      return {};
+      return { Location: `/${bucket}` };
     },
     ListBuckets: (_input, ctx) => {
       const buckets = ctx.store.list<S3Bucket>();
@@ -565,7 +572,12 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidBucketName", "bucket name required", 400);
       }
       getBucket(ctx, bucket);
-      return { $headers: { "x-amz-bucket-region": req.region } };
+      return {
+        $headers: {
+          "x-amz-bucket-region": req.region,
+          "x-amz-access-point-alias": "false",
+        },
+      };
     },
     PutObject: async (input, ctx, req) => {
       const { bucket, key } = bucketKeyFromPath(req.path);
@@ -598,6 +610,10 @@ const s3: ServiceDefinition = {
           : undefined;
       const expires =
         typeof input["Expires"] === "number" ? input["Expires"] : undefined;
+      const serverSideEncryption =
+        typeof input["ServerSideEncryption"] === "string"
+          ? input["ServerSideEncryption"]
+          : "AES256";
       const object: S3Object = {
         key,
         body,
@@ -620,6 +636,7 @@ const s3: ServiceDefinition = {
         contentEncoding,
         contentLanguage,
         expires,
+        serverSideEncryption,
       };
       const existing = target.objects[key] ?? [];
       const versions = versioned ? [object, ...existing] : [object];
@@ -639,6 +656,7 @@ const s3: ServiceDefinition = {
       return {
         ETag: object.etag,
         ...(versionId !== undefined ? { VersionId: versionId } : {}),
+        ServerSideEncryption: object.serverSideEncryption,
       };
     },
     GetObject: (input, ctx, req) => {
@@ -651,8 +669,8 @@ const s3: ServiceDefinition = {
         typeof input["VersionId"] === "string" ? input["VersionId"] : undefined;
       let object: S3Object | undefined;
       if (requestedVersionId !== undefined) {
-        const found = (target.objects[key] ?? []).find(
-          (v) => v.versionId === requestedVersionId,
+        const found = (target.objects[key] ?? []).find((v) =>
+          matchesNullVersion(requestedVersionId, v.versionId),
         );
         if (found === undefined) {
           throw awsError("NoSuchKey", "The specified key does not exist.", 404);
@@ -732,6 +750,7 @@ const s3: ServiceDefinition = {
         ...((responseExpires ?? object.expires) !== undefined
           ? { Expires: responseExpires ?? object.expires }
           : {}),
+        ServerSideEncryption: object.serverSideEncryption ?? "AES256",
       };
       const rangeHeader = req.headers.get("range");
       const match =
@@ -780,8 +799,8 @@ const s3: ServiceDefinition = {
         typeof input["VersionId"] === "string" ? input["VersionId"] : undefined;
       let object: S3Object | undefined;
       if (requestedVersionId !== undefined) {
-        const found = (target.objects[key] ?? []).find(
-          (v) => v.versionId === requestedVersionId,
+        const found = (target.objects[key] ?? []).find((v) =>
+          matchesNullVersion(requestedVersionId, v.versionId),
         );
         if (found === undefined || found.isDeleteMarker) {
           throw awsError("NoSuchKey", "The specified key does not exist.", 404);
@@ -819,6 +838,7 @@ const s3: ServiceDefinition = {
           ? { ContentLanguage: object.contentLanguage }
           : {}),
         ...(object.expires !== undefined ? { Expires: object.expires } : {}),
+        ServerSideEncryption: object.serverSideEncryption ?? "AES256",
       };
     },
     ListObjectsV2: (input, ctx, req) => {
@@ -943,8 +963,8 @@ const s3: ServiceDefinition = {
       }
       if (versioned && requestedVersionId !== undefined) {
         const existing = target.objects[key] ?? [];
-        const idx = existing.findIndex(
-          (v) => v.versionId === requestedVersionId,
+        const idx = existing.findIndex((v) =>
+          matchesNullVersion(requestedVersionId, v.versionId),
         );
         if (idx === -1) return {};
         const removed = existing[idx];
@@ -1041,7 +1061,9 @@ const s3: ServiceDefinition = {
           );
         } else if (versioned && versionId !== undefined) {
           const existing = objects[key] ?? [];
-          const idx = existing.findIndex((v) => v.versionId === versionId);
+          const idx = existing.findIndex((v) =>
+            matchesNullVersion(versionId, v.versionId),
+          );
           if (idx !== -1) {
             const removed = existing[idx];
             const filtered = existing.filter((_, i) => i !== idx);
@@ -1554,6 +1576,7 @@ const s3: ServiceDefinition = {
         Bucket: bucket,
         Key: key,
         ETag: etag,
+        ServerSideEncryption: "AES256",
       };
     },
     AbortMultipartUpload: (_input, ctx, req) => {

@@ -5,9 +5,13 @@ import {
   CreateBucketCommand,
   DeleteBucketCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
+  GetObjectCommand,
   GetObjectTaggingCommand,
+  HeadObjectCommand,
   ListObjectsCommand,
   ListObjectVersionsCommand,
+  NoSuchKey,
   PutBucketVersioningCommand,
   PutObjectCommand,
   PutObjectTaggingCommand,
@@ -242,6 +246,108 @@ describe("S3 fidelity gaps e2e", () => {
     for (const key of ["a/x", "a/y", "b/z"]) {
       await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
     }
+    await client.send(new DeleteBucketCommand({ Bucket: bucket }));
+  });
+
+  test("null-versioned object: DeleteObject with VersionId null removes pre-versioning object", async () => {
+    const client = s3();
+    const bucket = "bunsai-e2e-s3-null-version-delete";
+    await client.send(new CreateBucketCommand({ Bucket: bucket }));
+
+    await client.send(
+      new PutObjectCommand({ Bucket: bucket, Key: "obj", Body: "data" }),
+    );
+
+    await client.send(
+      new PutBucketVersioningCommand({
+        Bucket: bucket,
+        VersioningConfiguration: { Status: "Enabled" },
+      }),
+    );
+
+    await client.send(
+      new DeleteObjectCommand({
+        Bucket: bucket,
+        Key: "obj",
+        VersionId: "null",
+      }),
+    );
+
+    let caught: unknown;
+    try {
+      await client.send(new GetObjectCommand({ Bucket: bucket, Key: "obj" }));
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(NoSuchKey);
+
+    await client.send(new DeleteBucketCommand({ Bucket: bucket }));
+  });
+
+  test("null-versioned object: DeleteObjects with VersionId null removes pre-versioning object", async () => {
+    const client = s3();
+    const bucket = "bunsai-e2e-s3-null-version-delete-objects";
+    await client.send(new CreateBucketCommand({ Bucket: bucket }));
+
+    await client.send(
+      new PutObjectCommand({ Bucket: bucket, Key: "obj", Body: "data" }),
+    );
+
+    await client.send(
+      new PutBucketVersioningCommand({
+        Bucket: bucket,
+        VersioningConfiguration: { Status: "Enabled" },
+      }),
+    );
+
+    await client.send(
+      new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: { Objects: [{ Key: "obj", VersionId: "null" }] },
+      }),
+    );
+
+    let caught: unknown;
+    try {
+      await client.send(new GetObjectCommand({ Bucket: bucket, Key: "obj" }));
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(NoSuchKey);
+
+    await client.send(new DeleteBucketCommand({ Bucket: bucket }));
+  });
+
+  test("GetObject response includes ServerSideEncryption AES256", async () => {
+    const client = s3();
+    const bucket = "bunsai-e2e-s3-sse-header";
+    await client.send(new CreateBucketCommand({ Bucket: bucket }));
+
+    await client.send(
+      new PutObjectCommand({ Bucket: bucket, Key: "obj", Body: "data" }),
+    );
+
+    const result = await client.send(
+      new GetObjectCommand({ Bucket: bucket, Key: "obj" }),
+    );
+    expect(result.ServerSideEncryption).toBe("AES256");
+
+    const headResult = await client.send(
+      new HeadObjectCommand({ Bucket: bucket, Key: "obj" }),
+    );
+    expect(headResult.ServerSideEncryption).toBe("AES256");
+
+    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: "obj" }));
+    await client.send(new DeleteBucketCommand({ Bucket: bucket }));
+  });
+
+  test("CreateBucket response includes Location header", async () => {
+    const client = s3();
+    const bucket = "bunsai-e2e-s3-create-location";
+    const result = await client.send(
+      new CreateBucketCommand({ Bucket: bucket }),
+    );
+    expect(result.Location).toBe(`/${bucket}`);
     await client.send(new DeleteBucketCommand({ Bucket: bucket }));
   });
 });

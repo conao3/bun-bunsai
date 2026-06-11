@@ -14,8 +14,8 @@
     {
       "command": "CreateBucketCommand",
       "input": { "Bucket": "parity-s3-errors" },
-      "expected": {},
-      "ignorePaths": ["$metadata", "Location"],
+      "expected": { "Location": "/parity-s3-errors" },
+      "ignorePaths": ["$metadata"],
       "saveAs": null,
       "refs": {}
     },

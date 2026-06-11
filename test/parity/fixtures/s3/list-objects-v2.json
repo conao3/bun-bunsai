@@ -6,8 +6,8 @@
     {
       "command": "CreateBucketCommand",
       "input": { "Bucket": "parity-s3-list" },
-      "expected": {},
-      "ignorePaths": ["$metadata", "Location"],
+      "expected": { "Location": "/parity-s3-list" },
+      "ignorePaths": ["$metadata"],
       "saveAs": null,
       "refs": {}
     },

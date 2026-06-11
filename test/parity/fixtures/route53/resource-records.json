@@ -1,0 +1,106 @@
+{
+  "clientPackage": "@aws-sdk/client-route-53",
+  "clientName": "Route53Client",
+  "steps": [
+    {
+      "command": "CreateHostedZoneCommand",
+      "input": {
+        "Name": "parity-r53-rrset.example.com",
+        "CallerReference": "parity-r53-rrset-ref-1"
+      },
+      "expected": {
+        "HostedZone": {
+          "Name": "parity-r53-rrset.example.com.",
+          "ResourceRecordSetCount": 2
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "HostedZone.Id",
+        "HostedZone.CallerReference",
+        "HostedZone.Config",
+        "ChangeInfo",
+        "DelegationSet",
+        "Location"
+      ],
+      "saveAs": "zone",
+      "refs": {}
+    },
+    {
+      "command": "ChangeResourceRecordSetsCommand",
+      "input": {
+        "HostedZoneId": "${zone.Location}",
+        "ChangeBatch": {
+          "Changes": [
+            {
+              "Action": "CREATE",
+              "ResourceRecordSet": {
+                "Name": "www.parity-r53-rrset.example.com.",
+                "Type": "A",
+                "TTL": 300,
+                "ResourceRecords": [{ "Value": "1.2.3.4" }]
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ChangeInfo": { "Status": "INSYNC" }
+      },
+      "ignorePaths": ["$metadata", "ChangeInfo.Id", "ChangeInfo.SubmittedAt"],
+      "saveAs": null,
+      "refs": { "zone.Location": "zone" }
+    },
+    {
+      "command": "ListResourceRecordSetsCommand",
+      "input": { "HostedZoneId": "${zone.Location}" },
+      "expected": {
+        "IsTruncated": false,
+        "ResourceRecordSets": "<ANY>"
+      },
+      "ignorePaths": [
+        "$metadata",
+        "MaxItems",
+        "NextRecordName",
+        "NextRecordType"
+      ],
+      "saveAs": null,
+      "refs": { "zone.Location": "zone" }
+    },
+    {
+      "command": "ChangeResourceRecordSetsCommand",
+      "input": {
+        "HostedZoneId": "${zone.Location}",
+        "ChangeBatch": {
+          "Changes": [
+            {
+              "Action": "DELETE",
+              "ResourceRecordSet": {
+                "Name": "www.parity-r53-rrset.example.com.",
+                "Type": "A",
+                "TTL": 300,
+                "ResourceRecords": [{ "Value": "1.2.3.4" }]
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ChangeInfo": { "Status": "INSYNC" }
+      },
+      "ignorePaths": ["$metadata", "ChangeInfo.Id", "ChangeInfo.SubmittedAt"],
+      "saveAs": null,
+      "refs": { "zone.Location": "zone" }
+    },
+    {
+      "command": "DeleteHostedZoneCommand",
+      "input": { "Id": "${zone.Location}" },
+      "expected": {
+        "ChangeInfo": { "Status": "INSYNC" }
+      },
+      "ignorePaths": ["$metadata", "ChangeInfo.Id", "ChangeInfo.SubmittedAt"],
+      "saveAs": null,
+      "refs": { "zone.Location": "zone" }
+    }
+  ]
+}

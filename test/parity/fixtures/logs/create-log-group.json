@@ -1,0 +1,43 @@
+{
+  "clientPackage": "@aws-sdk/client-cloudwatch-logs",
+  "clientName": "CloudWatchLogsClient",
+  "steps": [
+    {
+      "command": "CreateLogGroupCommand",
+      "input": { "logGroupName": "/parity/logs/group" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeLogGroupsCommand",
+      "input": { "logGroupNamePrefix": "/parity/logs/group" },
+      "expected": {
+        "logGroups": [
+          {
+            "logGroupName": "/parity/logs/group",
+            "arn": "<ANY>",
+            "metricFilterCount": 0,
+            "storedBytes": 0
+          }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "logGroups[0].creationTime",
+        "logGroups[0].retentionInDays"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteLogGroupCommand",
+      "input": { "logGroupName": "/parity/logs/group" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

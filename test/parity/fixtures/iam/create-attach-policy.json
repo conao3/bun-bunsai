@@ -1,0 +1,109 @@
+{
+  "clientPackage": "@aws-sdk/client-iam",
+  "clientName": "IAMClient",
+  "steps": [
+    {
+      "command": "CreateRoleCommand",
+      "input": {
+        "RoleName": "parity-iam-role-policy",
+        "AssumeRolePolicyDocument": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"}}]}"
+      },
+      "expected": {
+        "Role": { "RoleName": "parity-iam-role-policy" }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Role.Arn",
+        "Role.RoleId",
+        "Role.Path",
+        "Role.CreateDate",
+        "Role.AssumeRolePolicyDocument",
+        "Role.MaxSessionDuration"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreatePolicyCommand",
+      "input": {
+        "PolicyName": "parity-iam-policy",
+        "PolicyDocument": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"*\"}]}"
+      },
+      "expected": {
+        "Policy": {
+          "PolicyName": "parity-iam-policy",
+          "Arn": "arn:aws:iam::000000000000:policy/parity-iam-policy",
+          "PolicyId": "<ANY>",
+          "Path": "/",
+          "DefaultVersionId": "v1",
+          "AttachmentCount": 0,
+          "IsAttachable": true
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Policy.CreateDate",
+        "Policy.UpdateDate",
+        "Policy.PermissionsBoundaryUsageCount"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "AttachRolePolicyCommand",
+      "input": {
+        "RoleName": "parity-iam-role-policy",
+        "PolicyArn": "arn:aws:iam::000000000000:policy/parity-iam-policy"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListAttachedRolePoliciesCommand",
+      "input": { "RoleName": "parity-iam-role-policy" },
+      "expected": {
+        "AttachedPolicies": [
+          {
+            "PolicyName": "parity-iam-policy",
+            "PolicyArn": "arn:aws:iam::000000000000:policy/parity-iam-policy"
+          }
+        ],
+        "IsTruncated": false
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DetachRolePolicyCommand",
+      "input": {
+        "RoleName": "parity-iam-role-policy",
+        "PolicyArn": "arn:aws:iam::000000000000:policy/parity-iam-policy"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeletePolicyCommand",
+      "input": {
+        "PolicyArn": "arn:aws:iam::000000000000:policy/parity-iam-policy"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteRoleCommand",
+      "input": { "RoleName": "parity-iam-role-policy" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

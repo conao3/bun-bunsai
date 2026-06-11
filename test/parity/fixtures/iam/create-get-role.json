@@ -1,0 +1,59 @@
+{
+  "clientPackage": "@aws-sdk/client-iam",
+  "clientName": "IAMClient",
+  "steps": [
+    {
+      "command": "CreateRoleCommand",
+      "input": {
+        "RoleName": "parity-iam-role",
+        "AssumeRolePolicyDocument": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"}}]}"
+      },
+      "expected": {
+        "Role": {
+          "RoleName": "parity-iam-role",
+          "Arn": "<ANY>",
+          "RoleId": "<ANY>",
+          "Path": "/",
+          "MaxSessionDuration": 3600
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Role.CreateDate",
+        "Role.AssumeRolePolicyDocument"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetRoleCommand",
+      "input": { "RoleName": "parity-iam-role" },
+      "expected": {
+        "Role": {
+          "RoleName": "parity-iam-role",
+          "Arn": "<ANY>",
+          "RoleId": "<ANY>",
+          "Path": "/",
+          "MaxSessionDuration": 3600
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Role.CreateDate",
+        "Role.AssumeRolePolicyDocument",
+        "Role.RoleLastUsed",
+        "Role.Tags"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteRoleCommand",
+      "input": { "RoleName": "parity-iam-role" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "clientPackage": "@aws-sdk/client-cloudwatch-logs",
+  "clientName": "CloudWatchLogsClient",
+  "steps": [
+    {
+      "command": "CreateLogGroupCommand",
+      "input": { "logGroupName": "/parity/logs/events" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateLogStreamCommand",
+      "input": {
+        "logGroupName": "/parity/logs/events",
+        "logStreamName": "parity-stream"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutLogEventsCommand",
+      "input": {
+        "logGroupName": "/parity/logs/events",
+        "logStreamName": "parity-stream",
+        "logEvents": [
+          { "timestamp": 1700000000000, "message": "parity-log-message-1" },
+          { "timestamp": 1700000001000, "message": "parity-log-message-2" }
+        ]
+      },
+      "expected": {
+        "nextSequenceToken": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "rejectedLogEventsInfo"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetLogEventsCommand",
+      "input": {
+        "logGroupName": "/parity/logs/events",
+        "logStreamName": "parity-stream",
+        "startFromHead": true
+      },
+      "expected": {
+        "events": [
+          { "timestamp": 1700000000000, "message": "parity-log-message-1" },
+          { "timestamp": 1700000001000, "message": "parity-log-message-2" }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "nextForwardToken",
+        "nextBackwardToken",
+        "events[0].ingestionTime",
+        "events[1].ingestionTime"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteLogStreamCommand",
+      "input": {
+        "logGroupName": "/parity/logs/events",
+        "logStreamName": "parity-stream"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteLogGroupCommand",
+      "input": { "logGroupName": "/parity/logs/events" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

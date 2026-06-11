@@ -1,0 +1,49 @@
+{
+  "clientPackage": "@aws-sdk/client-sfn",
+  "clientName": "SFNClient",
+  "steps": [
+    {
+      "command": "CreateStateMachineCommand",
+      "input": {
+        "name": "parity-sfn-machine",
+        "definition": "{\"Comment\":\"parity test\",\"StartAt\":\"Pass\",\"States\":{\"Pass\":{\"Type\":\"Pass\",\"End\":true}}}",
+        "roleArn": "arn:aws:iam::000000000000:role/parity-sfn-role",
+        "type": "STANDARD"
+      },
+      "expected": {
+        "stateMachineArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "creationDate"],
+      "saveAs": "machine",
+      "refs": {}
+    },
+    {
+      "command": "DescribeStateMachineCommand",
+      "input": { "stateMachineArn": "${machine.stateMachineArn}" },
+      "expected": {
+        "stateMachineArn": "<ANY>",
+        "name": "parity-sfn-machine",
+        "status": "ACTIVE",
+        "definition": "{\"Comment\":\"parity test\",\"StartAt\":\"Pass\",\"States\":{\"Pass\":{\"Type\":\"Pass\",\"End\":true}}}",
+        "roleArn": "arn:aws:iam::000000000000:role/parity-sfn-role",
+        "type": "STANDARD"
+      },
+      "ignorePaths": [
+        "$metadata",
+        "creationDate",
+        "loggingConfiguration",
+        "tracingConfiguration"
+      ],
+      "saveAs": null,
+      "refs": { "machine.stateMachineArn": "machine" }
+    },
+    {
+      "command": "DeleteStateMachineCommand",
+      "input": { "stateMachineArn": "${machine.stateMachineArn}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "machine.stateMachineArn": "machine" }
+    }
+  ]
+}

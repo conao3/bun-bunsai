@@ -236,12 +236,29 @@ type StoredGlobalCluster = {
   GlobalClusterMembers: { DBClusterArn: string; IsWriter: boolean }[];
 };
 
+type StoredOption = {
+  OptionName: string;
+  Permanent: boolean;
+  Persistent: boolean;
+  Port?: number;
+  OptionVersion?: string;
+  OptionSettings?: { Name?: string; Value?: string }[];
+  DBSecurityGroupMemberships?: {
+    DBSecurityGroupName: string;
+    Status: string;
+  }[];
+  VpcSecurityGroupMemberships?: {
+    VpcSecurityGroupId: string;
+    Status: string;
+  }[];
+};
+
 type StoredOptionGroup = {
   OptionGroupName: string;
   OptionGroupDescription: string;
   EngineName: string;
   MajorEngineVersion: string;
-  Options: { OptionName: string; Permanent: boolean; Persistent: boolean }[];
+  Options: StoredOption[];
   AllowsVpcAndNonVpcInstanceMemberships: boolean;
   VpcId: string | undefined;
   OptionGroupArn: string;
@@ -3831,6 +3848,70 @@ const ModifyIntegration: OperationHandler = (input, ctx) => {
 const ModifyOptionGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "OptionGroupName");
   const og = requireOptionGroup(ctx, name);
+  const toInclude = (input["OptionsToInclude"] ?? []) as {
+    OptionName: string;
+    Port?: number;
+    OptionVersion?: string;
+    OptionSettings?: { Name?: string; Value?: string }[];
+    DBSecurityGroupMemberships?: string[];
+    VpcSecurityGroupMemberships?: string[];
+  }[];
+  const toRemove = (input["OptionsToRemove"] ?? []) as string[];
+  if (
+    input["OptionsToInclude"] === undefined &&
+    input["OptionsToRemove"] === undefined
+  ) {
+    throw awsError(
+      "InvalidParameterCombination",
+      "At least one option must be added, modified, or removed.",
+      400,
+    );
+  }
+  for (const conf of toInclude) {
+    const existing = og.Options.find((o) => o.OptionName === conf.OptionName);
+    const next: StoredOption = {
+      OptionName: conf.OptionName,
+      Permanent: existing?.Permanent ?? false,
+      Persistent: existing?.Persistent ?? false,
+      ...(conf.Port !== undefined ? { Port: conf.Port } : {}),
+      ...(conf.OptionVersion !== undefined
+        ? { OptionVersion: conf.OptionVersion }
+        : {}),
+      ...(conf.OptionSettings !== undefined
+        ? { OptionSettings: conf.OptionSettings }
+        : {}),
+      ...(conf.DBSecurityGroupMemberships !== undefined
+        ? {
+            DBSecurityGroupMemberships: conf.DBSecurityGroupMemberships.map(
+              (n) => ({ DBSecurityGroupName: n, Status: "authorized" }),
+            ),
+          }
+        : {}),
+      ...(conf.VpcSecurityGroupMemberships !== undefined
+        ? {
+            VpcSecurityGroupMemberships: conf.VpcSecurityGroupMemberships.map(
+              (id) => ({ VpcSecurityGroupId: id, Status: "active" }),
+            ),
+          }
+        : {}),
+    };
+    if (existing !== undefined) {
+      Object.assign(existing, next);
+    } else {
+      og.Options.push(next);
+    }
+  }
+  for (const optionName of toRemove) {
+    const target = og.Options.find((o) => o.OptionName === optionName);
+    if (target?.Permanent === true) {
+      throw awsError(
+        "InvalidOptionGroupStateFault",
+        `Cannot remove permanent option ${optionName} from option group ${name}.`,
+        400,
+      );
+    }
+  }
+  og.Options = og.Options.filter((o) => !toRemove.includes(o.OptionName));
   ctx.store.set(optionGroupKey(name), og);
   return { OptionGroup: presentOptionGroup(og) };
 };

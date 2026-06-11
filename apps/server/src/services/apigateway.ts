@@ -22,6 +22,7 @@ type StoredRestApi = {
   rootResourceId: string;
   apiKeySource: string;
   disableExecuteApiEndpoint: boolean;
+  endpointConfiguration: { types: string[] };
 };
 
 type StoredResource = {
@@ -692,6 +693,7 @@ const restApiView = (api: StoredRestApi): Record<string, unknown> => ({
   rootResourceId: api.rootResourceId,
   apiKeySource: api.apiKeySource,
   disableExecuteApiEndpoint: api.disableExecuteApiEndpoint,
+  endpointConfiguration: api.endpointConfiguration,
 });
 
 const resourceView = (resource: StoredResource): Record<string, unknown> => ({
@@ -966,6 +968,9 @@ const CreateRestApi: OperationHandler = (input, ctx) => {
     rootResourceId,
     apiKeySource: stringOrUndefined(input["apiKeySource"]) ?? "HEADER",
     disableExecuteApiEndpoint: input["disableExecuteApiEndpoint"] === true,
+    endpointConfiguration: (input["endpointConfiguration"] as
+      | { types: string[] }
+      | undefined) ?? { types: ["EDGE"] },
   };
   ctx.store.set(restApiKey(id), api);
   const root: StoredResource = {
@@ -1069,6 +1074,7 @@ const ImportRestApi: OperationHandler = (input, ctx) => {
     rootResourceId,
     apiKeySource: "HEADER",
     disableExecuteApiEndpoint: false,
+    endpointConfiguration: { types: ["EDGE"] },
   };
   ctx.store.set(restApiKey(id), api);
   const root: StoredResource = {

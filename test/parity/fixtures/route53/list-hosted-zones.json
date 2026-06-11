@@ -1,0 +1,51 @@
+{
+  "clientPackage": "@aws-sdk/client-route-53",
+  "clientName": "Route53Client",
+  "steps": [
+    {
+      "command": "CreateHostedZoneCommand",
+      "input": {
+        "Name": "parity-r53-list.example.com",
+        "CallerReference": "parity-r53-list-ref-1"
+      },
+      "expected": {
+        "HostedZone": {
+          "Name": "parity-r53-list.example.com.",
+          "ResourceRecordSetCount": 2
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "HostedZone.Id",
+        "HostedZone.CallerReference",
+        "HostedZone.Config",
+        "ChangeInfo",
+        "DelegationSet",
+        "Location"
+      ],
+      "saveAs": "zone",
+      "refs": {}
+    },
+    {
+      "command": "ListHostedZonesCommand",
+      "input": {},
+      "expected": {
+        "IsTruncated": false,
+        "HostedZones": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "MaxItems", "Marker", "NextMarker"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteHostedZoneCommand",
+      "input": { "Id": "${zone.Location}" },
+      "expected": {
+        "ChangeInfo": { "Status": "INSYNC" }
+      },
+      "ignorePaths": ["$metadata", "ChangeInfo.Id", "ChangeInfo.SubmittedAt"],
+      "saveAs": null,
+      "refs": { "zone.Location": "zone" }
+    }
+  ]
+}

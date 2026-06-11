@@ -1,0 +1,64 @@
+{
+  "clientPackage": "@aws-sdk/client-route-53",
+  "clientName": "Route53Client",
+  "steps": [
+    {
+      "command": "CreateHostedZoneCommand",
+      "input": {
+        "Name": "parity-route53.example.com",
+        "CallerReference": "parity-route53-ref-1"
+      },
+      "expected": {
+        "HostedZone": {
+          "Name": "parity-route53.example.com.",
+          "CallerReference": "parity-route53-ref-1",
+          "Config": { "PrivateZone": false },
+          "ResourceRecordSetCount": 2
+        },
+        "ChangeInfo": {
+          "Status": "INSYNC"
+        },
+        "DelegationSet": {
+          "NameServers": "<ANY>"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "HostedZone.Id",
+        "ChangeInfo.Id",
+        "ChangeInfo.SubmittedAt",
+        "Location"
+      ],
+      "saveAs": "zone",
+      "refs": {}
+    },
+    {
+      "command": "GetHostedZoneCommand",
+      "input": { "Id": "${zone.Location}" },
+      "expected": {
+        "HostedZone": {
+          "Name": "parity-route53.example.com.",
+          "CallerReference": "parity-route53-ref-1",
+          "Config": { "PrivateZone": false },
+          "ResourceRecordSetCount": 2
+        },
+        "DelegationSet": {
+          "NameServers": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata", "HostedZone.Id"],
+      "saveAs": null,
+      "refs": { "zone.Location": "zone" }
+    },
+    {
+      "command": "DeleteHostedZoneCommand",
+      "input": { "Id": "${zone.Location}" },
+      "expected": {
+        "ChangeInfo": { "Status": "INSYNC" }
+      },
+      "ignorePaths": ["$metadata", "ChangeInfo.Id", "ChangeInfo.SubmittedAt"],
+      "saveAs": null,
+      "refs": { "zone.Location": "zone" }
+    }
+  ]
+}

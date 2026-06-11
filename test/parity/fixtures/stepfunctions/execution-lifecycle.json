@@ -1,0 +1,58 @@
+{
+  "clientPackage": "@aws-sdk/client-sfn",
+  "clientName": "SFNClient",
+  "steps": [
+    {
+      "command": "CreateStateMachineCommand",
+      "input": {
+        "name": "parity-sfn-exec-machine",
+        "definition": "{\"StartAt\":\"Pass\",\"States\":{\"Pass\":{\"Type\":\"Pass\",\"End\":true}}}",
+        "roleArn": "arn:aws:iam::000000000000:role/parity-sfn-role",
+        "type": "STANDARD"
+      },
+      "expected": {
+        "stateMachineArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "creationDate"],
+      "saveAs": "machine",
+      "refs": {}
+    },
+    {
+      "command": "StartExecutionCommand",
+      "input": {
+        "stateMachineArn": "${machine.stateMachineArn}",
+        "name": "parity-exec-1",
+        "input": "{\"key\":\"value\"}"
+      },
+      "expected": {
+        "executionArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "startDate"],
+      "saveAs": "exec",
+      "refs": { "machine.stateMachineArn": "machine" }
+    },
+    {
+      "command": "DescribeExecutionCommand",
+      "input": { "executionArn": "${exec.executionArn}" },
+      "expected": {
+        "executionArn": "<ANY>",
+        "stateMachineArn": "<ANY>",
+        "name": "parity-exec-1",
+        "status": "SUCCEEDED",
+        "input": "{\"key\":\"value\"}",
+        "output": "{\"key\":\"value\"}"
+      },
+      "ignorePaths": ["$metadata", "startDate", "stopDate"],
+      "saveAs": null,
+      "refs": { "exec.executionArn": "exec" }
+    },
+    {
+      "command": "DeleteStateMachineCommand",
+      "input": { "stateMachineArn": "${machine.stateMachineArn}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "machine.stateMachineArn": "machine" }
+    }
+  ]
+}

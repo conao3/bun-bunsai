@@ -18,6 +18,10 @@ const SERVICES: Record<string, string> = {
   ssm: "tests/aws/services/ssm",
   kms: "tests/aws/services/kms",
   sts: "tests/aws/services/sts",
+  iam: "tests/aws/services/iam",
+  logs: "tests/aws/services/logs",
+  stepfunctions: "tests/aws/services/stepfunctions",
+  route53: "tests/aws/services/route53",
 };
 
 type ContentEntry = {

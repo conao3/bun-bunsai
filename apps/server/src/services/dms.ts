@@ -61,6 +61,90 @@ type StoredReplicationTask = {
   LastFailureMessage: string | undefined;
 };
 
+type StoredReplicationSubnetGroup = {
+  ReplicationSubnetGroupIdentifier: string;
+  ReplicationSubnetGroupDescription: string;
+  VpcId: string;
+  SubnetGroupStatus: string;
+  ReplicationSubnetGroupArn: string;
+};
+
+type StoredCertificate = {
+  CertificateIdentifier: string;
+  CertificateArn: string;
+  CertificateCreationDate: string;
+  CertificatePem: string | undefined;
+  KeyLength: number;
+  SigningAlgorithm: string;
+  ValidFromDate: string;
+  ValidToDate: string;
+};
+
+type StoredEventSubscription = {
+  CustomerAwsId: string;
+  CustSubscriptionId: string;
+  SnsTopicArn: string;
+  Status: string;
+  SubscriptionCreationTime: string;
+  SourceType: string | undefined;
+  SourceIdsList: string[];
+  EventCategoriesList: string[];
+  Enabled: boolean;
+  SubscriptionArn: string;
+};
+
+type StoredReplicationConfig = {
+  ReplicationConfigIdentifier: string;
+  ReplicationConfigArn: string;
+  SourceEndpointArn: string;
+  TargetEndpointArn: string;
+  ReplicationType: string;
+  TableMappings: string;
+  ReplicationSettings: string | undefined;
+  Status: string;
+};
+
+type StoredDataMigration = {
+  DataMigrationName: string;
+  DataMigrationArn: string;
+  DataMigrationType: string | undefined;
+  Status: string;
+  MigrationProjectArn: string | undefined;
+};
+
+type StoredDataProvider = {
+  DataProviderName: string;
+  DataProviderArn: string;
+  DataProviderCreationTime: string;
+  Engine: string;
+  Description: string | undefined;
+};
+
+type StoredInstanceProfile = {
+  InstanceProfileArn: string;
+  InstanceProfileName: string;
+  KmsKeyArn: string | undefined;
+  PubliclyAccessible: boolean;
+  NetworkType: string | undefined;
+  InstanceProfileCreationTime: string;
+};
+
+type StoredMigrationProject = {
+  MigrationProjectName: string;
+  MigrationProjectArn: string;
+  MigrationProjectCreationTime: string;
+  InstanceProfileArn: string | undefined;
+  Description: string | undefined;
+};
+
+type StoredConnection = {
+  ReplicationInstanceArn: string;
+  EndpointArn: string;
+  Status: string;
+  EndpointIdentifier: string;
+  ReplicationInstanceIdentifier: string;
+};
+
 const instanceKey = (id: string): string => `instance/${id}`;
 const instanceArnKey = (arn: string): string => `instanceArn/${arn}`;
 const endpointKey = (id: string): string => `endpoint/${id}`;
@@ -68,6 +152,27 @@ const endpointArnKey = (arn: string): string => `endpointArn/${arn}`;
 const taskKey = (id: string): string => `task/${id}`;
 const taskArnKey = (arn: string): string => `taskArn/${arn}`;
 const tagKey = (arn: string): string => `tags/${arn}`;
+const subnetGroupKey = (id: string): string => `subnetgroup/${id}`;
+const subnetGroupArnKey = (arn: string): string => `subnetgroupArn/${arn}`;
+const certificateKey = (id: string): string => `certificate/${id}`;
+const certificateArnKey = (arn: string): string => `certificateArn/${arn}`;
+const eventSubKey = (name: string): string => `eventsub/${name}`;
+const eventSubArnKey = (arn: string): string => `eventsubArn/${arn}`;
+const replicationConfigKey = (id: string): string => `replicationconfig/${id}`;
+const replicationConfigArnKey = (arn: string): string =>
+  `replicationconfigArn/${arn}`;
+const dataMigrationKey = (id: string): string => `datamigration/${id}`;
+const dataMigrationArnKey = (arn: string): string => `datamigrationArn/${arn}`;
+const dataProviderKey = (id: string): string => `dataprovider/${id}`;
+const dataProviderArnKey = (arn: string): string => `dataproviderArn/${arn}`;
+const instanceProfileKey = (id: string): string => `instanceprofile/${id}`;
+const instanceProfileArnKey = (arn: string): string =>
+  `instanceprofileArn/${arn}`;
+const migrationProjectKey = (id: string): string => `migrationproject/${id}`;
+const migrationProjectArnKey = (arn: string): string =>
+  `migrationprojectArn/${arn}`;
+const connectionKey = (instanceArn: string, endpointArn: string): string =>
+  `connection/${instanceArn}|${endpointArn}`;
 
 const requireStr = (input: Record<string, unknown>, key: string): string => {
   const v = input[key];
@@ -110,6 +215,51 @@ const endpointArnOf = (region: string, account: string, id: string): string =>
 
 const taskArnOf = (region: string, account: string, id: string): string =>
   `arn:aws:dms:${region}:${account}:task:${id}`;
+
+const subnetGroupArnOf = (
+  region: string,
+  account: string,
+  id: string,
+): string => `arn:aws:dms:${region}:${account}:subgrp:${id}`;
+
+const certificateArnOf = (
+  region: string,
+  account: string,
+  id: string,
+): string => `arn:aws:dms:${region}:${account}:cert:${id}`;
+
+const eventSubArnOf = (region: string, account: string, name: string): string =>
+  `arn:aws:dms:${region}:${account}:es:${name}`;
+
+const replicationConfigArnOf = (
+  region: string,
+  account: string,
+  id: string,
+): string => `arn:aws:dms:${region}:${account}:replication-config:${id}`;
+
+const dataMigrationArnOf = (
+  region: string,
+  account: string,
+  id: string,
+): string => `arn:aws:dms:${region}:${account}:data-migration:${id}`;
+
+const dataProviderArnOf = (
+  region: string,
+  account: string,
+  id: string,
+): string => `arn:aws:dms:${region}:${account}:data-provider:${id}`;
+
+const instanceProfileArnOf = (
+  region: string,
+  account: string,
+  id: string,
+): string => `arn:aws:dms:${region}:${account}:instance-profile:${id}`;
+
+const migrationProjectArnOf = (
+  region: string,
+  account: string,
+  id: string,
+): string => `arn:aws:dms:${region}:${account}:migration-project:${id}`;
 
 const tagList = (
   input: Record<string, unknown>,
@@ -231,6 +381,141 @@ const requireTask = (
   return advanceTaskStatus(task);
 };
 
+const requireSubnetGroup = (
+  ctx: ServiceContext,
+  id: string,
+): StoredReplicationSubnetGroup => {
+  const sg = ctx.store.get<StoredReplicationSubnetGroup>(subnetGroupKey(id));
+  if (!sg)
+    throw awsError(
+      "ResourceNotFoundFault",
+      `Subnet group ${id} not found.`,
+      404,
+    );
+  return sg;
+};
+
+const requireCertificateByArn = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredCertificate => {
+  const cert = ctx.store.get<StoredCertificate>(certificateArnKey(arn));
+  if (!cert)
+    throw awsError(
+      "ResourceNotFoundFault",
+      `Certificate ${arn} not found.`,
+      404,
+    );
+  return cert;
+};
+
+const requireEventSub = (
+  ctx: ServiceContext,
+  name: string,
+): StoredEventSubscription => {
+  const sub = ctx.store.get<StoredEventSubscription>(eventSubKey(name));
+  if (!sub)
+    throw awsError(
+      "ResourceNotFoundFault",
+      `Event subscription ${name} not found.`,
+      404,
+    );
+  return sub;
+};
+
+const requireReplicationConfig = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredReplicationConfig => {
+  const config = ctx.store.get<StoredReplicationConfig>(
+    replicationConfigArnKey(arn),
+  );
+  if (!config)
+    throw awsError(
+      "ResourceNotFoundFault",
+      `Replication config ${arn} not found.`,
+      404,
+    );
+  return config;
+};
+
+const requireDataMigration = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredDataMigration => {
+  const dm = ctx.store.get<StoredDataMigration>(dataMigrationArnKey(arn));
+  if (!dm)
+    throw awsError(
+      "ResourceNotFoundFault",
+      `Data migration ${arn} not found.`,
+      404,
+    );
+  return dm;
+};
+
+const requireDataProvider = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredDataProvider => {
+  const dp = ctx.store.get<StoredDataProvider>(dataProviderArnKey(arn));
+  if (!dp)
+    throw awsError(
+      "ResourceNotFoundFault",
+      `Data provider ${arn} not found.`,
+      404,
+    );
+  return dp;
+};
+
+const requireInstanceProfile = (
+  ctx: ServiceContext,
+  arn: string,
+): StoredInstanceProfile => {
+  const ip = ctx.store.get<StoredInstanceProfile>(instanceProfileArnKey(arn));
+  if (!ip)
+    throw awsError(
+      "ResourceNotFoundFault",
+      `Instance profile ${arn} not found.`,
+      404,
+    );
+  return ip;
+};
+
+const requireMigrationProject = (
+  ctx: ServiceContext,
+  identifier: string,
+): StoredMigrationProject => {
+  const byArn = ctx.store.get<StoredMigrationProject>(
+    migrationProjectArnKey(identifier),
+  );
+  if (byArn) return byArn;
+  const byId = ctx.store.get<StoredMigrationProject>(
+    migrationProjectKey(identifier),
+  );
+  if (!byId)
+    throw awsError(
+      "ResourceNotFoundFault",
+      `Migration project ${identifier} not found.`,
+      404,
+    );
+  return byId;
+};
+
+const isKnownArn = (ctx: ServiceContext, arn: string): boolean =>
+  !!(
+    ctx.store.get(instanceArnKey(arn)) ||
+    ctx.store.get(endpointArnKey(arn)) ||
+    ctx.store.get(taskArnKey(arn)) ||
+    ctx.store.get(subnetGroupArnKey(arn)) ||
+    ctx.store.get(certificateArnKey(arn)) ||
+    ctx.store.get(eventSubArnKey(arn)) ||
+    ctx.store.get(replicationConfigArnKey(arn)) ||
+    ctx.store.get(dataMigrationArnKey(arn)) ||
+    ctx.store.get(dataProviderArnKey(arn)) ||
+    ctx.store.get(instanceProfileArnKey(arn)) ||
+    ctx.store.get(migrationProjectArnKey(arn))
+  );
+
 const instanceToResponse = (inst: StoredReplicationInstance) => ({
   ReplicationInstanceIdentifier: inst.ReplicationInstanceIdentifier,
   ReplicationInstanceClass: inst.ReplicationInstanceClass,
@@ -325,16 +610,13 @@ const CreateReplicationInstance: OperationHandler = (input, ctx) => {
     ReplicationInstanceIdentifier: id,
     ReplicationInstanceClass: cls,
     ReplicationInstanceStatus: "creating",
-    AllocatedStorage:
-      typeof input["AllocatedStorage"] === "number"
-        ? input["AllocatedStorage"]
-        : 50,
+    AllocatedStorage: optNum(input, "AllocatedStorage") ?? 50,
     InstanceCreateTime: now,
-    AvailabilityZone: optStr(input, "AvailabilityZone") ?? `${ctx.region}a`,
+    AvailabilityZone: optStr(input, "AvailabilityZone") ?? "us-east-1a",
     ReplicationInstanceArn: arn,
     ReplicationInstancePublicIpAddress: "0.0.0.0",
     ReplicationInstancePrivateIpAddress: "10.0.0.1",
-    PubliclyAccessible: optBool(input, "PubliclyAccessible", true),
+    PubliclyAccessible: optBool(input, "PubliclyAccessible", false),
     MultiAZ: optBool(input, "MultiAZ", false),
     EngineVersion: optStr(input, "EngineVersion") ?? "3.5.2",
     AutoMinorVersionUpgrade: optBool(input, "AutoMinorVersionUpgrade", true),
@@ -367,8 +649,7 @@ const DescribeReplicationInstances: OperationHandler = (input, ctx) => {
   instances = applyFilters(instances, filters, {
     "replication-instance-arn": (i) => i.ReplicationInstanceArn,
     "replication-instance-id": (i) => i.ReplicationInstanceIdentifier,
-    "replication-instance-class": (i) => i.ReplicationInstanceClass,
-    "engine-version": (i) => i.EngineVersion,
+    "replication-instance-status": (i) => i.ReplicationInstanceStatus,
   });
   const { items, nextMarker } = paginateMarker(instances, marker, maxRecords);
   return {
@@ -380,20 +661,13 @@ const DescribeReplicationInstances: OperationHandler = (input, ctx) => {
 const ModifyReplicationInstance: OperationHandler = (input, ctx) => {
   const arn = requireStr(input, "ReplicationInstanceArn");
   const inst = requireInstance(ctx, arn);
-  if (inst.ReplicationInstanceStatus !== "available") {
-    throw awsError(
-      "InvalidResourceStateFault",
-      `Replication instance ${arn} is not in available state.`,
-      400,
-    );
-  }
   const updated: StoredReplicationInstance = {
     ...inst,
+    AllocatedStorage:
+      optNum(input, "AllocatedStorage") ?? inst.AllocatedStorage,
     ReplicationInstanceClass:
       optStr(input, "ReplicationInstanceClass") ??
       inst.ReplicationInstanceClass,
-    AllocatedStorage:
-      optNum(input, "AllocatedStorage") ?? inst.AllocatedStorage,
     MultiAZ:
       input["MultiAZ"] !== undefined
         ? optBool(input, "MultiAZ", inst.MultiAZ)
@@ -426,9 +700,23 @@ const DeleteReplicationInstance: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const hasTask = ctx.store
+    .list<StoredReplicationTask>()
+    .some(
+      (e) =>
+        e.key.startsWith("task/") && e.value.ReplicationInstanceArn === arn,
+    );
+  if (hasTask) {
+    throw awsError(
+      "InvalidResourceStateFault",
+      `Replication instance ${arn} has associated replication tasks.`,
+      400,
+    );
+  }
   const deleted = { ...inst, ReplicationInstanceStatus: "deleting" };
   ctx.store.delete(instanceKey(inst.ReplicationInstanceIdentifier));
   ctx.store.delete(instanceArnKey(arn));
+  ctx.store.delete(tagKey(arn));
   return { ReplicationInstance: instanceToResponse(deleted) };
 };
 
@@ -517,6 +805,9 @@ const ModifyEndpoint: OperationHandler = (input, ctx) => {
         : ep.CertificateArn,
     SslMode: optStr(input, "SslMode") ?? ep.SslMode,
   };
+  if (updated.EndpointIdentifier !== ep.EndpointIdentifier) {
+    ctx.store.delete(endpointKey(ep.EndpointIdentifier));
+  }
   ctx.store.set(endpointKey(updated.EndpointIdentifier), updated);
   ctx.store.set(endpointArnKey(arn), updated);
   return { Endpoint: endpointToResponse(updated) };
@@ -525,59 +816,51 @@ const ModifyEndpoint: OperationHandler = (input, ctx) => {
 const DeleteEndpoint: OperationHandler = (input, ctx) => {
   const arn = requireStr(input, "EndpointArn");
   const ep = requireEndpoint(ctx, arn);
+  const hasTask = ctx.store
+    .list<StoredReplicationTask>()
+    .some(
+      (e) =>
+        e.key.startsWith("task/") &&
+        (e.value.SourceEndpointArn === arn ||
+          e.value.TargetEndpointArn === arn),
+    );
+  if (hasTask) {
+    throw awsError(
+      "InvalidResourceStateFault",
+      `Endpoint ${arn} has associated replication tasks.`,
+      400,
+    );
+  }
   ctx.store.delete(endpointKey(ep.EndpointIdentifier));
   ctx.store.delete(endpointArnKey(arn));
+  ctx.store.delete(tagKey(arn));
   return { Endpoint: endpointToResponse({ ...ep, Status: "deleting" }) };
 };
 
 const TestConnection: OperationHandler = (input, ctx) => {
   const replicationInstanceArn = requireStr(input, "ReplicationInstanceArn");
   const endpointArn = requireStr(input, "EndpointArn");
-  requireInstance(ctx, replicationInstanceArn);
+  const inst = requireInstance(ctx, replicationInstanceArn);
   const ep = requireEndpoint(ctx, endpointArn);
-  return {
-    Connection: {
-      ReplicationInstanceArn: replicationInstanceArn,
-      EndpointArn: endpointArn,
-      Status: "successful",
-      EndpointIdentifier: ep.EndpointIdentifier,
-      ReplicationInstanceIdentifier:
-        replicationInstanceArn.split(":").pop() ?? "",
-      LastFailureMessage: undefined,
-    },
+  const conn: StoredConnection = {
+    ReplicationInstanceArn: replicationInstanceArn,
+    EndpointArn: endpointArn,
+    Status: "successful",
+    EndpointIdentifier: ep.EndpointIdentifier,
+    ReplicationInstanceIdentifier: inst.ReplicationInstanceIdentifier,
   };
+  ctx.store.set(connectionKey(replicationInstanceArn, endpointArn), conn);
+  return { Connection: { ...conn, LastFailureMessage: undefined } };
 };
 
 const DescribeConnections: OperationHandler = (input, ctx) => {
   const marker = optStr(input, "Marker");
   const maxRecords = optNum(input, "MaxRecords");
   const filters = input["Filters"];
-  const endpoints = ctx.store
-    .list<StoredEndpoint>()
-    .filter((e) => e.key.startsWith("endpoint/"))
+  let connections = ctx.store
+    .list<StoredConnection>()
+    .filter((e) => e.key.startsWith("connection/"))
     .map((e) => e.value);
-  const instances = ctx.store
-    .list<StoredReplicationInstance>()
-    .filter((e) => e.key.startsWith("instance/"))
-    .map((e) => e.value);
-  let connections: {
-    ReplicationInstanceArn: string;
-    EndpointArn: string;
-    Status: string;
-    EndpointIdentifier: string;
-    ReplicationInstanceIdentifier: string;
-  }[] = [];
-  for (const inst of instances) {
-    for (const ep of endpoints) {
-      connections.push({
-        ReplicationInstanceArn: inst.ReplicationInstanceArn,
-        EndpointArn: ep.EndpointArn,
-        Status: "successful",
-        EndpointIdentifier: ep.EndpointIdentifier,
-        ReplicationInstanceIdentifier: inst.ReplicationInstanceIdentifier,
-      });
-    }
-  }
   if (Array.isArray(filters) && filters.length > 0) {
     connections = connections.filter((c) =>
       (filters as Record<string, unknown>[]).every((f) => {
@@ -593,7 +876,10 @@ const DescribeConnections: OperationHandler = (input, ctx) => {
     );
   }
   const { items, nextMarker } = paginateMarker(connections, marker, maxRecords);
-  return { Marker: nextMarker, Connections: items };
+  return {
+    Marker: nextMarker,
+    Connections: items.map((c) => ({ ...c, LastFailureMessage: undefined })),
+  };
 };
 
 const CreateReplicationTask: OperationHandler = (input, ctx) => {
@@ -697,13 +983,30 @@ const ModifyReplicationTask: OperationHandler = (input, ctx) => {
         ? optStr(input, "ReplicationTaskSettings")
         : task.ReplicationTaskSettings,
   };
+  if (updated.ReplicationTaskIdentifier !== task.ReplicationTaskIdentifier) {
+    ctx.store.delete(taskKey(task.ReplicationTaskIdentifier));
+  }
   ctx.store.set(taskKey(updated.ReplicationTaskIdentifier), updated);
   ctx.store.set(taskArnKey(arn), updated);
   return { ReplicationTask: taskToResponse(updated) };
 };
 
+const VALID_START_TYPES = [
+  "start-replication",
+  "resume-processing",
+  "reload-target",
+];
+
 const StartReplicationTask: OperationHandler = (input, ctx) => {
   const arn = requireStr(input, "ReplicationTaskArn");
+  const startType = requireStr(input, "StartReplicationTaskType");
+  if (!VALID_START_TYPES.includes(startType)) {
+    throw awsError(
+      "InvalidResourceStateFault",
+      `Invalid StartReplicationTaskType: ${startType}.`,
+      400,
+    );
+  }
   const task = requireTask(ctx, arn);
   if (!["ready", "stopped", "failed"].includes(task.Status)) {
     throw awsError(
@@ -756,6 +1059,7 @@ const DeleteReplicationTask: OperationHandler = (input, ctx) => {
   }
   ctx.store.delete(taskKey(task.ReplicationTaskIdentifier));
   ctx.store.delete(taskArnKey(arn));
+  ctx.store.delete(tagKey(arn));
   return { ReplicationTask: taskToResponse({ ...task, Status: "deleting" }) };
 };
 
@@ -783,6 +1087,9 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
   if (arns.length === 0) return { TagList: [] };
   const allTags: { Key: string; Value: string; ResourceArn: string }[] = [];
   for (const a of arns) {
+    if (!isKnownArn(ctx, a)) {
+      throw awsError("ResourceNotFoundFault", `Resource ${a} not found.`, 404);
+    }
     const tags =
       ctx.store.get<{ Key: string; Value: string }[]>(tagKey(a)) ?? [];
     for (const t of tags) {
@@ -832,43 +1139,66 @@ const DescribeOrderableReplicationInstances: OperationHandler = (
   ],
 });
 
-const DescribeReplicationSubnetGroups: OperationHandler = (_input, _ctx) => ({
-  Marker: undefined,
-  ReplicationSubnetGroups: [],
-});
+const DescribeReplicationSubnetGroups: OperationHandler = (input, ctx) => {
+  const marker = optStr(input, "Marker");
+  const maxRecords = optNum(input, "MaxRecords");
+  const groups = ctx.store
+    .list<StoredReplicationSubnetGroup>()
+    .filter((e) => e.key.startsWith("subnetgroup/"))
+    .map((e) => e.value);
+  const { items, nextMarker } = paginateMarker(groups, marker, maxRecords);
+  return {
+    Marker: nextMarker,
+    ReplicationSubnetGroups: items.map((g) => ({ ...g, Subnets: [] })),
+  };
+};
 
 const CreateReplicationSubnetGroup: OperationHandler = (input, ctx) => {
   const id = requireStr(input, "ReplicationSubnetGroupIdentifier");
   const description = requireStr(input, "ReplicationSubnetGroupDescription");
-  const arn = `arn:aws:dms:${ctx.region}:${ctx.account}:subgrp:${id}`;
-  return {
-    ReplicationSubnetGroup: {
-      ReplicationSubnetGroupIdentifier: id,
-      ReplicationSubnetGroupDescription: description,
-      VpcId: "vpc-default",
-      SubnetGroupStatus: "Complete",
-      Subnets: [],
-      ReplicationSubnetGroupArn: arn,
-    },
+  if (ctx.store.get(subnetGroupKey(id))) {
+    throw awsError(
+      "ResourceAlreadyExistsFault",
+      `Subnet group ${id} already exists.`,
+      400,
+    );
+  }
+  const arn = subnetGroupArnOf(ctx.region, ctx.account, id);
+  const sg: StoredReplicationSubnetGroup = {
+    ReplicationSubnetGroupIdentifier: id,
+    ReplicationSubnetGroupDescription: description,
+    VpcId: "vpc-default",
+    SubnetGroupStatus: "Complete",
+    ReplicationSubnetGroupArn: arn,
   };
+  ctx.store.set(subnetGroupKey(id), sg);
+  ctx.store.set(subnetGroupArnKey(arn), sg);
+  const tags = tagList(input);
+  if (tags.length > 0) ctx.store.set(tagKey(arn), tags);
+  return { ReplicationSubnetGroup: { ...sg, Subnets: [] } };
 };
 
-const DeleteReplicationSubnetGroup: OperationHandler = (_input, _ctx) => ({});
+const DeleteReplicationSubnetGroup: OperationHandler = (input, ctx) => {
+  const id = requireStr(input, "ReplicationSubnetGroupIdentifier");
+  const sg = requireSubnetGroup(ctx, id);
+  ctx.store.delete(subnetGroupKey(id));
+  ctx.store.delete(subnetGroupArnKey(sg.ReplicationSubnetGroupArn));
+  ctx.store.delete(tagKey(sg.ReplicationSubnetGroupArn));
+  return {};
+};
 
 const ModifyReplicationSubnetGroup: OperationHandler = (input, ctx) => {
   const id = requireStr(input, "ReplicationSubnetGroupIdentifier");
-  const arn = `arn:aws:dms:${ctx.region}:${ctx.account}:subgrp:${id}`;
-  return {
-    ReplicationSubnetGroup: {
-      ReplicationSubnetGroupIdentifier: id,
-      ReplicationSubnetGroupDescription:
-        optStr(input, "ReplicationSubnetGroupDescription") ?? "",
-      VpcId: "vpc-default",
-      SubnetGroupStatus: "Complete",
-      Subnets: [],
-      ReplicationSubnetGroupArn: arn,
-    },
+  const sg = requireSubnetGroup(ctx, id);
+  const updated: StoredReplicationSubnetGroup = {
+    ...sg,
+    ReplicationSubnetGroupDescription:
+      optStr(input, "ReplicationSubnetGroupDescription") ??
+      sg.ReplicationSubnetGroupDescription,
   };
+  ctx.store.set(subnetGroupKey(id), updated);
+  ctx.store.set(subnetGroupArnKey(sg.ReplicationSubnetGroupArn), updated);
+  return { ReplicationSubnetGroup: { ...updated, Subnets: [] } };
 };
 
 const DescribeEndpointTypes: OperationHandler = (_input, _ctx) => ({
@@ -946,43 +1276,71 @@ const RefreshSchemas: OperationHandler = (_input, _ctx) => ({
   },
 });
 
-const DescribeCertificates: OperationHandler = (_input, _ctx) => ({
-  Marker: undefined,
-  Certificates: [],
-});
-
-const ImportCertificate: OperationHandler = (input, ctx) => {
-  const id = requireStr(input, "CertificateIdentifier");
-  const arn = `arn:aws:dms:${ctx.region}:${ctx.account}:cert:${id}`;
+const DescribeCertificates: OperationHandler = (input, ctx) => {
+  const marker = optStr(input, "Marker");
+  const maxRecords = optNum(input, "MaxRecords");
+  const certs = ctx.store
+    .list<StoredCertificate>()
+    .filter((e) => e.key.startsWith("certificate/"))
+    .map((e) => e.value);
+  const { items, nextMarker } = paginateMarker(certs, marker, maxRecords);
   return {
-    Certificate: {
-      CertificateIdentifier: id,
-      CertificateArn: arn,
-      CertificateCreationDate: new Date().toISOString(),
-      CertificatePem: optStr(input, "CertificatePem"),
-      CertificateWallet: undefined,
-      KeyLength: 2048,
-      SigningAlgorithm: "SHA256withRSA",
-      ValidFromDate: new Date().toISOString(),
-      ValidToDate: new Date(
-        Date.now() + 365 * 24 * 60 * 60 * 1000,
-      ).toISOString(),
-    },
+    Marker: nextMarker,
+    Certificates: items.map((c) => ({ ...c, CertificateWallet: undefined })),
   };
 };
 
-const DeleteCertificate: OperationHandler = (_input, _ctx) => ({
-  Certificate: undefined,
-});
+const ImportCertificate: OperationHandler = (input, ctx) => {
+  const id = requireStr(input, "CertificateIdentifier");
+  if (ctx.store.get(certificateKey(id))) {
+    throw awsError(
+      "ResourceAlreadyExistsFault",
+      `Certificate ${id} already exists.`,
+      400,
+    );
+  }
+  const arn = certificateArnOf(ctx.region, ctx.account, id);
+  const now = new Date().toISOString();
+  const cert: StoredCertificate = {
+    CertificateIdentifier: id,
+    CertificateArn: arn,
+    CertificateCreationDate: now,
+    CertificatePem: optStr(input, "CertificatePem"),
+    KeyLength: 2048,
+    SigningAlgorithm: "SHA256withRSA",
+    ValidFromDate: now,
+    ValidToDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+  ctx.store.set(certificateKey(id), cert);
+  ctx.store.set(certificateArnKey(arn), cert);
+  const tags = tagList(input);
+  if (tags.length > 0) ctx.store.set(tagKey(arn), tags);
+  return { Certificate: { ...cert, CertificateWallet: undefined } };
+};
+
+const DeleteCertificate: OperationHandler = (input, ctx) => {
+  const arn = requireStr(input, "CertificateArn");
+  const cert = requireCertificateByArn(ctx, arn);
+  ctx.store.delete(certificateKey(cert.CertificateIdentifier));
+  ctx.store.delete(certificateArnKey(arn));
+  ctx.store.delete(tagKey(arn));
+  return { Certificate: { ...cert, CertificateWallet: undefined } };
+};
 
 const DescribeEventCategories: OperationHandler = (_input, _ctx) => ({
   EventCategoryGroupList: [],
 });
 
-const DescribeEventSubscriptions: OperationHandler = (_input, _ctx) => ({
-  Marker: undefined,
-  EventSubscriptionsList: [],
-});
+const DescribeEventSubscriptions: OperationHandler = (input, ctx) => {
+  const marker = optStr(input, "Marker");
+  const maxRecords = optNum(input, "MaxRecords");
+  const subs = ctx.store
+    .list<StoredEventSubscription>()
+    .filter((e) => e.key.startsWith("eventsub/"))
+    .map((e) => e.value);
+  const { items, nextMarker } = paginateMarker(subs, marker, maxRecords);
+  return { Marker: nextMarker, EventSubscriptionsList: items };
+};
 
 const DescribeEvents: OperationHandler = (_input, _ctx) => ({
   Marker: undefined,
@@ -991,33 +1349,61 @@ const DescribeEvents: OperationHandler = (_input, _ctx) => ({
 
 const CreateEventSubscription: OperationHandler = (input, ctx) => {
   const name = requireStr(input, "SubscriptionName");
-  return {
-    EventSubscription: {
-      CustomerAwsId: ctx.account,
-      CustSubscriptionId: name,
-      SnsTopicArn: optStr(input, "SnsTopicArn") ?? "",
-      Status: "active",
-      SubscriptionCreationTime: new Date().toISOString(),
-      SourceType: optStr(input, "SourceType"),
-      SourceIdsList: [],
-      EventCategoriesList: [],
-      Enabled: optBool(input, "Enabled", true),
-    },
+  if (ctx.store.get(eventSubKey(name))) {
+    throw awsError(
+      "ResourceAlreadyExistsFault",
+      `Event subscription ${name} already exists.`,
+      400,
+    );
+  }
+  const arn = eventSubArnOf(ctx.region, ctx.account, name);
+  const sub: StoredEventSubscription = {
+    CustomerAwsId: ctx.account,
+    CustSubscriptionId: name,
+    SnsTopicArn: optStr(input, "SnsTopicArn") ?? "",
+    Status: "active",
+    SubscriptionCreationTime: new Date().toISOString(),
+    SourceType: optStr(input, "SourceType"),
+    SourceIdsList: [],
+    EventCategoriesList: [],
+    Enabled: optBool(input, "Enabled", true),
+    SubscriptionArn: arn,
   };
+  ctx.store.set(eventSubKey(name), sub);
+  ctx.store.set(eventSubArnKey(arn), sub);
+  const tags = tagList(input);
+  if (tags.length > 0) ctx.store.set(tagKey(arn), tags);
+  return { EventSubscription: sub };
 };
 
-const ModifyEventSubscription: OperationHandler = (input, _ctx) => ({
-  EventSubscription: {
-    CustSubscriptionId: requireStr(input, "SubscriptionName"),
-    Status: "active",
-  },
-});
+const ModifyEventSubscription: OperationHandler = (input, ctx) => {
+  const name = requireStr(input, "SubscriptionName");
+  const sub = requireEventSub(ctx, name);
+  const updated: StoredEventSubscription = {
+    ...sub,
+    SnsTopicArn: optStr(input, "SnsTopicArn") ?? sub.SnsTopicArn,
+    SourceType:
+      input["SourceType"] !== undefined
+        ? optStr(input, "SourceType")
+        : sub.SourceType,
+    Enabled:
+      input["Enabled"] !== undefined
+        ? optBool(input, "Enabled", sub.Enabled)
+        : sub.Enabled,
+  };
+  ctx.store.set(eventSubKey(name), updated);
+  ctx.store.set(eventSubArnKey(sub.SubscriptionArn), updated);
+  return { EventSubscription: updated };
+};
 
-const DeleteEventSubscription: OperationHandler = (_input, _ctx) => ({
-  EventSubscription: undefined,
-});
-
-const AddTagsToResourceStub: OperationHandler = (_input, _ctx) => ({});
+const DeleteEventSubscription: OperationHandler = (input, ctx) => {
+  const name = requireStr(input, "SubscriptionName");
+  const sub = requireEventSub(ctx, name);
+  ctx.store.delete(eventSubKey(name));
+  ctx.store.delete(eventSubArnKey(sub.SubscriptionArn));
+  ctx.store.delete(tagKey(sub.SubscriptionArn));
+  return { EventSubscription: sub };
+};
 
 const RebootReplicationInstance: OperationHandler = (input, ctx) => {
   const arn = requireStr(input, "ReplicationInstanceArn");
@@ -1124,9 +1510,21 @@ const StartReplicationTaskAssessmentRun: OperationHandler = (input, ctx) => {
   };
 };
 
-const DeleteConnection: OperationHandler = (_input, _ctx) => ({
-  Connection: undefined,
-});
+const DeleteConnection: OperationHandler = (input, ctx) => {
+  const replicationInstanceArn = requireStr(input, "ReplicationInstanceArn");
+  const endpointArn = requireStr(input, "EndpointArn");
+  const key = connectionKey(replicationInstanceArn, endpointArn);
+  const conn = ctx.store.get<StoredConnection>(key);
+  if (!conn) {
+    throw awsError(
+      "ResourceNotFoundFault",
+      `Connection between ${replicationInstanceArn} and ${endpointArn} not found.`,
+      404,
+    );
+  }
+  ctx.store.delete(key);
+  return { Connection: { ...conn, LastFailureMessage: undefined } };
+};
 
 const BatchStartRecommendations: OperationHandler = (_input, _ctx) => ({
   ErrorEntries: [],
@@ -1145,43 +1543,76 @@ const DescribeRecommendationLimitations: OperationHandler = (_input, _ctx) => ({
 const StartRecommendations: OperationHandler = (_input, _ctx) => ({});
 
 const CreateReplicationConfig: OperationHandler = (input, ctx) => {
-  const arn = requireStr(input, "ReplicationConfigArn").length
-    ? requireStr(input, "ReplicationConfigArn")
-    : `arn:aws:dms:${ctx.region}:${ctx.account}:replication-config:${requireStr(input, "ReplicationConfigIdentifier")}`;
-  return {
-    ReplicationConfig: {
-      ReplicationConfigIdentifier: requireStr(
-        input,
-        "ReplicationConfigIdentifier",
-      ),
-      ReplicationConfigArn: arn,
-      SourceEndpointArn: optStr(input, "SourceEndpointArn"),
-      TargetEndpointArn: optStr(input, "TargetEndpointArn"),
-      ReplicationType: optStr(input, "ReplicationType"),
-      TableMappings: optStr(input, "TableMappings"),
-      ReplicationSettings: optStr(input, "ReplicationSettings"),
-      Status: "creating",
-    },
+  const id = requireStr(input, "ReplicationConfigIdentifier");
+  const sourceArn = requireStr(input, "SourceEndpointArn");
+  const targetArn = requireStr(input, "TargetEndpointArn");
+  const replicationType = requireStr(input, "ReplicationType");
+  const tableMappings = requireStr(input, "TableMappings");
+  if (ctx.store.get(replicationConfigKey(id))) {
+    throw awsError(
+      "ResourceAlreadyExistsFault",
+      `Replication config ${id} already exists.`,
+      400,
+    );
+  }
+  requireEndpoint(ctx, sourceArn);
+  requireEndpoint(ctx, targetArn);
+  const arn = replicationConfigArnOf(ctx.region, ctx.account, id);
+  const config: StoredReplicationConfig = {
+    ReplicationConfigIdentifier: id,
+    ReplicationConfigArn: arn,
+    SourceEndpointArn: sourceArn,
+    TargetEndpointArn: targetArn,
+    ReplicationType: replicationType,
+    TableMappings: tableMappings,
+    ReplicationSettings: optStr(input, "ReplicationSettings"),
+    Status: "creating",
   };
+  ctx.store.set(replicationConfigKey(id), config);
+  ctx.store.set(replicationConfigArnKey(arn), config);
+  const tags = tagList(input);
+  if (tags.length > 0) ctx.store.set(tagKey(arn), tags);
+  return { ReplicationConfig: config };
 };
 
-const DeleteReplicationConfig: OperationHandler = (_input, _ctx) => ({
-  ReplicationConfig: undefined,
-});
+const DeleteReplicationConfig: OperationHandler = (input, ctx) => {
+  const arn = requireStr(input, "ReplicationConfigArn");
+  const config = requireReplicationConfig(ctx, arn);
+  ctx.store.delete(replicationConfigKey(config.ReplicationConfigIdentifier));
+  ctx.store.delete(replicationConfigArnKey(arn));
+  ctx.store.delete(tagKey(arn));
+  return { ReplicationConfig: config };
+};
 
-const DescribeReplicationConfigs: OperationHandler = (_input, _ctx) => ({
-  Marker: undefined,
-  ReplicationConfigs: [],
-});
+const DescribeReplicationConfigs: OperationHandler = (input, ctx) => {
+  const marker = optStr(input, "Marker");
+  const maxRecords = optNum(input, "MaxRecords");
+  const configs = ctx.store
+    .list<StoredReplicationConfig>()
+    .filter((e) => e.key.startsWith("replicationconfig/"))
+    .map((e) => e.value);
+  const { items, nextMarker } = paginateMarker(configs, marker, maxRecords);
+  return { Marker: nextMarker, ReplicationConfigs: items };
+};
 
 const ModifyReplicationConfig: OperationHandler = (input, ctx) => {
   const arn = requireStr(input, "ReplicationConfigArn");
-  return {
-    ReplicationConfig: {
-      ReplicationConfigArn: arn,
-      Status: "available",
-    },
+  const config = requireReplicationConfig(ctx, arn);
+  const updated: StoredReplicationConfig = {
+    ...config,
+    ReplicationType: optStr(input, "ReplicationType") ?? config.ReplicationType,
+    TableMappings: optStr(input, "TableMappings") ?? config.TableMappings,
+    ReplicationSettings:
+      input["ReplicationSettings"] !== undefined
+        ? optStr(input, "ReplicationSettings")
+        : config.ReplicationSettings,
   };
+  ctx.store.set(
+    replicationConfigKey(config.ReplicationConfigIdentifier),
+    updated,
+  );
+  ctx.store.set(replicationConfigArnKey(arn), updated);
+  return { ReplicationConfig: updated };
 };
 
 const StartReplication: OperationHandler = (input, _ctx) => ({
@@ -1214,144 +1645,305 @@ const DescribeReplicationTableStatistics: OperationHandler = (
 
 const CreateDataMigration: OperationHandler = (input, ctx) => {
   const id = requireStr(input, "DataMigrationName");
-  const arn = `arn:aws:dms:${ctx.region}:${ctx.account}:data-migration:${id}`;
-  return {
-    DataMigration: {
-      DataMigrationName: id,
-      DataMigrationArn: arn,
-      DataMigrationType: optStr(input, "DataMigrationType"),
-      Status: "creating",
-      MigrationProjectArn: optStr(input, "MigrationProjectArn"),
-    },
+  if (ctx.store.get(dataMigrationKey(id))) {
+    throw awsError(
+      "ResourceAlreadyExistsFault",
+      `Data migration ${id} already exists.`,
+      400,
+    );
+  }
+  const arn = dataMigrationArnOf(ctx.region, ctx.account, id);
+  const dm: StoredDataMigration = {
+    DataMigrationName: id,
+    DataMigrationArn: arn,
+    DataMigrationType: optStr(input, "DataMigrationType"),
+    Status: "creating",
+    MigrationProjectArn: optStr(input, "MigrationProjectIdentifier"),
   };
+  ctx.store.set(dataMigrationKey(id), dm);
+  ctx.store.set(dataMigrationArnKey(arn), dm);
+  const tags = tagList(input);
+  if (tags.length > 0) ctx.store.set(tagKey(arn), tags);
+  return { DataMigration: dm };
 };
 
-const DeleteDataMigration: OperationHandler = (_input, _ctx) => ({
-  DataMigration: undefined,
-});
+const DeleteDataMigration: OperationHandler = (input, ctx) => {
+  const arn = requireStr(input, "DataMigrationIdentifier");
+  const dm = requireDataMigration(ctx, arn);
+  ctx.store.delete(dataMigrationKey(dm.DataMigrationName));
+  ctx.store.delete(dataMigrationArnKey(arn));
+  ctx.store.delete(tagKey(arn));
+  return { DataMigration: dm };
+};
 
-const DescribeDataMigrations: OperationHandler = (_input, _ctx) => ({
-  Marker: undefined,
-  DataMigrations: [],
-});
+const DescribeDataMigrations: OperationHandler = (input, ctx) => {
+  const marker = optStr(input, "Marker");
+  const maxRecords = optNum(input, "MaxRecords");
+  const dms = ctx.store
+    .list<StoredDataMigration>()
+    .filter((e) => e.key.startsWith("datamigration/"))
+    .map((e) => e.value);
+  const { items, nextMarker } = paginateMarker(dms, marker, maxRecords);
+  return { Marker: nextMarker, DataMigrations: items };
+};
 
-const ModifyDataMigration: OperationHandler = (input, _ctx) => ({
-  DataMigration: {
-    DataMigrationArn: requireStr(input, "DataMigrationArn"),
-    Status: "modifying",
-  },
-});
+const ModifyDataMigration: OperationHandler = (input, ctx) => {
+  const arn = requireStr(input, "DataMigrationIdentifier");
+  const dm = requireDataMigration(ctx, arn);
+  const updated: StoredDataMigration = {
+    ...dm,
+    DataMigrationType:
+      input["DataMigrationType"] !== undefined
+        ? optStr(input, "DataMigrationType")
+        : dm.DataMigrationType,
+  };
+  ctx.store.set(dataMigrationKey(dm.DataMigrationName), updated);
+  ctx.store.set(dataMigrationArnKey(arn), updated);
+  return { DataMigration: updated };
+};
 
 const StartDataMigration: OperationHandler = (input, _ctx) => ({
   DataMigration: {
-    DataMigrationArn: requireStr(input, "DataMigrationArn"),
+    DataMigrationArn: requireStr(input, "DataMigrationIdentifier"),
     Status: "running",
   },
 });
 
 const StopDataMigration: OperationHandler = (input, _ctx) => ({
   DataMigration: {
-    DataMigrationArn: requireStr(input, "DataMigrationArn"),
+    DataMigrationArn: requireStr(input, "DataMigrationIdentifier"),
     Status: "stopped",
   },
 });
 
 const CreateDataProvider: OperationHandler = (input, ctx) => {
   const id = requireStr(input, "DataProviderName");
-  const arn = `arn:aws:dms:${ctx.region}:${ctx.account}:data-provider:${id}`;
+  if (ctx.store.get(dataProviderKey(id))) {
+    throw awsError(
+      "ResourceAlreadyExistsFault",
+      `Data provider ${id} already exists.`,
+      400,
+    );
+  }
+  const arn = dataProviderArnOf(ctx.region, ctx.account, id);
+  const dp: StoredDataProvider = {
+    DataProviderName: id,
+    DataProviderArn: arn,
+    DataProviderCreationTime: new Date().toISOString(),
+    Engine: optStr(input, "Engine") ?? "mysql",
+    Description: optStr(input, "Description"),
+  };
+  ctx.store.set(dataProviderKey(id), dp);
+  ctx.store.set(dataProviderArnKey(arn), dp);
+  const tags = tagList(input);
+  if (tags.length > 0) ctx.store.set(tagKey(arn), tags);
+  return { DataProvider: { ...dp, Settings: undefined } };
+};
+
+const DeleteDataProvider: OperationHandler = (input, ctx) => {
+  const arn = requireStr(input, "DataProviderIdentifier");
+  const dp = requireDataProvider(ctx, arn);
+  ctx.store.delete(dataProviderKey(dp.DataProviderName));
+  ctx.store.delete(dataProviderArnKey(arn));
+  ctx.store.delete(tagKey(arn));
+  return { DataProvider: { ...dp, Settings: undefined } };
+};
+
+const DescribeDataProviders: OperationHandler = (input, ctx) => {
+  const marker = optStr(input, "Marker");
+  const maxRecords = optNum(input, "MaxRecords");
+  const providers = ctx.store
+    .list<StoredDataProvider>()
+    .filter((e) => e.key.startsWith("dataprovider/"))
+    .map((e) => e.value);
+  const { items, nextMarker } = paginateMarker(providers, marker, maxRecords);
   return {
-    DataProvider: {
-      DataProviderName: id,
-      DataProviderArn: arn,
-      DataProviderCreationTime: new Date().toISOString(),
-      Engine: optStr(input, "Engine") ?? "mysql",
-      Settings: undefined,
-      Description: optStr(input, "Description"),
-    },
+    Marker: nextMarker,
+    DataProviders: items.map((dp) => ({ ...dp, Settings: undefined })),
   };
 };
 
-const DeleteDataProvider: OperationHandler = (_input, _ctx) => ({
-  DataProvider: undefined,
-});
-
-const DescribeDataProviders: OperationHandler = (_input, _ctx) => ({
-  Marker: undefined,
-  DataProviders: [],
-});
-
-const ModifyDataProvider: OperationHandler = (input, _ctx) => ({
-  DataProvider: {
-    DataProviderArn: requireStr(input, "DataProviderArn"),
-    DataProviderName: optStr(input, "DataProviderName"),
-    Engine: optStr(input, "Engine"),
-  },
-});
+const ModifyDataProvider: OperationHandler = (input, ctx) => {
+  const arn = requireStr(input, "DataProviderIdentifier");
+  const dp = requireDataProvider(ctx, arn);
+  const updated: StoredDataProvider = {
+    ...dp,
+    DataProviderName: optStr(input, "DataProviderName") ?? dp.DataProviderName,
+    Engine: optStr(input, "Engine") ?? dp.Engine,
+    Description:
+      input["Description"] !== undefined
+        ? optStr(input, "Description")
+        : dp.Description,
+  };
+  if (updated.DataProviderName !== dp.DataProviderName) {
+    ctx.store.delete(dataProviderKey(dp.DataProviderName));
+  }
+  ctx.store.set(dataProviderKey(updated.DataProviderName), updated);
+  ctx.store.set(dataProviderArnKey(arn), updated);
+  return { DataProvider: { ...updated, Settings: undefined } };
+};
 
 const CreateInstanceProfile: OperationHandler = (input, ctx) => {
   const id = requireStr(input, "InstanceProfileName");
-  const arn = `arn:aws:dms:${ctx.region}:${ctx.account}:instance-profile:${id}`;
-  return {
-    InstanceProfile: {
-      InstanceProfileArn: arn,
-      InstanceProfileName: id,
-      KmsKeyArn: optStr(input, "KmsKeyId"),
-      PubliclyAccessible: optBool(input, "PubliclyAccessible", false),
-      NetworkType: optStr(input, "NetworkType"),
-      InstanceProfileCreationTime: new Date().toISOString(),
-    },
+  if (ctx.store.get(instanceProfileKey(id))) {
+    throw awsError(
+      "ResourceAlreadyExistsFault",
+      `Instance profile ${id} already exists.`,
+      400,
+    );
+  }
+  const arn = instanceProfileArnOf(ctx.region, ctx.account, id);
+  const ip: StoredInstanceProfile = {
+    InstanceProfileArn: arn,
+    InstanceProfileName: id,
+    KmsKeyArn: optStr(input, "KmsKeyId"),
+    PubliclyAccessible: optBool(input, "PubliclyAccessible", false),
+    NetworkType: optStr(input, "NetworkType"),
+    InstanceProfileCreationTime: new Date().toISOString(),
   };
+  ctx.store.set(instanceProfileKey(id), ip);
+  ctx.store.set(instanceProfileArnKey(arn), ip);
+  const tags = tagList(input);
+  if (tags.length > 0) ctx.store.set(tagKey(arn), tags);
+  return { InstanceProfile: ip };
 };
 
-const DeleteInstanceProfile: OperationHandler = (_input, _ctx) => ({
-  InstanceProfile: undefined,
-});
+const DeleteInstanceProfile: OperationHandler = (input, ctx) => {
+  const arn = requireStr(input, "InstanceProfileIdentifier");
+  const ip = requireInstanceProfile(ctx, arn);
+  ctx.store.delete(instanceProfileKey(ip.InstanceProfileName));
+  ctx.store.delete(instanceProfileArnKey(arn));
+  ctx.store.delete(tagKey(arn));
+  return { InstanceProfile: ip };
+};
 
-const DescribeInstanceProfiles: OperationHandler = (_input, _ctx) => ({
-  Marker: undefined,
-  InstanceProfiles: [],
-});
+const DescribeInstanceProfiles: OperationHandler = (input, ctx) => {
+  const marker = optStr(input, "Marker");
+  const maxRecords = optNum(input, "MaxRecords");
+  const profiles = ctx.store
+    .list<StoredInstanceProfile>()
+    .filter((e) => e.key.startsWith("instanceprofile/"))
+    .map((e) => e.value);
+  const { items, nextMarker } = paginateMarker(profiles, marker, maxRecords);
+  return { Marker: nextMarker, InstanceProfiles: items };
+};
 
-const ModifyInstanceProfile: OperationHandler = (input, _ctx) => ({
-  InstanceProfile: {
-    InstanceProfileArn: requireStr(input, "InstanceProfileArn"),
-    InstanceProfileName: optStr(input, "InstanceProfileName"),
-  },
-});
+const ModifyInstanceProfile: OperationHandler = (input, ctx) => {
+  const arn = requireStr(input, "InstanceProfileIdentifier");
+  const ip = requireInstanceProfile(ctx, arn);
+  const updated: StoredInstanceProfile = {
+    ...ip,
+    InstanceProfileName:
+      optStr(input, "InstanceProfileName") ?? ip.InstanceProfileName,
+    NetworkType:
+      input["NetworkType"] !== undefined
+        ? optStr(input, "NetworkType")
+        : ip.NetworkType,
+  };
+  if (updated.InstanceProfileName !== ip.InstanceProfileName) {
+    ctx.store.delete(instanceProfileKey(ip.InstanceProfileName));
+  }
+  ctx.store.set(instanceProfileKey(updated.InstanceProfileName), updated);
+  ctx.store.set(instanceProfileArnKey(arn), updated);
+  return { InstanceProfile: updated };
+};
 
 const CreateMigrationProject: OperationHandler = (input, ctx) => {
   const id = requireStr(input, "MigrationProjectName");
-  const arn = `arn:aws:dms:${ctx.region}:${ctx.account}:migration-project:${id}`;
+  if (ctx.store.get(migrationProjectKey(id))) {
+    throw awsError(
+      "ResourceAlreadyExistsFault",
+      `Migration project ${id} already exists.`,
+      400,
+    );
+  }
+  const arn = migrationProjectArnOf(ctx.region, ctx.account, id);
+  const mp: StoredMigrationProject = {
+    MigrationProjectName: id,
+    MigrationProjectArn: arn,
+    MigrationProjectCreationTime: new Date().toISOString(),
+    InstanceProfileArn: optStr(input, "InstanceProfileIdentifier"),
+    Description: optStr(input, "Description"),
+  };
+  ctx.store.set(migrationProjectKey(id), mp);
+  ctx.store.set(migrationProjectArnKey(arn), mp);
+  const tags = tagList(input);
+  if (tags.length > 0) ctx.store.set(tagKey(arn), tags);
   return {
     MigrationProject: {
-      MigrationProjectName: id,
-      MigrationProjectArn: arn,
-      MigrationProjectCreationTime: new Date().toISOString(),
-      InstanceProfileArn: optStr(input, "InstanceProfileIdentifier"),
+      ...mp,
       SourceDataProviderDescriptors: [],
       TargetDataProviderDescriptors: [],
       SchemaConversionApplicationAttributes: undefined,
       TransformationRules: undefined,
-      Description: optStr(input, "Description"),
     },
   };
 };
 
-const DeleteMigrationProject: OperationHandler = (_input, _ctx) => ({
-  MigrationProject: undefined,
-});
+const DeleteMigrationProject: OperationHandler = (input, ctx) => {
+  const identifier = requireStr(input, "MigrationProjectIdentifier");
+  const mp = requireMigrationProject(ctx, identifier);
+  ctx.store.delete(migrationProjectKey(mp.MigrationProjectName));
+  ctx.store.delete(migrationProjectArnKey(mp.MigrationProjectArn));
+  ctx.store.delete(tagKey(mp.MigrationProjectArn));
+  return {
+    MigrationProject: {
+      ...mp,
+      SourceDataProviderDescriptors: [],
+      TargetDataProviderDescriptors: [],
+      SchemaConversionApplicationAttributes: undefined,
+      TransformationRules: undefined,
+    },
+  };
+};
 
-const DescribeMigrationProjects: OperationHandler = (_input, _ctx) => ({
-  Marker: undefined,
-  MigrationProjects: [],
-});
+const DescribeMigrationProjects: OperationHandler = (input, ctx) => {
+  const marker = optStr(input, "Marker");
+  const maxRecords = optNum(input, "MaxRecords");
+  const projects = ctx.store
+    .list<StoredMigrationProject>()
+    .filter((e) => e.key.startsWith("migrationproject/"))
+    .map((e) => e.value);
+  const { items, nextMarker } = paginateMarker(projects, marker, maxRecords);
+  return {
+    Marker: nextMarker,
+    MigrationProjects: items.map((mp) => ({
+      ...mp,
+      SourceDataProviderDescriptors: [],
+      TargetDataProviderDescriptors: [],
+      SchemaConversionApplicationAttributes: undefined,
+      TransformationRules: undefined,
+    })),
+  };
+};
 
-const ModifyMigrationProject: OperationHandler = (input, _ctx) => ({
-  MigrationProject: {
-    MigrationProjectArn: requireStr(input, "MigrationProjectIdentifier"),
-    MigrationProjectName: optStr(input, "MigrationProjectName"),
-  },
-});
+const ModifyMigrationProject: OperationHandler = (input, ctx) => {
+  const identifier = requireStr(input, "MigrationProjectIdentifier");
+  const mp = requireMigrationProject(ctx, identifier);
+  const updated: StoredMigrationProject = {
+    ...mp,
+    MigrationProjectName:
+      optStr(input, "MigrationProjectName") ?? mp.MigrationProjectName,
+    Description:
+      input["Description"] !== undefined
+        ? optStr(input, "Description")
+        : mp.Description,
+  };
+  if (updated.MigrationProjectName !== mp.MigrationProjectName) {
+    ctx.store.delete(migrationProjectKey(mp.MigrationProjectName));
+  }
+  ctx.store.set(migrationProjectKey(updated.MigrationProjectName), updated);
+  ctx.store.set(migrationProjectArnKey(mp.MigrationProjectArn), updated);
+  return {
+    MigrationProject: {
+      ...updated,
+      SourceDataProviderDescriptors: [],
+      TargetDataProviderDescriptors: [],
+      SchemaConversionApplicationAttributes: undefined,
+      TransformationRules: undefined,
+    },
+  };
+};
 
 const ExportMetadataModelAssessment: OperationHandler = (_input, _ctx) => ({
   PdfReport: undefined,

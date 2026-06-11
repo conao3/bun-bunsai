@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
   BatchIsAuthorizedCommand,
+  BatchIsAuthorizedWithTokenCommand,
   CreateIdentitySourceCommand,
   CreatePolicyCommand,
   CreatePolicyStoreAliasCommand,
@@ -18,6 +19,7 @@ import {
   GetPolicyStoreCommand,
   GetPolicyTemplateCommand,
   IsAuthorizedCommand,
+  IsAuthorizedWithTokenCommand,
   ListIdentitySourcesCommand,
   ListPoliciesCommand,
   ListPolicyStoreAliasesCommand,
@@ -417,4 +419,312 @@ test("VerifiedPermissions tags", async () => {
   await client.send(
     new DeletePolicyStoreCommand({ policyStoreId: store.policyStoreId! }),
   );
+});
+
+test("VP-1: DeletePolicyStore deletionProtection", async () => {
+  const client = vp();
+
+  const store = await client.send(
+    new CreatePolicyStoreCommand({
+      validationSettings: { mode: "OFF" },
+      deletionProtection: "ENABLED",
+    }),
+  );
+  const storeId = store.policyStoreId!;
+
+  await expect(
+    client.send(new DeletePolicyStoreCommand({ policyStoreId: storeId })),
+  ).rejects.toThrow();
+
+  let rejected = false;
+  try {
+    await client.send(new DeletePolicyStoreCommand({ policyStoreId: storeId }));
+  } catch (e: unknown) {
+    const err = e as { name?: string };
+    expect(err.name).toBe("InvalidStateException");
+    rejected = true;
+  }
+  expect(rejected).toBe(true);
+
+  await client.send(
+    new UpdatePolicyStoreCommand({
+      policyStoreId: storeId,
+      validationSettings: { mode: "OFF" },
+      deletionProtection: "DISABLED",
+    }),
+  );
+
+  await client.send(new DeletePolicyStoreCommand({ policyStoreId: storeId }));
+
+  const listed = await client.send(new ListPolicyStoresCommand({}));
+  expect(listed.policyStores?.some((s) => s.policyStoreId === storeId)).toBe(
+    false,
+  );
+});
+
+test("VP-1: DeletePolicyStore cleans up child resources", async () => {
+  const client = vp();
+
+  const store = await client.send(
+    new CreatePolicyStoreCommand({ validationSettings: { mode: "OFF" } }),
+  );
+  const storeId = store.policyStoreId!;
+
+  await client.send(
+    new CreatePolicyCommand({
+      policyStoreId: storeId,
+      definition: {
+        static: {
+          statement:
+            'permit(principal == User::"alice", action == Action::"view", resource == Document::"doc1");',
+        },
+      },
+    }),
+  );
+
+  await client.send(
+    new CreatePolicyTemplateCommand({
+      policyStoreId: storeId,
+      statement:
+        'permit(principal == ?principal, action == Action::"view", resource == ?resource);',
+    }),
+  );
+
+  await client.send(new DeletePolicyStoreCommand({ policyStoreId: storeId }));
+
+  const listed = await client.send(new ListPolicyStoresCommand({}));
+  expect(listed.policyStores?.some((s) => s.policyStoreId === storeId)).toBe(
+    false,
+  );
+});
+
+test("VP-2: template-linked policy authorization", async () => {
+  const client = vp();
+
+  const store = await client.send(
+    new CreatePolicyStoreCommand({ validationSettings: { mode: "OFF" } }),
+  );
+  const storeId = store.policyStoreId!;
+
+  const tmpl = await client.send(
+    new CreatePolicyTemplateCommand({
+      policyStoreId: storeId,
+      statement:
+        'permit(principal == ?principal, action == Action::"view", resource == ?resource);',
+    }),
+  );
+  const templateId = tmpl.policyTemplateId!;
+
+  const tlinked = await client.send(
+    new CreatePolicyCommand({
+      policyStoreId: storeId,
+      definition: {
+        templateLinked: {
+          policyTemplateId: templateId,
+          principal: { entityType: "User", entityId: "alice" },
+          resource: { entityType: "Document", entityId: "doc1" },
+        },
+      },
+    }),
+  );
+  expect(tlinked.policyType).toBe("TEMPLATE_LINKED");
+
+  const allow = await client.send(
+    new IsAuthorizedCommand({
+      policyStoreId: storeId,
+      principal: { entityType: "User", entityId: "alice" },
+      action: { actionType: "Action", actionId: "view" },
+      resource: { entityType: "Document", entityId: "doc1" },
+    }),
+  );
+  expect(allow.decision).toBe("ALLOW");
+  expect(
+    allow.determiningPolicies?.some((p) => p.policyId === tlinked.policyId),
+  ).toBe(true);
+
+  const deny = await client.send(
+    new IsAuthorizedCommand({
+      policyStoreId: storeId,
+      principal: { entityType: "User", entityId: "bob" },
+      action: { actionType: "Action", actionId: "view" },
+      resource: { entityType: "Document", entityId: "doc1" },
+    }),
+  );
+  expect(deny.decision).toBe("DENY");
+
+  await client.send(new DeletePolicyStoreCommand({ policyStoreId: storeId }));
+});
+
+test("VP-2: wildcard permit(principal, action, resource) grants ALLOW", async () => {
+  const client = vp();
+
+  const store = await client.send(
+    new CreatePolicyStoreCommand({ validationSettings: { mode: "OFF" } }),
+  );
+  const storeId = store.policyStoreId!;
+
+  await client.send(
+    new CreatePolicyCommand({
+      policyStoreId: storeId,
+      definition: {
+        static: {
+          statement: "permit(principal, action, resource);",
+        },
+      },
+    }),
+  );
+
+  const result = await client.send(
+    new IsAuthorizedCommand({
+      policyStoreId: storeId,
+      principal: { entityType: "AnyUser", entityId: "anyone" },
+      action: { actionType: "AnyAction", actionId: "anything" },
+      resource: { entityType: "AnyResource", entityId: "anything" },
+    }),
+  );
+  expect(result.decision).toBe("ALLOW");
+
+  await client.send(new DeletePolicyStoreCommand({ policyStoreId: storeId }));
+});
+
+test("VP-3: IsAuthorizedWithToken JWT decode + policy evaluation", async () => {
+  const client = vp();
+
+  const store = await client.send(
+    new CreatePolicyStoreCommand({ validationSettings: { mode: "OFF" } }),
+  );
+  const storeId = store.policyStoreId!;
+
+  await client.send(
+    new CreateIdentitySourceCommand({
+      policyStoreId: storeId,
+      configuration: {
+        cognitoUserPoolConfiguration: {
+          userPoolArn:
+            "arn:aws:cognito-idp:us-east-1:000000000000:userpool/us-east-1_test",
+          clientIds: [],
+        },
+      },
+      principalEntityType: "MyApp::User",
+    }),
+  );
+
+  await client.send(
+    new CreatePolicyCommand({
+      policyStoreId: storeId,
+      definition: {
+        static: {
+          statement:
+            'permit(principal == MyApp::User::"sub-123", action == Action::"view", resource == Doc::"d1");',
+        },
+      },
+    }),
+  );
+
+  const jwtPayload = btoa(JSON.stringify({ sub: "sub-123" }))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
+  const jwtHeader = btoa(JSON.stringify({ alg: "none" }))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
+  const token = `${jwtHeader}.${jwtPayload}.`;
+
+  const allowResult = await client.send(
+    new IsAuthorizedWithTokenCommand({
+      policyStoreId: storeId,
+      identityToken: token,
+      action: { actionType: "Action", actionId: "view" },
+      resource: { entityType: "Doc", entityId: "d1" },
+    }),
+  );
+  expect(allowResult.decision).toBe("ALLOW");
+  expect(allowResult.principal?.entityId).toBe("sub-123");
+  expect(allowResult.determiningPolicies?.length).toBeGreaterThan(0);
+
+  const denyPayload = btoa(JSON.stringify({ sub: "other-sub" }))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
+  const denyToken = `${jwtHeader}.${denyPayload}.`;
+
+  const denyResult = await client.send(
+    new IsAuthorizedWithTokenCommand({
+      policyStoreId: storeId,
+      identityToken: denyToken,
+      action: { actionType: "Action", actionId: "view" },
+      resource: { entityType: "Doc", entityId: "d1" },
+    }),
+  );
+  expect(denyResult.decision).toBe("DENY");
+
+  await client.send(new DeletePolicyStoreCommand({ policyStoreId: storeId }));
+});
+
+test("VP-3: BatchIsAuthorizedWithToken per-request evaluation", async () => {
+  const client = vp();
+
+  const store = await client.send(
+    new CreatePolicyStoreCommand({ validationSettings: { mode: "OFF" } }),
+  );
+  const storeId = store.policyStoreId!;
+
+  await client.send(
+    new CreateIdentitySourceCommand({
+      policyStoreId: storeId,
+      configuration: {
+        cognitoUserPoolConfiguration: {
+          userPoolArn:
+            "arn:aws:cognito-idp:us-east-1:000000000000:userpool/us-east-1_test",
+          clientIds: [],
+        },
+      },
+      principalEntityType: "MyApp::User",
+    }),
+  );
+
+  await client.send(
+    new CreatePolicyCommand({
+      policyStoreId: storeId,
+      definition: {
+        static: {
+          statement:
+            'permit(principal == MyApp::User::"sub-abc", action == Action::"read", resource == Doc::"file1");',
+        },
+      },
+    }),
+  );
+
+  const jwtPayload = btoa(JSON.stringify({ sub: "sub-abc" }))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
+  const jwtHeader = btoa(JSON.stringify({ alg: "none" }))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
+  const token = `${jwtHeader}.${jwtPayload}.`;
+
+  const batch = await client.send(
+    new BatchIsAuthorizedWithTokenCommand({
+      policyStoreId: storeId,
+      identityToken: token,
+      requests: [
+        {
+          action: { actionType: "Action", actionId: "read" },
+          resource: { entityType: "Doc", entityId: "file1" },
+        },
+        {
+          action: { actionType: "Action", actionId: "write" },
+          resource: { entityType: "Doc", entityId: "file1" },
+        },
+      ],
+    }),
+  );
+  expect(batch.results?.length).toBe(2);
+  expect(batch.results![0].decision).toBe("ALLOW");
+  expect(batch.results![1].decision).toBe("DENY");
+
+  await client.send(new DeletePolicyStoreCommand({ policyStoreId: storeId }));
 });

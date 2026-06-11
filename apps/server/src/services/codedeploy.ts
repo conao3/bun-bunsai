@@ -70,12 +70,31 @@ type StoredDeploymentConfig = {
 
 type TagEntry = { Key: string; Value: string };
 
+type StoredOnPremisesInstance = {
+  instanceName: string;
+  iamUserArn: string | undefined;
+  iamSessionArn: string | undefined;
+  registerTime: number;
+  deregisterTime: number | undefined;
+  tags: TagEntry[];
+};
+
+type StoredRevision = {
+  applicationName: string;
+  revision: Record<string, unknown>;
+  description: string | undefined;
+  registerTime: number;
+};
+
 const appKey = (name: string): string => `app/${name}`;
 const depGroupKey = (app: string, group: string): string =>
   `depgroup/${app}/${group}`;
 const deploymentKey = (id: string): string => `deployment/${id}`;
 const depConfigKey = (name: string): string => `depconfig/${name}`;
 const tagsKey = (arn: string): string => `tags/${arn}`;
+const onPremKey = (name: string): string => `onprem/${name}`;
+const revisionKey = (app: string, hash: string): string =>
+  `revision/${app}/${hash}`;
 
 const appArn = (ctx: ServiceContext, name: string): string =>
   `arn:aws:codedeploy:${ctx.region}:${ctx.account}:application:${name}`;
@@ -146,6 +165,33 @@ const listDepConfigs = (ctx: ServiceContext): StoredDeploymentConfig[] =>
     .list<StoredDeploymentConfig>()
     .filter((e) => e.key.startsWith("depconfig/"))
     .map((e) => e.value);
+
+const listOnPremInstances = (ctx: ServiceContext): StoredOnPremisesInstance[] =>
+  ctx.store
+    .list<StoredOnPremisesInstance>()
+    .filter((e) => e.key.startsWith("onprem/"))
+    .map((e) => e.value);
+
+const listRevisions = (ctx: ServiceContext, app: string): StoredRevision[] =>
+  ctx.store
+    .list<StoredRevision>()
+    .filter((e) => e.key.startsWith(`revision/${app}/`))
+    .map((e) => e.value);
+
+const stableStringify = (v: unknown): string => {
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(",")}]`;
+  const sorted = Object.keys(v as Record<string, unknown>).sort();
+  return `{${sorted
+    .map(
+      (k) =>
+        `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`,
+    )
+    .join(",")}}`;
+};
+
+const revisionHash = (revision: Record<string, unknown>): string =>
+  Buffer.from(stableStringify(revision)).toString("base64url");
 
 const DEFAULT_CONFIGS: {
   name: string;
@@ -386,6 +432,18 @@ const depConfigView = (
   createTime: cfg.createTime / 1000,
 });
 
+const onPremView = (
+  inst: StoredOnPremisesInstance,
+): Record<string, unknown> => ({
+  instanceName: inst.instanceName,
+  iamUserArn: inst.iamUserArn,
+  iamSessionArn: inst.iamSessionArn,
+  registerTime: inst.registerTime / 1000,
+  deregisterTime:
+    inst.deregisterTime !== undefined ? inst.deregisterTime / 1000 : undefined,
+  tags: inst.tags,
+});
+
 const getTags = (ctx: ServiceContext, arn: string): TagEntry[] =>
   ctx.store.get<TagEntry[]>(tagsKey(arn)) ?? [];
 
@@ -423,6 +481,44 @@ const arnToResource = (
     return { type: "deploymentconfig", key: arn.slice(dcPrefix.length) };
   }
   return undefined;
+};
+
+const checkResourceExists = (
+  ctx: ServiceContext,
+  resource: { type: string; key: string },
+): void => {
+  if (resource.type === "application") {
+    if (ctx.store.get(appKey(resource.key)) === undefined) {
+      throw awsError(
+        "ApplicationDoesNotExistException",
+        `Application does not exist: ${resource.key}`,
+        400,
+      );
+    }
+  } else if (resource.type === "deploymentgroup") {
+    const slashIdx = resource.key.indexOf("/");
+    const appName = slashIdx >= 0 ? resource.key.slice(0, slashIdx) : "";
+    const groupName = slashIdx >= 0 ? resource.key.slice(slashIdx + 1) : "";
+    if (
+      slashIdx < 0 ||
+      ctx.store.get(depGroupKey(appName, groupName)) === undefined
+    ) {
+      throw awsError(
+        "DeploymentGroupDoesNotExistException",
+        `Deployment group does not exist: ${resource.key}`,
+        400,
+      );
+    }
+  } else if (resource.type === "deploymentconfig") {
+    ensureSeeded(ctx);
+    if (ctx.store.get(depConfigKey(resource.key)) === undefined) {
+      throw awsError(
+        "DeploymentConfigDoesNotExistException",
+        `Deployment config does not exist: ${resource.key}`,
+        400,
+      );
+    }
+  }
 };
 
 const CreateApplication: OperationHandler = (input, ctx) => {
@@ -529,10 +625,19 @@ const UpdateApplication: OperationHandler = (input, ctx) => {
 
 const BatchGetApplications: OperationHandler = (input, ctx) => {
   const names = stringListFromInput(input["applicationNames"]);
-  const infos = names.map((name) => {
-    const app = ctx.store.get<StoredApplication>(appKey(name));
-    return app ? appView(app) : undefined;
-  });
+  if (names.length > 100) {
+    throw awsError(
+      "BatchLimitExceededException",
+      "Cannot get more than 100 applications at a time.",
+      400,
+    );
+  }
+  const infos = names
+    .map((name) => {
+      const app = ctx.store.get<StoredApplication>(appKey(name));
+      return app ? appView(app) : undefined;
+    })
+    .filter((a) => a !== undefined);
   return { applicationsInfo: infos };
 };
 
@@ -560,9 +665,17 @@ const CreateDeploymentGroup: OperationHandler = (input, ctx) => {
       400,
     );
   }
-  const configName =
-    stringOrUndefined(input["deploymentConfigName"]) ??
-    "CodeDeployDefault.OneAtATime";
+  const providedConfigName = stringOrUndefined(input["deploymentConfigName"]);
+  if (providedConfigName !== undefined) {
+    if (ctx.store.get(depConfigKey(providedConfigName)) === undefined) {
+      throw awsError(
+        "DeploymentConfigDoesNotExistException",
+        `Deployment config does not exist: ${providedConfigName}`,
+        400,
+      );
+    }
+  }
+  const configName = providedConfigName ?? "CodeDeployDefault.OneAtATime";
   const tags = arrayOrEmpty(input["tags"]) as TagEntry[];
   const group: StoredDeploymentGroup = {
     deploymentGroupId: genId(),
@@ -682,13 +795,21 @@ const UpdateDeploymentGroup: OperationHandler = (input, ctx) => {
       );
     }
   }
+  const newConfigName = stringOrUndefined(input["deploymentConfigName"]);
+  if (newConfigName !== undefined) {
+    if (ctx.store.get(depConfigKey(newConfigName)) === undefined) {
+      throw awsError(
+        "DeploymentConfigDoesNotExistException",
+        `Deployment config does not exist: ${newConfigName}`,
+        400,
+      );
+    }
+  }
   const updated: StoredDeploymentGroup = {
     ...group,
     deploymentGroupName: targetName,
     arn: depGroupArn(ctx, applicationName, targetName),
-    deploymentConfigName:
-      stringOrUndefined(input["deploymentConfigName"]) ??
-      group.deploymentConfigName,
+    deploymentConfigName: newConfigName ?? group.deploymentConfigName,
     serviceRoleArn:
       stringOrUndefined(input["serviceRoleArn"]) ?? group.serviceRoleArn,
     ec2TagFilters:
@@ -822,10 +943,41 @@ const CreateDeployment: OperationHandler = (input, ctx) => {
           depGroupKey(applicationName, deploymentGroupName),
         )
       : undefined;
+  const providedDepConfigName = stringOrUndefined(
+    input["deploymentConfigName"],
+  );
+  if (providedDepConfigName !== undefined) {
+    if (ctx.store.get(depConfigKey(providedDepConfigName)) === undefined) {
+      throw awsError(
+        "DeploymentConfigDoesNotExistException",
+        `Deployment config does not exist: ${providedDepConfigName}`,
+        400,
+      );
+    }
+  }
   const configName =
-    stringOrUndefined(input["deploymentConfigName"]) ??
+    providedDepConfigName ??
     group?.deploymentConfigName ??
     "CodeDeployDefault.OneAtATime";
+  const revision = recordOrUndefined(input["revision"]);
+  if (revision === undefined) {
+    throw awsError(
+      "RevisionRequiredException",
+      "A revision must be specified.",
+      400,
+    );
+  }
+  const hash = revisionHash(revision);
+  const revKey = revisionKey(applicationName, hash);
+  if (ctx.store.get(revKey) === undefined) {
+    const rev: StoredRevision = {
+      applicationName,
+      revision,
+      description: undefined,
+      registerTime: Date.now(),
+    };
+    ctx.store.set(revKey, rev);
+  }
   const deploymentId = genDeploymentId();
   const dep: StoredDeployment = {
     deploymentId,
@@ -833,7 +985,7 @@ const CreateDeployment: OperationHandler = (input, ctx) => {
     deploymentGroupName,
     deploymentConfigName: configName,
     description: stringOrUndefined(input["description"]),
-    revision: recordOrUndefined(input["revision"]),
+    revision,
     createTime: Date.now(),
     stoppedAt: undefined,
     stoppedMessage: undefined,
@@ -864,9 +1016,40 @@ const GetDeployment: OperationHandler = (input, ctx) => {
 const ListDeployments: OperationHandler = (input, ctx) => {
   const applicationName = stringOrUndefined(input["applicationName"]);
   const deploymentGroupName = stringOrUndefined(input["deploymentGroupName"]);
+
+  if (applicationName !== undefined) {
+    if (ctx.store.get(appKey(applicationName)) === undefined) {
+      throw awsError(
+        "ApplicationDoesNotExistException",
+        `Application does not exist: ${applicationName}`,
+        400,
+      );
+    }
+  }
+  if (deploymentGroupName !== undefined) {
+    if (applicationName === undefined) {
+      throw awsError(
+        "InvalidInputException",
+        "applicationName is required when deploymentGroupName is specified.",
+        400,
+      );
+    }
+    if (
+      ctx.store.get(depGroupKey(applicationName, deploymentGroupName)) ===
+      undefined
+    ) {
+      throw awsError(
+        "DeploymentGroupDoesNotExistException",
+        `Deployment group does not exist: ${deploymentGroupName}`,
+        400,
+      );
+    }
+  }
+
   const statusFilter = Array.isArray(input["includeOnlyStatuses"])
     ? (input["includeOnlyStatuses"] as string[])
     : undefined;
+  const createTimeRange = recordOrUndefined(input["createTimeRange"]);
   let deps = listDeployments(ctx);
   if (applicationName !== undefined) {
     deps = deps.filter((d) => d.applicationName === applicationName);
@@ -878,6 +1061,20 @@ const ListDeployments: OperationHandler = (input, ctx) => {
     deps = deps.filter((d) =>
       statusFilter.includes(computeDeploymentStatus(d)),
     );
+  }
+  if (createTimeRange !== undefined) {
+    const rangeStart =
+      typeof createTimeRange["start"] === "number"
+        ? createTimeRange["start"] * 1000
+        : undefined;
+    const rangeEnd =
+      typeof createTimeRange["end"] === "number"
+        ? createTimeRange["end"] * 1000
+        : undefined;
+    if (rangeStart !== undefined)
+      deps = deps.filter((d) => d.createTime >= rangeStart);
+    if (rangeEnd !== undefined)
+      deps = deps.filter((d) => d.createTime <= rangeEnd);
   }
   const ids = deps.map((d) => d.deploymentId);
   const nextToken = stringOrUndefined(input["nextToken"]);
@@ -921,10 +1118,19 @@ const StopDeployment: OperationHandler = (input, ctx) => {
 
 const BatchGetDeployments: OperationHandler = (input, ctx) => {
   const ids = stringListFromInput(input["deploymentIds"]);
-  const infos = ids.map((id) => {
-    const dep = ctx.store.get<StoredDeployment>(deploymentKey(id));
-    return dep ? deploymentView(dep) : undefined;
-  });
+  if (ids.length > 25) {
+    throw awsError(
+      "BatchLimitExceededException",
+      "Cannot get more than 25 deployments at a time.",
+      400,
+    );
+  }
+  const infos = ids
+    .map((id) => {
+      const dep = ctx.store.get<StoredDeployment>(deploymentKey(id));
+      return dep ? deploymentView(dep) : undefined;
+    })
+    .filter((d) => d !== undefined);
   return { deploymentsInfo: infos };
 };
 
@@ -992,8 +1198,21 @@ const DeleteDeploymentConfig: OperationHandler = (input, ctx) => {
   );
   if (cfg?.isDefault === true) {
     throw awsError(
-      "InvalidDeploymentConfigNameException",
+      "InvalidOperationException",
       `Cannot delete built-in deployment configuration: ${deploymentConfigName}`,
+      400,
+    );
+  }
+  if (cfg === undefined) {
+    return {};
+  }
+  const inUse = listDepGroups(ctx).some(
+    (g) => g.deploymentConfigName === deploymentConfigName,
+  );
+  if (inUse) {
+    throw awsError(
+      "DeploymentConfigInUseException",
+      `Deployment config is in use: ${deploymentConfigName}`,
       400,
     );
   }
@@ -1011,6 +1230,7 @@ const TagResource: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  checkResourceExists(ctx, resource);
   const tags = arrayOrEmpty(input["Tags"]) as TagEntry[];
   const existing = getTags(ctx, arn);
   setTags(ctx, arn, mergeTags(existing, tags));
@@ -1027,6 +1247,7 @@ const UntagResource: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  checkResourceExists(ctx, resource);
   const keys = stringListFromInput(input["TagKeys"]);
   const existing = getTags(ctx, arn);
   setTags(ctx, arn, removeTags(existing, keys));
@@ -1043,17 +1264,69 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  checkResourceExists(ctx, resource);
   const tags = getTags(ctx, arn);
   return { Tags: tags };
 };
 
-const AddTagsToOnPremisesInstances: OperationHandler = (_input, _ctx) => ({});
+const AddTagsToOnPremisesInstances: OperationHandler = (input, ctx) => {
+  const names = stringListFromInput(input["instanceNames"]);
+  const tags = arrayOrEmpty(input["tags"]) as TagEntry[];
+  if (tags.length === 0) {
+    throw awsError(
+      "TagRequiredException",
+      "At least one tag is required.",
+      400,
+    );
+  }
+  for (const name of names) {
+    const inst = ctx.store.get<StoredOnPremisesInstance>(onPremKey(name));
+    if (inst === undefined) {
+      throw awsError(
+        "InstanceNotRegisteredException",
+        `Instance not registered: ${name}`,
+        400,
+      );
+    }
+    const updated: StoredOnPremisesInstance = {
+      ...inst,
+      tags: mergeTags(inst.tags, tags),
+    };
+    ctx.store.set(onPremKey(name), updated);
+  }
+  return {};
+};
 
-const BatchGetApplicationRevisions: OperationHandler = (input, _ctx) => ({
-  applicationName: stringOrUndefined(input["applicationName"]),
-  revisions: [],
-  errorMessage: undefined,
-});
+const BatchGetApplicationRevisions: OperationHandler = (input, ctx) => {
+  const applicationName = requireString(input, "applicationName");
+  if (ctx.store.get(appKey(applicationName)) === undefined) {
+    throw awsError(
+      "ApplicationDoesNotExistException",
+      `Application does not exist: ${applicationName}`,
+      400,
+    );
+  }
+  const revisions = arrayOrEmpty(input["revisions"]);
+  const result = revisions
+    .map((r) => {
+      const rev = recordOrUndefined(r);
+      if (rev === undefined) return undefined;
+      const hash = revisionHash(rev);
+      const stored = ctx.store.get<StoredRevision>(
+        revisionKey(applicationName, hash),
+      );
+      if (stored === undefined) return undefined;
+      return {
+        revisionLocation: stored.revision,
+        genericRevisionInfo: {
+          description: stored.description,
+          registerTime: stored.registerTime / 1000,
+        },
+      };
+    })
+    .filter((r) => r !== undefined);
+  return { applicationName, revisions: result, errorMessage: undefined };
+};
 
 const BatchGetDeploymentInstances: OperationHandler = (_input, _ctx) => ({
   instancesSummary: [],
@@ -1064,11 +1337,44 @@ const BatchGetDeploymentTargets: OperationHandler = (_input, _ctx) => ({
   deploymentTargets: [],
 });
 
-const BatchGetOnPremisesInstances: OperationHandler = (_input, _ctx) => ({
-  instanceInfos: [],
-});
+const BatchGetOnPremisesInstances: OperationHandler = (input, ctx) => {
+  const names = stringListFromInput(input["instanceNames"]);
+  if (names.length > 25) {
+    throw awsError(
+      "BatchLimitExceededException",
+      "Cannot get more than 25 on-premises instances at a time.",
+      400,
+    );
+  }
+  const infos = names
+    .map((name) => {
+      const inst = ctx.store.get<StoredOnPremisesInstance>(onPremKey(name));
+      return inst ? onPremView(inst) : undefined;
+    })
+    .filter((i) => i !== undefined);
+  return { instanceInfos: infos };
+};
 
-const ContinueDeployment: OperationHandler = (_input, _ctx) => ({});
+const ContinueDeployment: OperationHandler = (input, ctx) => {
+  const deploymentId = requireString(input, "deploymentId");
+  const dep = ctx.store.get<StoredDeployment>(deploymentKey(deploymentId));
+  if (dep === undefined) {
+    throw awsError(
+      "DeploymentDoesNotExistException",
+      `Deployment does not exist: ${deploymentId}`,
+      400,
+    );
+  }
+  const currentStatus = computeDeploymentStatus(dep);
+  if (currentStatus === "Succeeded" || currentStatus === "Stopped") {
+    throw awsError(
+      "DeploymentAlreadyCompletedException",
+      `Deployment ${deploymentId} has already completed.`,
+      400,
+    );
+  }
+  return {};
+};
 
 const DeleteGitHubAccountToken: OperationHandler = (input, _ctx) => ({
   tokenName: stringOrUndefined(input["tokenName"]),
@@ -1076,22 +1382,59 @@ const DeleteGitHubAccountToken: OperationHandler = (input, _ctx) => ({
 
 const DeleteResourcesByExternalId: OperationHandler = (_input, _ctx) => ({});
 
-const DeregisterOnPremisesInstance: OperationHandler = (_input, _ctx) => ({});
+const DeregisterOnPremisesInstance: OperationHandler = (input, ctx) => {
+  const instanceName = requireString(input, "instanceName");
+  const inst = ctx.store.get<StoredOnPremisesInstance>(onPremKey(instanceName));
+  if (inst === undefined) {
+    throw awsError(
+      "InstanceNotRegisteredException",
+      `Instance not registered: ${instanceName}`,
+      400,
+    );
+  }
+  const updated: StoredOnPremisesInstance = {
+    ...inst,
+    deregisterTime: Date.now(),
+  };
+  ctx.store.set(onPremKey(instanceName), updated);
+  return {};
+};
 
 const GetApplicationRevision: OperationHandler = (input, ctx) => {
   const applicationName = requireString(input, "applicationName");
-  const app = ctx.store.get<StoredApplication>(appKey(applicationName));
-  if (app === undefined) {
+  if (ctx.store.get(appKey(applicationName)) === undefined) {
     throw awsError(
       "ApplicationDoesNotExistException",
       `Application does not exist: ${applicationName}`,
       400,
     );
   }
+  const revision = recordOrUndefined(input["revision"]);
+  if (revision === undefined) {
+    throw awsError(
+      "RevisionRequiredException",
+      "A revision must be specified.",
+      400,
+    );
+  }
+  const hash = revisionHash(revision);
+  const stored = ctx.store.get<StoredRevision>(
+    revisionKey(applicationName, hash),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "RevisionDoesNotExistException",
+      `Revision does not exist for application: ${applicationName}`,
+      400,
+    );
+  }
   return {
     applicationName,
-    revision: recordOrUndefined(input["revision"]) ?? {},
-    revisionInfo: { description: undefined, registerTime: undefined },
+    revision: stored.revision,
+    revisionInfo: {
+      description: stored.description,
+      registerTime: stored.registerTime / 1000,
+    },
   };
 };
 
@@ -1103,14 +1446,43 @@ const GetDeploymentTarget: OperationHandler = (_input, _ctx) => ({
   deploymentTarget: undefined,
 });
 
-const GetOnPremisesInstance: OperationHandler = (_input, _ctx) => ({
-  instanceInfo: undefined,
-});
+const GetOnPremisesInstance: OperationHandler = (input, ctx) => {
+  const instanceName = requireString(input, "instanceName");
+  const inst = ctx.store.get<StoredOnPremisesInstance>(onPremKey(instanceName));
+  if (inst === undefined) {
+    throw awsError(
+      "InstanceNotRegisteredException",
+      `Instance not registered: ${instanceName}`,
+      400,
+    );
+  }
+  return { instanceInfo: onPremView(inst) };
+};
 
-const ListApplicationRevisions: OperationHandler = (input, _ctx) => ({
-  revisions: [],
-  nextToken: undefined,
-});
+const ListApplicationRevisions: OperationHandler = (input, ctx) => {
+  const applicationName = requireString(input, "applicationName");
+  if (ctx.store.get(appKey(applicationName)) === undefined) {
+    throw awsError(
+      "ApplicationDoesNotExistException",
+      `Application does not exist: ${applicationName}`,
+      400,
+    );
+  }
+  const revs = listRevisions(ctx, applicationName);
+  const nextToken = stringOrUndefined(input["nextToken"]);
+  const start = nextToken
+    ? parseInt(Buffer.from(nextToken, "base64").toString())
+    : 0;
+  const page = revs.slice(start, start + 100);
+  const next =
+    start + 100 < revs.length
+      ? Buffer.from(String(start + 100)).toString("base64")
+      : undefined;
+  return {
+    revisions: page.map((r) => r.revision),
+    nextToken: next,
+  };
+};
 
 const ListDeploymentInstances: OperationHandler = (_input, _ctx) => ({
   instancesList: [],
@@ -1127,29 +1499,182 @@ const ListGitHubAccountTokenNames: OperationHandler = (_input, _ctx) => ({
   nextToken: undefined,
 });
 
-const ListOnPremisesInstances: OperationHandler = (_input, _ctx) => ({
-  instanceNames: [],
-  nextToken: undefined,
-});
+const ListOnPremisesInstances: OperationHandler = (input, ctx) => {
+  const registrationStatus = stringOrUndefined(input["registrationStatus"]);
+  const tagFilters = arrayOrEmpty(input["tagFilters"]) as Array<{
+    Key?: string;
+    Value?: string;
+    Type?: string;
+  }>;
 
-const PutLifecycleEventHookExecutionStatus: OperationHandler = (
-  _input,
-  _ctx,
-) => ({ lifecycleEventHookExecutionId: undefined });
+  let instances = listOnPremInstances(ctx);
 
-const RegisterApplicationRevision: OperationHandler = (_input, _ctx) => ({});
+  if (registrationStatus === "Registered") {
+    instances = instances.filter((i) => i.deregisterTime === undefined);
+  } else if (registrationStatus === "Deregistered") {
+    instances = instances.filter((i) => i.deregisterTime !== undefined);
+  }
 
-const RegisterOnPremisesInstance: OperationHandler = (_input, _ctx) => ({});
+  if (tagFilters.length > 0) {
+    instances = instances.filter((inst) =>
+      tagFilters.every((filter) => {
+        const { Key, Value } = filter;
+        if (Key === undefined && Value === undefined) return true;
+        return inst.tags.some((t) => {
+          if (Key !== undefined && Value !== undefined)
+            return t.Key === Key && t.Value === Value;
+          if (Key !== undefined) return t.Key === Key;
+          if (Value !== undefined) return t.Value === Value;
+          return true;
+        });
+      }),
+    );
+  }
 
-const RemoveTagsFromOnPremisesInstances: OperationHandler = (
-  _input,
-  _ctx,
-) => ({});
+  const names = instances.map((i) => i.instanceName);
+  const nextToken = stringOrUndefined(input["nextToken"]);
+  const start = nextToken
+    ? parseInt(Buffer.from(nextToken, "base64").toString())
+    : 0;
+  const page = names.slice(start, start + 100);
+  const next =
+    start + 100 < names.length
+      ? Buffer.from(String(start + 100)).toString("base64")
+      : undefined;
+  return { instanceNames: page, nextToken: next };
+};
 
-const SkipWaitTimeForInstanceTermination: OperationHandler = (
-  _input,
-  _ctx,
-) => ({});
+const PutLifecycleEventHookExecutionStatus: OperationHandler = (input, ctx) => {
+  const deploymentId = requireString(input, "deploymentId");
+  const dep = ctx.store.get<StoredDeployment>(deploymentKey(deploymentId));
+  if (dep === undefined) {
+    throw awsError(
+      "DeploymentDoesNotExistException",
+      `Deployment does not exist: ${deploymentId}`,
+      400,
+    );
+  }
+  const currentStatus = computeDeploymentStatus(dep);
+  if (currentStatus === "Succeeded" || currentStatus === "Stopped") {
+    throw awsError(
+      "DeploymentAlreadyCompletedException",
+      `Deployment ${deploymentId} has already completed.`,
+      400,
+    );
+  }
+  return { lifecycleEventHookExecutionId: undefined };
+};
+
+const RegisterApplicationRevision: OperationHandler = (input, ctx) => {
+  const applicationName = requireString(input, "applicationName");
+  if (ctx.store.get(appKey(applicationName)) === undefined) {
+    throw awsError(
+      "ApplicationDoesNotExistException",
+      `Application does not exist: ${applicationName}`,
+      400,
+    );
+  }
+  const revision = recordOrUndefined(input["revision"]);
+  if (revision === undefined) {
+    throw awsError(
+      "RevisionRequiredException",
+      "A revision must be specified.",
+      400,
+    );
+  }
+  const description = stringOrUndefined(input["description"]);
+  const hash = revisionHash(revision);
+  const rev: StoredRevision = {
+    applicationName,
+    revision,
+    description,
+    registerTime: Date.now(),
+  };
+  ctx.store.set(revisionKey(applicationName, hash), rev);
+  return {};
+};
+
+const RegisterOnPremisesInstance: OperationHandler = (input, ctx) => {
+  const instanceName = requireString(input, "instanceName");
+  const iamUserArn = stringOrUndefined(input["iamUserArn"]);
+  const iamSessionArn = stringOrUndefined(input["iamSessionArn"]);
+  if (iamUserArn !== undefined && iamSessionArn !== undefined) {
+    throw awsError(
+      "InvalidIamSessionArnException",
+      "Cannot specify both iamUserArn and iamSessionArn.",
+      400,
+    );
+  }
+  if (ctx.store.get(onPremKey(instanceName)) !== undefined) {
+    throw awsError(
+      "InstanceNameAlreadyRegisteredException",
+      `Instance already registered: ${instanceName}`,
+      400,
+    );
+  }
+  const inst: StoredOnPremisesInstance = {
+    instanceName,
+    iamUserArn,
+    iamSessionArn,
+    registerTime: Date.now(),
+    deregisterTime: undefined,
+    tags: [],
+  };
+  ctx.store.set(onPremKey(instanceName), inst);
+  return {};
+};
+
+const RemoveTagsFromOnPremisesInstances: OperationHandler = (input, ctx) => {
+  const names = stringListFromInput(input["instanceNames"]);
+  const tagEntries = arrayOrEmpty(input["tags"]) as Array<{ Key?: string }>;
+  if (tagEntries.length === 0) {
+    throw awsError(
+      "TagRequiredException",
+      "At least one tag is required.",
+      400,
+    );
+  }
+  const tagKeys = tagEntries
+    .map((t) => t.Key)
+    .filter((k): k is string => typeof k === "string");
+  for (const name of names) {
+    const inst = ctx.store.get<StoredOnPremisesInstance>(onPremKey(name));
+    if (inst === undefined) {
+      throw awsError(
+        "InstanceNotRegisteredException",
+        `Instance not registered: ${name}`,
+        400,
+      );
+    }
+    const updated: StoredOnPremisesInstance = {
+      ...inst,
+      tags: removeTags(inst.tags, tagKeys),
+    };
+    ctx.store.set(onPremKey(name), updated);
+  }
+  return {};
+};
+
+const SkipWaitTimeForInstanceTermination: OperationHandler = (input, ctx) => {
+  const deploymentId = requireString(input, "deploymentId");
+  const dep = ctx.store.get<StoredDeployment>(deploymentKey(deploymentId));
+  if (dep === undefined) {
+    throw awsError(
+      "DeploymentDoesNotExistException",
+      `Deployment does not exist: ${deploymentId}`,
+      400,
+    );
+  }
+  const currentStatus = computeDeploymentStatus(dep);
+  if (currentStatus === "Succeeded" || currentStatus === "Stopped") {
+    throw awsError(
+      "DeploymentAlreadyCompletedException",
+      `Deployment ${deploymentId} has already completed.`,
+      400,
+    );
+  }
+  return {};
+};
 
 const codedeploy = {
   name: "codedeploy",

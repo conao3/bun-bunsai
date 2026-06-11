@@ -29,6 +29,10 @@ const thingPrincipalsKey = (thingName: string) =>
   `thingPrincipals:${thingName}`;
 const principalThingsKey = (principal: string) =>
   `principalThings:${principal}`;
+const policyVersionKey = (policyName: string, versionId: string) =>
+  `policyVersion:${policyName}:${versionId}`;
+const policyVersionsKey = (policyName: string) =>
+  `policyVersions:${policyName}`;
 const allThingsKey = "allThings";
 const allThingTypesKey = "allThingTypes";
 const allThingGroupsKey = "allThingGroups";
@@ -90,6 +94,13 @@ type StoredTopicRule = {
   ruleArn: string;
   topicRulePayload: unknown;
   enabled: boolean;
+  createdAt: number;
+};
+
+type StoredPolicyVersion = {
+  policyVersionId: string;
+  policyDocument: string;
+  isDefaultVersion: boolean;
   createdAt: number;
 };
 
@@ -244,12 +255,11 @@ const CreateThing: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const thingName = requireStr(data, "thingName");
   if (ctx.store.get(thingKey(thingName)) !== undefined) {
-    const existing = ctx.store.get<StoredThing>(thingKey(thingName))!;
-    return {
-      thingName,
-      thingArn: existing.thingArn,
-      thingId: existing.thingId,
-    };
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Thing ${thingName} already exists.`,
+      409,
+    );
   }
   const thingId = crypto.randomUUID();
   const arn = thingArn(ctx, thingName);
@@ -268,6 +278,8 @@ const CreateThing: OperationHandler = (input, ctx) => {
   };
   ctx.store.set(thingKey(thingName), stored);
   addToList(ctx, allThingsKey, thingName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
   return { thingName, thingArn: arn, thingId };
 };
 
@@ -289,7 +301,21 @@ const UpdateThing: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const thingName = requireStr(data, "thingName");
   const stored = requireThing(ctx, thingName);
-  const thingTypeName = str(data["thingTypeName"]) ?? stored.thingTypeName;
+  const expectedVersion = data["expectedVersion"];
+  if (
+    expectedVersion !== undefined &&
+    Number(expectedVersion) !== stored.version
+  ) {
+    throw awsError(
+      "VersionConflictException",
+      `Version conflict for thing ${thingName}.`,
+      409,
+    );
+  }
+  const removeThingType = data["removeThingType"] === true;
+  const thingTypeName = removeThingType
+    ? undefined
+    : (str(data["thingTypeName"]) ?? stored.thingTypeName);
   const attributePayload = data["attributePayload"] as
     | Record<string, unknown>
     | undefined;
@@ -316,7 +342,37 @@ const UpdateThing: OperationHandler = (input, ctx) => {
 const DeleteThing: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const thingName = requireStr(data, "thingName");
-  requireThing(ctx, thingName);
+  const stored = requireThing(ctx, thingName);
+  const expectedVersion = data["expectedVersion"];
+  if (
+    expectedVersion !== undefined &&
+    Number(expectedVersion) !== stored.version
+  ) {
+    throw awsError(
+      "VersionConflictException",
+      `Version conflict for thing ${thingName}.`,
+      409,
+    );
+  }
+  const principals = getList<string>(ctx, thingPrincipalsKey(thingName));
+  if (principals.length > 0) {
+    throw awsError(
+      "InvalidRequestException",
+      `Cannot delete. Thing ${thingName} is still attached to one or more principals.`,
+      400,
+    );
+  }
+  const groups = getList<string>(ctx, thingGroupsForThingKey(thingName));
+  for (const groupName of groups) {
+    removeFromList<string>(
+      ctx,
+      thingGroupMembersKey(groupName),
+      (n) => n === thingName,
+    );
+  }
+  ctx.store.set(thingGroupsForThingKey(thingName), undefined);
+  ctx.store.set(thingPrincipalsKey(thingName), undefined);
+  ctx.store.set(tagsKey(stored.thingArn), undefined);
   ctx.store.set(thingKey(thingName), undefined);
   removeFromList<string>(ctx, allThingsKey, (n) => n === thingName);
   return {};
@@ -325,8 +381,36 @@ const DeleteThing: OperationHandler = (input, ctx) => {
 const ListThings: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const marker = str(data["nextToken"]) ?? str(data["marker"]);
-  const allNames = getList<string>(ctx, allThingsKey);
-  const { items: names, nextMarker } = paginateList(allNames, marker);
+  const maxResults =
+    typeof data["maxResults"] === "number"
+      ? Math.min(data["maxResults"], 250)
+      : undefined;
+  const filterTypeName = str(data["thingTypeName"]);
+  const attributeName = str(data["attributeName"]);
+  const attributeValue = str(data["attributeValue"]);
+  const usePrefixAttributeValue = data["usePrefixAttributeValue"] === true;
+  let allNames = getList<string>(ctx, allThingsKey);
+  if (filterTypeName || attributeName) {
+    allNames = allNames.filter((n) => {
+      const t = ctx.store.get<StoredThing>(thingKey(n));
+      if (!t) return false;
+      if (filterTypeName && t.thingTypeName !== filterTypeName) return false;
+      if (attributeName && attributeValue !== undefined) {
+        const val = t.attributes[attributeName];
+        if (usePrefixAttributeValue) {
+          if (!val?.startsWith(attributeValue)) return false;
+        } else {
+          if (val !== attributeValue) return false;
+        }
+      }
+      return true;
+    });
+  }
+  const { items: names, nextMarker } = paginateList(
+    allNames,
+    marker,
+    maxResults,
+  );
   const things = names
     .map((n) => ctx.store.get<StoredThing>(thingKey(n)))
     .filter(Boolean)
@@ -380,6 +464,8 @@ const CreateThingType: OperationHandler = (input, ctx) => {
   };
   ctx.store.set(thingTypeKey(thingTypeName), stored);
   addToList(ctx, allThingTypesKey, thingTypeName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
   return {
     thingTypeName,
     thingTypeArn: arn,
@@ -409,7 +495,8 @@ const DescribeThingType: OperationHandler = (input, ctx) => {
 const DeleteThingType: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const thingTypeName = requireStr(data, "thingTypeName");
-  requireThingType(ctx, thingTypeName);
+  const stored = requireThingType(ctx, thingTypeName);
+  ctx.store.set(tagsKey(stored.thingTypeArn), undefined);
   ctx.store.set(thingTypeKey(thingTypeName), undefined);
   removeFromList<string>(ctx, allThingTypesKey, (n) => n === thingTypeName);
   return {};
@@ -478,6 +565,8 @@ const CreateThingGroup: OperationHandler = (input, ctx) => {
   };
   ctx.store.set(thingGroupKey(thingGroupName), stored);
   addToList(ctx, allThingGroupsKey, thingGroupName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
   return { thingGroupName, thingGroupArn: arn, thingGroupId };
 };
 
@@ -504,6 +593,17 @@ const UpdateThingGroup: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const thingGroupName = requireStr(data, "thingGroupName");
   const stored = requireThingGroup(ctx, thingGroupName);
+  const expectedVersion = data["expectedVersion"];
+  if (
+    expectedVersion !== undefined &&
+    Number(expectedVersion) !== stored.version
+  ) {
+    throw awsError(
+      "VersionConflictException",
+      `Version conflict for thing group ${thingGroupName}.`,
+      409,
+    );
+  }
   const props = data["thingGroupProperties"] as
     | Record<string, unknown>
     | undefined;
@@ -520,18 +620,68 @@ const UpdateThingGroup: OperationHandler = (input, ctx) => {
 const DeleteThingGroup: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const thingGroupName = requireStr(data, "thingGroupName");
-  requireThingGroup(ctx, thingGroupName);
+  const stored = requireThingGroup(ctx, thingGroupName);
+  const expectedVersion = data["expectedVersion"];
+  if (
+    expectedVersion !== undefined &&
+    Number(expectedVersion) !== stored.version
+  ) {
+    throw awsError(
+      "VersionConflictException",
+      `Version conflict for thing group ${thingGroupName}.`,
+      409,
+    );
+  }
+  const allGroupNames = getList<string>(ctx, allThingGroupsKey);
+  for (const gName of allGroupNames) {
+    const g = ctx.store.get<StoredThingGroup>(thingGroupKey(gName));
+    if (g?.parentGroupName === thingGroupName) {
+      throw awsError(
+        "InvalidRequestException",
+        `ThingGroup ${thingGroupName} has child groups.`,
+        400,
+      );
+    }
+  }
+  const members = getList<string>(ctx, thingGroupMembersKey(thingGroupName));
+  for (const memberName of members) {
+    removeFromList<string>(
+      ctx,
+      thingGroupsForThingKey(memberName),
+      (g) => g === thingGroupName,
+    );
+  }
+  ctx.store.set(tagsKey(stored.thingGroupArn), undefined);
+  ctx.store.set(thingGroupMembersKey(thingGroupName), undefined);
   ctx.store.set(thingGroupKey(thingGroupName), undefined);
   removeFromList<string>(ctx, allThingGroupsKey, (n) => n === thingGroupName);
-  ctx.store.set(thingGroupMembersKey(thingGroupName), undefined);
   return {};
 };
 
 const ListThingGroups: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const marker = str(data["nextToken"]);
-  const allNames = getList<string>(ctx, allThingGroupsKey);
-  const { items: names, nextMarker } = paginateList(allNames, marker);
+  const maxResults =
+    typeof data["maxResults"] === "number"
+      ? Math.min(data["maxResults"], 250)
+      : undefined;
+  const parentGroup = str(data["parentGroup"]);
+  const namePrefixFilter = str(data["namePrefixFilter"]);
+  let allNames = getList<string>(ctx, allThingGroupsKey);
+  if (parentGroup || namePrefixFilter) {
+    allNames = allNames.filter((n) => {
+      const g = ctx.store.get<StoredThingGroup>(thingGroupKey(n));
+      if (!g) return false;
+      if (parentGroup && g.parentGroupName !== parentGroup) return false;
+      if (namePrefixFilter && !n.startsWith(namePrefixFilter)) return false;
+      return true;
+    });
+  }
+  const { items: names, nextMarker } = paginateList(
+    allNames,
+    marker,
+    maxResults,
+  );
   const thingGroups = names
     .map((n) => ctx.store.get<StoredThingGroup>(thingGroupKey(n)))
     .filter(Boolean)
@@ -638,6 +788,13 @@ const UpdateCertificate: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const certificateId = requireStr(data, "certificateId");
   const newStatus = requireStr(data, "newStatus");
+  if (newStatus === "PENDING_TRANSFER" || newStatus === "PENDING_ACTIVATION") {
+    throw awsError(
+      "CertificateStateException",
+      `Setting the status to ${newStatus} is not allowed.`,
+      406,
+    );
+  }
   const stored = requireCert(ctx, certificateId);
   ctx.store.set(certKey(certificateId), { ...stored, status: newStatus });
   return {};
@@ -646,16 +803,42 @@ const UpdateCertificate: OperationHandler = (input, ctx) => {
 const DeleteCertificate: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const certificateId = requireStr(data, "certificateId");
-  requireCert(ctx, certificateId);
+  const forceDelete =
+    data["forceDelete"] === true || data["forceDelete"] === "true";
+  const stored = requireCert(ctx, certificateId);
+  if (stored.status === "ACTIVE") {
+    throw awsError(
+      "CertificateStateException",
+      `Certificate ${certificateId} is in ACTIVE state.`,
+      406,
+    );
+  }
   const arn = certArn(ctx, certificateId);
+  const attachedThings = getList<string>(ctx, principalThingsKey(arn));
+  if (attachedThings.length > 0) {
+    throw awsError(
+      "DeleteConflictException",
+      `Certificate ${certificateId} is attached to one or more things.`,
+      409,
+    );
+  }
   const attachedPolicies = getList<string>(ctx, principalPoliciesKey(arn));
-  if (attachedPolicies.length > 0) {
+  if (attachedPolicies.length > 0 && !forceDelete) {
     throw awsError(
       "DeleteConflictException",
       `Certificate ${certificateId} has attached policies.`,
       409,
     );
   }
+  for (const policyName of attachedPolicies) {
+    removeFromList<string>(
+      ctx,
+      policyAttachmentsKey(policyName),
+      (t) => t === arn,
+    );
+  }
+  ctx.store.set(principalPoliciesKey(arn), undefined);
+  ctx.store.set(principalThingsKey(arn), undefined);
   ctx.store.set(certKey(certificateId), undefined);
   removeFromList<string>(ctx, allCertsKey, (id) => id === certificateId);
   return {};
@@ -702,6 +885,16 @@ const CreatePolicy: OperationHandler = (input, ctx) => {
   };
   ctx.store.set(policyKey(policyName), stored);
   addToList(ctx, allPoliciesKey, policyName);
+  const v1: StoredPolicyVersion = {
+    policyVersionId: "1",
+    policyDocument,
+    isDefaultVersion: true,
+    createdAt: stored.createdAt,
+  };
+  ctx.store.set(policyVersionKey(policyName, "1"), v1);
+  addToList(ctx, policyVersionsKey(policyName), "1");
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
   return {
     policyName,
     policyArn: arn,
@@ -727,7 +920,7 @@ const GetPolicy: OperationHandler = (input, ctx) => {
 const DeletePolicy: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const policyName = requireStr(data, "policyName");
-  requirePolicy(ctx, policyName);
+  const stored = requirePolicy(ctx, policyName);
   const targets = getList<string>(ctx, policyAttachmentsKey(policyName));
   if (targets.length > 0) {
     throw awsError(
@@ -736,6 +929,12 @@ const DeletePolicy: OperationHandler = (input, ctx) => {
       409,
     );
   }
+  const versions = getList<string>(ctx, policyVersionsKey(policyName));
+  for (const vId of versions) {
+    ctx.store.set(policyVersionKey(policyName, vId), undefined);
+  }
+  ctx.store.set(policyVersionsKey(policyName), undefined);
+  ctx.store.set(tagsKey(stored.policyArn), undefined);
   ctx.store.set(policyKey(policyName), undefined);
   removeFromList<string>(ctx, allPoliciesKey, (n) => n === policyName);
   return {};
@@ -813,6 +1012,229 @@ const ListTargetsForPolicy: OperationHandler = (input, ctx) => {
   const allTargets = getList<string>(ctx, policyAttachmentsKey(policyName));
   const { items: targets, nextMarker } = paginateList(allTargets, marker);
   return { targets, nextMarker };
+};
+
+const CreatePolicyVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const policyName = requireStr(data, "policyName");
+  const policyDocument = requireStr(data, "policyDocument");
+  const setAsDefault =
+    data["setAsDefault"] === true || data["setAsDefault"] === "true";
+  const stored = requirePolicy(ctx, policyName);
+  const versions = getList<string>(ctx, policyVersionsKey(policyName));
+  if (versions.length >= 5) {
+    throw awsError(
+      "VersionsLimitExceededException",
+      `The policy ${policyName} has too many versions.`,
+      409,
+    );
+  }
+  const maxVer = versions.reduce((m, v) => Math.max(m, parseInt(v, 10)), 0);
+  const nextId = String(maxVer + 1);
+  const version: StoredPolicyVersion = {
+    policyVersionId: nextId,
+    policyDocument,
+    isDefaultVersion: setAsDefault,
+    createdAt: nowSeconds(),
+  };
+  ctx.store.set(policyVersionKey(policyName, nextId), version);
+  addToList(ctx, policyVersionsKey(policyName), nextId);
+  if (setAsDefault) {
+    const oldId = stored.defaultVersionId;
+    const old = ctx.store.get<StoredPolicyVersion>(
+      policyVersionKey(policyName, oldId),
+    );
+    if (old) {
+      ctx.store.set(policyVersionKey(policyName, oldId), {
+        ...old,
+        isDefaultVersion: false,
+      });
+    }
+    ctx.store.set(policyKey(policyName), {
+      ...stored,
+      defaultVersionId: nextId,
+      policyDocument,
+    });
+  }
+  return {
+    policyArn: stored.policyArn,
+    policyDocument,
+    policyVersionId: nextId,
+    isDefaultVersion: setAsDefault,
+  };
+};
+
+const GetPolicyVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const policyName = requireStr(data, "policyName");
+  const policyVersionId = requireStr(data, "policyVersionId");
+  const stored = requirePolicy(ctx, policyName);
+  const version = ctx.store.get<StoredPolicyVersion>(
+    policyVersionKey(policyName, policyVersionId),
+  );
+  if (!version) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `PolicyVersion ${policyVersionId} not found.`,
+      404,
+    );
+  }
+  return {
+    policyArn: stored.policyArn,
+    policyName,
+    policyDocument: version.policyDocument,
+    policyVersionId,
+    isDefaultVersion: version.isDefaultVersion,
+    creationDate: version.createdAt,
+    lastModifiedDate: version.createdAt,
+  };
+};
+
+const ListPolicyVersions: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const policyName = requireStr(data, "policyName");
+  requirePolicy(ctx, policyName);
+  const versions = getList<string>(ctx, policyVersionsKey(policyName));
+  const policyVersions = versions.map((vId) => {
+    const v = ctx.store.get<StoredPolicyVersion>(
+      policyVersionKey(policyName, vId),
+    )!;
+    return {
+      versionId: vId,
+      isDefaultVersion: v.isDefaultVersion,
+      createDate: v.createdAt,
+    };
+  });
+  return { policyVersions };
+};
+
+const SetDefaultPolicyVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const policyName = requireStr(data, "policyName");
+  const policyVersionId = requireStr(data, "policyVersionId");
+  const stored = requirePolicy(ctx, policyName);
+  const version = ctx.store.get<StoredPolicyVersion>(
+    policyVersionKey(policyName, policyVersionId),
+  );
+  if (!version) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `PolicyVersion ${policyVersionId} not found.`,
+      404,
+    );
+  }
+  const oldId = stored.defaultVersionId;
+  if (oldId !== policyVersionId) {
+    const old = ctx.store.get<StoredPolicyVersion>(
+      policyVersionKey(policyName, oldId),
+    );
+    if (old) {
+      ctx.store.set(policyVersionKey(policyName, oldId), {
+        ...old,
+        isDefaultVersion: false,
+      });
+    }
+    ctx.store.set(policyVersionKey(policyName, policyVersionId), {
+      ...version,
+      isDefaultVersion: true,
+    });
+    ctx.store.set(policyKey(policyName), {
+      ...stored,
+      defaultVersionId: policyVersionId,
+      policyDocument: version.policyDocument,
+    });
+  }
+  return {};
+};
+
+const DeletePolicyVersion: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const policyName = requireStr(data, "policyName");
+  const policyVersionId = requireStr(data, "policyVersionId");
+  const stored = requirePolicy(ctx, policyName);
+  if (stored.defaultVersionId === policyVersionId) {
+    throw awsError(
+      "DeleteConflictException",
+      `Cannot delete the default version of a policy.`,
+      409,
+    );
+  }
+  const version = ctx.store.get<StoredPolicyVersion>(
+    policyVersionKey(policyName, policyVersionId),
+  );
+  if (!version) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `PolicyVersion ${policyVersionId} not found.`,
+      404,
+    );
+  }
+  ctx.store.set(policyVersionKey(policyName, policyVersionId), undefined);
+  removeFromList<string>(
+    ctx,
+    policyVersionsKey(policyName),
+    (v) => v === policyVersionId,
+  );
+  return {};
+};
+
+const AttachPrincipalPolicy: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const policyName = requireStr(data, "policyName");
+  const principal = requireStr(data, "principal");
+  requirePolicy(ctx, policyName);
+  const targets = getList<string>(ctx, policyAttachmentsKey(policyName));
+  if (!targets.includes(principal)) {
+    addToList(ctx, policyAttachmentsKey(policyName), principal);
+  }
+  const policies = getList<string>(ctx, principalPoliciesKey(principal));
+  if (!policies.includes(policyName)) {
+    addToList(ctx, principalPoliciesKey(principal), policyName);
+  }
+  return {};
+};
+
+const DetachPrincipalPolicy: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const policyName = requireStr(data, "policyName");
+  const principal = requireStr(data, "principal");
+  removeFromList<string>(
+    ctx,
+    policyAttachmentsKey(policyName),
+    (t) => t === principal,
+  );
+  removeFromList<string>(
+    ctx,
+    principalPoliciesKey(principal),
+    (p) => p === policyName,
+  );
+  return {};
+};
+
+const ListPrincipalPolicies: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const principal = requireStr(data, "principal");
+  const marker = str(data["marker"]);
+  const allPolicyNames = getList<string>(ctx, principalPoliciesKey(principal));
+  const { items: names, nextMarker } = paginateList(allPolicyNames, marker);
+  const policies = names
+    .map((n) => ctx.store.get<StoredPolicy>(policyKey(n)))
+    .filter(Boolean)
+    .map((p) => ({
+      policyName: p!.policyName,
+      policyArn: p!.policyArn,
+    }));
+  return { policies, nextMarker };
+};
+
+const ListPolicyPrincipals: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const policyName = requireStr(data, "policyName");
+  requirePolicy(ctx, policyName);
+  const marker = str(data["marker"]);
+  const allTargets = getList<string>(ctx, policyAttachmentsKey(policyName));
+  const { items: principals, nextMarker } = paginateList(allTargets, marker);
+  return { principals, nextMarker };
 };
 
 // === ThingPrincipal operations ===
@@ -897,6 +1319,8 @@ const CreateTopicRule: OperationHandler = (input, ctx) => {
   };
   ctx.store.set(topicRuleKey(ruleName), stored);
   addToList(ctx, allRulesKey, ruleName);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
   return {};
 };
 
@@ -937,7 +1361,8 @@ const ReplaceTopicRule: OperationHandler = (input, ctx) => {
 const DeleteTopicRule: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const ruleName = requireStr(data, "ruleName");
-  requireRule(ctx, ruleName);
+  const stored = requireRule(ctx, ruleName);
+  ctx.store.set(tagsKey(stored.ruleArn), undefined);
   ctx.store.set(topicRuleKey(ruleName), undefined);
   removeFromList<string>(ctx, allRulesKey, (n) => n === ruleName);
   return {};
@@ -1153,6 +1578,38 @@ export default {
         if (req.method === "DELETE") return "DeletePolicy";
         return undefined;
       }
+      if (parts.length === 3 && parts[2] === "version") {
+        if (req.method === "GET") return "ListPolicyVersions";
+        if (req.method === "POST") return "CreatePolicyVersion";
+        return undefined;
+      }
+      if (parts.length === 4 && parts[2] === "version") {
+        if (req.method === "GET") return "GetPolicyVersion";
+        if (req.method === "PATCH") return "SetDefaultPolicyVersion";
+        if (req.method === "DELETE") return "DeletePolicyVersion";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "principal-policies") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListPrincipalPolicies";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "PUT") return "AttachPrincipalPolicy";
+        if (req.method === "DELETE") return "DetachPrincipalPolicy";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "policy-principals") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListPolicyPrincipals";
+        return undefined;
+      }
       return undefined;
     }
 
@@ -1255,10 +1712,19 @@ export default {
     GetPolicy,
     DeletePolicy,
     ListPolicies,
+    CreatePolicyVersion,
+    GetPolicyVersion,
+    ListPolicyVersions,
+    SetDefaultPolicyVersion,
+    DeletePolicyVersion,
     AttachPolicy,
     DetachPolicy,
     ListAttachedPolicies,
     ListTargetsForPolicy,
+    AttachPrincipalPolicy,
+    DetachPrincipalPolicy,
+    ListPrincipalPolicies,
+    ListPolicyPrincipals,
     AttachThingPrincipal,
     DetachThingPrincipal,
     ListThingPrincipals,

@@ -3,16 +3,20 @@ import { startApp } from "./harness.ts";
 import {
   AddThingToThingGroupCommand,
   AttachPolicyCommand,
+  AttachPrincipalPolicyCommand,
   AttachThingPrincipalCommand,
   CreateKeysAndCertificateCommand,
   CreatePolicyCommand,
+  CreatePolicyVersionCommand,
   CreateThingCommand,
   CreateThingGroupCommand,
   CreateThingTypeCommand,
   CreateTopicRuleCommand,
   DeleteCertificateCommand,
   DeletePolicyCommand,
+  DeletePolicyVersionCommand,
   DeleteThingCommand,
+  DeleteThingGroupCommand,
   DeleteTopicRuleCommand,
   DeprecateThingTypeCommand,
   DescribeCertificateCommand,
@@ -21,20 +25,24 @@ import {
   DescribeThingGroupCommand,
   DescribeThingTypeCommand,
   DetachPolicyCommand,
+  DetachPrincipalPolicyCommand,
   DetachThingPrincipalCommand,
   DisableTopicRuleCommand,
   EnableTopicRuleCommand,
   GetPolicyCommand,
+  GetPolicyVersionCommand,
   GetTopicRuleCommand,
   IoTClient,
   ListAttachedPoliciesCommand,
   ListCertificatesCommand,
   ListPoliciesCommand,
+  ListPolicyVersionsCommand,
   ListThingGroupsForThingCommand,
   ListThingPrincipalsCommand,
   ListThingsCommand,
   ListThingsInThingGroupCommand,
   ListTopicRulesCommand,
+  SetDefaultPolicyVersionCommand,
   TagResourceCommand,
   UntagResourceCommand,
   UpdateCertificateCommand,
@@ -431,4 +439,195 @@ test("IoT shadow delete non-existent throws", async () => {
       }),
     ),
   ).rejects.toThrow();
+});
+
+// === IOT-02: CreateThing duplicate returns 409 ===
+
+test("IOT-02: CreateThing duplicate throws ResourceAlreadyExistsException", async () => {
+  const client = iot();
+  const thingName = `bunsai_e2e_dup_${suffix()}`;
+  await client.send(new CreateThingCommand({ thingName }));
+  await expect(
+    client.send(new CreateThingCommand({ thingName })),
+  ).rejects.toMatchObject({ name: "ResourceAlreadyExistsException" });
+});
+
+// === IOT-03: DeleteCertificate ACTIVE guard ===
+
+test("IOT-03: DeleteCertificate on ACTIVE cert throws CertificateStateException", async () => {
+  const client = iot();
+  const cert = await client.send(
+    new CreateKeysAndCertificateCommand({ setAsActive: true }),
+  );
+  const certId = cert.certificateId!;
+  await expect(
+    client.send(new DeleteCertificateCommand({ certificateId: certId })),
+  ).rejects.toMatchObject({ name: "CertificateStateException" });
+  await client.send(
+    new UpdateCertificateCommand({
+      certificateId: certId,
+      newStatus: "INACTIVE",
+    }),
+  );
+  await client.send(new DeleteCertificateCommand({ certificateId: certId }));
+  const list = await client.send(new ListCertificatesCommand({}));
+  expect(list.certificates?.some((c) => c.certificateId === certId)).toBe(
+    false,
+  );
+});
+
+// === IOT-04: DeleteThing with principal attached ===
+
+test("IOT-04: DeleteThing with attached principal throws, cleans group membership after detach", async () => {
+  const client = iot();
+  const thingName = `bunsai_e2e_del_${suffix()}`;
+  const groupName = `bunsai_e2e_delg_${suffix()}`;
+  const policyName = `bunsai_e2e_delpol_${suffix()}`;
+  const cert = await client.send(new CreateKeysAndCertificateCommand({}));
+  const certArn = cert.certificateArn!;
+  const certId = cert.certificateId!;
+  await client.send(new CreateThingCommand({ thingName }));
+  await client.send(new CreateThingGroupCommand({ thingGroupName: groupName }));
+  await client.send(
+    new AttachThingPrincipalCommand({ thingName, principal: certArn }),
+  );
+  await expect(
+    client.send(new DeleteThingCommand({ thingName })),
+  ).rejects.toMatchObject({ name: "InvalidRequestException" });
+  await client.send(
+    new DetachThingPrincipalCommand({ thingName, principal: certArn }),
+  );
+  await client.send(
+    new AddThingToThingGroupCommand({ thingGroupName: groupName, thingName }),
+  );
+  await client.send(new DeleteThingCommand({ thingName }));
+  const inGroup = await client.send(
+    new ListThingsInThingGroupCommand({ thingGroupName: groupName }),
+  );
+  expect(inGroup.things).not.toContain(thingName);
+  await client.send(
+    new UpdateCertificateCommand({
+      certificateId: certId,
+      newStatus: "INACTIVE",
+    }),
+  );
+  await client.send(new DeleteCertificateCommand({ certificateId: certId }));
+  await client.send(
+    new CreatePolicyCommand({
+      policyName,
+      policyDocument: JSON.stringify({ Version: "2012-10-17", Statement: [] }),
+    }),
+  );
+  await client.send(new DeleteThingGroupCommand({ thingGroupName: groupName }));
+  await client.send(new DeletePolicyCommand({ policyName }));
+});
+
+// === IOT-01: Policy versions lifecycle ===
+
+test("IOT-01: Policy versions lifecycle + legacy AttachPrincipalPolicy", async () => {
+  const client = iot();
+  const policyName = `bunsai_e2e_polv_${suffix()}`;
+  const cert = await client.send(
+    new CreateKeysAndCertificateCommand({ setAsActive: false }),
+  );
+  const certArn = cert.certificateArn!;
+  const certId = cert.certificateId!;
+  await client.send(
+    new CreatePolicyCommand({
+      policyName,
+      policyDocument: JSON.stringify({ Version: "2012-10-17", Statement: [] }),
+    }),
+  );
+  const v2 = await client.send(
+    new CreatePolicyVersionCommand({
+      policyName,
+      policyDocument: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{ Effect: "Allow", Action: "*", Resource: "*" }],
+      }),
+      setAsDefault: false,
+    }),
+  );
+  expect(v2.policyVersionId).toBe("2");
+  const got = await client.send(
+    new GetPolicyVersionCommand({ policyName, policyVersionId: "2" }),
+  );
+  expect(got.policyVersionId).toBe("2");
+  expect(got.isDefaultVersion).toBe(false);
+  const list = await client.send(new ListPolicyVersionsCommand({ policyName }));
+  expect(list.policyVersions?.length).toBe(2);
+  await client.send(
+    new SetDefaultPolicyVersionCommand({ policyName, policyVersionId: "2" }),
+  );
+  const policy = await client.send(new GetPolicyCommand({ policyName }));
+  expect(policy.defaultVersionId).toBe("2");
+  await client.send(
+    new DeletePolicyVersionCommand({ policyName, policyVersionId: "1" }),
+  );
+  const list2 = await client.send(
+    new ListPolicyVersionsCommand({ policyName }),
+  );
+  expect(list2.policyVersions?.length).toBe(1);
+  await client.send(
+    new AttachPrincipalPolicyCommand({ policyName, principal: certArn }),
+  );
+  await client.send(
+    new DetachPrincipalPolicyCommand({ policyName, principal: certArn }),
+  );
+  await client.send(new DeleteCertificateCommand({ certificateId: certId }));
+  await client.send(new DeletePolicyCommand({ policyName }));
+});
+
+// === IOT-05: VersionConflictException ===
+
+test("IOT-05: UpdateThing with wrong expectedVersion throws VersionConflictException", async () => {
+  const client = iot();
+  const thingName = `bunsai_e2e_ver_${suffix()}`;
+  await client.send(new CreateThingCommand({ thingName }));
+  await expect(
+    client.send(
+      new UpdateThingCommand({
+        thingName,
+        expectedVersion: 99,
+        attributePayload: { attributes: {} },
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "VersionConflictException" });
+  await client.send(new DeleteThingCommand({ thingName }));
+});
+
+// === IOT-07: maxResults pagination ===
+
+test("IOT-07: maxResults limits ListThings page size", async () => {
+  const client = iot();
+  const prefix = `bunsai_e2e_page_${suffix()}`;
+  const names = Array.from({ length: 3 }, (_, i) => `${prefix}_${i}`);
+  for (const n of names)
+    await client.send(new CreateThingCommand({ thingName: n }));
+  const page = await client.send(new ListThingsCommand({ maxResults: 2 }));
+  expect(page.things?.length ?? 0).toBeLessThanOrEqual(2);
+  for (const n of names)
+    await client.send(new DeleteThingCommand({ thingName: n }));
+});
+
+// === IOT-08: ListThings filters ===
+
+test("IOT-08: ListThings thingTypeName filter", async () => {
+  const client = iot();
+  const s = suffix();
+  const typeName = `bunsai_e2e_ftype_${s}`;
+  const thingA = `bunsai_e2e_fa_${s}`;
+  const thingB = `bunsai_e2e_fb_${s}`;
+  await client.send(new CreateThingTypeCommand({ thingTypeName: typeName }));
+  await client.send(
+    new CreateThingCommand({ thingName: thingA, thingTypeName: typeName }),
+  );
+  await client.send(new CreateThingCommand({ thingName: thingB }));
+  const filtered = await client.send(
+    new ListThingsCommand({ thingTypeName: typeName }),
+  );
+  expect(filtered.things?.some((t) => t.thingName === thingA)).toBe(true);
+  expect(filtered.things?.some((t) => t.thingName === thingB)).toBe(false);
+  await client.send(new DeleteThingCommand({ thingName: thingA }));
+  await client.send(new DeleteThingCommand({ thingName: thingB }));
 });

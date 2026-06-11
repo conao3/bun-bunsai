@@ -1,0 +1,67 @@
+{
+  "clientPackage": "@aws-sdk/client-dynamodb",
+  "clientName": "DynamoDBClient",
+  "steps": [
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "TableName": "parity-ddb-table",
+        "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }],
+        "AttributeDefinitions": [
+          { "AttributeName": "id", "AttributeType": "S" }
+        ],
+        "ProvisionedThroughput": {
+          "ReadCapacityUnits": 5,
+          "WriteCapacityUnits": 5
+        }
+      },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-table",
+          "TableArn": "<ANY>",
+          "TableStatus": "<ANY>",
+          "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }]
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeTableCommand",
+      "input": { "TableName": "parity-ddb-table" },
+      "expected": {
+        "Table": {
+          "TableName": "parity-ddb-table",
+          "TableArn": "<ANY>",
+          "TableStatus": "<ANY>",
+          "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }]
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTablesCommand",
+      "input": {},
+      "expected": { "TableNames": ["parity-ddb-table"] },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": { "TableName": "parity-ddb-table" },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-table",
+          "TableStatus": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

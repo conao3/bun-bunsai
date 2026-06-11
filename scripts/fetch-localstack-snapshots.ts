@@ -11,6 +11,9 @@ const SERVICES: Record<string, string> = {
   sqs: "tests/aws/services/sqs",
   sns: "tests/aws/services/sns",
   lambda: "tests/aws/services/lambda_",
+  dynamodb: "tests/aws/services/dynamodb",
+  cloudformation: "tests/aws/services/cloudformation",
+  events: "tests/aws/services/events",
 };
 
 type ContentEntry = {

@@ -1,0 +1,41 @@
+{
+  "clientPackage": "@aws-sdk/client-cloudformation",
+  "clientName": "CloudFormationClient",
+  "steps": [
+    {
+      "command": "CreateStackCommand",
+      "input": {
+        "StackName": "parity-cfn-list",
+        "TemplateBody": "{\"AWSTemplateFormatVersion\":\"2010-09-09\",\"Resources\":{\"Q\":{\"Type\":\"AWS::SQS::Queue\"}}}"
+      },
+      "expected": { "StackId": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListStacksCommand",
+      "input": { "StackStatusFilter": ["CREATE_COMPLETE"] },
+      "expected": {
+        "StackSummaries": [
+          {
+            "StackName": "parity-cfn-list",
+            "StackStatus": "CREATE_COMPLETE",
+            "StackId": "<ANY>"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteStackCommand",
+      "input": { "StackName": "parity-cfn-list" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "clientPackage": "@aws-sdk/client-eventbridge",
+  "clientName": "EventBridgeClient",
+  "steps": [
+    {
+      "command": "CreateEventBusCommand",
+      "input": { "Name": "parity-bus" },
+      "expected": { "EventBusArn": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "bus",
+      "refs": {}
+    },
+    {
+      "command": "DescribeEventBusCommand",
+      "input": { "Name": "parity-bus" },
+      "expected": {
+        "Name": "parity-bus",
+        "Arn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListEventBusesCommand",
+      "input": { "NamePrefix": "parity-bus" },
+      "expected": {
+        "EventBuses": [
+          {
+            "Name": "parity-bus",
+            "Arn": "<ANY>"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteEventBusCommand",
+      "input": { "Name": "parity-bus" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

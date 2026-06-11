@@ -1,0 +1,24 @@
+{
+  "clientPackage": "@aws-sdk/client-cloudformation",
+  "clientName": "CloudFormationClient",
+  "steps": [
+    {
+      "command": "ValidateTemplateCommand",
+      "input": {
+        "TemplateBody": "{\"AWSTemplateFormatVersion\":\"2010-09-09\",\"Parameters\":{\"Env\":{\"Type\":\"String\",\"Default\":\"dev\"}},\"Resources\":{\"Queue\":{\"Type\":\"AWS::SQS::Queue\"}}}"
+      },
+      "expected": {
+        "Parameters": [
+          {
+            "ParameterKey": "Env",
+            "DefaultValue": "dev",
+            "NoEcho": false
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

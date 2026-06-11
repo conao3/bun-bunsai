@@ -18,6 +18,7 @@ const queryTokenPrefix = "query-token:" as const;
 const tagPrefix = "tags:" as const;
 const accountSettingsKey = "account-settings" as const;
 const tableStorePrefix = "table:" as const;
+const dbStorePrefix = "db:" as const;
 
 type StoredScheduledQuery = {
   Arn: string;
@@ -586,13 +587,57 @@ const UpdateScheduledQuery: OperationHandler = (input, ctx) => {
   return {};
 };
 
+const validateTagArn = (ctx: ServiceContext, arn: string): void => {
+  if (/^arn:aws:timestream:[^:]+:[^:]+:scheduled-query\//.test(arn)) {
+    requireScheduledQuery(ctx, arn);
+    return;
+  }
+  const tableMatch = arn.match(
+    /^arn:aws:timestream:[^:]+:[^:]+:database:([^:]+):table\/(.+)$/,
+  );
+  if (tableMatch) {
+    if (ctx.store.get(`${dbStorePrefix}${tableMatch[1]}`) === undefined) {
+      throw awsError(
+        "ResourceNotFoundException",
+        `Database ${tableMatch[1]} not found.`,
+        404,
+      );
+    }
+    if (
+      ctx.store.get(`${tableStorePrefix}${tableMatch[1]}/${tableMatch[2]}`) ===
+      undefined
+    ) {
+      throw awsError(
+        "ResourceNotFoundException",
+        `Table ${tableMatch[2]} not found.`,
+        404,
+      );
+    }
+    return;
+  }
+  const dbMatch = arn.match(
+    /^arn:aws:timestream:[^:]+:[^:]+:database\/([^:/]+)$/,
+  );
+  if (dbMatch) {
+    if (ctx.store.get(`${dbStorePrefix}${dbMatch[1]}`) === undefined) {
+      throw awsError(
+        "ResourceNotFoundException",
+        `Database ${dbMatch[1]} not found.`,
+        404,
+      );
+    }
+    return;
+  }
+  throw awsError("ValidationException", `Invalid ARN: ${arn}`, 400);
+};
+
 const TagResource: OperationHandler = (input, ctx) => {
   const ResourceARN = requireString(input, "ResourceARN");
   const tags = input["Tags"];
   if (!Array.isArray(tags)) {
     throw awsError("ValidationException", "Tags is required.", 400);
   }
-  requireScheduledQuery(ctx, ResourceARN);
+  validateTagArn(ctx, ResourceARN);
   const existing =
     ctx.store.get<Record<string, string>>(`${tagPrefix}${ResourceARN}`) ?? {};
   for (const t of tags as Array<{ Key: string; Value: string }>) {
@@ -608,7 +653,7 @@ const UntagResource: OperationHandler = (input, ctx) => {
   if (!Array.isArray(tagKeys)) {
     throw awsError("ValidationException", "TagKeys is required.", 400);
   }
-  requireScheduledQuery(ctx, ResourceARN);
+  validateTagArn(ctx, ResourceARN);
   const existing =
     ctx.store.get<Record<string, string>>(`${tagPrefix}${ResourceARN}`) ?? {};
   for (const key of tagKeys as string[]) {
@@ -620,7 +665,7 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const ResourceARN = requireString(input, "ResourceARN");
-  requireScheduledQuery(ctx, ResourceARN);
+  validateTagArn(ctx, ResourceARN);
   const existing =
     ctx.store.get<Record<string, string>>(`${tagPrefix}${ResourceARN}`) ?? {};
   const Tags = Object.entries(existing).map(([Key, Value]) => ({

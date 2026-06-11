@@ -4,9 +4,8 @@ import {
   CreateDatabaseCommand,
   CreateTableCommand,
   DeleteDatabaseCommand,
-  TagResourceCommand,
+  DeleteTableCommand,
   TimestreamWriteClient,
-  UntagResourceCommand,
   WriteRecordsCommand,
   type _Record,
 } from "@aws-sdk/client-timestream-write";
@@ -22,7 +21,9 @@ import {
   PrepareQueryCommand,
   QueryCommand,
   S3EncryptionOption,
+  TagResourceCommand,
   TimestreamQueryClient,
+  UntagResourceCommand,
   UpdateAccountSettingsCommand,
   UpdateScheduledQueryCommand,
 } from "@aws-sdk/client-timestream-query";
@@ -147,7 +148,6 @@ test("Timestream ScheduledQuery ClientToken idempotency", async () => {
 
 test("Timestream ScheduledQuery tags round-trip", async () => {
   const qc = queryClient();
-  const wc = writeClient();
   const name = "e2e-sq-tags";
 
   const created = await qc.send(
@@ -165,7 +165,7 @@ test("Timestream ScheduledQuery tags round-trip", async () => {
     (initialTags.Tags ?? []).some((t) => t.Key === "env" && t.Value === "test"),
   ).toBeTrue();
 
-  await wc.send(
+  await qc.send(
     new TagResourceCommand({
       ResourceARN: arn,
       Tags: [{ Key: "project", Value: "bunsai" }],
@@ -177,7 +177,7 @@ test("Timestream ScheduledQuery tags round-trip", async () => {
   expect((afterTag.Tags ?? []).some((t) => t.Key === "project")).toBeTrue();
   expect((afterTag.Tags ?? []).some((t) => t.Key === "env")).toBeTrue();
 
-  await wc.send(
+  await qc.send(
     new UntagResourceCommand({ ResourceARN: arn, TagKeys: ["env"] }),
   );
   const afterUntag = await qc.send(
@@ -241,6 +241,9 @@ test("Timestream Query pagination via NextToken", async () => {
 
   expect(page1.QueryId).toBe(page2.QueryId);
 
+  await wc.send(
+    new DeleteTableCommand({ DatabaseName: dbName, TableName: tableName }),
+  );
   await wc.send(new DeleteDatabaseCommand({ DatabaseName: dbName }));
 });
 
@@ -296,6 +299,9 @@ test("Timestream Query ClientToken idempotency", async () => {
   );
   expect(first.QueryId).toBe(second.QueryId);
 
+  await wc.send(
+    new DeleteTableCommand({ DatabaseName: dbName, TableName: tableName }),
+  );
   await wc.send(new DeleteDatabaseCommand({ DatabaseName: dbName }));
 });
 
@@ -367,6 +373,9 @@ test("Timestream PrepareQuery returns schema columns without _pq", async () => {
   const asAny = prepared as unknown as Record<string, unknown>;
   expect(asAny["_pq"]).toBeUndefined();
 
+  await wc.send(
+    new DeleteTableCommand({ DatabaseName: dbName, TableName: tableName }),
+  );
   await wc.send(new DeleteDatabaseCommand({ DatabaseName: dbName }));
 });
 

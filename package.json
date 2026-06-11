@@ -30,6 +30,8 @@
     "@aws-sdk/client-auto-scaling": "^3.1066.0",
     "@aws-sdk/client-backup": "^3.1058.0",
     "@aws-sdk/client-batch": "^3.1058.0",
+    "@aws-sdk/client-bedrock": "^3.1066.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1066.0",
     "@aws-sdk/client-budgets": "^3.1059.0",
     "@aws-sdk/client-cloudformation": "^3.1058.0",
     "@aws-sdk/client-cloudfront": "^3.1058.0",
@@ -45,6 +47,7 @@
     "@aws-sdk/client-config-service": "^3.1059.0",
     "@aws-sdk/client-connect": "^3.1059.0",
     "@aws-sdk/client-data-pipeline": "^3.1059.0",
+    "@aws-sdk/client-database-migration-service": "^3.1066.0",
     "@aws-sdk/client-dataexchange": "^3.1059.0",
     "@aws-sdk/client-datasync": "^3.1058.0",
     "@aws-sdk/client-dax": "^3.1059.0",
@@ -147,6 +150,7 @@
     "@aws-sdk/client-apigatewayv2": "^3.1066.0",
     "@aws-sdk/client-codedeploy": "^3.1066.0",
     "@aws-sdk/client-cognito-identity": "^3.1066.0",
-    "@aws-sdk/client-kinesis-analytics-v2": "^3.1066.0"
+    "@aws-sdk/client-kinesis-analytics-v2": "^3.1066.0",
+    "@aws-sdk/client-sesv2": "^3.1066.0"
   }
 }

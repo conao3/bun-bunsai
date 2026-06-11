@@ -186,6 +186,10 @@ aws-models/
   route53resolver.json  # botocore/data/route53resolver/2018-04-01/service-2.json   (protocol json, signingName route53resolver)
   application-autoscaling.json # botocore/data/application-autoscaling/2016-02-06/service-2.json (protocol json, signingName application-autoscaling, targetPrefix AnyScaleFrontendService)
   xray.json             # botocore/data/xray/2016-04-12/service-2.json             (protocol rest-json, signingName xray)
+  sesv2.json            # botocore/data/sesv2/2019-09-27/service-2.json             (protocol rest-json, endpointPrefix email, signingName ses)
+  bedrock.json          # botocore/data/bedrock/2023-04-20/service-2.json           (protocol rest-json, signingName bedrock)
+  bedrock-runtime.json  # botocore/data/bedrock-runtime/2023-09-30/service-2.json  (protocol rest-json, signingName bedrock)
+  dms.json              # botocore/data/dms/2016-01-01/service-2.json               (protocol json, signingName dms, targetPrefix AmazonDMSv20160101)
   kinesisanalyticsv2.json # botocore/data/kinesisanalyticsv2/2018-05-23/service-2.json (protocol json, signingName kinesisanalytics, endpointPrefix kinesisanalytics, targetPrefix KinesisAnalytics_20180523)
 ```
 

@@ -15,6 +15,7 @@ import lambda from "./lambda.ts";
 import cloudwatch from "./cloudwatch.ts";
 import stepFunctions from "./stepfunctions.ts";
 import ses from "./ses.ts";
+import sesv2 from "./sesv2.ts";
 import route53 from "./route53.ts";
 import cloudFormation from "./cloudformation.ts";
 import apiGateway from "./apigateway.ts";
@@ -121,6 +122,9 @@ import pipes from "./pipes.ts";
 import route53resolver from "./route53resolver.ts";
 import applicationAutoscaling from "./application-autoscaling.ts";
 import xray from "./xray.ts";
+import bedrock from "./bedrock.ts";
+import bedrockRuntime from "./bedrock-runtime.ts";
+import dms from "./dms.ts";
 import kinesisanalyticsv2 from "./kinesisanalyticsv2.ts";
 
 export const services: ServiceDefinition[] = [
@@ -139,6 +143,7 @@ export const services: ServiceDefinition[] = [
   cloudwatch,
   stepFunctions,
   ses,
+  sesv2,
   route53,
   cloudFormation,
   apiGateway,
@@ -245,6 +250,9 @@ export const services: ServiceDefinition[] = [
   route53resolver,
   applicationAutoscaling,
   xray,
+  bedrockRuntime,
+  bedrock,
+  dms,
   kinesisanalyticsv2,
 ];
 

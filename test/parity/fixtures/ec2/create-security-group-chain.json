@@ -1,0 +1,111 @@
+{
+  "clientPackage": "@aws-sdk/client-ec2",
+  "clientName": "EC2Client",
+  "steps": [
+    {
+      "command": "CreateVpcCommand",
+      "input": { "CidrBlock": "10.1.0.0/16" },
+      "expected": {
+        "Vpc": {
+          "CidrBlock": "10.1.0.0/16",
+          "State": "available",
+          "VpcId": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "vpc",
+      "refs": {}
+    },
+    {
+      "command": "CreateSecurityGroupCommand",
+      "input": {
+        "GroupName": "parity-ec2-sg",
+        "Description": "parity test security group",
+        "VpcId": "${vpc.Vpc.VpcId}"
+      },
+      "expected": {
+        "GroupId": "<ANY>",
+        "SecurityGroupArn": "<ANY>",
+        "Tags": []
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "sg",
+      "refs": { "vpc.Vpc.VpcId": "vpc" }
+    },
+    {
+      "command": "AuthorizeSecurityGroupIngressCommand",
+      "input": {
+        "GroupId": "${sg.GroupId}",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "IpRanges": [{ "CidrIp": "0.0.0.0/0" }]
+          }
+        ]
+      },
+      "expected": {
+        "Return": true,
+        "SecurityGroupRules": [
+          {
+            "GroupId": "<ANY>",
+            "IsEgress": false,
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIpv4": "0.0.0.0/0",
+            "SecurityGroupRuleId": "<ANY>",
+            "GroupOwnerId": "<ANY>"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "sg.GroupId": "sg" }
+    },
+    {
+      "command": "DescribeSecurityGroupsCommand",
+      "input": { "GroupIds": ["${sg.GroupId}"] },
+      "expected": {
+        "SecurityGroups": [
+          {
+            "GroupId": "<ANY>",
+            "GroupName": "parity-ec2-sg",
+            "Description": "parity test security group",
+            "VpcId": "<ANY>",
+            "OwnerId": "<ANY>",
+            "Tags": [],
+            "IpPermissions": [
+              {
+                "IpProtocol": "tcp",
+                "FromPort": 80,
+                "ToPort": 80,
+                "IpRanges": [{ "CidrIp": "0.0.0.0/0", "Description": "<ANY>" }]
+              }
+            ]
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "sg.GroupId": "sg", "vpc.Vpc.VpcId": "vpc" }
+    },
+    {
+      "command": "DeleteSecurityGroupCommand",
+      "input": { "GroupId": "${sg.GroupId}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "sg.GroupId": "sg" }
+    },
+    {
+      "command": "DeleteVpcCommand",
+      "input": { "VpcId": "${vpc.Vpc.VpcId}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "vpc.Vpc.VpcId": "vpc" }
+    }
+  ]
+}

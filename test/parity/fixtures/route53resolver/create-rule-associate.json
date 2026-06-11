@@ -1,0 +1,129 @@
+{
+  "clientPackage": "@aws-sdk/client-route53resolver",
+  "clientName": "Route53ResolverClient",
+  "steps": [
+    {
+      "command": "CreateResolverEndpointCommand",
+      "input": {
+        "CreatorRequestId": "parity-r53r-ep-rule-assoc",
+        "Direction": "OUTBOUND",
+        "IpAddresses": [
+          { "SubnetId": "subnet-ccc333", "Ip": "10.0.1.1" },
+          { "SubnetId": "subnet-ddd444", "Ip": "10.0.1.2" }
+        ],
+        "SecurityGroupIds": ["sg-def456"],
+        "Name": "parity-r53r-ep-for-rule",
+        "ResolverEndpointType": "IPV4"
+      },
+      "expected": {
+        "ResolverEndpoint": {
+          "Direction": "OUTBOUND",
+          "Status": "CREATING",
+          "Id": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "ep",
+      "refs": {}
+    },
+    {
+      "command": "CreateResolverRuleCommand",
+      "input": {
+        "CreatorRequestId": "parity-r53r-rule-1",
+        "DomainName": "example.internal.",
+        "RuleType": "FORWARD",
+        "Name": "parity-r53r-rule",
+        "ResolverEndpointId": "${ep.ResolverEndpoint.Id}",
+        "TargetIps": [{ "Ip": "10.0.1.200", "Port": 53 }]
+      },
+      "expected": {
+        "ResolverRule": {
+          "CreatorRequestId": "parity-r53r-rule-1",
+          "DomainName": "example.internal.",
+          "Name": "parity-r53r-rule",
+          "RuleType": "FORWARD",
+          "Status": "CREATING",
+          "OwnerId": "<ANY>",
+          "ShareStatus": "NOT_SHARED",
+          "TargetIps": [{ "Ip": "10.0.1.200", "Port": 53 }],
+          "Id": "<ANY>",
+          "Arn": "<ANY>",
+          "ResolverEndpointId": "<ANY>",
+          "CreationTime": "<ANY>",
+          "ModificationTime": "<ANY>",
+          "StatusMessage": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "rule",
+      "refs": { "ep.ResolverEndpoint.Id": "ep" }
+    },
+    {
+      "command": "AssociateResolverRuleCommand",
+      "input": {
+        "ResolverRuleId": "${rule.ResolverRule.Id}",
+        "VPCId": "vpc-aaa111222",
+        "Name": "parity-r53r-assoc"
+      },
+      "expected": {
+        "ResolverRuleAssociation": {
+          "ResolverRuleId": "<ANY>",
+          "VPCId": "vpc-aaa111222",
+          "Name": "parity-r53r-assoc",
+          "Status": "CREATING",
+          "Id": "<ANY>",
+          "StatusMessage": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "assoc",
+      "refs": { "rule.ResolverRule.Id": "rule" }
+    },
+    {
+      "command": "DisassociateResolverRuleCommand",
+      "input": {
+        "ResolverRuleId": "${rule.ResolverRule.Id}",
+        "VPCId": "vpc-aaa111222"
+      },
+      "expected": {
+        "ResolverRuleAssociation": {
+          "ResolverRuleId": "<ANY>",
+          "VPCId": "vpc-aaa111222",
+          "Status": "DELETING",
+          "Id": "<ANY>",
+          "StatusMessage": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "rule.ResolverRule.Id": "rule" }
+    },
+    {
+      "command": "DeleteResolverRuleCommand",
+      "input": { "ResolverRuleId": "${rule.ResolverRule.Id}" },
+      "expected": {
+        "ResolverRule": {
+          "Status": "DELETING",
+          "Id": "<ANY>",
+          "Arn": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "rule.ResolverRule.Id": "rule" }
+    },
+    {
+      "command": "DeleteResolverEndpointCommand",
+      "input": { "ResolverEndpointId": "${ep.ResolverEndpoint.Id}" },
+      "expected": {
+        "ResolverEndpoint": {
+          "Status": "DELETING",
+          "Id": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "ep.ResolverEndpoint.Id": "ep" }
+    }
+  ]
+}

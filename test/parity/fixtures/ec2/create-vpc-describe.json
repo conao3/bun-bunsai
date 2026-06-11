@@ -1,0 +1,58 @@
+{
+  "clientPackage": "@aws-sdk/client-ec2",
+  "clientName": "EC2Client",
+  "steps": [
+    {
+      "command": "CreateVpcCommand",
+      "input": { "CidrBlock": "10.0.0.0/16" },
+      "expected": {
+        "Vpc": {
+          "CidrBlock": "10.0.0.0/16",
+          "State": "available",
+          "InstanceTenancy": "default",
+          "IsDefault": false,
+          "VpcId": "<ANY>",
+          "DhcpOptionsId": "<ANY>",
+          "OwnerId": "<ANY>",
+          "Tags": []
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "vpc",
+      "refs": {}
+    },
+    {
+      "command": "DescribeVpcsCommand",
+      "input": { "VpcIds": ["${vpc.Vpc.VpcId}"] },
+      "expected": {
+        "Vpcs": [
+          {
+            "CidrBlock": "10.0.0.0/16",
+            "State": "available",
+            "InstanceTenancy": "default",
+            "IsDefault": false,
+            "Tags": [],
+            "CidrBlockAssociationSet": [
+              {
+                "CidrBlock": "10.0.0.0/16",
+                "CidrBlockState": { "State": "associated", "StatusMessage": "" }
+              }
+            ],
+            "Ipv6CidrBlockAssociationSet": []
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "vpc.Vpc.VpcId": "vpc" }
+    },
+    {
+      "command": "DeleteVpcCommand",
+      "input": { "VpcId": "${vpc.Vpc.VpcId}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "vpc.Vpc.VpcId": "vpc" }
+    }
+  ]
+}

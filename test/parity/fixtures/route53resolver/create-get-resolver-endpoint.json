@@ -1,0 +1,78 @@
+{
+  "clientPackage": "@aws-sdk/client-route53resolver",
+  "clientName": "Route53ResolverClient",
+  "steps": [
+    {
+      "command": "CreateResolverEndpointCommand",
+      "input": {
+        "CreatorRequestId": "parity-r53r-ep-create-get",
+        "Direction": "INBOUND",
+        "IpAddresses": [
+          { "SubnetId": "subnet-aaa111", "Ip": "10.0.0.1" },
+          { "SubnetId": "subnet-bbb222", "Ip": "10.0.0.2" }
+        ],
+        "SecurityGroupIds": ["sg-abc123"],
+        "Name": "parity-r53r-endpoint",
+        "ResolverEndpointType": "IPV4"
+      },
+      "expected": {
+        "ResolverEndpoint": {
+          "CreatorRequestId": "parity-r53r-ep-create-get",
+          "Direction": "INBOUND",
+          "IpAddressCount": 2,
+          "Name": "parity-r53r-endpoint",
+          "ResolverEndpointType": "IPV4",
+          "Status": "CREATING",
+          "Id": "<ANY>",
+          "Arn": "<ANY>",
+          "HostVPCId": "<ANY>",
+          "SecurityGroupIds": "<ANY>",
+          "StatusMessage": "<ANY>",
+          "CreationTime": "<ANY>",
+          "ModificationTime": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "ep",
+      "refs": {}
+    },
+    {
+      "command": "GetResolverEndpointCommand",
+      "input": { "ResolverEndpointId": "${ep.ResolverEndpoint.Id}" },
+      "expected": {
+        "ResolverEndpoint": {
+          "CreatorRequestId": "parity-r53r-ep-create-get",
+          "Direction": "INBOUND",
+          "IpAddressCount": 2,
+          "Name": "parity-r53r-endpoint",
+          "ResolverEndpointType": "IPV4",
+          "Status": "OPERATIONAL",
+          "Id": "<ANY>",
+          "Arn": "<ANY>",
+          "HostVPCId": "<ANY>",
+          "SecurityGroupIds": "<ANY>",
+          "StatusMessage": "<ANY>",
+          "CreationTime": "<ANY>",
+          "ModificationTime": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "ep.ResolverEndpoint.Id": "ep" }
+    },
+    {
+      "command": "DeleteResolverEndpointCommand",
+      "input": { "ResolverEndpointId": "${ep.ResolverEndpoint.Id}" },
+      "expected": {
+        "ResolverEndpoint": {
+          "Status": "DELETING",
+          "Id": "<ANY>",
+          "Arn": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "ep.ResolverEndpoint.Id": "ep" }
+    }
+  ]
+}

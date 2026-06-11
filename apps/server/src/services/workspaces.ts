@@ -222,8 +222,8 @@ const paginateList = <T>(
 };
 
 const nextWorkspaceIp = (ctx: ServiceContext): string => {
-  const counter = (ctx.store.get<number>("ipCounter") ?? 9) + 1;
-  ctx.store.set("ipCounter", counter);
+  const counter = (ctx.store.get<number>("_ipCounter") ?? 9) + 1;
+  ctx.store.set("_ipCounter", counter);
   return `10.0.${Math.floor(counter / 256)}.${counter % 256}`;
 };
 

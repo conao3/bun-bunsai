@@ -1,0 +1,49 @@
+{
+  "clientPackage": "@aws-sdk/client-ses",
+  "clientName": "SESClient",
+  "steps": [
+    {
+      "command": "VerifyEmailIdentityCommand",
+      "input": { "EmailAddress": "parity-sender@example.com" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetSendQuotaCommand",
+      "input": {},
+      "expected": {
+        "Max24HourSend": 200,
+        "MaxSendRate": 1,
+        "SentLast24Hours": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "SendEmailCommand",
+      "input": {
+        "Source": "parity-sender@example.com",
+        "Destination": { "ToAddresses": ["recipient@example.com"] },
+        "Message": {
+          "Subject": { "Data": "Parity test" },
+          "Body": { "Text": { "Data": "Parity test body" } }
+        }
+      },
+      "expected": { "MessageId": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteIdentityCommand",
+      "input": { "Identity": "parity-sender@example.com" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

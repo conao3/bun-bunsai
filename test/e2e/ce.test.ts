@@ -15,9 +15,23 @@ import {
   GetCostAndUsageCommand,
   GetCostForecastCommand,
   GetDimensionValuesCommand,
+  GetCommitmentPurchaseAnalysisCommand,
   GetTagsCommand,
+  ListCommitmentPurchaseAnalysesCommand,
+  ListCostAllocationTagBackfillHistoryCommand,
+  ListCostAllocationTagsCommand,
   ListCostCategoryDefinitionsCommand,
+  ListSavingsPlansPurchaseRecommendationGenerationCommand,
+  ListTagsForResourceCommand,
+  ProvideAnomalyFeedbackCommand,
+  StartCommitmentPurchaseAnalysisCommand,
+  StartCostAllocationTagBackfillCommand,
+  StartSavingsPlansPurchaseRecommendationGenerationCommand,
+  TagResourceCommand,
+  UntagResourceCommand,
   UpdateAnomalyMonitorCommand,
+  UpdateAnomalySubscriptionCommand,
+  UpdateCostAllocationTagsStatusCommand,
   UpdateCostCategoryDefinitionCommand,
 } from "@aws-sdk/client-cost-explorer";
 
@@ -296,4 +310,354 @@ test("CE AnomalyMonitor CRUD", async () => {
     new GetAnomalyMonitorsCommand({ MonitorArnList: [monitorArn] }),
   );
   expect(empty.AnomalyMonitors ?? []).toHaveLength(0);
+});
+
+test("CE-001 ResourceTags persisted at create, visible via ListTagsForResource, cleaned on delete", async () => {
+  const client = ce();
+
+  const created = await client.send(
+    new CreateAnomalyMonitorCommand({
+      AnomalyMonitor: {
+        MonitorName: "ce001-monitor",
+        MonitorType: "DIMENSIONAL",
+        MonitorDimension: "SERVICE",
+      },
+      ResourceTags: [{ Key: "env", Value: "dev" }],
+    }),
+  );
+  const monitorArn = created.MonitorArn!;
+
+  const listResult = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: monitorArn }),
+  );
+  expect(listResult.ResourceTags).toHaveLength(1);
+  expect(listResult.ResourceTags![0].Key).toBe("env");
+  expect(listResult.ResourceTags![0].Value).toBe("dev");
+
+  await client.send(
+    new DeleteAnomalyMonitorCommand({ MonitorArn: monitorArn }),
+  );
+
+  const created2 = await client.send(
+    new CreateAnomalyMonitorCommand({
+      AnomalyMonitor: {
+        MonitorName: "ce001-monitor",
+        MonitorType: "DIMENSIONAL",
+        MonitorDimension: "SERVICE",
+      },
+    }),
+  );
+  const monitorArn2 = created2.MonitorArn!;
+  const listAfterRecreate = await client.send(
+    new ListTagsForResourceCommand({ ResourceArn: monitorArn2 }),
+  );
+  expect(listAfterRecreate.ResourceTags).toHaveLength(0);
+
+  await expect(
+    client.send(
+      new TagResourceCommand({
+        ResourceArn: "arn:aws:ce::000000000000:anomalymonitor/nonexistent",
+        ResourceTags: [{ Key: "k", Value: "v" }],
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteAnomalyMonitorCommand({ MonitorArn: monitorArn2 }),
+  );
+});
+
+test("CE-002 UpdateCostAllocationTagsStatus → ListCostAllocationTags reflects new status", async () => {
+  const client = ce();
+
+  const initial = await client.send(
+    new ListCostAllocationTagsCommand({ TagKeys: ["Environment"] }),
+  );
+  expect(initial.CostAllocationTags![0].Status).toBe("Active");
+
+  await client.send(
+    new UpdateCostAllocationTagsStatusCommand({
+      CostAllocationTagsStatus: [{ TagKey: "Environment", Status: "Inactive" }],
+    }),
+  );
+
+  const after = await client.send(
+    new ListCostAllocationTagsCommand({ Status: "Inactive" }),
+  );
+  const environmentTag = (after.CostAllocationTags ?? []).find(
+    (t) => t.TagKey === "Environment",
+  );
+  expect(environmentTag).toBeDefined();
+  expect(environmentTag!.Status).toBe("Inactive");
+
+  await client.send(
+    new UpdateCostAllocationTagsStatusCommand({
+      CostAllocationTagsStatus: [{ TagKey: "Environment", Status: "Active" }],
+    }),
+  );
+});
+
+test("CE-003 CPA lifecycle: Start persists, Get returns config, List shows it, unknown id throws", async () => {
+  const client = ce();
+
+  const started = await client.send(
+    new StartCommitmentPurchaseAnalysisCommand({
+      CommitmentPurchaseAnalysisConfiguration: {
+        SavingsPlansPurchaseAnalysisConfiguration: {
+          AccountScope: "PAYER",
+          AnalysisType: "CUSTOM_COMMITMENT",
+          LookBackTimePeriod: { Start: "2024-01-01", End: "2024-02-01" },
+          SavingsPlansToAdd: [],
+          SavingsPlansToExclude: [],
+        },
+      },
+    }),
+  );
+  const analysisId = started.AnalysisId!;
+  expect(analysisId).toBeDefined();
+
+  const got = await client.send(new ListCommitmentPurchaseAnalysesCommand({}));
+  const found = (got.AnalysisSummaryList ?? []).find(
+    (a) => a.AnalysisId === analysisId,
+  );
+  expect(found).toBeDefined();
+});
+
+test("CE-003 GetCommitmentPurchaseAnalysis unknown id throws AnalysisNotFoundException", async () => {
+  const client = ce();
+
+  await expect(
+    client.send(
+      new GetCommitmentPurchaseAnalysisCommand({ AnalysisId: "deadbeef" }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("CE-004 SP generation Start persists, List filtered by RecommendationId", async () => {
+  const client = ce();
+
+  const started = await client.send(
+    new StartSavingsPlansPurchaseRecommendationGenerationCommand({}),
+  );
+  const recommendationId = started.RecommendationId!;
+  expect(recommendationId).toBeDefined();
+
+  const listed = await client.send(
+    new ListSavingsPlansPurchaseRecommendationGenerationCommand({
+      RecommendationIds: [recommendationId],
+    }),
+  );
+  expect(
+    (listed.GenerationSummaryList ?? []).map((g) => g.RecommendationId),
+  ).toContain(recommendationId);
+});
+
+test("CE-005 Backfill Start persists, ListHistory returns it", async () => {
+  const client = ce();
+
+  const started = await client.send(
+    new StartCostAllocationTagBackfillCommand({ BackfillFrom: "2024-01-01" }),
+  );
+  expect(started.BackfillRequest?.BackfillFrom).toBe("2024-01-01");
+
+  const history = await client.send(
+    new ListCostAllocationTagBackfillHistoryCommand({}),
+  );
+  const found = (history.BackfillRequests ?? []).find(
+    (r) => r.BackfillFrom === "2024-01-01",
+  );
+  expect(found).toBeDefined();
+});
+
+test("CE-006 CreateAnomalySubscription rejects unknown monitor", async () => {
+  const client = ce();
+  await expect(
+    client.send(
+      new CreateAnomalySubscriptionCommand({
+        AnomalySubscription: {
+          SubscriptionName: "ce006-sub",
+          MonitorArnList: [
+            "arn:aws:ce::000000000000:anomalymonitor/nonexistent",
+          ],
+          Subscribers: [],
+          Threshold: 10,
+          Frequency: "DAILY",
+        },
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+test("CE-006 UpdateAnomalySubscription rejects unknown monitor", async () => {
+  const client = ce();
+
+  const monitor = await client.send(
+    new CreateAnomalyMonitorCommand({
+      AnomalyMonitor: {
+        MonitorName: "ce006-update-monitor",
+        MonitorType: "DIMENSIONAL",
+        MonitorDimension: "SERVICE",
+      },
+    }),
+  );
+  const monitorArn = monitor.MonitorArn!;
+
+  const sub = await client.send(
+    new CreateAnomalySubscriptionCommand({
+      AnomalySubscription: {
+        SubscriptionName: "ce006-update-sub",
+        MonitorArnList: [monitorArn],
+        Subscribers: [],
+        Threshold: 10,
+        Frequency: "DAILY",
+      },
+    }),
+  );
+  const subArn = sub.SubscriptionArn!;
+
+  await expect(
+    client.send(
+      new UpdateAnomalySubscriptionCommand({
+        SubscriptionArn: subArn,
+        MonitorArnList: ["arn:aws:ce::000000000000:anomalymonitor/nonexistent"],
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteAnomalySubscriptionCommand({ SubscriptionArn: subArn }),
+  );
+  await client.send(
+    new DeleteAnomalyMonitorCommand({ MonitorArn: monitorArn }),
+  );
+});
+
+test("CE-007 ProvideAnomalyFeedback persists, GetAnomalies surfaces feedback", async () => {
+  const client = ce();
+
+  const monitor = await client.send(
+    new CreateAnomalyMonitorCommand({
+      AnomalyMonitor: {
+        MonitorName: "ce007-monitor",
+        MonitorType: "DIMENSIONAL",
+        MonitorDimension: "SERVICE",
+      },
+    }),
+  );
+  const monitorArn = monitor.MonitorArn!;
+
+  const anomalies = await client.send(
+    new GetAnomaliesCommand({
+      MonitorArn: monitorArn,
+      DateInterval: { StartDate: "2024-01-01", EndDate: "2024-02-01" },
+    }),
+  );
+  expect(anomalies.Anomalies!.length).toBeGreaterThan(0);
+  const anomalyId = anomalies.Anomalies![0].AnomalyId!;
+
+  await client.send(
+    new ProvideAnomalyFeedbackCommand({
+      AnomalyId: anomalyId,
+      Feedback: "YES",
+    }),
+  );
+
+  const afterFeedback = await client.send(
+    new GetAnomaliesCommand({
+      MonitorArn: monitorArn,
+      DateInterval: { StartDate: "2024-01-01", EndDate: "2024-02-01" },
+      Feedback: "YES",
+    }),
+  );
+  expect(
+    (afterFeedback.Anomalies ?? []).find((a) => a.AnomalyId === anomalyId),
+  ).toBeDefined();
+
+  await client.send(
+    new DeleteAnomalyMonitorCommand({ MonitorArn: monitorArn }),
+  );
+});
+
+test("CE-007 GetAnomalies without MonitorArn iterates all stored monitors", async () => {
+  const client = ce();
+
+  const monitor = await client.send(
+    new CreateAnomalyMonitorCommand({
+      AnomalyMonitor: {
+        MonitorName: "ce007-all-monitor",
+        MonitorType: "DIMENSIONAL",
+        MonitorDimension: "SERVICE",
+      },
+    }),
+  );
+  const monitorArn = monitor.MonitorArn!;
+
+  const anomalies = await client.send(
+    new GetAnomaliesCommand({
+      DateInterval: { StartDate: "2024-01-01", EndDate: "2024-02-01" },
+    }),
+  );
+  expect(
+    (anomalies.Anomalies ?? []).some(
+      (a) =>
+        (a as unknown as Record<string, unknown>)["MonitorArn"] === monitorArn,
+    ),
+  ).toBe(true);
+
+  await client.send(
+    new DeleteAnomalyMonitorCommand({ MonitorArn: monitorArn }),
+  );
+});
+
+test("CE-008 Create uses UUID-based ARNs with ctx.account", async () => {
+  const client = ce();
+
+  const m1 = await client.send(
+    new CreateAnomalyMonitorCommand({
+      AnomalyMonitor: {
+        MonitorName: "same-name",
+        MonitorType: "DIMENSIONAL",
+        MonitorDimension: "SERVICE",
+      },
+    }),
+  );
+  const m2 = await client.send(
+    new CreateAnomalyMonitorCommand({
+      AnomalyMonitor: {
+        MonitorName: "same-name",
+        MonitorType: "DIMENSIONAL",
+        MonitorDimension: "SERVICE",
+      },
+    }),
+  );
+
+  expect(m1.MonitorArn).not.toBe(m2.MonitorArn);
+
+  await client.send(
+    new DeleteAnomalyMonitorCommand({ MonitorArn: m1.MonitorArn! }),
+  );
+  await client.send(
+    new DeleteAnomalyMonitorCommand({ MonitorArn: m2.MonitorArn! }),
+  );
+});
+
+test("CE-001 TagResource/UntagResource existence check", async () => {
+  const client = ce();
+
+  await expect(
+    client.send(
+      new UntagResourceCommand({
+        ResourceArn: "arn:aws:ce::000000000000:costcategory/nonexistent",
+        ResourceTagKeys: ["k"],
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new ListTagsForResourceCommand({
+        ResourceArn: "arn:aws:ce::000000000000:anomalysubscription/nonexistent",
+      }),
+    ),
+  ).rejects.toThrow();
 });

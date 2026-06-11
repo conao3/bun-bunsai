@@ -1,7 +1,11 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import ceModel from "../../../../test/vendor/aws-models/ce.json" with { type: "json" };
-import type { OperationHandler, ServiceDefinition } from "../core/types.ts";
+import type {
+  OperationHandler,
+  ServiceContext,
+  ServiceDefinition,
+} from "../core/types.ts";
 
 const model = loadServiceModel(ceModel);
 
@@ -32,16 +36,73 @@ type StoredAnomalySubscription = Record<string, unknown> & {
   Frequency: string;
 };
 
+type StoredCPA = {
+  AnalysisId: string;
+  AnalysisStatus: string;
+  CommitmentPurchaseAnalysisConfiguration: unknown;
+  AnalysisStartedTime: string;
+  EstimatedCompletionTime: string;
+  AnalysisCompletionTime: string;
+};
+
+type StoredSPGeneration = {
+  RecommendationId: string;
+  GenerationStatus: string;
+  GenerationStartedTime: string;
+  EstimatedCompletionTime: string;
+};
+
+type StoredBackfill = {
+  BackfillFrom: string;
+  RequestedAt: string;
+  CompletedAt?: string;
+  BackfillStatus: string;
+  LastUpdatedAt: string;
+};
+
+type StoredCostAllocationTag = {
+  TagKey: string;
+  Type: string;
+  Status: string;
+  LastUpdatedDate: string;
+  LastUsedDate: string;
+};
+
 const region = "us-east-1";
 const accountId = "000000000000";
 
-const arn = (resource: string, id: string): string =>
-  `arn:aws:ce::${accountId}:${resource}/${id}`;
+const arn = (account: string, resource: string, id: string): string =>
+  `arn:aws:ce::${account}:${resource}/${id}`;
 
 const ccKey = (arnVal: string): string => `cc/${arnVal}`;
 const monitorKey = (arnVal: string): string => `monitor/${arnVal}`;
 const subscriptionKey = (arnVal: string): string => `subscription/${arnVal}`;
 const tagKey = (arnVal: string): string => `tag/${arnVal}`;
+const catagKey = (tagKeyStr: string): string => `catag/${tagKeyStr}`;
+const cpaKey = (id: string): string => `cpa/${id}`;
+const sprgenKey = (id: string): string => `sprgen/${id}`;
+const backfillKey = (requestedAt: string): string => `backfill/${requestedAt}`;
+const feedbackKey = (anomalyId: string): string => `feedback/${anomalyId}`;
+
+const seedCostAllocationTags = (ctx: ServiceContext): void => {
+  const defaultKeys = ["Environment", "Project", "Team", "Owner", "CostCenter"];
+  for (const k of defaultKeys) {
+    if (!ctx.store.get<StoredCostAllocationTag>(catagKey(k))) {
+      ctx.store.set(catagKey(k), {
+        TagKey: k,
+        Type: "UserDefined",
+        Status: "Active",
+        LastUpdatedDate: todayYMD(),
+        LastUsedDate: todayYMD(),
+      } as StoredCostAllocationTag);
+    }
+  }
+};
+
+const resolveResourceExists = (arnVal: string, ctx: ServiceContext): boolean =>
+  !!ctx.store.get(ccKey(arnVal)) ||
+  !!ctx.store.get(monitorKey(arnVal)) ||
+  !!ctx.store.get(subscriptionKey(arnVal));
 
 const todayYMD = (): string => {
   const d = new Date();
@@ -444,7 +505,7 @@ const CreateCostCategoryDefinition: OperationHandler = (input, ctx) => {
   const effectiveStart = String(
     input["EffectiveStart"] ?? `${todayYMD()}T00:00:00Z`,
   );
-  const ccArn = arn("costcategory", name.replace(/\s+/g, "-").toLowerCase());
+  const ccArn = arn(ctx.account, "costcategory", crypto.randomUUID());
 
   const stored: StoredCostCategory = {
     CostCategoryArn: ccArn,
@@ -457,6 +518,14 @@ const CreateCostCategoryDefinition: OperationHandler = (input, ctx) => {
     ProcessingStatus: [{ Component: "COST_EXPLORER", Status: "PROCESSING" }],
   };
   ctx.store.set(ccKey(ccArn), stored);
+  const resourceTags = input["ResourceTags"];
+  if (Array.isArray(resourceTags)) {
+    const tags: Record<string, string> = {};
+    for (const t of resourceTags as Array<{ Key: string; Value: string }>) {
+      tags[t.Key] = t.Value;
+    }
+    ctx.store.set(tagKey(ccArn), tags);
+  }
   return { CostCategoryArn: ccArn, EffectiveStart: effectiveStart };
 };
 
@@ -470,6 +539,7 @@ const DeleteCostCategoryDefinition: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(ccKey(ccArn));
+  ctx.store.delete(tagKey(ccArn));
   return { CostCategoryArn: ccArn, EffectiveEnd: `${todayYMD()}T00:00:00Z` };
 };
 
@@ -558,10 +628,7 @@ const CreateAnomalyMonitor: OperationHandler = (input, ctx) => {
   if (!name)
     throw awsError("ValidationException", "MonitorName is required.", 400);
   const monitorType = String(monitorInput["MonitorType"] ?? "DIMENSIONAL");
-  const monitorArn = arn(
-    "anomalymonitor",
-    name.replace(/\s+/g, "-").toLowerCase(),
-  );
+  const monitorArn = arn(ctx.account, "anomalymonitor", crypto.randomUUID());
   const today = todayYMD();
 
   const stored: StoredAnomalyMonitor = {
@@ -576,6 +643,14 @@ const CreateAnomalyMonitor: OperationHandler = (input, ctx) => {
     DimensionalValueCount: 0,
   };
   ctx.store.set(monitorKey(monitorArn), stored);
+  const resourceTags = input["ResourceTags"];
+  if (Array.isArray(resourceTags)) {
+    const tags: Record<string, string> = {};
+    for (const t of resourceTags as Array<{ Key: string; Value: string }>) {
+      tags[t.Key] = t.Value;
+    }
+    ctx.store.set(tagKey(monitorArn), tags);
+  }
   return { MonitorArn: monitorArn };
 };
 
@@ -589,6 +664,7 @@ const DeleteAnomalyMonitor: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(monitorKey(monitorArn));
+  ctx.store.delete(tagKey(monitorArn));
   return {};
 };
 
@@ -647,17 +723,26 @@ const CreateAnomalySubscription: OperationHandler = (input, ctx) => {
   const name = String(subInput["SubscriptionName"] ?? "");
   if (!name)
     throw awsError("ValidationException", "SubscriptionName is required.", 400);
-  const subArn = arn(
-    "anomalysubscription",
-    name.replace(/\s+/g, "-").toLowerCase(),
-  );
+
+  const monitorArnList = Array.isArray(subInput["MonitorArnList"])
+    ? (subInput["MonitorArnList"] as string[])
+    : [];
+  for (const mArn of monitorArnList) {
+    if (!ctx.store.get<StoredAnomalyMonitor>(monitorKey(mArn))) {
+      throw awsError(
+        "UnknownMonitorException",
+        `Monitor ${mArn} does not exist.`,
+        400,
+      );
+    }
+  }
+
+  const subArn = arn(ctx.account, "anomalysubscription", crypto.randomUUID());
 
   const stored: StoredAnomalySubscription = {
     SubscriptionArn: subArn,
     SubscriptionName: name,
-    MonitorArnList: Array.isArray(subInput["MonitorArnList"])
-      ? (subInput["MonitorArnList"] as string[])
-      : [],
+    MonitorArnList: monitorArnList,
     Subscribers: Array.isArray(subInput["Subscribers"])
       ? subInput["Subscribers"]
       : [],
@@ -667,6 +752,14 @@ const CreateAnomalySubscription: OperationHandler = (input, ctx) => {
     Frequency: String(subInput["Frequency"] ?? "DAILY"),
   };
   ctx.store.set(subscriptionKey(subArn), stored);
+  const resourceTags = input["ResourceTags"];
+  if (Array.isArray(resourceTags)) {
+    const tags: Record<string, string> = {};
+    for (const t of resourceTags as Array<{ Key: string; Value: string }>) {
+      tags[t.Key] = t.Value;
+    }
+    ctx.store.set(tagKey(subArn), tags);
+  }
   return { SubscriptionArn: subArn };
 };
 
@@ -680,6 +773,7 @@ const DeleteAnomalySubscription: OperationHandler = (input, ctx) => {
     );
   }
   ctx.store.delete(subscriptionKey(subArn));
+  ctx.store.delete(tagKey(subArn));
   return {};
 };
 
@@ -724,14 +818,24 @@ const UpdateAnomalySubscription: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const newMonitorArnList = Array.isArray(input["MonitorArnList"])
+    ? (input["MonitorArnList"] as string[])
+    : stored.MonitorArnList;
+  for (const mArn of newMonitorArnList) {
+    if (!ctx.store.get<StoredAnomalyMonitor>(monitorKey(mArn))) {
+      throw awsError(
+        "UnknownMonitorException",
+        `Monitor ${mArn} does not exist.`,
+        400,
+      );
+    }
+  }
   const updated: StoredAnomalySubscription = {
     ...stored,
     SubscriptionName: String(
       input["SubscriptionName"] ?? stored.SubscriptionName,
     ),
-    MonitorArnList: Array.isArray(input["MonitorArnList"])
-      ? (input["MonitorArnList"] as string[])
-      : stored.MonitorArnList,
+    MonitorArnList: newMonitorArnList,
     Subscribers: Array.isArray(input["Subscribers"])
       ? input["Subscribers"]
       : stored.Subscribers,
@@ -747,14 +851,18 @@ const UpdateAnomalySubscription: OperationHandler = (input, ctx) => {
   return { SubscriptionArn: subArn };
 };
 
-const ProvideAnomalyFeedback: OperationHandler = (input) => {
+const ProvideAnomalyFeedback: OperationHandler = (input, ctx) => {
   const anomalyId = String(input["AnomalyId"] ?? "");
   if (!anomalyId)
     throw awsError("ValidationException", "AnomalyId is required.", 400);
+  const feedback = String(input["Feedback"] ?? "");
+  if (feedback) {
+    ctx.store.set(feedbackKey(anomalyId), { Feedback: feedback });
+  }
   return { AnomalyId: anomalyId };
 };
 
-const GetAnomalies: OperationHandler = (input) => {
+const GetAnomalies: OperationHandler = (input, ctx) => {
   const dateInterval = input["DateInterval"] as
     | Record<string, unknown>
     | undefined;
@@ -768,13 +876,30 @@ const GetAnomalies: OperationHandler = (input) => {
   const nextToken = input["NextPageToken"];
   const maxResults = input["MaxResults"];
   const monitorArn = input["MonitorArn"];
+  const feedbackFilter = input["Feedback"];
+  const totalImpactFilter = input["TotalImpact"] as
+    | Record<string, unknown>
+    | undefined;
+
+  const monitorArns: string[] =
+    typeof monitorArn === "string" && monitorArn !== ""
+      ? [monitorArn]
+      : ctx.store
+          .list<StoredAnomalyMonitor>()
+          .filter((e) => e.key.startsWith("monitor/"))
+          .map((e) => e.value.MonitorArn);
 
   const anomalies: unknown[] = [];
-  if (typeof monitorArn === "string" && monitorArn !== "") {
-    const seed = `anomaly|${monitorArn}|${dateInterval["StartDate"]}`;
+  for (const mArn of monitorArns) {
+    const seed = `anomaly|${mArn}|${dateInterval["StartDate"]}`;
     const impact = (deterministicSeed(seed) % 10000) / 100;
+    const anomalyId = `anomaly-${deterministicSeed(seed).toString(16)}`;
+    const storedFeedback = ctx.store.get<{ Feedback: string }>(
+      feedbackKey(anomalyId),
+    );
+    const feedback = storedFeedback?.Feedback ?? "PLANNED_ACTIVITY";
     anomalies.push({
-      AnomalyId: `anomaly-${deterministicSeed(seed).toString(16)}`,
+      AnomalyId: anomalyId,
       AnomalyStartDate: dateInterval["StartDate"],
       AnomalyEndDate: dateInterval["EndDate"],
       DimensionValue: "Amazon EC2",
@@ -797,13 +922,38 @@ const GetAnomalies: OperationHandler = (input) => {
         TotalImpact: impact * 0.7,
         TotalImpactPercentage: (deterministicSeed(seed + "pct") % 10000) / 100,
       },
-      MonitorArn: monitorArn,
-      Feedback: "PLANNED_ACTIVITY",
+      MonitorArn: mArn,
+      Feedback: feedback,
+    });
+  }
+
+  let filtered = anomalies as Array<Record<string, unknown>>;
+  if (typeof feedbackFilter === "string") {
+    filtered = filtered.filter(
+      (a) => (a["Feedback"] as string) === feedbackFilter,
+    );
+  }
+  if (totalImpactFilter) {
+    const lowerBound =
+      typeof totalImpactFilter["NumericOperator"] === "string" &&
+      typeof totalImpactFilter["StartValue"] === "number"
+        ? totalImpactFilter["StartValue"]
+        : undefined;
+    const upperBound =
+      typeof totalImpactFilter["EndValue"] === "number"
+        ? totalImpactFilter["EndValue"]
+        : undefined;
+    filtered = filtered.filter((a) => {
+      const ti = ((a["Impact"] as Record<string, unknown>)["TotalImpact"] ??
+        0) as number;
+      if (lowerBound !== undefined && ti < lowerBound) return false;
+      if (upperBound !== undefined && ti > upperBound) return false;
+      return true;
     });
   }
 
   const { items, nextToken: newNext } = paginateList(
-    anomalies,
+    filtered,
     nextToken,
     typeof maxResults === "number" ? maxResults : undefined,
     100,
@@ -1137,17 +1287,25 @@ const GetApproximateUsageRecords: OperationHandler = (input) => {
   };
 };
 
-const GetCommitmentPurchaseAnalysis: OperationHandler = (input) => {
+const GetCommitmentPurchaseAnalysis: OperationHandler = (input, ctx) => {
   const analysisId = String(input["AnalysisId"] ?? "");
+  const stored = ctx.store.get<StoredCPA>(cpaKey(analysisId));
+  if (!stored) {
+    throw awsError(
+      "AnalysisNotFoundException",
+      `Analysis ${analysisId} does not exist.`,
+      400,
+    );
+  }
   return {
-    EstimatedCompletionTime: new Date().toISOString(),
-    AnalysisCompletionTime: new Date().toISOString(),
-    AnalysisStartedTime: new Date().toISOString(),
-    AnalysisStatus: "SUCCEEDED",
+    EstimatedCompletionTime: stored.EstimatedCompletionTime,
+    AnalysisCompletionTime: stored.AnalysisCompletionTime,
+    AnalysisStartedTime: stored.AnalysisStartedTime,
+    AnalysisStatus: stored.AnalysisStatus,
     ErrorCode: undefined,
     AnalysisId: analysisId,
     CommitmentPurchaseAnalysisConfiguration:
-      input["CommitmentPurchaseAnalysisConfiguration"],
+      stored.CommitmentPurchaseAnalysisConfiguration,
     AnalysisDetails: {
       SavingsPlansAnalysisDetails: {
         StrategyList: [],
@@ -1156,11 +1314,22 @@ const GetCommitmentPurchaseAnalysis: OperationHandler = (input) => {
   };
 };
 
-const ListCommitmentPurchaseAnalyses: OperationHandler = (input) => {
+const ListCommitmentPurchaseAnalyses: OperationHandler = (input, ctx) => {
   const nextToken = input["NextPageToken"];
   const pageSize = input["PageSize"];
+  const all = ctx.store
+    .list<StoredCPA>()
+    .filter((e) => e.key.startsWith("cpa/"))
+    .map((e) => ({
+      AnalysisId: e.value.AnalysisId,
+      AnalysisStatus: e.value.AnalysisStatus,
+      CommitmentPurchaseAnalysisConfiguration:
+        e.value.CommitmentPurchaseAnalysisConfiguration,
+      AnalysisStartedTime: e.value.AnalysisStartedTime,
+      EstimatedCompletionTime: e.value.EstimatedCompletionTime,
+    }));
   const { items, nextToken: newNext } = paginateList(
-    [],
+    all,
     nextToken,
     pageSize,
     20,
@@ -1168,14 +1337,23 @@ const ListCommitmentPurchaseAnalyses: OperationHandler = (input) => {
   return { AnalysisSummaryList: items, NextPageToken: newNext };
 };
 
-const StartCommitmentPurchaseAnalysis: OperationHandler = (input) => {
+const StartCommitmentPurchaseAnalysis: OperationHandler = (input, ctx) => {
   const config = input["CommitmentPurchaseAnalysisConfiguration"];
-  const seed = `cpa|${JSON.stringify(config)}`;
-  const analysisId = deterministicSeed(seed).toString(16).padStart(32, "0");
+  const analysisId = crypto.randomUUID().replace(/-/g, "");
+  const now = new Date().toISOString();
+  const stored: StoredCPA = {
+    AnalysisId: analysisId,
+    AnalysisStatus: "SUCCEEDED",
+    CommitmentPurchaseAnalysisConfiguration: config,
+    AnalysisStartedTime: now,
+    EstimatedCompletionTime: now,
+    AnalysisCompletionTime: now,
+  };
+  ctx.store.set(cpaKey(analysisId), stored);
   return {
     AnalysisId: analysisId,
-    AnalysisStartedTime: new Date().toISOString(),
-    EstimatedCompletionTime: new Date().toISOString(),
+    AnalysisStartedTime: now,
+    EstimatedCompletionTime: now,
   };
 };
 
@@ -1211,11 +1389,15 @@ const GetCostComparisonDrivers: OperationHandler = (input) => {
   return { CostComparisonDrivers: items, NextPageToken: newNext };
 };
 
-const ListCostAllocationTagBackfillHistory: OperationHandler = (input) => {
+const ListCostAllocationTagBackfillHistory: OperationHandler = (input, ctx) => {
   const nextToken = input["NextToken"];
   const maxResults = input["MaxResults"];
+  const all = ctx.store
+    .list<StoredBackfill>()
+    .filter((e) => e.key.startsWith("backfill/"))
+    .map((e) => e.value);
   const { items, nextToken: newNext } = paginateList(
-    [],
+    all,
     nextToken,
     maxResults,
     100,
@@ -1223,33 +1405,29 @@ const ListCostAllocationTagBackfillHistory: OperationHandler = (input) => {
   return { BackfillRequests: items, NextToken: newNext };
 };
 
-const ListCostAllocationTags: OperationHandler = (input) => {
+const ListCostAllocationTags: OperationHandler = (input, ctx) => {
   const nextToken = input["NextToken"];
   const maxResults = input["MaxResults"];
   const status = input["Status"];
   const tagKeys = input["TagKeys"];
 
-  const tags = ["Environment", "Project", "Team", "Owner", "CostCenter"].map(
-    (k) => ({
-      TagKey: k,
-      Type: "UserDefined",
-      Status: "Active",
-      LastUpdatedDate: todayYMD(),
-      LastUsedDate: todayYMD(),
-    }),
-  );
+  seedCostAllocationTags(ctx);
 
-  let filtered = tags;
+  let all = ctx.store
+    .list<StoredCostAllocationTag>()
+    .filter((e) => e.key.startsWith("catag/"))
+    .map((e) => e.value);
+
   if (typeof status === "string") {
-    filtered = filtered.filter((t) => t.Status === status);
+    all = all.filter((t) => t.Status === status);
   }
   if (Array.isArray(tagKeys) && tagKeys.length > 0) {
     const ks = new Set(tagKeys as string[]);
-    filtered = filtered.filter((t) => ks.has(t.TagKey));
+    all = all.filter((t) => ks.has(t.TagKey));
   }
 
   const { items, nextToken: newNext } = paginateList(
-    filtered,
+    all,
     nextToken,
     maxResults,
     100,
@@ -1257,32 +1435,86 @@ const ListCostAllocationTags: OperationHandler = (input) => {
   return { CostAllocationTags: items, NextToken: newNext };
 };
 
-const StartCostAllocationTagBackfill: OperationHandler = (input) => {
+const StartCostAllocationTagBackfill: OperationHandler = (input, ctx) => {
   const backfillFrom = String(input["BackfillFrom"] ?? "");
-  return {
-    BackfillRequest: {
-      BackfillFrom: backfillFrom,
-      RequestedAt: new Date().toISOString(),
-      CompletedAt: undefined,
-      BackfillStatus: "PROCESSING",
-      LastUpdatedAt: new Date().toISOString(),
-    },
+  const existing = ctx.store
+    .list<StoredBackfill>()
+    .filter(
+      (e) =>
+        e.key.startsWith("backfill/") &&
+        e.value.BackfillStatus === "PROCESSING",
+    );
+  if (existing.length > 0) {
+    throw awsError(
+      "BackfillLimitExceededException",
+      "A backfill is already in progress.",
+      400,
+    );
+  }
+  const requestedAt = new Date().toISOString();
+  const stored: StoredBackfill = {
+    BackfillFrom: backfillFrom,
+    RequestedAt: requestedAt,
+    CompletedAt: requestedAt,
+    BackfillStatus: "SUCCEEDED",
+    LastUpdatedAt: requestedAt,
   };
+  ctx.store.set(backfillKey(requestedAt), stored);
+  return { BackfillRequest: stored };
 };
 
-const UpdateCostAllocationTagsStatus: OperationHandler = (input) => {
+const UpdateCostAllocationTagsStatus: OperationHandler = (input, ctx) => {
   const costAllocationTagsStatus = input["CostAllocationTagsStatus"];
-  return { Errors: [] };
+  seedCostAllocationTags(ctx);
+  const errors: unknown[] = [];
+  if (Array.isArray(costAllocationTagsStatus)) {
+    for (const entry of costAllocationTagsStatus as Array<{
+      TagKey: string;
+      Status: string;
+    }>) {
+      const stored = ctx.store.get<StoredCostAllocationTag>(
+        catagKey(entry.TagKey),
+      );
+      if (!stored) {
+        errors.push({ TagKey: entry.TagKey, Code: "InternalError" });
+        continue;
+      }
+      ctx.store.set(catagKey(entry.TagKey), {
+        ...stored,
+        Status: entry.Status,
+        LastUpdatedDate: todayYMD(),
+      });
+    }
+  }
+  return { Errors: errors };
 };
 
 const ListSavingsPlansPurchaseRecommendationGeneration: OperationHandler = (
   input,
+  ctx,
 ) => {
   const nextToken = input["NextPageToken"];
+  const pageSize = input["PageSize"];
+  const generationStatus = input["GenerationStatus"];
+  const recommendationIds = input["RecommendationIds"];
+
+  let all = ctx.store
+    .list<StoredSPGeneration>()
+    .filter((e) => e.key.startsWith("sprgen/"))
+    .map((e) => e.value);
+
+  if (typeof generationStatus === "string") {
+    all = all.filter((g) => g.GenerationStatus === generationStatus);
+  }
+  if (Array.isArray(recommendationIds) && recommendationIds.length > 0) {
+    const idSet = new Set(recommendationIds as string[]);
+    all = all.filter((g) => idSet.has(g.RecommendationId));
+  }
+
   const { items, nextToken: newNext } = paginateList(
-    [],
+    all,
     nextToken,
-    undefined,
+    pageSize,
     20,
   );
   return { GenerationSummaryList: items, NextPageToken: newNext };
@@ -1290,17 +1522,50 @@ const ListSavingsPlansPurchaseRecommendationGeneration: OperationHandler = (
 
 const StartSavingsPlansPurchaseRecommendationGeneration: OperationHandler = (
   _input,
+  ctx,
 ) => {
-  const estimatedCompletionTime = new Date(Date.now() + 300000).toISOString();
+  const existing = ctx.store
+    .list<StoredSPGeneration>()
+    .filter(
+      (e) =>
+        e.key.startsWith("sprgen/") &&
+        e.value.GenerationStatus === "PROCESSING",
+    );
+  if (existing.length > 0) {
+    throw awsError(
+      "GenerationExistsException",
+      "A generation is already in progress.",
+      400,
+    );
+  }
+  const recommendationId = `sprgen-${crypto.randomUUID().replace(/-/g, "")}`;
+  const now = new Date().toISOString();
+  const estimatedCompletionTime = new Date(
+    new Date(now).getTime() + 300000,
+  ).toISOString();
+  const stored: StoredSPGeneration = {
+    RecommendationId: recommendationId,
+    GenerationStatus: "SUCCEEDED",
+    GenerationStartedTime: now,
+    EstimatedCompletionTime: estimatedCompletionTime,
+  };
+  ctx.store.set(sprgenKey(recommendationId), stored);
   return {
-    RecommendationId: `sprgen-${Date.now().toString(16)}`,
-    GenerationStartedTime: new Date().toISOString(),
+    RecommendationId: recommendationId,
+    GenerationStartedTime: now,
     EstimatedCompletionTime: estimatedCompletionTime,
   };
 };
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const resourceArn = String(input["ResourceArn"] ?? "");
+  if (!resolveResourceExists(resourceArn, ctx)) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource ${resourceArn} does not exist.`,
+      400,
+    );
+  }
   const tags = ctx.store.get<Record<string, string>>(tagKey(resourceArn)) ?? {};
   return {
     ResourceTags: Object.entries(tags).map(([Key, Value]) => ({ Key, Value })),
@@ -1309,6 +1574,13 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const resourceArn = String(input["ResourceArn"] ?? "");
+  if (!resolveResourceExists(resourceArn, ctx)) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource ${resourceArn} does not exist.`,
+      400,
+    );
+  }
   const resourceTags = input["ResourceTags"];
   const existing =
     ctx.store.get<Record<string, string>>(tagKey(resourceArn)) ?? {};
@@ -1326,6 +1598,13 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const resourceArn = String(input["ResourceArn"] ?? "");
+  if (!resolveResourceExists(resourceArn, ctx)) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource ${resourceArn} does not exist.`,
+      400,
+    );
+  }
   const tagKeys = input["ResourceTagKeys"];
   const existing =
     ctx.store.get<Record<string, string>>(tagKey(resourceArn)) ?? {};

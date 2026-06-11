@@ -48,10 +48,16 @@ type StoredTtl = {
   AttributeName: string;
 };
 
+type StoredProvisionedThroughput = {
+  ReadCapacityUnits: number;
+  WriteCapacityUnits: number;
+};
+
 type SecondaryIndex = {
   IndexName: string;
   KeySchema: KeySchemaElement[];
   Projection: Record<string, unknown>;
+  provisionedThroughput?: StoredProvisionedThroughput;
 };
 
 type StoredTable = {
@@ -69,6 +75,8 @@ type StoredTable = {
   streamSpecification?: { StreamEnabled: boolean; StreamViewType: string };
   latestStreamArn?: string;
   latestStreamLabel?: string;
+  provisionedThroughput?: StoredProvisionedThroughput;
+  billingMode?: string;
 };
 
 type StoredBackup = {
@@ -324,8 +332,8 @@ const gsiDescription = (
   ItemCount: Object.keys(table.items).length,
   IndexArn: indexArn(ctx.region, ctx.account, table.TableName, index.IndexName),
   ProvisionedThroughput: {
-    ReadCapacityUnits: 0,
-    WriteCapacityUnits: 0,
+    ReadCapacityUnits: index.provisionedThroughput?.ReadCapacityUnits ?? 0,
+    WriteCapacityUnits: index.provisionedThroughput?.WriteCapacityUnits ?? 0,
     NumberOfDecreasesToday: 0,
   },
 });
@@ -348,6 +356,7 @@ const tableDescription = (
   table: StoredTable,
   status: string,
 ): Record<string, unknown> => {
+  const isPPR = table.billingMode === "PAY_PER_REQUEST";
   const description: Record<string, unknown> = {
     TableName: table.TableName,
     AttributeDefinitions: table.AttributeDefinitions,
@@ -358,11 +367,20 @@ const tableDescription = (
     TableSizeBytes: 0,
     TableArn: tableArn(ctx.region, ctx.account, table.TableName),
     ProvisionedThroughput: {
-      ReadCapacityUnits: 0,
-      WriteCapacityUnits: 0,
+      ReadCapacityUnits: isPPR
+        ? 0
+        : (table.provisionedThroughput?.ReadCapacityUnits ?? 0),
+      WriteCapacityUnits: isPPR
+        ? 0
+        : (table.provisionedThroughput?.WriteCapacityUnits ?? 0),
       NumberOfDecreasesToday: 0,
     },
   };
+  if (isPPR) {
+    description["BillingModeSummary"] = {
+      BillingMode: "PAY_PER_REQUEST",
+    };
+  }
   if (table.globalSecondaryIndexes !== undefined) {
     description["GlobalSecondaryIndexes"] = table.globalSecondaryIndexes.map(
       (index) => gsiDescription(ctx, table, index),
@@ -579,17 +597,35 @@ const ensureConditionPasses = (
 
 const parseSecondaryIndexes = (value: unknown): SecondaryIndex[] =>
   (Array.isArray(value) ? (value as Record<string, unknown>[]) : []).map(
-    (entry) => ({
-      IndexName:
-        typeof entry["IndexName"] === "string" ? entry["IndexName"] : "",
-      KeySchema: Array.isArray(entry["KeySchema"])
-        ? (entry["KeySchema"] as KeySchemaElement[])
-        : [],
-      Projection:
-        typeof entry["Projection"] === "object" && entry["Projection"] !== null
-          ? (entry["Projection"] as Record<string, unknown>)
-          : { ProjectionType: "ALL" },
-    }),
+    (entry) => {
+      const index: SecondaryIndex = {
+        IndexName:
+          typeof entry["IndexName"] === "string" ? entry["IndexName"] : "",
+        KeySchema: Array.isArray(entry["KeySchema"])
+          ? (entry["KeySchema"] as KeySchemaElement[])
+          : [],
+        Projection:
+          typeof entry["Projection"] === "object" &&
+          entry["Projection"] !== null
+            ? (entry["Projection"] as Record<string, unknown>)
+            : { ProjectionType: "ALL" },
+      };
+      const pt = entry["ProvisionedThroughput"];
+      if (typeof pt === "object" && pt !== null) {
+        const raw = pt as Record<string, unknown>;
+        index.provisionedThroughput = {
+          ReadCapacityUnits:
+            typeof raw["ReadCapacityUnits"] === "number"
+              ? raw["ReadCapacityUnits"]
+              : 0,
+          WriteCapacityUnits:
+            typeof raw["WriteCapacityUnits"] === "number"
+              ? raw["WriteCapacityUnits"]
+              : 0,
+        };
+      }
+      return index;
+    },
   );
 
 const CreateTable: OperationHandler = (input, ctx) => {
@@ -614,6 +650,25 @@ const CreateTable: OperationHandler = (input, ctx) => {
     CreationDateTime: Math.floor(Date.now() / 1000),
     items: {},
   };
+  const billingMode =
+    typeof input["BillingMode"] === "string" ? input["BillingMode"] : undefined;
+  if (billingMode !== undefined) table.billingMode = billingMode;
+  if (billingMode !== "PAY_PER_REQUEST") {
+    const pt = input["ProvisionedThroughput"];
+    if (typeof pt === "object" && pt !== null) {
+      const raw = pt as Record<string, unknown>;
+      table.provisionedThroughput = {
+        ReadCapacityUnits:
+          typeof raw["ReadCapacityUnits"] === "number"
+            ? raw["ReadCapacityUnits"]
+            : 0,
+        WriteCapacityUnits:
+          typeof raw["WriteCapacityUnits"] === "number"
+            ? raw["WriteCapacityUnits"]
+            : 0,
+      };
+    }
+  }
   const gsi = parseSecondaryIndexes(input["GlobalSecondaryIndexes"]);
   if (gsi.length > 0) table.globalSecondaryIndexes = gsi;
   const lsi = parseSecondaryIndexes(input["LocalSecondaryIndexes"]);
@@ -1762,6 +1817,65 @@ const UpdateTable: OperationHandler = (input, ctx) => {
       };
     }
     ctx.store.set(name, table);
+  }
+  const newBillingMode =
+    typeof input["BillingMode"] === "string" ? input["BillingMode"] : undefined;
+  if (newBillingMode !== undefined) {
+    table.billingMode = newBillingMode;
+    ctx.store.set(name, table);
+  }
+  const effectiveBillingMode = newBillingMode ?? table.billingMode;
+  if (effectiveBillingMode !== "PAY_PER_REQUEST") {
+    const pt = input["ProvisionedThroughput"];
+    if (typeof pt === "object" && pt !== null) {
+      const raw = pt as Record<string, unknown>;
+      table.provisionedThroughput = {
+        ReadCapacityUnits:
+          typeof raw["ReadCapacityUnits"] === "number"
+            ? raw["ReadCapacityUnits"]
+            : (table.provisionedThroughput?.ReadCapacityUnits ?? 0),
+        WriteCapacityUnits:
+          typeof raw["WriteCapacityUnits"] === "number"
+            ? raw["WriteCapacityUnits"]
+            : (table.provisionedThroughput?.WriteCapacityUnits ?? 0),
+      };
+      ctx.store.set(name, table);
+    }
+  }
+  const gsiUpdates = Array.isArray(input["GlobalSecondaryIndexUpdates"])
+    ? (input["GlobalSecondaryIndexUpdates"] as Record<string, unknown>[])
+    : [];
+  for (const update of gsiUpdates) {
+    const updateOp = asRecord(update["Update"]);
+    const indexName =
+      typeof updateOp["IndexName"] === "string" ? updateOp["IndexName"] : "";
+    const gsiPt = updateOp["ProvisionedThroughput"];
+    if (
+      indexName !== "" &&
+      typeof gsiPt === "object" &&
+      gsiPt !== null &&
+      table.globalSecondaryIndexes !== undefined
+    ) {
+      const raw = gsiPt as Record<string, unknown>;
+      table.globalSecondaryIndexes = table.globalSecondaryIndexes.map((idx) =>
+        idx.IndexName === indexName
+          ? {
+              ...idx,
+              provisionedThroughput: {
+                ReadCapacityUnits:
+                  typeof raw["ReadCapacityUnits"] === "number"
+                    ? raw["ReadCapacityUnits"]
+                    : (idx.provisionedThroughput?.ReadCapacityUnits ?? 0),
+                WriteCapacityUnits:
+                  typeof raw["WriteCapacityUnits"] === "number"
+                    ? raw["WriteCapacityUnits"]
+                    : (idx.provisionedThroughput?.WriteCapacityUnits ?? 0),
+              },
+            }
+          : idx,
+      );
+      ctx.store.set(name, table);
+    }
   }
   return { TableDescription: tableDescription(ctx, table, "ACTIVE") };
 };

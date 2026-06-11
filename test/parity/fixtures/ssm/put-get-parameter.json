@@ -1,0 +1,45 @@
+{
+  "clientPackage": "@aws-sdk/client-ssm",
+  "clientName": "SSMClient",
+  "steps": [
+    {
+      "command": "PutParameterCommand",
+      "input": {
+        "Name": "/parity/ssm/basic",
+        "Value": "test-value",
+        "Type": "String"
+      },
+      "expected": {
+        "Version": 1,
+        "Tier": "Standard"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetParameterCommand",
+      "input": { "Name": "/parity/ssm/basic" },
+      "expected": {
+        "Parameter": {
+          "Name": "/parity/ssm/basic",
+          "Type": "String",
+          "Value": "test-value",
+          "Version": 1,
+          "ARN": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteParameterCommand",
+      "input": { "Name": "/parity/ssm/basic" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

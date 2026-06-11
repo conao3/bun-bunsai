@@ -1,0 +1,14 @@
+{
+  "clientPackage": "@aws-sdk/client-kms",
+  "clientName": "KMSClient",
+  "steps": [
+    {
+      "command": "GenerateRandomCommand",
+      "input": { "NumberOfBytes": 16 },
+      "expected": { "Plaintext": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

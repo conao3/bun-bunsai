@@ -1,0 +1,27 @@
+{
+  "clientPackage": "@aws-sdk/client-kms",
+  "clientName": "KMSClient",
+  "steps": [
+    {
+      "command": "CreateKeyCommand",
+      "input": { "Description": "parity-kms-key" },
+      "expected": {
+        "KeyMetadata": {
+          "AWSAccountId": "000000000000",
+          "Arn": "<ANY>",
+          "KeyId": "<ANY>",
+          "Description": "parity-kms-key",
+          "Enabled": true,
+          "KeyUsage": "ENCRYPT_DECRYPT",
+          "KeyState": "Enabled",
+          "Origin": "AWS_KMS",
+          "KeyManager": "CUSTOMER",
+          "KeySpec": "SYMMETRIC_DEFAULT"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

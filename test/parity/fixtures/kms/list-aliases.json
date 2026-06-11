@@ -1,0 +1,14 @@
+{
+  "clientPackage": "@aws-sdk/client-kms",
+  "clientName": "KMSClient",
+  "steps": [
+    {
+      "command": "ListAliasesCommand",
+      "input": {},
+      "expected": { "Aliases": [] },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

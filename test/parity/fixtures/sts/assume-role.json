@@ -1,0 +1,28 @@
+{
+  "clientPackage": "@aws-sdk/client-sts",
+  "clientName": "STSClient",
+  "steps": [
+    {
+      "command": "AssumeRoleCommand",
+      "input": {
+        "RoleArn": "arn:aws:iam::123456789012:role/parity-role",
+        "RoleSessionName": "parity-session"
+      },
+      "expected": {
+        "AssumedRoleUser": {
+          "Arn": "arn:aws:sts::123456789012:assumed-role/parity-role/parity-session",
+          "AssumedRoleId": "<ANY>"
+        },
+        "Credentials": {
+          "AccessKeyId": "<ANY>",
+          "SecretAccessKey": "<ANY>",
+          "SessionToken": "<ANY>",
+          "Expiration": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

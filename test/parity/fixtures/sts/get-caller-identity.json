@@ -1,0 +1,18 @@
+{
+  "clientPackage": "@aws-sdk/client-sts",
+  "clientName": "STSClient",
+  "steps": [
+    {
+      "command": "GetCallerIdentityCommand",
+      "input": {},
+      "expected": {
+        "Account": "000000000000",
+        "Arn": "arn:aws:iam::000000000000:root",
+        "UserId": "000000000000"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

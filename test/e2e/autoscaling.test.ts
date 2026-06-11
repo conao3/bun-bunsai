@@ -396,7 +396,8 @@ test("AttachInstances / DetachInstances", async () => {
       AutoScalingGroupNames: [asgName],
     }),
   );
-  expect(afterDetach.AutoScalingGroups![0]!.Instances).toHaveLength(1);
+  expect(afterDetach.AutoScalingGroups![0]!.DesiredCapacity).toBe(2);
+  expect(afterDetach.AutoScalingGroups![0]!.Instances).toHaveLength(2);
 
   await asc.send(
     new DeleteAutoScalingGroupCommand({
@@ -480,5 +481,177 @@ test("DeleteLaunchConfiguration ResourceInUseFault", async () => {
     new DeleteLaunchConfigurationCommand({
       LaunchConfigurationName: lcName,
     }),
+  );
+});
+
+test("AS-2: LaunchTemplate round-trip and no-launch-source ValidationError", async () => {
+  const asc = client();
+  const asgName = "e2e-asg-lt";
+
+  await expect(
+    asc.send(
+      new CreateAutoScalingGroupCommand({
+        AutoScalingGroupName: asgName,
+        MinSize: 0,
+        MaxSize: 2,
+        DesiredCapacity: 0,
+        AvailabilityZones: ["us-east-1a"],
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await asc.send(
+    new CreateAutoScalingGroupCommand({
+      AutoScalingGroupName: asgName,
+      LaunchTemplate: { LaunchTemplateId: "lt-0123456789abcdef0", Version: "$Latest" },
+      MinSize: 0,
+      MaxSize: 2,
+      DesiredCapacity: 0,
+      AvailabilityZones: ["us-east-1a"],
+    }),
+  );
+
+  const described = await asc.send(
+    new DescribeAutoScalingGroupsCommand({ AutoScalingGroupNames: [asgName] }),
+  );
+  expect(described.AutoScalingGroups).toHaveLength(1);
+  expect(described.AutoScalingGroups![0]!.LaunchTemplate?.LaunchTemplateId).toBe(
+    "lt-0123456789abcdef0",
+  );
+  expect(described.AutoScalingGroups![0]!.LaunchTemplate?.Version).toBe("$Latest");
+
+  await asc.send(
+    new UpdateAutoScalingGroupCommand({
+      AutoScalingGroupName: asgName,
+      LaunchTemplate: { LaunchTemplateId: "lt-0123456789abcdef0", Version: "2" },
+    }),
+  );
+  const afterUpdate = await asc.send(
+    new DescribeAutoScalingGroupsCommand({ AutoScalingGroupNames: [asgName] }),
+  );
+  expect(afterUpdate.AutoScalingGroups![0]!.LaunchTemplate?.Version).toBe("2");
+
+  await asc.send(
+    new DeleteAutoScalingGroupCommand({ AutoScalingGroupName: asgName, ForceDelete: true }),
+  );
+});
+
+test("AS-3: bounds validation and DesiredCapacity clamp", async () => {
+  const asc = client();
+  const lcName = "e2e-lc-bounds";
+  const asgName = "e2e-asg-bounds";
+
+  await asc.send(
+    new CreateLaunchConfigurationCommand({
+      LaunchConfigurationName: lcName,
+      ImageId: "ami-00000010",
+      InstanceType: "t3.micro",
+    }),
+  );
+
+  await expect(
+    asc.send(
+      new CreateAutoScalingGroupCommand({
+        AutoScalingGroupName: asgName,
+        LaunchConfigurationName: lcName,
+        MinSize: 3,
+        MaxSize: 1,
+        AvailabilityZones: ["us-east-1a"],
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    asc.send(
+      new CreateAutoScalingGroupCommand({
+        AutoScalingGroupName: asgName,
+        LaunchConfigurationName: lcName,
+        MinSize: 0,
+        MaxSize: 2,
+        DesiredCapacity: 5,
+        AvailabilityZones: ["us-east-1a"],
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await asc.send(
+    new CreateAutoScalingGroupCommand({
+      AutoScalingGroupName: asgName,
+      LaunchConfigurationName: lcName,
+      MinSize: 1,
+      MaxSize: 3,
+      DesiredCapacity: 2,
+      AvailabilityZones: ["us-east-1a"],
+    }),
+  );
+
+  await asc.send(
+    new UpdateAutoScalingGroupCommand({
+      AutoScalingGroupName: asgName,
+      MaxSize: 1,
+    }),
+  );
+  const afterShrink = await asc.send(
+    new DescribeAutoScalingGroupsCommand({ AutoScalingGroupNames: [asgName] }),
+  );
+  expect(afterShrink.AutoScalingGroups![0]!.DesiredCapacity).toBe(1);
+
+  await asc.send(
+    new DeleteAutoScalingGroupCommand({ AutoScalingGroupName: asgName, ForceDelete: true }),
+  );
+  await asc.send(
+    new DeleteLaunchConfigurationCommand({ LaunchConfigurationName: lcName }),
+  );
+});
+
+test("AS-4: AttachInstances increments DesiredCapacity and enforces MaxSize", async () => {
+  const asc = client();
+  const lcName = "e2e-lc-attach2";
+  const asgName = "e2e-asg-attach2";
+
+  await asc.send(
+    new CreateLaunchConfigurationCommand({
+      LaunchConfigurationName: lcName,
+      ImageId: "ami-00000011",
+      InstanceType: "t3.micro",
+    }),
+  );
+  await asc.send(
+    new CreateAutoScalingGroupCommand({
+      AutoScalingGroupName: asgName,
+      LaunchConfigurationName: lcName,
+      MinSize: 0,
+      MaxSize: 2,
+      DesiredCapacity: 0,
+      AvailabilityZones: ["us-east-1a"],
+    }),
+  );
+
+  await asc.send(
+    new AttachInstancesCommand({
+      AutoScalingGroupName: asgName,
+      InstanceIds: ["i-as4001", "i-as4002"],
+    }),
+  );
+  const afterAttach = await asc.send(
+    new DescribeAutoScalingGroupsCommand({ AutoScalingGroupNames: [asgName] }),
+  );
+  expect(afterAttach.AutoScalingGroups![0]!.DesiredCapacity).toBe(2);
+  expect(afterAttach.AutoScalingGroups![0]!.Instances).toHaveLength(2);
+
+  await expect(
+    asc.send(
+      new AttachInstancesCommand({
+        AutoScalingGroupName: asgName,
+        InstanceIds: ["i-as4003"],
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await asc.send(
+    new DeleteAutoScalingGroupCommand({ AutoScalingGroupName: asgName, ForceDelete: true }),
+  );
+  await asc.send(
+    new DeleteLaunchConfigurationCommand({ LaunchConfigurationName: lcName }),
   );
 });

@@ -1,14 +1,19 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  BatchLoadDataFormat,
+  CreateBatchLoadTaskCommand,
   CreateDatabaseCommand,
   CreateTableCommand,
   DeleteDatabaseCommand,
   DeleteTableCommand,
+  DescribeBatchLoadTaskCommand,
   DescribeDatabaseCommand,
   DescribeTableCommand,
+  ListBatchLoadTasksCommand,
   ListDatabasesCommand,
   ListTablesCommand,
+  S3EncryptionOption,
   TagResourceCommand,
   TimestreamWriteClient,
   UntagResourceCommand,
@@ -235,6 +240,9 @@ test("Timestream WriteRecords and Query", async () => {
   );
   expect(limitedRows.Rows?.length).toBe(2);
 
+  await wc.send(
+    new DeleteTableCommand({ DatabaseName: dbName, TableName: tableName }),
+  );
   await wc.send(new DeleteDatabaseCommand({ DatabaseName: dbName }));
 });
 
@@ -307,5 +315,113 @@ test("Timestream WriteRecords with CommonAttributes", async () => {
   );
   expect(result.Rows?.length).toBe(2);
 
+  await wc.send(
+    new DeleteTableCommand({ DatabaseName: dbName, TableName: tableName }),
+  );
   await wc.send(new DeleteDatabaseCommand({ DatabaseName: dbName }));
+});
+
+test("Timestream batch load task lifecycle", async () => {
+  const wc = writeClient();
+  const dbName = "e2e-batch-db";
+  const tableName = "e2e-batch-table";
+
+  await wc.send(new CreateDatabaseCommand({ DatabaseName: dbName }));
+  await wc.send(
+    new CreateTableCommand({ DatabaseName: dbName, TableName: tableName }),
+  );
+
+  const dataSourceConfig = {
+    DataSourceS3Configuration: { BucketName: "test-bucket" },
+    CsvConfiguration: {},
+    DataFormat: BatchLoadDataFormat.CSV,
+  };
+  const reportConfig = {
+    ReportS3Configuration: {
+      BucketName: "test-bucket",
+      EncryptionOption: S3EncryptionOption.SSE_S3,
+    },
+  };
+
+  const created = await wc.send(
+    new CreateBatchLoadTaskCommand({
+      TargetDatabaseName: dbName,
+      TargetTableName: tableName,
+      DataSourceConfiguration: dataSourceConfig,
+      ReportConfiguration: reportConfig,
+    }),
+  );
+  expect(created.TaskId).toBeTruthy();
+
+  const clientToken = "idempotency-token-abc";
+  const first = await wc.send(
+    new CreateBatchLoadTaskCommand({
+      TargetDatabaseName: dbName,
+      TargetTableName: tableName,
+      ClientToken: clientToken,
+      DataSourceConfiguration: dataSourceConfig,
+      ReportConfiguration: reportConfig,
+    }),
+  );
+  const second = await wc.send(
+    new CreateBatchLoadTaskCommand({
+      TargetDatabaseName: dbName,
+      TargetTableName: tableName,
+      ClientToken: clientToken,
+      DataSourceConfiguration: dataSourceConfig,
+      ReportConfiguration: reportConfig,
+    }),
+  );
+  expect(first.TaskId).toBe(second.TaskId);
+
+  const described = await wc.send(
+    new DescribeBatchLoadTaskCommand({ TaskId: created.TaskId }),
+  );
+  expect(described.BatchLoadTaskDescription?.TargetDatabaseName).toBe(dbName);
+  expect(described.BatchLoadTaskDescription?.TargetTableName).toBe(tableName);
+  expect(described.BatchLoadTaskDescription?.CreationTime).toBeDefined();
+  expect(described.BatchLoadTaskDescription?.TaskStatus).toBe("SUCCEEDED");
+
+  const listed = await wc.send(new ListBatchLoadTasksCommand({}));
+  expect(
+    (listed.BatchLoadTasks ?? []).some((t) => t.TaskId === created.TaskId),
+  ).toBeTrue();
+
+  const filteredSucceeded = await wc.send(
+    new ListBatchLoadTasksCommand({ TaskStatus: "SUCCEEDED" }),
+  );
+  expect(
+    (filteredSucceeded.BatchLoadTasks ?? []).every(
+      (t) => t.TaskStatus === "SUCCEEDED",
+    ),
+  ).toBeTrue();
+
+  await wc.send(
+    new DeleteTableCommand({ DatabaseName: dbName, TableName: tableName }),
+  );
+  await wc.send(new DeleteDatabaseCommand({ DatabaseName: dbName }));
+});
+
+test("Timestream DeleteDatabase guard requires empty database", async () => {
+  const wc = writeClient();
+  const dbName = "e2e-guard-db";
+  const tableName = "e2e-guard-table";
+
+  await wc.send(new CreateDatabaseCommand({ DatabaseName: dbName }));
+  await wc.send(
+    new CreateTableCommand({ DatabaseName: dbName, TableName: tableName }),
+  );
+
+  await expect(
+    wc.send(new DeleteDatabaseCommand({ DatabaseName: dbName })),
+  ).rejects.toThrow();
+
+  await wc.send(
+    new DeleteTableCommand({ DatabaseName: dbName, TableName: tableName }),
+  );
+  await wc.send(new DeleteDatabaseCommand({ DatabaseName: dbName }));
+
+  await expect(
+    wc.send(new DescribeDatabaseCommand({ DatabaseName: dbName })),
+  ).rejects.toThrow();
 });

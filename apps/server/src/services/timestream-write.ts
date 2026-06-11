@@ -15,6 +15,7 @@ const tablePrefix = "table:" as const;
 export const recordPrefix = "record:" as const;
 const tagPrefix = "tags:" as const;
 const batchPrefix = "batch:" as const;
+const batchTokenPrefix = "batchtoken:" as const;
 
 type StoredDatabase = {
   DatabaseName: string;
@@ -35,6 +36,8 @@ type StoredTable = {
     MemoryStoreRetentionPeriodInHours: number;
     MagneticStoreRetentionPeriodInDays: number;
   };
+  MagneticStoreWriteProperties?: unknown;
+  Schema?: unknown;
 };
 
 export type StoredRecord = {
@@ -57,9 +60,14 @@ export type StoredRecord = {
 type StoredBatchLoadTask = {
   TaskId: string;
   TaskStatus: string;
-  DatabaseName: string;
-  TableName: string;
+  TargetDatabaseName: string;
+  TargetTableName: string;
   CreationTime: number;
+  LastUpdatedTime: number;
+  DataSourceConfiguration?: unknown;
+  ReportConfiguration?: unknown;
+  DataModelConfiguration?: unknown;
+  RecordVersion?: number;
 };
 
 const requireString = (
@@ -79,6 +87,17 @@ const optionalString = (
 ): string | undefined => {
   const value = input[field];
   return typeof value === "string" ? value : undefined;
+};
+
+const requireObject = (
+  input: Record<string, unknown>,
+  field: string,
+): unknown => {
+  const value = input[field];
+  if (typeof value !== "object" || value === null) {
+    throw awsError("ValidationException", `${field} is required.`, 400);
+  }
+  return value;
 };
 
 const makeArn = (ctx: ServiceContext, resource: string, name: string): string =>
@@ -137,6 +156,10 @@ const tableView = (table: StoredTable) => ({
   RetentionProperties: table.RetentionProperties,
   CreationTime: Math.floor(table.CreationTime / 1000),
   LastUpdatedTime: Math.floor(table.LastUpdatedTime / 1000),
+  ...(table.MagneticStoreWriteProperties !== undefined
+    ? { MagneticStoreWriteProperties: table.MagneticStoreWriteProperties }
+    : {}),
+  ...(table.Schema !== undefined ? { Schema: table.Schema } : {}),
 });
 
 const DescribeEndpoints: OperationHandler = (_input, ctx) => ({
@@ -183,12 +206,26 @@ const DescribeDatabase: OperationHandler = (input, ctx) => {
   return { Database: dbView(db, ctx) };
 };
 
-const ListDatabases: OperationHandler = (_input, ctx) => {
-  const dbs = ctx.store
+const ListDatabases: OperationHandler = (input, ctx) => {
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const nextToken = optionalString(input, "NextToken");
+  let entries = ctx.store
     .list<StoredDatabase>()
     .filter((e) => e.key.startsWith(dbPrefix))
-    .map((e) => dbView(e.value, ctx));
-  return { Databases: dbs };
+    .sort((a, b) => (a.key < b.key ? -1 : 1));
+  if (nextToken !== undefined) {
+    entries = entries.filter((e) => e.key > nextToken);
+  }
+  const hasMore = maxResults !== undefined && entries.length > maxResults;
+  const page =
+    maxResults !== undefined ? entries.slice(0, maxResults) : entries;
+  return {
+    Databases: page.map((e) => dbView(e.value, ctx)),
+    ...(hasMore && page.length > 0
+      ? { NextToken: page[page.length - 1].key }
+      : {}),
+  };
 };
 
 const UpdateDatabase: OperationHandler = (input, ctx) => {
@@ -206,14 +243,19 @@ const UpdateDatabase: OperationHandler = (input, ctx) => {
 
 const DeleteDatabase: OperationHandler = (input, ctx) => {
   const DatabaseName = requireString(input, "DatabaseName");
-  requireDb(ctx, DatabaseName);
-  ctx.store.delete(`${dbPrefix}${DatabaseName}`);
-  const tablesToDelete = ctx.store
+  const db = requireDb(ctx, DatabaseName);
+  const tables = ctx.store
     .list<StoredTable>()
     .filter((e) => e.key.startsWith(`${tablePrefix}${DatabaseName}/`));
-  for (const t of tablesToDelete) {
-    ctx.store.delete(t.key);
+  if (tables.length > 0) {
+    throw awsError(
+      "ValidationException",
+      `All tables in the database must be deleted first.`,
+      400,
+    );
   }
+  ctx.store.delete(`${dbPrefix}${DatabaseName}`);
+  ctx.store.delete(`${tagPrefix}${db.Arn}`);
   return {};
 };
 
@@ -251,6 +293,15 @@ const CreateTable: OperationHandler = (input, ctx) => {
     CreationTime: now,
     LastUpdatedTime: now,
     RetentionProperties: retention,
+    MagneticStoreWriteProperties:
+      typeof input["MagneticStoreWriteProperties"] === "object" &&
+      input["MagneticStoreWriteProperties"] !== null
+        ? input["MagneticStoreWriteProperties"]
+        : undefined,
+    Schema:
+      typeof input["Schema"] === "object" && input["Schema"] !== null
+        ? input["Schema"]
+        : undefined,
   };
   ctx.store.set(tableKey, table);
   const tags = input["Tags"];
@@ -273,13 +324,27 @@ const DescribeTable: OperationHandler = (input, ctx) => {
 
 const ListTables: OperationHandler = (input, ctx) => {
   const DatabaseName = optionalString(input, "DatabaseName");
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const nextToken = optionalString(input, "NextToken");
   const prefix =
     DatabaseName !== undefined ? `${tablePrefix}${DatabaseName}/` : tablePrefix;
-  const tables = ctx.store
+  let entries = ctx.store
     .list<StoredTable>()
     .filter((e) => e.key.startsWith(prefix))
-    .map((e) => tableView(e.value));
-  return { Tables: tables };
+    .sort((a, b) => (a.key < b.key ? -1 : 1));
+  if (nextToken !== undefined) {
+    entries = entries.filter((e) => e.key > nextToken);
+  }
+  const hasMore = maxResults !== undefined && entries.length > maxResults;
+  const page =
+    maxResults !== undefined ? entries.slice(0, maxResults) : entries;
+  return {
+    Tables: page.map((e) => tableView(e.value)),
+    ...(hasMore && page.length > 0
+      ? { NextToken: page[page.length - 1].key }
+      : {}),
+  };
 };
 
 const UpdateTable: OperationHandler = (input, ctx) => {
@@ -298,6 +363,15 @@ const UpdateTable: OperationHandler = (input, ctx) => {
     ...table,
     RetentionProperties: retention,
     LastUpdatedTime: Date.now(),
+    MagneticStoreWriteProperties:
+      typeof input["MagneticStoreWriteProperties"] === "object" &&
+      input["MagneticStoreWriteProperties"] !== null
+        ? input["MagneticStoreWriteProperties"]
+        : table.MagneticStoreWriteProperties,
+    Schema:
+      typeof input["Schema"] === "object" && input["Schema"] !== null
+        ? input["Schema"]
+        : table.Schema,
   };
   ctx.store.set(`${tablePrefix}${DatabaseName}/${TableName}`, updated);
   return { Table: tableView(updated) };
@@ -306,8 +380,9 @@ const UpdateTable: OperationHandler = (input, ctx) => {
 const DeleteTable: OperationHandler = (input, ctx) => {
   const DatabaseName = requireString(input, "DatabaseName");
   const TableName = requireString(input, "TableName");
-  requireTable(ctx, DatabaseName, TableName);
+  const table = requireTable(ctx, DatabaseName, TableName);
   ctx.store.delete(`${tablePrefix}${DatabaseName}/${TableName}`);
+  ctx.store.delete(`${tagPrefix}${table.Arn}`);
   const recordsToDelete = ctx.store
     .list<StoredRecord>()
     .filter((e) =>
@@ -476,8 +551,27 @@ const WriteRecords: OperationHandler = (input, ctx) => {
   };
 };
 
+const parseArn = (ctx: ServiceContext, arn: string): void => {
+  const tableMatch = arn.match(
+    /^arn:aws:timestream:[^:]+:[^:]+:database:([^:]+):table\/(.+)$/,
+  );
+  if (tableMatch) {
+    requireTable(ctx, tableMatch[1], tableMatch[2]);
+    return;
+  }
+  const dbMatch = arn.match(
+    /^arn:aws:timestream:[^:]+:[^:]+:database\/([^:/]+)$/,
+  );
+  if (dbMatch) {
+    requireDb(ctx, dbMatch[1]);
+    return;
+  }
+  throw awsError("ValidationException", `Invalid ARN: ${arn}`, 400);
+};
+
 const TagResource: OperationHandler = (input, ctx) => {
   const ResourceARN = requireString(input, "ResourceARN");
+  parseArn(ctx, ResourceARN);
   const tags = input["Tags"];
   if (!Array.isArray(tags)) {
     throw awsError("ValidationException", "Tags is required.", 400);
@@ -493,12 +587,17 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const ResourceARN = requireString(input, "ResourceARN");
+  parseArn(ctx, ResourceARN);
   const tagKeys = input["TagKeys"];
   if (!Array.isArray(tagKeys)) {
     throw awsError("ValidationException", "TagKeys is required.", 400);
   }
-  const existing =
-    ctx.store.get<Record<string, string>>(`${tagPrefix}${ResourceARN}`) ?? {};
+  const existing = ctx.store.get<Record<string, string>>(
+    `${tagPrefix}${ResourceARN}`,
+  );
+  if (existing === undefined) {
+    return {};
+  }
   for (const key of tagKeys as string[]) {
     delete existing[key];
   }
@@ -508,6 +607,7 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const ResourceARN = requireString(input, "ResourceARN");
+  parseArn(ctx, ResourceARN);
   const existing =
     ctx.store.get<Record<string, string>>(`${tagPrefix}${ResourceARN}`) ?? {};
   const Tags = Object.entries(existing).map(([Key, Value]) => ({
@@ -518,18 +618,46 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
 };
 
 const CreateBatchLoadTask: OperationHandler = (input, ctx) => {
-  const DatabaseName = requireString(input, "DatabaseName");
-  const TableName = requireString(input, "TableName");
-  requireTable(ctx, DatabaseName, TableName);
+  const TargetDatabaseName = requireString(input, "TargetDatabaseName");
+  const TargetTableName = requireString(input, "TargetTableName");
+  const DataSourceConfiguration = requireObject(
+    input,
+    "DataSourceConfiguration",
+  );
+  const ReportConfiguration = requireObject(input, "ReportConfiguration");
+  requireTable(ctx, TargetDatabaseName, TargetTableName);
+  const clientToken = optionalString(input, "ClientToken");
+  if (clientToken !== undefined) {
+    const existing = ctx.store.get<string>(`${batchTokenPrefix}${clientToken}`);
+    if (existing !== undefined) {
+      return { TaskId: existing };
+    }
+  }
   const TaskId = crypto.randomUUID();
+  const now = Date.now();
   const task: StoredBatchLoadTask = {
     TaskId,
-    TaskStatus: "CREATED",
-    DatabaseName,
-    TableName,
-    CreationTime: Date.now(),
+    TaskStatus: "SUCCEEDED",
+    TargetDatabaseName,
+    TargetTableName,
+    CreationTime: now,
+    LastUpdatedTime: now,
+    DataSourceConfiguration,
+    ReportConfiguration,
+    DataModelConfiguration:
+      typeof input["DataModelConfiguration"] === "object" &&
+      input["DataModelConfiguration"] !== null
+        ? input["DataModelConfiguration"]
+        : undefined,
+    RecordVersion:
+      typeof input["RecordVersion"] === "number"
+        ? input["RecordVersion"]
+        : undefined,
   };
   ctx.store.set(`${batchPrefix}${TaskId}`, task);
+  if (clientToken !== undefined) {
+    ctx.store.set(`${batchTokenPrefix}${clientToken}`, TaskId);
+  }
   return { TaskId };
 };
 
@@ -547,23 +675,55 @@ const DescribeBatchLoadTask: OperationHandler = (input, ctx) => {
     BatchLoadTaskDescription: {
       TaskId: task.TaskId,
       TaskStatus: task.TaskStatus,
-      DatabaseName: task.DatabaseName,
-      TableName: task.TableName,
+      TargetDatabaseName: task.TargetDatabaseName,
+      TargetTableName: task.TargetTableName,
+      CreationTime: Math.floor(task.CreationTime / 1000),
+      LastUpdatedTime: Math.floor(task.LastUpdatedTime / 1000),
+      ...(task.DataSourceConfiguration !== undefined
+        ? { DataSourceConfiguration: task.DataSourceConfiguration }
+        : {}),
+      ...(task.ReportConfiguration !== undefined
+        ? { ReportConfiguration: task.ReportConfiguration }
+        : {}),
+      ...(task.DataModelConfiguration !== undefined
+        ? { DataModelConfiguration: task.DataModelConfiguration }
+        : {}),
+      ...(task.RecordVersion !== undefined
+        ? { RecordVersion: task.RecordVersion }
+        : {}),
     },
   };
 };
 
-const ListBatchLoadTasks: OperationHandler = (_input, ctx) => {
-  const tasks = ctx.store
+const ListBatchLoadTasks: OperationHandler = (input, ctx) => {
+  const taskStatus = optionalString(input, "TaskStatus");
+  const maxResults =
+    typeof input["MaxResults"] === "number" ? input["MaxResults"] : undefined;
+  const nextToken = optionalString(input, "NextToken");
+  let entries = ctx.store
     .list<StoredBatchLoadTask>()
     .filter((e) => e.key.startsWith(batchPrefix))
-    .map((e) => ({
+    .filter(
+      (e) => taskStatus === undefined || e.value.TaskStatus === taskStatus,
+    )
+    .sort((a, b) => (a.key < b.key ? -1 : 1));
+  if (nextToken !== undefined) {
+    entries = entries.filter((e) => e.key > nextToken);
+  }
+  const hasMore = maxResults !== undefined && entries.length > maxResults;
+  const page =
+    maxResults !== undefined ? entries.slice(0, maxResults) : entries;
+  return {
+    BatchLoadTasks: page.map((e) => ({
       TaskId: e.value.TaskId,
       TaskStatus: e.value.TaskStatus,
-      DatabaseName: e.value.DatabaseName,
-      TableName: e.value.TableName,
-    }));
-  return { BatchLoadTasks: tasks };
+      DatabaseName: e.value.TargetDatabaseName,
+      TableName: e.value.TargetTableName,
+    })),
+    ...(hasMore && page.length > 0
+      ? { NextToken: page[page.length - 1].key }
+      : {}),
+  };
 };
 
 const ResumeBatchLoadTask: OperationHandler = (input, ctx) => {

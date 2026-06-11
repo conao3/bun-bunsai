@@ -1,0 +1,53 @@
+{
+  "clientPackage": "@aws-sdk/client-transcribe",
+  "clientName": "TranscribeClient",
+  "steps": [
+    {
+      "command": "StartTranscriptionJobCommand",
+      "input": {
+        "TranscriptionJobName": "parity-transcribe-job",
+        "LanguageCode": "en-US",
+        "Media": { "MediaFileUri": "s3://parity-bucket/test-audio.mp3" }
+      },
+      "expected": {
+        "TranscriptionJob": {
+          "TranscriptionJobName": "parity-transcribe-job",
+          "TranscriptionJobStatus": "IN_PROGRESS",
+          "LanguageCode": "en-US",
+          "Media": { "MediaFileUri": "s3://parity-bucket/test-audio.mp3" }
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "job",
+      "refs": {}
+    },
+    {
+      "command": "GetTranscriptionJobCommand",
+      "input": {
+        "TranscriptionJobName": "${job.TranscriptionJob.TranscriptionJobName}"
+      },
+      "expected": {
+        "TranscriptionJob": {
+          "TranscriptionJobName": "parity-transcribe-job",
+          "TranscriptionJobStatus": "COMPLETED",
+          "LanguageCode": "en-US",
+          "Media": { "MediaFileUri": "s3://parity-bucket/test-audio.mp3" },
+          "Transcript": { "TranscriptFileUri": "<ANY>" }
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "job.TranscriptionJob.TranscriptionJobName": "job" }
+    },
+    {
+      "command": "DeleteTranscriptionJobCommand",
+      "input": {
+        "TranscriptionJobName": "${job.TranscriptionJob.TranscriptionJobName}"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "job.TranscriptionJob.TranscriptionJobName": "job" }
+    }
+  ]
+}

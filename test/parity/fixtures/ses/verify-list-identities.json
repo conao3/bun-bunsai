@@ -1,0 +1,30 @@
+{
+  "clientPackage": "@aws-sdk/client-ses",
+  "clientName": "SESClient",
+  "steps": [
+    {
+      "command": "VerifyEmailIdentityCommand",
+      "input": { "EmailAddress": "parity-ses@example.com" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListIdentitiesCommand",
+      "input": {},
+      "expected": { "Identities": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteIdentityCommand",
+      "input": { "Identity": "parity-ses@example.com" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

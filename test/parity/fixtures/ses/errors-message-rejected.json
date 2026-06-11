@@ -1,0 +1,21 @@
+{
+  "clientPackage": "@aws-sdk/client-ses",
+  "clientName": "SESClient",
+  "steps": [
+    {
+      "command": "SendEmailCommand",
+      "input": {
+        "Source": "unverified-parity@example.com",
+        "Destination": { "ToAddresses": ["recipient@example.com"] },
+        "Message": {
+          "Subject": { "Data": "Parity test" },
+          "Body": { "Text": { "Data": "Parity test body" } }
+        }
+      },
+      "expectedError": { "name": "MessageRejected", "statusCode": 400 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

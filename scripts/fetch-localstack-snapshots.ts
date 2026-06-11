@@ -30,6 +30,8 @@ const SERVICES: Record<string, string> = {
   firehose: "tests/aws/services/firehose",
   ec2: "tests/aws/services/ec2",
   route53resolver: "tests/aws/services/route53resolver",
+  ses: "tests/aws/services/ses",
+  transcribe: "tests/aws/services/transcribe",
 };
 
 type ContentEntry = {

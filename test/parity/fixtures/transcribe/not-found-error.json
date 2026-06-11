@@ -1,0 +1,22 @@
+{
+  "clientPackage": "@aws-sdk/client-transcribe",
+  "clientName": "TranscribeClient",
+  "steps": [
+    {
+      "command": "GetTranscriptionJobCommand",
+      "input": { "TranscriptionJobName": "parity-transcribe-nonexistent" },
+      "expectedError": { "name": "NotFoundException", "statusCode": 400 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTranscriptionJobCommand",
+      "input": { "TranscriptionJobName": "parity-transcribe-nonexistent" },
+      "expectedError": { "name": "NotFoundException", "statusCode": 400 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

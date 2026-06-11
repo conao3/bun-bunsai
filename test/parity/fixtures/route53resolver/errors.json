@@ -1,0 +1,28 @@
+{
+  "clientPackage": "@aws-sdk/client-route53resolver",
+  "clientName": "Route53ResolverClient",
+  "steps": [
+    {
+      "command": "GetResolverEndpointCommand",
+      "input": { "ResolverEndpointId": "rslvr-in-nonexistent000" },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetResolverRuleCommand",
+      "input": { "ResolverRuleId": "rslvr-rr-nonexistent000" },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

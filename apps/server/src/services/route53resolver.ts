@@ -235,7 +235,7 @@ const requireEndpoint = (ctx: ServiceContext, id: string): StoredEndpoint => {
     throw awsError(
       "ResourceNotFoundException",
       `Resolver endpoint with ID '${id}' does not exist.`,
-      404,
+      400,
     );
   }
   return ep;
@@ -250,7 +250,7 @@ const requireFwrg = (
     throw awsError(
       "ResourceNotFoundException",
       `Firewall rule group with ID '${id}' does not exist.`,
-      404,
+      400,
     );
   }
   return g;
@@ -265,7 +265,7 @@ const requireFwdl = (
     throw awsError(
       "ResourceNotFoundException",
       `Firewall domain list with ID '${id}' does not exist.`,
-      404,
+      400,
     );
   }
   return d;
@@ -280,7 +280,7 @@ const requireFwAssoc = (
     throw awsError(
       "ResourceNotFoundException",
       `Firewall rule group association with ID '${id}' does not exist.`,
-      404,
+      400,
     );
   }
   return a;
@@ -295,7 +295,7 @@ const requireQlConfig = (
     throw awsError(
       "ResourceNotFoundException",
       `Resolver query log configuration with ID '${id}' does not exist.`,
-      404,
+      400,
     );
   }
   return c;
@@ -310,7 +310,7 @@ const requireQlAssoc = (
     throw awsError(
       "ResourceNotFoundException",
       `Resolver query log configuration association with ID '${id}' does not exist.`,
-      404,
+      400,
     );
   }
   return a;
@@ -325,7 +325,7 @@ const requireOutpost = (
     throw awsError(
       "ResourceNotFoundException",
       `Outpost resolver with ID '${id}' does not exist.`,
-      404,
+      400,
     );
   }
   return o;
@@ -337,7 +337,7 @@ const requireRule = (ctx: ServiceContext, id: string): StoredRule => {
     throw awsError(
       "ResourceNotFoundException",
       `Resolver rule with ID '${id}' does not exist.`,
-      404,
+      400,
     );
   }
   return rule;
@@ -352,7 +352,7 @@ const requireAssoc = (
     throw awsError(
       "ResourceNotFoundException",
       `Resolver rule association with ID '${id}' does not exist.`,
-      404,
+      400,
     );
   }
   return assoc;
@@ -364,7 +364,7 @@ const requireArnExists = (ctx: ServiceContext, arn: string): void => {
     throw awsError(
       "ResourceNotFoundException",
       `Resource '${arn}' does not exist.`,
-      404,
+      400,
     );
   }
   const slashIdx = parts[5].indexOf("/");
@@ -372,7 +372,7 @@ const requireArnExists = (ctx: ServiceContext, arn: string): void => {
     throw awsError(
       "ResourceNotFoundException",
       `Resource '${arn}' does not exist.`,
-      404,
+      400,
     );
   }
   const resourceType = parts[5].slice(0, slashIdx);
@@ -387,7 +387,7 @@ const requireArnExists = (ctx: ServiceContext, arn: string): void => {
     throw awsError(
       "ResourceNotFoundException",
       `Resource '${arn}' does not exist.`,
-      404,
+      400,
     );
   }
 };
@@ -952,7 +952,7 @@ const DisassociateResolverEndpointIpAddress: OperationHandler = (
     throw awsError(
       "ResourceNotFoundException",
       `IP address not found on endpoint '${id}'.`,
-      404,
+      400,
     );
   }
   if (remaining.length < 2) {
@@ -1230,7 +1230,7 @@ const DisassociateResolverRule: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `The Resolver rule '${ruleId}' is not associated with VPC '${vpcId}'.`,
-      404,
+      400,
     );
   }
 
@@ -1544,7 +1544,7 @@ const UpdateFirewallRule: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Firewall rule not found.`,
-      404,
+      400,
     );
   }
   const updated: StoredFirewallRule = {
@@ -1587,7 +1587,7 @@ const DeleteFirewallRule: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `Firewall rule not found.`,
-      404,
+      400,
     );
   }
   ctx.store.delete(key);
@@ -1826,7 +1826,7 @@ const GetFirewallRuleGroupPolicy: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `No policy found for '${arn}'.`,
-      404,
+      400,
     );
   }
   return { FirewallRuleGroupPolicy: policy };
@@ -2046,7 +2046,7 @@ const DisassociateResolverQueryLogConfig: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `VPC '${resourceId}' is not associated with query log config '${configId}'.`,
-      404,
+      400,
     );
   }
   const assoc = existing.value;
@@ -2080,7 +2080,7 @@ const GetResolverQueryLogConfigPolicy: OperationHandler = (input, ctx) => {
     throw awsError(
       "ResourceNotFoundException",
       `No policy found for '${arn}'.`,
-      404,
+      400,
     );
   }
   return { ResolverQueryLogConfigPolicy: policy };

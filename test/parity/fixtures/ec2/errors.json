@@ -1,0 +1,14 @@
+{
+  "clientPackage": "@aws-sdk/client-ec2",
+  "clientName": "EC2Client",
+  "steps": [
+    {
+      "command": "AuthorizeSecurityGroupIngressCommand",
+      "input": { "GroupId": "sg-nonexistent000" },
+      "expectedError": { "name": "InvalidGroup.NotFound", "statusCode": 400 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

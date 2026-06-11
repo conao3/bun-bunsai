@@ -462,10 +462,10 @@ const PutImage: OperationHandler = (input, ctx) => {
     typeof input["imageDigest"] === "string" && input["imageDigest"] !== ""
       ? (input["imageDigest"] as string)
       : syntheticDigest(imageManifest);
-  const existing = repository.images.find(
-    (img) => img.imageDigest === imageDigest,
+  const exactMatch = repository.images.find(
+    (img) => img.imageDigest === imageDigest && img.imageTag === imageTag,
   );
-  if (existing !== undefined && existing.imageTag === imageTag) {
+  if (exactMatch !== undefined) {
     throw awsError(
       "ImageAlreadyExistsException",
       "Image already exists in the repository.",
@@ -498,14 +498,7 @@ const PutImage: OperationHandler = (input, ctx) => {
     imagePushedAt: Math.floor(Date.now() / 1000),
     imageSizeInBytes: imageManifest.length,
   };
-  if (existing !== undefined) {
-    const idx = repository.images.findIndex(
-      (img) => img.imageDigest === imageDigest,
-    );
-    repository.images[idx] = image;
-  } else {
-    repository.images.push(image);
-  }
+  repository.images.push(image);
   ctx.store.set(name, repository);
   return {
     image: {

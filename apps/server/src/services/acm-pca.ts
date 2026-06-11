@@ -1,8 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import acmPcaModel from "../../../../test/vendor/aws-models/acm-pca.json" with {
-  type: "json",
-};
+import acmPcaModel from "../../../../test/vendor/aws-models/acm-pca.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,
@@ -96,9 +94,7 @@ const checkIdempotency = (
   token: string | undefined,
 ): unknown | undefined => {
   if (token === undefined || token === "") return undefined;
-  const record = ctx.store.get<IdempotencyRecord>(
-    idempotencyKey(scope, token),
-  );
+  const record = ctx.store.get<IdempotencyRecord>(idempotencyKey(scope, token));
   if (record === undefined) return undefined;
   const now = Math.floor(Date.now() / 1000);
   if (now >= record.expiresAt) return undefined;
@@ -303,7 +299,10 @@ const ImportCertificateAuthorityCertificate: OperationHandler = (
   ca.LastStateChangeAt = now;
   ca.NotBefore = now - 60;
   ca.NotAfter = now + 365 * 24 * 3600;
-  ca.Serial = Buffer.from(id, "utf8").toString("hex").substring(0, 32).toUpperCase();
+  ca.Serial = Buffer.from(id, "utf8")
+    .toString("hex")
+    .substring(0, 32)
+    .toUpperCase();
   ca.certPem = pemOf(id);
   ca.certChainPem =
     typeof input.CertificateChain === "string" && input.CertificateChain !== ""

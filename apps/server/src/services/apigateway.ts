@@ -1217,7 +1217,7 @@ const PutMethod: OperationHandler = (input, ctx) => {
     apiKeyRequired:
       typeof input["apiKeyRequired"] === "boolean"
         ? input["apiKeyRequired"]
-        : undefined,
+        : false,
     operationName: stringOrUndefined(input["operationName"]),
     requestParameters:
       input["requestParameters"] !== null &&

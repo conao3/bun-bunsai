@@ -1,0 +1,45 @@
+{
+  "clientPackage": "@aws-sdk/client-acm",
+  "clientName": "ACMClient",
+  "steps": [
+    {
+      "command": "DescribeCertificateCommand",
+      "input": {
+        "CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/nonexistent-id"
+      },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteCertificateCommand",
+      "input": {
+        "CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/nonexistent-id"
+      },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTagsForCertificateCommand",
+      "input": {
+        "CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/nonexistent-id"
+      },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

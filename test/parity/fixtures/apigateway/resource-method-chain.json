@@ -1,0 +1,81 @@
+{
+  "clientPackage": "@aws-sdk/client-api-gateway",
+  "clientName": "APIGatewayClient",
+  "steps": [
+    {
+      "command": "CreateRestApiCommand",
+      "input": { "name": "parity-apigw-resource" },
+      "expected": { "id": "<ANY>", "rootResourceId": "<ANY>" },
+      "ignorePaths": [
+        "$metadata",
+        "name",
+        "apiKeySource",
+        "disableExecuteApiEndpoint",
+        "createdDate",
+        "endpointConfiguration"
+      ],
+      "saveAs": "api",
+      "refs": {}
+    },
+    {
+      "command": "CreateResourceCommand",
+      "input": {
+        "restApiId": "${api.id}",
+        "parentId": "${api.rootResourceId}",
+        "pathPart": "pets"
+      },
+      "expected": {
+        "id": "<ANY>",
+        "parentId": "<ANY>",
+        "path": "/pets",
+        "pathPart": "pets"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "resource",
+      "refs": { "api.id": "api", "api.rootResourceId": "api" }
+    },
+    {
+      "command": "GetResourcesCommand",
+      "input": { "restApiId": "${api.id}" },
+      "expected": {
+        "items": [
+          { "id": "<ANY>", "path": "/" },
+          {
+            "id": "<ANY>",
+            "parentId": "<ANY>",
+            "path": "/pets",
+            "pathPart": "pets"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "api.id": "api" }
+    },
+    {
+      "command": "PutMethodCommand",
+      "input": {
+        "restApiId": "${api.id}",
+        "resourceId": "${resource.id}",
+        "httpMethod": "GET",
+        "authorizationType": "NONE"
+      },
+      "expected": {
+        "httpMethod": "GET",
+        "authorizationType": "NONE",
+        "apiKeyRequired": false
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "api.id": "api", "resource.id": "resource" }
+    },
+    {
+      "command": "DeleteRestApiCommand",
+      "input": { "restApiId": "${api.id}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "api.id": "api" }
+    }
+  ]
+}

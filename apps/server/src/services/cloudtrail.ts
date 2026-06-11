@@ -112,9 +112,9 @@ type StoredEvent = {
 const trailKey = (name: string): string => `trail/${name}`;
 
 const eventKey = (seq: number): string =>
-  `event/${seq.toString().padStart(12, "0")}`;
+  `_event/${seq.toString().padStart(12, "0")}`;
 
-const loggingCountKey = "loggingTrailCount";
+const loggingCountKey = "_loggingTrailCount";
 
 const selectorsKey = (name: string): string => `selectors/${name}`;
 
@@ -1601,7 +1601,7 @@ const LookupEvents: OperationHandler = (input, ctx) => {
 
   const allEvents = ctx.store
     .list<StoredEvent>()
-    .filter(({ key }) => key.startsWith("event/"))
+    .filter(({ key }) => key.startsWith("_event/"))
     .map(({ value }) => value)
     .sort((a, b) => b.EventTime - a.EventTime);
 
@@ -1681,8 +1681,8 @@ export const recordManagementEvent = (
   const loggingCount = ctStore.get<number>(loggingCountKey) ?? 0;
   if (loggingCount <= 0) return;
 
-  const seq = (ctStore.get<number>("eventSeq") ?? 0) + 1;
-  ctStore.set("eventSeq", seq);
+  const seq = (ctStore.get<number>("_eventSeq") ?? 0) + 1;
+  ctStore.set("_eventSeq", seq);
 
   const eventSource = `${service}.amazonaws.com`;
   const readOnly = /^(Get|List|Describe|Lookup)/.test(operation)

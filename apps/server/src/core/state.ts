@@ -56,6 +56,7 @@ export const enumerateResources = (
     const [account, region, service] = scope.split("/");
     if (filterService !== undefined && service !== filterService) continue;
     for (const [key, value] of bucket.entries()) {
+      if (key.startsWith("_")) continue;
       result.push({ account, region, service, key, value });
     }
   }

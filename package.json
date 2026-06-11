@@ -83,6 +83,7 @@
     "@aws-sdk/client-iot-events": "^3.1059.0",
     "@aws-sdk/client-iotsitewise": "^3.1059.0",
     "@aws-sdk/client-ivs": "^3.1059.0",
+    "@aws-sdk/client-kafka": "^3.1059.0",
     "@aws-sdk/client-kendra": "^3.1059.0",
     "@aws-sdk/client-keyspaces": "^3.1059.0",
     "@aws-sdk/client-kinesis": "^3.1058.0",

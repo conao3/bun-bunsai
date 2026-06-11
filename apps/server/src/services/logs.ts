@@ -1,5 +1,6 @@
 import { gzipSync } from "node:zlib";
 import { awsError } from "../core/framework.ts";
+import { deliverToArn } from "../core/events.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import logsModel from "../../../../test/vendor/aws-models/logs.json" with { type: "json" };
 import type {
@@ -643,8 +644,26 @@ const DescribeLogStreams: OperationHandler = (input, ctx) => {
 
 const matchesPattern = (pattern: string, message: string): boolean => {
   if (pattern === "") return true;
-  const terms = pattern.trim().split(/\s+/).filter(Boolean);
-  return terms.every((term) => message.includes(term));
+  const tokens = pattern.trim().match(/"[^"]*"|[^\s]+/g) ?? [];
+  const andTerms: string[] = [];
+  const orTerms: string[] = [];
+  const excludeTerms: string[] = [];
+  for (const token of tokens) {
+    if (token.startsWith("?")) {
+      orTerms.push(token.slice(1));
+    } else if (token.startsWith("-")) {
+      excludeTerms.push(token.slice(1));
+    } else if (token.startsWith('"') && token.endsWith('"')) {
+      andTerms.push(token.slice(1, -1));
+    } else {
+      andTerms.push(token);
+    }
+  }
+  if (!andTerms.every((t) => message.includes(t))) return false;
+  if (orTerms.length > 0 && !orTerms.some((t) => message.includes(t)))
+    return false;
+  if (excludeTerms.some((t) => message.includes(t))) return false;
+  return true;
 };
 
 const emitMetrics = (
@@ -696,12 +715,12 @@ const emitMetrics = (
   }
 };
 
-const deliverToSubscriptions = (
+const deliverToSubscriptions = async (
   ctx: ServiceContext,
   groupName: string,
   streamName: string,
   events: StoredEvent[],
-): void => {
+): Promise<void> => {
   const filters = ctx.store
     .list<StoredSubscriptionFilter>()
     .filter((entry) => entry.key.startsWith(`${subFilterPrefix}${groupName} `))
@@ -711,6 +730,28 @@ const deliverToSubscriptions = (
       matchesPattern(filter.filterPattern, e.message),
     );
     if (matching.length === 0) continue;
+    const cwPayload = {
+      messageType: "DATA_MESSAGE",
+      owner: ctx.account,
+      logGroup: groupName,
+      logStream: streamName,
+      subscriptionFilters: [filter.filterName],
+      logEvents: matching.map((e) => ({
+        id: e.eventId,
+        timestamp: e.timestamp,
+        message: e.message,
+      })),
+    };
+    if (filter.destinationArn.startsWith("arn:aws:lambda:")) {
+      const data = gzipSync(Buffer.from(JSON.stringify(cwPayload))).toString(
+        "base64",
+      );
+      await deliverToArn(ctx, filter.destinationArn, {
+        body: "",
+        event: { awslogs: { data } },
+      });
+      continue;
+    }
     if (!filter.destinationArn.startsWith("arn:aws:kinesis:")) continue;
     const parts = filter.destinationArn.split("/");
     const streamName2 = parts[parts.length - 1] ?? "";
@@ -730,19 +771,7 @@ const deliverToSubscriptions = (
     if (kStream === undefined) continue;
     const openShard = kStream.shards.find((s) => s.Status === "OPEN");
     if (openShard === undefined) continue;
-    const payload = {
-      messageType: "DATA_MESSAGE",
-      owner: ctx.account,
-      logGroup: groupName,
-      logStream: streamName,
-      subscriptionFilters: [filter.filterName],
-      logEvents: matching.map((e) => ({
-        id: e.eventId,
-        timestamp: e.timestamp,
-        message: e.message,
-      })),
-    };
-    const compressed = gzipSync(Buffer.from(JSON.stringify(payload)));
+    const compressed = gzipSync(Buffer.from(JSON.stringify(cwPayload)));
     const record = {
       SequenceNumber: String(kStream.nextSequence),
       Data: compressed.toString("binary"),
@@ -756,7 +785,7 @@ const deliverToSubscriptions = (
   }
 };
 
-const PutLogEvents: OperationHandler = (input, ctx) => {
+const PutLogEvents: OperationHandler = async (input, ctx) => {
   const groupName = requireString(input, "logGroupName");
   const streamName = requireString(input, "logStreamName");
   const group = requireGroup(ctx, groupName);
@@ -790,7 +819,7 @@ const PutLogEvents: OperationHandler = (input, ctx) => {
   stream.events.sort((a, b) => a.timestamp - b.timestamp);
   ctx.store.set(groupName, group);
   emitMetrics(ctx, groupName, newEvents);
-  deliverToSubscriptions(ctx, groupName, streamName, newEvents);
+  await deliverToSubscriptions(ctx, groupName, streamName, newEvents);
   return { nextSequenceToken: sequenceTokenOf(stream) };
 };
 
@@ -885,10 +914,8 @@ const FilterLogEvents: OperationHandler = (input, ctx) => {
     for (const event of stream.events) {
       if (startTime !== undefined && event.timestamp < startTime) continue;
       if (endTime !== undefined && event.timestamp >= endTime) continue;
-      if (pattern !== undefined && pattern !== "") {
-        const terms = pattern.trim().split(/\s+/).filter(Boolean);
-        if (!terms.every((term) => event.message.includes(term))) continue;
-      }
+      if (pattern !== undefined && !matchesPattern(pattern, event.message))
+        continue;
       collected.push({
         logStreamName: stream.logStreamName,
         timestamp: event.timestamp,

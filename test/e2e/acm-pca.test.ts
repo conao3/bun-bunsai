@@ -2,19 +2,26 @@ import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
   ACMPCAClient,
+  AuditReportResponseFormat,
   CertificateAuthorityType,
   CertificateAuthorityStatus,
+  CreateCertificateAuthorityAuditReportCommand,
   CreateCertificateAuthorityCommand,
   DeleteCertificateAuthorityCommand,
+  DeletePolicyCommand,
+  DescribeCertificateAuthorityAuditReportCommand,
   DescribeCertificateAuthorityCommand,
   GetCertificateAuthorityCertificateCommand,
   GetCertificateAuthorityCsrCommand,
   GetCertificateCommand,
+  GetPolicyCommand,
   ImportCertificateAuthorityCertificateCommand,
   IssueCertificateCommand,
   KeyAlgorithm,
   ListCertificateAuthoritiesCommand,
   ListTagsCommand,
+  PutPolicyCommand,
+  RestoreCertificateAuthorityCommand,
   RevocationReason,
   RevokeCertificateCommand,
   SigningAlgorithm,
@@ -259,4 +266,240 @@ test("ACM PCA update CA status", async () => {
     new DescribeCertificateAuthorityCommand({ CertificateAuthorityArn: caArn }),
   );
   expect(described.CertificateAuthority?.Status).toBe("DISABLED");
+});
+
+test("acmpca-01: audit report persistence", async () => {
+  const client = acmPca();
+
+  const created = await client.send(
+    new CreateCertificateAuthorityCommand({
+      CertificateAuthorityConfiguration: caConfig,
+      CertificateAuthorityType: CertificateAuthorityType.ROOT,
+    }),
+  );
+  const caArn = created.CertificateAuthorityArn!;
+  await client.send(
+    new ImportCertificateAuthorityCertificateCommand({
+      CertificateAuthorityArn: caArn,
+      Certificate: Buffer.from("fakecert"),
+    }),
+  );
+
+  await expect(
+    client.send(
+      new DescribeCertificateAuthorityAuditReportCommand({
+        CertificateAuthorityArn: caArn,
+        AuditReportId: crypto.randomUUID(),
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
+
+  const auditCreated = await client.send(
+    new CreateCertificateAuthorityAuditReportCommand({
+      CertificateAuthorityArn: caArn,
+      S3BucketName: "my-bucket",
+      AuditReportResponseFormat: AuditReportResponseFormat.JSON,
+    }),
+  );
+  const auditReportId = auditCreated.AuditReportId!;
+
+  const described = await client.send(
+    new DescribeCertificateAuthorityAuditReportCommand({
+      CertificateAuthorityArn: caArn,
+      AuditReportId: auditReportId,
+    }),
+  );
+  expect(described.S3BucketName).toBe("my-bucket");
+  expect(described.AuditReportStatus).toBe("SUCCESS");
+  expect(described.CreatedAt).toBeDefined();
+});
+
+test("acmpca-02: UpdateCertificateAuthority status transition validation", async () => {
+  const client = acmPca();
+
+  const created = await client.send(
+    new CreateCertificateAuthorityCommand({
+      CertificateAuthorityConfiguration: caConfig,
+      CertificateAuthorityType: CertificateAuthorityType.ROOT,
+    }),
+  );
+  const caArn = created.CertificateAuthorityArn!;
+
+  await expect(
+    client.send(
+      new UpdateCertificateAuthorityCommand({
+        CertificateAuthorityArn: caArn,
+        Status: CertificateAuthorityStatus.ACTIVE,
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidStateException" });
+
+  await client.send(
+    new ImportCertificateAuthorityCertificateCommand({
+      CertificateAuthorityArn: caArn,
+      Certificate: Buffer.from("fakecert"),
+    }),
+  );
+
+  await expect(
+    client.send(
+      new UpdateCertificateAuthorityCommand({
+        CertificateAuthorityArn: caArn,
+        Status: "DELETED" as CertificateAuthorityStatus,
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidArgsException" });
+});
+
+test("acmpca-03: RestoreCertificateAuthority preserves pre-delete status", async () => {
+  const client = acmPca();
+
+  const created = await client.send(
+    new CreateCertificateAuthorityCommand({
+      CertificateAuthorityConfiguration: caConfig,
+      CertificateAuthorityType: CertificateAuthorityType.ROOT,
+    }),
+  );
+  const caArn = created.CertificateAuthorityArn!;
+
+  await client.send(
+    new DeleteCertificateAuthorityCommand({ CertificateAuthorityArn: caArn }),
+  );
+
+  await client.send(
+    new RestoreCertificateAuthorityCommand({ CertificateAuthorityArn: caArn }),
+  );
+
+  const restored = await client.send(
+    new DescribeCertificateAuthorityCommand({ CertificateAuthorityArn: caArn }),
+  );
+  expect(restored.CertificateAuthority?.Status).toBe("PENDING_CERTIFICATE");
+
+  await client.send(
+    new ImportCertificateAuthorityCertificateCommand({
+      CertificateAuthorityArn: caArn,
+      Certificate: Buffer.from("fakecert"),
+    }),
+  );
+
+  const active = await client.send(
+    new DescribeCertificateAuthorityCommand({ CertificateAuthorityArn: caArn }),
+  );
+  expect(active.CertificateAuthority?.Status).toBe("ACTIVE");
+});
+
+test("acmpca-04: DeleteCertificateAuthority sets RestorableUntil", async () => {
+  const client = acmPca();
+
+  const created = await client.send(
+    new CreateCertificateAuthorityCommand({
+      CertificateAuthorityConfiguration: caConfig,
+      CertificateAuthorityType: CertificateAuthorityType.ROOT,
+    }),
+  );
+  const caArn = created.CertificateAuthorityArn!;
+
+  await client.send(
+    new DeleteCertificateAuthorityCommand({
+      CertificateAuthorityArn: caArn,
+      PermanentDeletionTimeInDays: 7,
+    }),
+  );
+
+  const described = await client.send(
+    new DescribeCertificateAuthorityCommand({ CertificateAuthorityArn: caArn }),
+  );
+  expect(described.CertificateAuthority?.RestorableUntil).toBeDefined();
+});
+
+test("acmpca-05: CA responses include OwnerAccount/KeyStorageSecurityStandard/UsageMode", async () => {
+  const client = acmPca();
+
+  const created = await client.send(
+    new CreateCertificateAuthorityCommand({
+      CertificateAuthorityConfiguration: caConfig,
+      CertificateAuthorityType: CertificateAuthorityType.ROOT,
+    }),
+  );
+  const caArn = created.CertificateAuthorityArn!;
+
+  const described = await client.send(
+    new DescribeCertificateAuthorityCommand({ CertificateAuthorityArn: caArn }),
+  );
+  expect(described.CertificateAuthority?.OwnerAccount).toBeDefined();
+  expect(
+    described.CertificateAuthority?.KeyStorageSecurityStandard,
+  ).toBeDefined();
+  expect(described.CertificateAuthority?.UsageMode).toBeDefined();
+});
+
+test("acmpca-06: ListCertificateAuthorities with ResourceOwner OTHER_ACCOUNTS returns empty", async () => {
+  const client = acmPca();
+
+  const listed = await client.send(
+    new ListCertificateAuthoritiesCommand({ ResourceOwner: "OTHER_ACCOUNTS" }),
+  );
+  expect(listed.CertificateAuthorities).toHaveLength(0);
+});
+
+test("acmpca-07: DeletePolicy throws ResourceNotFoundException when no policy exists", async () => {
+  const client = acmPca();
+
+  const created = await client.send(
+    new CreateCertificateAuthorityCommand({
+      CertificateAuthorityConfiguration: caConfig,
+      CertificateAuthorityType: CertificateAuthorityType.ROOT,
+    }),
+  );
+  const caArn = created.CertificateAuthorityArn!;
+
+  await expect(
+    client.send(new DeletePolicyCommand({ ResourceArn: caArn })),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
+
+  await client.send(
+    new PutPolicyCommand({
+      ResourceArn: caArn,
+      Policy: JSON.stringify({ Version: "2012-10-17", Statement: [] }),
+    }),
+  );
+
+  await client.send(new DeletePolicyCommand({ ResourceArn: caArn }));
+
+  await expect(
+    client.send(new GetPolicyCommand({ ResourceArn: caArn })),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
+});
+
+test("acmpca-08: GetCertificateAuthorityCertificate works for DISABLED CA", async () => {
+  const client = acmPca();
+
+  const created = await client.send(
+    new CreateCertificateAuthorityCommand({
+      CertificateAuthorityConfiguration: caConfig,
+      CertificateAuthorityType: CertificateAuthorityType.ROOT,
+    }),
+  );
+  const caArn = created.CertificateAuthorityArn!;
+
+  await client.send(
+    new ImportCertificateAuthorityCertificateCommand({
+      CertificateAuthorityArn: caArn,
+      Certificate: Buffer.from("fakecert"),
+    }),
+  );
+
+  await client.send(
+    new UpdateCertificateAuthorityCommand({
+      CertificateAuthorityArn: caArn,
+      Status: CertificateAuthorityStatus.DISABLED,
+    }),
+  );
+
+  const caCert = await client.send(
+    new GetCertificateAuthorityCertificateCommand({
+      CertificateAuthorityArn: caArn,
+    }),
+  );
+  expect(caCert.Certificate).toContain("BEGIN CERTIFICATE");
 });

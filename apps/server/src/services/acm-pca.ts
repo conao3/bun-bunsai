@@ -24,6 +24,19 @@ type StoredCA = {
   certPem?: string;
   certChainPem?: string;
   tags: { Key: string; Value?: string }[];
+  statusBeforeDeletion?: string;
+  RestorableUntil?: number;
+  KeyStorageSecurityStandard: string;
+  UsageMode: string;
+  OwnerAccount: string;
+};
+
+type StoredAuditReport = {
+  AuditReportId: string;
+  S3BucketName: string;
+  S3Key: string;
+  AuditReportResponseFormat: string;
+  CreatedAt: number;
 };
 
 type StoredCert = {
@@ -55,6 +68,8 @@ const certKey = (caId: string, serial: string): string =>
 const permKey = (caId: string, principal: string): string =>
   `perm/${caId}/${principal}`;
 const policyKey = (caId: string): string => `policy/${caId}`;
+const auditReportKey = (caId: string, auditReportId: string): string =>
+  `auditReport/${caId}/${auditReportId}`;
 const idempotencyKey = (scope: string, token: string): string =>
   `idempotency/${scope}/${token}`;
 
@@ -148,6 +163,10 @@ const buildCAResponse = (ca: StoredCA) => ({
   NotBefore: ca.NotBefore,
   NotAfter: ca.NotAfter,
   Serial: ca.Serial,
+  RestorableUntil: ca.RestorableUntil,
+  KeyStorageSecurityStandard: ca.KeyStorageSecurityStandard,
+  UsageMode: ca.UsageMode,
+  OwnerAccount: ca.OwnerAccount,
 });
 
 const CreateCertificateAuthority: OperationHandler = (input, ctx) => {
@@ -179,6 +198,13 @@ const CreateCertificateAuthority: OperationHandler = (input, ctx) => {
     tags: Array.isArray(input.Tags)
       ? (input.Tags as { Key: string; Value?: string }[])
       : [],
+    KeyStorageSecurityStandard:
+      typeof input.KeyStorageSecurityStandard === "string"
+        ? input.KeyStorageSecurityStandard
+        : "FIPS_140_2_LEVEL_3_OR_HIGHER",
+    UsageMode:
+      typeof input.UsageMode === "string" ? input.UsageMode : "GENERAL_PURPOSE",
+    OwnerAccount: ctx.account,
   };
 
   ctx.store.set(caKey(id), ca);
@@ -198,6 +224,10 @@ const ListCertificateAuthorities: OperationHandler = (input, ctx) => {
     typeof input.MaxResults === "number" ? input.MaxResults : 100;
   const nextToken =
     typeof input.NextToken === "string" ? input.NextToken : undefined;
+
+  if (input.ResourceOwner === "OTHER_ACCOUNTS") {
+    return { CertificateAuthorities: [], NextToken: undefined };
+  }
 
   const allCAs = ctx.store
     .list<StoredCA>()
@@ -226,8 +256,15 @@ const DeleteCertificateAuthority: OperationHandler = (input, ctx) => {
     );
   }
   const id = caIdFromArn(arn);
+  const now = Math.floor(Date.now() / 1000);
+  const permanentDeletionDays =
+    typeof input.PermanentDeletionTimeInDays === "number"
+      ? input.PermanentDeletionTimeInDays
+      : 30;
+  ca.statusBeforeDeletion = ca.Status;
   ca.Status = "DELETED";
-  ca.LastStateChangeAt = Math.floor(Date.now() / 1000);
+  ca.LastStateChangeAt = now;
+  ca.RestorableUntil = now + permanentDeletionDays * 86400;
   ctx.store.set(caKey(id), ca);
   return {};
 };
@@ -242,9 +279,19 @@ const RestoreCertificateAuthority: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const now = Math.floor(Date.now() / 1000);
+  if (ca.RestorableUntil !== undefined && now > ca.RestorableUntil) {
+    throw awsError(
+      "InvalidStateException",
+      `The CA restoration window has expired.`,
+      400,
+    );
+  }
   const id = caIdFromArn(arn);
-  ca.Status = "DISABLED";
-  ca.LastStateChangeAt = Math.floor(Date.now() / 1000);
+  ca.Status = ca.statusBeforeDeletion ?? "DISABLED";
+  ca.LastStateChangeAt = now;
+  ca.statusBeforeDeletion = undefined;
+  ca.RestorableUntil = undefined;
   ctx.store.set(caKey(id), ca);
   return {};
 };
@@ -261,6 +308,20 @@ const UpdateCertificateAuthority: OperationHandler = (input, ctx) => {
   }
   const id = caIdFromArn(arn);
   if (typeof input.Status === "string") {
+    if (input.Status !== "ACTIVE" && input.Status !== "DISABLED") {
+      throw awsError(
+        "InvalidArgsException",
+        `Status must be ACTIVE or DISABLED; received ${input.Status}.`,
+        400,
+      );
+    }
+    if (ca.Status !== "ACTIVE" && ca.Status !== "DISABLED") {
+      throw awsError(
+        "InvalidStateException",
+        `The CA ${arn} must be in ACTIVE or DISABLED state to update status.`,
+        400,
+      );
+    }
     ca.Status = input.Status;
     ca.LastStateChangeAt = Math.floor(Date.now() / 1000);
   }
@@ -315,10 +376,10 @@ const ImportCertificateAuthorityCertificate: OperationHandler = (
 const GetCertificateAuthorityCertificate: OperationHandler = (input, ctx) => {
   const arn = (input.CertificateAuthorityArn as string) ?? "";
   const ca = requireCA(ctx, arn);
-  if (ca.Status !== "ACTIVE") {
+  if (ca.certPem === undefined || ca.Status === "DELETED") {
     throw awsError(
       "InvalidStateException",
-      `The CA ${arn} is not in the ACTIVE state.`,
+      `The CA ${arn} does not have a certificate.`,
       400,
     );
   }
@@ -509,6 +570,14 @@ const GetPolicy: OperationHandler = (input, ctx) => {
 const DeletePolicy: OperationHandler = (input, ctx) => {
   const caArn = (input.ResourceArn as string) ?? "";
   requireCA(ctx, caArn);
+  const policy = ctx.store.get<string>(policyKey(caIdFromArn(caArn)));
+  if (policy === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `No policy found for CA ${caArn}.`,
+      400,
+    );
+  }
   ctx.store.delete(policyKey(caIdFromArn(caArn)));
   return {};
 };
@@ -567,11 +636,24 @@ const CreateCertificateAuthorityAuditReport: OperationHandler = (
 ) => {
   const caArn = (input.CertificateAuthorityArn as string) ?? "";
   requireActiveCA(ctx, caArn);
-  const auditReportId = crypto.randomUUID();
   const caId = caIdFromArn(caArn);
+  const auditReportId = crypto.randomUUID();
+  const s3BucketName = (input.S3BucketName as string) ?? "";
+  const auditReportResponseFormat =
+    (input.AuditReportResponseFormat as string) ?? "JSON";
+  const s3Key = `audit-report/${caId}/${auditReportId}.json`;
+  const now = Math.floor(Date.now() / 1000);
+  const report: StoredAuditReport = {
+    AuditReportId: auditReportId,
+    S3BucketName: s3BucketName,
+    S3Key: s3Key,
+    AuditReportResponseFormat: auditReportResponseFormat,
+    CreatedAt: now,
+  };
+  ctx.store.set(auditReportKey(caId, auditReportId), report);
   return {
     AuditReportId: auditReportId,
-    S3Key: `audit-report/${caId}/${auditReportId}.json`,
+    S3Key: s3Key,
   };
 };
 
@@ -581,12 +663,23 @@ const DescribeCertificateAuthorityAuditReport: OperationHandler = (
 ) => {
   const caArn = (input.CertificateAuthorityArn as string) ?? "";
   requireCA(ctx, caArn);
+  const caId = caIdFromArn(caArn);
   const auditReportId = (input.AuditReportId as string) ?? "";
+  const report = ctx.store.get<StoredAuditReport>(
+    auditReportKey(caId, auditReportId),
+  );
+  if (report === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Audit report ${auditReportId} does not exist.`,
+      400,
+    );
+  }
   return {
     AuditReportStatus: "SUCCESS",
-    S3BucketName: "audit-bucket",
-    S3Key: `audit-report/${caIdFromArn(caArn)}/${auditReportId}.json`,
-    CreatedAt: Math.floor(Date.now() / 1000),
+    S3BucketName: report.S3BucketName,
+    S3Key: report.S3Key,
+    CreatedAt: report.CreatedAt,
   };
 };
 

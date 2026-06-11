@@ -101,12 +101,12 @@ test("FIS Experiment lifecycle", async () => {
   const exp = started.experiment!;
   expect(exp.id).toBeDefined();
   expect(exp.experimentTemplateId).toBe(templateId);
-  expect(["initiating", "running"]).toContain(exp.state?.status);
+  expect(["initiating", "running"]).toContain(exp.state?.status as string);
 
   const got = await client.send(new GetExperimentCommand({ id: exp.id! }));
   expect(got.experiment?.id).toBe(exp.id);
   expect(["initiating", "running", "completed"]).toContain(
-    got.experiment?.state?.status,
+    got.experiment?.state?.status as string,
   );
 
   const listed = await client.send(
@@ -115,9 +115,7 @@ test("FIS Experiment lifecycle", async () => {
   const expIds = (listed.experiments ?? []).map((e) => e.id);
   expect(expIds).toContain(exp.id);
 
-  await client.send(
-    new DeleteExperimentTemplateCommand({ id: templateId }),
-  );
+  await client.send(new DeleteExperimentTemplateCommand({ id: templateId }));
 });
 
 test("FIS StopExperiment guard", async () => {
@@ -134,11 +132,13 @@ test("FIS StopExperiment guard", async () => {
   const expId = started.experiment!.id!;
 
   const stopped = await client.send(new StopExperimentCommand({ id: expId }));
-  expect(["stopping", "stopped"]).toContain(stopped.experiment?.state?.status);
+  expect(["stopping", "stopped"]).toContain(
+    stopped.experiment?.state?.status as string,
+  );
 
   const afterStop = await client.send(new GetExperimentCommand({ id: expId }));
   expect(["stopping", "stopped"]).toContain(
-    afterStop.experiment?.state?.status,
+    afterStop.experiment?.state?.status as string,
   );
 
   await expect(

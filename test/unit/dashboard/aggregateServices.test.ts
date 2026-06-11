@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { aggregateServices } from "../../../apps/dashboard/src/aggregateServices.ts";
-import type { ServiceSummary } from "../../../apps/dashboard/src/api.ts";
+
+type ServiceSummary = {
+  name: string;
+  protocol: "query" | "json" | "rest-json" | "rest-xml" | "unknown";
+  status: "available";
+  callCount: number;
+  resourceCount: number;
+};
 
 const svc = (
   name: string,

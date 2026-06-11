@@ -256,6 +256,220 @@ describe("logs e2e (CON-2188 — JSON filter pattern)", () => {
     await c.send(new DeleteLogGroupCommand({ logGroupName: groupName }));
   });
 
+  test("FilterLogEvents: IS NULL matches null field, not missing field", async () => {
+    const c = logs();
+    const groupName = "bunsai-logs8-json-isnull-group";
+    const streamName = "bunsai-logs8-json-isnull-stream";
+
+    await c.send(new CreateLogGroupCommand({ logGroupName: groupName }));
+    await c.send(
+      new CreateLogStreamCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+      }),
+    );
+
+    const baseTime = 1700000000000;
+    await c.send(
+      new PutLogEventsCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+        logEvents: [
+          {
+            timestamp: baseTime,
+            message: JSON.stringify({ foo: null, tag: "has-null" }),
+          },
+          {
+            timestamp: baseTime + 1000,
+            message: JSON.stringify({ tag: "missing-foo" }),
+          },
+          {
+            timestamp: baseTime + 2000,
+            message: JSON.stringify({ foo: "value", tag: "has-value" }),
+          },
+        ],
+      }),
+    );
+
+    const result = await c.send(
+      new FilterLogEventsCommand({
+        logGroupName: groupName,
+        filterPattern: "{ $.foo IS NULL }",
+      }),
+    );
+    const messages = (result.events ?? []).map((e) => e.message);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain("has-null");
+
+    await c.send(new DeleteLogGroupCommand({ logGroupName: groupName }));
+  });
+
+  test("FilterLogEvents: NOT EXISTS matches missing field, not null field", async () => {
+    const c = logs();
+    const groupName = "bunsai-logs8-json-notexists-group";
+    const streamName = "bunsai-logs8-json-notexists-stream";
+
+    await c.send(new CreateLogGroupCommand({ logGroupName: groupName }));
+    await c.send(
+      new CreateLogStreamCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+      }),
+    );
+
+    const baseTime = 1700000000000;
+    await c.send(
+      new PutLogEventsCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+        logEvents: [
+          {
+            timestamp: baseTime,
+            message: JSON.stringify({ tag: "missing-foo" }),
+          },
+          {
+            timestamp: baseTime + 1000,
+            message: JSON.stringify({ foo: null, tag: "has-null" }),
+          },
+          {
+            timestamp: baseTime + 2000,
+            message: JSON.stringify({ foo: "value", tag: "has-value" }),
+          },
+        ],
+      }),
+    );
+
+    const result = await c.send(
+      new FilterLogEventsCommand({
+        logGroupName: groupName,
+        filterPattern: "{ $.foo NOT EXISTS }",
+      }),
+    );
+    const messages = (result.events ?? []).map((e) => e.message);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain("missing-foo");
+
+    await c.send(new DeleteLogGroupCommand({ logGroupName: groupName }));
+  });
+
+  test('FilterLogEvents: IS TRUE / IS FALSE matches boolean only, not string "true"', async () => {
+    const c = logs();
+    const groupName = "bunsai-logs8-json-istrue-group";
+    const streamName = "bunsai-logs8-json-istrue-stream";
+
+    await c.send(new CreateLogGroupCommand({ logGroupName: groupName }));
+    await c.send(
+      new CreateLogStreamCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+      }),
+    );
+
+    const baseTime = 1700000000000;
+    await c.send(
+      new PutLogEventsCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+        logEvents: [
+          {
+            timestamp: baseTime,
+            message: JSON.stringify({ flag: true, tag: "bool-true" }),
+          },
+          {
+            timestamp: baseTime + 1000,
+            message: JSON.stringify({ flag: false, tag: "bool-false" }),
+          },
+          {
+            timestamp: baseTime + 2000,
+            message: JSON.stringify({ flag: "true", tag: "str-true" }),
+          },
+          {
+            timestamp: baseTime + 3000,
+            message: JSON.stringify({ flag: "false", tag: "str-false" }),
+          },
+        ],
+      }),
+    );
+
+    const trueResult = await c.send(
+      new FilterLogEventsCommand({
+        logGroupName: groupName,
+        filterPattern: "{ $.flag IS TRUE }",
+      }),
+    );
+    const trueMessages = (trueResult.events ?? []).map((e) => e.message);
+    expect(trueMessages).toHaveLength(1);
+    expect(trueMessages[0]).toContain("bool-true");
+
+    const falseResult = await c.send(
+      new FilterLogEventsCommand({
+        logGroupName: groupName,
+        filterPattern: "{ $.flag IS FALSE }",
+      }),
+    );
+    const falseMessages = (falseResult.events ?? []).map((e) => e.message);
+    expect(falseMessages).toHaveLength(1);
+    expect(falseMessages[0]).toContain("bool-false");
+
+    await c.send(new DeleteLogGroupCommand({ logGroupName: groupName }));
+  });
+
+  test("FilterLogEvents: IS NULL && compound condition", async () => {
+    const c = logs();
+    const groupName = "bunsai-logs8-json-isnull-and-group";
+    const streamName = "bunsai-logs8-json-isnull-and-stream";
+
+    await c.send(new CreateLogGroupCommand({ logGroupName: groupName }));
+    await c.send(
+      new CreateLogStreamCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+      }),
+    );
+
+    const baseTime = 1700000000000;
+    await c.send(
+      new PutLogEventsCommand({
+        logGroupName: groupName,
+        logStreamName: streamName,
+        logEvents: [
+          {
+            timestamp: baseTime,
+            message: JSON.stringify({
+              foo: null,
+              level: "error",
+              tag: "null+error",
+            }),
+          },
+          {
+            timestamp: baseTime + 1000,
+            message: JSON.stringify({
+              foo: null,
+              level: "info",
+              tag: "null+info",
+            }),
+          },
+          {
+            timestamp: baseTime + 2000,
+            message: JSON.stringify({ level: "error", tag: "missing+error" }),
+          },
+        ],
+      }),
+    );
+
+    const result = await c.send(
+      new FilterLogEventsCommand({
+        logGroupName: groupName,
+        filterPattern: '{ $.foo IS NULL && $.level = "error" }',
+      }),
+    );
+    const messages = (result.events ?? []).map((e) => e.message);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain("null+error");
+
+    await c.send(new DeleteLogGroupCommand({ logGroupName: groupName }));
+  });
+
   test("PutLogEvents delivers JSON-matching events to Lambda subscription filter", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bunsai-logs8-"));
     const marker = join(dir, "out.json");

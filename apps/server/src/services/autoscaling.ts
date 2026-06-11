@@ -61,6 +61,15 @@ type StoredAutoScalingGroup = {
   AutoScalingGroupName: string;
   AutoScalingGroupARN: string;
   LaunchConfigurationName: string | undefined;
+  LaunchTemplate:
+    | {
+        LaunchTemplateId?: string;
+        LaunchTemplateName?: string;
+        Version?: string;
+      }
+    | undefined;
+  MixedInstancesPolicy: Record<string, unknown> | undefined;
+  InstanceId: string | undefined;
   MinSize: number;
   MaxSize: number;
   DesiredCapacity: number;
@@ -333,6 +342,8 @@ const asgToOutput = (
   AutoScalingGroupName: asg.AutoScalingGroupName,
   AutoScalingGroupARN: asg.AutoScalingGroupARN,
   LaunchConfigurationName: asg.LaunchConfigurationName,
+  LaunchTemplate: asg.LaunchTemplate,
+  MixedInstancesPolicy: asg.MixedInstancesPolicy,
   MinSize: asg.MinSize,
   MaxSize: asg.MaxSize,
   DesiredCapacity: asg.DesiredCapacity,
@@ -446,6 +457,14 @@ const DescribeLaunchConfigurations: OperationHandler = (input, ctx) => {
 
 const DeleteLaunchConfiguration: OperationHandler = (input, ctx) => {
   const name = requireString(input, "LaunchConfigurationName");
+  const lc = ctx.store.get<StoredLaunchConfiguration>(lcKey(name));
+  if (lc === undefined) {
+    throw awsError(
+      "ValidationError",
+      `Launch configuration '${name}' does not exist.`,
+      400,
+    );
+  }
   const inUse = ctx.store
     .list<StoredAutoScalingGroup>()
     .filter((e) => e.key.startsWith("asg/"))
@@ -477,12 +496,60 @@ const CreateAutoScalingGroup: OperationHandler = (input, ctx) => {
   if (lcName !== undefined) {
     requireLc(ctx, lcName);
   }
+
+  const launchTemplate =
+    typeof input["LaunchTemplate"] === "object" &&
+    input["LaunchTemplate"] !== null
+      ? (input["LaunchTemplate"] as {
+          LaunchTemplateId?: string;
+          LaunchTemplateName?: string;
+          Version?: string;
+        })
+      : undefined;
+  const mixedInstancesPolicy =
+    typeof input["MixedInstancesPolicy"] === "object" &&
+    input["MixedInstancesPolicy"] !== null
+      ? (input["MixedInstancesPolicy"] as Record<string, unknown>)
+      : undefined;
+  const instanceId =
+    typeof input["InstanceId"] === "string" ? input["InstanceId"] : undefined;
+
+  if (
+    lcName === undefined &&
+    launchTemplate === undefined &&
+    mixedInstancesPolicy === undefined &&
+    instanceId === undefined
+  ) {
+    throw awsError(
+      "ValidationError",
+      "Either LaunchConfigurationName, LaunchTemplate, MixedInstancesPolicy, or InstanceId must be provided.",
+      400,
+    );
+  }
+
   const minSize = requireNumber(input, "MinSize");
   const maxSize = requireNumber(input, "MaxSize");
+
+  if (minSize > maxSize) {
+    throw awsError(
+      "ValidationError",
+      `MinSize ${minSize} must be less than or equal to MaxSize ${maxSize}.`,
+      400,
+    );
+  }
+
   const desiredCapacity =
     typeof input["DesiredCapacity"] === "number"
       ? input["DesiredCapacity"]
       : minSize;
+
+  if (desiredCapacity < minSize || desiredCapacity > maxSize) {
+    throw awsError(
+      "ValidationError",
+      `DesiredCapacity ${desiredCapacity} is outside of the group limits [${minSize}, ${maxSize}].`,
+      400,
+    );
+  }
 
   const rawTags = input["Tags"];
   const tags: StoredTag[] = [];
@@ -515,6 +582,9 @@ const CreateAutoScalingGroup: OperationHandler = (input, ctx) => {
     AutoScalingGroupName: name,
     AutoScalingGroupARN: asgArnOf(ctx.region, ctx.account, name),
     LaunchConfigurationName: lcName,
+    LaunchTemplate: launchTemplate,
+    MixedInstancesPolicy: mixedInstancesPolicy,
+    InstanceId: instanceId,
     MinSize: minSize,
     MaxSize: maxSize,
     DesiredCapacity: desiredCapacity,
@@ -568,6 +638,9 @@ const DescribeAutoScalingGroups: OperationHandler = (input, ctx) => {
   const maxRecords =
     typeof input["MaxRecords"] === "number" ? input["MaxRecords"] : 50;
   const offset = decodePageToken(input["NextToken"]);
+  const filters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as Record<string, unknown>[])
+    : [];
 
   let all = ctx.store
     .list<StoredAutoScalingGroup>()
@@ -577,6 +650,25 @@ const DescribeAutoScalingGroups: OperationHandler = (input, ctx) => {
   if (names.length > 0) {
     const nameSet = new Set(names);
     all = all.filter((asg) => nameSet.has(asg.AutoScalingGroupName));
+  }
+
+  for (const filter of filters) {
+    const filterName = typeof filter["Name"] === "string" ? filter["Name"] : "";
+    const filterValues = Array.isArray(filter["Values"])
+      ? (filter["Values"] as string[])
+      : [];
+    if (filterValues.length === 0) continue;
+    const valueSet = new Set(filterValues);
+    if (filterName === "tag-key") {
+      all = all.filter((asg) => asg.Tags.some((t) => valueSet.has(t.Key)));
+    } else if (filterName === "tag-value") {
+      all = all.filter((asg) => asg.Tags.some((t) => valueSet.has(t.Value)));
+    } else if (filterName.startsWith("tag:")) {
+      const tagKey = filterName.slice(4);
+      all = all.filter((asg) =>
+        asg.Tags.some((t) => t.Key === tagKey && valueSet.has(t.Value)),
+      );
+    }
   }
 
   const page = all.slice(offset, offset + maxRecords);
@@ -611,11 +703,53 @@ const UpdateAutoScalingGroup: OperationHandler = (input, ctx) => {
     requireLc(ctx, input["LaunchConfigurationName"]);
     asg.LaunchConfigurationName = input["LaunchConfigurationName"];
   }
+  if (
+    typeof input["LaunchTemplate"] === "object" &&
+    input["LaunchTemplate"] !== null
+  ) {
+    asg.LaunchTemplate = input["LaunchTemplate"] as {
+      LaunchTemplateId?: string;
+      LaunchTemplateName?: string;
+      Version?: string;
+    };
+  }
+  if (
+    typeof input["MixedInstancesPolicy"] === "object" &&
+    input["MixedInstancesPolicy"] !== null
+  ) {
+    asg.MixedInstancesPolicy = input["MixedInstancesPolicy"] as Record<
+      string,
+      unknown
+    >;
+  }
   if (typeof input["MinSize"] === "number") asg.MinSize = input["MinSize"];
   if (typeof input["MaxSize"] === "number") asg.MaxSize = input["MaxSize"];
-  if (typeof input["DesiredCapacity"] === "number") {
-    asg.DesiredCapacity = input["DesiredCapacity"];
+
+  if (asg.MinSize > asg.MaxSize) {
+    throw awsError(
+      "ValidationError",
+      `MinSize ${asg.MinSize} must be less than or equal to MaxSize ${asg.MaxSize}.`,
+      400,
+    );
   }
+
+  if (typeof input["DesiredCapacity"] === "number") {
+    const desired = input["DesiredCapacity"];
+    if (desired < asg.MinSize || desired > asg.MaxSize) {
+      throw awsError(
+        "ValidationError",
+        `New DesiredCapacity value ${desired} is outside of the group limits [${asg.MinSize}, ${asg.MaxSize}].`,
+        400,
+      );
+    }
+    asg.DesiredCapacity = desired;
+  } else {
+    asg.DesiredCapacity = Math.min(
+      asg.MaxSize,
+      Math.max(asg.MinSize, asg.DesiredCapacity),
+    );
+  }
+
   if (typeof input["DefaultCooldown"] === "number") {
     asg.DefaultCooldown = input["DefaultCooldown"];
   }
@@ -648,7 +782,11 @@ const DeleteAutoScalingGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "AutoScalingGroupName");
   const asg = ctx.store.get<StoredAutoScalingGroup>(asgKey(name));
   if (asg === undefined) {
-    return {};
+    throw awsError(
+      "ValidationError",
+      `Auto Scaling group '${name}' does not exist.`,
+      400,
+    );
   }
   const forceDelete =
     typeof input["ForceDelete"] === "boolean" ? input["ForceDelete"] : false;
@@ -741,10 +879,14 @@ const DescribeAutoScalingInstances: OperationHandler = (input, ctx) => {
 
 const TerminateInstanceInAutoScalingGroup: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
-  const shouldDecrement =
-    typeof input["ShouldDecrementDesiredCapacity"] === "boolean"
-      ? input["ShouldDecrementDesiredCapacity"]
-      : true;
+  if (typeof input["ShouldDecrementDesiredCapacity"] !== "boolean") {
+    throw awsError(
+      "ValidationError",
+      "ShouldDecrementDesiredCapacity is required.",
+      400,
+    );
+  }
+  const shouldDecrement = input["ShouldDecrementDesiredCapacity"];
 
   const instance = ctx.store.get<StoredInstance>(instanceKey(instanceId));
   if (instance === undefined) {
@@ -752,13 +894,22 @@ const TerminateInstanceInAutoScalingGroup: OperationHandler = (input, ctx) => {
   }
 
   const asg = requireAsg(ctx, instance.AutoScalingGroupName);
+
+  if (shouldDecrement && asg.DesiredCapacity - 1 < asg.MinSize) {
+    throw awsError(
+      "ValidationError",
+      `Cannot decrement DesiredCapacity below MinSize ${asg.MinSize}.`,
+      400,
+    );
+  }
+
   const idx = asg.InstanceIds.indexOf(instanceId);
   if (idx !== -1) {
     asg.InstanceIds.splice(idx, 1);
   }
   ctx.store.delete(instanceKey(instanceId));
 
-  if (shouldDecrement && asg.DesiredCapacity > asg.MinSize) {
+  if (shouldDecrement) {
     asg.DesiredCapacity -= 1;
   }
   ctx.store.set(asgKey(asg.AutoScalingGroupName), asg);
@@ -786,21 +937,32 @@ const AttachInstances: OperationHandler = (input, ctx) => {
     ? (input["InstanceIds"] as string[])
     : [];
 
-  for (const id of instanceIds) {
-    if (!asg.InstanceIds.includes(id)) {
-      const instance: StoredInstance = {
-        InstanceId: id,
-        AutoScalingGroupName: asgName,
-        AvailabilityZone: asg.AvailabilityZones[0] ?? "us-east-1a",
-        LifecycleState: "InService",
-        HealthStatus: "Healthy",
-        LaunchConfigurationName: asg.LaunchConfigurationName,
-        ProtectedFromScaleIn: false,
-      };
-      ctx.store.set(instanceKey(id), instance);
-      asg.InstanceIds.push(id);
-    }
+  const newIds = instanceIds.filter((id) => !asg.InstanceIds.includes(id));
+  if (asg.InstanceIds.length + newIds.length > asg.MaxSize) {
+    throw awsError(
+      "ValidationError",
+      `Attaching ${newIds.length} instance(s) would exceed the group's MaxSize of ${asg.MaxSize}.`,
+      400,
+    );
   }
+
+  for (const id of newIds) {
+    const instance: StoredInstance = {
+      InstanceId: id,
+      AutoScalingGroupName: asgName,
+      AvailabilityZone: asg.AvailabilityZones[0] ?? "us-east-1a",
+      LifecycleState: "InService",
+      HealthStatus: "Healthy",
+      LaunchConfigurationName: asg.LaunchConfigurationName,
+      ProtectedFromScaleIn: false,
+    };
+    ctx.store.set(instanceKey(id), instance);
+    asg.InstanceIds.push(id);
+  }
+  asg.DesiredCapacity = Math.min(
+    asg.MaxSize,
+    asg.DesiredCapacity + newIds.length,
+  );
   ctx.store.set(asgKey(asgName), asg);
   return {};
 };
@@ -811,10 +973,25 @@ const DetachInstances: OperationHandler = (input, ctx) => {
   const instanceIds = Array.isArray(input["InstanceIds"])
     ? (input["InstanceIds"] as string[])
     : [];
-  const shouldDecrement =
-    typeof input["ShouldDecrementDesiredCapacity"] === "boolean"
-      ? input["ShouldDecrementDesiredCapacity"]
-      : false;
+  if (typeof input["ShouldDecrementDesiredCapacity"] !== "boolean") {
+    throw awsError(
+      "ValidationError",
+      "ShouldDecrementDesiredCapacity is required.",
+      400,
+    );
+  }
+  const shouldDecrement = input["ShouldDecrementDesiredCapacity"];
+
+  const detachCount = instanceIds.filter((id) =>
+    asg.InstanceIds.includes(id),
+  ).length;
+  if (shouldDecrement && asg.DesiredCapacity - detachCount < asg.MinSize) {
+    throw awsError(
+      "ValidationError",
+      `Cannot decrement DesiredCapacity below MinSize ${asg.MinSize}.`,
+      400,
+    );
+  }
 
   const activities: Record<string, unknown>[] = [];
   for (const id of instanceIds) {
@@ -837,10 +1014,13 @@ const DetachInstances: OperationHandler = (input, ctx) => {
   if (shouldDecrement) {
     asg.DesiredCapacity = Math.max(
       asg.MinSize,
-      asg.DesiredCapacity - instanceIds.length,
+      asg.DesiredCapacity - detachCount,
     );
+    ctx.store.set(asgKey(asgName), asg);
+  } else {
+    ctx.store.set(asgKey(asgName), asg);
+    syncInstances(ctx, asg);
   }
-  ctx.store.set(asgKey(asgName), asg);
 
   return { Activities: activities };
 };
@@ -903,6 +1083,9 @@ const DescribePolicies: OperationHandler = (input, ctx) => {
   const policyNames = Array.isArray(input["PolicyNames"])
     ? (input["PolicyNames"] as string[])
     : [];
+  const policyTypes = Array.isArray(input["PolicyTypes"])
+    ? (input["PolicyTypes"] as string[])
+    : [];
   const maxRecords =
     typeof input["MaxRecords"] === "number" ? input["MaxRecords"] : 50;
   const offset = decodePageToken(input["NextToken"]);
@@ -918,6 +1101,10 @@ const DescribePolicies: OperationHandler = (input, ctx) => {
   if (policyNames.length > 0) {
     const nameSet = new Set(policyNames);
     all = all.filter((p) => nameSet.has(p.PolicyName));
+  }
+  if (policyTypes.length > 0) {
+    const typeSet = new Set(policyTypes);
+    all = all.filter((p) => typeSet.has(p.PolicyType));
   }
 
   const page = all.slice(offset, offset + maxRecords);
@@ -980,6 +1167,16 @@ const CreateOrUpdateTags: OperationHandler = (input, ctx) => {
     const key = typeof tag["Key"] === "string" ? tag["Key"] : undefined;
     if (resourceId === undefined || key === undefined) continue;
 
+    if (
+      ctx.store.get<StoredAutoScalingGroup>(asgKey(resourceId)) === undefined
+    ) {
+      throw awsError(
+        "ValidationError",
+        `Auto Scaling group '${resourceId}' does not exist.`,
+        400,
+      );
+    }
+
     const storedTag: StoredTag = {
       ResourceId: resourceId,
       ResourceType:
@@ -1039,6 +1236,14 @@ const DescribeTags: OperationHandler = (input, ctx) => {
     } else if (filterName === "value") {
       const valueSet = new Set(filterValues);
       all = all.filter((t) => valueSet.has(t.Value));
+    } else if (filterName === "propagate-at-launch") {
+      const wantTrue = filterValues.includes("true");
+      const wantFalse = filterValues.includes("false");
+      if (wantTrue && !wantFalse) {
+        all = all.filter((t) => t.PropagateAtLaunch === true);
+      } else if (wantFalse && !wantTrue) {
+        all = all.filter((t) => t.PropagateAtLaunch === false);
+      }
     }
   }
 
@@ -1069,6 +1274,16 @@ const DeleteTags: OperationHandler = (input, ctx) => {
       typeof tag["ResourceId"] === "string" ? tag["ResourceId"] : undefined;
     const key = typeof tag["Key"] === "string" ? tag["Key"] : undefined;
     if (resourceId === undefined || key === undefined) continue;
+
+    if (
+      ctx.store.get<StoredAutoScalingGroup>(asgKey(resourceId)) === undefined
+    ) {
+      throw awsError(
+        "ValidationError",
+        `Auto Scaling group '${resourceId}' does not exist.`,
+        400,
+      );
+    }
 
     ctx.store.delete(tagKey(resourceId, key));
 

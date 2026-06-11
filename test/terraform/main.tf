@@ -25,6 +25,7 @@ provider "aws" {
     sqs      = "http://localhost:${var.bunsai_port}"
     iam      = "http://localhost:${var.bunsai_port}"
     dynamodb = "http://localhost:${var.bunsai_port}"
+    s3       = "http://localhost:${var.bunsai_port}"
   }
 }
 
@@ -56,5 +57,16 @@ resource "aws_dynamodb_table" "smoke" {
   attribute {
     name = "pk"
     type = "S"
+  }
+}
+
+resource "aws_s3_bucket" "smoke" {
+  bucket = "tf-smoke-bucket"
+}
+
+resource "aws_s3_bucket_versioning" "smoke" {
+  bucket = aws_s3_bucket.smoke.id
+  versioning_configuration {
+    status = "Enabled"
   }
 }

@@ -13,6 +13,7 @@ export type SerializeErrorRequest = {
   senderFault?: boolean;
   jsonVersion?: string;
   requestId?: string;
+  xmlRoot?: string;
 };
 
 const escapeXml = (value: string): string =>
@@ -109,6 +110,24 @@ export const serializeShapeError = (
     }
     case "query":
     case "rest-xml": {
+      const xmlRoot = req.xmlRoot;
+      if (xmlRoot !== undefined) {
+        let inner = `<Code>${escapeXml(req.code)}</Code>`;
+        if (
+          message !== undefined &&
+          data.Message === undefined &&
+          data.message === undefined
+        )
+          inner += `<Message>${escapeXml(message)}</Message>`;
+        inner += dataMembersBody(req.shape, data);
+        inner += `<RequestId>${req.requestId ?? "foo-id"}</RequestId>`;
+        const body = `<${xmlRoot}>${inner}</${xmlRoot}>`;
+        return {
+          body,
+          contentType: contentTypes[req.protocol],
+          statusCode: req.statusCode,
+        };
+      }
       const fault = req.senderFault === false ? "Receiver" : "Sender";
       let inner = `<Type>${fault}</Type><Code>${escapeXml(req.code)}</Code>`;
       if (

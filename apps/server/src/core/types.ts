@@ -186,6 +186,7 @@ export type ServiceDefinition = {
   resolveOperation?: (req: ParsedRequest) => string | undefined;
   model?: ServiceModel;
   matches?: (req: ParsedRequest) => boolean;
+  xmlErrorRoot?: string;
 };
 
 export type RequestLogEntry = {

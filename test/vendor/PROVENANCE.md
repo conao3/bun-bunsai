@@ -183,6 +183,7 @@ aws-models/
   cognito-identity.json # botocore/data/cognito-identity/2014-06-30/service-2.json  (protocol json, signingName cognito-identity)
   pipes.json            # botocore/data/pipes/2015-10-07/service-2.json             (protocol rest-json, signingName pipes; Amazon EventBridge Pipes)
   route53resolver.json  # botocore/data/route53resolver/2018-04-01/service-2.json   (protocol json, signingName route53resolver)
+  sesv2.json            # botocore/data/sesv2/2019-09-27/service-2.json             (protocol rest-json, endpointPrefix email, signingName ses)
 ```
 
 ### Notes

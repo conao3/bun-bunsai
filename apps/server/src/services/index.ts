@@ -15,6 +15,7 @@ import lambda from "./lambda.ts";
 import cloudwatch from "./cloudwatch.ts";
 import stepFunctions from "./stepfunctions.ts";
 import ses from "./ses.ts";
+import sesv2 from "./sesv2.ts";
 import route53 from "./route53.ts";
 import cloudFormation from "./cloudformation.ts";
 import apiGateway from "./apigateway.ts";
@@ -135,6 +136,7 @@ export const services: ServiceDefinition[] = [
   cloudwatch,
   stepFunctions,
   ses,
+  sesv2,
   route53,
   cloudFormation,
   apiGateway,

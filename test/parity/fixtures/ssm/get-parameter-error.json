@@ -1,0 +1,14 @@
+{
+  "clientPackage": "@aws-sdk/client-ssm",
+  "clientName": "SSMClient",
+  "steps": [
+    {
+      "command": "GetParameterCommand",
+      "input": { "Name": "/parity/ssm/nonexistent" },
+      "expectedError": { "name": "ParameterNotFound", "statusCode": 400 },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

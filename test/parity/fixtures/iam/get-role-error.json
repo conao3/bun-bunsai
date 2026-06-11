@@ -1,0 +1,14 @@
+{
+  "clientPackage": "@aws-sdk/client-iam",
+  "clientName": "IAMClient",
+  "steps": [
+    {
+      "command": "GetRoleCommand",
+      "input": { "RoleName": "parity-iam-nonexistent-role" },
+      "expectedError": { "name": "NoSuchEntityException", "statusCode": 404 },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

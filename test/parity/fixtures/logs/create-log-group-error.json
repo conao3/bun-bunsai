@@ -1,0 +1,33 @@
+{
+  "clientPackage": "@aws-sdk/client-cloudwatch-logs",
+  "clientName": "CloudWatchLogsClient",
+  "steps": [
+    {
+      "command": "CreateLogGroupCommand",
+      "input": { "logGroupName": "/parity/logs/error-dup" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateLogGroupCommand",
+      "input": { "logGroupName": "/parity/logs/error-dup" },
+      "expectedError": {
+        "name": "ResourceAlreadyExistsException",
+        "statusCode": 400
+      },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteLogGroupCommand",
+      "input": { "logGroupName": "/parity/logs/error-dup" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

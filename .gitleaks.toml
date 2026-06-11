@@ -8,6 +8,7 @@ paths = [
   '''apps/server/src/services/acm\.ts''',
   '''apps/server/src/services/acm-pca\.ts''',
   '''apps/server/src/services/ec2\.ts''',
+  '''apps/server/src/services/iot\.ts''',
   '''test/e2e/.*''',
 ]
 regexes = [

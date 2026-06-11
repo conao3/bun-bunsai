@@ -1,0 +1,39 @@
+{
+  "clientPackage": "@aws-sdk/client-s3",
+  "clientName": "S3Client",
+  "clientConfig": { "forcePathStyle": true },
+  "steps": [
+    {
+      "command": "GetObjectCommand",
+      "input": { "Bucket": "parity-s3-no-such-bucket", "Key": "any-key" },
+      "expectedError": { "name": "NoSuchBucket", "statusCode": 404 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateBucketCommand",
+      "input": { "Bucket": "parity-s3-errors" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "Location"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetObjectCommand",
+      "input": { "Bucket": "parity-s3-errors", "Key": "no-such-key" },
+      "expectedError": { "name": "NoSuchKey", "statusCode": 404 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteBucketCommand",
+      "input": { "Bucket": "parity-s3-errors" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

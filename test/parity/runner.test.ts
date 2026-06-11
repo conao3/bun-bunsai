@@ -16,6 +16,7 @@ type Step = {
 type Fixture = {
   clientPackage: string;
   clientName: string;
+  clientConfig?: Record<string, unknown>;
   steps: Step[];
 };
 
@@ -189,6 +190,7 @@ for (const fixturePath of fixturePaths) {
       region,
       credentials,
       requestHandler,
+      ...(fixture.clientConfig ?? {}),
     });
     const send = (client as { send(cmd: unknown): Promise<unknown> }).send.bind(
       client,

@@ -1,0 +1,103 @@
+{
+  "clientPackage": "@aws-sdk/client-s3",
+  "clientName": "S3Client",
+  "clientConfig": { "forcePathStyle": true },
+  "steps": [
+    {
+      "command": "CreateBucketCommand",
+      "input": { "Bucket": "parity-s3-list" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "Location"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutObjectCommand",
+      "input": {
+        "Bucket": "parity-s3-list",
+        "Key": "test/foo/a.txt",
+        "Body": { "$base64": "YQ==" }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata", "ETag"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutObjectCommand",
+      "input": {
+        "Bucket": "parity-s3-list",
+        "Key": "test/foo/b.txt",
+        "Body": { "$base64": "Yg==" }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata", "ETag"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutObjectCommand",
+      "input": {
+        "Bucket": "parity-s3-list",
+        "Key": "test/bar/c.txt",
+        "Body": { "$base64": "Yw==" }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata", "ETag"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListObjectsV2Command",
+      "input": {
+        "Bucket": "parity-s3-list",
+        "Prefix": "test/",
+        "Delimiter": "/"
+      },
+      "expected": {
+        "Name": "parity-s3-list",
+        "Prefix": "test/",
+        "Delimiter": "/",
+        "MaxKeys": 1000,
+        "KeyCount": 2,
+        "IsTruncated": false,
+        "CommonPrefixes": [{ "Prefix": "test/bar/" }, { "Prefix": "test/foo/" }]
+      },
+      "ignorePaths": ["$metadata", "Contents", "EncodingType"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteObjectCommand",
+      "input": { "Bucket": "parity-s3-list", "Key": "test/foo/a.txt" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteObjectCommand",
+      "input": { "Bucket": "parity-s3-list", "Key": "test/foo/b.txt" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteObjectCommand",
+      "input": { "Bucket": "parity-s3-list", "Key": "test/bar/c.txt" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteBucketCommand",
+      "input": { "Bucket": "parity-s3-list" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

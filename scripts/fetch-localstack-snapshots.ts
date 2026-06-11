@@ -22,6 +22,14 @@ const SERVICES: Record<string, string> = {
   logs: "tests/aws/services/logs",
   stepfunctions: "tests/aws/services/stepfunctions",
   route53: "tests/aws/services/route53",
+  s3: "tests/aws/services/s3",
+  apigateway: "tests/aws/services/apigateway",
+  acm: "tests/aws/services/acm",
+  cloudwatch: "tests/aws/services/cloudwatch",
+  kinesis: "tests/aws/services/kinesis",
+  firehose: "tests/aws/services/firehose",
+  ec2: "tests/aws/services/ec2",
+  route53resolver: "tests/aws/services/route53resolver",
 };
 
 type ContentEntry = {

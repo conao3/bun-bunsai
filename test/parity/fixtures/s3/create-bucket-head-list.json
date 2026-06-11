@@ -1,0 +1,39 @@
+{
+  "clientPackage": "@aws-sdk/client-s3",
+  "clientName": "S3Client",
+  "clientConfig": { "forcePathStyle": true },
+  "steps": [
+    {
+      "command": "CreateBucketCommand",
+      "input": { "Bucket": "parity-s3-create" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "Location"],
+      "saveAs": "b1",
+      "refs": {}
+    },
+    {
+      "command": "HeadBucketCommand",
+      "input": { "Bucket": "parity-s3-create" },
+      "expected": { "BucketRegion": "us-east-1" },
+      "ignorePaths": ["$metadata", "AccessPointAlias"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListBucketsCommand",
+      "input": {},
+      "expected": { "Owner": { "ID": "bunsai", "DisplayName": "bunsai" } },
+      "ignorePaths": ["$metadata", "Buckets"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteBucketCommand",
+      "input": { "Bucket": "parity-s3-create" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

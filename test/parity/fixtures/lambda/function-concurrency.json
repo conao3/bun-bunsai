@@ -1,0 +1,69 @@
+{
+  "clientPackage": "@aws-sdk/client-lambda",
+  "clientName": "LambdaClient",
+  "steps": [
+    {
+      "command": "CreateFunctionCommand",
+      "input": {
+        "FunctionName": "parity-fn-concurrency",
+        "Runtime": "nodejs20.x",
+        "Role": "arn:aws:iam::000000000000:role/parity-role",
+        "Handler": "index.handler",
+        "Code": { "ZipFile": { "$base64": "UEsgZmFrZSB6aXA=" } }
+      },
+      "expected": {
+        "FunctionName": "parity-fn-concurrency",
+        "FunctionArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "fn",
+      "refs": {}
+    },
+    {
+      "command": "PutFunctionConcurrencyCommand",
+      "input": {
+        "FunctionName": "parity-fn-concurrency",
+        "ReservedConcurrentExecutions": 0
+      },
+      "expected": { "ReservedConcurrentExecutions": 0 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutFunctionConcurrencyCommand",
+      "input": {
+        "FunctionName": "parity-fn-concurrency",
+        "ReservedConcurrentExecutions": 5
+      },
+      "expected": { "ReservedConcurrentExecutions": 5 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetFunctionConcurrencyCommand",
+      "input": { "FunctionName": "parity-fn-concurrency" },
+      "expected": { "ReservedConcurrentExecutions": 5 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteFunctionConcurrencyCommand",
+      "input": { "FunctionName": "parity-fn-concurrency" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteFunctionCommand",
+      "input": { "FunctionName": "parity-fn-concurrency" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

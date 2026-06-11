@@ -1,0 +1,51 @@
+{
+  "clientPackage": "@aws-sdk/client-lambda",
+  "clientName": "LambdaClient",
+  "steps": [
+    {
+      "command": "CreateFunctionCommand",
+      "input": {
+        "FunctionName": "parity-fn-lifecycle",
+        "Runtime": "nodejs20.x",
+        "Role": "arn:aws:iam::000000000000:role/parity-role",
+        "Handler": "index.handler",
+        "Code": { "ZipFile": { "$base64": "UEsgZmFrZSB6aXA=" } }
+      },
+      "expected": {
+        "FunctionName": "parity-fn-lifecycle",
+        "FunctionArn": "<ANY>",
+        "Runtime": "nodejs20.x",
+        "Handler": "index.handler",
+        "PackageType": "Zip"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "fn",
+      "refs": {}
+    },
+    {
+      "command": "GetFunctionCommand",
+      "input": { "FunctionName": "parity-fn-lifecycle" },
+      "expected": {
+        "Configuration": {
+          "FunctionName": "parity-fn-lifecycle",
+          "FunctionArn": "<ANY>",
+          "Runtime": "nodejs20.x",
+          "Handler": "index.handler",
+          "PackageType": "Zip"
+        },
+        "Code": { "RepositoryType": "S3", "Location": "<ANY>" }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteFunctionCommand",
+      "input": { "FunctionName": "parity-fn-lifecycle" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

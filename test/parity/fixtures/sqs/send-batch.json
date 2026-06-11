@@ -1,0 +1,44 @@
+{
+  "clientPackage": "@aws-sdk/client-sqs",
+  "clientName": "SQSClient",
+  "steps": [
+    {
+      "command": "CreateQueueCommand",
+      "input": { "QueueName": "parity-q-batch" },
+      "expected": { "QueueUrl": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "q",
+      "refs": {}
+    },
+    {
+      "command": "SendMessageBatchCommand",
+      "input": {
+        "QueueUrl": "${q.QueueUrl}",
+        "Entries": [
+          { "Id": "msg-1", "MessageBody": "body-1" },
+          { "Id": "msg-2", "MessageBody": "body-2" },
+          { "Id": "msg-3", "MessageBody": "body-3" }
+        ]
+      },
+      "expected": {
+        "Successful": [
+          { "Id": "msg-1", "MD5OfMessageBody": "<ANY>", "MessageId": "<ANY>" },
+          { "Id": "msg-2", "MD5OfMessageBody": "<ANY>", "MessageId": "<ANY>" },
+          { "Id": "msg-3", "MD5OfMessageBody": "<ANY>", "MessageId": "<ANY>" }
+        ],
+        "Failed": []
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteQueueCommand",
+      "input": { "QueueUrl": "${q.QueueUrl}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

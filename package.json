@@ -26,6 +26,7 @@
     "@aws-sdk/client-appstream": "^3.1059.0",
     "@aws-sdk/client-appsync": "^3.1058.0",
     "@aws-sdk/client-athena": "^3.1058.0",
+    "@aws-sdk/client-auto-scaling": "^3.1066.0",
     "@aws-sdk/client-backup": "^3.1058.0",
     "@aws-sdk/client-batch": "^3.1058.0",
     "@aws-sdk/client-budgets": "^3.1059.0",
@@ -100,11 +101,13 @@
     "@aws-sdk/client-personalize": "^3.1059.0",
     "@aws-sdk/client-pinpoint": "^3.1059.0",
     "@aws-sdk/client-pinpoint-sms-voice-v2": "^3.1059.0",
+    "@aws-sdk/client-pipes": "^3.1066.0",
     "@aws-sdk/client-ram": "^3.1059.0",
     "@aws-sdk/client-rds": "^3.1058.0",
     "@aws-sdk/client-redshift": "^3.1058.0",
     "@aws-sdk/client-resource-groups": "^3.1059.0",
     "@aws-sdk/client-route-53": "^3.1058.0",
+    "@aws-sdk/client-route53resolver": "^3.1066.0",
     "@aws-sdk/client-s3": "^3.1058.0",
     "@aws-sdk/client-sagemaker": "^3.1058.0",
     "@aws-sdk/client-scheduler": "^3.1058.0",
@@ -136,5 +139,9 @@
     "knip": "^6.15.0",
     "prettier": "^3.8.3",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@aws-sdk/client-codedeploy": "^3.1066.0",
+    "@aws-sdk/client-cognito-identity": "^3.1066.0"
   }
 }

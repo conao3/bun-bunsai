@@ -777,6 +777,7 @@ const GetTopicAttributes: OperationHandler = (input, ctx) => {
     }
   }
   const attributes: Record<string, string> = {
+    DisplayName: "",
     ...topic.Attributes,
     TopicArn: topicArn,
     Owner: ctx.account,

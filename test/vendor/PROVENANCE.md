@@ -109,6 +109,7 @@ aws-models/
   eks.json             # botocore/data/eks/2017-11-01/service-2.json             (protocol rest-json)
   appsync.json         # botocore/data/appsync/2017-07-25/service-2.json         (protocol rest-json)
   codebuild.json       # botocore/data/codebuild/2016-10-06/service-2.json       (protocol json)
+  codedeploy.json      # botocore/data/codedeploy/2014-10-06/service-2.json      (protocol json)
   codepipeline.json    # botocore/data/codepipeline/2015-07-09/service-2.json    (protocol json)
   transfer.json        # botocore/data/transfer/2018-11-05/service-2.json        (protocol json)
   codecommit.json      # botocore/data/codecommit/2015-04-13/service-2.json      (protocol json)
@@ -178,6 +179,10 @@ aws-models/
   ram.json              # botocore/data/ram/2018-01-04/service-2.json              (protocol rest-json, endpointPrefix ram, signingName ram)
   network-firewall.json # botocore/data/network-firewall/2020-11-12/service-2.json (protocol json, endpointPrefix network-firewall, signingName network-firewall, targetPrefix NetworkFirewall_20201112)
   schemas.json          # botocore/data/schemas/2019-12-02/service-2.json          (protocol rest-json, endpointPrefix schemas, signingName schemas)
+  autoscaling.json      # botocore/data/autoscaling/2011-01-01/service-2.json      (protocol query, signingName autoscaling)
+  cognito-identity.json # botocore/data/cognito-identity/2014-06-30/service-2.json  (protocol json, signingName cognito-identity)
+  pipes.json            # botocore/data/pipes/2015-10-07/service-2.json             (protocol rest-json, signingName pipes; Amazon EventBridge Pipes)
+  route53resolver.json  # botocore/data/route53resolver/2018-04-01/service-2.json   (protocol json, signingName route53resolver)
   xray.json             # botocore/data/xray/2016-04-12/service-2.json             (protocol rest-json, signingName xray)
 ```
 
@@ -189,6 +194,49 @@ aws-models/
 - Apache-2.0 attribution is satisfied by the co-located
   `botocore-protocol-tests/LICENSE.txt` / `NOTICE` and the root `NOTICE`, which
   already propagate the Botocore attribution for all vendored botocore data.
+
+## localstack-snapshots/
+
+|               |                                                                                                                                                                                                     |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Upstream repo | https://github.com/localstack/localstack                                                                                                                                                            |
+| License       | Apache-2.0                                                                                                                                                                                          |
+| Pinned tag    | `v3.8.1`                                                                                                                                                                                            |
+| Commit hash   | `529aba7d8372e9199f42a31a6500071363ad8c18`                                                                                                                                                          |
+| Source path   | `tests/aws/services/{sqs,sns,lambda_}/*.snapshot.json`                                                                                                                                              |
+| Fetched on    | 2026-06-11 (JST)                                                                                                                                                                                    |
+| Method        | GitHub Contents API (`api.github.com/repos/localstack/localstack/contents/...?ref=<tag>`) for the file listing, `raw.githubusercontent.com/localstack/localstack/<commit>/...` for the bytes |
+
+### Layout
+
+```
+localstack-snapshots/
+  sqs/
+    test_sqs.snapshot.json           # snapshot responses for tests/aws/services/sqs/test_sqs.py
+    test_sqs_move_task.snapshot.json # snapshot responses for tests/aws/services/sqs/test_sqs_move_task.py
+  sns/
+    test_sns.snapshot.json           # snapshot responses for tests/aws/services/sns/test_sns.py
+    test_sns_filter_policy.snapshot.json
+  lambda/
+    test_lambda.snapshot.json
+    test_lambda_api.snapshot.json    # snapshot responses for tests/aws/services/lambda_/test_lambda_api.py
+    test_lambda_common.snapshot.json
+    test_lambda_destinations.snapshot.json
+    test_lambda_runtimes.snapshot.json
+  LICENSE.txt                        # upstream Apache-2.0 license text
+```
+
+### Notes
+
+- Each `.snapshot.json` is a dict keyed by `tests/aws/services/<svc>/test_<name>.py::<Class>::<method>[<variant>]`.
+  Values are `{ "recorded-date": "...", "recorded-content": { "<label>": <response> } }` where each
+  `<response>` is the raw boto3 response dict recorded against real AWS.
+- Placeholder tokens in the responses: `<resource:N>`, `<partition>`, `<region>`, `"timestamp"`,
+  `"date"`, `<code-sha256:N>`, `<uuid:N>` etc. — these are localstack's own normalizers applied at
+  record time to make snapshots region/account-agnostic.
+- Apache-2.0 attribution is satisfied by the co-located `localstack-snapshots/LICENSE.txt`. The v3.8.1
+  tag was chosen because it predates localstack's license change to BSL; the `LICENSE.txt` at that
+  commit confirms Apache-2.0.
 
 ## Refreshing
 

@@ -1,0 +1,83 @@
+{
+  "clientPackage": "@aws-sdk/client-sqs",
+  "clientName": "SQSClient",
+  "steps": [
+    {
+      "command": "CreateQueueCommand",
+      "input": { "QueueName": "parity-q-tags" },
+      "expected": { "QueueUrl": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "q",
+      "refs": {}
+    },
+    {
+      "command": "TagQueueCommand",
+      "input": {
+        "QueueUrl": "${q.QueueUrl}",
+        "Tags": { "tag1": "value1", "tag2": "value2", "tag3": "" }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListQueueTagsCommand",
+      "input": { "QueueUrl": "${q.QueueUrl}" },
+      "expected": {
+        "Tags": { "tag1": "value1", "tag2": "value2", "tag3": "" }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UntagQueueCommand",
+      "input": {
+        "QueueUrl": "${q.QueueUrl}",
+        "TagKeys": ["tag1", "tag3"]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListQueueTagsCommand",
+      "input": { "QueueUrl": "${q.QueueUrl}" },
+      "expected": {
+        "Tags": { "tag2": "value2" }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UntagQueueCommand",
+      "input": {
+        "QueueUrl": "${q.QueueUrl}",
+        "TagKeys": ["tag2"]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListQueueTagsCommand",
+      "input": { "QueueUrl": "${q.QueueUrl}" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "Tags"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteQueueCommand",
+      "input": { "QueueUrl": "${q.QueueUrl}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

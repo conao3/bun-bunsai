@@ -38,12 +38,28 @@ type StoredIdentity = {
   LastModifiedDate: number;
 };
 
+type StoredIdentityPoolRoles = {
+  Roles: Record<string, string>;
+  RoleMappings?: Record<string, unknown>;
+};
+
+type StoredPrincipalTags = {
+  UseDefaults: boolean;
+  PrincipalTags: Record<string, string>;
+};
+
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
 const poolKey = (poolId: string): string => `pool:${poolId}`;
 const identityKey = (identityId: string): string => `identity:${identityId}`;
-const loginMapKey = (poolId: string, loginKey: string): string =>
-  `login:${poolId}:${loginKey}`;
+const loginMapKey = (
+  poolId: string,
+  provider: string,
+  stableId: string,
+): string => `login:${poolId}:${provider}:${stableId}`;
+const rolesKey = (poolId: string): string => `roles:${poolId}`;
+const principalTagsKey = (poolId: string, provider: string): string =>
+  `principaltags:${poolId}:${provider}`;
 
 const encodePageToken = (offset: number): string =>
   Buffer.from(String(offset), "utf8").toString("base64");
@@ -81,6 +97,21 @@ const issueCredentials = (account: string, identityId: string) => ({
   SessionToken: `${fedTokenPrefix}${account}/${identityId}`,
   Expiration: nowSeconds() + 3600,
 });
+
+const stableLoginId = (token: string): string => {
+  const parts = token.split(".");
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(
+        Buffer.from(parts[1], "base64url").toString("utf8"),
+      );
+      if (typeof payload.sub === "string") return payload.sub;
+    } catch {
+      // not a valid JWT
+    }
+  }
+  return token;
+};
 
 const cognitoIdentity: ServiceDefinition = {
   name: "cognito-identity",
@@ -252,6 +283,35 @@ const cognitoIdentity: ServiceDefinition = {
           400,
         );
       }
+
+      const identities = ctx.store
+        .list<StoredIdentity>()
+        .filter(
+          (e) =>
+            e.key.startsWith("identity:") && e.value.IdentityPoolId === poolId,
+        );
+      for (const entry of identities) {
+        ctx.store.delete(entry.key);
+      }
+
+      const loginPrefix = `login:${poolId}:`;
+      const loginMappings = ctx.store
+        .list<string>()
+        .filter((e) => e.key.startsWith(loginPrefix));
+      for (const entry of loginMappings) {
+        ctx.store.delete(entry.key);
+      }
+
+      ctx.store.delete(rolesKey(poolId));
+
+      const ptPrefix = `principaltags:${poolId}:`;
+      const ptEntries = ctx.store
+        .list<StoredPrincipalTags>()
+        .filter((e) => e.key.startsWith(ptPrefix));
+      for (const entry of ptEntries) {
+        ctx.store.delete(entry.key);
+      }
+
       ctx.store.delete(poolKey(poolId));
       return {};
     },
@@ -286,16 +346,17 @@ const cognitoIdentity: ServiceDefinition = {
         );
       }
 
-      const loginKeys = logins
-        ? Object.entries(logins).map(([k, v]) => `${k}:${v}`)
-        : [];
-      const loginMapLookupKey =
-        loginKeys.length > 0 ? loginMapKey(poolId, loginKeys[0]) : undefined;
+      const loginEntries = logins ? Object.entries(logins) : [];
 
-      if (loginMapLookupKey) {
-        const existingId = ctx.store.get<string>(loginMapLookupKey);
+      for (const [provider, token] of loginEntries) {
+        const sid = stableLoginId(token);
+        const mapKey = loginMapKey(poolId, provider, sid);
+        const existingId = ctx.store.get<string>(mapKey);
         if (existingId) {
-          return { IdentityId: existingId };
+          if (ctx.store.get<StoredIdentity>(identityKey(existingId))) {
+            return { IdentityId: existingId };
+          }
+          ctx.store.delete(mapKey);
         }
       }
 
@@ -307,14 +368,15 @@ const cognitoIdentity: ServiceDefinition = {
       const identity: StoredIdentity = {
         IdentityId: identityId,
         IdentityPoolId: poolId,
-        Logins: loginKeys,
+        Logins: loginEntries.map(([provider]) => provider),
         CreationDate: now,
         LastModifiedDate: now,
       };
 
       ctx.store.set(identityKey(identityId), identity);
-      if (loginMapLookupKey) {
-        ctx.store.set(loginMapLookupKey, identityId);
+      for (const [provider, token] of loginEntries) {
+        const sid = stableLoginId(token);
+        ctx.store.set(loginMapKey(poolId, provider, sid), identityId);
       }
 
       return { IdentityId: identityId };
@@ -322,6 +384,8 @@ const cognitoIdentity: ServiceDefinition = {
 
     GetCredentialsForIdentity: (input, ctx) => {
       const identityId = input["IdentityId"] as string;
+      const customRoleArn = input["CustomRoleArn"] as string | undefined;
+
       const identity = ctx.store.get<StoredIdentity>(identityKey(identityId));
       if (!identity) {
         throw awsError(
@@ -329,6 +393,43 @@ const cognitoIdentity: ServiceDefinition = {
           `Identity '${identityId}' not found`,
           400,
         );
+      }
+
+      const pool = ctx.store.get<StoredIdentityPool>(
+        poolKey(identity.IdentityPoolId),
+      );
+      if (!pool) {
+        throw awsError(
+          "ResourceNotFoundException",
+          `Identity pool '${identity.IdentityPoolId}' not found`,
+          400,
+        );
+      }
+
+      const isAuthenticated = identity.Logins.length > 0;
+
+      if (!isAuthenticated && !pool.AllowUnauthenticatedIdentities) {
+        throw awsError(
+          "NotAuthorizedException",
+          "Unauthenticated access is not allowed for this identity pool",
+          400,
+        );
+      }
+
+      if (!customRoleArn) {
+        const storedRoles = ctx.store.get<StoredIdentityPoolRoles>(
+          rolesKey(identity.IdentityPoolId),
+        );
+        if (storedRoles) {
+          const roleKey = isAuthenticated ? "authenticated" : "unauthenticated";
+          if (!storedRoles.Roles?.[roleKey]) {
+            throw awsError(
+              "InvalidIdentityPoolConfigurationException",
+              `No ${roleKey} role configured for identity pool`,
+              400,
+            );
+          }
+        }
       }
 
       const acct = accountOf(ctx);
@@ -424,7 +525,17 @@ const cognitoIdentity: ServiceDefinition = {
     DeleteIdentities: (input, ctx) => {
       const idsToDelete = input["IdentityIdsToDelete"] as string[];
       for (const id of idsToDelete) {
-        ctx.store.delete(identityKey(id));
+        const identity = ctx.store.get<StoredIdentity>(identityKey(id));
+        if (identity) {
+          const loginPrefix = `login:${identity.IdentityPoolId}:`;
+          const loginMappings = ctx.store
+            .list<string>()
+            .filter((e) => e.key.startsWith(loginPrefix) && e.value === id);
+          for (const mapping of loginMappings) {
+            ctx.store.delete(mapping.key);
+          }
+          ctx.store.delete(identityKey(id));
+        }
       }
       return { UnprocessedIdentityIds: [] };
     },
@@ -522,23 +633,55 @@ const cognitoIdentity: ServiceDefinition = {
           400,
         );
       }
-      const acct = accountOf(ctx);
+
+      const stored = ctx.store.get<StoredIdentityPoolRoles>(rolesKey(poolId));
+      if (!stored) {
+        return {
+          IdentityPoolId: poolId,
+          RoleMappings: {},
+        };
+      }
+
       return {
         IdentityPoolId: poolId,
-        Roles: {
-          authenticated: `arn:aws:iam::${acct}:role/Cognito_${pool.IdentityPoolName}Auth_Role`,
-          unauthenticated: `arn:aws:iam::${acct}:role/Cognito_${pool.IdentityPoolName}Unauth_Role`,
-        },
-        RoleMappings: {},
+        Roles: stored.Roles,
+        RoleMappings: stored.RoleMappings ?? {},
       };
     },
 
-    SetIdentityPoolRoles: (_input, _ctx) => {
+    SetIdentityPoolRoles: (input, ctx) => {
+      const poolId = input["IdentityPoolId"] as string;
+      const roles = input["Roles"] as Record<string, string> | undefined;
+      const roleMappings = input["RoleMappings"] as
+        | Record<string, unknown>
+        | undefined;
+
+      const pool = ctx.store.get<StoredIdentityPool>(poolKey(poolId));
+      if (!pool) {
+        throw awsError(
+          "ResourceNotFoundException",
+          `Identity pool '${poolId}' not found`,
+          400,
+        );
+      }
+
+      if (!roles) {
+        throw awsError("InvalidParameterException", "Roles is required", 400);
+      }
+
+      const stored: StoredIdentityPoolRoles = {
+        Roles: roles,
+        RoleMappings: roleMappings,
+      };
+      ctx.store.set(rolesKey(poolId), stored);
+
       return {};
     },
 
     GetPrincipalTagAttributeMap: (input, ctx) => {
       const poolId = input["IdentityPoolId"] as string;
+      const providerName = input["IdentityProviderName"] as string;
+
       const pool = ctx.store.get<StoredIdentityPool>(poolKey(poolId));
       if (!pool) {
         throw awsError(
@@ -547,16 +690,23 @@ const cognitoIdentity: ServiceDefinition = {
           400,
         );
       }
+
+      const stored = ctx.store.get<StoredPrincipalTags>(
+        principalTagsKey(poolId, providerName),
+      );
+
       return {
         IdentityPoolId: poolId,
-        IdentityProviderName: input["IdentityProviderName"] as string,
-        UseDefaults: true,
-        PrincipalTags: {},
+        IdentityProviderName: providerName,
+        UseDefaults: stored?.UseDefaults ?? true,
+        PrincipalTags: stored?.PrincipalTags ?? {},
       };
     },
 
     SetPrincipalTagAttributeMap: (input, ctx) => {
       const poolId = input["IdentityPoolId"] as string;
+      const providerName = input["IdentityProviderName"] as string;
+
       const pool = ctx.store.get<StoredIdentityPool>(poolKey(poolId));
       if (!pool) {
         throw awsError(
@@ -565,11 +715,24 @@ const cognitoIdentity: ServiceDefinition = {
           400,
         );
       }
+
+      const useDefaults = input["UseDefaults"] as boolean | undefined;
+      const principalTags = input["PrincipalTags"] as
+        | Record<string, string>
+        | undefined;
+
+      const stored: StoredPrincipalTags = {
+        UseDefaults: useDefaults ?? true,
+        PrincipalTags: principalTags ?? {},
+      };
+
+      ctx.store.set(principalTagsKey(poolId, providerName), stored);
+
       return {
         IdentityPoolId: poolId,
-        IdentityProviderName: input["IdentityProviderName"] as string,
-        UseDefaults: input["UseDefaults"] as boolean,
-        PrincipalTags: input["PrincipalTags"] as Record<string, string>,
+        IdentityProviderName: providerName,
+        UseDefaults: stored.UseDefaults,
+        PrincipalTags: stored.PrincipalTags,
       };
     },
 
@@ -585,17 +748,81 @@ const cognitoIdentity: ServiceDefinition = {
       }
 
       const logins = input["Logins"] as Record<string, string> | undefined;
-      const loginKeys = logins
-        ? Object.entries(logins).map(([k, v]) => `${k}:${v}`)
-        : [];
-      const loginMapLookupKey =
-        loginKeys.length > 0 ? loginMapKey(poolId, loginKeys[0]) : undefined;
+      const inputIdentityId = input["IdentityId"] as string | undefined;
+      const loginEntries = logins ? Object.entries(logins) : [];
 
       let identityId: string;
-      if (loginMapLookupKey) {
-        const existingId = ctx.store.get<string>(loginMapLookupKey);
-        if (existingId) {
-          identityId = existingId;
+
+      if (inputIdentityId) {
+        const existingIdentity = ctx.store.get<StoredIdentity>(
+          identityKey(inputIdentityId),
+        );
+        if (!existingIdentity) {
+          throw awsError(
+            "ResourceNotFoundException",
+            `Identity '${inputIdentityId}' not found`,
+            400,
+          );
+        }
+
+        for (const [provider, token] of loginEntries) {
+          const sid = stableLoginId(token);
+          const mapKey = loginMapKey(poolId, provider, sid);
+          const existingMappedId = ctx.store.get<string>(mapKey);
+          if (existingMappedId && existingMappedId !== inputIdentityId) {
+            throw awsError(
+              "DeveloperUserAlreadyRegisteredException",
+              `Developer user identifier is already registered to a different identity`,
+              400,
+            );
+          }
+        }
+
+        identityId = inputIdentityId;
+        const identity = ctx.store.get<StoredIdentity>(
+          identityKey(identityId),
+        )!;
+        for (const [provider, token] of loginEntries) {
+          const sid = stableLoginId(token);
+          ctx.store.set(loginMapKey(poolId, provider, sid), identityId);
+          if (!identity.Logins.includes(provider)) {
+            identity.Logins.push(provider);
+          }
+        }
+        identity.LastModifiedDate = nowSeconds();
+        ctx.store.set(identityKey(identityId), identity);
+      } else {
+        let foundId: string | undefined;
+        for (const [provider, token] of loginEntries) {
+          const sid = stableLoginId(token);
+          const mapKey = loginMapKey(poolId, provider, sid);
+          const existingId = ctx.store.get<string>(mapKey);
+          if (
+            existingId &&
+            ctx.store.get<StoredIdentity>(identityKey(existingId))
+          ) {
+            foundId = existingId;
+            break;
+          }
+        }
+
+        if (foundId) {
+          identityId = foundId;
+          const identity = ctx.store.get<StoredIdentity>(
+            identityKey(identityId),
+          )!;
+          for (const [provider, token] of loginEntries) {
+            const sid = stableLoginId(token);
+            const mapKey = loginMapKey(poolId, provider, sid);
+            if (!ctx.store.get<string>(mapKey)) {
+              ctx.store.set(mapKey, identityId);
+            }
+            if (!identity.Logins.includes(provider)) {
+              identity.Logins.push(provider);
+            }
+          }
+          identity.LastModifiedDate = nowSeconds();
+          ctx.store.set(identityKey(identityId), identity);
         } else {
           const region = ctx.region || "us-east-1";
           identityId = `${region}:${crypto.randomUUID()}`;
@@ -603,25 +830,16 @@ const cognitoIdentity: ServiceDefinition = {
           const identity: StoredIdentity = {
             IdentityId: identityId,
             IdentityPoolId: poolId,
-            Logins: loginKeys,
+            Logins: loginEntries.map(([provider]) => provider),
             CreationDate: now,
             LastModifiedDate: now,
           };
           ctx.store.set(identityKey(identityId), identity);
-          ctx.store.set(loginMapLookupKey, identityId);
+          for (const [provider, token] of loginEntries) {
+            const sid = stableLoginId(token);
+            ctx.store.set(loginMapKey(poolId, provider, sid), identityId);
+          }
         }
-      } else {
-        const region = ctx.region || "us-east-1";
-        identityId = `${region}:${crypto.randomUUID()}`;
-        const now = nowSeconds();
-        const identity: StoredIdentity = {
-          IdentityId: identityId,
-          IdentityPoolId: poolId,
-          Logins: loginKeys,
-          CreationDate: now,
-          LastModifiedDate: now,
-        };
-        ctx.store.set(identityKey(identityId), identity);
       }
 
       const acct = accountOf(ctx);
@@ -642,12 +860,92 @@ const cognitoIdentity: ServiceDefinition = {
           400,
         );
       }
-      void input["MaxResults"];
-      return {
-        IdentityId: undefined,
-        DeveloperUserIdentifierList: [],
-        NextToken: undefined,
-      };
+
+      const developerUserIdentifier = input["DeveloperUserIdentifier"] as
+        | string
+        | undefined;
+      const identityIdInput = input["IdentityId"] as string | undefined;
+      const maxResults = (input["MaxResults"] as number) || 10;
+
+      const provider = pool.DeveloperProviderName;
+      if (!provider) {
+        throw awsError(
+          "InvalidParameterException",
+          "Identity pool does not have a developer provider configured",
+          400,
+        );
+      }
+
+      const loginPrefix = `login:${poolId}:${provider}:`;
+
+      if (developerUserIdentifier) {
+        const sid = stableLoginId(developerUserIdentifier);
+        const mapKey = loginMapKey(poolId, provider, sid);
+        const identityId = ctx.store.get<string>(mapKey);
+
+        if (!identityId) {
+          throw awsError(
+            "ResourceNotFoundException",
+            `Developer identity '${developerUserIdentifier}' not found`,
+            400,
+          );
+        }
+
+        const allIdentifiers = ctx.store
+          .list<string>()
+          .filter(
+            (e) => e.key.startsWith(loginPrefix) && e.value === identityId,
+          )
+          .map((e) => e.key.slice(loginPrefix.length));
+
+        const { page, nextToken } = paginate(
+          allIdentifiers,
+          maxResults,
+          input["NextToken"],
+        );
+
+        return {
+          IdentityId: identityId,
+          DeveloperUserIdentifierList: page,
+          NextToken: nextToken,
+        };
+      } else if (identityIdInput) {
+        const identity = ctx.store.get<StoredIdentity>(
+          identityKey(identityIdInput),
+        );
+        if (!identity) {
+          throw awsError(
+            "ResourceNotFoundException",
+            `Identity '${identityIdInput}' not found`,
+            400,
+          );
+        }
+
+        const allIdentifiers = ctx.store
+          .list<string>()
+          .filter(
+            (e) => e.key.startsWith(loginPrefix) && e.value === identityIdInput,
+          )
+          .map((e) => e.key.slice(loginPrefix.length));
+
+        const { page, nextToken } = paginate(
+          allIdentifiers,
+          maxResults,
+          input["NextToken"],
+        );
+
+        return {
+          IdentityId: identityIdInput,
+          DeveloperUserIdentifierList: page,
+          NextToken: nextToken,
+        };
+      } else {
+        throw awsError(
+          "InvalidParameterException",
+          "Either DeveloperUserIdentifier or IdentityId must be provided",
+          400,
+        );
+      }
     },
 
     MergeDeveloperIdentities: (input, ctx) => {
@@ -660,7 +958,81 @@ const cognitoIdentity: ServiceDefinition = {
           400,
         );
       }
-      return { IdentityId: input["DestinationUserIdentifier"] as string };
+
+      const sourceIdentifier = input["SourceUserIdentifier"] as string;
+      const destIdentifier = input["DestinationUserIdentifier"] as string;
+      const devProviderName =
+        (input["DeveloperProviderName"] as string) ||
+        pool.DeveloperProviderName;
+
+      if (!devProviderName) {
+        throw awsError(
+          "InvalidParameterException",
+          "DeveloperProviderName is required",
+          400,
+        );
+      }
+
+      const srcMapKey = loginMapKey(
+        poolId,
+        devProviderName,
+        stableLoginId(sourceIdentifier),
+      );
+      const dstMapKey = loginMapKey(
+        poolId,
+        devProviderName,
+        stableLoginId(destIdentifier),
+      );
+
+      const srcIdentityId = ctx.store.get<string>(srcMapKey);
+      if (!srcIdentityId) {
+        throw awsError(
+          "ResourceNotFoundException",
+          `Developer identity '${sourceIdentifier}' not found`,
+          400,
+        );
+      }
+
+      const dstIdentityId = ctx.store.get<string>(dstMapKey);
+      if (!dstIdentityId) {
+        throw awsError(
+          "ResourceNotFoundException",
+          `Developer identity '${destIdentifier}' not found`,
+          400,
+        );
+      }
+
+      const loginPrefix = `login:${poolId}:`;
+      const srcMappings = ctx.store
+        .list<string>()
+        .filter(
+          (e) => e.key.startsWith(loginPrefix) && e.value === srcIdentityId,
+        );
+
+      for (const mapping of srcMappings) {
+        ctx.store.set(mapping.key, dstIdentityId);
+      }
+
+      const srcIdentity = ctx.store.get<StoredIdentity>(
+        identityKey(srcIdentityId),
+      );
+      const dstIdentity = ctx.store.get<StoredIdentity>(
+        identityKey(dstIdentityId),
+      );
+
+      if (srcIdentity && dstIdentity) {
+        for (const login of srcIdentity.Logins) {
+          if (!dstIdentity.Logins.includes(login)) {
+            dstIdentity.Logins.push(login);
+          }
+        }
+        dstIdentity.LastModifiedDate = nowSeconds();
+        ctx.store.set(identityKey(dstIdentityId), dstIdentity);
+      }
+
+      ctx.store.delete(identityKey(srcIdentityId));
+
+      return { IdentityId: dstIdentityId };
     },
 
     UnlinkDeveloperIdentity: (input, ctx) => {
@@ -673,11 +1045,11 @@ const cognitoIdentity: ServiceDefinition = {
           400,
         );
       }
-      return {};
-    },
 
-    UnlinkIdentity: (input, ctx) => {
       const identityId = input["IdentityId"] as string;
+      const devProviderName = input["DeveloperProviderName"] as string;
+      const devUserIdentifier = input["DeveloperUserIdentifier"] as string;
+
       const identity = ctx.store.get<StoredIdentity>(identityKey(identityId));
       if (!identity) {
         throw awsError(
@@ -686,6 +1058,43 @@ const cognitoIdentity: ServiceDefinition = {
           400,
         );
       }
+
+      const sid = stableLoginId(devUserIdentifier);
+      ctx.store.delete(loginMapKey(poolId, devProviderName, sid));
+
+      identity.Logins = identity.Logins.filter((l) => l !== devProviderName);
+      identity.LastModifiedDate = nowSeconds();
+      ctx.store.set(identityKey(identityId), identity);
+
+      return {};
+    },
+
+    UnlinkIdentity: (input, ctx) => {
+      const identityId = input["IdentityId"] as string;
+      const logins = input["Logins"] as Record<string, string> | undefined;
+      const loginsToRemove = input["LoginsToRemove"] as string[] | undefined;
+
+      const identity = ctx.store.get<StoredIdentity>(identityKey(identityId));
+      if (!identity) {
+        throw awsError(
+          "ResourceNotFoundException",
+          `Identity '${identityId}' not found`,
+          400,
+        );
+      }
+
+      for (const provider of loginsToRemove ?? []) {
+        const token = logins?.[provider];
+        if (token) {
+          const sid = stableLoginId(token);
+          ctx.store.delete(loginMapKey(identity.IdentityPoolId, provider, sid));
+        }
+        identity.Logins = identity.Logins.filter((l) => l !== provider);
+      }
+
+      identity.LastModifiedDate = nowSeconds();
+      ctx.store.set(identityKey(identityId), identity);
+
       return {};
     },
   },

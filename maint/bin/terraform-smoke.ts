@@ -10,6 +10,7 @@ import {
   GetItemCommand,
   DynamoDBClient,
 } from "@aws-sdk/client-dynamodb";
+import { PublishCommand, SNSClient } from "@aws-sdk/client-sns";
 import { resolve } from "path";
 
 const tfCheck = Bun.spawnSync(["terraform", "version"], {
@@ -111,6 +112,20 @@ try {
   if (ddbGet.Item?.pk?.S !== "smoke-key")
     throw new Error("DynamoDB read-after-write mismatch");
   console.log("✓ DynamoDB table verified");
+
+  const sns = new SNSClient({ endpoint, region, credentials });
+  await sns.send(
+    new PublishCommand({
+      TopicArn: "arn:aws:sns:us-east-1:000000000000:tf-smoke-topic",
+      Message: "hello-sns",
+    }),
+  );
+  const snsMsg = await sqs.send(
+    new ReceiveMessageCommand({ QueueUrl: queueUrl, MaxNumberOfMessages: 10 }),
+  );
+  if (!snsMsg.Messages?.some((m) => (m.Body ?? "").includes("hello-sns")))
+    throw new Error("SNS→SQS delivery: published message not received");
+  console.log("✓ SNS topic + SQS subscription verified");
 
   tf(["destroy", "-auto-approve"]);
 

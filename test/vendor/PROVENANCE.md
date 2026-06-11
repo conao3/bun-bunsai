@@ -194,6 +194,7 @@ aws-models/
   timestream-write.json # botocore/data/timestream-write/2018-11-01/service-2.json  (protocol json, signingName timestream, endpointPrefix ingest.timestream, targetPrefix Timestream_20181101)
   timestream-query.json # botocore/data/timestream-query/2018-11-01/service-2.json  (protocol json, signingName timestream, endpointPrefix query.timestream, targetPrefix Timestream_20181101)
   kinesisanalyticsv2.json # botocore/data/kinesisanalyticsv2/2018-05-23/service-2.json (protocol json, signingName kinesisanalytics, endpointPrefix kinesisanalytics, targetPrefix KinesisAnalytics_20180523)
+  verifiedpermissions.json # botocore/data/verifiedpermissions/2021-12-01/service-2.json (protocol json, signingName verifiedpermissions, targetPrefix VerifiedPermissions)
 ```
 
 ### Notes

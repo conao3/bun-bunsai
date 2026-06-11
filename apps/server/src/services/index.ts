@@ -129,6 +129,7 @@ import dms from "./dms.ts";
 import timestreamWrite from "./timestream-write.ts";
 import timestreamQuery from "./timestream-query.ts";
 import kinesisanalyticsv2 from "./kinesisanalyticsv2.ts";
+import verifiedpermissions from "./verifiedpermissions.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -260,6 +261,7 @@ export const services: ServiceDefinition[] = [
   timestreamWrite,
   timestreamQuery,
   kinesisanalyticsv2,
+  verifiedpermissions,
 ];
 
 export const findService = (

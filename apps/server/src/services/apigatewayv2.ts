@@ -2245,7 +2245,7 @@ const CreatePortal: OperationHandler = (input, ctx) => {
     portalContent: asRecord(input["PortalContent"]),
     rumAppMonitorName: stringOrUndefined(input["RumAppMonitorName"]),
     tags: asStringRecord(input["Tags"]) ?? {},
-    status: "INACTIVE",
+    status: "DISABLED",
     lastModified: now,
     lastPublished: undefined,
     lastPublishedDescription: undefined,
@@ -2308,7 +2308,7 @@ const DeletePortal: OperationHandler = (input, ctx) => {
 const DisablePortal: OperationHandler = (input, ctx) => {
   const id = requireString(input, "PortalId");
   const p = getPortal(id, ctx);
-  ctx.store.set(portalKey(id), { ...p, status: "INACTIVE" });
+  ctx.store.set(portalKey(id), { ...p, status: "DISABLED" });
   return {};
 };
 
@@ -2324,7 +2324,7 @@ const PublishPortal: OperationHandler = (input, ctx) => {
   const now = new Date().toISOString();
   ctx.store.set(portalKey(id), {
     ...p,
-    status: "ACTIVE",
+    status: "PUBLISHED",
     lastPublished: now,
     lastPublishedDescription: stringOrUndefined(
       input["LastPublishedDescription"],

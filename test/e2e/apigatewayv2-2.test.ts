@@ -69,6 +69,7 @@ import {
   UpdateProductRestEndpointPageCommand,
   UpdateRouteResponseCommand,
   UpdateVpcLinkCommand,
+  PublishStatus,
 } from "@aws-sdk/client-apigatewayv2";
 
 const { endpoint, requestHandler } = startApp();
@@ -457,7 +458,7 @@ test("portal lifecycle", async () => {
 
   const created = await client.send(
     new CreatePortalCommand({
-      Authorization: { AuthorizationType: "NONE" },
+      Authorization: { None: {} },
       PortalContent: {
         DisplayName: "My Portal",
         Theme: {
@@ -471,11 +472,11 @@ test("portal lifecycle", async () => {
           },
         },
       },
-      EndpointConfiguration: { DomainNameId: "abc" },
+      EndpointConfiguration: { None: {} },
     }),
   );
   const portalId = created.PortalId!;
-  expect(created.PublishStatus).toBe("INACTIVE");
+  expect(created.PublishStatus).toBe(PublishStatus.DISABLED);
 
   const got = await client.send(new GetPortalCommand({ PortalId: portalId }));
   expect(got.PortalId).toBe(portalId);
@@ -494,13 +495,13 @@ test("portal lifecycle", async () => {
   const published = await client.send(
     new GetPortalCommand({ PortalId: portalId }),
   );
-  expect(published.PublishStatus).toBe("ACTIVE");
+  expect(published.PublishStatus).toBe(PublishStatus.PUBLISHED);
 
   await client.send(new DisablePortalCommand({ PortalId: portalId }));
   const disabled = await client.send(
     new GetPortalCommand({ PortalId: portalId }),
   );
-  expect(disabled.PublishStatus).toBe("INACTIVE");
+  expect(disabled.PublishStatus).toBe(PublishStatus.DISABLED);
 
   await client.send(new DeletePortalCommand({ PortalId: portalId }));
 });
@@ -562,7 +563,9 @@ test("portal product and pages lifecycle", async () => {
   const restPage = await client.send(
     new CreateProductRestEndpointPageCommand({
       PortalProductId: ppId,
-      RestEndpointIdentifier: { ApiId: "abc", Stage: "$default" },
+      RestEndpointIdentifier: {
+        IdentifierParts: { RestApiId: "abc", Path: "/", Method: "GET", Stage: "$default" },
+      },
     }),
   );
   const restPageId = restPage.ProductRestEndpointPageId!;

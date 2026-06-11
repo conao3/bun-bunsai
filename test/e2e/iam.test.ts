@@ -15,6 +15,7 @@ import {
   DeleteGroupPolicyCommand,
   DeleteLoginProfileCommand,
   DeleteRoleCommand,
+  DetachRolePolicyCommand,
   DeleteServerCertificateCommand,
   DeleteUserCommand,
   DeleteVirtualMFADeviceCommand,
@@ -152,6 +153,12 @@ test("IAM role, user, policy and access key lifecycle", async () => {
   const usersAfterNames = (usersAfter.Users ?? []).map((u) => u.UserName);
   expect(usersAfterNames).not.toContain("bunsai-e2e-user");
 
+  await client.send(
+    new DetachRolePolicyCommand({
+      RoleName: "bunsai-e2e-role",
+      PolicyArn: policyArn,
+    }),
+  );
   await client.send(new DeleteRoleCommand({ RoleName: "bunsai-e2e-role" }));
   const rolesAfter = await client.send(new ListRolesCommand({}));
   const rolesAfterNames = (rolesAfter.Roles ?? []).map((r) => r.RoleName);

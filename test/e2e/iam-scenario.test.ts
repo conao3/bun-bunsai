@@ -156,4 +156,139 @@ describe("IAM scenario e2e: app permission setup", () => {
 
     await client.send(new DeletePolicyCommand({ PolicyArn: policyArn }));
   });
+
+  test("DeleteConflict guards: attachment残/inline残でDeleteRole失敗、detach後成功", async () => {
+    const client = iam();
+    const roleName = "scenario-guard-role";
+    const policyName = "scenario-guard-policy";
+    const inlinePolicyName = "scenario-guard-inline";
+
+    const assumeRolePolicyDocument = JSON.stringify({
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Effect: "Allow",
+          Principal: { Service: "lambda.amazonaws.com" },
+          Action: "sts:AssumeRole",
+        },
+      ],
+    });
+
+    await client.send(
+      new CreateRoleCommand({
+        RoleName: roleName,
+        AssumeRolePolicyDocument: assumeRolePolicyDocument,
+      }),
+    );
+
+    const createPolicyRes = await client.send(
+      new CreatePolicyCommand({
+        PolicyName: policyName,
+        PolicyDocument: JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [
+            { Effect: "Allow", Action: "s3:GetObject", Resource: "*" },
+          ],
+        }),
+      }),
+    );
+    const policyArn = createPolicyRes.Policy!.Arn!;
+
+    await client.send(
+      new AttachRolePolicyCommand({ RoleName: roleName, PolicyArn: policyArn }),
+    );
+
+    await expect(
+      client.send(new DeleteRoleCommand({ RoleName: roleName })),
+    ).rejects.toMatchObject({ name: "DeleteConflictException" });
+
+    await client.send(
+      new PutRolePolicyCommand({
+        RoleName: roleName,
+        PolicyName: inlinePolicyName,
+        PolicyDocument: JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [
+            { Effect: "Deny", Action: "s3:DeleteObject", Resource: "*" },
+          ],
+        }),
+      }),
+    );
+
+    await client.send(
+      new DetachRolePolicyCommand({ RoleName: roleName, PolicyArn: policyArn }),
+    );
+
+    await expect(
+      client.send(new DeleteRoleCommand({ RoleName: roleName })),
+    ).rejects.toMatchObject({ name: "DeleteConflictException" });
+
+    await client.send(
+      new DeleteRolePolicyCommand({
+        RoleName: roleName,
+        PolicyName: inlinePolicyName,
+      }),
+    );
+
+    await client.send(new DeleteRoleCommand({ RoleName: roleName }));
+    await expect(
+      client.send(new GetRoleCommand({ RoleName: roleName })),
+    ).rejects.toMatchObject({ name: "NoSuchEntityException" });
+
+    await expect(
+      client.send(new DeletePolicyCommand({ PolicyArn: policyArn })),
+    ).resolves.toBeDefined();
+  });
+
+  test("DeleteConflict guard: attach残でDeletePolicy失敗、detach後成功", async () => {
+    const client = iam();
+    const roleName = "scenario-policy-guard-role";
+    const policyName = "scenario-policy-guard-policy";
+
+    const assumeRolePolicyDocument = JSON.stringify({
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Effect: "Allow",
+          Principal: { Service: "lambda.amazonaws.com" },
+          Action: "sts:AssumeRole",
+        },
+      ],
+    });
+
+    await client.send(
+      new CreateRoleCommand({
+        RoleName: roleName,
+        AssumeRolePolicyDocument: assumeRolePolicyDocument,
+      }),
+    );
+
+    const createPolicyRes = await client.send(
+      new CreatePolicyCommand({
+        PolicyName: policyName,
+        PolicyDocument: JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [
+            { Effect: "Allow", Action: "s3:GetObject", Resource: "*" },
+          ],
+        }),
+      }),
+    );
+    const policyArn = createPolicyRes.Policy!.Arn!;
+
+    await client.send(
+      new AttachRolePolicyCommand({ RoleName: roleName, PolicyArn: policyArn }),
+    );
+
+    await expect(
+      client.send(new DeletePolicyCommand({ PolicyArn: policyArn })),
+    ).rejects.toMatchObject({ name: "DeleteConflictException" });
+
+    await client.send(
+      new DetachRolePolicyCommand({ RoleName: roleName, PolicyArn: policyArn }),
+    );
+
+    await client.send(new DeletePolicyCommand({ PolicyArn: policyArn }));
+    await client.send(new DeleteRoleCommand({ RoleName: roleName }));
+  });
 });

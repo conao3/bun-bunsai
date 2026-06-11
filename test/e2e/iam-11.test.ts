@@ -7,7 +7,9 @@ import {
   CreateUserCommand,
   DeleteGroupCommand,
   DeleteRoleCommand,
+  DeleteRolePolicyCommand,
   DeleteUserCommand,
+  DetachRolePolicyCommand,
   IAMClient,
   AttachGroupPolicyCommand,
   CreateGroupCommand,
@@ -72,6 +74,12 @@ test("HIGH-1: DeleteRole cleans up roletag/* and rolepolicy/* entries", async ()
   );
   expect(tagsBefore.Tags).toHaveLength(2);
 
+  await client.send(
+    new DeleteRolePolicyCommand({
+      RoleName: "del-role-1",
+      PolicyName: "inline1",
+    }),
+  );
   await client.send(new DeleteRoleCommand({ RoleName: "del-role-1" }));
 
   await client.send(
@@ -330,5 +338,11 @@ test("HIGH-4+HIGH-5: ListPolicies paginates and filters OnlyAttached", async () 
   );
   expect(unattached.Policies).toHaveLength(4);
 
+  await client.send(
+    new DetachRolePolicyCommand({
+      RoleName: "pagtest-attach-role",
+      PolicyArn: policyArns[0],
+    }),
+  );
   await client.send(new DeleteRoleCommand({ RoleName: "pagtest-attach-role" }));
 });

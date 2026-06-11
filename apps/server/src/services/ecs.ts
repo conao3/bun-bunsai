@@ -150,6 +150,12 @@ type StoredExpressGatewayService = {
   createdAt: number;
 };
 
+type Elbv2Target = {
+  Id: string;
+  Port: number | undefined;
+  AvailabilityZone: string | undefined;
+};
+
 const clusterKey = (name: string): string => `cluster#${name}`;
 
 const taskDefKey = (family: string, revision: number): string =>
@@ -901,6 +907,34 @@ const reconcileServiceTasks = (
   }
 };
 
+const syncServiceTargets = (
+  ctx: ServiceContext,
+  service: StoredService,
+  tasks: StoredTask[],
+): void => {
+  if (service.loadBalancers.length === 0) return;
+  const elbStore = ctx.storeFor("elasticloadbalancing");
+  const prevKey = `svc_lb_tasks#${service.clusterName}#${service.serviceName}`;
+  const prevTaskArns = ctx.store.get<string[]>(prevKey) ?? [];
+  const currentTaskArns = tasks.map((t) => t.taskArn);
+  for (const lb of service.loadBalancers) {
+    const tgArn =
+      typeof lb["targetGroupArn"] === "string"
+        ? lb["targetGroupArn"]
+        : undefined;
+    if (tgArn === undefined) continue;
+    const existing = elbStore.get<Elbv2Target[]>(`targets/${tgArn}`) ?? [];
+    const kept = existing.filter((t) => !prevTaskArns.includes(t.Id));
+    const added: Elbv2Target[] = tasks.map((task) => ({
+      Id: task.taskArn,
+      Port: undefined,
+      AvailabilityZone: undefined,
+    }));
+    elbStore.set(`targets/${tgArn}`, [...kept, ...added]);
+  }
+  ctx.store.set(prevKey, currentTaskArns);
+};
+
 const makeDeployment = (
   taskDefinitionArn: string,
   desiredCount: number,
@@ -940,6 +974,20 @@ const CreateService: OperationHandler = (input, ctx) => {
   const loadBalancers = Array.isArray(rawLbs)
     ? (rawLbs as Record<string, unknown>[])
     : [];
+  const elbStore = ctx.storeFor("elasticloadbalancing");
+  for (const lb of loadBalancers) {
+    const tgArn =
+      typeof lb["targetGroupArn"] === "string"
+        ? lb["targetGroupArn"]
+        : undefined;
+    if (tgArn !== undefined && elbStore.get(`tg/${tgArn}`) === undefined) {
+      throw awsError(
+        "TargetGroupNotFound",
+        `The target group '${tgArn}' does not exist.`,
+        400,
+      );
+    }
+  }
   const rawDepConfig = input["deploymentConfiguration"];
   const deploymentConfiguration =
     rawDepConfig !== null && typeof rawDepConfig === "object"
@@ -981,6 +1029,16 @@ const CreateService: OperationHandler = (input, ctx) => {
     ctx.store.set(tagKey(service.serviceArn), inputTags);
   }
   reconcileServiceTasks(ctx, service);
+  const serviceTasks = ctx.store
+    .list<StoredTask>()
+    .filter(
+      (e) =>
+        e.key.startsWith("task#") &&
+        e.value.clusterName === clusterName &&
+        e.value.serviceName === serviceName,
+    )
+    .map((e) => e.value);
+  syncServiceTargets(ctx, service, serviceTasks);
   const runningCount = countServiceTasks(ctx, clusterName, serviceName);
   return { service: serviceView(service, runningCount) };
 };
@@ -1067,6 +1125,16 @@ const UpdateService: OperationHandler = (input, ctx) => {
   };
   ctx.store.set(serviceKey(clusterName, name), updated);
   reconcileServiceTasks(ctx, updated);
+  const updatedTasks = ctx.store
+    .list<StoredTask>()
+    .filter(
+      (e) =>
+        e.key.startsWith("task#") &&
+        e.value.clusterName === clusterName &&
+        e.value.serviceName === name,
+    )
+    .map((e) => e.value);
+  syncServiceTargets(ctx, updated, updatedTasks);
   const runningCount = countServiceTasks(ctx, clusterName, name);
   return { service: serviceView(updated, runningCount) };
 };
@@ -1083,6 +1151,7 @@ const DeleteService: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  syncServiceTargets(ctx, service, []);
   ctx.store
     .list<StoredTask>()
     .filter(

@@ -122,6 +122,8 @@ import pipes from "./pipes.ts";
 import route53resolver from "./route53resolver.ts";
 import applicationAutoscaling from "./application-autoscaling.ts";
 import xray from "./xray.ts";
+import bedrock from "./bedrock.ts";
+import bedrockRuntime from "./bedrock-runtime.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -246,6 +248,8 @@ export const services: ServiceDefinition[] = [
   route53resolver,
   applicationAutoscaling,
   xray,
+  bedrockRuntime,
+  bedrock,
 ];
 
 export const findService = (

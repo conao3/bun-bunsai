@@ -30,6 +30,8 @@
     "@aws-sdk/client-auto-scaling": "^3.1066.0",
     "@aws-sdk/client-backup": "^3.1058.0",
     "@aws-sdk/client-batch": "^3.1058.0",
+    "@aws-sdk/client-bedrock": "^3.1066.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1066.0",
     "@aws-sdk/client-budgets": "^3.1059.0",
     "@aws-sdk/client-cloudformation": "^3.1058.0",
     "@aws-sdk/client-cloudfront": "^3.1058.0",

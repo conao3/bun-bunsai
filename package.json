@@ -142,6 +142,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@aws-sdk/client-apigatewayv2": "^3.1066.0",
     "@aws-sdk/client-codedeploy": "^3.1066.0",
     "@aws-sdk/client-cognito-identity": "^3.1066.0"
   }

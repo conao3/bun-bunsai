@@ -31,7 +31,6 @@ import {
   ListActiveViolationsCommand,
   ListAuditMitigationActionsExecutionsCommand,
   ListAuditMitigationActionsTasksCommand,
-  ListAuditSuppressions as _ListAuditSuppressions,
   ListAuditSuppressionsCommand,
   ListAuditTasksCommand,
   ListCustomMetricsCommand,

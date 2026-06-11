@@ -184,6 +184,7 @@ aws-models/
   pipes.json            # botocore/data/pipes/2015-10-07/service-2.json             (protocol rest-json, signingName pipes; Amazon EventBridge Pipes)
   route53resolver.json  # botocore/data/route53resolver/2018-04-01/service-2.json   (protocol json, signingName route53resolver)
   application-autoscaling.json # botocore/data/application-autoscaling/2016-02-06/service-2.json (protocol json, signingName application-autoscaling, targetPrefix AnyScaleFrontendService)
+  xray.json             # botocore/data/xray/2016-04-12/service-2.json             (protocol rest-json, signingName xray)
 ```
 
 ### Notes

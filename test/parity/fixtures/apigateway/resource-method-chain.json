@@ -5,14 +5,17 @@
     {
       "command": "CreateRestApiCommand",
       "input": { "name": "parity-apigw-resource" },
-      "expected": { "id": "<ANY>", "rootResourceId": "<ANY>" },
+      "expected": {
+        "id": "<ANY>",
+        "rootResourceId": "<ANY>",
+        "endpointConfiguration": { "types": ["EDGE"] }
+      },
       "ignorePaths": [
         "$metadata",
         "name",
         "apiKeySource",
         "disableExecuteApiEndpoint",
-        "createdDate",
-        "endpointConfiguration"
+        "createdDate"
       ],
       "saveAs": "api",
       "refs": {}

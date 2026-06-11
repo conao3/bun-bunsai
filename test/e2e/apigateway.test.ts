@@ -18,6 +18,39 @@ const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 const apigateway = () =>
   new APIGatewayClient({ endpoint, region, credentials, requestHandler });
 
+test("API Gateway endpointConfiguration round-trip (default)", async () => {
+  const client = apigateway();
+  const created = await client.send(
+    new CreateRestApiCommand({ name: "bunsai-e2e-endpoint-default" }),
+  );
+  expect(created.endpointConfiguration).toEqual({ types: ["EDGE"] });
+  const got = await client.send(
+    new GetRestApiCommand({ restApiId: created.id as string }),
+  );
+  expect(got.endpointConfiguration).toEqual({ types: ["EDGE"] });
+  await client.send(
+    new DeleteRestApiCommand({ restApiId: created.id as string }),
+  );
+});
+
+test("API Gateway endpointConfiguration round-trip (explicit REGIONAL)", async () => {
+  const client = apigateway();
+  const created = await client.send(
+    new CreateRestApiCommand({
+      name: "bunsai-e2e-endpoint-regional",
+      endpointConfiguration: { types: ["REGIONAL"] },
+    }),
+  );
+  expect(created.endpointConfiguration).toEqual({ types: ["REGIONAL"] });
+  const got = await client.send(
+    new GetRestApiCommand({ restApiId: created.id as string }),
+  );
+  expect(got.endpointConfiguration).toEqual({ types: ["REGIONAL"] });
+  await client.send(
+    new DeleteRestApiCommand({ restApiId: created.id as string }),
+  );
+});
+
 test("API Gateway rest api, resource and deployment lifecycle", async () => {
   const client = apigateway();
   const apiName = "bunsai-e2e-api";

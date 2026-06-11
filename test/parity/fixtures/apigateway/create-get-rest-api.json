@@ -11,9 +11,10 @@
         "description": "parity test api",
         "apiKeySource": "HEADER",
         "disableExecuteApiEndpoint": false,
-        "rootResourceId": "<ANY>"
+        "rootResourceId": "<ANY>",
+        "endpointConfiguration": { "types": ["EDGE"] }
       },
-      "ignorePaths": ["$metadata", "createdDate", "endpointConfiguration"],
+      "ignorePaths": ["$metadata", "createdDate"],
       "saveAs": "api",
       "refs": {}
     },
@@ -26,9 +27,10 @@
         "description": "parity test api",
         "apiKeySource": "HEADER",
         "disableExecuteApiEndpoint": false,
-        "rootResourceId": "<ANY>"
+        "rootResourceId": "<ANY>",
+        "endpointConfiguration": { "types": ["EDGE"] }
       },
-      "ignorePaths": ["$metadata", "createdDate", "endpointConfiguration"],
+      "ignorePaths": ["$metadata", "createdDate"],
       "saveAs": null,
       "refs": { "api.id": "api" }
     },

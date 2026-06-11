@@ -197,6 +197,7 @@ aws-models/
   kinesisanalyticsv2.json # botocore/data/kinesisanalyticsv2/2018-05-23/service-2.json (protocol json, signingName kinesisanalytics, endpointPrefix kinesisanalytics, targetPrefix KinesisAnalytics_20180523)
   verifiedpermissions.json # botocore/data/verifiedpermissions/2021-12-01/service-2.json (protocol json, signingName verifiedpermissions, targetPrefix VerifiedPermissions)
   mediaconvert.json     # botocore/data/mediaconvert/2017-08-29/service-2.json      (protocol rest-json, signingName mediaconvert)
+  kafka.json            # botocore/data/kafka/2018-11-14/service-2.json            (protocol rest-json, signingName kafka; Amazon MSK)
 ```
 
 ### Notes
@@ -216,7 +217,7 @@ aws-models/
 | License       | Apache-2.0                                                                                                                                                                                          |
 | Pinned tag    | `v3.8.1`                                                                                                                                                                                            |
 | Commit hash   | `529aba7d8372e9199f42a31a6500071363ad8c18`                                                                                                                                                          |
-| Source path   | `tests/aws/services/{sqs,sns,lambda_}/*.snapshot.json`                                                                                                                                              |
+| Source path   | `tests/aws/services/{sqs,sns,lambda_,dynamodb,cloudformation,events}/*.snapshot.json`                                                                                                               |
 | Fetched on    | 2026-06-11 (JST)                                                                                                                                                                                    |
 | Method        | GitHub Contents API (`api.github.com/repos/localstack/localstack/contents/...?ref=<tag>`) for the file listing, `raw.githubusercontent.com/localstack/localstack/<commit>/...` for the bytes |
 
@@ -236,6 +237,19 @@ localstack-snapshots/
     test_lambda_common.snapshot.json
     test_lambda_destinations.snapshot.json
     test_lambda_runtimes.snapshot.json
+  dynamodb/
+    test_dynamodb.snapshot.json      # snapshot responses for tests/aws/services/dynamodb/test_dynamodb.py
+  cloudformation/
+    test_template_engine.snapshot.json  # snapshot responses for tests/aws/services/cloudformation/test_template_engine.py
+  events/
+    test_archive_and_replay.snapshot.json
+    test_events.snapshot.json        # snapshot responses for tests/aws/services/events/test_events.py
+    test_events_cross_account_region.snapshot.json
+    test_events_inputs.snapshot.json
+    test_events_patterns.snapshot.json
+    test_events_schedule.snapshot.json
+    test_events_tags.snapshot.json
+    test_events_targets.snapshot.json
   LICENSE.txt                        # upstream Apache-2.0 license text
 ```
 

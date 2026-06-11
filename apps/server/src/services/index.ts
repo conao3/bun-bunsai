@@ -132,6 +132,7 @@ import timestreamQuery from "./timestream-query.ts";
 import kinesisanalyticsv2 from "./kinesisanalyticsv2.ts";
 import verifiedpermissions from "./verifiedpermissions.ts";
 import mediaconvert from "./mediaconvert.ts";
+import kafka from "./kafka.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -266,6 +267,7 @@ export const services: ServiceDefinition[] = [
   timestreamQuery,
   kinesisanalyticsv2,
   verifiedpermissions,
+  kafka,
 ];
 
 export const findService = (

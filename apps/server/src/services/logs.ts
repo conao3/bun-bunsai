@@ -642,9 +642,192 @@ const DescribeLogStreams: OperationHandler = (input, ctx) => {
   return result;
 };
 
+const jsonSelectorGet = (path: string, obj: unknown): unknown => {
+  let cur = obj;
+  const segments = path.split(".").flatMap((seg) => {
+    const parts: (string | number)[] = [];
+    const re = /([^[]+)|\[(\d+)\]/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(seg)) !== null) {
+      if (m[2] !== undefined) {
+        parts.push(parseInt(m[2], 10));
+      } else {
+        parts.push(m[1]!);
+      }
+    }
+    return parts;
+  });
+  for (const seg of segments) {
+    if (cur === null || typeof cur !== "object") return undefined;
+    if (typeof seg === "number") {
+      cur = (cur as unknown[])[seg];
+    } else {
+      cur = (cur as Record<string, unknown>)[seg];
+    }
+  }
+  return cur;
+};
+
+const jsonWildcardMatch = (pattern: string, value: string): boolean => {
+  if (!pattern.includes("*")) return pattern === value;
+  const parts = pattern
+    .split("*")
+    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`^${parts.join(".*")}$`).test(value);
+};
+
+const jsonCompare = (
+  selector: string,
+  op: string,
+  rawValue: string,
+  obj: Record<string, unknown>,
+): boolean => {
+  const path = selector.startsWith("$.")
+    ? selector.slice(2)
+    : selector.slice(1);
+  const actual = jsonSelectorGet(path, obj);
+  if (rawValue.startsWith('"') && rawValue.endsWith('"')) {
+    const sv = rawValue.slice(1, -1);
+    const av = typeof actual === "string" ? actual : String(actual ?? "");
+    if (op === "=") return jsonWildcardMatch(sv, av);
+    if (op === "!=") return !jsonWildcardMatch(sv, av);
+    return false;
+  }
+  const nv = parseFloat(rawValue);
+  const an =
+    typeof actual === "number" ? actual : parseFloat(String(actual ?? ""));
+  if (!Number.isFinite(nv) || !Number.isFinite(an)) return false;
+  if (op === "=") return an === nv;
+  if (op === "!=") return an !== nv;
+  if (op === "<") return an < nv;
+  if (op === "<=") return an <= nv;
+  if (op === ">") return an > nv;
+  if (op === ">=") return an >= nv;
+  return false;
+};
+
+const jsonTokenize = (expr: string): string[] => {
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < expr.length) {
+    const ch = expr[i]!;
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
+    if (ch === "(" || ch === ")") {
+      tokens.push(ch);
+      i++;
+      continue;
+    }
+    if (ch === "&" && expr[i + 1] === "&") {
+      tokens.push("&&");
+      i += 2;
+      continue;
+    }
+    if (ch === "|" && expr[i + 1] === "|") {
+      tokens.push("||");
+      i += 2;
+      continue;
+    }
+    if (ch === "!" && expr[i + 1] === "=") {
+      tokens.push("!=");
+      i += 2;
+      continue;
+    }
+    if (ch === "<" && expr[i + 1] === "=") {
+      tokens.push("<=");
+      i += 2;
+      continue;
+    }
+    if (ch === ">" && expr[i + 1] === "=") {
+      tokens.push(">=");
+      i += 2;
+      continue;
+    }
+    if (ch === "<" || ch === ">" || ch === "=") {
+      tokens.push(ch);
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < expr.length && expr[j] !== '"') {
+        if (expr[j] === "\\") j++;
+        j++;
+      }
+      tokens.push(expr.slice(i, j + 1));
+      i = j + 1;
+      continue;
+    }
+    let j = i;
+    while (j < expr.length && !/[\s()&|=<>!]/.test(expr[j]!)) j++;
+    if (j > i) tokens.push(expr.slice(i, j));
+    i = j;
+  }
+  return tokens;
+};
+
+const jsonEvalExpr = (
+  tokens: string[],
+  pos: { v: number },
+  obj: Record<string, unknown>,
+): boolean => {
+  const parsePrimary = (): boolean => {
+    if (tokens[pos.v] === "(") {
+      pos.v++;
+      const result = parseOr();
+      pos.v++;
+      return result;
+    }
+    const selector = tokens[pos.v++]!;
+    const op = tokens[pos.v++]!;
+    const value = tokens[pos.v++]!;
+    return jsonCompare(selector, op, value, obj);
+  };
+  const parseAnd = (): boolean => {
+    let result = parsePrimary();
+    while (pos.v < tokens.length && tokens[pos.v] === "&&") {
+      pos.v++;
+      result = parsePrimary() && result;
+    }
+    return result;
+  };
+  const parseOr = (): boolean => {
+    let result = parseAnd();
+    while (pos.v < tokens.length && tokens[pos.v] === "||") {
+      pos.v++;
+      result = parseAnd() || result;
+    }
+    return result;
+  };
+  return parseOr();
+};
+
+const matchesJsonPattern = (pattern: string, message: string): boolean => {
+  let obj: unknown;
+  try {
+    obj = JSON.parse(message);
+  } catch {
+    return false;
+  }
+  if (typeof obj !== "object" || obj === null || Array.isArray(obj))
+    return false;
+  const expr = pattern.slice(1, -1).trim();
+  if (expr === "") return true;
+  const tokens = jsonTokenize(expr);
+  if (tokens.length === 0) return true;
+  const pos = { v: 0 };
+  return jsonEvalExpr(tokens, pos, obj as Record<string, unknown>);
+};
+
 const matchesPattern = (pattern: string, message: string): boolean => {
   if (pattern === "") return true;
-  const tokens = pattern.trim().match(/"[^"]*"|[^\s]+/g) ?? [];
+  const trimmed = pattern.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return matchesJsonPattern(trimmed, message);
+  }
+  const tokens = trimmed.match(/"[^"]*"|[^\s]+/g) ?? [];
   const andTerms: string[] = [];
   const orTerms: string[] = [];
   const excludeTerms: string[] = [];

@@ -101,6 +101,37 @@ const matchesDetailPattern = (value: unknown, pattern: unknown): boolean => {
     return pattern.includes(value);
   }
   if (typeof pattern === "object" && pattern !== null) {
+    const p = pattern as Record<string, unknown>;
+    if ("prefix" in p) {
+      return (
+        typeof value === "string" &&
+        typeof p["prefix"] === "string" &&
+        value.startsWith(p["prefix"] as string)
+      );
+    }
+    if ("exists" in p) {
+      return p["exists"] ? value !== undefined : value === undefined;
+    }
+    if ("numeric" in p) {
+      const ops = p["numeric"];
+      if (!Array.isArray(ops) || typeof value !== "number") return false;
+      for (let i = 0; i + 1 < ops.length; i += 2) {
+        const op = ops[i];
+        const num = ops[i + 1];
+        if (typeof num !== "number") return false;
+        if (op === ">" && !(value > num)) return false;
+        if (op === ">=" && !(value >= num)) return false;
+        if (op === "<" && !(value < num)) return false;
+        if (op === "<=" && !(value <= num)) return false;
+        if (op === "=" && value !== num) return false;
+      }
+      return true;
+    }
+    if ("anything-but" in p) {
+      const excl = p["anything-but"];
+      if (Array.isArray(excl)) return !excl.includes(value);
+      return value !== excl;
+    }
     let obj = value;
     if (typeof value === "string") {
       try {
@@ -110,7 +141,7 @@ const matchesDetailPattern = (value: unknown, pattern: unknown): boolean => {
       }
     }
     if (typeof obj !== "object" || obj === null) return false;
-    for (const [k, v] of Object.entries(pattern as Record<string, unknown>)) {
+    for (const [k, v] of Object.entries(p)) {
       if (!matchesDetailPattern((obj as Record<string, unknown>)[k], v))
         return false;
     }
@@ -164,6 +195,9 @@ const transitionState = (pipe: StoredPipe): StoredPipe => {
   if (pipe.CurrentState === "CREATING" && pipe.DesiredState === "RUNNING") {
     return { ...pipe, CurrentState: "RUNNING" };
   }
+  if (pipe.CurrentState === "CREATING" && pipe.DesiredState === "STOPPED") {
+    return { ...pipe, CurrentState: "STOPPED" };
+  }
   if (pipe.CurrentState === "STARTING" && pipe.DesiredState === "RUNNING") {
     return { ...pipe, CurrentState: "RUNNING" };
   }
@@ -173,11 +207,125 @@ const transitionState = (pipe: StoredPipe): StoredPipe => {
   return pipe;
 };
 
-const CreatePipe: OperationHandler = (input, ctx) => {
+type SqsMessageLike = {
+  MessageId: string;
+  ReceiptHandle: string;
+  Body: string;
+  MD5OfBody: string;
+  MessageAttributes: Record<string, unknown> | undefined;
+  SentTimestamp: number;
+  SenderId: string;
+  invisibleUntil: number;
+};
+
+type SqsQueueLike = {
+  messages: SqsMessageLike[];
+};
+
+const drainSourceQueue = async (
+  ctx: ServiceContext,
+  pipe: StoredPipe,
+): Promise<void> => {
+  const parsed = parseArn(pipe.Source);
+  if (parsed === undefined || parsed.service !== "sqs") return;
+  const sqsStore = ctx.storeFor("sqs");
+  const queueName = parsed.resource;
+  const queue = sqsStore.get<SqsQueueLike>(queueName);
+  if (queue === undefined || queue.messages.length === 0) return;
+
+  const now = Date.now();
+  const consumedIds = new Set<string>();
+
+  for (const message of queue.messages) {
+    if (message.invisibleUntil > now) continue;
+    const rec: Record<string, unknown> = {
+      messageId: message.MessageId,
+      receiptHandle: message.ReceiptHandle,
+      body: message.Body,
+      attributes: {
+        ApproximateReceiveCount: "1",
+        SentTimestamp: String(message.SentTimestamp),
+        SenderId: message.SenderId,
+        ApproximateFirstReceiveTimestamp: String(message.SentTimestamp),
+      },
+      messageAttributes: message.MessageAttributes ?? {},
+      md5OfBody: message.MD5OfBody,
+      eventSource: "aws:sqs",
+      eventSourceARN: pipe.Source,
+      awsRegion: sqsStore.scope.region,
+    };
+    consumedIds.add(message.MessageId);
+    if (!filterMatches(pipe.Filters, rec)) continue;
+    const body = message.Body;
+    const targetParsed = parseArn(pipe.Target);
+    if (targetParsed === undefined) continue;
+    if (targetParsed.service === "sqs") {
+      await deliverToArn(ctx, pipe.Target, { body, event: rec });
+    } else {
+      await deliverToArn(ctx, pipe.Target, { body, event: { Records: [rec] } });
+    }
+  }
+
+  if (consumedIds.size > 0) {
+    queue.messages = queue.messages.filter(
+      (m) => !consumedIds.has(m.MessageId),
+    );
+    sqsStore.set(queueName, queue);
+  }
+};
+
+const settleAndDrain = async (
+  ctx: ServiceContext,
+  pipe: StoredPipe,
+  key: string,
+): Promise<void> => {
+  const settled = transitionState(pipe);
+  if (settled === pipe) return;
+  ctx.store.set(key, settled);
+  if (settled.CurrentState === "RUNNING") {
+    await drainSourceQueue(ctx, settled);
+  }
+};
+
+const validDesiredStates = new Set(["RUNNING", "STOPPED"]);
+
+const parseDesiredState = (input: Record<string, unknown>): string => {
+  const raw = stringOrUndefined(input["DesiredState"]);
+  if (raw !== undefined && !validDesiredStates.has(raw)) {
+    throw awsError(
+      "ValidationException",
+      `Value '${raw}' at 'desiredState' failed to satisfy constraint: Member must satisfy enum value set: [RUNNING, STOPPED]`,
+      400,
+    );
+  }
+  return raw ?? "RUNNING";
+};
+
+const requirePipeArnExists = (ctx: ServiceContext, arn: string): void => {
+  const parsed = parseArn(arn);
+  if (parsed === undefined) {
+    throw awsError("NotFoundException", `Resource ${arn} does not exist.`, 404);
+  }
+  if (parsed.service === "pipes") {
+    const name = parsed.resource.startsWith("pipe/")
+      ? parsed.resource.slice(5)
+      : parsed.resource;
+    if (ctx.store.get(pipeKey(name)) === undefined) {
+      throw awsError(
+        "NotFoundException",
+        `Resource ${arn} does not exist.`,
+        404,
+      );
+    }
+  }
+};
+
+const CreatePipe: OperationHandler = async (input, ctx) => {
   const name = requireString(input, "Name");
   const source = requireString(input, "Source");
   const target = requireString(input, "Target");
   const roleArn = requireString(input, "RoleArn");
+  const desiredState = parseDesiredState(input);
 
   if (ctx.store.get(pipeKey(name)) !== undefined) {
     throw awsError("ConflictException", `Pipe ${name} already exists.`, 409);
@@ -194,7 +342,7 @@ const CreatePipe: OperationHandler = (input, ctx) => {
     Name: name,
     Arn: pipeArn(ctx, name),
     Description: stringOrUndefined(input["Description"]),
-    DesiredState: stringOrUndefined(input["DesiredState"]) ?? "RUNNING",
+    DesiredState: desiredState,
     CurrentState: "CREATING",
     StateReason: undefined,
     Source: source,
@@ -221,6 +369,8 @@ const CreatePipe: OperationHandler = (input, ctx) => {
   if (typeof input["Tags"] === "object" && input["Tags"] !== null) {
     ctx.store.set(`tag:${pipe.Arn}`, input["Tags"]);
   }
+
+  await settleAndDrain(ctx, pipe, pipeKey(name));
 
   return {
     Arn: pipe.Arn,
@@ -265,7 +415,7 @@ const UpdatePipe: OperationHandler = (input, ctx) => {
         : pipe.Description,
     DesiredState: stringOrUndefined(input["DesiredState"]) ?? pipe.DesiredState,
     Target: stringOrUndefined(input["Target"]) ?? pipe.Target,
-    RoleArn: stringOrUndefined(input["RoleArn"]) ?? pipe.RoleArn,
+    RoleArn: requireString(input, "RoleArn"),
     SourceParameters: sourceParameters,
     Enrichment:
       "Enrichment" in input
@@ -343,15 +493,11 @@ const ListPipes: OperationHandler = (input, ctx) => {
     )
     .sort((a, b) => (a.Name < b.Name ? -1 : a.Name > b.Name ? 1 : 0));
 
-  let startIdx = 0;
-  if (nextToken !== undefined) {
-    const idx = all.findIndex((p) => p.Name === nextToken);
-    if (idx >= 0) startIdx = idx;
-  }
+  const startIdx = nextToken !== undefined ? parseInt(nextToken, 10) || 0 : 0;
 
   const page = all.slice(startIdx, startIdx + limit);
   const newNextToken =
-    startIdx + limit < all.length ? all[startIdx + limit]!.Name : undefined;
+    startIdx + limit < all.length ? String(startIdx + limit) : undefined;
 
   return {
     Pipes: page.map(pipeSummary),
@@ -359,7 +505,7 @@ const ListPipes: OperationHandler = (input, ctx) => {
   };
 };
 
-const StartPipe: OperationHandler = (input, ctx) => {
+const StartPipe: OperationHandler = async (input, ctx) => {
   const name = requireString(input, "Name");
   const pipe = requirePipe(ctx, name);
   const now = Date.now();
@@ -370,6 +516,7 @@ const StartPipe: OperationHandler = (input, ctx) => {
     LastModifiedTime: now,
   };
   ctx.store.set(pipeKey(name), updated);
+  await settleAndDrain(ctx, updated, pipeKey(name));
   return {
     Arn: updated.Arn,
     Name: updated.Name,
@@ -379,7 +526,7 @@ const StartPipe: OperationHandler = (input, ctx) => {
   };
 };
 
-const StopPipe: OperationHandler = (input, ctx) => {
+const StopPipe: OperationHandler = async (input, ctx) => {
   const name = requireString(input, "Name");
   const pipe = requirePipe(ctx, name);
   const now = Date.now();
@@ -390,6 +537,7 @@ const StopPipe: OperationHandler = (input, ctx) => {
     LastModifiedTime: now,
   };
   ctx.store.set(pipeKey(name), updated);
+  await settleAndDrain(ctx, updated, pipeKey(name));
   return {
     Arn: updated.Arn,
     Name: updated.Name,
@@ -401,6 +549,7 @@ const StopPipe: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
+  requirePipeArnExists(ctx, arn);
   const newTags =
     typeof input["tags"] === "object" && input["tags"] !== null
       ? (input["tags"] as Record<string, string>)
@@ -412,6 +561,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
+  requirePipeArnExists(ctx, arn);
   const keys = Array.isArray(input["tagKeys"])
     ? (input["tagKeys"] as string[])
     : [];
@@ -424,6 +574,7 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const arn = requireString(input, "resourceArn");
+  requirePipeArnExists(ctx, arn);
   const tags = ctx.store.get<Record<string, string>>(`tag:${arn}`) ?? {};
   return { tags };
 };
@@ -437,6 +588,7 @@ registerEventSource(async (ctx, sourceArn, records) => {
     if (pipe.CurrentState !== "RUNNING") continue;
     for (const record of records) {
       const rec = record as Record<string, unknown>;
+      consumed = true;
       if (!filterMatches(pipe.Filters, rec)) continue;
       const body =
         typeof rec["body"] === "string" ? rec["body"] : JSON.stringify(rec);
@@ -450,7 +602,6 @@ registerEventSource(async (ctx, sourceArn, records) => {
           event: { Records: records },
         });
       }
-      consumed = true;
     }
   }
   return consumed;

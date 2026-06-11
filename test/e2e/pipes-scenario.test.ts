@@ -250,7 +250,6 @@ describe("EventBridge Pipes delivery: SQS → SQS", () => {
         RoleArn: "arn:aws:iam::000000000000:role/r",
       }),
     );
-    await p.send(new DescribePipeCommand({ Name: "delivery-pipe" }));
 
     await q.send(
       new SendMessageCommand({
@@ -301,7 +300,6 @@ describe("EventBridge Pipes delivery: filter", () => {
         },
       }),
     );
-    await p.send(new DescribePipeCommand({ Name: "filter-pipe" }));
 
     await q.send(
       new SendMessageCommand({
@@ -371,7 +369,6 @@ describe("EventBridge Pipes delivery: Lambda target", () => {
         RoleArn: "arn:aws:iam::000000000000:role/r",
       }),
     );
-    await p.send(new DescribePipeCommand({ Name: "lambda-pipe" }));
 
     await q.send(
       new SendMessageCommand({
@@ -410,7 +407,6 @@ describe("EventBridge Pipes: Stop/Start lifecycle", () => {
         RoleArn: "arn:aws:iam::000000000000:role/r",
       }),
     );
-    await p.send(new DescribePipeCommand({ Name: "stop-pipe" }));
 
     const stopped = await p.send(new StopPipeCommand({ Name: "stop-pipe" }));
     expect(stopped.CurrentState).toBe("STOPPING");
@@ -437,6 +433,16 @@ describe("EventBridge Pipes: Stop/Start lifecycle", () => {
 
     const started = await p.send(new StartPipeCommand({ Name: "stop-pipe" }));
     expect(started.CurrentState).toBe("STARTING");
+
+    const backlogDelivered = await q.send(
+      new ReceiveMessageCommand({
+        QueueUrl: tgtQ.QueueUrl!,
+        MaxNumberOfMessages: 1,
+      }),
+    );
+    expect(backlogDelivered.Messages).toHaveLength(1);
+    expect(backlogDelivered.Messages![0]!.Body).toBe("while-stopped");
+
     const afterStart = await p.send(
       new DescribePipeCommand({ Name: "stop-pipe" }),
     );

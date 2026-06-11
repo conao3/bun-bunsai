@@ -1,0 +1,88 @@
+{
+  "clientPackage": "@aws-sdk/client-timestream-write",
+  "clientName": "TimestreamWriteClient",
+  "clientConfig": { "disableHostPrefix": true },
+  "steps": [
+    {
+      "command": "CreateDatabaseCommand",
+      "input": {
+        "DatabaseName": "parity-tsdb3",
+        "Tags": [{ "Key": "k1", "Value": "v1" }]
+      },
+      "expected": { "Database": { "DatabaseName": "parity-tsdb3" } },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "db3",
+      "refs": {}
+    },
+    {
+      "command": "ListTagsForResourceCommand",
+      "input": { "ResourceARN": "${db3.Database.Arn}" },
+      "expected": {
+        "Tags": [{ "Key": "k1", "Value": "v1" }]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "db3.Database.Arn": "db3" }
+    },
+    {
+      "command": "TagResourceCommand",
+      "input": {
+        "ResourceARN": "${db3.Database.Arn}",
+        "Tags": [
+          { "Key": "k2", "Value": "v2" },
+          { "Key": "k3", "Value": "v3" }
+        ]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "db3.Database.Arn": "db3" }
+    },
+    {
+      "command": "ListTagsForResourceCommand",
+      "input": { "ResourceARN": "${db3.Database.Arn}" },
+      "expected": {
+        "Tags": [
+          { "Key": "k1", "Value": "v1" },
+          { "Key": "k2", "Value": "v2" },
+          { "Key": "k3", "Value": "v3" }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "db3.Database.Arn": "db3" }
+    },
+    {
+      "command": "UntagResourceCommand",
+      "input": {
+        "ResourceARN": "${db3.Database.Arn}",
+        "TagKeys": ["k2"]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "db3.Database.Arn": "db3" }
+    },
+    {
+      "command": "ListTagsForResourceCommand",
+      "input": { "ResourceARN": "${db3.Database.Arn}" },
+      "expected": {
+        "Tags": [
+          { "Key": "k1", "Value": "v1" },
+          { "Key": "k3", "Value": "v3" }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "db3.Database.Arn": "db3" }
+    },
+    {
+      "command": "DeleteDatabaseCommand",
+      "input": { "DatabaseName": "parity-tsdb3" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

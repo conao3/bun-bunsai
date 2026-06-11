@@ -271,6 +271,53 @@ localstack-snapshots/
   tag was chosen because it predates localstack's license change to BSL; the `LICENSE.txt` at that
   commit confirms Apache-2.0.
 
+## moto-tests/
+
+|               |                                                                                                                                                                             |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Upstream repo | https://github.com/getmoto/moto                                                                                                                                             |
+| License       | Apache-2.0                                                                                                                                                                  |
+| Pinned tag    | `5.2.2`                                                                                                                                                                     |
+| Commit hash   | `837595545cc4a4bb8fede2cff84b2b2373443981`                                                                                                                                  |
+| Source path   | `tests/test_<svc>/` — only `.py` files containing `@aws_verified`                                                                                                          |
+| Fetched on    | 2026-06-12 (JST)                                                                                                                                                            |
+| Method        | GitHub Contents API (`api.github.com/repos/getmoto/moto/contents/...?ref=<tag>`) for the file listing, `raw.githubusercontent.com/getmoto/moto/<commit>/...` for the bytes |
+
+### Layout
+
+```
+moto-tests/
+  rds/
+    test_rds.py          # contains test_modify_option_group (@aws_verified)
+    test_integrations.py # contains test_db_cluster_managed_master_user_password_lifecycle, test_db_instance_managed_master_user_password_lifecycle (@aws_verified)
+  athena/
+    test_athena.py       # contains test_get_primary_workgroup, test_create_and_get_workgroup (@aws_verified)
+  timestream-write/
+    test_timestreamwrite_database.py  # contains test_create_database_simple, test_describe_unknown_database (@aws_verified)
+    test_timestreamwrite_table.py     # contains test_create_table, test_create_table__with_magnetic_store_write_properties, test_create_table_without_retention_properties, test_describe_unknown_database (@aws_verified)
+    test_timestreamwrite_tagging.py   # contains test_tag_and_untag_database (@aws_verified)
+  LICENSE                # upstream Apache-2.0 license text
+```
+
+### Fixture provenance
+
+| fixture file | source function |
+| --- | --- |
+| `test/parity/fixtures/rds/option-group-lifecycle.json` | `test_modify_option_group` in `test_rds.py` |
+| `test/parity/fixtures/rds/option-group-modify-remove.json` | `test_modify_option_group` in `test_rds.py` |
+| `test/parity/fixtures/athena/create-and-get-workgroup.json` | `test_create_and_get_workgroup` in `test_athena.py` |
+| `test/parity/fixtures/timestream-write/create-database.json` | `test_create_database_simple`, `test_describe_unknown_database` in `test_timestreamwrite_database.py` |
+| `test/parity/fixtures/timestream-write/create-table.json` | `test_create_table_without_retention_properties` in `test_timestreamwrite_table.py` |
+| `test/parity/fixtures/timestream-write/tag-resource.json` | `test_tag_and_untag_database` in `test_timestreamwrite_tagging.py` |
+
+### Notes
+
+- Services with no `@aws_verified` tests in this tag: `application-autoscaling`, `cognito-idp`.
+  No test files vendored for those services.
+- `test_integrations.py` (rds) tests involve multi-service cross-referencing (KMS, Secrets Manager) and
+  waiters; no simple fixture was derived.
+- Apache-2.0 attribution is satisfied by the co-located `moto-tests/LICENSE`.
+
 ## Refreshing
 
 Re-run with the same GitHub Contents API + raw.githubusercontent.com flow

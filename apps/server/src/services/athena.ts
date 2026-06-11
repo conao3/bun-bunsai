@@ -564,7 +564,17 @@ const CreateWorkGroup: OperationHandler = (input, ctx) => {
       typeof input["Description"] === "string"
         ? (input["Description"] as string)
         : "",
-    Configuration: asRecord(input["Configuration"]),
+    Configuration: {
+      EnforceWorkGroupConfiguration: true,
+      PublishCloudWatchMetricsEnabled: false,
+      RequesterPaysEnabled: false,
+      EngineVersion: {
+        SelectedEngineVersion: "AUTO",
+        EffectiveEngineVersion: "Athena engine version 3",
+      },
+      EnableMinimumEncryptionConfiguration: false,
+      ...asRecord(input["Configuration"]),
+    },
     CreationTime: Math.floor(Date.now() / 1000),
   };
   ctx.store.set(`${workGroupPrefix}${name}`, workGroup);

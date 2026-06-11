@@ -5,6 +5,8 @@ import type { ServiceDefinition } from "../core/types.ts";
 
 const model = loadServiceModel(identitystoreModel);
 
+const validIdentityStoreId = "d-bunsai0001" as const;
+
 const userKey = (storeId: string, userId: string): string =>
   `is:user:${storeId}:${userId}`;
 const groupKey = (storeId: string, groupId: string): string =>
@@ -33,6 +35,34 @@ type Email = {
   Primary?: boolean;
 };
 
+type Address = {
+  StreetAddress?: string;
+  Locality?: string;
+  Region?: string;
+  PostalCode?: string;
+  Country?: string;
+  Formatted?: string;
+  Type?: string;
+  Primary?: boolean;
+};
+
+type PhoneNumber = {
+  Value?: string;
+  Type?: string;
+  Primary?: boolean;
+};
+
+type Photo = {
+  Url?: string;
+  Type?: string;
+  Primary?: boolean;
+};
+
+type Role = {
+  Value: string;
+  Type?: string;
+};
+
 type ExternalId = {
   Issuer: string;
   Id: string;
@@ -46,13 +76,22 @@ type StoredUser = {
   NickName?: string;
   ProfileUrl?: string;
   Emails?: Email[];
+  Addresses?: Address[];
+  PhoneNumbers?: PhoneNumber[];
   Name?: Name;
   UserType?: string;
   Title?: string;
   PreferredLanguage?: string;
   Locale?: string;
   Timezone?: string;
+  Photos?: Photo[];
+  Website?: string;
+  Birthdate?: string;
+  Roles?: Role[];
+  Extensions?: Record<string, unknown>;
   ExternalIds?: ExternalId[];
+  CreatedAt?: string;
+  UpdatedAt?: string;
 };
 
 type StoredGroup = {
@@ -61,6 +100,8 @@ type StoredGroup = {
   DisplayName?: string;
   Description?: string;
   ExternalIds?: ExternalId[];
+  CreatedAt?: string;
+  UpdatedAt?: string;
 };
 
 type StoredMembership = {
@@ -68,6 +109,16 @@ type StoredMembership = {
   IdentityStoreId: string;
   GroupId: string;
   MemberId: { UserId: string };
+};
+
+const requireValidStore = (storeId: string): void => {
+  if (storeId !== validIdentityStoreId) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Identity store ${storeId} not found`,
+      400,
+    );
+  }
 };
 
 const requireUser = (
@@ -102,13 +153,18 @@ const requireGroup = (
   return group;
 };
 
+const toPascal = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
 const encodeToken = (offset: number): string =>
   Buffer.from(String(offset)).toString("base64");
 
 const decodeToken = (token: unknown): number => {
   if (typeof token !== "string" || token === "") return 0;
   const n = Number.parseInt(Buffer.from(token, "base64").toString(), 10);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
+  if (!Number.isFinite(n) || n < 0) {
+    throw awsError("ValidationException", "Invalid NextToken", 400);
+  }
+  return n;
 };
 
 const paginate = <T>(
@@ -132,6 +188,7 @@ const identitystore: ServiceDefinition = {
   operations: {
     CreateUser: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const username = input["UserName"] as string | undefined;
       if (username) {
         const existing = ctx.store.get<string>(usernameIdx(storeId, username));
@@ -144,6 +201,7 @@ const identitystore: ServiceDefinition = {
         }
       }
       const userId = crypto.randomUUID();
+      const now = new Date().toISOString();
       const user: StoredUser = {
         UserId: userId,
         IdentityStoreId: storeId,
@@ -152,13 +210,22 @@ const identitystore: ServiceDefinition = {
         NickName: input["NickName"] as string | undefined,
         ProfileUrl: input["ProfileUrl"] as string | undefined,
         Emails: input["Emails"] as Email[] | undefined,
+        Addresses: input["Addresses"] as Address[] | undefined,
+        PhoneNumbers: input["PhoneNumbers"] as PhoneNumber[] | undefined,
         Name: input["Name"] as Name | undefined,
         UserType: input["UserType"] as string | undefined,
         Title: input["Title"] as string | undefined,
         PreferredLanguage: input["PreferredLanguage"] as string | undefined,
         Locale: input["Locale"] as string | undefined,
         Timezone: input["Timezone"] as string | undefined,
+        Photos: input["Photos"] as Photo[] | undefined,
+        Website: input["Website"] as string | undefined,
+        Birthdate: input["Birthdate"] as string | undefined,
+        Roles: input["Roles"] as Role[] | undefined,
+        Extensions: input["Extensions"] as Record<string, unknown> | undefined,
         ExternalIds: input["ExternalIds"] as ExternalId[] | undefined,
+        CreatedAt: now,
+        UpdatedAt: now,
       };
       ctx.store.set(userKey(storeId, userId), user);
       if (username) {
@@ -172,6 +239,7 @@ const identitystore: ServiceDefinition = {
 
     DescribeUser: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const userId = input["UserId"] as string;
       const user = requireUser(ctx, storeId, userId);
       return { ...user };
@@ -179,6 +247,7 @@ const identitystore: ServiceDefinition = {
 
     DeleteUser: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const userId = input["UserId"] as string;
       const user = requireUser(ctx, storeId, userId);
       ctx.store.delete(userKey(storeId, userId));
@@ -188,11 +257,24 @@ const identitystore: ServiceDefinition = {
       for (const ext of user.ExternalIds ?? []) {
         ctx.store.delete(externalIdIdx(storeId, ext.Issuer, ext.Id));
       }
+      const danglingMemberships = ctx.store
+        .list<StoredMembership>()
+        .filter(
+          (e) =>
+            e.key.startsWith("is:membership:") &&
+            e.value.IdentityStoreId === storeId &&
+            e.value.MemberId.UserId === userId,
+        )
+        .map((e) => e.key);
+      for (const key of danglingMemberships) {
+        ctx.store.delete(key);
+      }
       return {};
     },
 
     UpdateUser: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const userId = input["UserId"] as string;
       const user = requireUser(ctx, storeId, userId);
       const ops = input["Operations"] as Array<{
@@ -200,23 +282,79 @@ const identitystore: ServiceDefinition = {
         AttributeValue?: unknown;
       }>;
       for (const op of ops ?? []) {
-        const path = op.AttributePath as keyof StoredUser;
-        if (op.AttributeValue === null || op.AttributeValue === undefined) {
-          delete (user as Record<string, unknown>)[path];
+        const segments = op.AttributePath.split(".");
+        const topKey = toPascal(segments[0]);
+        if (segments.length >= 2) {
+          const subKey = toPascal(segments[1]);
+          const parent = (user as Record<string, unknown>)[topKey] as
+            | Record<string, unknown>
+            | undefined;
+          if (op.AttributeValue === null || op.AttributeValue === undefined) {
+            if (parent) delete parent[subKey];
+          } else {
+            if (!parent) {
+              (user as Record<string, unknown>)[topKey] = {};
+            }
+            (
+              (user as Record<string, unknown>)[topKey] as Record<
+                string,
+                unknown
+              >
+            )[subKey] = op.AttributeValue;
+          }
+        } else if (topKey === "UserName") {
+          const newUsername = op.AttributeValue as string | null | undefined;
+          if (newUsername === null || newUsername === undefined) {
+            if (user.UserName)
+              ctx.store.delete(usernameIdx(storeId, user.UserName));
+            delete user.UserName;
+          } else {
+            const existing = ctx.store.get<string>(
+              usernameIdx(storeId, newUsername),
+            );
+            if (existing && existing !== userId) {
+              throw awsError(
+                "ConflictException",
+                `Username ${newUsername} already taken`,
+                400,
+              );
+            }
+            if (user.UserName)
+              ctx.store.delete(usernameIdx(storeId, user.UserName));
+            ctx.store.set(usernameIdx(storeId, newUsername), userId);
+            user.UserName = newUsername;
+          }
         } else {
-          (user as Record<string, unknown>)[path] = op.AttributeValue;
+          if (op.AttributeValue === null || op.AttributeValue === undefined) {
+            delete (user as Record<string, unknown>)[topKey];
+          } else {
+            (user as Record<string, unknown>)[topKey] = op.AttributeValue;
+          }
         }
       }
+      user.UpdatedAt = new Date().toISOString();
       ctx.store.set(userKey(storeId, userId), user);
       return {};
     },
 
     ListUsers: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
-      const all = ctx.store
+      requireValidStore(storeId);
+      const filters = input["Filters"] as
+        | Array<{ AttributePath: string; AttributeValue: string }>
+        | undefined;
+      let all = ctx.store
         .list<StoredUser>()
         .filter((e) => e.key.startsWith(`is:user:${storeId}:`))
         .map((e) => e.value);
+      if (filters && filters.length > 0) {
+        all = all.filter((u) =>
+          filters.every((f) => {
+            const key = toPascal(f.AttributePath) as keyof StoredUser;
+            return u[key] === f.AttributeValue;
+          }),
+        );
+      }
       const { page, nextToken } = paginate(
         all,
         input["MaxResults"] as number | undefined,
@@ -227,6 +365,7 @@ const identitystore: ServiceDefinition = {
 
     GetUserId: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const altId = input["AlternateIdentifier"] as {
         ExternalId?: ExternalId;
         UniqueAttribute?: { AttributePath: string; AttributeValue: unknown };
@@ -268,6 +407,7 @@ const identitystore: ServiceDefinition = {
 
     CreateGroup: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const displayName = input["DisplayName"] as string | undefined;
       if (displayName) {
         const existing = ctx.store.get<string>(
@@ -282,12 +422,15 @@ const identitystore: ServiceDefinition = {
         }
       }
       const groupId = crypto.randomUUID();
+      const now = new Date().toISOString();
       const group: StoredGroup = {
         GroupId: groupId,
         IdentityStoreId: storeId,
         DisplayName: displayName,
         Description: input["Description"] as string | undefined,
         ExternalIds: input["ExternalIds"] as ExternalId[] | undefined,
+        CreatedAt: now,
+        UpdatedAt: now,
       };
       ctx.store.set(groupKey(storeId, groupId), group);
       if (displayName) {
@@ -304,6 +447,7 @@ const identitystore: ServiceDefinition = {
 
     DescribeGroup: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const groupId = input["GroupId"] as string;
       const group = requireGroup(ctx, storeId, groupId);
       return { ...group };
@@ -311,6 +455,7 @@ const identitystore: ServiceDefinition = {
 
     DeleteGroup: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const groupId = input["GroupId"] as string;
       const group = requireGroup(ctx, storeId, groupId);
       ctx.store.delete(groupKey(storeId, groupId));
@@ -320,11 +465,24 @@ const identitystore: ServiceDefinition = {
       for (const ext of group.ExternalIds ?? []) {
         ctx.store.delete(externalIdIdx(storeId, `group:${ext.Issuer}`, ext.Id));
       }
+      const danglingMemberships = ctx.store
+        .list<StoredMembership>()
+        .filter(
+          (e) =>
+            e.key.startsWith("is:membership:") &&
+            e.value.IdentityStoreId === storeId &&
+            e.value.GroupId === groupId,
+        )
+        .map((e) => e.key);
+      for (const key of danglingMemberships) {
+        ctx.store.delete(key);
+      }
       return {};
     },
 
     UpdateGroup: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const groupId = input["GroupId"] as string;
       const group = requireGroup(ctx, storeId, groupId);
       const ops = input["Operations"] as Array<{
@@ -332,23 +490,60 @@ const identitystore: ServiceDefinition = {
         AttributeValue?: unknown;
       }>;
       for (const op of ops ?? []) {
-        const path = op.AttributePath as keyof StoredGroup;
-        if (op.AttributeValue === null || op.AttributeValue === undefined) {
-          delete (group as Record<string, unknown>)[path];
+        const topKey = toPascal(op.AttributePath);
+        if (topKey === "DisplayName") {
+          const newName = op.AttributeValue as string | null | undefined;
+          if (newName === null || newName === undefined) {
+            if (group.DisplayName)
+              ctx.store.delete(groupnameIdx(storeId, group.DisplayName));
+            delete group.DisplayName;
+          } else {
+            const existing = ctx.store.get<string>(
+              groupnameIdx(storeId, newName),
+            );
+            if (existing && existing !== groupId) {
+              throw awsError(
+                "ConflictException",
+                `Group name ${newName} already taken`,
+                400,
+              );
+            }
+            if (group.DisplayName)
+              ctx.store.delete(groupnameIdx(storeId, group.DisplayName));
+            ctx.store.set(groupnameIdx(storeId, newName), groupId);
+            group.DisplayName = newName;
+          }
         } else {
-          (group as Record<string, unknown>)[path] = op.AttributeValue;
+          if (op.AttributeValue === null || op.AttributeValue === undefined) {
+            delete (group as Record<string, unknown>)[topKey];
+          } else {
+            (group as Record<string, unknown>)[topKey] = op.AttributeValue;
+          }
         }
       }
+      group.UpdatedAt = new Date().toISOString();
       ctx.store.set(groupKey(storeId, groupId), group);
       return {};
     },
 
     ListGroups: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
-      const all = ctx.store
+      requireValidStore(storeId);
+      const filters = input["Filters"] as
+        | Array<{ AttributePath: string; AttributeValue: string }>
+        | undefined;
+      let all = ctx.store
         .list<StoredGroup>()
         .filter((e) => e.key.startsWith(`is:group:${storeId}:`))
         .map((e) => e.value);
+      if (filters && filters.length > 0) {
+        all = all.filter((g) =>
+          filters.every((f) => {
+            const key = toPascal(f.AttributePath) as keyof StoredGroup;
+            return g[key] === f.AttributeValue;
+          }),
+        );
+      }
       const { page, nextToken } = paginate(
         all,
         input["MaxResults"] as number | undefined,
@@ -359,6 +554,7 @@ const identitystore: ServiceDefinition = {
 
     GetGroupId: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const altId = input["AlternateIdentifier"] as {
         ExternalId?: ExternalId;
         UniqueAttribute?: { AttributePath: string; AttributeValue: unknown };
@@ -400,6 +596,7 @@ const identitystore: ServiceDefinition = {
 
     CreateGroupMembership: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const groupId = input["GroupId"] as string;
       const memberId = input["MemberId"] as { UserId: string };
       requireGroup(ctx, storeId, groupId);
@@ -432,11 +629,13 @@ const identitystore: ServiceDefinition = {
     },
 
     DescribeGroupMembership: (input, ctx) => {
+      const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const membershipId = input["MembershipId"] as string;
       const membership = ctx.store.get<StoredMembership>(
         membershipKey(membershipId),
       );
-      if (!membership) {
+      if (!membership || membership.IdentityStoreId !== storeId) {
         throw awsError(
           "ResourceNotFoundException",
           `Membership ${membershipId} not found`,
@@ -448,6 +647,7 @@ const identitystore: ServiceDefinition = {
 
     DeleteGroupMembership: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const membershipId = input["MembershipId"] as string;
       const membership = ctx.store.get<StoredMembership>(
         membershipKey(membershipId),
@@ -465,6 +665,7 @@ const identitystore: ServiceDefinition = {
 
     ListGroupMemberships: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const groupId = input["GroupId"] as string;
       requireGroup(ctx, storeId, groupId);
       const all = ctx.store
@@ -486,7 +687,9 @@ const identitystore: ServiceDefinition = {
 
     ListGroupMembershipsForMember: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const memberId = input["MemberId"] as { UserId: string };
+      requireUser(ctx, storeId, memberId.UserId);
       const all = ctx.store
         .list<StoredMembership>()
         .filter(
@@ -506,6 +709,7 @@ const identitystore: ServiceDefinition = {
 
     GetGroupMembershipId: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const groupId = input["GroupId"] as string;
       const memberId = input["MemberId"] as { UserId: string };
       const membership = ctx.store
@@ -532,7 +736,9 @@ const identitystore: ServiceDefinition = {
 
     IsMemberInGroups: (input, ctx) => {
       const storeId = input["IdentityStoreId"] as string;
+      requireValidStore(storeId);
       const memberId = input["MemberId"] as { UserId: string };
+      requireUser(ctx, storeId, memberId.UserId);
       const groupIds = input["GroupIds"] as string[];
       const membershipSet = new Set(
         ctx.store

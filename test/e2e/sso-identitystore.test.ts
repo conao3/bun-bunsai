@@ -27,13 +27,17 @@ import {
   CreateUserCommand,
   DescribeUserCommand,
   ListUsersCommand,
+  UpdateUserCommand,
   DeleteUserCommand,
   CreateGroupCommand,
   DescribeGroupCommand,
   ListGroupsCommand,
+  UpdateGroupCommand,
   DeleteGroupCommand,
   CreateGroupMembershipCommand,
+  DescribeGroupMembershipCommand,
   ListGroupMembershipsCommand,
+  ListGroupMembershipsForMemberCommand,
   IsMemberInGroupsCommand,
   GetGroupMembershipIdCommand,
   DeleteGroupMembershipCommand,
@@ -338,6 +342,282 @@ test("sso-admin: PermissionSet CRUD + policies", async () => {
     new DeletePermissionSetCommand({
       InstanceArn: INSTANCE_ARN,
       PermissionSetArn: psArn,
+    }),
+  );
+});
+
+test("identitystore: IDS-01 UpdateUser camelCase AttributePath mapping", async () => {
+  const client = ids();
+
+  const created = await client.send(
+    new CreateUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserName: "ids01-user@example.com",
+      DisplayName: "Original Name",
+      Name: { GivenName: "Original", FamilyName: "User" },
+    }),
+  );
+  const userId = created.UserId!;
+
+  await client.send(
+    new UpdateUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserId: userId,
+      Operations: [
+        { AttributePath: "displayName", AttributeValue: "New Name" },
+      ],
+    }),
+  );
+
+  const described = await client.send(
+    new DescribeUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserId: userId,
+    }),
+  );
+  expect(described.DisplayName).toBe("New Name");
+
+  await client.send(
+    new UpdateUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserId: userId,
+      Operations: [
+        { AttributePath: "name.familyName", AttributeValue: "Updated" },
+      ],
+    }),
+  );
+
+  const described2 = await client.send(
+    new DescribeUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserId: userId,
+    }),
+  );
+  expect(described2.Name?.FamilyName).toBe("Updated");
+  expect(described2.Name?.GivenName).toBe("Original");
+
+  await client.send(
+    new DeleteUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserId: userId,
+    }),
+  );
+});
+
+test("identitystore: IDS-01 UpdateGroup camelCase AttributePath mapping", async () => {
+  const client = ids();
+
+  const created = await client.send(
+    new CreateGroupCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      DisplayName: "ids01-group-original",
+      Description: "Original description",
+    }),
+  );
+  const groupId = created.GroupId!;
+
+  await client.send(
+    new UpdateGroupCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      GroupId: groupId,
+      Operations: [
+        { AttributePath: "description", AttributeValue: "Updated description" },
+      ],
+    }),
+  );
+
+  const described = await client.send(
+    new DescribeGroupCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      GroupId: groupId,
+    }),
+  );
+  expect(described.Description).toBe("Updated description");
+
+  await client.send(
+    new UpdateGroupCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      GroupId: groupId,
+      Operations: [
+        { AttributePath: "displayName", AttributeValue: "ids01-group-updated" },
+      ],
+    }),
+  );
+
+  const byNewName = await client.send(
+    new GetGroupIdCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      AlternateIdentifier: {
+        UniqueAttribute: {
+          AttributePath: "displayName",
+          AttributeValue: "ids01-group-updated",
+        },
+      },
+    }),
+  );
+  expect(byNewName.GroupId).toBe(groupId);
+
+  await client.send(
+    new DeleteGroupCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      GroupId: groupId,
+    }),
+  );
+});
+
+test("identitystore: IDS-02 DeleteGroup removes dangling memberships", async () => {
+  const client = ids();
+
+  const user = await client.send(
+    new CreateUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserName: "ids02-user@example.com",
+      DisplayName: "IDS02 User",
+    }),
+  );
+  const userId = user.UserId!;
+
+  const group = await client.send(
+    new CreateGroupCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      DisplayName: "ids02-group",
+    }),
+  );
+  const groupId = group.GroupId!;
+
+  const membership = await client.send(
+    new CreateGroupMembershipCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      GroupId: groupId,
+      MemberId: { UserId: userId },
+    }),
+  );
+  const membershipId = membership.MembershipId!;
+
+  await client.send(
+    new DeleteGroupCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      GroupId: groupId,
+    }),
+  );
+
+  const isMember = await client.send(
+    new IsMemberInGroupsCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      MemberId: { UserId: userId },
+      GroupIds: [groupId],
+    }),
+  );
+  expect(isMember.Results![0].MembershipExists).toBe(false);
+
+  await expect(
+    client.send(
+      new DescribeGroupMembershipCommand({
+        IdentityStoreId: IDENTITY_STORE_ID,
+        MembershipId: membershipId,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserId: userId,
+    }),
+  );
+});
+
+test("identitystore: IDS-02 DeleteUser removes dangling memberships", async () => {
+  const client = ids();
+
+  const user = await client.send(
+    new CreateUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserName: "ids02b-user@example.com",
+      DisplayName: "IDS02B User",
+    }),
+  );
+  const userId = user.UserId!;
+
+  const group = await client.send(
+    new CreateGroupCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      DisplayName: "ids02b-group",
+    }),
+  );
+  const groupId = group.GroupId!;
+
+  const membership = await client.send(
+    new CreateGroupMembershipCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      GroupId: groupId,
+      MemberId: { UserId: userId },
+    }),
+  );
+  const membershipId = membership.MembershipId!;
+
+  await client.send(
+    new DeleteUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserId: userId,
+    }),
+  );
+
+  await expect(
+    client.send(
+      new DescribeGroupMembershipCommand({
+        IdentityStoreId: IDENTITY_STORE_ID,
+        MembershipId: membershipId,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteGroupCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      GroupId: groupId,
+    }),
+  );
+});
+
+test("identitystore: IDS-03 CreateUser persists Addresses and PhoneNumbers", async () => {
+  const client = ids();
+
+  const created = await client.send(
+    new CreateUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserName: "ids03-user@example.com",
+      DisplayName: "IDS03 User",
+      PhoneNumbers: [{ Value: "+81-3-0000-0000", Type: "work", Primary: true }],
+      Addresses: [
+        {
+          StreetAddress: "1-1 Marunouchi",
+          Locality: "Chiyoda",
+          Country: "JP",
+          Primary: true,
+        },
+      ],
+    }),
+  );
+  const userId = created.UserId!;
+
+  const described = await client.send(
+    new DescribeUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserId: userId,
+    }),
+  );
+  expect(described.PhoneNumbers).toHaveLength(1);
+  expect(described.PhoneNumbers![0].Value).toBe("+81-3-0000-0000");
+  expect(described.PhoneNumbers![0].Type).toBe("work");
+  expect(described.Addresses).toHaveLength(1);
+  expect(described.Addresses![0].StreetAddress).toBe("1-1 Marunouchi");
+  expect(described.Addresses![0].Country).toBe("JP");
+
+  await client.send(
+    new DeleteUserCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      UserId: userId,
     }),
   );
 });

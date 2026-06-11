@@ -142,6 +142,7 @@ export type SerializeErrorOptions = {
   data?: Record<string, unknown>;
   jsonVersion?: string;
   requestId?: string;
+  xmlRoot?: string;
 };
 
 const fallbackParseInput = (req: ParsedRequest): Record<string, unknown> => {
@@ -297,6 +298,7 @@ const fallbackSerializeError = (
   protocol: Protocol,
   error: AwsError,
   requestId?: string,
+  xmlRoot?: string,
 ): CodecResult => {
   switch (protocol) {
     case "ec2":
@@ -310,6 +312,17 @@ const fallbackSerializeError = (
       };
     case "query":
     case "rest-xml":
+      if (xmlRoot !== undefined) {
+        return {
+          body: buildXml(xmlRoot, {
+            Code: error.code,
+            Message: error.message,
+            RequestId: requestId ?? "foo-id",
+          }),
+          contentType: contentTypes[protocol],
+          statusCode: error.statusCode,
+        };
+      }
       return {
         body: buildXml("ErrorResponse", {
           Error: { Code: error.code, Message: error.message },
@@ -353,7 +366,8 @@ export const serializeError = (
       data: opts.data,
       jsonVersion: opts.jsonVersion,
       requestId: opts.requestId,
+      xmlRoot: opts.xmlRoot,
     });
   }
-  return fallbackSerializeError(protocol, error, opts?.requestId);
+  return fallbackSerializeError(protocol, error, opts?.requestId, opts?.xmlRoot);
 };

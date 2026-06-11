@@ -80,6 +80,8 @@ type S3Bucket = {
   accelerateStatus: string | undefined;
   objectLock: Record<string, unknown> | undefined;
   acl?: string;
+  replication: Record<string, unknown> | undefined;
+  requestPayment: string;
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
@@ -386,6 +388,7 @@ const parseTaggingHeader = (tagging: unknown): S3Tag[] => {
 const s3: ServiceDefinition = {
   name: "s3",
   protocol: "rest-xml",
+  xmlErrorRoot: "Error",
   resolveOperation: (req: ParsedRequest): string | undefined => {
     const { bucket, key } = bucketKeyFromPath(req.path);
     if (bucket === undefined) {
@@ -408,6 +411,8 @@ const s3: ServiceDefinition = {
       const hasLogging = req.query.has("logging");
       const hasAccelerate = req.query.has("accelerate");
       const hasObjectLock = req.query.has("object-lock");
+      const hasReplication = req.query.has("replication");
+      const hasRequestPayment = req.query.has("requestPayment");
       if (req.method === "PUT") {
         if (hasTagging) return "PutBucketTagging";
         if (hasVersioning) return "PutBucketVersioning";
@@ -421,6 +426,8 @@ const s3: ServiceDefinition = {
         if (hasLogging) return "PutBucketLogging";
         if (hasAccelerate) return "PutBucketAccelerateConfiguration";
         if (hasObjectLock) return "PutObjectLockConfiguration";
+        if (hasReplication) return "PutBucketReplication";
+        if (hasRequestPayment) return "PutBucketRequestPayment";
         if (hasAcl) return "PutBucketAcl";
         return "CreateBucket";
       }
@@ -431,6 +438,7 @@ const s3: ServiceDefinition = {
         if (hasCors) return "DeleteBucketCors";
         if (hasWebsite) return "DeleteBucketWebsite";
         if (hasPublicAccessBlock) return "DeletePublicAccessBlock";
+        if (hasReplication) return "DeleteBucketReplication";
         return "DeleteBucket";
       }
       if (req.method === "GET") {
@@ -449,6 +457,8 @@ const s3: ServiceDefinition = {
         if (hasLogging) return "GetBucketLogging";
         if (hasAccelerate) return "GetBucketAccelerateConfiguration";
         if (hasObjectLock) return "GetObjectLockConfiguration";
+        if (hasReplication) return "GetBucketReplication";
+        if (hasRequestPayment) return "GetBucketRequestPayment";
         if (req.query.has("versions")) return "ListObjectVersions";
         if (req.query.get("list-type") === "2") return "ListObjectsV2";
         return "ListObjects";
@@ -534,6 +544,8 @@ const s3: ServiceDefinition = {
         accelerateStatus: undefined,
         objectLock: undefined,
         acl: undefined,
+        replication: undefined,
+        requestPayment: "BucketOwner",
       });
       return { Location: `/${bucket}` };
     },
@@ -2055,6 +2067,68 @@ const s3: ServiceDefinition = {
       const target = getBucket(ctx, bucket);
       ctx.store.set<S3Bucket>(bucket, { ...target, website: undefined });
       return {};
+    },
+    PutBucketReplication: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const replication =
+        typeof input["ReplicationConfiguration"] === "object" &&
+        input["ReplicationConfiguration"] !== null
+          ? (input["ReplicationConfiguration"] as Record<string, unknown>)
+          : undefined;
+      ctx.store.set<S3Bucket>(bucket, { ...target, replication });
+      return {};
+    },
+    GetBucketReplication: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if (target.replication === undefined) {
+        throw awsError(
+          "ReplicationConfigurationNotFoundError",
+          "The replication configuration was not found",
+          404,
+        );
+      }
+      return { ReplicationConfiguration: target.replication };
+    },
+    DeleteBucketReplication: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      ctx.store.set<S3Bucket>(bucket, { ...target, replication: undefined });
+      return {};
+    },
+    PutBucketRequestPayment: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["RequestPaymentConfiguration"];
+      const payer =
+        typeof config === "object" &&
+        config !== null &&
+        typeof (config as Record<string, unknown>)["Payer"] === "string"
+          ? ((config as Record<string, unknown>)["Payer"] as string)
+          : "BucketOwner";
+      ctx.store.set<S3Bucket>(bucket, { ...target, requestPayment: payer });
+      return {};
+    },
+    GetBucketRequestPayment: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      return { Payer: target.requestPayment };
     },
     PutBucketEncryption: (input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);

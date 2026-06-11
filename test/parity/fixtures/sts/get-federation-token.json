@@ -1,0 +1,26 @@
+{
+  "clientPackage": "@aws-sdk/client-sts",
+  "clientName": "STSClient",
+  "steps": [
+    {
+      "command": "GetFederationTokenCommand",
+      "input": { "Name": "parity-fed-user" },
+      "expected": {
+        "FederatedUser": {
+          "FederatedUserId": "000000000000:parity-fed-user",
+          "Arn": "arn:aws:sts::000000000000:federated-user/parity-fed-user"
+        },
+        "Credentials": {
+          "AccessKeyId": "<ANY>",
+          "SecretAccessKey": "<ANY>",
+          "SessionToken": "<ANY>",
+          "Expiration": "<ANY>"
+        },
+        "PackedPolicySize": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

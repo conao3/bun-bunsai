@@ -1,0 +1,61 @@
+{
+  "clientPackage": "@aws-sdk/client-ssm",
+  "clientName": "SSMClient",
+  "steps": [
+    {
+      "command": "PutParameterCommand",
+      "input": {
+        "Name": "/parity/ssm/versioned",
+        "Value": "value-v1",
+        "Type": "String"
+      },
+      "expected": {
+        "Version": 1,
+        "Tier": "Standard"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutParameterCommand",
+      "input": {
+        "Name": "/parity/ssm/versioned",
+        "Value": "value-v2",
+        "Type": "String",
+        "Overwrite": true
+      },
+      "expected": {
+        "Version": 2,
+        "Tier": "Standard"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetParameterCommand",
+      "input": { "Name": "/parity/ssm/versioned" },
+      "expected": {
+        "Parameter": {
+          "Name": "/parity/ssm/versioned",
+          "Type": "String",
+          "Value": "value-v2",
+          "Version": 2,
+          "ARN": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteParameterCommand",
+      "input": { "Name": "/parity/ssm/versioned" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

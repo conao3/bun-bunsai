@@ -1,0 +1,80 @@
+{
+  "clientPackage": "@aws-sdk/client-ssm",
+  "clientName": "SSMClient",
+  "steps": [
+    {
+      "command": "PutParameterCommand",
+      "input": {
+        "Name": "/parity/ssm/path/a",
+        "Value": "val-a",
+        "Type": "String"
+      },
+      "expected": {
+        "Version": 1,
+        "Tier": "Standard"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutParameterCommand",
+      "input": {
+        "Name": "/parity/ssm/path/b",
+        "Value": "val-b",
+        "Type": "String"
+      },
+      "expected": {
+        "Version": 1,
+        "Tier": "Standard"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetParametersByPathCommand",
+      "input": {
+        "Path": "/parity/ssm/path",
+        "Recursive": true
+      },
+      "expected": {
+        "Parameters": [
+          {
+            "Name": "/parity/ssm/path/a",
+            "Type": "String",
+            "Value": "val-a",
+            "Version": 1,
+            "ARN": "<ANY>"
+          },
+          {
+            "Name": "/parity/ssm/path/b",
+            "Type": "String",
+            "Value": "val-b",
+            "Version": 1,
+            "ARN": "<ANY>"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteParameterCommand",
+      "input": { "Name": "/parity/ssm/path/a" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteParameterCommand",
+      "input": { "Name": "/parity/ssm/path/b" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

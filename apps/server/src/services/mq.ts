@@ -323,9 +323,12 @@ const brokerView = (
     Created: isoTimestamp(broker.created),
   };
   if (broker.configuration !== undefined) {
-    result["Configuration"] = {
-      Id: broker.configuration.id,
-      Revision: broker.configuration.revision,
+    result["Configurations"] = {
+      Current: {
+        Id: broker.configuration.id,
+        Revision: broker.configuration.revision,
+      },
+      History: [],
     };
   }
   return result;

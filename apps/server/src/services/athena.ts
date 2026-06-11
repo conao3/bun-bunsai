@@ -39,6 +39,7 @@ type StoredWorkGroup = {
   Description: string;
   Configuration: Record<string, unknown>;
   CreationTime: number;
+  isDefault?: boolean;
 };
 
 type StoredDataCatalog = {
@@ -377,6 +378,7 @@ const calcView = (
 });
 
 const StartQueryExecution: OperationHandler = (input, ctx) => {
+  ensureSeeded(ctx);
   const clientRequestToken = stringOrUndefined(input["ClientRequestToken"]);
   if (clientRequestToken !== undefined) {
     const existingId = ctx.store.get<string>(
@@ -546,6 +548,30 @@ const GetQueryRuntimeStatistics: OperationHandler = (input, ctx) => {
   };
 };
 
+const ensureSeeded = (ctx: ServiceContext): void => {
+  if (ctx.store.get<boolean>("__athena_seeded") === true) return;
+  const primary: StoredWorkGroup = {
+    Name: "primary",
+    State: "ENABLED",
+    Description: "",
+    Configuration: {
+      ResultConfiguration: {},
+      EnforceWorkGroupConfiguration: false,
+      PublishCloudWatchMetricsEnabled: false,
+      RequesterPaysEnabled: false,
+      EngineVersion: {
+        SelectedEngineVersion: "AUTO",
+        EffectiveEngineVersion: "Athena engine version 3",
+      },
+      EnableMinimumEncryptionConfiguration: false,
+    },
+    CreationTime: Math.floor(Date.now() / 1000),
+    isDefault: true,
+  };
+  ctx.store.set(`${workGroupPrefix}primary`, primary);
+  ctx.store.set("__athena_seeded", true);
+};
+
 const CreateWorkGroup: OperationHandler = (input, ctx) => {
   const name = requireString(input, "Name");
   if (
@@ -587,6 +613,7 @@ const CreateWorkGroup: OperationHandler = (input, ctx) => {
 };
 
 const GetWorkGroup: OperationHandler = (input, ctx) => {
+  ensureSeeded(ctx);
   const name = requireString(input, "WorkGroup");
   const wg = ctx.store.get<StoredWorkGroup>(`${workGroupPrefix}${name}`);
   if (wg === undefined) {
@@ -608,13 +635,20 @@ const GetWorkGroup: OperationHandler = (input, ctx) => {
 };
 
 const DeleteWorkGroup: OperationHandler = (input, ctx) => {
+  ensureSeeded(ctx);
   const name = requireString(input, "WorkGroup");
-  if (
-    ctx.store.get<StoredWorkGroup>(`${workGroupPrefix}${name}`) === undefined
-  ) {
+  const wg = ctx.store.get<StoredWorkGroup>(`${workGroupPrefix}${name}`);
+  if (wg === undefined) {
     throw awsError(
       "InvalidRequestException",
       `WorkGroup ${name} was not found`,
+      400,
+    );
+  }
+  if (wg.isDefault === true) {
+    throw awsError(
+      "InvalidRequestException",
+      `Cannot delete primary WorkGroup`,
       400,
     );
   }
@@ -680,6 +714,7 @@ const UpdateWorkGroup: OperationHandler = (input, ctx) => {
 };
 
 const ListWorkGroups: OperationHandler = (input, ctx) => {
+  ensureSeeded(ctx);
   const maxResults =
     typeof input["MaxResults"] === "number"
       ? (input["MaxResults"] as number)

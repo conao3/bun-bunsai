@@ -6,7 +6,8 @@ import { startApp } from "../e2e/harness.ts";
 type Step = {
   command: string;
   input: Record<string, unknown>;
-  expected: Record<string, unknown>;
+  expected?: Record<string, unknown>;
+  expectedError?: { name: string; statusCode: number };
   ignorePaths: string[];
   saveAs: string | null;
   refs: Record<string, string>;
@@ -203,21 +204,40 @@ for (const fixturePath of fixturePaths) {
         );
 
       const resolvedInput = resolveRefs(step.input, saved);
-      const result = (await send(new CommandClass(resolvedInput))) as Record<
-        string,
-        unknown
-      >;
 
-      if (step.saveAs) {
-        saved[step.saveAs] = result;
+      if (step.expectedError) {
+        let caught: unknown;
+        try {
+          await send(new CommandClass(resolvedInput));
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught).toBeDefined();
+        const err = caught as {
+          name: string;
+          $metadata: { httpStatusCode: number };
+        };
+        expect(err.name).toBe(step.expectedError.name);
+        expect(err.$metadata.httpStatusCode).toBe(
+          step.expectedError.statusCode,
+        );
+      } else {
+        const result = (await send(new CommandClass(resolvedInput))) as Record<
+          string,
+          unknown
+        >;
+
+        if (step.saveAs) {
+          saved[step.saveAs] = result;
+        }
+
+        const [actualNorm, expectedNorm] = normalizeForComparison(
+          result,
+          step.expected ?? {},
+          step.ignorePaths,
+        );
+        expect(actualNorm).toEqual(expectedNorm);
       }
-
-      const [actualNorm, expectedNorm] = normalizeForComparison(
-        result,
-        step.expected,
-        step.ignorePaths,
-      );
-      expect(actualNorm).toEqual(expectedNorm);
     }
   });
 }

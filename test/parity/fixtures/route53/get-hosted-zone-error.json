@@ -1,0 +1,14 @@
+{
+  "clientPackage": "@aws-sdk/client-route-53",
+  "clientName": "Route53Client",
+  "steps": [
+    {
+      "command": "GetHostedZoneCommand",
+      "input": { "Id": "parity-nonexistent-zone" },
+      "expectedError": { "name": "NoSuchHostedZone", "statusCode": 404 },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

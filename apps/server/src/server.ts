@@ -3,6 +3,7 @@ import { serializeError } from "./core/protocol.ts";
 import { createRequestLog, recordLog } from "./core/log.ts";
 import { buildParsedRequest, routeRequest } from "./core/router.ts";
 import { createStateStore } from "./core/state.ts";
+import { recordManagementEvent } from "./services/cloudtrail.ts";
 import type { Protocol } from "./core/types.ts";
 import { createSnapshotRegistry, handleManagement } from "./management/api.ts";
 import { findService } from "./services/index.ts";
@@ -147,6 +148,23 @@ export function createBunsaiApp() {
       service.protocol,
     );
     const result = await dispatch(service, parsed, store, requestId);
+    if (
+      result.service !== "cloudtrail" ||
+      result.operation !== "LookupEvents"
+    ) {
+      const accessKeyId =
+        req.headers.get("authorization")?.match(/Credential=([^/]+)\//)?.[1] ??
+        "test";
+      recordManagementEvent(
+        store,
+        route.account,
+        route.region,
+        result.service,
+        result.operation,
+        accessKeyId,
+        bodyTextForLog(bodyBytes),
+      );
+    }
     const responseHeaders = new Headers({ "content-type": result.contentType });
     responseHeaders.set("x-amzn-RequestId", requestId);
     if (result.service === "s3")

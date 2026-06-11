@@ -13,6 +13,7 @@ import {
   StartLoggingCommand,
   StopLoggingCommand,
 } from "@aws-sdk/client-cloudtrail";
+import { SQSClient, CreateQueueCommand } from "@aws-sdk/client-sqs";
 
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
@@ -21,6 +22,8 @@ const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 describe("CloudTrail scenario e2e", () => {
   const cloudtrail = () =>
     new CloudTrailClient({ endpoint, region, credentials, requestHandler });
+  const sqs = () =>
+    new SQSClient({ endpoint, region, credentials, requestHandler });
 
   test("audit trail lifecycle: create → log → selectors → stop → delete", async () => {
     const client = cloudtrail();
@@ -84,10 +87,48 @@ describe("CloudTrail scenario e2e", () => {
     const listed = await client.send(new ListTrailsCommand({}));
     expect((listed.Trails ?? []).map((t) => t.Name)).toContain(trailName);
 
-    const events = await client.send(new LookupEventsCommand({}));
-    expect(events.Events ?? []).toEqual([]);
+    const sqsClient = sqs();
+    await sqsClient.send(
+      new CreateQueueCommand({ QueueName: "bunsai-e2e-scenario-queue-a" }),
+    );
+
+    const eventsFiltered = await client.send(
+      new LookupEventsCommand({
+        LookupAttributes: [
+          { AttributeKey: "EventName", AttributeValue: "CreateQueue" },
+        ],
+      }),
+    );
+    expect(eventsFiltered.Events ?? []).toHaveLength(1);
+    expect(eventsFiltered.Events?.[0]?.EventName).toBe("CreateQueue");
+    expect(eventsFiltered.Events?.[0]?.EventSource).toBe("sqs.amazonaws.com");
+
+    const eventsAll = await client.send(new LookupEventsCommand({}));
+    expect(eventsAll.Events ?? []).not.toHaveLength(0);
+
+    const lookupSelf = await client.send(
+      new LookupEventsCommand({
+        LookupAttributes: [
+          { AttributeKey: "EventName", AttributeValue: "LookupEvents" },
+        ],
+      }),
+    );
+    expect(lookupSelf.Events ?? []).toHaveLength(0);
 
     await client.send(new StopLoggingCommand({ Name: trailName }));
+
+    await sqsClient.send(
+      new CreateQueueCommand({ QueueName: "bunsai-e2e-scenario-queue-b" }),
+    );
+
+    const eventsAfterStop = await client.send(
+      new LookupEventsCommand({
+        LookupAttributes: [
+          { AttributeKey: "EventName", AttributeValue: "CreateQueue" },
+        ],
+      }),
+    );
+    expect(eventsAfterStop.Events ?? []).toHaveLength(1);
     const afterStopStatus = await client.send(
       new GetTrailStatusCommand({ Name: trailName }),
     );

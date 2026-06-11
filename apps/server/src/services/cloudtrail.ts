@@ -1,5 +1,7 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
+import { scopedStore } from "../core/state.ts";
+import type { StateStore } from "../core/state.ts";
 import cloudtrailModel from "../../../../test/vendor/aws-models/cloudtrail.json" with { type: "json" };
 import type {
   OperationHandler,
@@ -95,7 +97,24 @@ type StoredInsightSelectors = {
   InsightsDestination?: string;
 };
 
+type StoredEvent = {
+  EventId: string;
+  EventName: string;
+  EventSource: string;
+  EventTime: number;
+  Username: string;
+  AccessKeyId: string;
+  ReadOnly: string;
+  Resources: unknown[];
+  CloudTrailEvent: string;
+};
+
 const trailKey = (name: string): string => `trail/${name}`;
+
+const eventKey = (seq: number): string =>
+  `event/${seq.toString().padStart(12, "0")}`;
+
+const loggingCountKey = "loggingTrailCount";
 
 const selectorsKey = (name: string): string => `selectors/${name}`;
 
@@ -420,6 +439,10 @@ const DescribeTrails: OperationHandler = (input, ctx) => {
 const DeleteTrail: OperationHandler = (input, ctx) => {
   const name = resolveName(input);
   const trail = requireTrail(ctx, name);
+  if (trail.isLogging) {
+    const count = ctx.store.get<number>(loggingCountKey) ?? 0;
+    ctx.store.set(loggingCountKey, Math.max(0, count - 1));
+  }
   ctx.store.delete(trailKey(name));
   ctx.store.delete(tagsKey(trail.TrailARN));
   return {};
@@ -428,6 +451,10 @@ const DeleteTrail: OperationHandler = (input, ctx) => {
 const StartLogging: OperationHandler = (input, ctx) => {
   const name = resolveName(input);
   const trail = requireTrail(ctx, name);
+  if (!trail.isLogging) {
+    const count = ctx.store.get<number>(loggingCountKey) ?? 0;
+    ctx.store.set(loggingCountKey, count + 1);
+  }
   trail.isLogging = true;
   trail.startLoggingTime = Math.floor(Date.now() / 1000);
   trail.latestDeliveryTime = trail.startLoggingTime;
@@ -439,6 +466,10 @@ const StartLogging: OperationHandler = (input, ctx) => {
 const StopLogging: OperationHandler = (input, ctx) => {
   const name = resolveName(input);
   const trail = requireTrail(ctx, name);
+  if (trail.isLogging) {
+    const count = ctx.store.get<number>(loggingCountKey) ?? 0;
+    ctx.store.set(loggingCountKey, Math.max(0, count - 1));
+  }
   trail.isLogging = false;
   trail.stopLoggingTime = Math.floor(Date.now() / 1000);
   ctx.store.set(trailKey(name), trail);
@@ -1530,10 +1561,72 @@ const ListPublicKeys: OperationHandler = (_input, _ctx) => {
   };
 };
 
-const LookupEvents: OperationHandler = (_input, _ctx) => {
+const matchLookupAttr = (
+  event: StoredEvent,
+  key: string,
+  value: string,
+): boolean => {
+  switch (key) {
+    case "EventName":
+      return event.EventName === value;
+    case "EventSource":
+      return event.EventSource === value;
+    case "Username":
+      return event.Username === value;
+    case "AccessKeyId":
+      return event.AccessKeyId === value;
+    case "EventId":
+      return event.EventId === value;
+    case "ResourceName":
+      return (event.Resources as { ResourceName?: string }[]).some(
+        (r) => r.ResourceName === value,
+      );
+    case "ResourceType":
+      return (event.Resources as { ResourceType?: string }[]).some(
+        (r) => r.ResourceType === value,
+      );
+    default:
+      return true;
+  }
+};
+
+const LookupEvents: OperationHandler = (input, ctx) => {
+  const attrs = input["LookupAttributes"] as
+    | { AttributeKey: string; AttributeValue: string }[]
+    | undefined;
+  const startTime = input["StartTime"] as number | undefined;
+  const endTime = input["EndTime"] as number | undefined;
+  const maxResults = (input["MaxResults"] as number | undefined) ?? 50;
+  const nextToken = input["NextToken"] as string | undefined;
+
+  const allEvents = ctx.store
+    .list<StoredEvent>()
+    .filter(({ key }) => key.startsWith("event/"))
+    .map(({ value }) => value)
+    .sort((a, b) => b.EventTime - a.EventTime);
+
+  const filtered = allEvents.filter((event) => {
+    if (startTime !== undefined && event.EventTime < startTime) return false;
+    if (endTime !== undefined && event.EventTime > endTime) return false;
+    if (attrs !== undefined && attrs.length > 0) {
+      for (const attr of attrs) {
+        if (!matchLookupAttr(event, attr.AttributeKey, attr.AttributeValue))
+          return false;
+      }
+    }
+    return true;
+  });
+
+  const offset = nextToken !== undefined ? parseInt(nextToken, 10) : 0;
+  const page = filtered.slice(offset, offset + maxResults);
+  const newNextToken =
+    offset + maxResults < filtered.length
+      ? String(offset + maxResults)
+      : undefined;
+
   return {
-    Events: [],
-    NextToken: undefined,
+    Events: page,
+    NextToken: newNextToken,
   };
 };
 
@@ -1569,6 +1662,66 @@ const DeregisterOrganizationDelegatedAdmin: OperationHandler = (
 ) => {
   requireString(input, "DelegatedAdminAccountId");
   return {};
+};
+
+export const recordManagementEvent = (
+  store: StateStore,
+  account: string,
+  region: string,
+  service: string,
+  operation: string,
+  accessKeyId: string,
+  requestBody: string,
+): void => {
+  const ctStore = scopedStore(store, {
+    account,
+    region,
+    service: "cloudtrail",
+  });
+  const loggingCount = ctStore.get<number>(loggingCountKey) ?? 0;
+  if (loggingCount <= 0) return;
+
+  const seq = (ctStore.get<number>("eventSeq") ?? 0) + 1;
+  ctStore.set("eventSeq", seq);
+
+  const eventSource = `${service}.amazonaws.com`;
+  const readOnly = /^(Get|List|Describe|Lookup)/.test(operation)
+    ? "true"
+    : "false";
+  const eventTime = Math.floor(Date.now() / 1000);
+  const eventId = crypto.randomUUID();
+
+  let requestParameters: unknown;
+  try {
+    requestParameters = JSON.parse(requestBody);
+  } catch {
+    requestParameters = requestBody || undefined;
+  }
+
+  const event: StoredEvent = {
+    EventId: eventId,
+    EventName: operation,
+    EventSource: eventSource,
+    EventTime: eventTime,
+    Username: "test",
+    AccessKeyId: accessKeyId,
+    ReadOnly: readOnly,
+    Resources: [],
+    CloudTrailEvent: JSON.stringify({
+      eventVersion: "1.08",
+      eventName: operation,
+      eventSource: eventSource,
+      awsRegion: region,
+      requestParameters,
+    }),
+  };
+
+  ctStore.set(eventKey(seq), event);
+
+  const minSeq = seq - 1000;
+  if (minSeq > 0) {
+    ctStore.delete(eventKey(minSeq));
+  }
 };
 
 const cloudtrail = {

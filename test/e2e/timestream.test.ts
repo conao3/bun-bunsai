@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  BatchLoadDataFormat,
   CreateBatchLoadTaskCommand,
   CreateDatabaseCommand,
   CreateTableCommand,
@@ -12,6 +13,7 @@ import {
   ListBatchLoadTasksCommand,
   ListDatabasesCommand,
   ListTablesCommand,
+  S3EncryptionOption,
   TagResourceCommand,
   TimestreamWriteClient,
   UntagResourceCommand,
@@ -332,12 +334,12 @@ test("Timestream batch load task lifecycle", async () => {
   const dataSourceConfig = {
     DataSourceS3Configuration: { BucketName: "test-bucket" },
     CsvConfiguration: {},
-    DataFormat: "CSV",
+    DataFormat: BatchLoadDataFormat.CSV,
   };
   const reportConfig = {
     ReportS3Configuration: {
       BucketName: "test-bucket",
-      EncryptionOption: "SSE_S3",
+      EncryptionOption: S3EncryptionOption.SSE_S3,
     },
   };
 

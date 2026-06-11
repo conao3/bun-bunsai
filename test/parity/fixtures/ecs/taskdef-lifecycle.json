@@ -1,0 +1,108 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-ecs",
+  "clientName": "ECSClient",
+  "steps": [
+    {
+      "command": "RegisterTaskDefinitionCommand",
+      "input": {
+        "family": "parity-ecs-task",
+        "containerDefinitions": [
+          {
+            "name": "app",
+            "image": "nginx:latest",
+            "cpu": 256,
+            "memory": 512,
+            "essential": true
+          }
+        ],
+        "cpu": "256",
+        "memory": "512"
+      },
+      "expected": {
+        "taskDefinition": {
+          "family": "parity-ecs-task",
+          "revision": 1,
+          "status": "ACTIVE",
+          "cpu": "256",
+          "memory": "512",
+          "requiresAttributes": [],
+          "compatibilities": [],
+          "requiresCompatibilities": [],
+          "placementConstraints": [],
+          "volumes": []
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "taskDefinition.taskDefinitionArn",
+        "taskDefinition.containerDefinitions",
+        "taskDefinition.registeredAt",
+        "tags"
+      ],
+      "saveAs": "td1",
+      "refs": {}
+    },
+    {
+      "command": "DescribeTaskDefinitionCommand",
+      "input": { "taskDefinition": "parity-ecs-task" },
+      "expected": {
+        "taskDefinition": {
+          "family": "parity-ecs-task",
+          "revision": 1,
+          "status": "ACTIVE"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "taskDefinition.taskDefinitionArn",
+        "taskDefinition.containerDefinitions",
+        "taskDefinition.registeredAt",
+        "taskDefinition.cpu",
+        "taskDefinition.memory",
+        "taskDefinition.requiresAttributes",
+        "taskDefinition.compatibilities",
+        "taskDefinition.requiresCompatibilities",
+        "taskDefinition.placementConstraints",
+        "taskDefinition.volumes",
+        "tags"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTaskDefinitionsCommand",
+      "input": { "familyPrefix": "parity-ecs-task" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "taskDefinitionArns"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeregisterTaskDefinitionCommand",
+      "input": { "taskDefinition": "parity-ecs-task:1" },
+      "expected": {
+        "taskDefinition": {
+          "family": "parity-ecs-task",
+          "revision": 1,
+          "status": "INACTIVE"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "taskDefinition.taskDefinitionArn",
+        "taskDefinition.containerDefinitions",
+        "taskDefinition.registeredAt",
+        "taskDefinition.cpu",
+        "taskDefinition.memory",
+        "taskDefinition.requiresAttributes",
+        "taskDefinition.compatibilities",
+        "taskDefinition.requiresCompatibilities",
+        "taskDefinition.placementConstraints",
+        "taskDefinition.volumes"
+      ],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

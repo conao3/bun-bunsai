@@ -1,0 +1,45 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-ecr",
+  "clientName": "ECRClient",
+  "steps": [
+    {
+      "command": "DescribeRepositoriesCommand",
+      "input": { "repositoryNames": ["parity-ecr-no-such-repo"] },
+      "expectedError": {
+        "name": "RepositoryNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateRepositoryCommand",
+      "input": { "repositoryName": "parity-ecr-errors-repo" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "repository"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateRepositoryCommand",
+      "input": { "repositoryName": "parity-ecr-errors-repo" },
+      "expectedError": {
+        "name": "RepositoryAlreadyExistsException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteRepositoryCommand",
+      "input": { "repositoryName": "parity-ecr-errors-repo" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "repository"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

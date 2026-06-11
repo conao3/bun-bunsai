@@ -346,7 +346,7 @@ const requireCluster = (
   const cluster = ctx.store.get<StoredCacheCluster>(clusterKey(id));
   if (cluster === undefined) {
     throw awsError(
-      "CacheClusterNotFound",
+      "CacheClusterNotFoundFault",
       `CacheCluster ${id} not found.`,
       404,
     );
@@ -646,7 +646,7 @@ const CreateCacheCluster: OperationHandler = (input, ctx) => {
   const existing = ctx.store.get<StoredCacheCluster>(clusterKey(id));
   if (existing !== undefined) {
     throw awsError(
-      "CacheClusterAlreadyExists",
+      "CacheClusterAlreadyExistsFault",
       `CacheCluster ${id} already exists.`,
       400,
     );
@@ -761,7 +761,7 @@ const CreateReplicationGroup: OperationHandler = (input, ctx) => {
   const existing = ctx.store.get<StoredReplicationGroup>(groupKey(id));
   if (existing !== undefined) {
     throw awsError(
-      "ReplicationGroupAlreadyExists",
+      "ReplicationGroupAlreadyExistsFault",
       `ReplicationGroup ${id} already exists.`,
       400,
     );

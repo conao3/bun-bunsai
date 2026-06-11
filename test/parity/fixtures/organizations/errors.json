@@ -1,0 +1,45 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-organizations",
+  "clientName": "OrganizationsClient",
+  "steps": [
+    {
+      "command": "CreateOrganizationCommand",
+      "input": { "FeatureSet": "ALL" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "Organization"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateOrganizationCommand",
+      "input": { "FeatureSet": "ALL" },
+      "expectedError": {
+        "name": "AlreadyInOrganizationException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteOrganizationCommand",
+      "input": {},
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeOrganizationCommand",
+      "input": {},
+      "expectedError": {
+        "name": "AWSOrganizationsNotInUseException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

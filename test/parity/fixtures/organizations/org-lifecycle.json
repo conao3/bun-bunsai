@@ -1,0 +1,71 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-organizations",
+  "clientName": "OrganizationsClient",
+  "steps": [
+    {
+      "command": "CreateOrganizationCommand",
+      "input": { "FeatureSet": "ALL" },
+      "expected": {
+        "Organization": {
+          "MasterAccountId": "000000000000",
+          "FeatureSet": "ALL"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Organization.Id",
+        "Organization.Arn",
+        "Organization.MasterAccountArn",
+        "Organization.MasterAccountEmail",
+        "Organization.AvailablePolicyTypes"
+      ],
+      "saveAs": "org1",
+      "refs": {}
+    },
+    {
+      "command": "DescribeOrganizationCommand",
+      "input": {},
+      "expected": {
+        "Organization": {
+          "MasterAccountId": "000000000000",
+          "FeatureSet": "ALL"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Organization.Id",
+        "Organization.Arn",
+        "Organization.MasterAccountArn",
+        "Organization.MasterAccountEmail",
+        "Organization.AvailablePolicyTypes"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListAccountsCommand",
+      "input": {},
+      "expected": {},
+      "ignorePaths": ["$metadata", "Accounts", "NextToken"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListRootsCommand",
+      "input": {},
+      "expected": {},
+      "ignorePaths": ["$metadata", "Roots", "NextToken"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteOrganizationCommand",
+      "input": {},
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

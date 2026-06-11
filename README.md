@@ -4,7 +4,7 @@ A stateful AWS mock server built in [Bun](https://bun.sh). Think LocalStack, reb
 
 `bunsai` reads the same service definitions the AWS SDK ships internally (botocore `service-2.json` / Smithy models) and drives all protocol encoding/decoding from that model data, so adding or extending a service is a matter of writing handlers — not hand-rolling wire formats.
 
-> **Status:** **113 AWS services** across all 5 AWS wire protocols. Operation coverage is **~86%** (106 services at 100%) and growing via automated PR-driven development. See [STATUS.md](./STATUS.md) for the live coverage table.
+> **Status:** **141 AWS services** across all 5 AWS wire protocols. **138 services at 100%** operation coverage and growing via automated PR-driven development. See [STATUS.md](./STATUS.md) for the live coverage table.
 
 ## Quick Start
 

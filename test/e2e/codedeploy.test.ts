@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  AddTagsToOnPremisesInstancesCommand,
   BatchGetApplicationsCommand,
+  BatchGetApplicationRevisionsCommand,
   BatchGetDeploymentGroupsCommand,
   BatchGetDeploymentsCommand,
+  BatchGetOnPremisesInstancesCommand,
   CodeDeployClient,
   CreateApplicationCommand,
   CreateDeploymentCommand,
@@ -12,21 +15,38 @@ import {
   DeleteApplicationCommand,
   DeleteDeploymentConfigCommand,
   DeleteDeploymentGroupCommand,
+  DeregisterOnPremisesInstanceCommand,
   GetApplicationCommand,
+  GetApplicationRevisionCommand,
   GetDeploymentCommand,
   GetDeploymentConfigCommand,
   GetDeploymentGroupCommand,
+  GetOnPremisesInstanceCommand,
+  ListApplicationRevisionsCommand,
   ListApplicationsCommand,
   ListDeploymentConfigsCommand,
   ListDeploymentGroupsCommand,
   ListDeploymentsCommand,
+  ListOnPremisesInstancesCommand,
   ListTagsForResourceCommand,
+  RegisterApplicationRevisionCommand,
+  RegisterOnPremisesInstanceCommand,
+  RemoveTagsFromOnPremisesInstancesCommand,
   StopDeploymentCommand,
   TagResourceCommand,
   UntagResourceCommand,
   UpdateApplicationCommand,
   UpdateDeploymentGroupCommand,
 } from "@aws-sdk/client-codedeploy";
+
+const sampleRevision = {
+  revisionType: "S3" as const,
+  s3Location: {
+    bucket: "my-bucket",
+    key: "myapp.zip",
+    bundleType: "zip" as const,
+  },
+};
 
 const { endpoint, requestHandler } = startApp();
 const region = "us-east-1";
@@ -196,6 +216,7 @@ test("CodeDeploy deployment lifecycle and stop guard", async () => {
       applicationName: appName,
       deploymentGroupName: groupName,
       description: "e2e test deployment",
+      revision: sampleRevision,
     }),
   );
   expect(dep.deploymentId).toMatch(/^d-/);
@@ -230,6 +251,7 @@ test("CodeDeploy deployment lifecycle and stop guard", async () => {
     new CreateDeploymentCommand({
       applicationName: appName,
       deploymentGroupName: groupName,
+      revision: sampleRevision,
     }),
   );
   const deploymentId2 = dep2.deploymentId!;
@@ -332,4 +354,253 @@ test("CodeDeploy batch get applications", async () => {
   for (const name of apps) {
     await client.send(new DeleteApplicationCommand({ applicationName: name }));
   }
+});
+
+test("CD-01: on-premises instance lifecycle", async () => {
+  const client = codedeploy();
+  const instanceName = "bunsai-e2e-onprem-1";
+  const iamUserArn = "arn:aws:iam::000000000000:user/codedeploy-agent";
+
+  await client.send(
+    new RegisterOnPremisesInstanceCommand({
+      instanceName,
+      iamUserArn,
+    }),
+  );
+
+  await expect(
+    client.send(
+      new RegisterOnPremisesInstanceCommand({ instanceName, iamUserArn }),
+    ),
+  ).rejects.toThrow();
+
+  const got = await client.send(
+    new GetOnPremisesInstanceCommand({ instanceName }),
+  );
+  expect(got.instanceInfo?.instanceName).toBe(instanceName);
+  expect(got.instanceInfo?.iamUserArn).toBe(iamUserArn);
+  expect(got.instanceInfo?.deregisterTime).toBeUndefined();
+
+  await client.send(
+    new AddTagsToOnPremisesInstancesCommand({
+      instanceNames: [instanceName],
+      tags: [{ Key: "env", Value: "test" }],
+    }),
+  );
+  const gotTagged = await client.send(
+    new GetOnPremisesInstanceCommand({ instanceName }),
+  );
+  expect(gotTagged.instanceInfo?.tags).toEqual(
+    expect.arrayContaining([{ Key: "env", Value: "test" }]),
+  );
+
+  const listed = await client.send(
+    new ListOnPremisesInstancesCommand({
+      registrationStatus: "Registered",
+    }),
+  );
+  expect(listed.instanceNames).toContain(instanceName);
+
+  const listedByTag = await client.send(
+    new ListOnPremisesInstancesCommand({
+      tagFilters: [{ Key: "env", Value: "test" }],
+    }),
+  );
+  expect(listedByTag.instanceNames).toContain(instanceName);
+
+  const batch = await client.send(
+    new BatchGetOnPremisesInstancesCommand({ instanceNames: [instanceName] }),
+  );
+  expect(batch.instanceInfos).toHaveLength(1);
+  expect(batch.instanceInfos?.[0]?.instanceName).toBe(instanceName);
+
+  await client.send(
+    new RemoveTagsFromOnPremisesInstancesCommand({
+      instanceNames: [instanceName],
+      tags: [{ Key: "env" }],
+    }),
+  );
+
+  await client.send(new DeregisterOnPremisesInstanceCommand({ instanceName }));
+
+  const gotDeregistered = await client.send(
+    new GetOnPremisesInstanceCommand({ instanceName }),
+  );
+  expect(gotDeregistered.instanceInfo?.deregisterTime).toBeDefined();
+
+  const listedDeregistered = await client.send(
+    new ListOnPremisesInstancesCommand({
+      registrationStatus: "Deregistered",
+    }),
+  );
+  expect(listedDeregistered.instanceNames).toContain(instanceName);
+
+  await expect(
+    client.send(new GetOnPremisesInstanceCommand({ instanceName: "no-such" })),
+  ).rejects.toThrow();
+});
+
+test("CD-02: application revision registry", async () => {
+  const client = codedeploy();
+  const appName = "bunsai-e2e-revision-app";
+  const rev = {
+    revisionType: "S3" as const,
+    s3Location: {
+      bucket: "rev-bucket",
+      key: "app-v1.zip",
+      bundleType: "zip" as const,
+    },
+  };
+
+  await client.send(new CreateApplicationCommand({ applicationName: appName }));
+
+  await expect(
+    client.send(
+      new GetApplicationRevisionCommand({
+        applicationName: appName,
+        revision: rev,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new RegisterApplicationRevisionCommand({
+      applicationName: appName,
+      revision: rev,
+      description: "version 1",
+    }),
+  );
+
+  const got = await client.send(
+    new GetApplicationRevisionCommand({
+      applicationName: appName,
+      revision: rev,
+    }),
+  );
+  expect(got.applicationName).toBe(appName);
+  expect(got.revisionInfo?.description).toBe("version 1");
+
+  const listed = await client.send(
+    new ListApplicationRevisionsCommand({ applicationName: appName }),
+  );
+  expect(listed.revisions).toHaveLength(1);
+
+  const batchRevs = await client.send(
+    new BatchGetApplicationRevisionsCommand({
+      applicationName: appName,
+      revisions: [rev],
+    }),
+  );
+  expect(batchRevs.revisions).toHaveLength(1);
+
+  await client.send(new DeleteApplicationCommand({ applicationName: appName }));
+});
+
+test("CD-03: DeleteDeploymentConfig in-use guard", async () => {
+  const client = codedeploy();
+  const appName = "bunsai-e2e-depconfig-app";
+  const groupName = "bunsai-e2e-depconfig-group";
+  const configName = "bunsai-e2e-inuse-config";
+  const roleArn = "arn:aws:iam::000000000000:role/CodeDeployRole";
+
+  await client.send(new CreateApplicationCommand({ applicationName: appName }));
+  await client.send(
+    new CreateDeploymentConfigCommand({
+      deploymentConfigName: configName,
+      minimumHealthyHosts: { type: "HOST_COUNT", value: 0 },
+      computePlatform: "Server",
+    }),
+  );
+  await client.send(
+    new CreateDeploymentGroupCommand({
+      applicationName: appName,
+      deploymentGroupName: groupName,
+      serviceRoleArn: roleArn,
+      deploymentConfigName: configName,
+    }),
+  );
+
+  await expect(
+    client.send(
+      new DeleteDeploymentConfigCommand({ deploymentConfigName: configName }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new DeleteDeploymentConfigCommand({
+        deploymentConfigName: "CodeDeployDefault.AllAtOnce",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new DeleteDeploymentGroupCommand({
+      applicationName: appName,
+      deploymentGroupName: groupName,
+    }),
+  );
+  await client.send(
+    new DeleteDeploymentConfigCommand({ deploymentConfigName: configName }),
+  );
+  await client.send(new DeleteApplicationCommand({ applicationName: appName }));
+});
+
+test("CD-04: deploymentConfigName existence validation", async () => {
+  const client = codedeploy();
+  const appName = "bunsai-e2e-depconfig-exists-app";
+  const roleArn = "arn:aws:iam::000000000000:role/CodeDeployRole";
+
+  await client.send(new CreateApplicationCommand({ applicationName: appName }));
+
+  await expect(
+    client.send(
+      new CreateDeploymentGroupCommand({
+        applicationName: appName,
+        deploymentGroupName: "grp",
+        serviceRoleArn: roleArn,
+        deploymentConfigName: "NonExistentConfig",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(
+    new CreateDeploymentGroupCommand({
+      applicationName: appName,
+      deploymentGroupName: "grp",
+      serviceRoleArn: roleArn,
+    }),
+  );
+
+  await expect(
+    client.send(
+      new UpdateDeploymentGroupCommand({
+        applicationName: appName,
+        currentDeploymentGroupName: "grp",
+        deploymentConfigName: "NonExistentConfig",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new CreateDeploymentCommand({
+        applicationName: appName,
+        deploymentGroupName: "grp",
+        deploymentConfigName: "NonExistentConfig",
+        revision: sampleRevision,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await expect(
+    client.send(
+      new CreateDeploymentCommand({
+        applicationName: appName,
+        deploymentGroupName: "grp",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  await client.send(new DeleteApplicationCommand({ applicationName: appName }));
 });

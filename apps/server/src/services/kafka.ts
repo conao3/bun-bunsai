@@ -71,6 +71,7 @@ type StoredConfiguration = {
 type StoredOperation = {
   clusterArn: string;
   clusterOperationArn: string;
+  clusterType: ClusterType;
   operationType: string;
   operationState: "UPDATE_COMPLETE" | "UPDATE_IN_PROGRESS" | "UPDATE_FAILED";
   creationTime: number;
@@ -109,11 +110,23 @@ type StoredVpcConnection = {
   tags: Record<string, string>;
 };
 
+type StoredTopic = {
+  topicArn: string;
+  topicName: string;
+  clusterArn: string;
+  partitionCount: number;
+  replicationFactor: number;
+  status: "CREATING" | "ACTIVE";
+  configs: string;
+};
+
 const clusterKey = (arn: string): string => `cluster/${arn}`;
 const configKey = (arn: string): string => `config/${arn}`;
 const operationKey = (arn: string): string => `operation/${arn}`;
 const replicatorKey = (arn: string): string => `replicator/${arn}`;
 const vpcConnectionKey = (arn: string): string => `vpcconn/${arn}`;
+const topicKey = (clusterArn: string, name: string): string =>
+  `topic/${clusterArn}/${name}`;
 
 const nowMs = (): number => Date.now();
 
@@ -169,6 +182,13 @@ const replicatorArnOf = (
 
 const vpcConnectionArnOf = (ctx: ServiceContext, shortId: string): string =>
   `arn:aws:kafka:${ctx.region}:${ctx.account}:vpc-connection/${shortId}`;
+
+const topicArnOf = (
+  ctx: ServiceContext,
+  clusterArn: string,
+  name: string,
+): string =>
+  `arn:aws:kafka:${ctx.region}:${ctx.account}:topic/${clusterArn}/${name}`;
 
 const bootstrapBrokers = (cluster: StoredCluster, region: string): string => {
   const brokers: string[] = [];
@@ -647,6 +667,20 @@ const DeleteConfiguration: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "arn is required.", 400);
   }
   const cfg = requireConfig(ctx, arn);
+  const inUse = ctx.store.list<StoredCluster>().some((e) => {
+    if (!e.key.startsWith("cluster/")) return false;
+    if (e.value.state === "DELETING") return false;
+    const ci = e.value.configurationInfo as Record<string, unknown> | undefined;
+    if (ci === undefined) return false;
+    return ci["arn"] === arn || ci["Arn"] === arn;
+  });
+  if (inUse) {
+    throw awsError(
+      "BadRequestException",
+      `Configuration ${arn} is in use by one or more clusters.`,
+      400,
+    );
+  }
   const updated = { ...cfg, state: "DELETING" as const };
   ctx.store.set(configKey(arn), updated);
   return { Arn: arn, State: "DELETING" };
@@ -720,7 +754,7 @@ const ListConfigurationRevisions: OperationHandler = (input, ctx) => {
     revisions,
     maxResults,
     nextToken,
-    (r) => String(r.revision),
+    (r) => String(r.revision).padStart(20, "0"),
   );
   return {
     Revisions: page.map((r) => ({
@@ -741,11 +775,13 @@ const recordOperation = (
   ctx: ServiceContext,
   clusterArn: string,
   operationType: string,
+  clusterType: ClusterType,
 ): string => {
   const arn = makeOperationArn(ctx);
   const op: StoredOperation = {
     clusterArn,
     clusterOperationArn: arn,
+    clusterType,
     operationType,
     operationState: "UPDATE_COMPLETE",
     creationTime: nowMs(),
@@ -755,12 +791,30 @@ const recordOperation = (
   return arn;
 };
 
+const requireCurrentVersion = (
+  input: Record<string, unknown>,
+  cluster: StoredCluster,
+): void => {
+  const cv = stringOrUndefined(input["CurrentVersion"]);
+  if (cv === undefined) {
+    throw awsError("BadRequestException", "currentVersion is required.", 400);
+  }
+  if (cv !== cluster.currentVersion) {
+    throw awsError(
+      "BadRequestException",
+      `Version mismatch: expected ${cluster.currentVersion}.`,
+      400,
+    );
+  }
+};
+
 const UpdateBrokerCount: OperationHandler = (input, ctx) => {
   const clusterArn = stringOrUndefined(input["ClusterArn"]);
   if (clusterArn === undefined) {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   const cluster = requireCluster(ctx, clusterArn);
+  requireCurrentVersion(input, cluster);
   const targetCount =
     numberOrUndefined(input["TargetNumberOfBrokerNodes"]) ??
     cluster.numberOfBrokerNodes;
@@ -771,7 +825,12 @@ const UpdateBrokerCount: OperationHandler = (input, ctx) => {
     currentVersion: nextVersion,
   };
   ctx.store.set(clusterKey(clusterArn), updated);
-  const operationArn = recordOperation(ctx, clusterArn, "UPDATE_BROKER_COUNT");
+  const operationArn = recordOperation(
+    ctx,
+    clusterArn,
+    "UPDATE_BROKER_COUNT",
+    cluster.clusterType,
+  );
   return { ClusterArn: clusterArn, ClusterOperationArn: operationArn };
 };
 
@@ -781,6 +840,7 @@ const UpdateBrokerStorage: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   const cluster = requireCluster(ctx, clusterArn);
+  requireCurrentVersion(input, cluster);
   const nextVersion = String(parseInt(cluster.currentVersion, 10) + 1);
   const updated = { ...cluster, currentVersion: nextVersion };
   ctx.store.set(clusterKey(clusterArn), updated);
@@ -788,6 +848,7 @@ const UpdateBrokerStorage: OperationHandler = (input, ctx) => {
     ctx,
     clusterArn,
     "UPDATE_BROKER_STORAGE",
+    cluster.clusterType,
   );
   return { ClusterArn: clusterArn, ClusterOperationArn: operationArn };
 };
@@ -798,10 +859,16 @@ const UpdateBrokerType: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   const cluster = requireCluster(ctx, clusterArn);
+  requireCurrentVersion(input, cluster);
   const nextVersion = String(parseInt(cluster.currentVersion, 10) + 1);
   const updated = { ...cluster, currentVersion: nextVersion };
   ctx.store.set(clusterKey(clusterArn), updated);
-  const operationArn = recordOperation(ctx, clusterArn, "UPDATE_BROKER_TYPE");
+  const operationArn = recordOperation(
+    ctx,
+    clusterArn,
+    "UPDATE_BROKER_TYPE",
+    cluster.clusterType,
+  );
   return { ClusterArn: clusterArn, ClusterOperationArn: operationArn };
 };
 
@@ -811,6 +878,7 @@ const UpdateClusterConfiguration: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   const cluster = requireCluster(ctx, clusterArn);
+  requireCurrentVersion(input, cluster);
   const configInfo = asRecord(input["ConfigurationInfo"]);
   const nextVersion = String(parseInt(cluster.currentVersion, 10) + 1);
   const updated = {
@@ -823,6 +891,7 @@ const UpdateClusterConfiguration: OperationHandler = (input, ctx) => {
     ctx,
     clusterArn,
     "UPDATE_CLUSTER_CONFIGURATION",
+    cluster.clusterType,
   );
   return { ClusterArn: clusterArn, ClusterOperationArn: operationArn };
 };
@@ -833,6 +902,7 @@ const UpdateClusterKafkaVersion: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   const cluster = requireCluster(ctx, clusterArn);
+  requireCurrentVersion(input, cluster);
   const targetVersion =
     stringOrUndefined(input["TargetKafkaVersion"]) ?? cluster.kafkaVersion;
   const nextVersion = String(parseInt(cluster.currentVersion, 10) + 1);
@@ -847,6 +917,7 @@ const UpdateClusterKafkaVersion: OperationHandler = (input, ctx) => {
     ctx,
     clusterArn,
     "UPDATE_CLUSTER_KAFKA_VERSION",
+    cluster.clusterType,
   );
   return { ClusterArn: clusterArn, ClusterOperationArn: operationArn };
 };
@@ -857,12 +928,18 @@ const UpdateConnectivity: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   const cluster = requireCluster(ctx, clusterArn);
+  requireCurrentVersion(input, cluster);
   const nextVersion = String(parseInt(cluster.currentVersion, 10) + 1);
   ctx.store.set(clusterKey(clusterArn), {
     ...cluster,
     currentVersion: nextVersion,
   });
-  const operationArn = recordOperation(ctx, clusterArn, "UPDATE_CONNECTIVITY");
+  const operationArn = recordOperation(
+    ctx,
+    clusterArn,
+    "UPDATE_CONNECTIVITY",
+    cluster.clusterType,
+  );
   return { ClusterArn: clusterArn, ClusterOperationArn: operationArn };
 };
 
@@ -872,6 +949,7 @@ const UpdateMonitoring: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   const cluster = requireCluster(ctx, clusterArn);
+  requireCurrentVersion(input, cluster);
   const nextVersion = String(parseInt(cluster.currentVersion, 10) + 1);
   const updated = {
     ...cluster,
@@ -883,7 +961,12 @@ const UpdateMonitoring: OperationHandler = (input, ctx) => {
     currentVersion: nextVersion,
   };
   ctx.store.set(clusterKey(clusterArn), updated);
-  const operationArn = recordOperation(ctx, clusterArn, "UPDATE_MONITORING");
+  const operationArn = recordOperation(
+    ctx,
+    clusterArn,
+    "UPDATE_MONITORING",
+    cluster.clusterType,
+  );
   return { ClusterArn: clusterArn, ClusterOperationArn: operationArn };
 };
 
@@ -893,13 +976,19 @@ const UpdateRebalancing: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   const cluster = requireCluster(ctx, clusterArn);
+  requireCurrentVersion(input, cluster);
   const nextVersion = String(parseInt(cluster.currentVersion, 10) + 1);
   ctx.store.set(clusterKey(clusterArn), {
     ...cluster,
     rebalancing: asRecord(input["Rebalancing"]) ?? cluster.rebalancing,
     currentVersion: nextVersion,
   });
-  const operationArn = recordOperation(ctx, clusterArn, "UPDATE_REBALANCING");
+  const operationArn = recordOperation(
+    ctx,
+    clusterArn,
+    "UPDATE_REBALANCING",
+    cluster.clusterType,
+  );
   return { ClusterArn: clusterArn, ClusterOperationArn: operationArn };
 };
 
@@ -909,6 +998,7 @@ const UpdateSecurity: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   const cluster = requireCluster(ctx, clusterArn);
+  requireCurrentVersion(input, cluster);
   const nextVersion = String(parseInt(cluster.currentVersion, 10) + 1);
   ctx.store.set(clusterKey(clusterArn), {
     ...cluster,
@@ -917,7 +1007,12 @@ const UpdateSecurity: OperationHandler = (input, ctx) => {
     encryptionInfo: asRecord(input["EncryptionInfo"]) ?? cluster.encryptionInfo,
     currentVersion: nextVersion,
   });
-  const operationArn = recordOperation(ctx, clusterArn, "UPDATE_SECURITY");
+  const operationArn = recordOperation(
+    ctx,
+    clusterArn,
+    "UPDATE_SECURITY",
+    cluster.clusterType,
+  );
   return { ClusterArn: clusterArn, ClusterOperationArn: operationArn };
 };
 
@@ -927,13 +1022,19 @@ const UpdateStorage: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   const cluster = requireCluster(ctx, clusterArn);
+  requireCurrentVersion(input, cluster);
   const nextVersion = String(parseInt(cluster.currentVersion, 10) + 1);
   ctx.store.set(clusterKey(clusterArn), {
     ...cluster,
     storageMode: stringOrUndefined(input["StorageMode"]) ?? cluster.storageMode,
     currentVersion: nextVersion,
   });
-  const operationArn = recordOperation(ctx, clusterArn, "UPDATE_STORAGE");
+  const operationArn = recordOperation(
+    ctx,
+    clusterArn,
+    "UPDATE_STORAGE",
+    cluster.clusterType,
+  );
   return { ClusterArn: clusterArn, ClusterOperationArn: operationArn };
 };
 
@@ -942,8 +1043,13 @@ const RebootBroker: OperationHandler = (input, ctx) => {
   if (clusterArn === undefined) {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
-  requireCluster(ctx, clusterArn);
-  const operationArn = recordOperation(ctx, clusterArn, "REBOOT_BROKER");
+  const cluster = requireCluster(ctx, clusterArn);
+  const operationArn = recordOperation(
+    ctx,
+    clusterArn,
+    "REBOOT_BROKER",
+    cluster.clusterType,
+  );
   return { ClusterArn: clusterArn, ClusterOperationArn: operationArn };
 };
 
@@ -974,7 +1080,7 @@ const ListNodes: OperationHandler = (input, ctx) => {
     nodes,
     maxResults,
     nextToken,
-    (n) => String(n.brokerNodeInfo.brokerId),
+    (n) => String(n.brokerNodeInfo.brokerId).padStart(20, "0"),
   );
   return { NodeInfoList: page, NextToken: next };
 };
@@ -985,6 +1091,16 @@ const opInfoView = (o: StoredOperation): Record<string, unknown> => ({
   operationType: o.operationType,
   operationState: o.operationState,
   creationTime: new Date(o.creationTime).toISOString(),
+  endTime: new Date(o.endTime).toISOString(),
+});
+
+const opInfoV2View = (o: StoredOperation): Record<string, unknown> => ({
+  clusterArn: o.clusterArn,
+  clusterType: o.clusterType,
+  operationArn: o.clusterOperationArn,
+  operationType: o.operationType,
+  operationState: o.operationState,
+  startTime: new Date(o.creationTime).toISOString(),
   endTime: new Date(o.endTime).toISOString(),
 });
 
@@ -1025,7 +1141,7 @@ const DescribeClusterOperationV2: OperationHandler = (input, ctx) => {
       404,
     );
   }
-  return { ClusterOperationInfo: opInfoView(op) };
+  return { ClusterOperationInfo: opInfoV2View(op) };
 };
 
 const ListClusterOperations: OperationHandler = (input, ctx) => {
@@ -1079,7 +1195,7 @@ const ListClusterOperationsV2: OperationHandler = (input, ctx) => {
     (o) => o.clusterOperationArn,
   );
   return {
-    ClusterOperationInfoList: page.map(opInfoView),
+    ClusterOperationInfoList: page.map(opInfoV2View),
     NextToken: next,
   };
 };
@@ -1334,15 +1450,32 @@ const CreateVpcConnection: OperationHandler = (input, ctx) => {
   if (targetClusterArn === undefined) {
     throw awsError("BadRequestException", "targetClusterArn is required.", 400);
   }
+  requireCluster(ctx, targetClusterArn);
+  const authentication = stringOrUndefined(input["Authentication"]);
+  if (authentication === undefined) {
+    throw awsError("BadRequestException", "authentication is required.", 400);
+  }
+  const vpcId = stringOrUndefined(input["VpcId"]);
+  if (vpcId === undefined) {
+    throw awsError("BadRequestException", "vpcId is required.", 400);
+  }
+  const clientSubnets = stringListFrom(input["ClientSubnets"]);
+  if (clientSubnets.length === 0) {
+    throw awsError("BadRequestException", "clientSubnets is required.", 400);
+  }
+  const securityGroups = stringListFrom(input["SecurityGroups"]);
+  if (securityGroups.length === 0) {
+    throw awsError("BadRequestException", "securityGroups is required.", 400);
+  }
   const shortId = crypto.randomUUID();
   const arn = vpcConnectionArnOf(ctx, shortId);
   const conn: StoredVpcConnection = {
     vpcConnectionArn: arn,
     targetClusterArn,
-    vpcId: stringOrUndefined(input["VpcId"]) ?? "",
-    clientSubnets: stringListFrom(input["ClientSubnets"]),
-    securityGroups: stringListFrom(input["SecurityGroups"]),
-    authentication: stringOrUndefined(input["Authentication"]) ?? "SASL_IAM",
+    vpcId,
+    clientSubnets,
+    securityGroups,
+    authentication,
     creationTime: nowMs(),
     state: "AVAILABLE",
     tags: stringMapFrom(input["Tags"]),
@@ -1350,7 +1483,7 @@ const CreateVpcConnection: OperationHandler = (input, ctx) => {
   ctx.store.set(vpcConnectionKey(arn), conn);
   return {
     VpcConnectionArn: arn,
-    State: "CREATING",
+    State: "AVAILABLE",
     Authentication: conn.authentication,
     VpcId: conn.vpcId,
     ClientSubnets: conn.clientSubnets,
@@ -1472,7 +1605,28 @@ const RejectClientVpcConnection: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   requireCluster(ctx, clusterArn);
-  return {};
+  const vpcConnectionArn = stringOrUndefined(input["VpcConnectionArn"]);
+  if (vpcConnectionArn === undefined) {
+    throw awsError("BadRequestException", "vpcConnectionArn is required.", 400);
+  }
+  const conn = ctx.store.get<StoredVpcConnection>(
+    vpcConnectionKey(vpcConnectionArn),
+  );
+  if (conn === undefined) {
+    throw awsError(
+      "BadRequestException",
+      `VPC connection ${vpcConnectionArn} not found.`,
+      400,
+    );
+  }
+  ctx.store.set(vpcConnectionKey(vpcConnectionArn), {
+    ...conn,
+    state: "REJECTED",
+  });
+  return {
+    VpcConnectionArn: vpcConnectionArn,
+    State: "REJECTED",
+  };
 };
 
 const CreateReplicator: OperationHandler = (input, ctx) => {
@@ -1626,10 +1780,71 @@ const UpdateReplicationInfo: OperationHandler = (input, ctx) => {
       404,
     );
   }
+  const srcArn = stringOrUndefined(input["SourceKafkaClusterArn"]) ?? "";
+  const tgtArn = stringOrUndefined(input["TargetKafkaClusterArn"]) ?? "";
+  const topicReplication = asRecord(input["TopicReplication"]);
+  const consumerGroupReplication = asRecord(input["ConsumerGroupReplication"]);
+
+  const updatedList = replicator.replicationInfoList.map(
+    (ri: Record<string, unknown>) => {
+      const riSrc =
+        (ri["sourceKafkaClusterArn"] as string | undefined) ??
+        (ri["SourceKafkaClusterArn"] as string | undefined) ??
+        "";
+      const riTgt =
+        (ri["targetKafkaClusterArn"] as string | undefined) ??
+        (ri["TargetKafkaClusterArn"] as string | undefined) ??
+        "";
+      if (riSrc !== srcArn || riTgt !== tgtArn) return ri;
+      return {
+        ...ri,
+        ...(topicReplication !== undefined
+          ? {
+              TopicReplication: {
+                ...(asRecord(ri["TopicReplication"]) ?? {}),
+                ...topicReplication,
+              },
+            }
+          : {}),
+        ...(consumerGroupReplication !== undefined
+          ? {
+              ConsumerGroupReplication: {
+                ...(asRecord(ri["ConsumerGroupReplication"]) ?? {}),
+                ...consumerGroupReplication,
+              },
+            }
+          : {}),
+      };
+    },
+  );
+
+  ctx.store.set(replicatorKey(replicatorArn), {
+    ...replicator,
+    replicationInfoList: updatedList,
+    replicatorState: "UPDATING",
+  });
+
   return {
     ReplicatorArn: replicatorArn,
-    ReplicatorState: replicator.replicatorState,
+    ReplicatorState: "UPDATING",
   };
+};
+
+const requireTopic = (
+  ctx: ServiceContext,
+  clusterArn: string,
+  name: string,
+  errorCode: string,
+): StoredTopic => {
+  const topic = ctx.store.get<StoredTopic>(topicKey(clusterArn, name));
+  if (topic === undefined) {
+    throw awsError(
+      errorCode,
+      `Topic ${name} not found on cluster ${clusterArn}.`,
+      404,
+    );
+  }
+  return topic;
 };
 
 const CreateTopic: OperationHandler = (input, ctx) => {
@@ -1638,16 +1853,46 @@ const CreateTopic: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   requireCluster(ctx, clusterArn);
-  const topicData = Array.isArray(input["TopicsToCreate"])
-    ? (input["TopicsToCreate"] as Record<string, unknown>[])
-    : [];
+  const topicName = stringOrUndefined(input["TopicName"]);
+  if (topicName === undefined) {
+    throw awsError("BadRequestException", "topicName is required.", 400);
+  }
+  const partitionCount = numberOrUndefined(input["PartitionCount"]);
+  if (partitionCount === undefined) {
+    throw awsError("BadRequestException", "partitionCount is required.", 400);
+  }
+  const replicationFactor = numberOrUndefined(input["ReplicationFactor"]);
+  if (replicationFactor === undefined) {
+    throw awsError(
+      "BadRequestException",
+      "replicationFactor is required.",
+      400,
+    );
+  }
+  if (
+    ctx.store.get<StoredTopic>(topicKey(clusterArn, topicName)) !== undefined
+  ) {
+    throw awsError(
+      "TopicExistsException",
+      `Topic ${topicName} already exists.`,
+      409,
+    );
+  }
+  const arn = topicArnOf(ctx, clusterArn, topicName);
+  const topic: StoredTopic = {
+    topicArn: arn,
+    topicName,
+    clusterArn,
+    partitionCount,
+    replicationFactor,
+    status: "ACTIVE",
+    configs: typeof input["Configs"] === "string" ? input["Configs"] : "",
+  };
+  ctx.store.set(topicKey(clusterArn, topicName), topic);
   return {
-    ClusterArn: clusterArn,
-    Error: null,
-    Topics: topicData.map((t) => ({
-      settings: t,
-      topic: t["name"] ?? "",
-    })),
+    TopicArn: arn,
+    TopicName: topicName,
+    Status: "ACTIVE",
   };
 };
 
@@ -1662,13 +1907,14 @@ const DescribeTopic: OperationHandler = (input, ctx) => {
     );
   }
   requireCluster(ctx, clusterArn);
+  const topic = requireTopic(ctx, clusterArn, topicName, "NotFoundException");
   return {
-    ClusterArn: clusterArn,
-    Topic: {
-      name: topicName,
-      partitions: [],
-      settings: {},
-    },
+    Configs: topic.configs,
+    PartitionCount: topic.partitionCount,
+    ReplicationFactor: topic.replicationFactor,
+    Status: topic.status,
+    TopicArn: topic.topicArn,
+    TopicName: topic.topicName,
   };
 };
 
@@ -1678,7 +1924,33 @@ const ListTopics: OperationHandler = (input, ctx) => {
     throw awsError("BadRequestException", "clusterArn is required.", 400);
   }
   requireCluster(ctx, clusterArn);
-  return { ClusterArn: clusterArn, Topics: [], NextToken: undefined };
+  const topicNameFilter = stringOrUndefined(input["TopicNameFilter"]);
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  let topics = ctx.store
+    .list<StoredTopic>()
+    .filter((e) => e.key.startsWith(`topic/${clusterArn}/`))
+    .map((e) => e.value)
+    .sort((a, b) => a.topicName.localeCompare(b.topicName));
+  if (topicNameFilter !== undefined) {
+    topics = topics.filter((t) => t.topicName.startsWith(topicNameFilter));
+  }
+  const { page, nextToken: next } = paginateList(
+    topics,
+    maxResults,
+    nextToken,
+    (t) => t.topicName,
+  );
+  return {
+    Topics: page.map((t) => ({
+      OutOfSyncReplicaCount: 0,
+      PartitionCount: t.partitionCount,
+      ReplicationFactor: t.replicationFactor,
+      TopicArn: t.topicArn,
+      TopicName: t.topicName,
+    })),
+    NextToken: next,
+  };
 };
 
 const UpdateTopic: OperationHandler = (input, ctx) => {
@@ -1692,10 +1964,22 @@ const UpdateTopic: OperationHandler = (input, ctx) => {
     );
   }
   requireCluster(ctx, clusterArn);
+  const topic = requireTopic(
+    ctx,
+    clusterArn,
+    topicName,
+    "UnknownTopicOrPartitionException",
+  );
+  const updatedConfigs =
+    typeof input["Configs"] === "string" ? input["Configs"] : topic.configs;
+  ctx.store.set(topicKey(clusterArn, topicName), {
+    ...topic,
+    configs: updatedConfigs,
+  });
   return {
-    ClusterArn: clusterArn,
-    Error: null,
-    Topic: { settings: {}, topic: topicName },
+    Status: topic.status,
+    TopicArn: topic.topicArn,
+    TopicName: topic.topicName,
   };
 };
 
@@ -1710,7 +1994,18 @@ const DeleteTopic: OperationHandler = (input, ctx) => {
     );
   }
   requireCluster(ctx, clusterArn);
-  return { ClusterArn: clusterArn, Error: null, Topic: topicName };
+  const topic = requireTopic(
+    ctx,
+    clusterArn,
+    topicName,
+    "UnknownTopicOrPartitionException",
+  );
+  ctx.store.delete(topicKey(clusterArn, topicName));
+  return {
+    Status: "DELETING",
+    TopicArn: topic.topicArn,
+    TopicName: topic.topicName,
+  };
 };
 
 const DescribeTopicPartitions: OperationHandler = (input, ctx) => {
@@ -1724,7 +2019,30 @@ const DescribeTopicPartitions: OperationHandler = (input, ctx) => {
     );
   }
   requireCluster(ctx, clusterArn);
-  return { NextToken: undefined, TopicPartitionInfoList: [] };
+  const topic = requireTopic(ctx, clusterArn, topicName, "NotFoundException");
+  const maxResults = numberOrUndefined(input["MaxResults"]);
+  const nextToken = stringOrUndefined(input["NextToken"]);
+  const partitions = Array.from({ length: topic.partitionCount }, (_, i) => ({
+    Partition: i,
+    Leader: { Host: "", Port: 9092, Rack: undefined },
+    Replicas: Array.from({ length: topic.replicationFactor }, (__, r) => ({
+      Host: "",
+      Port: 9092,
+      Rack: undefined,
+    })),
+    Isr: Array.from({ length: topic.replicationFactor }, (__, r) => ({
+      Host: "",
+      Port: 9092,
+      Rack: undefined,
+    })),
+  }));
+  const { page, nextToken: next } = paginateList(
+    partitions,
+    maxResults,
+    nextToken,
+    (p) => String(p.Partition).padStart(20, "0"),
+  );
+  return { Partitions: page, NextToken: next };
 };
 
 const pathSegments = (path: string): string[] =>

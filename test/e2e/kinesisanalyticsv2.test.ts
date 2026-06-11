@@ -2,16 +2,22 @@ import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
   AddApplicationCloudWatchLoggingOptionCommand,
+  AddApplicationVpcConfigurationCommand,
   CreateApplicationCommand,
   CreateApplicationSnapshotCommand,
   DeleteApplicationCommand,
   DeleteApplicationSnapshotCommand,
   DescribeApplicationCommand,
+  DescribeApplicationOperationCommand,
   DescribeApplicationSnapshotCommand,
+  DescribeApplicationVersionCommand,
   KinesisAnalyticsV2Client,
+  ListApplicationOperationsCommand,
   ListApplicationSnapshotsCommand,
+  ListApplicationVersionsCommand,
   ListApplicationsCommand,
   ListTagsForResourceCommand,
+  RollbackApplicationCommand,
   StartApplicationCommand,
   StopApplicationCommand,
   TagResourceCommand,
@@ -76,10 +82,11 @@ test("kinesisanalyticsv2: application lifecycle (create, describe, list, update,
   );
   expect(updated.ApplicationDetail?.ApplicationVersionId).toBe(versionId + 1);
 
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
   await c.send(
     new DeleteApplicationCommand({
       ApplicationName: appName,
-      CreateTimestamp: new Date(),
+      CreateTimestamp: createTs,
     }),
   );
 
@@ -94,7 +101,7 @@ test("kinesisanalyticsv2: start/stop state machine (READY → STARTING → RUNNI
   const c = client();
   const appName = "bunsai-e2e-statemachine";
 
-  await c.send(
+  const created = await c.send(
     new CreateApplicationCommand({
       ApplicationName: appName,
       RuntimeEnvironment: "FLINK-1_18",
@@ -121,10 +128,11 @@ test("kinesisanalyticsv2: start/stop state machine (READY → STARTING → RUNNI
   );
   expect(stopping.ApplicationDetail?.ApplicationStatus).toBe("READY");
 
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
   await c.send(
     new DeleteApplicationCommand({
       ApplicationName: appName,
-      CreateTimestamp: new Date(),
+      CreateTimestamp: createTs,
     }),
   );
 });
@@ -133,7 +141,7 @@ test("kinesisanalyticsv2: RUNNING state blocks deletion (ResourceInUseException)
   const c = client();
   const appName = "bunsai-e2e-running-guard";
 
-  await c.send(
+  const created = await c.send(
     new CreateApplicationCommand({
       ApplicationName: appName,
       RuntimeEnvironment: "FLINK-1_18",
@@ -143,11 +151,12 @@ test("kinesisanalyticsv2: RUNNING state blocks deletion (ResourceInUseException)
 
   await c.send(new StartApplicationCommand({ ApplicationName: appName }));
 
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
   await expect(
     c.send(
       new DeleteApplicationCommand({
         ApplicationName: appName,
-        CreateTimestamp: new Date(),
+        CreateTimestamp: createTs,
       }),
     ),
   ).rejects.toThrow();
@@ -158,7 +167,7 @@ test("kinesisanalyticsv2: RUNNING state blocks deletion (ResourceInUseException)
   await c.send(
     new DeleteApplicationCommand({
       ApplicationName: appName,
-      CreateTimestamp: new Date(),
+      CreateTimestamp: createTs,
     }),
   );
 });
@@ -167,7 +176,7 @@ test("kinesisanalyticsv2: ConcurrentModificationException on version mismatch", 
   const c = client();
   const appName = "bunsai-e2e-version-guard";
 
-  await c.send(
+  const created = await c.send(
     new CreateApplicationCommand({
       ApplicationName: appName,
       RuntimeEnvironment: "FLINK-1_18",
@@ -184,26 +193,30 @@ test("kinesisanalyticsv2: ConcurrentModificationException on version mismatch", 
     ),
   ).rejects.toThrow();
 
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
   await c.send(
     new DeleteApplicationCommand({
       ApplicationName: appName,
-      CreateTimestamp: new Date(),
+      CreateTimestamp: createTs,
     }),
   );
 });
 
-test("kinesisanalyticsv2: snapshot CRUD", async () => {
+test("kinesisanalyticsv2: snapshot CRUD (requires RUNNING state)", async () => {
   const c = client();
   const appName = "bunsai-e2e-snapshot";
   const snapshotName = "snap-1";
 
-  await c.send(
+  const created = await c.send(
     new CreateApplicationCommand({
       ApplicationName: appName,
       RuntimeEnvironment: "FLINK-1_18",
       ServiceExecutionRole: "arn:aws:iam::123456789012:role/test-role",
     }),
   );
+
+  await c.send(new StartApplicationCommand({ ApplicationName: appName }));
+  await c.send(new DescribeApplicationCommand({ ApplicationName: appName }));
 
   await c.send(
     new CreateApplicationSnapshotCommand({
@@ -247,10 +260,14 @@ test("kinesisanalyticsv2: snapshot CRUD", async () => {
     ),
   ).toBe(false);
 
+  await c.send(new StopApplicationCommand({ ApplicationName: appName }));
+  await c.send(new DescribeApplicationCommand({ ApplicationName: appName }));
+
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
   await c.send(
     new DeleteApplicationCommand({
       ApplicationName: appName,
-      CreateTimestamp: new Date(),
+      CreateTimestamp: createTs,
     }),
   );
 });
@@ -259,7 +276,7 @@ test("kinesisanalyticsv2: tag operations", async () => {
   const c = client();
   const appName = "bunsai-e2e-tags";
 
-  await c.send(
+  const created = await c.send(
     new CreateApplicationCommand({
       ApplicationName: appName,
       RuntimeEnvironment: "FLINK-1_18",
@@ -297,10 +314,11 @@ test("kinesisanalyticsv2: tag operations", async () => {
   expect((tags3.Tags ?? []).some((t) => t.Key === "k1")).toBe(false);
   expect((tags3.Tags ?? []).some((t) => t.Key === "k2")).toBe(true);
 
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
   await c.send(
     new DeleteApplicationCommand({
       ApplicationName: appName,
-      CreateTimestamp: new Date(),
+      CreateTimestamp: createTs,
     }),
   );
 });
@@ -309,7 +327,7 @@ test("kinesisanalyticsv2: CloudWatch logging options", async () => {
   const c = client();
   const appName = "bunsai-e2e-cw";
 
-  await c.send(
+  const created = await c.send(
     new CreateApplicationCommand({
       ApplicationName: appName,
       RuntimeEnvironment: "FLINK-1_18",
@@ -336,10 +354,526 @@ test("kinesisanalyticsv2: CloudWatch logging options", async () => {
   expect(addResult.ApplicationVersionId).toBe(versionId + 1);
   expect((addResult.CloudWatchLoggingOptionDescriptions ?? []).length).toBe(1);
 
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
   await c.send(
     new DeleteApplicationCommand({
       ApplicationName: appName,
-      CreateTimestamp: new Date(),
+      CreateTimestamp: createTs,
+    }),
+  );
+});
+
+test("kinesisanalyticsv2 KDA2-001: OperationId persistence — DescribeApplicationOperation and ListApplicationOperations", async () => {
+  const c = client();
+  const appName = "bunsai-e2e-kda2-001";
+
+  const created = await c.send(
+    new CreateApplicationCommand({
+      ApplicationName: appName,
+      RuntimeEnvironment: "FLINK-1_18",
+      ServiceExecutionRole: "arn:aws:iam::123456789012:role/test-role",
+    }),
+  );
+
+  const startRes = await c.send(
+    new StartApplicationCommand({ ApplicationName: appName }),
+  );
+  const startOpId = startRes.OperationId;
+  expect(startOpId).toBeDefined();
+
+  const descOp = await c.send(
+    new DescribeApplicationOperationCommand({
+      ApplicationName: appName,
+      OperationId: startOpId!,
+    }),
+  );
+  expect(descOp.ApplicationOperationInfoDetails?.OperationStatus).toBe(
+    "SUCCESSFUL",
+  );
+  expect(descOp.ApplicationOperationInfoDetails?.Operation).toBe(
+    "StartApplication",
+  );
+
+  const listOps = await c.send(
+    new ListApplicationOperationsCommand({ ApplicationName: appName }),
+  );
+  expect((listOps.ApplicationOperationInfoList ?? []).length).toBeGreaterThan(
+    0,
+  );
+  const found = (listOps.ApplicationOperationInfoList ?? []).find(
+    (o) => o.OperationId === startOpId,
+  );
+  expect(found).toBeDefined();
+
+  const stopRes = await c.send(
+    new StopApplicationCommand({ ApplicationName: appName }),
+  );
+  const stopOpId = stopRes.OperationId;
+  expect(stopOpId).toBeDefined();
+
+  await c.send(new DescribeApplicationCommand({ ApplicationName: appName }));
+
+  const filteredOps = await c.send(
+    new ListApplicationOperationsCommand({
+      ApplicationName: appName,
+      Operation: "StopApplication",
+    }),
+  );
+  expect(
+    (filteredOps.ApplicationOperationInfoList ?? []).every(
+      (o) => o.Operation === "StopApplication",
+    ),
+  ).toBe(true);
+
+  await expect(
+    c.send(
+      new DescribeApplicationOperationCommand({
+        ApplicationName: appName,
+        OperationId: "nonexistent-op-id",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
+  await c.send(
+    new DeleteApplicationCommand({
+      ApplicationName: appName,
+      CreateTimestamp: createTs,
+    }),
+  );
+});
+
+test("kinesisanalyticsv2 KDA2-002: ApplicationConfigurationDescription mapping and merge", async () => {
+  const c = client();
+  const appName = "bunsai-e2e-kda2-002";
+
+  const created = await c.send(
+    new CreateApplicationCommand({
+      ApplicationName: appName,
+      RuntimeEnvironment: "FLINK-1_18",
+      ServiceExecutionRole: "arn:aws:iam::123456789012:role/test-role",
+      ApplicationConfiguration: {
+        ApplicationCodeConfiguration: {
+          CodeContent: {
+            S3ContentLocation: {
+              BucketARN: "arn:aws:s3:::my-bucket",
+              FileKey: "app.jar",
+            },
+          },
+          CodeContentType: "ZIPFILE",
+        },
+        EnvironmentProperties: {
+          PropertyGroups: [
+            {
+              PropertyGroupId: "group1",
+              PropertyMap: { key1: "val1" },
+            },
+          ],
+        },
+      },
+    }),
+  );
+
+  const described = await c.send(
+    new DescribeApplicationCommand({ ApplicationName: appName }),
+  );
+  const configDesc =
+    described.ApplicationDetail?.ApplicationConfigurationDescription;
+  expect(configDesc).toBeDefined();
+  expect(
+    (configDesc as Record<string, unknown>)?.EnvironmentPropertyDescriptions,
+  ).toBeDefined();
+  expect(
+    (configDesc as Record<string, unknown>)
+      ?.ApplicationCodeConfigurationDescription,
+  ).toBeDefined();
+
+  const versionId = described.ApplicationDetail?.ApplicationVersionId ?? 1;
+  await c.send(
+    new UpdateApplicationCommand({
+      ApplicationName: appName,
+      CurrentApplicationVersionId: versionId,
+      ApplicationConfigurationUpdate: {
+        EnvironmentPropertyUpdates: {
+          PropertyGroups: [
+            {
+              PropertyGroupId: "group1",
+              PropertyMap: { key1: "val2" },
+            },
+          ],
+        },
+      },
+    }),
+  );
+
+  const describedAfterUpdate = await c.send(
+    new DescribeApplicationCommand({ ApplicationName: appName }),
+  );
+  const configDescAfter =
+    describedAfterUpdate.ApplicationDetail?.ApplicationConfigurationDescription;
+  expect(
+    (configDescAfter as Record<string, unknown>)
+      ?.ApplicationCodeConfigurationDescription,
+  ).toBeDefined();
+  expect(
+    (configDescAfter as Record<string, unknown>)
+      ?.EnvironmentPropertyDescriptions,
+  ).toBeDefined();
+
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
+  await c.send(
+    new DeleteApplicationCommand({
+      ApplicationName: appName,
+      CreateTimestamp: createTs,
+    }),
+  );
+});
+
+test("kinesisanalyticsv2 KDA2-003: concurrency precondition — InvalidArgumentException when both version identifiers absent", async () => {
+  const c = client();
+  const appName = "bunsai-e2e-kda2-003";
+
+  const created = await c.send(
+    new CreateApplicationCommand({
+      ApplicationName: appName,
+      RuntimeEnvironment: "FLINK-1_18",
+      ServiceExecutionRole: "arn:aws:iam::123456789012:role/test-role",
+    }),
+  );
+
+  await expect(
+    c.send(
+      new UpdateApplicationCommand({
+        ApplicationName: appName,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
+  await c.send(
+    new DeleteApplicationCommand({
+      ApplicationName: appName,
+      CreateTimestamp: createTs,
+    }),
+  );
+});
+
+test("kinesisanalyticsv2 KDA2-004: RollbackApplication restores previous configuration", async () => {
+  const c = client();
+  const appName = "bunsai-e2e-kda2-004";
+
+  const created = await c.send(
+    new CreateApplicationCommand({
+      ApplicationName: appName,
+      RuntimeEnvironment: "FLINK-1_18",
+      ServiceExecutionRole: "arn:aws:iam::123456789012:role/test-role",
+      ApplicationConfiguration: {
+        EnvironmentProperties: {
+          PropertyGroups: [
+            { PropertyGroupId: "g1", PropertyMap: { k: "original" } },
+          ],
+        },
+      },
+    }),
+  );
+
+  await expect(
+    c.send(
+      new RollbackApplicationCommand({
+        ApplicationName: appName,
+        CurrentApplicationVersionId: 1,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const described = await c.send(
+    new DescribeApplicationCommand({ ApplicationName: appName }),
+  );
+  const v1 = described.ApplicationDetail?.ApplicationVersionId ?? 1;
+  await c.send(
+    new UpdateApplicationCommand({
+      ApplicationName: appName,
+      CurrentApplicationVersionId: v1,
+      ApplicationConfigurationUpdate: {
+        EnvironmentPropertyUpdates: {
+          PropertyGroups: [
+            { PropertyGroupId: "g1", PropertyMap: { k: "updated" } },
+          ],
+        },
+      },
+    }),
+  );
+
+  const described2 = await c.send(
+    new DescribeApplicationCommand({ ApplicationName: appName }),
+  );
+  const v2 = described2.ApplicationDetail?.ApplicationVersionId ?? 2;
+
+  const rollbackRes = await c.send(
+    new RollbackApplicationCommand({
+      ApplicationName: appName,
+      CurrentApplicationVersionId: v2,
+    }),
+  );
+  expect(rollbackRes.ApplicationDetail?.ApplicationVersionId).toBe(v2 + 1);
+
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
+  await c.send(
+    new DeleteApplicationCommand({
+      ApplicationName: appName,
+      CreateTimestamp: createTs,
+    }),
+  );
+});
+
+test("kinesisanalyticsv2 KDA2-005: version history — ListApplicationVersions and DescribeApplicationVersion", async () => {
+  const c = client();
+  const appName = "bunsai-e2e-kda2-005";
+
+  const created = await c.send(
+    new CreateApplicationCommand({
+      ApplicationName: appName,
+      RuntimeEnvironment: "FLINK-1_18",
+      ServiceExecutionRole: "arn:aws:iam::123456789012:role/test-role",
+    }),
+  );
+
+  const described = await c.send(
+    new DescribeApplicationCommand({ ApplicationName: appName }),
+  );
+  const v1 = described.ApplicationDetail?.ApplicationVersionId ?? 1;
+
+  await c.send(
+    new UpdateApplicationCommand({
+      ApplicationName: appName,
+      CurrentApplicationVersionId: v1,
+    }),
+  );
+
+  const versions = await c.send(
+    new ListApplicationVersionsCommand({ ApplicationName: appName }),
+  );
+  expect((versions.ApplicationVersionSummaries ?? []).length).toBeGreaterThan(
+    1,
+  );
+
+  const v1Detail = await c.send(
+    new DescribeApplicationVersionCommand({
+      ApplicationName: appName,
+      ApplicationVersionId: 1,
+    }),
+  );
+  expect(v1Detail.ApplicationVersionDetail?.ApplicationVersionId).toBe(1);
+
+  await expect(
+    c.send(
+      new DescribeApplicationVersionCommand({
+        ApplicationName: appName,
+        ApplicationVersionId: 9999,
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
+  await c.send(
+    new DeleteApplicationCommand({
+      ApplicationName: appName,
+      CreateTimestamp: createTs,
+    }),
+  );
+});
+
+test("kinesisanalyticsv2 KDA2-006: StopApplication Force flag", async () => {
+  const c = client();
+  const appName = "bunsai-e2e-kda2-006";
+
+  const created = await c.send(
+    new CreateApplicationCommand({
+      ApplicationName: appName,
+      RuntimeEnvironment: "FLINK-1_18",
+      ServiceExecutionRole: "arn:aws:iam::123456789012:role/test-role",
+    }),
+  );
+
+  await c.send(new StartApplicationCommand({ ApplicationName: appName }));
+
+  const stopRes = await c.send(
+    new StopApplicationCommand({ ApplicationName: appName, Force: true }),
+  );
+  expect(stopRes.OperationId).toBeDefined();
+
+  const afterStop = await c.send(
+    new DescribeApplicationCommand({ ApplicationName: appName }),
+  );
+  expect(afterStop.ApplicationDetail?.ApplicationStatus).toBe("READY");
+
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
+  await c.send(
+    new DeleteApplicationCommand({
+      ApplicationName: appName,
+      CreateTimestamp: createTs,
+    }),
+  );
+});
+
+test("kinesisanalyticsv2 KDA2-007: DeleteApplication CreateTimestamp guard", async () => {
+  const c = client();
+  const appName = "bunsai-e2e-kda2-007";
+
+  await c.send(
+    new CreateApplicationCommand({
+      ApplicationName: appName,
+      RuntimeEnvironment: "FLINK-1_18",
+      ServiceExecutionRole: "arn:aws:iam::123456789012:role/test-role",
+    }),
+  );
+
+  await expect(
+    c.send(
+      new DeleteApplicationCommand({
+        ApplicationName: appName,
+        CreateTimestamp: new Date("2000-01-01T00:00:00Z"),
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const described = await c.send(
+    new DescribeApplicationCommand({ ApplicationName: appName }),
+  );
+  const createTs = described.ApplicationDetail?.CreateTimestamp;
+  await c.send(
+    new DeleteApplicationCommand({
+      ApplicationName: appName,
+      CreateTimestamp: createTs,
+    }),
+  );
+});
+
+test("kinesisanalyticsv2 KDA2-008: CreateApplicationSnapshot requires RUNNING state", async () => {
+  const c = client();
+  const appName = "bunsai-e2e-kda2-008";
+
+  const created = await c.send(
+    new CreateApplicationCommand({
+      ApplicationName: appName,
+      RuntimeEnvironment: "FLINK-1_18",
+      ServiceExecutionRole: "arn:aws:iam::123456789012:role/test-role",
+    }),
+  );
+
+  await expect(
+    c.send(
+      new CreateApplicationSnapshotCommand({
+        ApplicationName: appName,
+        SnapshotName: "snap-should-fail",
+      }),
+    ),
+  ).rejects.toThrow();
+
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
+  await c.send(
+    new DeleteApplicationCommand({
+      ApplicationName: appName,
+      CreateTimestamp: createTs,
+    }),
+  );
+});
+
+test("kinesisanalyticsv2 KDA2-001: UpdateApplication OperationId persisted", async () => {
+  const c = client();
+  const appName = "bunsai-e2e-kda2-001b";
+
+  const created = await c.send(
+    new CreateApplicationCommand({
+      ApplicationName: appName,
+      RuntimeEnvironment: "FLINK-1_18",
+      ServiceExecutionRole: "arn:aws:iam::123456789012:role/test-role",
+    }),
+  );
+
+  const described = await c.send(
+    new DescribeApplicationCommand({ ApplicationName: appName }),
+  );
+  const vId = described.ApplicationDetail?.ApplicationVersionId ?? 1;
+
+  const updateRes = await c.send(
+    new UpdateApplicationCommand({
+      ApplicationName: appName,
+      CurrentApplicationVersionId: vId,
+    }),
+  );
+  const updateOpId = updateRes.OperationId;
+  expect(updateOpId).toBeDefined();
+
+  const opDetail = await c.send(
+    new DescribeApplicationOperationCommand({
+      ApplicationName: appName,
+      OperationId: updateOpId!,
+    }),
+  );
+  expect(opDetail.ApplicationOperationInfoDetails?.OperationStatus).toBe(
+    "SUCCESSFUL",
+  );
+  expect(opDetail.ApplicationOperationInfoDetails?.Operation).toBe(
+    "UpdateApplication",
+  );
+
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
+  await c.send(
+    new DeleteApplicationCommand({
+      ApplicationName: appName,
+      CreateTimestamp: createTs,
+    }),
+  );
+});
+
+test("kinesisanalyticsv2: VPC configuration CRUD", async () => {
+  const c = client();
+  const appName = "bunsai-e2e-vpc";
+
+  const created = await c.send(
+    new CreateApplicationCommand({
+      ApplicationName: appName,
+      RuntimeEnvironment: "FLINK-1_18",
+      ServiceExecutionRole: "arn:aws:iam::123456789012:role/test-role",
+    }),
+  );
+
+  const described = await c.send(
+    new DescribeApplicationCommand({ ApplicationName: appName }),
+  );
+  const conditionalToken = described.ApplicationDetail?.ConditionalToken;
+
+  const addVpcRes = await c.send(
+    new AddApplicationVpcConfigurationCommand({
+      ApplicationName: appName,
+      ConditionalToken: conditionalToken,
+      VpcConfiguration: {
+        SubnetIds: ["subnet-12345"],
+        SecurityGroupIds: ["sg-12345"],
+      },
+    }),
+  );
+  expect(addVpcRes.OperationId).toBeDefined();
+  expect(addVpcRes.VpcConfigurationDescription?.SubnetIds).toContain(
+    "subnet-12345",
+  );
+
+  const vpcOpDetail = await c.send(
+    new DescribeApplicationOperationCommand({
+      ApplicationName: appName,
+      OperationId: addVpcRes.OperationId!,
+    }),
+  );
+  expect(vpcOpDetail.ApplicationOperationInfoDetails?.OperationStatus).toBe(
+    "SUCCESSFUL",
+  );
+
+  const createTs = created.ApplicationDetail?.CreateTimestamp;
+  await c.send(
+    new DeleteApplicationCommand({
+      ApplicationName: appName,
+      CreateTimestamp: createTs,
     }),
   );
 });

@@ -34,6 +34,22 @@ type StoredVpcConfig = {
   securityGroupIds: string[];
 };
 
+type StoredOperation = {
+  operationId: string;
+  operation: string;
+  startTime: number;
+  endTime: number;
+  operationStatus: string;
+  versionFrom: number;
+  versionTo: number;
+};
+
+type StoredVersionRecord = {
+  versionId: number;
+  applicationStatus: ApplicationStatus;
+  configSnapshot: Record<string, unknown> | undefined;
+};
+
 type StoredApplication = {
   applicationName: string;
   applicationArn: string;
@@ -47,6 +63,7 @@ type StoredApplication = {
   applicationDescription: string | undefined;
   applicationMode: string;
   applicationConfiguration: Record<string, unknown> | undefined;
+  previousConfigSnapshot: Record<string, unknown> | undefined;
   cloudWatchLoggingOptionDescriptions: StoredCwLoggingOption[];
   maintenanceWindowStartTime: string | undefined;
   tags: Record<string, string>;
@@ -54,7 +71,8 @@ type StoredApplication = {
   inputDescriptions: Array<Record<string, unknown>>;
   outputDescriptions: Array<Record<string, unknown>>;
   referenceDataSourceDescriptions: Array<Record<string, unknown>>;
-  operationIds: string[];
+  operations: StoredOperation[];
+  versionHistory: StoredVersionRecord[];
 };
 
 type StoredSnapshot = {
@@ -88,7 +106,19 @@ const resolveVersionCheck = (
   app: StoredApplication,
   currentVersionId: unknown,
   conditionalToken: unknown,
+  requireOne = false,
 ): void => {
+  if (
+    requireOne &&
+    currentVersionId === undefined &&
+    conditionalToken === undefined
+  ) {
+    throw awsError(
+      "InvalidArgumentException",
+      "Must provide either CurrentApplicationVersionId or ConditionalToken.",
+      400,
+    );
+  }
   if (conditionalToken !== undefined) {
     if (conditionalToken !== app.conditionalToken) {
       throw awsError(
@@ -115,6 +145,102 @@ const bumpVersion = (app: StoredApplication, now: number): void => {
   app.applicationVersionId += 1;
   app.conditionalToken = crypto.randomUUID();
   app.lastUpdateTimestamp = now;
+};
+
+const storeOperation = (
+  app: StoredApplication,
+  operationName: string,
+  versionFrom: number,
+  now: number,
+): string => {
+  const id = crypto.randomUUID();
+  app.operations.push({
+    operationId: id,
+    operation: operationName,
+    startTime: now,
+    endTime: now,
+    operationStatus: "SUCCESSFUL",
+    versionFrom,
+    versionTo: app.applicationVersionId,
+  });
+  return id;
+};
+
+const pushVersionRecord = (app: StoredApplication): void => {
+  app.versionHistory.push({
+    versionId: app.applicationVersionId,
+    applicationStatus: app.applicationStatus,
+    configSnapshot: app.applicationConfiguration,
+  });
+};
+
+const configToDescription = (
+  config: Record<string, unknown>,
+): Record<string, unknown> => {
+  const desc: Record<string, unknown> = {};
+  if (config.SqlApplicationConfiguration !== undefined)
+    desc.SqlApplicationConfigurationDescription =
+      config.SqlApplicationConfiguration;
+  if (config.FlinkApplicationConfiguration !== undefined)
+    desc.FlinkApplicationConfigurationDescription =
+      config.FlinkApplicationConfiguration;
+  if (config.EnvironmentProperties !== undefined) {
+    const ep = config.EnvironmentProperties as Record<string, unknown>;
+    desc.EnvironmentPropertyDescriptions = {
+      PropertyGroupDescriptions: ep.PropertyGroups,
+    };
+  }
+  if (config.ApplicationCodeConfiguration !== undefined) {
+    const acc = config.ApplicationCodeConfiguration as Record<string, unknown>;
+    desc.ApplicationCodeConfigurationDescription = {
+      CodeContentType: acc.CodeContentType,
+      ...(acc.CodeContent !== undefined
+        ? { CodeContentDescription: acc.CodeContent }
+        : {}),
+    };
+  }
+  if (config.ApplicationSnapshotConfiguration !== undefined)
+    desc.ApplicationSnapshotConfigurationDescription =
+      config.ApplicationSnapshotConfiguration;
+  if (config.ApplicationSystemRollbackConfiguration !== undefined)
+    desc.ApplicationSystemRollbackConfigurationDescription =
+      config.ApplicationSystemRollbackConfiguration;
+  if (config.ZeppelinApplicationConfiguration !== undefined)
+    desc.ZeppelinApplicationConfigurationDescription =
+      config.ZeppelinApplicationConfiguration;
+  return desc;
+};
+
+const updateConfigDescription = (
+  existing: Record<string, unknown> | undefined,
+  update: Record<string, unknown>,
+): Record<string, unknown> => {
+  const desc: Record<string, unknown> = { ...(existing ?? {}) };
+  if (update.SqlApplicationConfigurationUpdate !== undefined)
+    desc.SqlApplicationConfigurationDescription =
+      update.SqlApplicationConfigurationUpdate;
+  if (update.ApplicationCodeConfigurationUpdate !== undefined)
+    desc.ApplicationCodeConfigurationDescription =
+      update.ApplicationCodeConfigurationUpdate;
+  if (update.FlinkApplicationConfigurationUpdate !== undefined)
+    desc.FlinkApplicationConfigurationDescription =
+      update.FlinkApplicationConfigurationUpdate;
+  if (update.EnvironmentPropertyUpdates !== undefined) {
+    const epu = update.EnvironmentPropertyUpdates as Record<string, unknown>;
+    desc.EnvironmentPropertyDescriptions = {
+      PropertyGroupDescriptions: epu.PropertyGroups,
+    };
+  }
+  if (update.ApplicationSnapshotConfigurationUpdate !== undefined)
+    desc.ApplicationSnapshotConfigurationDescription =
+      update.ApplicationSnapshotConfigurationUpdate;
+  if (update.ApplicationSystemRollbackConfigurationUpdate !== undefined)
+    desc.ApplicationSystemRollbackConfigurationDescription =
+      update.ApplicationSystemRollbackConfigurationUpdate;
+  if (update.ZeppelinApplicationConfigurationUpdate !== undefined)
+    desc.ZeppelinApplicationConfigurationDescription =
+      update.ZeppelinApplicationConfigurationUpdate;
+  return desc;
 };
 
 const toApplicationDetail = (app: StoredApplication) => ({
@@ -178,6 +304,9 @@ const applyReadTimeTransition = (
   } else if (app.applicationStatus === "STOPPING") {
     app.applicationStatus = "READY";
     ctx.store.set(appKey(app.applicationName), app);
+  } else if (app.applicationStatus === "FORCE_STOPPING") {
+    app.applicationStatus = "READY";
+    ctx.store.set(appKey(app.applicationName), app);
   }
   return app;
 };
@@ -200,6 +329,11 @@ const CreateApplication: OperationHandler = (input, ctx) => {
   if (inputTags) {
     for (const { Key, Value } of inputTags) tags[Key] = Value;
   }
+  const rawConfig = input.ApplicationConfiguration as
+    | Record<string, unknown>
+    | undefined;
+  const appConfig =
+    rawConfig !== undefined ? configToDescription(rawConfig) : undefined;
   const app: StoredApplication = {
     applicationName: name,
     applicationArn: arn,
@@ -213,9 +347,8 @@ const CreateApplication: OperationHandler = (input, ctx) => {
     applicationDescription: input.ApplicationDescription as string | undefined,
     applicationMode:
       (input.ApplicationMode as string | undefined) ?? "STREAMING",
-    applicationConfiguration: input.ApplicationConfiguration as
-      | Record<string, unknown>
-      | undefined,
+    applicationConfiguration: appConfig,
+    previousConfigSnapshot: undefined,
     cloudWatchLoggingOptionDescriptions: [],
     maintenanceWindowStartTime: undefined,
     tags,
@@ -223,7 +356,8 @@ const CreateApplication: OperationHandler = (input, ctx) => {
     inputDescriptions: [],
     outputDescriptions: [],
     referenceDataSourceDescriptions: [],
-    operationIds: [],
+    operations: [],
+    versionHistory: [],
   };
   const cwOptions = input.CloudWatchLoggingOptions as
     | Array<{ LogStreamARN: string }>
@@ -236,6 +370,7 @@ const CreateApplication: OperationHandler = (input, ctx) => {
       });
     }
   }
+  pushVersionRecord(app);
   ctx.store.set(appKey(name), app);
   return { ApplicationDetail: toApplicationDetail(app) };
 };
@@ -283,6 +418,16 @@ const DeleteApplication: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  if (input.CreateTimestamp !== undefined) {
+    const inputTs = Number(input.CreateTimestamp);
+    if (Math.abs(inputTs - app.createTimestamp) > 2) {
+      throw awsError(
+        "InvalidArgumentException",
+        `CreateTimestamp does not match the application create time.`,
+        400,
+      );
+    }
+  }
   ctx.store.delete(appKey(name));
   for (const { key } of ctx.store
     .list<StoredSnapshot>()
@@ -299,10 +444,15 @@ const UpdateApplication: OperationHandler = (input, ctx) => {
     app,
     input.CurrentApplicationVersionId,
     input.ConditionalToken,
+    true,
   );
+  const versionFrom = app.applicationVersionId;
   if (input.ApplicationConfigurationUpdate !== undefined) {
-    app.applicationConfiguration =
-      input.ApplicationConfigurationUpdate as Record<string, unknown>;
+    app.previousConfigSnapshot = app.applicationConfiguration;
+    app.applicationConfiguration = updateConfigDescription(
+      app.applicationConfiguration,
+      input.ApplicationConfigurationUpdate as Record<string, unknown>,
+    );
   }
   if (input.ServiceExecutionRoleUpdate !== undefined) {
     app.serviceExecutionRole = input.ServiceExecutionRoleUpdate as string;
@@ -312,10 +462,12 @@ const UpdateApplication: OperationHandler = (input, ctx) => {
   }
   const now = Date.now() / 1000;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  const opId = storeOperation(app, "UpdateApplication", versionFrom, now);
   ctx.store.set(appKey(name), app);
   return {
     ApplicationDetail: toApplicationDetail(app),
-    OperationId: crypto.randomUUID(),
+    OperationId: opId,
   };
 };
 
@@ -329,29 +481,54 @@ const StartApplication: OperationHandler = (input, ctx) => {
       400,
     );
   }
+  const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   app.applicationStatus = "STARTING";
-  app.lastUpdateTimestamp = Date.now() / 1000;
+  app.lastUpdateTimestamp = now;
+  const opId = storeOperation(app, "StartApplication", versionFrom, now);
   ctx.store.set(appKey(name), app);
-  return { OperationId: crypto.randomUUID() };
+  return { OperationId: opId };
 };
 
 const StopApplication: OperationHandler = (input, ctx) => {
   const name = input.ApplicationName as string;
   const app = requireApp(ctx, name);
-  if (
-    app.applicationStatus !== "RUNNING" &&
-    app.applicationStatus !== "STARTING"
-  ) {
-    throw awsError(
-      "ResourceInUseException",
-      `Application ${name} is not in a running state.`,
-      400,
-    );
+  const force = input.Force as boolean | undefined;
+  const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
+  if (force === true) {
+    const forceAllowed: ApplicationStatus[] = [
+      "STARTING",
+      "UPDATING",
+      "STOPPING",
+      "AUTOSCALING",
+      "RUNNING",
+    ];
+    if (!forceAllowed.includes(app.applicationStatus)) {
+      throw awsError(
+        "ResourceInUseException",
+        `Application ${name} cannot be force-stopped from status ${app.applicationStatus}.`,
+        400,
+      );
+    }
+    app.applicationStatus = "FORCE_STOPPING";
+  } else {
+    if (
+      app.applicationStatus !== "RUNNING" &&
+      app.applicationStatus !== "STARTING"
+    ) {
+      throw awsError(
+        "ResourceInUseException",
+        `Application ${name} is not in a running state.`,
+        400,
+      );
+    }
+    app.applicationStatus = "STOPPING";
   }
-  app.applicationStatus = "STOPPING";
-  app.lastUpdateTimestamp = Date.now() / 1000;
+  app.lastUpdateTimestamp = now;
+  const opId = storeOperation(app, "StopApplication", versionFrom, now);
   ctx.store.set(appKey(name), app);
-  return { OperationId: crypto.randomUUID() };
+  return { OperationId: opId };
 };
 
 const AddApplicationCloudWatchLoggingOption: OperationHandler = (
@@ -364,6 +541,7 @@ const AddApplicationCloudWatchLoggingOption: OperationHandler = (
     app,
     input.CurrentApplicationVersionId,
     input.ConditionalToken,
+    true,
   );
   const opt = input.CloudWatchLoggingOption as { LogStreamARN: string };
   const id = crypto.randomUUID();
@@ -372,7 +550,15 @@ const AddApplicationCloudWatchLoggingOption: OperationHandler = (
     logStreamArn: opt.LogStreamARN,
   });
   const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  const opId = storeOperation(
+    app,
+    "AddApplicationCloudWatchLoggingOption",
+    versionFrom,
+    now,
+  );
   ctx.store.set(appKey(name), app);
   return {
     ApplicationARN: app.applicationArn,
@@ -382,7 +568,7 @@ const AddApplicationCloudWatchLoggingOption: OperationHandler = (
         CloudWatchLoggingOptionId: o.cloudWatchLoggingOptionId,
         LogStreamARN: o.logStreamArn,
       })),
-    OperationId: crypto.randomUUID(),
+    OperationId: opId,
   };
 };
 
@@ -396,6 +582,7 @@ const DeleteApplicationCloudWatchLoggingOption: OperationHandler = (
     app,
     input.CurrentApplicationVersionId,
     input.ConditionalToken,
+    true,
   );
   const optId = input.CloudWatchLoggingOptionId as string;
   const idx = app.cloudWatchLoggingOptionDescriptions.findIndex(
@@ -410,7 +597,15 @@ const DeleteApplicationCloudWatchLoggingOption: OperationHandler = (
   }
   app.cloudWatchLoggingOptionDescriptions.splice(idx, 1);
   const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  const opId = storeOperation(
+    app,
+    "DeleteApplicationCloudWatchLoggingOption",
+    versionFrom,
+    now,
+  );
   ctx.store.set(appKey(name), app);
   return {
     ApplicationARN: app.applicationArn,
@@ -420,7 +615,7 @@ const DeleteApplicationCloudWatchLoggingOption: OperationHandler = (
         CloudWatchLoggingOptionId: o.cloudWatchLoggingOptionId,
         LogStreamARN: o.logStreamArn,
       })),
-    OperationId: crypto.randomUUID(),
+    OperationId: opId,
   };
 };
 
@@ -440,7 +635,10 @@ const AddApplicationInput: OperationHandler = (input, ctx) => {
   };
   app.inputDescriptions.push(desc);
   const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  storeOperation(app, "AddApplicationInput", versionFrom, now);
   ctx.store.set(appKey(name), app);
   return {
     ApplicationARN: app.applicationArn,
@@ -475,7 +673,15 @@ const AddApplicationInputProcessingConfiguration: OperationHandler = (
     )?.InputLambdaProcessor,
   };
   const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  storeOperation(
+    app,
+    "AddApplicationInputProcessingConfiguration",
+    versionFrom,
+    now,
+  );
   ctx.store.set(appKey(name), app);
   return {
     ApplicationARN: app.applicationArn,
@@ -508,7 +714,15 @@ const DeleteApplicationInputProcessingConfiguration: OperationHandler = (
   delete (app.inputDescriptions[idx] as Record<string, unknown>)
     .InputProcessingConfigurationDescription;
   const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  storeOperation(
+    app,
+    "DeleteApplicationInputProcessingConfiguration",
+    versionFrom,
+    now,
+  );
   ctx.store.set(appKey(name), app);
   return {
     ApplicationARN: app.applicationArn,
@@ -532,7 +746,10 @@ const AddApplicationOutput: OperationHandler = (input, ctx) => {
   };
   app.outputDescriptions.push(desc);
   const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  storeOperation(app, "AddApplicationOutput", versionFrom, now);
   ctx.store.set(appKey(name), app);
   return {
     ApplicationARN: app.applicationArn,
@@ -558,7 +775,10 @@ const DeleteApplicationOutput: OperationHandler = (input, ctx) => {
   }
   app.outputDescriptions.splice(idx, 1);
   const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  storeOperation(app, "DeleteApplicationOutput", versionFrom, now);
   ctx.store.set(appKey(name), app);
   return {
     ApplicationARN: app.applicationArn,
@@ -580,7 +800,10 @@ const AddApplicationReferenceDataSource: OperationHandler = (input, ctx) => {
   };
   app.referenceDataSourceDescriptions.push(desc);
   const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  storeOperation(app, "AddApplicationReferenceDataSource", versionFrom, now);
   ctx.store.set(appKey(name), app);
   return {
     ApplicationARN: app.applicationArn,
@@ -606,7 +829,10 @@ const DeleteApplicationReferenceDataSource: OperationHandler = (input, ctx) => {
   }
   app.referenceDataSourceDescriptions.splice(idx, 1);
   const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  storeOperation(app, "DeleteApplicationReferenceDataSource", versionFrom, now);
   ctx.store.set(appKey(name), app);
   return {
     ApplicationARN: app.applicationArn,
@@ -621,6 +847,7 @@ const AddApplicationVpcConfiguration: OperationHandler = (input, ctx) => {
     app,
     input.CurrentApplicationVersionId,
     input.ConditionalToken,
+    true,
   );
   const vpc = (input.VpcConfiguration ?? {}) as {
     SubnetIds: string[];
@@ -636,7 +863,15 @@ const AddApplicationVpcConfiguration: OperationHandler = (input, ctx) => {
   };
   app.vpcConfigurationDescriptions.push(vpcConfig);
   const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  const opId = storeOperation(
+    app,
+    "AddApplicationVpcConfiguration",
+    versionFrom,
+    now,
+  );
   ctx.store.set(appKey(name), app);
   const desc = {
     VpcConfigurationId: vpcConfig.vpcConfigurationId,
@@ -648,7 +883,7 @@ const AddApplicationVpcConfiguration: OperationHandler = (input, ctx) => {
     ApplicationARN: app.applicationArn,
     ApplicationVersionId: app.applicationVersionId,
     VpcConfigurationDescription: desc,
-    OperationId: crypto.randomUUID(),
+    OperationId: opId,
   };
 };
 
@@ -659,6 +894,7 @@ const DeleteApplicationVpcConfiguration: OperationHandler = (input, ctx) => {
     app,
     input.CurrentApplicationVersionId,
     input.ConditionalToken,
+    true,
   );
   const vpcConfigId = input.VpcConfigurationId as string;
   const idx = app.vpcConfigurationDescriptions.findIndex(
@@ -673,26 +909,44 @@ const DeleteApplicationVpcConfiguration: OperationHandler = (input, ctx) => {
   }
   app.vpcConfigurationDescriptions.splice(idx, 1);
   const now = Date.now() / 1000;
+  const versionFrom = app.applicationVersionId;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  const opId = storeOperation(
+    app,
+    "DeleteApplicationVpcConfiguration",
+    versionFrom,
+    now,
+  );
   ctx.store.set(appKey(name), app);
   return {
     ApplicationARN: app.applicationArn,
     ApplicationVersionId: app.applicationVersionId,
-    OperationId: crypto.randomUUID(),
+    OperationId: opId,
   };
 };
 
 const CreateApplicationSnapshot: OperationHandler = (input, ctx) => {
   const appName = input.ApplicationName as string;
   const app = requireApp(ctx, appName);
+  const snapshotDesc = app.applicationConfiguration
+    ?.ApplicationSnapshotConfigurationDescription as
+    | Record<string, unknown>
+    | undefined;
+  if (snapshotDesc?.SnapshotsEnabled === false) {
+    throw awsError(
+      "UnsupportedOperationException",
+      `Snapshots are disabled for application ${appName}.`,
+      400,
+    );
+  }
   if (
     app.applicationStatus !== "RUNNING" &&
-    app.applicationStatus !== "STARTING" &&
-    app.applicationStatus !== "READY"
+    app.applicationStatus !== "AUTOSCALING"
   ) {
     throw awsError(
       "ResourceInUseException",
-      `Application ${appName} is not in a valid state for snapshot creation.`,
+      `Application ${appName} must be RUNNING to create a snapshot.`,
       400,
     );
   }
@@ -840,12 +1094,25 @@ const RollbackApplication: OperationHandler = (input, ctx) => {
   const name = input.ApplicationName as string;
   const app = requireApp(ctx, name);
   resolveVersionCheck(app, input.CurrentApplicationVersionId, undefined);
+  if (app.previousConfigSnapshot === undefined) {
+    throw awsError(
+      "InvalidRequestException",
+      `Application ${name} has no previous version to roll back to.`,
+      400,
+    );
+  }
+  const versionFrom = app.applicationVersionId;
+  const restoredConfig = app.previousConfigSnapshot;
+  app.previousConfigSnapshot = app.applicationConfiguration;
+  app.applicationConfiguration = restoredConfig;
   const now = Date.now() / 1000;
   bumpVersion(app, now);
+  pushVersionRecord(app);
+  const opId = storeOperation(app, "RollbackApplication", versionFrom, now);
   ctx.store.set(appKey(name), app);
   return {
     ApplicationDetail: toApplicationDetail(app),
-    OperationId: crypto.randomUUID(),
+    OperationId: opId,
   };
 };
 
@@ -876,19 +1143,49 @@ const DiscoverInputSchema: OperationHandler = (_input, _ctx) => ({
 const DescribeApplicationVersion: OperationHandler = (input, ctx) => {
   const name = input.ApplicationName as string;
   const app = requireApp(ctx, name);
-  return { ApplicationVersionDetail: toApplicationDetail(app) };
+  const versionId = Number(input.ApplicationVersionId);
+  const record = app.versionHistory.find((v) => v.versionId === versionId);
+  if (record === undefined) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Application version ${versionId} not found.`,
+      400,
+    );
+  }
+  return {
+    ApplicationVersionDetail: {
+      ...toApplicationDetail(app),
+      ApplicationVersionId: record.versionId,
+      ApplicationStatus: record.applicationStatus,
+      ApplicationConfigurationDescription: record.configSnapshot,
+    },
+  };
 };
 
 const ListApplicationVersions: OperationHandler = (input, ctx) => {
   const name = input.ApplicationName as string;
   const app = requireApp(ctx, name);
+  const limit = (input.Limit as number | undefined) ?? 50;
+  const nextToken = input.NextToken as string | undefined;
+  const history = [...app.versionHistory].sort(
+    (a, b) => b.versionId - a.versionId,
+  );
+  let startIdx = 0;
+  if (nextToken !== undefined) {
+    const idx = history.findIndex((v) => String(v.versionId) === nextToken);
+    if (idx >= 0) startIdx = idx;
+  }
+  const page = history.slice(startIdx, startIdx + limit);
+  const newNextToken =
+    startIdx + limit < history.length
+      ? String(history[startIdx + limit]?.versionId)
+      : undefined;
   return {
-    ApplicationVersionSummaries: [
-      {
-        ApplicationVersionId: app.applicationVersionId,
-        ApplicationStatus: app.applicationStatus,
-      },
-    ],
+    ApplicationVersionSummaries: page.map((v) => ({
+      ApplicationVersionId: v.versionId,
+      ApplicationStatus: v.applicationStatus,
+    })),
+    NextToken: newNextToken,
   };
 };
 
@@ -896,7 +1193,8 @@ const DescribeApplicationOperation: OperationHandler = (input, ctx) => {
   const name = input.ApplicationName as string;
   const app = requireApp(ctx, name);
   const operationId = input.OperationId as string;
-  if (!app.operationIds.includes(operationId)) {
+  const op = app.operations.find((o) => o.operationId === operationId);
+  if (op === undefined) {
     throw awsError(
       "ResourceNotFoundException",
       `Operation ${operationId} not found.`,
@@ -905,14 +1203,14 @@ const DescribeApplicationOperation: OperationHandler = (input, ctx) => {
   }
   return {
     ApplicationOperationInfoDetails: {
-      Operation: "update",
-      StartTime: app.lastUpdateTimestamp,
-      EndTime: app.lastUpdateTimestamp,
+      Operation: op.operation,
+      StartTime: op.startTime,
+      EndTime: op.endTime,
+      OperationStatus: op.operationStatus,
       ApplicationVersionChangeDetails: {
-        ApplicationVersionUpdatedFrom: app.applicationVersionId - 1,
-        ApplicationVersionUpdatedTo: app.applicationVersionId,
+        ApplicationVersionUpdatedFrom: op.versionFrom,
+        ApplicationVersionUpdatedTo: op.versionTo,
       },
-      OperationStatus: "SUCCESSFUL",
     },
   };
 };
@@ -920,14 +1218,33 @@ const DescribeApplicationOperation: OperationHandler = (input, ctx) => {
 const ListApplicationOperations: OperationHandler = (input, ctx) => {
   const name = input.ApplicationName as string;
   const app = requireApp(ctx, name);
+  const limit = (input.Limit as number | undefined) ?? 50;
+  const nextToken = input.NextToken as string | undefined;
+  const opFilter = input.Operation as string | undefined;
+  const statusFilter = input.OperationStatus as string | undefined;
+  let ops = app.operations;
+  if (opFilter !== undefined) ops = ops.filter((o) => o.operation === opFilter);
+  if (statusFilter !== undefined)
+    ops = ops.filter((o) => o.operationStatus === statusFilter);
+  let startIdx = 0;
+  if (nextToken !== undefined) {
+    const idx = ops.findIndex((o) => o.operationId === nextToken);
+    if (idx >= 0) startIdx = idx;
+  }
+  const page = ops.slice(startIdx, startIdx + limit);
+  const newNextToken =
+    startIdx + limit < ops.length
+      ? ops[startIdx + limit]?.operationId
+      : undefined;
   return {
-    ApplicationOperationInfoList: app.operationIds.map((id) => ({
-      Operation: "update",
-      OperationId: id,
-      StartTime: app.lastUpdateTimestamp,
-      EndTime: app.lastUpdateTimestamp,
-      OperationStatus: "SUCCESSFUL",
+    ApplicationOperationInfoList: page.map((o) => ({
+      Operation: o.operation,
+      OperationId: o.operationId,
+      StartTime: o.startTime,
+      EndTime: o.endTime,
+      OperationStatus: o.operationStatus,
     })),
+    NextToken: newNextToken,
   };
 };
 

@@ -50,9 +50,16 @@ import {
 } from "@aws-sdk/client-iot";
 import {
   IoTDataPlaneClient,
+  DeleteConnectionCommand,
   DeleteThingShadowCommand,
+  GetConnectionCommand,
+  GetRetainedMessageCommand,
   GetThingShadowCommand,
   ListNamedShadowsForThingCommand,
+  ListRetainedMessagesCommand,
+  ListSubscriptionsCommand,
+  PublishCommand,
+  SendDirectMessageCommand,
   UpdateThingShadowCommand,
 } from "@aws-sdk/client-iot-data-plane";
 
@@ -630,4 +637,197 @@ test("IOT-08: ListThings thingTypeName filter", async () => {
   expect(filtered.things?.some((t) => t.thingName === thingB)).toBe(false);
   await client.send(new DeleteThingCommand({ thingName: thingA }));
   await client.send(new DeleteThingCommand({ thingName: thingB }));
+});
+
+// === IOTDATA-001/002: Publish retain + GetRetainedMessage + ListRetainedMessages ===
+
+test("IOTDATA-001/002: retained message lifecycle via Publish/Get/List", async () => {
+  const client = iotData();
+  const topic = `bunsai/e2e/retained/${suffix()}`;
+
+  await client.send(
+    new PublishCommand({
+      topic,
+      retain: true,
+      qos: 1,
+      payload: new TextEncoder().encode("hello"),
+    }),
+  );
+
+  const got = await client.send(new GetRetainedMessageCommand({ topic }));
+  expect(got.topic).toBe(topic);
+  expect(new TextDecoder().decode(got.payload as Uint8Array)).toBe("hello");
+  expect(got.qos).toBe(1);
+
+  const list = await client.send(new ListRetainedMessagesCommand({}));
+  expect(list.retainedTopics?.some((r) => r.topic === topic)).toBe(true);
+
+  await client.send(
+    new PublishCommand({ topic, retain: true, payload: new Uint8Array(0) }),
+  );
+
+  await expect(
+    client.send(new GetRetainedMessageCommand({ topic })),
+  ).rejects.toMatchObject({ name: "ResourceNotFoundException" });
+
+  const list2 = await client.send(new ListRetainedMessagesCommand({}));
+  expect(list2.retainedTopics?.some((r) => r.topic === topic)).toBe(false);
+});
+
+// === IOTDATA-002: Publish invalid qos rejected ===
+
+test("IOTDATA-002: Publish with qos=2 is rejected", async () => {
+  const client = iotData();
+  await expect(
+    client.send(
+      new PublishCommand({
+        topic: `bunsai/e2e/qos/${suffix()}`,
+        qos: 2 as unknown as 0 | 1,
+        payload: new TextEncoder().encode("x"),
+      }),
+    ),
+  ).rejects.toThrow();
+});
+
+// === IOTDATA-003: UpdateThingShadow version conflict ===
+
+test("IOTDATA-003: UpdateThingShadow version conflict throws ConflictException", async () => {
+  const client = iotData();
+  const thingName = `bunsai_e2e_ver_${suffix()}`;
+
+  await client.send(
+    new UpdateThingShadowCommand({
+      thingName,
+      payload: new TextEncoder().encode(
+        JSON.stringify({ state: { desired: { x: 1 } } }),
+      ),
+    }),
+  );
+  await client.send(
+    new UpdateThingShadowCommand({
+      thingName,
+      payload: new TextEncoder().encode(
+        JSON.stringify({ state: { desired: { x: 2 } } }),
+      ),
+    }),
+  );
+
+  await expect(
+    client.send(
+      new UpdateThingShadowCommand({
+        thingName,
+        payload: new TextEncoder().encode(
+          JSON.stringify({ state: { desired: { x: 3 } }, version: 1 }),
+        ),
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "ConflictException" });
+
+  const got = await client.send(new GetThingShadowCommand({ thingName }));
+  const doc = JSON.parse(new TextDecoder().decode(got.payload as Uint8Array));
+  expect(doc.version).toBe(2);
+});
+
+// === IOTDATA-004: UpdateThingShadow invalid payload ===
+
+test("IOTDATA-004: UpdateThingShadow missing state throws InvalidRequestException", async () => {
+  const client = iotData();
+  const thingName = `bunsai_e2e_inv_${suffix()}`;
+
+  await expect(
+    client.send(
+      new UpdateThingShadowCommand({
+        thingName,
+        payload: new TextEncoder().encode(JSON.stringify({ desired: {} })),
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "InvalidRequestException" });
+});
+
+// === IOTDATA-005: ListNamedShadowsForThing pagination ===
+
+test("IOTDATA-005: ListNamedShadowsForThing pagination", async () => {
+  const client = iotData();
+  const thingName = `bunsai_e2e_pag_${suffix()}`;
+  const shadows = ["alpha", "beta", "gamma", "delta", "epsilon"];
+
+  for (const name of shadows) {
+    await client.send(
+      new UpdateThingShadowCommand({
+        thingName,
+        shadowName: name,
+        payload: new TextEncoder().encode(
+          JSON.stringify({ state: { desired: { v: 1 } } }),
+        ),
+      }),
+    );
+  }
+
+  const page1 = await client.send(
+    new ListNamedShadowsForThingCommand({ thingName, pageSize: 3 }),
+  );
+  expect(page1.results?.length).toBe(3);
+  expect(page1.nextToken).toBeTruthy();
+
+  const page2 = await client.send(
+    new ListNamedShadowsForThingCommand({
+      thingName,
+      pageSize: 3,
+      nextToken: page1.nextToken,
+    }),
+  );
+  expect(page2.results?.length).toBe(2);
+  expect(page2.nextToken).toBeUndefined();
+
+  const all = [...(page1.results ?? []), ...(page2.results ?? [])];
+  expect(all.sort()).toEqual(shadows.sort());
+});
+
+// === IOTDATA-006: DeleteThingShadow store.delete (no ghost keys) ===
+
+test("IOTDATA-006: DeleteThingShadow cleans named shadow list", async () => {
+  const client = iotData();
+  const thingName = `bunsai_e2e_del_${suffix()}`;
+
+  await client.send(
+    new UpdateThingShadowCommand({
+      thingName,
+      shadowName: "only",
+      payload: new TextEncoder().encode(
+        JSON.stringify({ state: { desired: { v: 1 } } }),
+      ),
+    }),
+  );
+  await client.send(
+    new DeleteThingShadowCommand({ thingName, shadowName: "only" }),
+  );
+
+  const list = await client.send(
+    new ListNamedShadowsForThingCommand({ thingName }),
+  );
+  expect(list.results?.length ?? 0).toBe(0);
+});
+
+// === IOTDATA-001: GetConnection / DeleteConnection / ListSubscriptions / SendDirectMessage ===
+
+test("IOTDATA-001: GetConnection, DeleteConnection, ListSubscriptions, SendDirectMessage smoke", async () => {
+  const client = iotData();
+  const clientId = `bunsai-e2e-${suffix()}`;
+  const topic = `bunsai/e2e/msg/${suffix()}`;
+
+  const conn = await client.send(new GetConnectionCommand({ clientId }));
+  expect(typeof conn.connected).toBe("boolean");
+
+  await client.send(new DeleteConnectionCommand({ clientId }));
+
+  const subs = await client.send(new ListSubscriptionsCommand({ clientId }));
+  expect(Array.isArray(subs.subscriptions)).toBe(true);
+
+  await client.send(
+    new SendDirectMessageCommand({
+      clientId,
+      topic,
+      payload: new TextEncoder().encode("direct"),
+    }),
+  );
 });

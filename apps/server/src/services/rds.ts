@@ -408,6 +408,18 @@ const numberOr = (
   return fallback;
 };
 
+const engineDefaultPort = (engine: string): number => {
+  if (engine === "docdb") return 27017;
+  if (engine === "neptune") return 8182;
+  return 3306;
+};
+
+const engineDefaultVersion = (engine: string): string | undefined => {
+  if (engine === "docdb") return "5.0.0";
+  if (engine === "neptune") return "1.3.0.0";
+  return undefined;
+};
+
 const booleanOr = (
   input: Record<string, unknown>,
   key: string,
@@ -1120,12 +1132,13 @@ const newInstanceFromParams = (
     DBName: optionalString(input, "DBName"),
     Endpoint: {
       Address: `${id}.bunsai.${ctx.region}.rds.amazonaws.com`,
-      Port: numberOr(input, "Port", 3306),
+      Port: numberOr(input, "Port", engineDefaultPort(engine)),
       HostedZoneId: "Z1BUNSAIRDS000",
     },
     AllocatedStorage: numberOr(input, "AllocatedStorage", 20),
     InstanceCreateTime: new Date().toISOString(),
-    EngineVersion: optionalString(input, "EngineVersion"),
+    EngineVersion:
+      optionalString(input, "EngineVersion") ?? engineDefaultVersion(engine),
     MultiAZ: booleanOr(input, "MultiAZ", false),
     PubliclyAccessible: booleanOr(input, "PubliclyAccessible", false),
     StorageType: optionalString(input, "StorageType") ?? "gp2",
@@ -1657,8 +1670,9 @@ const CreateDBCluster: OperationHandler = (input, ctx) => {
     DatabaseName: optionalString(input, "DatabaseName"),
     Endpoint: `${id}.cluster.${ctx.region}.rds.amazonaws.com`,
     ReaderEndpoint: `${id}.cluster-ro.${ctx.region}.rds.amazonaws.com`,
-    Port: numberOr(input, "Port", 3306),
-    EngineVersion: optionalString(input, "EngineVersion"),
+    Port: numberOr(input, "Port", engineDefaultPort(engine)),
+    EngineVersion:
+      optionalString(input, "EngineVersion") ?? engineDefaultVersion(engine),
     MultiAZ: false,
     DBClusterArn: clusterArnOf(ctx.region, ctx.account, id),
     DbClusterResourceId: `cluster-${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`,
@@ -2496,8 +2510,9 @@ const RestoreDBClusterFromS3: OperationHandler = (input, ctx) => {
     DatabaseName: optionalString(input, "DatabaseName"),
     Endpoint: `${id}.cluster.${ctx.region}.rds.amazonaws.com`,
     ReaderEndpoint: `${id}.cluster-ro.${ctx.region}.rds.amazonaws.com`,
-    Port: numberOr(input, "Port", 3306),
-    EngineVersion: optionalString(input, "EngineVersion"),
+    Port: numberOr(input, "Port", engineDefaultPort(engine)),
+    EngineVersion:
+      optionalString(input, "EngineVersion") ?? engineDefaultVersion(engine),
     MultiAZ: false,
     DBClusterArn: clusterArnOf(ctx.region, ctx.account, id),
     DbClusterResourceId: `cluster-${crypto.randomUUID().replace(/-/g, "").toUpperCase()}`,

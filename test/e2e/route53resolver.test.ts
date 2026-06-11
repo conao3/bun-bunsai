@@ -53,21 +53,22 @@ test("Route53Resolver endpoint lifecycle", async () => {
     }),
   );
   expect(created.ResolverEndpoint?.Id).toBeDefined();
-  expect(created.ResolverEndpoint?.Status).toBe("OPERATIONAL");
+  expect(created.ResolverEndpoint?.Status).toBe("CREATING");
   expect(created.ResolverEndpoint?.Direction).toBe("INBOUND");
   const endpointId = created.ResolverEndpoint?.Id ?? "";
   const endpointArn = created.ResolverEndpoint?.Arn ?? "";
 
-  const idempotent = await r53.send(
-    new CreateResolverEndpointCommand({
-      CreatorRequestId: "e2e-endpoint-create-1",
-      Name: "different-name",
-      SecurityGroupIds: ["sg-0123456789abcdef0"],
-      Direction: "INBOUND",
-      IpAddresses: [{ SubnetId: "subnet-aaa", Ip: "10.0.1.10" }],
-    }),
-  );
-  expect(idempotent.ResolverEndpoint?.Id).toBe(endpointId);
+  await expect(
+    r53.send(
+      new CreateResolverEndpointCommand({
+        CreatorRequestId: "e2e-endpoint-create-1",
+        Name: "different-name",
+        SecurityGroupIds: ["sg-0123456789abcdef0"],
+        Direction: "INBOUND",
+        IpAddresses: [{ SubnetId: "subnet-aaa", Ip: "10.0.1.10" }],
+      }),
+    ),
+  ).rejects.toThrow();
 
   const got = await r53.send(
     new GetResolverEndpointCommand({ ResolverEndpointId: endpointId }),
@@ -187,19 +188,20 @@ test("Route53Resolver rule CRUD and association lifecycle", async () => {
     }),
   );
   expect(ruleCreated.ResolverRule?.Id).toBeDefined();
-  expect(ruleCreated.ResolverRule?.Status).toBe("COMPLETE");
+  expect(String(ruleCreated.ResolverRule?.Status)).toBe("CREATING");
   expect(ruleCreated.ResolverRule?.DomainName).toBe("example.com");
   const ruleId = ruleCreated.ResolverRule?.Id ?? "";
   const ruleArn = ruleCreated.ResolverRule?.Arn ?? "";
 
-  const ruleIdempotent = await r53.send(
-    new CreateResolverRuleCommand({
-      CreatorRequestId: "e2e-rule-create-1",
-      Name: "different-name",
-      RuleType: "FORWARD",
-    }),
-  );
-  expect(ruleIdempotent.ResolverRule?.Id).toBe(ruleId);
+  await expect(
+    r53.send(
+      new CreateResolverRuleCommand({
+        CreatorRequestId: "e2e-rule-create-1",
+        Name: "different-name",
+        RuleType: "FORWARD",
+      }),
+    ),
+  ).rejects.toThrow();
 
   const ruleGot = await r53.send(
     new GetResolverRuleCommand({ ResolverRuleId: ruleId }),
@@ -232,7 +234,7 @@ test("Route53Resolver rule CRUD and association lifecycle", async () => {
       Name: "my-association",
     }),
   );
-  expect(assocCreated.ResolverRuleAssociation?.Status).toBe("COMPLETE");
+  expect(assocCreated.ResolverRuleAssociation?.Status).toBe("CREATING");
   expect(assocCreated.ResolverRuleAssociation?.VPCId).toBe(
     "vpc-00001111aaaabbbb1",
   );

@@ -358,6 +358,40 @@ const requireAssoc = (
   return assoc;
 };
 
+const requireArnExists = (ctx: ServiceContext, arn: string): void => {
+  const parts = arn.split(":");
+  if (parts.length < 6) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource '${arn}' does not exist.`,
+      404,
+    );
+  }
+  const slashIdx = parts[5].indexOf("/");
+  if (slashIdx < 0) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource '${arn}' does not exist.`,
+      404,
+    );
+  }
+  const resourceType = parts[5].slice(0, slashIdx);
+  const id = parts[5].slice(slashIdx + 1);
+  if (resourceType === "resolver-endpoint") requireEndpoint(ctx, id);
+  else if (resourceType === "resolver-rule") requireRule(ctx, id);
+  else if (resourceType === "firewall-rule-group") requireFwrg(ctx, id);
+  else if (resourceType === "firewall-domain-list") requireFwdl(ctx, id);
+  else if (resourceType === "resolver-query-log-config")
+    requireQlConfig(ctx, id);
+  else {
+    throw awsError(
+      "ResourceNotFoundException",
+      `Resource '${arn}' does not exist.`,
+      404,
+    );
+  }
+};
+
 const endpointView = (ep: StoredEndpoint): Record<string, unknown> => ({
   Id: ep.Id,
   CreatorRequestId: ep.CreatorRequestId,
@@ -421,6 +455,77 @@ const getRuleComplete = (rule: StoredRule): StoredRule => {
     };
   }
   return rule;
+};
+
+const getAssocComplete = (
+  assoc: StoredRuleAssociation,
+): StoredRuleAssociation => {
+  if (assoc.Status === "CREATING") {
+    return {
+      ...assoc,
+      Status: "COMPLETE",
+      StatusMessage:
+        "This association between a Resolver rule and a VPC is complete.",
+    };
+  }
+  return assoc;
+};
+
+const VALID_RULE_FILTER_NAMES = new Set([
+  "CreatorRequestId",
+  "DomainName",
+  "Name",
+  "ResolverEndpointId",
+  "RuleType",
+  "Status",
+  "Type",
+]);
+
+const normalizeDomain = (d: string): string => {
+  const lower = d.toLowerCase();
+  return lower.endsWith(".") ? lower : lower + ".";
+};
+
+const validateRuleTypeSemantics = (
+  ruleType: string,
+  resolverEndpointId: string | undefined,
+  targetIps: StoredRule["TargetIps"],
+  ctx: ServiceContext,
+): void => {
+  if (ruleType === "FORWARD") {
+    if (!targetIps || targetIps.length === 0) {
+      throw awsError(
+        "InvalidRequestException",
+        "TargetIps is required for FORWARD rules.",
+        400,
+      );
+    }
+    if (resolverEndpointId) {
+      const ep = requireEndpoint(ctx, resolverEndpointId);
+      if (ep.Direction !== "OUTBOUND") {
+        throw awsError(
+          "InvalidRequestException",
+          `ResolverEndpointId '${resolverEndpointId}' must reference an OUTBOUND endpoint.`,
+          400,
+        );
+      }
+    }
+  } else if (ruleType === "SYSTEM" || ruleType === "DELEGATE") {
+    if (targetIps && targetIps.length > 0) {
+      throw awsError(
+        "InvalidRequestException",
+        `TargetIps is not allowed for ${ruleType} rules.`,
+        400,
+      );
+    }
+    if (resolverEndpointId) {
+      throw awsError(
+        "InvalidRequestException",
+        `ResolverEndpointId is not allowed for ${ruleType} rules.`,
+        400,
+      );
+    }
+  }
 };
 
 const fwrgView = (g: StoredFirewallRuleGroup): Record<string, unknown> => ({
@@ -635,8 +740,13 @@ const CreateResolverEndpoint: OperationHandler = (input, ctx) => {
   );
   if (existingId) {
     const ep = ctx.store.get<StoredEndpoint>(endpointKey(existingId));
-    if (ep)
-      return { ResolverEndpoint: endpointView(getEndpointOperational(ep)) };
+    if (ep) {
+      throw awsError(
+        "ResourceExistsException",
+        `Resolver endpoint with CreatorRequestId '${creatorRequestId}' already exists.`,
+        400,
+      );
+    }
   }
 
   const id = nextId();
@@ -689,7 +799,7 @@ const CreateResolverEndpoint: OperationHandler = (input, ctx) => {
     ctx.store.set(tagsKey(arn), tagMap);
   }
 
-  return { ResolverEndpoint: endpointView(getEndpointOperational(ep)) };
+  return { ResolverEndpoint: endpointView(ep) };
 };
 
 const GetResolverEndpoint: OperationHandler = (input, ctx) => {
@@ -721,6 +831,20 @@ const UpdateResolverEndpoint: OperationHandler = (input, ctx) => {
 const DeleteResolverEndpoint: OperationHandler = (input, ctx) => {
   const id = input["ResolverEndpointId"] as string;
   const ep = requireEndpoint(ctx, id);
+
+  const rulesUsingEndpoint = ctx.store
+    .list<StoredRule>()
+    .filter(
+      (e) => e.key.startsWith("rule/") && e.value.ResolverEndpointId === id,
+    );
+  if (rulesUsingEndpoint.length > 0) {
+    throw awsError(
+      "InvalidRequestException",
+      `Resolver endpoint '${id}' cannot be deleted because it is referenced by one or more Resolver rules.`,
+      400,
+    );
+  }
+
   const deleting: StoredEndpoint = {
     ...ep,
     Status: "DELETING",
@@ -728,6 +852,7 @@ const DeleteResolverEndpoint: OperationHandler = (input, ctx) => {
   };
   ctx.store.set(endpointKey(id), deleting);
   ctx.store.delete(endpointKey(id));
+  ctx.store.delete(tagsKey(ep.Arn));
   return { ResolverEndpoint: endpointView(deleting) };
 };
 
@@ -772,6 +897,20 @@ const AssociateResolverEndpointIpAddress: OperationHandler = (input, ctx) => {
     Ipv6?: string;
     IpId?: string;
   };
+
+  const duplicate = ep.ipAddresses.find(
+    (ip) =>
+      (ipReq.Ip && ip.Ip === ipReq.Ip) ||
+      (ipReq.Ipv6 && ip.Ipv6 === ipReq.Ipv6),
+  );
+  if (duplicate) {
+    throw awsError(
+      "ResourceExistsException",
+      `IP address '${ipReq.Ip ?? ipReq.Ipv6}' is already associated with endpoint '${id}'.`,
+      400,
+    );
+  }
+
   const newIp: IpAddressEntry = {
     IpId: ipReq.IpId ?? nextIpId(),
     SubnetId: ipReq.SubnetId ?? "",
@@ -808,6 +947,22 @@ const DisassociateResolverEndpointIpAddress: OperationHandler = (
     if (!ipReq.IpId && ipReq.Ip && ip.Ip === ipReq.Ip) return false;
     return true;
   });
+
+  if (remaining.length === ep.ipAddresses.length) {
+    throw awsError(
+      "ResourceNotFoundException",
+      `IP address not found on endpoint '${id}'.`,
+      404,
+    );
+  }
+  if (remaining.length < 2) {
+    throw awsError(
+      "InvalidRequestException",
+      `Resolver endpoint '${id}' must have at least 2 IP addresses.`,
+      400,
+    );
+  }
+
   const updated: StoredEndpoint = {
     ...ep,
     ipAddresses: remaining,
@@ -850,8 +1005,19 @@ const CreateResolverRule: OperationHandler = (input, ctx) => {
   const existingId = ctx.store.get<string>(creatorRuleKey(creatorRequestId));
   if (existingId) {
     const rule = ctx.store.get<StoredRule>(ruleKey(existingId));
-    if (rule) return { ResolverRule: ruleView(getRuleComplete(rule)) };
+    if (rule) {
+      throw awsError(
+        "ResourceExistsException",
+        `Resolver rule with CreatorRequestId '${creatorRequestId}' already exists.`,
+        400,
+      );
+    }
   }
+
+  const ruleType = input["RuleType"] as string;
+  const resolverEndpointId = input["ResolverEndpointId"] as string | undefined;
+  const targetIps = input["TargetIps"] as StoredRule["TargetIps"];
+  validateRuleTypeSemantics(ruleType, resolverEndpointId, targetIps, ctx);
 
   const id = nextId();
   const arn = `arn:aws:route53resolver:${ctx.region}:${ctx.account}:resolver-rule/${id}`;
@@ -862,15 +1028,15 @@ const CreateResolverRule: OperationHandler = (input, ctx) => {
     Arn: arn,
     DomainName: input["DomainName"] as string | undefined,
     Name: input["Name"] as string | undefined,
-    RuleType: input["RuleType"] as string,
+    RuleType: ruleType,
     Status: "CREATING",
     StatusMessage: "Creating the Resolver Rule.",
     OwnerId: ctx.account,
     ShareStatus: "NOT_SHARED",
     CreationTime: now(),
     ModificationTime: now(),
-    ResolverEndpointId: input["ResolverEndpointId"] as string | undefined,
-    TargetIps: input["TargetIps"] as StoredRule["TargetIps"],
+    ResolverEndpointId: resolverEndpointId,
+    TargetIps: targetIps,
   };
 
   ctx.store.set(ruleKey(id), rule);
@@ -884,7 +1050,7 @@ const CreateResolverRule: OperationHandler = (input, ctx) => {
     ctx.store.set(tagsKey(arn), tagMap);
   }
 
-  return { ResolverRule: ruleView(getRuleComplete(rule)) };
+  return { ResolverRule: ruleView(rule) };
 };
 
 const GetResolverRule: OperationHandler = (input, ctx) => {
@@ -897,17 +1063,33 @@ const UpdateResolverRule: OperationHandler = (input, ctx) => {
   const id = input["ResolverRuleId"] as string;
   const rule = requireRule(ctx, id);
   const config = (input["Config"] as Record<string, unknown> | undefined) ?? {};
+
+  const newResolverEndpointId =
+    config["ResolverEndpointId"] !== undefined
+      ? (config["ResolverEndpointId"] as string | undefined)
+      : rule.ResolverEndpointId;
+  const newTargetIps =
+    config["TargetIps"] !== undefined
+      ? (config["TargetIps"] as StoredRule["TargetIps"])
+      : rule.TargetIps;
+
+  if (
+    config["ResolverEndpointId"] !== undefined ||
+    config["TargetIps"] !== undefined
+  ) {
+    validateRuleTypeSemantics(
+      rule.RuleType,
+      newResolverEndpointId,
+      newTargetIps,
+      ctx,
+    );
+  }
+
   const updated: StoredRule = {
     ...rule,
     Name: config["Name"] !== undefined ? (config["Name"] as string) : rule.Name,
-    ResolverEndpointId:
-      config["ResolverEndpointId"] !== undefined
-        ? (config["ResolverEndpointId"] as string | undefined)
-        : rule.ResolverEndpointId,
-    TargetIps:
-      config["TargetIps"] !== undefined
-        ? (config["TargetIps"] as StoredRule["TargetIps"])
-        : rule.TargetIps,
+    ResolverEndpointId: newResolverEndpointId,
+    TargetIps: newTargetIps,
     ModificationTime: now(),
   };
   ctx.store.set(ruleKey(id), updated);
@@ -937,6 +1119,7 @@ const DeleteResolverRule: OperationHandler = (input, ctx) => {
   };
   ctx.store.set(ruleKey(id), deleting);
   ctx.store.delete(ruleKey(id));
+  ctx.store.delete(tagsKey(rule.Arn));
   return { ResolverRule: ruleView(deleting) };
 };
 
@@ -948,14 +1131,35 @@ const ListResolverRules: OperationHandler = (input, ctx) => {
       | Array<{ Name: string; Values: string[] }>
       | undefined) ?? [];
 
+  for (const f of filters) {
+    if (!VALID_RULE_FILTER_NAMES.has(f.Name)) {
+      throw awsError(
+        "InvalidParameterException",
+        `Unknown filter name: '${f.Name}'.`,
+        400,
+      );
+    }
+  }
+
   const all = ctx.store
     .list<StoredRule>()
     .filter((e) => e.key.startsWith("rule/"))
     .map((e) => getRuleComplete(e.value));
 
-  const filtered = applyFilters(
-    all.map((r) => ruleView(r) as Record<string, unknown>),
-    filters,
+  const views = all.map((r) => ruleView(r) as Record<string, unknown>);
+
+  const filtered = views.filter((item) =>
+    filters.every((f) => {
+      const normName = f.Name === "Type" ? "RuleType" : f.Name;
+      const val = item[normName];
+      if (val === undefined || val === null) return false;
+      if (normName === "DomainName") {
+        const normVal = normalizeDomain(String(val));
+        return f.Values.some((fv) => normalizeDomain(fv) === normVal);
+      }
+      const normValues = f.Values.map((v) => v.toUpperCase());
+      return normValues.includes(String(val).toUpperCase());
+    }),
   );
 
   const start = nextToken ? parseInt(nextToken, 10) : 0;
@@ -1001,9 +1205,9 @@ const AssociateResolverRule: OperationHandler = (input, ctx) => {
     ResolverRuleId: ruleId,
     Name: input["Name"] as string | undefined,
     VPCId: vpcId,
-    Status: "COMPLETE",
+    Status: "CREATING",
     StatusMessage:
-      "This association between a Resolver rule and a VPC is complete.",
+      "Creating the association between a Resolver rule and a VPC.",
   };
   ctx.store.set(assocKey(id), assoc);
   return { ResolverRuleAssociation: assocView(assoc) };
@@ -1044,7 +1248,7 @@ const DisassociateResolverRule: OperationHandler = (input, ctx) => {
 const GetResolverRuleAssociation: OperationHandler = (input, ctx) => {
   const id = input["ResolverRuleAssociationId"] as string;
   const assoc = requireAssoc(ctx, id);
-  return { ResolverRuleAssociation: assocView(assoc) };
+  return { ResolverRuleAssociation: assocView(getAssocComplete(assoc)) };
 };
 
 const ListResolverRuleAssociations: OperationHandler = (input, ctx) => {
@@ -1058,7 +1262,7 @@ const ListResolverRuleAssociations: OperationHandler = (input, ctx) => {
   const all = ctx.store
     .list<StoredRuleAssociation>()
     .filter((e) => e.key.startsWith("assoc/"))
-    .map((e) => e.value);
+    .map((e) => getAssocComplete(e.value));
 
   const filtered = applyFilters(
     all.map((a) => assocView(a) as Record<string, unknown>),
@@ -2072,6 +2276,7 @@ const GetResolverRulePolicy: OperationHandler = (input, ctx) => {
 
 const TagResource: OperationHandler = (input, ctx) => {
   const arn = input["ResourceArn"] as string;
+  requireArnExists(ctx, arn);
   const newTags =
     (input["Tags"] as Array<{ Key: string; Value: string }> | undefined) ?? [];
   const key = tagsKey(arn);
@@ -2083,6 +2288,7 @@ const TagResource: OperationHandler = (input, ctx) => {
 
 const UntagResource: OperationHandler = (input, ctx) => {
   const arn = input["ResourceArn"] as string;
+  requireArnExists(ctx, arn);
   const tagKeys = (input["TagKeys"] as string[] | undefined) ?? [];
   const key = tagsKey(arn);
   const tags = ctx.store.get<Record<string, string>>(key) ?? {};
@@ -2093,6 +2299,7 @@ const UntagResource: OperationHandler = (input, ctx) => {
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
   const arn = input["ResourceArn"] as string;
+  requireArnExists(ctx, arn);
   const key = tagsKey(arn);
   const tags = ctx.store.get<Record<string, string>>(key) ?? {};
   return {

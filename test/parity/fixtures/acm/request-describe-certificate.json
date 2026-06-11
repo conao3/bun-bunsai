@@ -1,0 +1,96 @@
+{
+  "clientPackage": "@aws-sdk/client-acm",
+  "clientName": "ACMClient",
+  "steps": [
+    {
+      "command": "RequestCertificateCommand",
+      "input": {
+        "DomainName": "parity.example.com",
+        "ValidationMethod": "DNS"
+      },
+      "expected": { "CertificateArn": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "cert",
+      "refs": {}
+    },
+    {
+      "command": "DescribeCertificateCommand",
+      "input": { "CertificateArn": "${cert.CertificateArn}" },
+      "expected": {
+        "Certificate": {
+          "CertificateArn": "<ANY>",
+          "DomainName": "parity.example.com",
+          "Status": "PENDING_VALIDATION",
+          "Type": "AMAZON_ISSUED",
+          "KeyAlgorithm": "RSA_2048",
+          "RenewalEligibility": "INELIGIBLE",
+          "InUseBy": [],
+          "KeyUsages": [],
+          "ExtendedKeyUsages": [],
+          "SubjectAlternativeNames": ["parity.example.com"],
+          "DomainValidationOptions": [
+            {
+              "DomainName": "parity.example.com",
+              "ValidationDomain": "parity.example.com",
+              "ValidationStatus": "PENDING_VALIDATION",
+              "ValidationMethod": "DNS",
+              "ResourceRecord": {
+                "Name": "<ANY>",
+                "Type": "CNAME",
+                "Value": "<ANY>"
+              }
+            }
+          ]
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Certificate.CreatedAt",
+        "Certificate.Issuer",
+        "Certificate.Subject",
+        "Certificate.Options",
+        "Certificate.SignatureAlgorithm"
+      ],
+      "saveAs": null,
+      "refs": { "cert.CertificateArn": "cert" }
+    },
+    {
+      "command": "DescribeCertificateCommand",
+      "input": { "CertificateArn": "${cert.CertificateArn}" },
+      "expected": {
+        "Certificate": {
+          "CertificateArn": "<ANY>",
+          "DomainName": "parity.example.com",
+          "Status": "ISSUED",
+          "Type": "AMAZON_ISSUED",
+          "KeyAlgorithm": "RSA_2048",
+          "RenewalEligibility": "INELIGIBLE"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Certificate.CreatedAt",
+        "Certificate.IssuedAt",
+        "Certificate.Issuer",
+        "Certificate.Subject",
+        "Certificate.Options",
+        "Certificate.SignatureAlgorithm",
+        "Certificate.InUseBy",
+        "Certificate.KeyUsages",
+        "Certificate.ExtendedKeyUsages",
+        "Certificate.SubjectAlternativeNames",
+        "Certificate.DomainValidationOptions"
+      ],
+      "saveAs": null,
+      "refs": { "cert.CertificateArn": "cert" }
+    },
+    {
+      "command": "DeleteCertificateCommand",
+      "input": { "CertificateArn": "${cert.CertificateArn}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "cert.CertificateArn": "cert" }
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "clientPackage": "@aws-sdk/client-api-gateway",
+  "clientName": "APIGatewayClient",
+  "steps": [
+    {
+      "command": "GetRestApiCommand",
+      "input": { "restApiId": "nonexistent1" },
+      "expectedError": { "name": "NotFoundException", "statusCode": 404 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetResourcesCommand",
+      "input": { "restApiId": "nonexistent1" },
+      "expectedError": { "name": "NotFoundException", "statusCode": 404 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteRestApiCommand",
+      "input": { "restApiId": "nonexistent1" },
+      "expectedError": { "name": "NotFoundException", "statusCode": 404 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

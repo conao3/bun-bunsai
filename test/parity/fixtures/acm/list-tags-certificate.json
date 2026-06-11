@@ -1,0 +1,61 @@
+{
+  "clientPackage": "@aws-sdk/client-acm",
+  "clientName": "ACMClient",
+  "steps": [
+    {
+      "command": "RequestCertificateCommand",
+      "input": {
+        "DomainName": "parity-list.example.com",
+        "ValidationMethod": "DNS",
+        "Tags": [{ "Key": "env", "Value": "test" }]
+      },
+      "expected": { "CertificateArn": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "cert",
+      "refs": {}
+    },
+    {
+      "command": "ListCertificatesCommand",
+      "input": {},
+      "expected": {
+        "CertificateSummaryList": [
+          {
+            "CertificateArn": "<ANY>",
+            "DomainName": "parity-list.example.com",
+            "Status": "PENDING_VALIDATION",
+            "Type": "AMAZON_ISSUED",
+            "KeyAlgorithm": "RSA_2048",
+            "RenewalEligibility": "INELIGIBLE",
+            "InUse": false
+          }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "CertificateSummaryList[0].CreatedAt",
+        "CertificateSummaryList[0].SubjectAlternativeNameSummaries",
+        "CertificateSummaryList[0].Exported"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTagsForCertificateCommand",
+      "input": { "CertificateArn": "${cert.CertificateArn}" },
+      "expected": {
+        "Tags": [{ "Key": "env", "Value": "test" }]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "cert.CertificateArn": "cert" }
+    },
+    {
+      "command": "DeleteCertificateCommand",
+      "input": { "CertificateArn": "${cert.CertificateArn}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "cert.CertificateArn": "cert" }
+    }
+  ]
+}

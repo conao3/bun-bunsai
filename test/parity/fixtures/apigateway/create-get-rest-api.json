@@ -1,0 +1,52 @@
+{
+  "clientPackage": "@aws-sdk/client-api-gateway",
+  "clientName": "APIGatewayClient",
+  "steps": [
+    {
+      "command": "CreateRestApiCommand",
+      "input": { "name": "parity-apigw-api", "description": "parity test api" },
+      "expected": {
+        "id": "<ANY>",
+        "name": "parity-apigw-api",
+        "description": "parity test api",
+        "apiKeySource": "HEADER",
+        "disableExecuteApiEndpoint": false,
+        "rootResourceId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "createdDate", "endpointConfiguration"],
+      "saveAs": "api",
+      "refs": {}
+    },
+    {
+      "command": "GetRestApiCommand",
+      "input": { "restApiId": "${api.id}" },
+      "expected": {
+        "id": "<ANY>",
+        "name": "parity-apigw-api",
+        "description": "parity test api",
+        "apiKeySource": "HEADER",
+        "disableExecuteApiEndpoint": false,
+        "rootResourceId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "createdDate", "endpointConfiguration"],
+      "saveAs": null,
+      "refs": { "api.id": "api" }
+    },
+    {
+      "command": "GetRestApisCommand",
+      "input": {},
+      "expected": { "items": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteRestApiCommand",
+      "input": { "restApiId": "${api.id}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "api.id": "api" }
+    }
+  ]
+}

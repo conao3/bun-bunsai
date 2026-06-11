@@ -39,6 +39,19 @@ const allThingGroupsKey = "allThingGroups";
 const allCertsKey = "allCerts";
 const allPoliciesKey = "allPolicies";
 const allRulesKey = "allRules";
+const jobKey = (id: string) => `job:${id}`;
+const jobTemplateKey = (id: string) => `jobTemplate:${id}`;
+const commandKey = (id: string) => `command:${id}`;
+const commandExecutionKey = (id: string) => `commandExecution:${id}`;
+const jobExecutionKey = (jobId: string, thingName: string) =>
+  `jobExec:${jobId}:${thingName}`;
+const jobExecutionsForJobKey = (jobId: string) => `jobExecsForJob:${jobId}`;
+const jobExecutionsForThingKey = (thingName: string) =>
+  `jobExecsForThing:${thingName}`;
+const allJobsKey = "allJobs";
+const allJobTemplatesKey = "allJobTemplates";
+const allCommandsKey = "allCommands";
+const allCommandExecutionsKey = "allCommandExecutions";
 
 type StoredThing = {
   thingName: string;
@@ -104,6 +117,65 @@ type StoredPolicyVersion = {
   createdAt: number;
 };
 
+type StoredJob = {
+  jobId: string;
+  jobArn: string;
+  targets: string[];
+  status: string;
+  description?: string;
+  document?: string;
+  documentSource?: string;
+  targetSelection?: string;
+  createdAt: number;
+  lastUpdatedAt: number;
+  completedAt?: number;
+};
+
+type StoredJobExecution = {
+  jobId: string;
+  thingName: string;
+  executionNumber: number;
+  status: string;
+  queuedAt: number;
+  lastUpdatedAt: number;
+  versionNumber: number;
+};
+
+type StoredJobTemplate = {
+  jobTemplateId: string;
+  jobTemplateArn: string;
+  description: string;
+  document?: string;
+  documentSource?: string;
+  createdAt: number;
+};
+
+type StoredCommand = {
+  commandId: string;
+  commandArn: string;
+  namespace?: string;
+  displayName?: string;
+  description?: string;
+  payload?: unknown;
+  payloadTemplate?: string;
+  mandatoryParameters?: unknown[];
+  roleArn?: string;
+  deprecated: boolean;
+  pendingDeletion: boolean;
+  createdAt: number;
+  lastUpdatedAt: number;
+};
+
+type StoredCommandExecution = {
+  executionId: string;
+  commandArn: string;
+  targetArn: string;
+  status: string;
+  createdAt: number;
+  lastUpdatedAt: number;
+  completedAt?: number;
+};
+
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
 const thingArn = (ctx: ServiceContext, name: string) =>
@@ -118,6 +190,12 @@ const policyArn = (ctx: ServiceContext, name: string) =>
   `arn:aws:iot:${ctx.region}:${ctx.account}:policy/${name}`;
 const ruleArn = (ctx: ServiceContext, name: string) =>
   `arn:aws:iot:${ctx.region}:${ctx.account}:rule/${name}`;
+const jobArn = (ctx: ServiceContext, id: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:job/${id}`;
+const jobTemplateArn = (ctx: ServiceContext, id: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:jobtemplate/${id}`;
+const commandArn = (ctx: ServiceContext, id: string) =>
+  `arn:aws:iot:${ctx.region}:${ctx.account}:command/${id}`;
 
 const pemOf = (id: string): string =>
   `-----BEGIN CERTIFICATE-----\n${Buffer.from(id, "utf8").toString("base64")}\n-----END CERTIFICATE-----`;
@@ -1459,6 +1537,604 @@ const ListTagsForResource: OperationHandler = (input, ctx) => {
   return { tags };
 };
 
+// === Job / JobExecution / JobTemplate / Command operations ===
+
+const requireJob = (ctx: ServiceContext, id: string): StoredJob => {
+  const stored = ctx.store.get<StoredJob>(jobKey(id));
+  if (!stored)
+    throw awsError("ResourceNotFoundException", `Job ${id} not found.`, 404);
+  return stored;
+};
+
+const requireJobExecution = (
+  ctx: ServiceContext,
+  jobId: string,
+  thingName: string,
+): StoredJobExecution => {
+  const stored = ctx.store.get<StoredJobExecution>(
+    jobExecutionKey(jobId, thingName),
+  );
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Job execution for job ${jobId} on thing ${thingName} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireJobTemplate = (
+  ctx: ServiceContext,
+  id: string,
+): StoredJobTemplate => {
+  const stored = ctx.store.get<StoredJobTemplate>(jobTemplateKey(id));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Job template ${id} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireCommand = (ctx: ServiceContext, id: string): StoredCommand => {
+  const stored = ctx.store.get<StoredCommand>(commandKey(id));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Command ${id} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const requireCommandExecution = (
+  ctx: ServiceContext,
+  id: string,
+): StoredCommandExecution => {
+  const stored = ctx.store.get<StoredCommandExecution>(commandExecutionKey(id));
+  if (!stored)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Command execution ${id} not found.`,
+      404,
+    );
+  return stored;
+};
+
+const managedJobTemplates = [
+  {
+    templateName: "AWS-Download-And-Run-OTA-Update",
+    templateArn:
+      "arn:aws:iot:::managed-job-template/AWS-Download-And-Run-OTA-Update",
+    description: "Downloads and runs an OTA update on the device",
+    documentVersion: "1.0",
+  },
+  {
+    templateName: "AWS-Reboot",
+    templateArn: "arn:aws:iot:::managed-job-template/AWS-Reboot",
+    description: "Reboots the device",
+    documentVersion: "1.0",
+  },
+] as const;
+
+const CreateJob: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobId = requireStr(data, "jobId");
+  if (ctx.store.get(jobKey(jobId)) !== undefined)
+    throw awsError(
+      "ResourceAlreadyExistsException",
+      `Job ${jobId} already exists.`,
+      409,
+    );
+  const targets = data["targets"] as string[] | undefined;
+  if (!targets || targets.length === 0)
+    throw awsError("InvalidRequestException", "targets is required.", 400);
+  const arn = jobArn(ctx, jobId);
+  const now = nowSeconds();
+  const stored: StoredJob = {
+    jobId,
+    jobArn: arn,
+    targets,
+    status: "IN_PROGRESS",
+    description: str(data["description"]),
+    document: str(data["document"]),
+    documentSource: str(data["documentSource"]),
+    targetSelection: str(data["targetSelection"]),
+    createdAt: now,
+    lastUpdatedAt: now,
+  };
+  ctx.store.set(jobKey(jobId), stored);
+  addToList(ctx, allJobsKey, jobId);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  for (const target of targets) {
+    const thingName = target.includes(":")
+      ? (target.split("/").pop() ?? target)
+      : target;
+    const exec: StoredJobExecution = {
+      jobId,
+      thingName,
+      executionNumber: 1,
+      status: "QUEUED",
+      queuedAt: now,
+      lastUpdatedAt: now,
+      versionNumber: 1,
+    };
+    ctx.store.set(jobExecutionKey(jobId, thingName), exec);
+    addToList(ctx, jobExecutionsForJobKey(jobId), thingName);
+    addToList(ctx, jobExecutionsForThingKey(thingName), jobId);
+  }
+  return { jobId, jobArn: arn, description: stored.description };
+};
+
+const AssociateTargetsWithJob: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobId = requireStr(data, "jobId");
+  const stored = requireJob(ctx, jobId);
+  const newTargets = data["targets"] as string[] | undefined;
+  if (!newTargets || newTargets.length === 0)
+    throw awsError("InvalidRequestException", "targets is required.", 400);
+  const now = nowSeconds();
+  const existing = new Set(stored.targets);
+  for (const target of newTargets) {
+    if (!existing.has(target)) {
+      stored.targets.push(target);
+      const thingName = target.includes(":")
+        ? (target.split("/").pop() ?? target)
+        : target;
+      const exec: StoredJobExecution = {
+        jobId,
+        thingName,
+        executionNumber: 1,
+        status: "QUEUED",
+        queuedAt: now,
+        lastUpdatedAt: now,
+        versionNumber: 1,
+      };
+      ctx.store.set(jobExecutionKey(jobId, thingName), exec);
+      addToList(ctx, jobExecutionsForJobKey(jobId), thingName);
+      addToList(ctx, jobExecutionsForThingKey(thingName), jobId);
+    }
+  }
+  stored.lastUpdatedAt = now;
+  ctx.store.set(jobKey(jobId), stored);
+  return { jobArn: stored.jobArn, jobId, description: stored.description };
+};
+
+const CancelJob: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobId = requireStr(data, "jobId");
+  const stored = requireJob(ctx, jobId);
+  stored.status = "CANCELLATION_IN_PROGRESS";
+  stored.lastUpdatedAt = nowSeconds();
+  ctx.store.set(jobKey(jobId), stored);
+  return { jobId, jobArn: stored.jobArn, description: stored.description };
+};
+
+const DeleteJob: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobId = requireStr(data, "jobId");
+  requireJob(ctx, jobId);
+  ctx.store.set(jobKey(jobId), undefined);
+  removeFromList<string>(ctx, allJobsKey, (id) => id === jobId);
+  return {};
+};
+
+const DescribeJob: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobId = requireStr(data, "jobId");
+  const stored = requireJob(ctx, jobId);
+  return {
+    documentSource: stored.documentSource,
+    job: {
+      jobId: stored.jobId,
+      jobArn: stored.jobArn,
+      targets: stored.targets,
+      status: stored.status,
+      description: stored.description,
+      targetSelection: stored.targetSelection,
+      createdAt: stored.createdAt,
+      lastUpdatedAt: stored.lastUpdatedAt,
+      completedAt: stored.completedAt,
+    },
+  };
+};
+
+const UpdateJob: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobId = requireStr(data, "jobId");
+  const stored = requireJob(ctx, jobId);
+  if (data["description"] !== undefined)
+    stored.description = str(data["description"]);
+  stored.lastUpdatedAt = nowSeconds();
+  ctx.store.set(jobKey(jobId), stored);
+  return {};
+};
+
+const ListJobs: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const statusFilter = str(data["status"]);
+  const nextToken = str(data["nextToken"]);
+  const allIds = getList<string>(ctx, allJobsKey);
+  let jobs = allIds
+    .map((id) => ctx.store.get<StoredJob>(jobKey(id)))
+    .filter((j): j is StoredJob => j !== undefined);
+  if (statusFilter) jobs = jobs.filter((j) => j.status === statusFilter);
+  const { items, nextMarker } = paginateList(jobs, nextToken);
+  return {
+    jobs: items.map((j) => ({
+      jobId: j.jobId,
+      jobArn: j.jobArn,
+      status: j.status,
+      targetSelection: j.targetSelection,
+      createdAt: j.createdAt,
+      lastUpdatedAt: j.lastUpdatedAt,
+      completedAt: j.completedAt,
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const GetJobDocument: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobId = requireStr(data, "jobId");
+  const stored = requireJob(ctx, jobId);
+  return { document: stored.document ?? "" };
+};
+
+const DescribeJobExecution: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobId = requireStr(data, "jobId");
+  const thingName = requireStr(data, "thingName");
+  const exec = requireJobExecution(ctx, jobId, thingName);
+  return {
+    execution: {
+      jobId: exec.jobId,
+      thingArn: thingArn(ctx, exec.thingName),
+      status: exec.status,
+      executionNumber: exec.executionNumber,
+      queuedAt: exec.queuedAt,
+      lastUpdatedAt: exec.lastUpdatedAt,
+      versionNumber: exec.versionNumber,
+    },
+  };
+};
+
+const CancelJobExecution: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobId = requireStr(data, "jobId");
+  const thingName = requireStr(data, "thingName");
+  const exec = requireJobExecution(ctx, jobId, thingName);
+  exec.status = "CANCELLATION_IN_PROGRESS";
+  exec.lastUpdatedAt = nowSeconds();
+  ctx.store.set(jobExecutionKey(jobId, thingName), exec);
+  return {};
+};
+
+const DeleteJobExecution: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobId = requireStr(data, "jobId");
+  const thingName = requireStr(data, "thingName");
+  requireJobExecution(ctx, jobId, thingName);
+  ctx.store.set(jobExecutionKey(jobId, thingName), undefined);
+  removeFromList<string>(
+    ctx,
+    jobExecutionsForJobKey(jobId),
+    (n) => n === thingName,
+  );
+  removeFromList<string>(
+    ctx,
+    jobExecutionsForThingKey(thingName),
+    (id) => id === jobId,
+  );
+  return {};
+};
+
+const ListJobExecutionsForJob: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobId = requireStr(data, "jobId");
+  requireJob(ctx, jobId);
+  const thingNames = getList<string>(ctx, jobExecutionsForJobKey(jobId));
+  const execs = thingNames
+    .map((n) => ctx.store.get<StoredJobExecution>(jobExecutionKey(jobId, n)))
+    .filter((e): e is StoredJobExecution => e !== undefined);
+  const nextToken = str(data["nextToken"]);
+  const { items, nextMarker } = paginateList(execs, nextToken);
+  return {
+    executionSummaries: items.map((e) => ({
+      thingArn: thingArn(ctx, e.thingName),
+      jobExecutionSummary: {
+        status: e.status,
+        executionNumber: e.executionNumber,
+        queuedAt: e.queuedAt,
+        lastUpdatedAt: e.lastUpdatedAt,
+      },
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const ListJobExecutionsForThing: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const thingName = requireStr(data, "thingName");
+  const jobIds = getList<string>(ctx, jobExecutionsForThingKey(thingName));
+  const execs = jobIds
+    .map((id) =>
+      ctx.store.get<StoredJobExecution>(jobExecutionKey(id, thingName)),
+    )
+    .filter((e): e is StoredJobExecution => e !== undefined);
+  const nextToken = str(data["nextToken"]);
+  const { items, nextMarker } = paginateList(execs, nextToken);
+  return {
+    executionSummaries: items.map((e) => ({
+      jobId: e.jobId,
+      jobExecutionSummary: {
+        status: e.status,
+        executionNumber: e.executionNumber,
+        queuedAt: e.queuedAt,
+        lastUpdatedAt: e.lastUpdatedAt,
+      },
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const CreateJobTemplate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobTemplateId = requireStr(data, "jobTemplateId");
+  if (ctx.store.get(jobTemplateKey(jobTemplateId)) !== undefined)
+    throw awsError(
+      "ConflictException",
+      `Job template ${jobTemplateId} already exists.`,
+      409,
+    );
+  const description = requireStr(data, "description");
+  const arn = jobTemplateArn(ctx, jobTemplateId);
+  const stored: StoredJobTemplate = {
+    jobTemplateId,
+    jobTemplateArn: arn,
+    description,
+    document: str(data["document"]),
+    documentSource: str(data["documentSource"]),
+    createdAt: nowSeconds(),
+  };
+  ctx.store.set(jobTemplateKey(jobTemplateId), stored);
+  addToList(ctx, allJobTemplatesKey, jobTemplateId);
+  return { jobTemplateArn: arn, jobTemplateId };
+};
+
+const DeleteJobTemplate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobTemplateId = requireStr(data, "jobTemplateId");
+  requireJobTemplate(ctx, jobTemplateId);
+  ctx.store.set(jobTemplateKey(jobTemplateId), undefined);
+  removeFromList<string>(ctx, allJobTemplatesKey, (id) => id === jobTemplateId);
+  return {};
+};
+
+const DescribeJobTemplate: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const jobTemplateId = requireStr(data, "jobTemplateId");
+  const stored = requireJobTemplate(ctx, jobTemplateId);
+  return {
+    jobTemplateId: stored.jobTemplateId,
+    jobTemplateArn: stored.jobTemplateArn,
+    description: stored.description,
+    document: stored.document,
+    documentSource: stored.documentSource,
+    createdAt: stored.createdAt,
+  };
+};
+
+const ListJobTemplates: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const nextToken = str(data["nextToken"]);
+  const allIds = getList<string>(ctx, allJobTemplatesKey);
+  const templates = allIds
+    .map((id) => ctx.store.get<StoredJobTemplate>(jobTemplateKey(id)))
+    .filter((t): t is StoredJobTemplate => t !== undefined);
+  const { items, nextMarker } = paginateList(templates, nextToken);
+  return {
+    jobTemplates: items.map((t) => ({
+      jobTemplateArn: t.jobTemplateArn,
+      jobTemplateId: t.jobTemplateId,
+      description: t.description,
+      createdAt: t.createdAt,
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const DescribeManagedJobTemplate: OperationHandler = (input) => {
+  const data = input as Record<string, unknown>;
+  const templateName = requireStr(data, "templateName");
+  const template = managedJobTemplates.find(
+    (t) => t.templateName === templateName,
+  );
+  if (!template)
+    throw awsError(
+      "ResourceNotFoundException",
+      `Managed job template ${templateName} not found.`,
+      404,
+    );
+  return {
+    templateName: template.templateName,
+    templateArn: template.templateArn,
+    description: template.description,
+    documentVersion: template.documentVersion,
+    document: "{}",
+    environments: [],
+    templateVersion: template.documentVersion,
+  };
+};
+
+const ListManagedJobTemplates: OperationHandler = () => {
+  return {
+    managedJobTemplates: managedJobTemplates.map((t) => ({
+      templateName: t.templateName,
+      templateArn: t.templateArn,
+      description: t.description,
+      environments: [],
+      templateVersion: t.documentVersion,
+    })),
+  };
+};
+
+const CreateCommand: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const commandId = requireStr(data, "commandId");
+  if (ctx.store.get(commandKey(commandId)) !== undefined)
+    throw awsError(
+      "ConflictException",
+      `Command ${commandId} already exists.`,
+      409,
+    );
+  const arn = commandArn(ctx, commandId);
+  const now = nowSeconds();
+  const stored: StoredCommand = {
+    commandId,
+    commandArn: arn,
+    namespace: str(data["namespace"]),
+    displayName: str(data["displayName"]),
+    description: str(data["description"]),
+    payload: data["payload"],
+    payloadTemplate: str(data["payloadTemplate"]),
+    mandatoryParameters: data["mandatoryParameters"] as unknown[] | undefined,
+    roleArn: str(data["roleArn"]),
+    deprecated: false,
+    pendingDeletion: false,
+    createdAt: now,
+    lastUpdatedAt: now,
+  };
+  ctx.store.set(commandKey(commandId), stored);
+  addToList(ctx, allCommandsKey, commandId);
+  const tags = data["tags"] as { Key: string; Value?: string }[] | undefined;
+  if (tags && tags.length > 0) ctx.store.set(tagsKey(arn), tags);
+  return { commandId, commandArn: arn };
+};
+
+const DeleteCommand: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const commandId = requireStr(data, "commandId");
+  requireCommand(ctx, commandId);
+  ctx.store.set(commandKey(commandId), undefined);
+  removeFromList<string>(ctx, allCommandsKey, (id) => id === commandId);
+  return {};
+};
+
+const GetCommand: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const commandId = requireStr(data, "commandId");
+  const stored = requireCommand(ctx, commandId);
+  return {
+    commandId: stored.commandId,
+    commandArn: stored.commandArn,
+    namespace: stored.namespace,
+    displayName: stored.displayName,
+    description: stored.description,
+    payload: stored.payload,
+    mandatoryParameters: stored.mandatoryParameters,
+    roleArn: stored.roleArn,
+    deprecated: stored.deprecated,
+    pendingDeletion: stored.pendingDeletion,
+    createdAt: stored.createdAt,
+    lastUpdatedAt: stored.lastUpdatedAt,
+  };
+};
+
+const UpdateCommand: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const commandId = requireStr(data, "commandId");
+  const stored = requireCommand(ctx, commandId);
+  if (data["displayName"] !== undefined)
+    stored.displayName = str(data["displayName"]);
+  if (data["description"] !== undefined)
+    stored.description = str(data["description"]);
+  if (data["deprecated"] !== undefined)
+    stored.deprecated = Boolean(data["deprecated"]);
+  stored.lastUpdatedAt = nowSeconds();
+  ctx.store.set(commandKey(commandId), stored);
+  return { commandId: stored.commandId, commandArn: stored.commandArn };
+};
+
+const ListCommands: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const nextToken = str(data["nextToken"]);
+  const allIds = getList<string>(ctx, allCommandsKey);
+  const commands = allIds
+    .map((id) => ctx.store.get<StoredCommand>(commandKey(id)))
+    .filter((c): c is StoredCommand => c !== undefined);
+  const { items, nextMarker } = paginateList(commands, nextToken);
+  return {
+    commands: items.map((c) => ({
+      commandId: c.commandId,
+      commandArn: c.commandArn,
+      namespace: c.namespace,
+      displayName: c.displayName,
+      deprecated: c.deprecated,
+      createdAt: c.createdAt,
+      lastUpdatedAt: c.lastUpdatedAt,
+    })),
+    nextToken: nextMarker,
+  };
+};
+
+const GetCommandExecution: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const executionId = requireStr(data, "executionId");
+  const stored = requireCommandExecution(ctx, executionId);
+  return {
+    executionId: stored.executionId,
+    commandArn: stored.commandArn,
+    targetArn: stored.targetArn,
+    status: stored.status,
+    createdAt: stored.createdAt,
+    lastUpdatedAt: stored.lastUpdatedAt,
+    completedAt: stored.completedAt,
+  };
+};
+
+const DeleteCommandExecution: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const executionId = requireStr(data, "executionId");
+  requireCommandExecution(ctx, executionId);
+  ctx.store.set(commandExecutionKey(executionId), undefined);
+  removeFromList<string>(
+    ctx,
+    allCommandExecutionsKey,
+    (id) => id === executionId,
+  );
+  return {};
+};
+
+const ListCommandExecutions: OperationHandler = (input, ctx) => {
+  const data = input as Record<string, unknown>;
+  const nextToken = str(data["nextToken"]);
+  const commandArnFilter = str(data["commandArn"]);
+  const targetArnFilter = str(data["targetArn"]);
+  const allIds = getList<string>(ctx, allCommandExecutionsKey);
+  let execs = allIds
+    .map((id) => ctx.store.get<StoredCommandExecution>(commandExecutionKey(id)))
+    .filter((e): e is StoredCommandExecution => e !== undefined);
+  if (commandArnFilter)
+    execs = execs.filter((e) => e.commandArn === commandArnFilter);
+  if (targetArnFilter)
+    execs = execs.filter((e) => e.targetArn === targetArnFilter);
+  const { items, nextMarker } = paginateList(execs, nextToken);
+  return {
+    commandExecutions: items.map((e) => ({
+      executionId: e.executionId,
+      commandArn: e.commandArn,
+      targetArn: e.targetArn,
+      status: e.status,
+      createdAt: e.createdAt,
+      lastUpdatedAt: e.lastUpdatedAt,
+    })),
+    nextToken: nextMarker,
+  };
+};
+
 // === resolveOperation ===
 
 const idFromArn2 = (arn: string): string => {
@@ -1498,6 +2174,33 @@ export default {
           if (req.method === "GET") return "ListThingGroupsForThing";
           return undefined;
         }
+        if (parts[2] === "jobs") {
+          if (req.method === "GET") return "ListJobExecutionsForThing";
+          return undefined;
+        }
+        return undefined;
+      }
+      if (parts.length === 4) {
+        if (parts[2] === "jobs" && req.method === "GET")
+          return "DescribeJobExecution";
+        return undefined;
+      }
+      if (parts.length === 5) {
+        if (
+          parts[2] === "jobs" &&
+          parts[4] === "cancel" &&
+          req.method === "PUT"
+        )
+          return "CancelJobExecution";
+        return undefined;
+      }
+      if (parts.length === 6) {
+        if (
+          parts[2] === "jobs" &&
+          parts[4] === "executionNumber" &&
+          req.method === "DELETE"
+        )
+          return "DeleteJobExecution";
         return undefined;
       }
       return undefined;
@@ -1681,6 +2384,85 @@ export default {
       return undefined;
     }
 
+    if (parts[0] === "jobs") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListJobs";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "PUT") return "CreateJob";
+        if (req.method === "GET") return "DescribeJob";
+        if (req.method === "PATCH") return "UpdateJob";
+        if (req.method === "DELETE") return "DeleteJob";
+        return undefined;
+      }
+      if (parts.length === 3) {
+        if (parts[2] === "cancel" && req.method === "PUT") return "CancelJob";
+        if (parts[2] === "targets" && req.method === "POST")
+          return "AssociateTargetsWithJob";
+        if (parts[2] === "things" && req.method === "GET")
+          return "ListJobExecutionsForJob";
+        if (parts[2] === "job-document" && req.method === "GET")
+          return "GetJobDocument";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "job-templates") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListJobTemplates";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "PUT") return "CreateJobTemplate";
+        if (req.method === "GET") return "DescribeJobTemplate";
+        if (req.method === "DELETE") return "DeleteJobTemplate";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "managed-job-templates") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListManagedJobTemplates";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "DescribeManagedJobTemplate";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "commands") {
+      if (parts.length === 1) {
+        if (req.method === "GET") return "ListCommands";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "PUT") return "CreateCommand";
+        if (req.method === "GET") return "GetCommand";
+        if (req.method === "PATCH") return "UpdateCommand";
+        if (req.method === "DELETE") return "DeleteCommand";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (parts[0] === "command-executions") {
+      if (parts.length === 1) {
+        if (req.method === "POST") return "ListCommandExecutions";
+        return undefined;
+      }
+      if (parts.length === 2) {
+        if (req.method === "GET") return "GetCommandExecution";
+        if (req.method === "DELETE") return "DeleteCommandExecution";
+        return undefined;
+      }
+      return undefined;
+    }
+
     return undefined;
   },
   operations: {
@@ -1740,6 +2522,33 @@ export default {
     TagResource,
     UntagResource,
     ListTagsForResource,
+    CreateJob,
+    AssociateTargetsWithJob,
+    CancelJob,
+    DeleteJob,
+    DescribeJob,
+    UpdateJob,
+    ListJobs,
+    GetJobDocument,
+    DescribeJobExecution,
+    CancelJobExecution,
+    DeleteJobExecution,
+    ListJobExecutionsForJob,
+    ListJobExecutionsForThing,
+    CreateJobTemplate,
+    DeleteJobTemplate,
+    DescribeJobTemplate,
+    ListJobTemplates,
+    DescribeManagedJobTemplate,
+    ListManagedJobTemplates,
+    CreateCommand,
+    DeleteCommand,
+    GetCommand,
+    UpdateCommand,
+    ListCommands,
+    GetCommandExecution,
+    DeleteCommandExecution,
+    ListCommandExecutions,
   },
   model,
 } as const satisfies ServiceDefinition;

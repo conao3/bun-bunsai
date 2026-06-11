@@ -10,7 +10,7 @@
     "dev:server": "bun --filter @bunsai/server dev",
     "dev:dashboard": "bun --filter @bunsai/dashboard dev",
     "build": "bun --filter '*' build",
-    "lint": "tsc -p apps/server && tsc -p apps/dashboard && tsc -p . && knip",
+    "lint": "tsc -p apps/server && tsc -p apps/dashboard && NODE_OPTIONS=--max-old-space-size=6144 tsc -p . && knip",
     "fmt": "prettier --write .",
     "fmt:check": "prettier --check .",
     "fetch-protocol-tests": "bun scripts/fetch-protocol-tests.ts"

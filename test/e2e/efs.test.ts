@@ -102,10 +102,9 @@ test("EFS file system, mount target and lifecycle roundtrip", async () => {
   const deletableId = deletable.FileSystemId as string;
   await client.send(new DeleteFileSystemCommand({ FileSystemId: deletableId }));
 
-  const afterDelete = await client.send(
-    new DescribeFileSystemsCommand({ FileSystemId: deletableId }),
-  );
-  expect(afterDelete.FileSystems ?? []).toHaveLength(0);
+  await expect(
+    client.send(new DescribeFileSystemsCommand({ FileSystemId: deletableId })),
+  ).rejects.toMatchObject({ name: "FileSystemNotFound" });
   void mountTargetId;
 });
 

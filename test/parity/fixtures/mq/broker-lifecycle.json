@@ -1,0 +1,158 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-mq",
+  "clientName": "MqClient",
+  "steps": [
+    {
+      "command": "CreateBrokerCommand",
+      "input": {
+        "BrokerName": "parity-mq-broker",
+        "EngineType": "ACTIVEMQ",
+        "EngineVersion": "5.18.0",
+        "DeploymentMode": "SINGLE_INSTANCE",
+        "HostInstanceType": "mq.m5.large",
+        "PubliclyAccessible": false,
+        "Users": [
+          {
+            "Username": "admin",
+            "Password": "AdminPassword1!",
+            "ConsoleAccess": true
+          }
+        ]
+      },
+      "expected": {
+        "BrokerArn": "<ANY>",
+        "BrokerId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "broker",
+      "refs": {}
+    },
+    {
+      "command": "DescribeBrokerCommand",
+      "input": {
+        "BrokerId": "${broker.BrokerId}"
+      },
+      "expected": {
+        "BrokerName": "parity-mq-broker",
+        "BrokerState": "CREATION_IN_PROGRESS",
+        "EngineType": "ACTIVEMQ",
+        "EngineVersion": "5.18.0",
+        "DeploymentMode": "SINGLE_INSTANCE",
+        "HostInstanceType": "mq.m5.large",
+        "PubliclyAccessible": false
+      },
+      "ignorePaths": [
+        "$metadata",
+        "BrokerArn",
+        "BrokerId",
+        "BrokerInstances",
+        "Users",
+        "AuthenticationStrategy",
+        "AutoMinorVersionUpgrade",
+        "StorageType",
+        "SecurityGroups",
+        "SubnetIds",
+        "Tags",
+        "Created"
+      ],
+      "saveAs": null,
+      "refs": { "broker.BrokerId": "broker" }
+    },
+    {
+      "command": "DescribeBrokerCommand",
+      "input": {
+        "BrokerId": "${broker.BrokerId}"
+      },
+      "expected": {
+        "BrokerName": "parity-mq-broker",
+        "BrokerState": "RUNNING"
+      },
+      "ignorePaths": [
+        "$metadata",
+        "BrokerArn",
+        "BrokerId",
+        "BrokerInstances",
+        "Users",
+        "EngineType",
+        "EngineVersion",
+        "DeploymentMode",
+        "HostInstanceType",
+        "PubliclyAccessible",
+        "AuthenticationStrategy",
+        "AutoMinorVersionUpgrade",
+        "StorageType",
+        "SecurityGroups",
+        "SubnetIds",
+        "Tags",
+        "Created"
+      ],
+      "saveAs": null,
+      "refs": { "broker.BrokerId": "broker" }
+    },
+    {
+      "command": "ListBrokersCommand",
+      "input": {},
+      "expected": {},
+      "ignorePaths": ["$metadata", "BrokerSummaries", "NextToken"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteBrokerCommand",
+      "input": {
+        "BrokerId": "${broker.BrokerId}"
+      },
+      "expected": {
+        "BrokerId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "broker.BrokerId": "broker" }
+    },
+    {
+      "command": "DescribeBrokerCommand",
+      "input": {
+        "BrokerId": "${broker.BrokerId}"
+      },
+      "expected": {
+        "BrokerName": "parity-mq-broker",
+        "BrokerState": "DELETION_IN_PROGRESS"
+      },
+      "ignorePaths": [
+        "$metadata",
+        "BrokerArn",
+        "BrokerId",
+        "BrokerInstances",
+        "Users",
+        "EngineType",
+        "EngineVersion",
+        "DeploymentMode",
+        "HostInstanceType",
+        "PubliclyAccessible",
+        "AuthenticationStrategy",
+        "AutoMinorVersionUpgrade",
+        "StorageType",
+        "SecurityGroups",
+        "SubnetIds",
+        "Tags",
+        "Created"
+      ],
+      "saveAs": null,
+      "refs": { "broker.BrokerId": "broker" }
+    },
+    {
+      "command": "DescribeBrokerCommand",
+      "input": {
+        "BrokerId": "${broker.BrokerId}"
+      },
+      "expectedError": {
+        "name": "NotFoundException",
+        "statusCode": 404
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "broker.BrokerId": "broker" }
+    }
+  ]
+}

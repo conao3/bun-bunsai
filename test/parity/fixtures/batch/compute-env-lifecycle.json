@@ -1,0 +1,76 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-batch",
+  "clientName": "BatchClient",
+  "steps": [
+    {
+      "command": "CreateComputeEnvironmentCommand",
+      "input": {
+        "computeEnvironmentName": "parity-batch-ce",
+        "type": "UNMANAGED",
+        "state": "ENABLED"
+      },
+      "expected": {
+        "computeEnvironmentName": "parity-batch-ce",
+        "computeEnvironmentArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "ce",
+      "refs": {}
+    },
+    {
+      "command": "DescribeComputeEnvironmentsCommand",
+      "input": {
+        "computeEnvironments": ["parity-batch-ce"]
+      },
+      "expected": {
+        "computeEnvironments": [
+          {
+            "computeEnvironmentName": "parity-batch-ce",
+            "type": "UNMANAGED",
+            "state": "ENABLED",
+            "status": "VALID",
+            "statusReason": "ComputeEnvironment Healthy"
+          }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "nextToken",
+        "computeEnvironments[0].computeEnvironmentArn",
+        "computeEnvironments[0].ecsClusterArn",
+        "computeEnvironments[0].serviceRole",
+        "computeEnvironments[0].computeResources",
+        "computeEnvironments[0].tags",
+        "computeEnvironments[0].uuid",
+        "computeEnvironments[0].containerOrchestrationType"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UpdateComputeEnvironmentCommand",
+      "input": {
+        "computeEnvironment": "parity-batch-ce",
+        "state": "DISABLED"
+      },
+      "expected": {
+        "computeEnvironmentName": "parity-batch-ce",
+        "computeEnvironmentArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteComputeEnvironmentCommand",
+      "input": {
+        "computeEnvironment": "parity-batch-ce"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

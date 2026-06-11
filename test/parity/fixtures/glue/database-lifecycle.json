@@ -1,0 +1,126 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-glue",
+  "clientName": "GlueClient",
+  "steps": [
+    {
+      "command": "CreateDatabaseCommand",
+      "input": {
+        "DatabaseInput": {
+          "Name": "parity-glue-db",
+          "Description": "Parity test database"
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetDatabaseCommand",
+      "input": {
+        "Name": "parity-glue-db"
+      },
+      "expected": {
+        "Database": {
+          "Name": "parity-glue-db",
+          "Description": "Parity test database",
+          "CatalogId": "<ANY>",
+          "CreateTime": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "DatabaseName": "parity-glue-db",
+        "TableInput": {
+          "Name": "parity-glue-table",
+          "Description": "Parity test table",
+          "TableType": "EXTERNAL_TABLE",
+          "StorageDescriptor": {
+            "Columns": [
+              { "Name": "id", "Type": "int" },
+              { "Name": "name", "Type": "string" }
+            ],
+            "Location": "s3://parity-bucket/data/",
+            "InputFormat": "org.apache.hadoop.mapred.TextInputFormat",
+            "OutputFormat": "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
+            "SerdeInfo": {
+              "SerializationLibrary": "org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe"
+            }
+          }
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetTableCommand",
+      "input": {
+        "DatabaseName": "parity-glue-db",
+        "Name": "parity-glue-table"
+      },
+      "expected": {
+        "Table": {
+          "Name": "parity-glue-table",
+          "DatabaseName": "parity-glue-db",
+          "TableType": "EXTERNAL_TABLE"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Table.Description",
+        "Table.Owner",
+        "Table.CreateTime",
+        "Table.UpdateTime",
+        "Table.StorageDescriptor",
+        "Table.CatalogId",
+        "Table.IsRegisteredWithLakeFormation",
+        "Table.VersionId",
+        "Table.DatabaseName"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": {
+        "DatabaseName": "parity-glue-db",
+        "Name": "parity-glue-table"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteDatabaseCommand",
+      "input": {
+        "Name": "parity-glue-db"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetDatabaseCommand",
+      "input": {
+        "Name": "parity-glue-db"
+      },
+      "expectedError": {
+        "name": "EntityNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -1,0 +1,140 @@
+{
+  "provenance": "docs-derived",
+  "clientPackage": "@aws-sdk/client-appsync",
+  "clientName": "AppSyncClient",
+  "steps": [
+    {
+      "command": "CreateGraphqlApiCommand",
+      "input": {
+        "name": "parity-appsync-api",
+        "authenticationType": "API_KEY"
+      },
+      "expected": {
+        "graphqlApi": {
+          "name": "parity-appsync-api",
+          "authenticationType": "API_KEY",
+          "apiId": "<ANY>",
+          "arn": "<ANY>"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "graphqlApi.uris",
+        "graphqlApi.tags",
+        "graphqlApi.xrayEnabled",
+        "graphqlApi.visibility",
+        "graphqlApi.apiType",
+        "graphqlApi.owner",
+        "graphqlApi.logConfig",
+        "graphqlApi.userPoolConfig",
+        "graphqlApi.openIDConnectConfig",
+        "graphqlApi.lambdaAuthorizerConfig",
+        "graphqlApi.additionalAuthenticationProviders"
+      ],
+      "saveAs": "api",
+      "refs": {}
+    },
+    {
+      "command": "GetGraphqlApiCommand",
+      "input": {
+        "apiId": "${api.graphqlApi.apiId}"
+      },
+      "expected": {
+        "graphqlApi": {
+          "name": "parity-appsync-api",
+          "authenticationType": "API_KEY",
+          "apiId": "<ANY>",
+          "arn": "<ANY>"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "graphqlApi.uris",
+        "graphqlApi.tags",
+        "graphqlApi.xrayEnabled",
+        "graphqlApi.visibility",
+        "graphqlApi.apiType",
+        "graphqlApi.owner",
+        "graphqlApi.logConfig",
+        "graphqlApi.userPoolConfig",
+        "graphqlApi.openIDConnectConfig",
+        "graphqlApi.lambdaAuthorizerConfig",
+        "graphqlApi.additionalAuthenticationProviders"
+      ],
+      "saveAs": null,
+      "refs": { "api.graphqlApi.apiId": "api" }
+    },
+    {
+      "command": "CreateApiKeyCommand",
+      "input": {
+        "apiId": "${api.graphqlApi.apiId}"
+      },
+      "expected": {
+        "apiKey": {
+          "id": "<ANY>",
+          "expires": "<ANY>",
+          "deletes": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata", "apiKey.description"],
+      "saveAs": "key",
+      "refs": { "api.graphqlApi.apiId": "api" }
+    },
+    {
+      "command": "ListApiKeysCommand",
+      "input": {
+        "apiId": "${api.graphqlApi.apiId}"
+      },
+      "expected": {
+        "apiKeys": [
+          {
+            "id": "<ANY>",
+            "expires": "<ANY>"
+          }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "nextToken",
+        "apiKeys[0].description",
+        "apiKeys[0].deletes"
+      ],
+      "saveAs": null,
+      "refs": { "api.graphqlApi.apiId": "api" }
+    },
+    {
+      "command": "DeleteApiKeyCommand",
+      "input": {
+        "apiId": "${api.graphqlApi.apiId}",
+        "id": "${key.apiKey.id}"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "api.graphqlApi.apiId": "api", "key.apiKey.id": "key" }
+    },
+    {
+      "command": "DeleteGraphqlApiCommand",
+      "input": {
+        "apiId": "${api.graphqlApi.apiId}"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "api.graphqlApi.apiId": "api" }
+    },
+    {
+      "command": "GetGraphqlApiCommand",
+      "input": {
+        "apiId": "${api.graphqlApi.apiId}"
+      },
+      "expectedError": {
+        "name": "NotFoundException",
+        "statusCode": 404
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "api.graphqlApi.apiId": "api" }
+    }
+  ]
+}

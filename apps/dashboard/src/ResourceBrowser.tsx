@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ResourceEntry } from "./api";
 import { decideAutoSelect } from "./autoSelect";
 import type { Selection } from "./autoSelect";
+import { groupResourcesByPrefix } from "./groupByPrefix";
 import { useLocation } from "./router";
 import {
   CodeBlock,
@@ -373,22 +374,37 @@ function ResourceTree({
                 {items.length === 0 ? (
                   <div className="tree-empty">なし</div>
                 ) : (
-                  items.map((it) => (
-                    <button
-                      key={`${svc}/${it.key}`}
-                      className={`tree-node leaf${sel && sel.service === svc && sel.key === it.key ? " sel" : ""}`}
-                      onClick={() => setSel({ service: svc, key: it.key })}
-                      aria-selected={
-                        sel?.service === svc && sel?.key === it.key
-                      }
-                    >
-                      <span
-                        className="leaf-glyph"
-                        style={{ background: s.color }}
-                      />
-                      <span className="leaf-name mono">{it.key}</span>
-                    </button>
-                  ))
+                  (() => {
+                    const groups = groupResourcesByPrefix(
+                      items,
+                      s.resourceLabel,
+                    );
+                    const renderLeaf = (it: ResourceEntry) => (
+                      <button
+                        key={`${svc}/${it.key}`}
+                        className={`tree-node leaf${sel && sel.service === svc && sel.key === it.key ? " sel" : ""}`}
+                        onClick={() => setSel({ service: svc, key: it.key })}
+                        aria-selected={
+                          sel?.service === svc && sel?.key === it.key
+                        }
+                      >
+                        <span
+                          className="leaf-glyph"
+                          style={{ background: s.color }}
+                        />
+                        <span className="leaf-name mono">{it.key}</span>
+                      </button>
+                    );
+                    if (groups.length === 1) {
+                      return groups[0].items.map(renderLeaf);
+                    }
+                    return groups.map((group) => (
+                      <div key={group.prefix} className="tree-prefix-group">
+                        <div className="tree-prefix-header">{group.label}</div>
+                        {group.items.map(renderLeaf)}
+                      </div>
+                    ));
+                  })()
                 )}
               </div>
             )}

@@ -1509,6 +1509,16 @@ body {
   padding: 4px 10px;
   font-style: italic;
 }
+.tree-prefix-group {
+  margin-top: 4px;
+}
+.tree-prefix-header {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted-soft);
+  padding: 4px 8px 2px;
+  letter-spacing: 0.04em;
+}
 
 .res-main {
   min-width: 0;

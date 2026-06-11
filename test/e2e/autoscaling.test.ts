@@ -503,7 +503,10 @@ test("AS-2: LaunchTemplate round-trip and no-launch-source ValidationError", asy
   await asc.send(
     new CreateAutoScalingGroupCommand({
       AutoScalingGroupName: asgName,
-      LaunchTemplate: { LaunchTemplateId: "lt-0123456789abcdef0", Version: "$Latest" },
+      LaunchTemplate: {
+        LaunchTemplateId: "lt-0123456789abcdef0",
+        Version: "$Latest",
+      },
       MinSize: 0,
       MaxSize: 2,
       DesiredCapacity: 0,
@@ -515,15 +518,20 @@ test("AS-2: LaunchTemplate round-trip and no-launch-source ValidationError", asy
     new DescribeAutoScalingGroupsCommand({ AutoScalingGroupNames: [asgName] }),
   );
   expect(described.AutoScalingGroups).toHaveLength(1);
-  expect(described.AutoScalingGroups![0]!.LaunchTemplate?.LaunchTemplateId).toBe(
-    "lt-0123456789abcdef0",
+  expect(
+    described.AutoScalingGroups![0]!.LaunchTemplate?.LaunchTemplateId,
+  ).toBe("lt-0123456789abcdef0");
+  expect(described.AutoScalingGroups![0]!.LaunchTemplate?.Version).toBe(
+    "$Latest",
   );
-  expect(described.AutoScalingGroups![0]!.LaunchTemplate?.Version).toBe("$Latest");
 
   await asc.send(
     new UpdateAutoScalingGroupCommand({
       AutoScalingGroupName: asgName,
-      LaunchTemplate: { LaunchTemplateId: "lt-0123456789abcdef0", Version: "2" },
+      LaunchTemplate: {
+        LaunchTemplateId: "lt-0123456789abcdef0",
+        Version: "2",
+      },
     }),
   );
   const afterUpdate = await asc.send(
@@ -532,7 +540,10 @@ test("AS-2: LaunchTemplate round-trip and no-launch-source ValidationError", asy
   expect(afterUpdate.AutoScalingGroups![0]!.LaunchTemplate?.Version).toBe("2");
 
   await asc.send(
-    new DeleteAutoScalingGroupCommand({ AutoScalingGroupName: asgName, ForceDelete: true }),
+    new DeleteAutoScalingGroupCommand({
+      AutoScalingGroupName: asgName,
+      ForceDelete: true,
+    }),
   );
 });
 
@@ -597,7 +608,10 @@ test("AS-3: bounds validation and DesiredCapacity clamp", async () => {
   expect(afterShrink.AutoScalingGroups![0]!.DesiredCapacity).toBe(1);
 
   await asc.send(
-    new DeleteAutoScalingGroupCommand({ AutoScalingGroupName: asgName, ForceDelete: true }),
+    new DeleteAutoScalingGroupCommand({
+      AutoScalingGroupName: asgName,
+      ForceDelete: true,
+    }),
   );
   await asc.send(
     new DeleteLaunchConfigurationCommand({ LaunchConfigurationName: lcName }),
@@ -649,7 +663,10 @@ test("AS-4: AttachInstances increments DesiredCapacity and enforces MaxSize", as
   ).rejects.toThrow();
 
   await asc.send(
-    new DeleteAutoScalingGroupCommand({ AutoScalingGroupName: asgName, ForceDelete: true }),
+    new DeleteAutoScalingGroupCommand({
+      AutoScalingGroupName: asgName,
+      ForceDelete: true,
+    }),
   );
   await asc.send(
     new DeleteLaunchConfigurationCommand({ LaunchConfigurationName: lcName }),

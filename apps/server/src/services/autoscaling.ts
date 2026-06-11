@@ -61,7 +61,13 @@ type StoredAutoScalingGroup = {
   AutoScalingGroupName: string;
   AutoScalingGroupARN: string;
   LaunchConfigurationName: string | undefined;
-  LaunchTemplate: { LaunchTemplateId?: string; LaunchTemplateName?: string; Version?: string } | undefined;
+  LaunchTemplate:
+    | {
+        LaunchTemplateId?: string;
+        LaunchTemplateName?: string;
+        Version?: string;
+      }
+    | undefined;
   MixedInstancesPolicy: Record<string, unknown> | undefined;
   InstanceId: string | undefined;
   MinSize: number;
@@ -492,17 +498,28 @@ const CreateAutoScalingGroup: OperationHandler = (input, ctx) => {
   }
 
   const launchTemplate =
-    typeof input["LaunchTemplate"] === "object" && input["LaunchTemplate"] !== null
-      ? (input["LaunchTemplate"] as { LaunchTemplateId?: string; LaunchTemplateName?: string; Version?: string })
+    typeof input["LaunchTemplate"] === "object" &&
+    input["LaunchTemplate"] !== null
+      ? (input["LaunchTemplate"] as {
+          LaunchTemplateId?: string;
+          LaunchTemplateName?: string;
+          Version?: string;
+        })
       : undefined;
   const mixedInstancesPolicy =
-    typeof input["MixedInstancesPolicy"] === "object" && input["MixedInstancesPolicy"] !== null
+    typeof input["MixedInstancesPolicy"] === "object" &&
+    input["MixedInstancesPolicy"] !== null
       ? (input["MixedInstancesPolicy"] as Record<string, unknown>)
       : undefined;
   const instanceId =
     typeof input["InstanceId"] === "string" ? input["InstanceId"] : undefined;
 
-  if (lcName === undefined && launchTemplate === undefined && mixedInstancesPolicy === undefined && instanceId === undefined) {
+  if (
+    lcName === undefined &&
+    launchTemplate === undefined &&
+    mixedInstancesPolicy === undefined &&
+    instanceId === undefined
+  ) {
     throw awsError(
       "ValidationError",
       "Either LaunchConfigurationName, LaunchTemplate, MixedInstancesPolicy, or InstanceId must be provided.",
@@ -686,11 +703,24 @@ const UpdateAutoScalingGroup: OperationHandler = (input, ctx) => {
     requireLc(ctx, input["LaunchConfigurationName"]);
     asg.LaunchConfigurationName = input["LaunchConfigurationName"];
   }
-  if (typeof input["LaunchTemplate"] === "object" && input["LaunchTemplate"] !== null) {
-    asg.LaunchTemplate = input["LaunchTemplate"] as { LaunchTemplateId?: string; LaunchTemplateName?: string; Version?: string };
+  if (
+    typeof input["LaunchTemplate"] === "object" &&
+    input["LaunchTemplate"] !== null
+  ) {
+    asg.LaunchTemplate = input["LaunchTemplate"] as {
+      LaunchTemplateId?: string;
+      LaunchTemplateName?: string;
+      Version?: string;
+    };
   }
-  if (typeof input["MixedInstancesPolicy"] === "object" && input["MixedInstancesPolicy"] !== null) {
-    asg.MixedInstancesPolicy = input["MixedInstancesPolicy"] as Record<string, unknown>;
+  if (
+    typeof input["MixedInstancesPolicy"] === "object" &&
+    input["MixedInstancesPolicy"] !== null
+  ) {
+    asg.MixedInstancesPolicy = input["MixedInstancesPolicy"] as Record<
+      string,
+      unknown
+    >;
   }
   if (typeof input["MinSize"] === "number") asg.MinSize = input["MinSize"];
   if (typeof input["MaxSize"] === "number") asg.MaxSize = input["MaxSize"];
@@ -714,7 +744,10 @@ const UpdateAutoScalingGroup: OperationHandler = (input, ctx) => {
     }
     asg.DesiredCapacity = desired;
   } else {
-    asg.DesiredCapacity = Math.min(asg.MaxSize, Math.max(asg.MinSize, asg.DesiredCapacity));
+    asg.DesiredCapacity = Math.min(
+      asg.MaxSize,
+      Math.max(asg.MinSize, asg.DesiredCapacity),
+    );
   }
 
   if (typeof input["DefaultCooldown"] === "number") {
@@ -847,7 +880,11 @@ const DescribeAutoScalingInstances: OperationHandler = (input, ctx) => {
 const TerminateInstanceInAutoScalingGroup: OperationHandler = (input, ctx) => {
   const instanceId = requireString(input, "InstanceId");
   if (typeof input["ShouldDecrementDesiredCapacity"] !== "boolean") {
-    throw awsError("ValidationError", "ShouldDecrementDesiredCapacity is required.", 400);
+    throw awsError(
+      "ValidationError",
+      "ShouldDecrementDesiredCapacity is required.",
+      400,
+    );
   }
   const shouldDecrement = input["ShouldDecrementDesiredCapacity"];
 
@@ -922,7 +959,10 @@ const AttachInstances: OperationHandler = (input, ctx) => {
     ctx.store.set(instanceKey(id), instance);
     asg.InstanceIds.push(id);
   }
-  asg.DesiredCapacity = Math.min(asg.MaxSize, asg.DesiredCapacity + newIds.length);
+  asg.DesiredCapacity = Math.min(
+    asg.MaxSize,
+    asg.DesiredCapacity + newIds.length,
+  );
   ctx.store.set(asgKey(asgName), asg);
   return {};
 };
@@ -934,11 +974,17 @@ const DetachInstances: OperationHandler = (input, ctx) => {
     ? (input["InstanceIds"] as string[])
     : [];
   if (typeof input["ShouldDecrementDesiredCapacity"] !== "boolean") {
-    throw awsError("ValidationError", "ShouldDecrementDesiredCapacity is required.", 400);
+    throw awsError(
+      "ValidationError",
+      "ShouldDecrementDesiredCapacity is required.",
+      400,
+    );
   }
   const shouldDecrement = input["ShouldDecrementDesiredCapacity"];
 
-  const detachCount = instanceIds.filter((id) => asg.InstanceIds.includes(id)).length;
+  const detachCount = instanceIds.filter((id) =>
+    asg.InstanceIds.includes(id),
+  ).length;
   if (shouldDecrement && asg.DesiredCapacity - detachCount < asg.MinSize) {
     throw awsError(
       "ValidationError",
@@ -1121,7 +1167,9 @@ const CreateOrUpdateTags: OperationHandler = (input, ctx) => {
     const key = typeof tag["Key"] === "string" ? tag["Key"] : undefined;
     if (resourceId === undefined || key === undefined) continue;
 
-    if (ctx.store.get<StoredAutoScalingGroup>(asgKey(resourceId)) === undefined) {
+    if (
+      ctx.store.get<StoredAutoScalingGroup>(asgKey(resourceId)) === undefined
+    ) {
       throw awsError(
         "ValidationError",
         `Auto Scaling group '${resourceId}' does not exist.`,
@@ -1227,7 +1275,9 @@ const DeleteTags: OperationHandler = (input, ctx) => {
     const key = typeof tag["Key"] === "string" ? tag["Key"] : undefined;
     if (resourceId === undefined || key === undefined) continue;
 
-    if (ctx.store.get<StoredAutoScalingGroup>(asgKey(resourceId)) === undefined) {
+    if (
+      ctx.store.get<StoredAutoScalingGroup>(asgKey(resourceId)) === undefined
+    ) {
       throw awsError(
         "ValidationError",
         `Auto Scaling group '${resourceId}' does not exist.`,

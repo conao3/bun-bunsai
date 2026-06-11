@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { startApp } from "./harness.ts";
 import {
+  AssociateCertificateCommand,
   CancelJobCommand,
   CreateJobCommand,
   CreateJobTemplateCommand,
@@ -10,8 +11,10 @@ import {
   DeletePresetCommand,
   DeleteQueueCommand,
   DescribeEndpointsCommand,
+  DisassociateCertificateCommand,
   GetJobCommand,
   GetJobTemplateCommand,
+  GetJobsQueryResultsCommand,
   GetPresetCommand,
   GetQueueCommand,
   ListJobTemplatesCommand,
@@ -20,6 +23,8 @@ import {
   ListQueuesCommand,
   ListTagsForResourceCommand,
   MediaConvertClient,
+  SearchJobsCommand,
+  StartJobsQueryCommand,
   TagResourceCommand,
   UntagResourceCommand,
   UpdateJobTemplateCommand,
@@ -274,4 +279,127 @@ test("MediaConvert Tags round-trip", async () => {
   expect(tags2.ResourceTags?.Tags?.team).toBe("bunsai");
 
   await client.send(new DeleteQueueCommand({ Name: name }));
+});
+
+test("MC-01 SearchJobs: Status/InputFile filters", async () => {
+  const client = mc();
+  const fileInput = `s3://my-bucket/mc01-${Date.now()}/input.mp4`;
+
+  const created = await client.send(
+    new CreateJobCommand({
+      Role: "arn:aws:iam::123456789012:role/MediaConvertRole",
+      Settings: {
+        Inputs: [{ FileInput: fileInput }],
+        OutputGroups: [],
+      },
+    }),
+  );
+  const id = created.Job!.Id!;
+
+  const byStatus = await client.send(
+    new SearchJobsCommand({ Status: "SUBMITTED" }),
+  );
+  expect(byStatus.Jobs?.some((j: { Id?: string }) => j.Id === id)).toBe(true);
+
+  const byInputFile = await client.send(
+    new SearchJobsCommand({ InputFile: "mc01-" }),
+  );
+  expect(byInputFile.Jobs?.some((j: { Id?: string }) => j.Id === id)).toBe(
+    true,
+  );
+
+  const noMatch = await client.send(
+    new SearchJobsCommand({ Status: "COMPLETE" }),
+  );
+  expect(noMatch.Jobs?.some((j: { Id?: string }) => j.Id === id)).toBe(false);
+});
+
+test("MC-02 StartJobsQuery/GetJobsQueryResults: Id round-trip and NotFoundException", async () => {
+  const client = mc();
+
+  const created = await client.send(
+    new CreateJobCommand({
+      Role: "arn:aws:iam::123456789012:role/MediaConvertRole",
+      Settings: { Inputs: [], OutputGroups: [] },
+    }),
+  );
+  const jobId = created.Job!.Id!;
+
+  const started = await client.send(new StartJobsQueryCommand({}));
+  expect(started.Id).toBeDefined();
+  expect(typeof started.Id).toBe("string");
+  expect((started.Id as string).length).toBeGreaterThan(0);
+
+  const results = await client.send(
+    new GetJobsQueryResultsCommand({ Id: started.Id }),
+  );
+  expect(results.Status).toBe("COMPLETE");
+  expect(results.Jobs?.some((j: { Id?: string }) => j.Id === jobId)).toBe(true);
+
+  await expect(
+    client.send(new GetJobsQueryResultsCommand({ Id: "nope" })),
+  ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
+});
+
+test("MC-03 Certificate ops: Associate/Disassociate state", async () => {
+  const client = mc();
+  const arn = "arn:aws:acm:us-east-1:123456789012:certificate/mc03-test";
+
+  await expect(
+    client.send(new DisassociateCertificateCommand({ Arn: arn })),
+  ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
+
+  await client.send(new AssociateCertificateCommand({ Arn: arn }));
+
+  await client.send(new DisassociateCertificateCommand({ Arn: arn }));
+
+  await expect(
+    client.send(new DisassociateCertificateCommand({ Arn: arn })),
+  ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
+});
+
+test("MC-04 ListJobs: Status filter", async () => {
+  const client = mc();
+
+  const created = await client.send(
+    new CreateJobCommand({
+      Role: "arn:aws:iam::123456789012:role/MediaConvertRole",
+      Settings: { Inputs: [], OutputGroups: [] },
+    }),
+  );
+  const id = created.Job!.Id!;
+
+  const submitted = await client.send(
+    new ListJobsCommand({ Status: "SUBMITTED" }),
+  );
+  expect(submitted.Jobs?.some((j: { Id?: string }) => j.Id === id)).toBe(true);
+
+  const complete = await client.send(
+    new ListJobsCommand({ Status: "COMPLETE" }),
+  );
+  expect(complete.Jobs?.some((j: { Id?: string }) => j.Id === id)).toBe(false);
+});
+
+test("MC-07 CreateJob: nonexistent Queue throws NotFoundException", async () => {
+  const client = mc();
+
+  await expect(
+    client.send(
+      new CreateJobCommand({
+        Role: "arn:aws:iam::123456789012:role/MediaConvertRole",
+        Queue: "nonexistent-queue-mc07",
+        Settings: { Inputs: [], OutputGroups: [] },
+      }),
+    ),
+  ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
+});
+
+test("MC-08 Tags: tag ops on nonexistent ARN throw NotFoundException", async () => {
+  const client = mc();
+  const fakeArn =
+    "arn:aws:mediaconvert:us-east-1:123456789012:queues/nonexistent-mc08";
+
+  await expect(
+    client.send(new ListTagsForResourceCommand({ Arn: fakeArn })),
+  ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
 });

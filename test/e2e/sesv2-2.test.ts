@@ -53,23 +53,44 @@ test("contact list lifecycle", async () => {
   await c.send(
     new CreateContactListCommand({
       ContactListName: "mylist",
-      Topics: [{ TopicName: "news", DisplayName: "News", DefaultSubscriptionStatus: "OPT_IN" }],
+      Topics: [
+        {
+          TopicName: "news",
+          DisplayName: "News",
+          DefaultSubscriptionStatus: "OPT_IN",
+        },
+      ],
     }),
   );
-  const got = await c.send(new GetContactListCommand({ ContactListName: "mylist" }));
+  const got = await c.send(
+    new GetContactListCommand({ ContactListName: "mylist" }),
+  );
   expect(got.ContactListName).toBe("mylist");
   expect(got.Topics?.length).toBe(1);
 
-  await c.send(new UpdateContactListCommand({ ContactListName: "mylist", Description: "updated" }));
+  await c.send(
+    new UpdateContactListCommand({
+      ContactListName: "mylist",
+      Description: "updated",
+    }),
+  );
 
   const list = await c.send(new ListContactListsCommand({}));
-  expect(list.ContactLists?.some((l) => l.ContactListName === "mylist")).toBe(true);
+  expect(list.ContactLists?.some((l) => l.ContactListName === "mylist")).toBe(
+    true,
+  );
 
   await c.send(
-    new CreateContactCommand({ ContactListName: "mylist", EmailAddress: "user@example.com" }),
+    new CreateContactCommand({
+      ContactListName: "mylist",
+      EmailAddress: "user@example.com",
+    }),
   );
   const gotContact = await c.send(
-    new GetContactCommand({ ContactListName: "mylist", EmailAddress: "user@example.com" }),
+    new GetContactCommand({
+      ContactListName: "mylist",
+      EmailAddress: "user@example.com",
+    }),
   );
   expect(gotContact.EmailAddress).toBe("user@example.com");
 
@@ -80,15 +101,22 @@ test("contact list lifecycle", async () => {
       UnsubscribeAll: true,
     }),
   );
-  const contacts = await c.send(new ListContactsCommand({ ContactListName: "mylist" }));
+  const contacts = await c.send(
+    new ListContactsCommand({ ContactListName: "mylist" }),
+  );
   expect(contacts.Contacts?.length).toBe(1);
 
   await c.send(
-    new DeleteContactCommand({ ContactListName: "mylist", EmailAddress: "user@example.com" }),
+    new DeleteContactCommand({
+      ContactListName: "mylist",
+      EmailAddress: "user@example.com",
+    }),
   );
   await c.send(new DeleteContactListCommand({ ContactListName: "mylist" }));
   const list2 = await c.send(new ListContactListsCommand({}));
-  expect(list2.ContactLists?.some((l) => l.ContactListName === "mylist")).toBe(false);
+  expect(list2.ContactLists?.some((l) => l.ContactListName === "mylist")).toBe(
+    false,
+  );
 });
 
 test("custom verification email template lifecycle", async () => {
@@ -118,8 +146,14 @@ test("custom verification email template lifecycle", async () => {
       FailureRedirectionURL: "https://example.com/fail",
     }),
   );
-  const list = await c.send(new ListCustomVerificationEmailTemplatesCommand({}));
-  expect(list.CustomVerificationEmailTemplates?.some((t) => t.TemplateName === "cvt1")).toBe(true);
+  const list = await c.send(
+    new ListCustomVerificationEmailTemplatesCommand({}),
+  );
+  expect(
+    list.CustomVerificationEmailTemplates?.some(
+      (t) => t.TemplateName === "cvt1",
+    ),
+  ).toBe(true);
 
   const sendRes = await c.send(
     new SendCustomVerificationEmailCommand({
@@ -129,14 +163,26 @@ test("custom verification email template lifecycle", async () => {
   );
   expect(sendRes.MessageId).toBeDefined();
 
-  await c.send(new DeleteCustomVerificationEmailTemplateCommand({ TemplateName: "cvt1" }));
-  const list2 = await c.send(new ListCustomVerificationEmailTemplatesCommand({}));
-  expect(list2.CustomVerificationEmailTemplates?.some((t) => t.TemplateName === "cvt1")).toBe(false);
+  await c.send(
+    new DeleteCustomVerificationEmailTemplateCommand({ TemplateName: "cvt1" }),
+  );
+  const list2 = await c.send(
+    new ListCustomVerificationEmailTemplatesCommand({}),
+  );
+  expect(
+    list2.CustomVerificationEmailTemplates?.some(
+      (t) => t.TemplateName === "cvt1",
+    ),
+  ).toBe(false);
 });
 
 test("email identity policy lifecycle", async () => {
   const c = sesv2();
-  await c.send(new CreateEmailIdentityCommand({ EmailIdentity: "policy-test@example.com" }));
+  await c.send(
+    new CreateEmailIdentityCommand({
+      EmailIdentity: "policy-test@example.com",
+    }),
+  );
   await c.send(
     new CreateEmailIdentityPolicyCommand({
       EmailIdentity: "policy-test@example.com",
@@ -145,7 +191,9 @@ test("email identity policy lifecycle", async () => {
     }),
   );
   const got = await c.send(
-    new GetEmailIdentityPoliciesCommand({ EmailIdentity: "policy-test@example.com" }),
+    new GetEmailIdentityPoliciesCommand({
+      EmailIdentity: "policy-test@example.com",
+    }),
   );
   expect(got.Policies?.pol1).toBeDefined();
 
@@ -153,7 +201,10 @@ test("email identity policy lifecycle", async () => {
     new UpdateEmailIdentityPolicyCommand({
       EmailIdentity: "policy-test@example.com",
       PolicyName: "pol1",
-      Policy: JSON.stringify({ Version: "2012-10-17", Statement: [{ Effect: "Allow" }] }),
+      Policy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{ Effect: "Allow" }],
+      }),
     }),
   );
   await c.send(
@@ -163,7 +214,9 @@ test("email identity policy lifecycle", async () => {
     }),
   );
   const got2 = await c.send(
-    new GetEmailIdentityPoliciesCommand({ EmailIdentity: "policy-test@example.com" }),
+    new GetEmailIdentityPoliciesCommand({
+      EmailIdentity: "policy-test@example.com",
+    }),
   );
   expect(Object.keys(got2.Policies ?? {}).length).toBe(0);
 });
@@ -187,7 +240,9 @@ test("export job lifecycle", async () => {
   expect(list.ExportJobs?.some((j) => j.JobId === created.JobId)).toBe(true);
 
   await c.send(new CancelExportJobCommand({ JobId: created.JobId! }));
-  const cancelled = await c.send(new GetExportJobCommand({ JobId: created.JobId! }));
+  const cancelled = await c.send(
+    new GetExportJobCommand({ JobId: created.JobId! }),
+  );
   expect(cancelled.JobStatus).toBe("CANCELLED");
 });
 
@@ -196,7 +251,12 @@ test("import job lifecycle", async () => {
   const created = await c.send(
     new CreateImportJobCommand({
       ImportDataSource: { S3Url: "s3://bucket/key", DataFormat: "CSV" },
-      ImportDestination: { ContactListDestination: { ContactListName: "n/a", ContactListImportAction: "PUT" } },
+      ImportDestination: {
+        ContactListDestination: {
+          ContactListName: "n/a",
+          ContactListImportAction: "PUT",
+        },
+      },
     }),
   );
   expect(created.JobId).toBeDefined();
@@ -213,7 +273,9 @@ test("deliverability test report lifecycle", async () => {
   const created = await c.send(
     new CreateDeliverabilityTestReportCommand({
       FromEmailAddress: "from@example.com",
-      Content: { Simple: { Subject: { Data: "test" }, Body: { Text: { Data: "body" } } } },
+      Content: {
+        Simple: { Subject: { Data: "test" }, Body: { Text: { Data: "body" } } },
+      },
     }),
   );
   expect(created.ReportId).toBeDefined();
@@ -225,17 +287,25 @@ test("deliverability test report lifecycle", async () => {
 
   const list = await c.send(new ListDeliverabilityTestReportsCommand({}));
   expect(
-    list.DeliverabilityTestReports?.some((r) => r.ReportId === created.ReportId),
+    list.DeliverabilityTestReports?.some(
+      (r) => r.ReportId === created.ReportId,
+    ),
   ).toBe(true);
 });
 
 test("SendBulkEmail and TestRenderEmailTemplate", async () => {
   const c = sesv2();
-  await c.send(new CreateEmailIdentityCommand({ EmailIdentity: "bulk-from@example.com" }));
+  await c.send(
+    new CreateEmailIdentityCommand({ EmailIdentity: "bulk-from@example.com" }),
+  );
   await c.send(
     new CreateEmailTemplateCommand({
       TemplateName: "bulk-tmpl",
-      TemplateContent: { Subject: "Hello {{name}}", Html: "<p>Hi</p>", Text: "Hi" },
+      TemplateContent: {
+        Subject: "Hello {{name}}",
+        Html: "<p>Hi</p>",
+        Text: "Hi",
+      },
     }),
   );
 
@@ -262,17 +332,19 @@ test("SendBulkEmail and TestRenderEmailTemplate", async () => {
 
 test("BatchGetMetricData and GetMessageInsights", async () => {
   const c = sesv2();
-  const batch = await c.send(
-    new BatchGetMetricDataCommand({ Queries: [] }),
-  );
+  const batch = await c.send(new BatchGetMetricDataCommand({ Queries: [] }));
   expect(batch.Results).toBeDefined();
 
-  await c.send(new CreateEmailIdentityCommand({ EmailIdentity: "insights@example.com" }));
+  await c.send(
+    new CreateEmailIdentityCommand({ EmailIdentity: "insights@example.com" }),
+  );
   const sent = await c.send(
     new SendEmailCommand({
       FromEmailAddress: "insights@example.com",
       Destination: { ToAddresses: ["to@example.com"] },
-      Content: { Simple: { Subject: { Data: "hi" }, Body: { Text: { Data: "body" } } } },
+      Content: {
+        Simple: { Subject: { Data: "hi" }, Body: { Text: { Data: "body" } } },
+      },
     }),
   );
   const insights = await c.send(

@@ -156,8 +156,7 @@ const tagsKey = (arn: string): string => `v2tags/${arn}`;
 const contactListKey = (name: string): string => `v2contactlist/${name}`;
 const contactKey = (listName: string, email: string): string =>
   `v2contact/${listName}/${email}`;
-const customVerifTemplateKey = (name: string): string =>
-  `v2cvtemplate/${name}`;
+const customVerifTemplateKey = (name: string): string => `v2cvtemplate/${name}`;
 const identityPoliciesKey = (identity: string): string =>
   `v2identitypolicies/${identity}`;
 const exportJobKey = (jobId: string): string => `v2exportjob/${jobId}`;
@@ -926,7 +925,11 @@ const UntagResource: OperationHandler = (input, _ctx, req) => {
 const CreateContactList: OperationHandler = (input, ctx) => {
   const name = input["ContactListName"] as string;
   if (ctx.store.get(contactListKey(name)) !== undefined) {
-    throw awsError("AlreadyExistsException", `Contact list ${name} already exists.`, 400);
+    throw awsError(
+      "AlreadyExistsException",
+      `Contact list ${name} already exists.`,
+      400,
+    );
   }
   const now = new Date().toISOString();
   const stored: StoredContactList = {
@@ -1002,7 +1005,11 @@ const CreateContact: OperationHandler = (input, ctx) => {
   requireContactList(ctx, listName);
   const email = input["EmailAddress"] as string;
   if (ctx.store.get(contactKey(listName, email)) !== undefined) {
-    throw awsError("AlreadyExistsException", `Contact ${email} already exists.`, 400);
+    throw awsError(
+      "AlreadyExistsException",
+      `Contact ${email} already exists.`,
+      400,
+    );
   }
   const now = new Date().toISOString();
   const stored: StoredContact = {
@@ -1086,10 +1093,17 @@ const ListContacts: OperationHandler = (input, ctx) => {
   return { Contacts: contacts };
 };
 
-const CreateCustomVerificationEmailTemplate: OperationHandler = (input, ctx) => {
+const CreateCustomVerificationEmailTemplate: OperationHandler = (
+  input,
+  ctx,
+) => {
   const name = input["TemplateName"] as string;
   if (ctx.store.get(customVerifTemplateKey(name)) !== undefined) {
-    throw awsError("AlreadyExistsException", `Template ${name} already exists.`, 400);
+    throw awsError(
+      "AlreadyExistsException",
+      `Template ${name} already exists.`,
+      400,
+    );
   }
   const stored: StoredCustomVerificationEmailTemplate = {
     TemplateName: name,
@@ -1109,14 +1123,20 @@ const GetCustomVerificationEmailTemplate: OperationHandler = (input, ctx) => {
   return { ...stored };
 };
 
-const DeleteCustomVerificationEmailTemplate: OperationHandler = (input, ctx) => {
+const DeleteCustomVerificationEmailTemplate: OperationHandler = (
+  input,
+  ctx,
+) => {
   const name = input["TemplateName"] as string;
   requireCustomVerifTemplate(ctx, name);
   ctx.store.delete(customVerifTemplateKey(name));
   return {};
 };
 
-const UpdateCustomVerificationEmailTemplate: OperationHandler = (input, ctx) => {
+const UpdateCustomVerificationEmailTemplate: OperationHandler = (
+  input,
+  ctx,
+) => {
   const name = input["TemplateName"] as string;
   const stored = requireCustomVerifTemplate(ctx, name);
   const updated: StoredCustomVerificationEmailTemplate = {
@@ -1125,9 +1145,11 @@ const UpdateCustomVerificationEmailTemplate: OperationHandler = (input, ctx) => 
       (input["FromEmailAddress"] as string | undefined) ??
       stored.FromEmailAddress,
     TemplateSubject:
-      (input["TemplateSubject"] as string | undefined) ?? stored.TemplateSubject,
+      (input["TemplateSubject"] as string | undefined) ??
+      stored.TemplateSubject,
     TemplateContent:
-      (input["TemplateContent"] as string | undefined) ?? stored.TemplateContent,
+      (input["TemplateContent"] as string | undefined) ??
+      stored.TemplateContent,
     SuccessRedirectionURL:
       (input["SuccessRedirectionURL"] as string | undefined) ??
       stored.SuccessRedirectionURL,
@@ -1139,7 +1161,10 @@ const UpdateCustomVerificationEmailTemplate: OperationHandler = (input, ctx) => 
   return {};
 };
 
-const ListCustomVerificationEmailTemplates: OperationHandler = (_input, ctx) => {
+const ListCustomVerificationEmailTemplates: OperationHandler = (
+  _input,
+  ctx,
+) => {
   const templates = ctx.store
     .list()
     .filter((e) => e.key.startsWith("v2cvtemplate/"))
@@ -1174,7 +1199,11 @@ const CreateEmailIdentityPolicy: OperationHandler = (input, ctx) => {
   const policies =
     ctx.store.get<Record<string, string>>(identityPoliciesKey(identity)) ?? {};
   if (policies[policyName] !== undefined) {
-    throw awsError("AlreadyExistsException", `Policy ${policyName} already exists.`, 400);
+    throw awsError(
+      "AlreadyExistsException",
+      `Policy ${policyName} already exists.`,
+      400,
+    );
   }
   policies[policyName] = input["Policy"] as string;
   ctx.store.set(identityPoliciesKey(identity), policies);
@@ -1356,7 +1385,13 @@ const GetDeliverabilityTestReport: OperationHandler = (input, ctx) => {
       CreateDate: stored.CreateDate,
       DeliverabilityTestStatus: stored.DeliverabilityTestStatus,
     },
-    OverallPlacement: { InboxPercentage: 1.0, SpamPercentage: 0.0, MissingPercentage: 0.0, SpfPercentage: 1.0, DkimPercentage: 1.0 },
+    OverallPlacement: {
+      InboxPercentage: 1.0,
+      SpamPercentage: 0.0,
+      MissingPercentage: 0.0,
+      SpfPercentage: 1.0,
+      DkimPercentage: 1.0,
+    },
     IspPlacements: [],
     Message: stored.Subject,
     Tags: [],
@@ -1417,7 +1452,11 @@ const TestRenderEmailTemplate: OperationHandler = (input, ctx) => {
   const text = stored.TemplateContent.Text ?? "";
   const subject = stored.TemplateContent.Subject ?? "";
   return {
-    RenderedTemplate: JSON.stringify({ Subject: subject, Html: html, Text: text }),
+    RenderedTemplate: JSON.stringify({
+      Subject: subject,
+      Html: html,
+      Text: text,
+    }),
   };
 };
 
@@ -1588,10 +1627,7 @@ const sesv2: ServiceDefinition = {
       }
     }
 
-    if (
-      parts[2] === "outbound-custom-verification-emails" &&
-      m === "POST"
-    ) {
+    if (parts[2] === "outbound-custom-verification-emails" && m === "POST") {
       return "SendCustomVerificationEmail";
     }
 

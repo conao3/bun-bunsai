@@ -58,7 +58,7 @@ test("IoT job lifecycle", async () => {
 
   const described = await client.send(new DescribeJobCommand({ jobId }));
   expect(described.job?.jobId).toBe(jobId);
-  expect(described.job?.status).toBe("IN_PROGRESS");
+  expect(described.job?.status as string).toBe("IN_PROGRESS");
   expect(described.job?.targets).toContain(thingArn);
 
   const listed = await client.send(new ListJobsCommand({}));
@@ -90,7 +90,7 @@ test("IoT job lifecycle", async () => {
     new DescribeJobExecutionCommand({ jobId, thingName }),
   );
   expect(exec.execution?.jobId).toBe(jobId);
-  expect(exec.execution?.status).toBe("QUEUED");
+  expect(exec.execution?.status as string).toBe("QUEUED");
 
   const execsForThing = await client.send(
     new ListJobExecutionsForThingCommand({ thingName }),
@@ -103,7 +103,9 @@ test("IoT job lifecycle", async () => {
   const afterCancel = await client.send(
     new DescribeJobExecutionCommand({ jobId, thingName }),
   );
-  expect(afterCancel.execution?.status).toBe("CANCELLATION_IN_PROGRESS");
+  expect(afterCancel.execution?.status as string).toBe(
+    "CANCELLATION_IN_PROGRESS",
+  );
 
   await client.send(
     new DeleteJobExecutionCommand({ jobId, thingName, executionNumber: 1 }),
@@ -111,7 +113,7 @@ test("IoT job lifecycle", async () => {
 
   await client.send(new CancelJobCommand({ jobId }));
   const afterJobCancel = await client.send(new DescribeJobCommand({ jobId }));
-  expect(afterJobCancel.job?.status).toBe("CANCELLATION_IN_PROGRESS");
+  expect(afterJobCancel.job?.status as string).toBe("CANCELLATION_IN_PROGRESS");
 
   await client.send(new DeleteJobCommand({ jobId, force: true }));
   await expect(

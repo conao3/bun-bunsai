@@ -133,6 +133,8 @@
     "@aws-sdk/client-storage-gateway": "^3.1059.0",
     "@aws-sdk/client-sts": "^3.1058.0",
     "@aws-sdk/client-swf": "^3.1059.0",
+    "@aws-sdk/client-timestream-query": "^3.1066.0",
+    "@aws-sdk/client-timestream-write": "^3.1066.0",
     "@aws-sdk/client-transcribe": "^3.1059.0",
     "@aws-sdk/client-transfer": "^3.1058.0",
     "@aws-sdk/client-voice-id": "^3.1059.0",

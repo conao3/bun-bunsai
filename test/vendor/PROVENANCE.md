@@ -191,6 +191,8 @@ aws-models/
   bedrock-runtime.json  # botocore/data/bedrock-runtime/2023-09-30/service-2.json  (protocol rest-json, signingName bedrock)
   textract.json         # botocore/data/textract/2018-06-27/service-2.json          (protocol json, targetPrefix Textract)
   dms.json              # botocore/data/dms/2016-01-01/service-2.json               (protocol json, signingName dms, targetPrefix AmazonDMSv20160101)
+  timestream-write.json # botocore/data/timestream-write/2018-11-01/service-2.json  (protocol json, signingName timestream, endpointPrefix ingest.timestream, targetPrefix Timestream_20181101)
+  timestream-query.json # botocore/data/timestream-query/2018-11-01/service-2.json  (protocol json, signingName timestream, endpointPrefix query.timestream, targetPrefix Timestream_20181101)
 ```
 
 ### Notes

@@ -1,0 +1,51 @@
+{
+  "clientPackage": "@aws-sdk/client-s3",
+  "clientName": "S3Client",
+  "clientConfig": { "forcePathStyle": true },
+  "steps": [
+    {
+      "command": "CreateBucketCommand",
+      "input": { "Bucket": "pm-copy-nosuchkey-src" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "Location"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateBucketCommand",
+      "input": { "Bucket": "pm-copy-nosuchkey-dst" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "Location"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CopyObjectCommand",
+      "input": {
+        "Bucket": "pm-copy-nosuchkey-dst",
+        "CopySource": "pm-copy-nosuchkey-src/foofoofoo",
+        "Key": "newkey"
+      },
+      "expectedError": { "name": "NoSuchKey", "statusCode": 404 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteBucketCommand",
+      "input": { "Bucket": "pm-copy-nosuchkey-src" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteBucketCommand",
+      "input": { "Bucket": "pm-copy-nosuchkey-dst" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

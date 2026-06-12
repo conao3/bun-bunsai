@@ -10,6 +10,7 @@ import {
   GetPublicAccessBlockCommand,
   PutBucketAccelerateConfigurationCommand,
   PutBucketLoggingCommand,
+  PutBucketVersioningCommand,
   PutObjectLockConfigurationCommand,
   PutPublicAccessBlockCommand,
   S3Client,
@@ -101,6 +102,13 @@ describe("S3 bucket policy/access ops e2e", () => {
 
   test("object lock configuration: put then get", async () => {
     const client = s3();
+
+    await client.send(
+      new PutBucketVersioningCommand({
+        Bucket: bucket,
+        VersioningConfiguration: { Status: "Enabled" },
+      }),
+    );
 
     await client.send(
       new PutObjectLockConfigurationCommand({

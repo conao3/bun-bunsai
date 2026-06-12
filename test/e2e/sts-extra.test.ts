@@ -4,10 +4,14 @@ import {
   AssumeRoleCommand,
   AssumeRoleWithSAMLCommand,
   AssumeRoleWithWebIdentityCommand,
+  AssumeRootCommand,
   DecodeAuthorizationMessageCommand,
+  GetAccessKeyInfoCommand,
   GetCallerIdentityCommand,
+  GetDelegatedAccessTokenCommand,
   GetFederationTokenCommand,
   GetSessionTokenCommand,
+  GetWebIdentityTokenCommand,
   STSClient,
 } from "@aws-sdk/client-sts";
 
@@ -327,4 +331,69 @@ test("AssumeRole GetCallerIdentity fidelity: session creds reflect assumed role"
     "arn:aws:sts::555566667777:assumed-role/fidelity-role/fidelity-session",
   );
   expect(identity.UserId).toContain("fidelity-session");
+});
+
+test("AssumeRoot returns Credentials and SourceIdentity", async () => {
+  const client = sts();
+  const out = await client.send(
+    new AssumeRootCommand({
+      TargetPrincipal: "arn:aws:iam::000000000000:root",
+      TaskPolicyArn: {
+        arn: "arn:aws:iam::aws:policy/IAMAuditRootUserCredentials",
+      },
+      DurationSeconds: 900,
+    }),
+  );
+  expect(out.Credentials?.AccessKeyId).toMatch(/^ASIA/);
+  expect(out.Credentials?.SecretAccessKey).toBeDefined();
+  expect(out.Credentials?.SessionToken).toBeDefined();
+  expect(out.Credentials?.Expiration).toBeInstanceOf(Date);
+  expect(out.SourceIdentity).toBeDefined();
+});
+
+test("GetAccessKeyInfo returns Account for ASIA key", async () => {
+  const client = sts();
+  const out = await client.send(
+    new GetAccessKeyInfoCommand({
+      AccessKeyId: "ASIA111122223333BNSI",
+    }),
+  );
+  expect(out.Account).toBe("111122223333");
+});
+
+test("GetAccessKeyInfo returns Account for AKIA key", async () => {
+  const client = sts();
+  const out = await client.send(
+    new GetAccessKeyInfoCommand({
+      AccessKeyId: "AKIA444455556666BNSI",
+    }),
+  );
+  expect(out.Account).toBe("444455556666");
+});
+
+test("GetDelegatedAccessToken returns Credentials and AssumedPrincipal", async () => {
+  const client = stsF();
+  const out = await client.send(
+    new GetDelegatedAccessTokenCommand({
+      TradeInToken: "dummy-trade-in-token",
+    }),
+  );
+  expect(out.Credentials?.AccessKeyId).toMatch(/^ASIA/);
+  expect(out.Credentials?.SecretAccessKey).toBeDefined();
+  expect(out.Credentials?.SessionToken).toBeDefined();
+  expect(out.Credentials?.Expiration).toBeInstanceOf(Date);
+  expect(out.AssumedPrincipal).toBeDefined();
+});
+
+test("GetWebIdentityToken returns WebIdentityToken and Expiration", async () => {
+  const client = sts();
+  const out = await client.send(
+    new GetWebIdentityTokenCommand({
+      Audience: ["https://example.com"],
+      SigningAlgorithm: "RS256",
+      DurationSeconds: 300,
+    }),
+  );
+  expect(out.WebIdentityToken).toBeDefined();
+  expect(out.Expiration).toBeInstanceOf(Date);
 });

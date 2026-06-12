@@ -126,6 +126,7 @@ const parseFormSet = (text: string): Record<string, string> => {
 const normalizeXml = (text: string): string =>
   text
     .replace(/<\?xml[^?]*\?>/g, "")
+    .replace(/<requestId>[^<]*<\/requestId>/g, "")
     .replace(/>\s+</g, "><")
     .replace(/\s+/g, " ")
     .replace(/<([\w:.-]+)((?:\s+[\w:.-]+="[^"]*")*)\s*>\s*<\/\1>/g, "<$1$2/>")

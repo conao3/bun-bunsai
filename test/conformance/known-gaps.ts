@@ -84,9 +84,6 @@ const endpointRoutingGaps: readonly string[] = [
 const serverStructuralGaps: readonly string[] = [
   "AwsJson11IntEnums:output",
   "Ec2EmptyQueryLists",
-  "Ec2QuerySupportsNaNFloatOutputs",
-  "Ec2QuerySupportsInfinityFloatOutputs",
-  "Ec2QuerySupportsNegativeInfinityFloatOutputs",
   "Ec2XmlEmptyLists",
   "Ec2XmlNamespaces",
   "IgnoreQueryParamsInResponse",

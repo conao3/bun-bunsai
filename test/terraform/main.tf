@@ -27,6 +27,10 @@ provider "aws" {
     dynamodb = "http://localhost:${var.bunsai_port}"
     s3       = "http://localhost:${var.bunsai_port}"
     sns      = "http://localhost:${var.bunsai_port}"
+    lambda   = "http://localhost:${var.bunsai_port}"
+    logs     = "http://localhost:${var.bunsai_port}"
+    events   = "http://localhost:${var.bunsai_port}"
+    sts      = "http://localhost:${var.bunsai_port}"
   }
 }
 
@@ -80,4 +84,43 @@ resource "aws_sns_topic_subscription" "smoke" {
   topic_arn = aws_sns_topic.smoke.arn
   protocol  = "sqs"
   endpoint  = aws_sqs_queue.smoke.arn
+}
+
+resource "aws_cloudwatch_log_group" "smoke" {
+  name              = "/aws/lambda/tf-smoke-fn"
+  retention_in_days = 7
+}
+
+resource "aws_iam_role_policy" "smoke" {
+  name = "tf-smoke-policy"
+  role = aws_iam_role.smoke.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.smoke.arn
+      }
+    ]
+  })
+}
+
+resource "aws_cloudwatch_event_rule" "smoke" {
+  name        = "tf-smoke-rule"
+  description = "smoke test rule"
+  event_pattern = jsonencode({
+    source      = ["smoke.test"]
+    detail-type = ["SmokeTest"]
+  })
+}
+
+resource "aws_cloudwatch_event_target" "smoke" {
+  rule = aws_cloudwatch_event_rule.smoke.name
+  arn  = aws_sqs_queue.smoke.arn
 }

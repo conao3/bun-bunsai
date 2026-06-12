@@ -91,6 +91,8 @@ type S3Bucket = {
   metadataTableConfiguration: Record<string, unknown> | undefined;
   metadataInventoryTableConfiguration: Record<string, unknown> | undefined;
   metadataJournalTableConfiguration: Record<string, unknown> | undefined;
+  ownershipControls: Record<string, unknown> | undefined;
+  abacStatus: Record<string, unknown> | undefined;
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
@@ -462,6 +464,9 @@ const s3: ServiceDefinition = {
       const hasIntelligentTiering = req.query.has("intelligent-tiering");
       const hasMetadataConfiguration = req.query.has("metadataConfiguration");
       const hasMetadataTable = req.query.has("metadataTable");
+      const hasOwnershipControls = req.query.has("ownershipControls");
+      const hasAbac = req.query.has("abac");
+      const hasPolicyStatus = req.query.has("policyStatus");
       const hasMetadataInventoryTable = req.query.has("metadataInventoryTable");
       const hasMetadataJournalTable = req.query.has("metadataJournalTable");
       if (req.method === "PUT") {
@@ -489,6 +494,8 @@ const s3: ServiceDefinition = {
           return "UpdateBucketMetadataInventoryTableConfiguration";
         if (hasMetadataJournalTable)
           return "UpdateBucketMetadataJournalTableConfiguration";
+        if (hasOwnershipControls) return "PutBucketOwnershipControls";
+        if (hasAbac) return "PutBucketAbac";
         return "CreateBucket";
       }
       if (req.method === "DELETE") {
@@ -507,6 +514,8 @@ const s3: ServiceDefinition = {
         if (hasMetadataConfiguration)
           return "DeleteBucketMetadataConfiguration";
         if (hasMetadataTable) return "DeleteBucketMetadataTableConfiguration";
+        if (hasOwnershipControls) return "DeleteBucketOwnershipControls";
+        if (hasEncryption) return "DeleteBucketEncryption";
         return "DeleteBucket";
       }
       if (req.method === "GET") {
@@ -545,6 +554,9 @@ const s3: ServiceDefinition = {
             : "ListBucketIntelligentTieringConfigurations";
         if (hasMetadataConfiguration) return "GetBucketMetadataConfiguration";
         if (hasMetadataTable) return "GetBucketMetadataTableConfiguration";
+        if (hasOwnershipControls) return "GetBucketOwnershipControls";
+        if (hasAbac) return "GetBucketAbac";
+        if (hasPolicyStatus) return "GetBucketPolicyStatus";
         if (req.query.has("versions")) return "ListObjectVersions";
         if (req.query.get("list-type") === "2") return "ListObjectsV2";
         return "ListObjects";
@@ -646,6 +658,8 @@ const s3: ServiceDefinition = {
         metadataTableConfiguration: undefined,
         metadataInventoryTableConfiguration: undefined,
         metadataJournalTableConfiguration: undefined,
+        ownershipControls: undefined,
+        abacStatus: undefined,
       });
       return { Location: `/${bucket}` };
     },
@@ -2766,6 +2780,138 @@ const s3: ServiceDefinition = {
       }
       const target = getBucket(ctx, bucket);
       return target.notification ?? {};
+    },
+    GetBucketNotification: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      return target.notification ?? {};
+    },
+    PutBucketNotification: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["NotificationConfiguration"];
+      const notification =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)
+          : {};
+      ctx.store.set<S3Bucket>(bucket, { ...target, notification });
+      return {};
+    },
+    GetBucketOwnershipControls: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if (target.ownershipControls === undefined) {
+        throw awsError(
+          "OwnershipControlsNotFoundError",
+          "The bucket ownership controls were not found",
+          404,
+        );
+      }
+      return { OwnershipControls: target.ownershipControls };
+    },
+    PutBucketOwnershipControls: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["OwnershipControls"];
+      const ownershipControls =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)
+          : {};
+      ctx.store.set<S3Bucket>(bucket, { ...target, ownershipControls });
+      return {};
+    },
+    DeleteBucketOwnershipControls: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        ownershipControls: undefined,
+      });
+      return {};
+    },
+    GetBucketAbac: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      return { AbacStatus: target.abacStatus ?? { Status: "Disabled" } };
+    },
+    PutBucketAbac: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["AbacStatus"];
+      const abacStatus =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)
+          : { Status: "Disabled" };
+      ctx.store.set<S3Bucket>(bucket, { ...target, abacStatus });
+      return {};
+    },
+    GetBucketPolicyStatus: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      return { PolicyStatus: { IsPublic: target.policy !== undefined } };
+    },
+    DeleteBucketEncryption: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      ctx.store.set<S3Bucket>(bucket, { ...target, encryptionRules: [] });
+      return {};
+    },
+    GetBucketLifecycle: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if ((target.lifecycleRules ?? []).length === 0) {
+        throw awsError(
+          "NoSuchLifecycleConfiguration",
+          "The lifecycle configuration does not exist",
+          404,
+        );
+      }
+      return { Rules: target.lifecycleRules };
+    },
+    PutBucketLifecycle: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["LifecycleConfiguration"];
+      const rawRules =
+        typeof config === "object" && config !== null
+          ? (config as Record<string, unknown>)["Rules"]
+          : undefined;
+      const lifecycleRules = Array.isArray(rawRules) ? rawRules : [];
+      ctx.store.set<S3Bucket>(bucket, { ...target, lifecycleRules });
+      return {};
     },
     PutPublicAccessBlock: (input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);

@@ -13,6 +13,18 @@ const SERVICES: Record<string, string> = {
   "cognito-idp": "tests/test_cognitoidp",
   athena: "tests/test_athena",
   "timestream-write": "tests/test_timestreamwrite",
+  dynamodb: "tests/test_dynamodb",
+  s3: "tests/test_s3",
+  ec2: "tests/test_ec2",
+  stepfunctions: "tests/test_stepfunctions",
+  sns: "tests/test_sns",
+  logs: "tests/test_logs",
+  iam: "tests/test_iam",
+  cloudformation: "tests/test_cloudformation",
+  secretsmanager: "tests/test_secretsmanager",
+  events: "tests/test_events",
+  lambda: "tests/test_awslambda",
+  ssm: "tests/test_ssm",
 };
 
 type ContentEntry = {

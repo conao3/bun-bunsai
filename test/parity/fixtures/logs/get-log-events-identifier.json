@@ -1,0 +1,41 @@
+{
+  "clientPackage": "@aws-sdk/client-cloudwatch-logs",
+  "clientName": "CloudWatchLogsClient",
+  "steps": [
+    {
+      "command": "CreateLogGroupCommand",
+      "input": { "logGroupName": "pm-arn-group" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateLogStreamCommand",
+      "input": { "logGroupName": "pm-arn-group", "logStreamName": "stream" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetLogEventsCommand",
+      "input": { "logGroupName": "pm-arn-group", "logStreamName": "stream" },
+      "expected": { "events": [] },
+      "ignorePaths": ["$metadata", "nextForwardToken", "nextBackwardToken"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetLogEventsCommand",
+      "input": {
+        "logGroupIdentifier": "pm-arn-group",
+        "logStreamName": "stream"
+      },
+      "expected": { "events": [] },
+      "ignorePaths": ["$metadata", "nextForwardToken", "nextBackwardToken"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

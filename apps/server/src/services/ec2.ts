@@ -4445,6 +4445,20 @@ const CreateLaunchTemplate: OperationHandler = (input, ctx) => {
     input["LaunchTemplateData"] !== null
       ? (input["LaunchTemplateData"] as Record<string, unknown>)
       : {};
+  const duplicate = ctx.store
+    .list<StoredLaunchTemplate>()
+    .some(
+      (entry) =>
+        entry.key.startsWith("lt/") &&
+        entry.value.LaunchTemplateName === launchTemplateName,
+    );
+  if (duplicate) {
+    throw awsError(
+      "InvalidLaunchTemplateName.AlreadyExistsException",
+      "Launch template name already in use.",
+      400,
+    );
+  }
   const id = hexId("lt");
   const createTime = new Date().toISOString();
   const createdBy = callerArn(ctx.account);

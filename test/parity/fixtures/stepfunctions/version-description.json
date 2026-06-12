@@ -1,0 +1,46 @@
+{
+  "clientPackage": "@aws-sdk/client-sfn",
+  "clientName": "SFNClient",
+  "steps": [
+    {
+      "command": "CreateStateMachineCommand",
+      "input": {
+        "name": "pm-versioned",
+        "definition": "{\"StartAt\": \"Pass\", \"States\": {\"Pass\": {\"Type\": \"Pass\", \"End\": true}}}",
+        "roleArn": "arn:aws:iam::000000000000:role/sfn-role",
+        "publish": true,
+        "versionDescription": "first version"
+      },
+      "expected": {
+        "stateMachineArn": "<ANY>",
+        "stateMachineVersionArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "creationDate"],
+      "saveAs": "sm",
+      "refs": {}
+    },
+    {
+      "command": "DescribeStateMachineCommand",
+      "input": { "stateMachineArn": "${sm.stateMachineArn}" },
+      "expected": {
+        "name": "pm-versioned",
+        "status": "ACTIVE"
+      },
+      "ignorePaths": [
+        "$metadata",
+        "stateMachineArn",
+        "definition",
+        "roleArn",
+        "type",
+        "creationDate",
+        "loggingConfiguration",
+        "tracingConfiguration",
+        "revisionId",
+        "description",
+        "encryptionConfiguration"
+      ],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

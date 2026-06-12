@@ -1,0 +1,42 @@
+{
+  "clientPackage": "@aws-sdk/client-ec2",
+  "clientName": "EC2Client",
+  "steps": [
+    {
+      "command": "CreateLaunchTemplateCommand",
+      "input": {
+        "LaunchTemplateName": "pm-lt",
+        "LaunchTemplateData": { "ImageId": "ami-12345678" }
+      },
+      "expected": {
+        "LaunchTemplate": {
+          "LaunchTemplateName": "pm-lt",
+          "DefaultVersionNumber": 1,
+          "LatestVersionNumber": 1
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "LaunchTemplate.LaunchTemplateId",
+        "LaunchTemplate.CreateTime",
+        "LaunchTemplate.CreatedBy"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateLaunchTemplateCommand",
+      "input": {
+        "LaunchTemplateName": "pm-lt",
+        "LaunchTemplateData": { "ImageId": "ami-12345678" }
+      },
+      "expectedError": {
+        "name": "InvalidLaunchTemplateName.AlreadyExistsException",
+        "statusCode": 400
+      },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

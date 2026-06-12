@@ -416,6 +416,8 @@ export function App() {
             accounts={accounts}
             regions={regions}
             services={services}
+            snapshots={snapshots}
+            onRefresh={refreshSnapshots}
           />
         )}
       </div>

@@ -1,0 +1,140 @@
+{
+  "clientPackage": "@aws-sdk/client-s3",
+  "clientName": "S3Client",
+  "clientConfig": { "forcePathStyle": true },
+  "steps": [
+    {
+      "command": "CreateBucketCommand",
+      "input": { "Bucket": "pm-mp-overwrite" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "Location"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateMultipartUploadCommand",
+      "input": { "Bucket": "pm-mp-overwrite", "Key": "mykey.txt" },
+      "expected": {
+        "Bucket": "pm-mp-overwrite",
+        "Key": "mykey.txt",
+        "UploadId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "upload1",
+      "refs": {}
+    },
+    {
+      "command": "UploadPartCommand",
+      "input": {
+        "Bucket": "pm-mp-overwrite",
+        "Key": "mykey.txt",
+        "UploadId": "${upload1.UploadId}",
+        "PartNumber": 1,
+        "Body": { "$base64": "Rmlyc3QgcGFydCBkYXRh" }
+      },
+      "expected": { "ETag": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "part1",
+      "refs": {}
+    },
+    {
+      "command": "CompleteMultipartUploadCommand",
+      "input": {
+        "Bucket": "pm-mp-overwrite",
+        "Key": "mykey.txt",
+        "UploadId": "${upload1.UploadId}",
+        "MultipartUpload": {
+          "Parts": [{ "PartNumber": 1, "ETag": "${part1.ETag}" }]
+        }
+      },
+      "expected": {
+        "Bucket": "pm-mp-overwrite",
+        "Key": "mykey.txt",
+        "ETag": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "Location", "ServerSideEncryption"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateMultipartUploadCommand",
+      "input": { "Bucket": "pm-mp-overwrite", "Key": "mykey.txt" },
+      "expected": {
+        "Bucket": "pm-mp-overwrite",
+        "Key": "mykey.txt",
+        "UploadId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "upload2",
+      "refs": {}
+    },
+    {
+      "command": "UploadPartCommand",
+      "input": {
+        "Bucket": "pm-mp-overwrite",
+        "Key": "mykey.txt",
+        "UploadId": "${upload2.UploadId}",
+        "PartNumber": 1,
+        "Body": { "$base64": "TmV3IGRhdGEgdGhhdCBzaG91bGQgb3ZlcndyaXRl" }
+      },
+      "expected": { "ETag": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "part2",
+      "refs": {}
+    },
+    {
+      "command": "CompleteMultipartUploadCommand",
+      "input": {
+        "Bucket": "pm-mp-overwrite",
+        "Key": "mykey.txt",
+        "UploadId": "${upload2.UploadId}",
+        "MultipartUpload": {
+          "Parts": [{ "PartNumber": 1, "ETag": "${part2.ETag}" }]
+        }
+      },
+      "expected": {
+        "Bucket": "pm-mp-overwrite",
+        "Key": "mykey.txt",
+        "ETag": "<ANY>"
+      },
+      "ignorePaths": ["$metadata", "Location", "ServerSideEncryption"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetObjectCommand",
+      "input": { "Bucket": "pm-mp-overwrite", "Key": "mykey.txt" },
+      "expected": {
+        "Body": "<ANY>",
+        "ContentLength": 30
+      },
+      "ignorePaths": [
+        "$metadata",
+        "ETag",
+        "ContentType",
+        "ServerSideEncryption",
+        "LastModified",
+        "AcceptRanges",
+        "Metadata"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteObjectCommand",
+      "input": { "Bucket": "pm-mp-overwrite", "Key": "mykey.txt" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteBucketCommand",
+      "input": { "Bucket": "pm-mp-overwrite" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

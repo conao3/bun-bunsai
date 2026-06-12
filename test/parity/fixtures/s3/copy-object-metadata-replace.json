@@ -1,0 +1,74 @@
+{
+  "clientPackage": "@aws-sdk/client-s3",
+  "clientName": "S3Client",
+  "clientConfig": { "forcePathStyle": true },
+  "steps": [
+    {
+      "command": "CreateBucketCommand",
+      "input": { "Bucket": "pm-copy-meta-replace" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "Location"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutObjectCommand",
+      "input": {
+        "Bucket": "pm-copy-meta-replace",
+        "Key": "my_key",
+        "Body": "some value"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata", "ETag", "ServerSideEncryption"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CopyObjectCommand",
+      "input": {
+        "Bucket": "pm-copy-meta-replace",
+        "CopySource": "pm-copy-meta-replace/my_key",
+        "Key": "my_key",
+        "Metadata": { "some-key": "some-value" },
+        "MetadataDirective": "REPLACE"
+      },
+      "expected": { "CopyObjectResult": { "ETag": "<ANY>" } },
+      "ignorePaths": ["$metadata", "VersionId"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetObjectCommand",
+      "input": { "Bucket": "pm-copy-meta-replace", "Key": "my_key" },
+      "expected": { "Metadata": { "some-key": "some-value" } },
+      "ignorePaths": [
+        "$metadata",
+        "ETag",
+        "ContentType",
+        "ContentLength",
+        "Body",
+        "ServerSideEncryption",
+        "LastModified",
+        "AcceptRanges"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteObjectCommand",
+      "input": { "Bucket": "pm-copy-meta-replace", "Key": "my_key" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteBucketCommand",
+      "input": { "Bucket": "pm-copy-meta-replace" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -634,6 +634,21 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
+      const ifNoneMatch = input["IfNoneMatch"];
+      if (typeof ifNoneMatch === "string") {
+        const currentObj = getCurrentObject(target.objects[key]);
+        if (
+          currentObj !== undefined &&
+          etagMatches(ifNoneMatch, currentObj.etag)
+        ) {
+          throw awsError(
+            "PreconditionFailed",
+            "At least one of the pre-conditions you specified did not hold",
+            412,
+            { Condition: "If-None-Match" },
+          );
+        }
+      }
       const versioned = target.versioningStatus === "Enabled";
       const body = req.bodyBytes;
       const etag = `"${md5Hex(body)}"`;
@@ -1273,11 +1288,27 @@ const s3: ServiceDefinition = {
         },
         source,
       );
+      const useReplace = input["MetadataDirective"] === "REPLACE";
+      const useTagReplace = input["TaggingDirective"] === "REPLACE";
+      if (
+        srcBucket === bucket &&
+        srcKey === key &&
+        srcVersionId === null &&
+        !useReplace &&
+        !useTagReplace &&
+        typeof input["StorageClass"] !== "string" &&
+        typeof input["WebsiteRedirectLocation"] !== "string" &&
+        typeof input["ServerSideEncryption"] !== "string"
+      ) {
+        throw awsError(
+          "InvalidRequest",
+          "This copy request is illegal because it is trying to copy an object to itself without changing the object's metadata, storage class, website redirect location or encryption attributes.",
+          400,
+        );
+      }
       const versioned = target.versioningStatus === "Enabled";
       const versionId = versioned ? generateVersionId() : undefined;
       const lastModified = nowSeconds();
-      const useReplace = input["MetadataDirective"] === "REPLACE";
-      const useTagReplace = input["TaggingDirective"] === "REPLACE";
       const reqStorageClass = input["StorageClass"];
       const reqMetadata = input["Metadata"];
       const object: S3Object = {
@@ -2341,6 +2372,13 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidBucketName", "bucket name required", 400);
       }
       const target = getBucket(ctx, bucket);
+      if (target.versioningStatus !== "Enabled") {
+        throw awsError(
+          "InvalidBucketState",
+          "Versioning must be 'Enabled' on the bucket to apply a Object Lock configuration",
+          409,
+        );
+      }
       const config = input["ObjectLockConfiguration"];
       const objectLock =
         typeof config === "object" && config !== null

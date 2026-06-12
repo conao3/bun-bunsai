@@ -29,12 +29,13 @@ const headersToRecord = (headers: Headers): Record<string, string> => {
   return obj;
 };
 
-export function createBunsaiApp() {
+export function createBunsaiApp(options?: { gatewayPort?: number }) {
   const store = createStateStore();
   const log = createRequestLog();
   const snapshots = createSnapshotRegistry();
   const startedAt = Date.now();
   const version = (serverPkg as { version?: string }).version ?? "0.0.0";
+  const gatewayPort = options?.gatewayPort ?? 4566;
 
   const gatewayFetch = async (req: Request): Promise<Response> => {
     const start = performance.now();
@@ -206,6 +207,7 @@ export function createBunsaiApp() {
       snapshots,
       startedAt,
       version,
+      gatewayPort,
     });
     return managed ?? new Response("not found", { status: 404 });
   };
@@ -219,7 +221,7 @@ export function createBunsaiServers(options: {
   dashboard?: import("bun").HTMLBundle;
   hmr?: boolean;
 }) {
-  const app = createBunsaiApp();
+  const app = createBunsaiApp({ gatewayPort: options.awsPort });
 
   const awsServer = Bun.serve({
     port: options.awsPort,

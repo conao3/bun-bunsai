@@ -46,6 +46,7 @@ export type RequestLogEntry = {
 export type ServerMeta = {
   uptimeSeconds: number;
   version: string;
+  gatewayPort: number;
 };
 
 export type SnapshotMeta = {

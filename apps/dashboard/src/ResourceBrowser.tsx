@@ -300,9 +300,8 @@ function SecretsManagerDetail({ value }: { value: SecretShape }) {
       </div>
       <div
         style={{
-          background: "color-mix(in srgb, var(--warning) 10%, transparent)",
-          border:
-            "1px solid color-mix(in srgb, var(--warning) 30%, transparent)",
+          background: "color-mix(in srgb, var(--amber) 9%, transparent)",
+          border: "1px solid color-mix(in srgb, var(--amber) 28%, transparent)",
           borderRadius: "var(--r-md)",
           padding: "10px 14px",
           fontSize: 13,
@@ -315,7 +314,7 @@ function SecretsManagerDetail({ value }: { value: SecretShape }) {
         <Ico.warn
           width="16"
           height="16"
-          style={{ color: "var(--warning)", flexShrink: 0 }}
+          style={{ color: "var(--amber)", flexShrink: 0 }}
         />
         SecretString はマスクされています
       </div>

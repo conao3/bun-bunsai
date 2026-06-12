@@ -232,3 +232,208 @@ test("Cognito User Pool JWT → API Gateway COGNITO_USER_POOLS authorizer → La
   expect(claims?.["sub"]).toBe(idPayload["sub"]);
   expect(claims?.["email"]).toBe("apigw@example.com");
 });
+
+test("COGNITO_USER_POOLS authorizer rejects token from different UserPool", async () => {
+  const idpClient = cognito();
+  const gwClient = apigw();
+  const lambdaClient = lam();
+
+  const pool = await idpClient.send(
+    new CreateUserPoolCommand({ PoolName: "apigw-main-pool" }),
+  );
+  const poolId = pool.UserPool?.Id ?? "";
+  expect(poolId).toBeTruthy();
+
+  const appClient = await idpClient.send(
+    new CreateUserPoolClientCommand({
+      UserPoolId: poolId,
+      ClientName: "apigw-main-client",
+      ExplicitAuthFlows: [
+        "ALLOW_USER_PASSWORD_AUTH",
+        "ALLOW_REFRESH_TOKEN_AUTH",
+      ],
+    }),
+  );
+  const clientId = appClient.UserPoolClient?.ClientId ?? "";
+  expect(clientId).toBeTruthy();
+
+  const otherPool = await idpClient.send(
+    new CreateUserPoolCommand({ PoolName: "apigw-other-pool" }),
+  );
+  const otherPoolId = otherPool.UserPool?.Id ?? "";
+  expect(otherPoolId).toBeTruthy();
+
+  const otherAppClient = await idpClient.send(
+    new CreateUserPoolClientCommand({
+      UserPoolId: otherPoolId,
+      ClientName: "apigw-other-client",
+      ExplicitAuthFlows: [
+        "ALLOW_USER_PASSWORD_AUTH",
+        "ALLOW_REFRESH_TOKEN_AUTH",
+      ],
+    }),
+  );
+  const otherClientId = otherAppClient.UserPoolClient?.ClientId ?? "";
+  expect(otherClientId).toBeTruthy();
+
+  await idpClient.send(
+    new AdminCreateUserCommand({
+      UserPoolId: otherPoolId,
+      Username: "other-user",
+      UserAttributes: [{ Name: "email", Value: "other@example.com" }],
+      TemporaryPassword: "TempPass1!",
+    }),
+  );
+  await idpClient.send(
+    new AdminSetUserPasswordCommand({
+      UserPoolId: otherPoolId,
+      Username: "other-user",
+      Password: "FinalPass1!",
+      Permanent: true,
+    }),
+  );
+  await idpClient.send(
+    new AdminConfirmSignUpCommand({
+      UserPoolId: otherPoolId,
+      Username: "other-user",
+    }),
+  );
+
+  const otherAuthRes = await cognitoPost("InitiateAuth", {
+    ClientId: otherClientId,
+    AuthFlow: "USER_PASSWORD_AUTH",
+    AuthParameters: { USERNAME: "other-user", PASSWORD: "FinalPass1!" },
+  });
+  expect(otherAuthRes.status).toBe(200);
+  const otherAuthResult = otherAuthRes.body["AuthenticationResult"] as Record<
+    string,
+    unknown
+  >;
+  const otherIdToken = otherAuthResult["IdToken"] as string;
+  expect(otherIdToken).toBeTruthy();
+
+  const fnName = "apigw-wrong-pool-echo-fn";
+  await lambdaClient.send(
+    new CreateFunctionCommand({
+      FunctionName: fnName,
+      Runtime: "nodejs20.x",
+      Role: "arn:aws:iam::000000000000:role/bunsai-e2e",
+      Handler: "index.handler",
+      Code: {
+        ZipFile: makeZip({
+          "index.js":
+            "exports.handler = async (event) => ({ statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok: true }) });",
+        }),
+      },
+    }),
+  );
+
+  const api = await gwClient.send(
+    new CreateRestApiCommand({ name: "apigw-wrong-pool-api" }),
+  );
+  const restApiId = api.id as string;
+  const rootResourceId = api.rootResourceId as string;
+  expect(restApiId).toBeTruthy();
+
+  const mainPoolArn = `arn:aws:cognito-idp:${region}:000000000000:userpool/${poolId}`;
+  const authorizer = await gwClient.send(
+    new CreateAuthorizerCommand({
+      restApiId,
+      name: "cognito-main-pool-auth",
+      type: "COGNITO_USER_POOLS",
+      providerARNs: [mainPoolArn],
+      identitySource: "method.request.header.Authorization",
+    }),
+  );
+  const authorizerId = authorizer.id as string;
+  expect(authorizerId).toBeTruthy();
+
+  const resource = await gwClient.send(
+    new CreateResourceCommand({
+      restApiId,
+      parentId: rootResourceId,
+      pathPart: "secure",
+    }),
+  );
+  const resourceId = resource.id as string;
+
+  await gwClient.send(
+    new PutMethodCommand({
+      restApiId,
+      resourceId,
+      httpMethod: "GET",
+      authorizationType: "COGNITO_USER_POOLS",
+      authorizerId,
+    }),
+  );
+
+  const functionArn = `arn:aws:lambda:${region}:000000000000:function:${fnName}`;
+  await gwClient.send(
+    new PutIntegrationCommand({
+      restApiId,
+      resourceId,
+      httpMethod: "GET",
+      type: "AWS_PROXY",
+      integrationHttpMethod: "POST",
+      uri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${functionArn}/invocations`,
+    }),
+  );
+
+  const deployment = await gwClient.send(
+    new CreateDeploymentCommand({ restApiId }),
+  );
+  const deployment2 = await gwClient.send(
+    new CreateStageCommand({
+      restApiId,
+      stageName: "prod",
+      deploymentId: deployment.id as string,
+    }),
+  );
+  expect(deployment2.stageName).toBe("prod");
+
+  const base = `http://${restApiId}.execute-api.${region}.localhost/prod/secure`;
+
+  const wrongPoolRes = await gwFetch(base, {
+    headers: { Authorization: `Bearer ${otherIdToken}` },
+  });
+  expect(wrongPoolRes.status).toBe(401);
+
+  await idpClient.send(
+    new AdminCreateUserCommand({
+      UserPoolId: poolId,
+      Username: "main-user",
+      UserAttributes: [{ Name: "email", Value: "main@example.com" }],
+      TemporaryPassword: "TempPass1!",
+    }),
+  );
+  await idpClient.send(
+    new AdminSetUserPasswordCommand({
+      UserPoolId: poolId,
+      Username: "main-user",
+      Password: "FinalPass1!",
+      Permanent: true,
+    }),
+  );
+  await idpClient.send(
+    new AdminConfirmSignUpCommand({
+      UserPoolId: poolId,
+      Username: "main-user",
+    }),
+  );
+
+  const mainAuthRes = await cognitoPost("InitiateAuth", {
+    ClientId: clientId,
+    AuthFlow: "USER_PASSWORD_AUTH",
+    AuthParameters: { USERNAME: "main-user", PASSWORD: "FinalPass1!" },
+  });
+  expect(mainAuthRes.status).toBe(200);
+  const mainIdToken = (
+    mainAuthRes.body["AuthenticationResult"] as Record<string, unknown>
+  )["IdToken"] as string;
+  expect(mainIdToken).toBeTruthy();
+
+  const okRes = await gwFetch(base, {
+    headers: { Authorization: `Bearer ${mainIdToken}` },
+  });
+  expect(okRes.status).toBe(200);
+});

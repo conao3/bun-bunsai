@@ -82,6 +82,9 @@ type S3Bucket = {
   acl?: string;
   replication: Record<string, unknown> | undefined;
   requestPayment: string;
+  analyticsConfigs: Record<string, unknown>;
+  inventoryConfigs: Record<string, unknown>;
+  metricsConfigs: Record<string, unknown>;
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
@@ -447,6 +450,9 @@ const s3: ServiceDefinition = {
       const hasObjectLock = req.query.has("object-lock");
       const hasReplication = req.query.has("replication");
       const hasRequestPayment = req.query.has("requestPayment");
+      const hasAnalytics = req.query.has("analytics");
+      const hasInventory = req.query.has("inventory");
+      const hasMetrics = req.query.has("metrics");
       if (req.method === "PUT") {
         if (hasTagging) return "PutBucketTagging";
         if (hasVersioning) return "PutBucketVersioning";
@@ -463,6 +469,9 @@ const s3: ServiceDefinition = {
         if (hasReplication) return "PutBucketReplication";
         if (hasRequestPayment) return "PutBucketRequestPayment";
         if (hasAcl) return "PutBucketAcl";
+        if (hasAnalytics) return "PutBucketAnalyticsConfiguration";
+        if (hasInventory) return "PutBucketInventoryConfiguration";
+        if (hasMetrics) return "PutBucketMetricsConfiguration";
         return "CreateBucket";
       }
       if (req.method === "DELETE") {
@@ -473,6 +482,9 @@ const s3: ServiceDefinition = {
         if (hasWebsite) return "DeleteBucketWebsite";
         if (hasPublicAccessBlock) return "DeletePublicAccessBlock";
         if (hasReplication) return "DeleteBucketReplication";
+        if (hasAnalytics) return "DeleteBucketAnalyticsConfiguration";
+        if (hasInventory) return "DeleteBucketInventoryConfiguration";
+        if (hasMetrics) return "DeleteBucketMetricsConfiguration";
         return "DeleteBucket";
       }
       if (req.method === "GET") {
@@ -493,6 +505,18 @@ const s3: ServiceDefinition = {
         if (hasObjectLock) return "GetObjectLockConfiguration";
         if (hasReplication) return "GetBucketReplication";
         if (hasRequestPayment) return "GetBucketRequestPayment";
+        if (hasAnalytics)
+          return req.query.has("id")
+            ? "GetBucketAnalyticsConfiguration"
+            : "ListBucketAnalyticsConfigurations";
+        if (hasInventory)
+          return req.query.has("id")
+            ? "GetBucketInventoryConfiguration"
+            : "ListBucketInventoryConfigurations";
+        if (hasMetrics)
+          return req.query.has("id")
+            ? "GetBucketMetricsConfiguration"
+            : "ListBucketMetricsConfigurations";
         if (req.query.has("versions")) return "ListObjectVersions";
         if (req.query.get("list-type") === "2") return "ListObjectsV2";
         return "ListObjects";
@@ -583,6 +607,9 @@ const s3: ServiceDefinition = {
         acl: undefined,
         replication: undefined,
         requestPayment: "BucketOwner",
+        analyticsConfigs: {},
+        inventoryConfigs: {},
+        metricsConfigs: {},
       });
       return { Location: `/${bucket}` };
     },
@@ -2077,6 +2104,234 @@ const s3: ServiceDefinition = {
       const target = getBucket(ctx, bucket);
       ctx.store.set<S3Bucket>(bucket, { ...target, lifecycleRules: [] });
       return {};
+    },
+    PutBucketAnalyticsConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const config = input["AnalyticsConfiguration"];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        analyticsConfigs: { ...target.analyticsConfigs, [id]: config },
+      });
+      return {};
+    },
+    GetBucketAnalyticsConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const config = target.analyticsConfigs[id];
+      if (config === undefined) {
+        throw awsError(
+          "NoSuchConfiguration",
+          "The specified configuration does not exist",
+          404,
+        );
+      }
+      return { AnalyticsConfiguration: config };
+    },
+    DeleteBucketAnalyticsConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const { [id]: _removed, ...rest } = target.analyticsConfigs;
+      ctx.store.set<S3Bucket>(bucket, { ...target, analyticsConfigs: rest });
+      return {};
+    },
+    ListBucketAnalyticsConfigurations: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const continuationToken = req.query.get("continuation-token");
+      const allIds = Object.keys(target.analyticsConfigs).sort();
+      const startIdx =
+        continuationToken !== null
+          ? allIds.findIndex((id) => id > continuationToken)
+          : 0;
+      const page = allIds.slice(
+        startIdx < 0 ? allIds.length : startIdx,
+        (startIdx < 0 ? allIds.length : startIdx) + 100,
+      );
+      const isTruncated = page.length === 100 && startIdx + 100 < allIds.length;
+      const list = page.map((id) => target.analyticsConfigs[id]);
+      return {
+        IsTruncated: isTruncated,
+        ContinuationToken: continuationToken ?? undefined,
+        NextContinuationToken: isTruncated ? page[page.length - 1] : undefined,
+        AnalyticsConfigurationList: list,
+      };
+    },
+    PutBucketInventoryConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const config = input["InventoryConfiguration"];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        inventoryConfigs: { ...target.inventoryConfigs, [id]: config },
+      });
+      return {};
+    },
+    GetBucketInventoryConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const config = target.inventoryConfigs[id];
+      if (config === undefined) {
+        throw awsError(
+          "NoSuchConfiguration",
+          "The specified configuration does not exist",
+          404,
+        );
+      }
+      return { InventoryConfiguration: config };
+    },
+    DeleteBucketInventoryConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const { [id]: _removed, ...rest } = target.inventoryConfigs;
+      ctx.store.set<S3Bucket>(bucket, { ...target, inventoryConfigs: rest });
+      return {};
+    },
+    ListBucketInventoryConfigurations: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const continuationToken = req.query.get("continuation-token");
+      const allIds = Object.keys(target.inventoryConfigs).sort();
+      const startIdx =
+        continuationToken !== null
+          ? allIds.findIndex((id) => id > continuationToken)
+          : 0;
+      const page = allIds.slice(
+        startIdx < 0 ? allIds.length : startIdx,
+        (startIdx < 0 ? allIds.length : startIdx) + 100,
+      );
+      const isTruncated = page.length === 100 && startIdx + 100 < allIds.length;
+      const list = page.map((id) => target.inventoryConfigs[id]);
+      return {
+        IsTruncated: isTruncated,
+        ContinuationToken: continuationToken ?? undefined,
+        NextContinuationToken: isTruncated ? page[page.length - 1] : undefined,
+        InventoryConfigurationList: list,
+      };
+    },
+    PutBucketMetricsConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const config = input["MetricsConfiguration"];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        metricsConfigs: { ...target.metricsConfigs, [id]: config },
+      });
+      return {};
+    },
+    GetBucketMetricsConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const config = target.metricsConfigs[id];
+      if (config === undefined) {
+        throw awsError(
+          "NoSuchConfiguration",
+          "The specified configuration does not exist",
+          404,
+        );
+      }
+      return { MetricsConfiguration: config };
+    },
+    DeleteBucketMetricsConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const { [id]: _removed, ...rest } = target.metricsConfigs;
+      ctx.store.set<S3Bucket>(bucket, { ...target, metricsConfigs: rest });
+      return {};
+    },
+    ListBucketMetricsConfigurations: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const continuationToken = req.query.get("continuation-token");
+      const allIds = Object.keys(target.metricsConfigs).sort();
+      const startIdx =
+        continuationToken !== null
+          ? allIds.findIndex((id) => id > continuationToken)
+          : 0;
+      const page = allIds.slice(
+        startIdx < 0 ? allIds.length : startIdx,
+        (startIdx < 0 ? allIds.length : startIdx) + 100,
+      );
+      const isTruncated = page.length === 100 && startIdx + 100 < allIds.length;
+      const list = page.map((id) => target.metricsConfigs[id]);
+      return {
+        IsTruncated: isTruncated,
+        ContinuationToken: continuationToken ?? undefined,
+        NextContinuationToken: isTruncated ? page[page.length - 1] : undefined,
+        MetricsConfigurationList: list,
+      };
     },
     PutBucketCors: (input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);

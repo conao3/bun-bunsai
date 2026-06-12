@@ -110,7 +110,7 @@ test("Function lifecycle", async () => {
   await client.send(
     new TestFunctionCommand({
       Name: name!,
-      IfMatch: published.ETag ?? updated.ETag!,
+      IfMatch: updated.ETag!,
       Stage: "LIVE",
       EventObject: Buffer.from("{}"),
     }),
@@ -119,7 +119,7 @@ test("Function lifecycle", async () => {
   await client.send(
     new DeleteFunctionCommand({
       Name: name!,
-      IfMatch: published.ETag ?? updated.ETag!,
+      IfMatch: updated.ETag!,
     }),
   );
 });
@@ -371,10 +371,10 @@ test("TrustStore lifecycle", async () => {
     new CreateTrustStoreCommand({
       Name: "test-truststore",
       CaCertificatesBundleSource: {
-        S3BucketSource: {
-          S3Region: "us-east-1",
-          S3Bucket: "my-bucket",
-          S3Key: "ca-bundle.pem",
+        CaCertificatesBundleS3Location: {
+          Region: "us-east-1",
+          Bucket: "my-bucket",
+          Key: "ca-bundle.pem",
         },
       },
     }),
@@ -394,10 +394,10 @@ test("TrustStore lifecycle", async () => {
       Id: id!,
       IfMatch: got.ETag!,
       CaCertificatesBundleSource: {
-        S3BucketSource: {
-          S3Region: "us-east-1",
-          S3Bucket: "my-bucket",
-          S3Key: "ca-bundle-v2.pem",
+        CaCertificatesBundleS3Location: {
+          Region: "us-east-1",
+          Bucket: "my-bucket",
+          Key: "ca-bundle-v2.pem",
         },
       },
     }),

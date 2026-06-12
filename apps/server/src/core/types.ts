@@ -213,4 +213,5 @@ export type RequestLogEntry = {
   requestHeaders: Record<string, string>;
   responseHeaders: Record<string, string>;
   resourceArn?: string;
+  contentType?: string;
 };

@@ -5,6 +5,13 @@ import type { Screen, Theme } from "./types";
 
 type Scope = { account: string; region: string };
 
+const fmtUptime = (seconds: number): string => {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+};
+
 const monitorNavItems = [
   { id: "overview", label: "Overview", ico: Ico.overview },
   { id: "log", label: "Request Log", ico: Ico.log },
@@ -33,6 +40,8 @@ export function Sidebar({
   snapshotCount,
   connected,
   endpoint,
+  uptimeSeconds,
+  version,
 }: {
   screen: Screen;
   setScreen: (s: Screen) => void;
@@ -42,6 +51,8 @@ export function Sidebar({
   snapshotCount: number;
   connected: boolean;
   endpoint: string;
+  uptimeSeconds?: number;
+  version?: string;
 }) {
   const stackState = !connected
     ? "idle"
@@ -123,6 +134,12 @@ export function Sidebar({
             <div className="k">Services</div>
             <div className="v">{services.length}</div>
           </div>
+          {uptimeSeconds !== undefined && (
+            <div>
+              <div className="k">Uptime</div>
+              <div className="v">{fmtUptime(uptimeSeconds)}</div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -162,7 +179,7 @@ export function Sidebar({
       </nav>
 
       <div className="sidebar-foot">
-        <span className="mono">bunsai dashboard</span>
+        <span className="mono">bunsai{version ? ` v${version}` : ""}</span>
         <span
           className="mono"
           style={{ color: connected ? "var(--teal)" : "var(--muted-soft)" }}

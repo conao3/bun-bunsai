@@ -3,11 +3,13 @@ import "./App.css";
 import type {
   RequestLogEntry,
   ResourceEntry,
+  ServerMeta,
   ServiceSummary,
   SnapshotMeta,
 } from "./api";
 import {
   fetchLogs,
+  fetchMeta,
   fetchResources,
   fetchServices,
   fetchSnapshots,
@@ -75,6 +77,7 @@ export function App() {
   const [resources, setResources] = useState<ResourceEntry[]>([]);
   const [requests, setRequests] = useState<RequestLogEntry[]>([]);
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
+  const [serverMeta, setServerMeta] = useState<ServerMeta | null>(null);
   const [connected, setConnected] = useState(false);
   const [resourcesLoaded, setResourcesLoaded] = useState(false);
 
@@ -207,11 +210,12 @@ export function App() {
     const POLL_MAX = 30000;
 
     const poll = () => {
-      Promise.all([fetchServices(), fetchResources()])
-        .then(([svcs, res]) => {
+      Promise.all([fetchServices(), fetchResources(), fetchMeta()])
+        .then(([svcs, res, meta]) => {
           if (cancelled) return;
           setServices(svcs);
           setResources(res);
+          setServerMeta(meta);
           setConnected(true);
           setResourcesLoaded(true);
           delay = 4000;
@@ -350,6 +354,8 @@ export function App() {
         snapshotCount={snapshots.length}
         connected={connected}
         endpoint={endpoint}
+        uptimeSeconds={serverMeta?.uptimeSeconds}
+        version={serverMeta?.version}
       />
       <div className="main">
         <GlobalBar
@@ -369,6 +375,7 @@ export function App() {
             scope={scope}
             setScreen={setScreen}
             connected={connected}
+            uptimeSeconds={serverMeta?.uptimeSeconds}
           />
         )}
         {screen === "log" && (

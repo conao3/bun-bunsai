@@ -815,8 +815,38 @@ const requireResourceTarget = (
   return { resourceType, resourceId };
 };
 
+const canonicalTagResourceId = (
+  ctx: ServiceContext,
+  resourceType: string,
+  resourceId: string,
+): string => {
+  if (resourceType !== "Parameter") return resourceId;
+  if (ctx.store.get<StoredParameter>(resourceId) !== undefined)
+    return resourceId;
+  const toggled = resourceId.startsWith("/")
+    ? resourceId.slice(1)
+    : `/${resourceId}`;
+  if (ctx.store.get<StoredParameter>(toggled) !== undefined) return toggled;
+  return resourceId;
+};
+
+const tagResourceTarget = (
+  input: Record<string, unknown>,
+  ctx: ServiceContext,
+): { resourceType: string; resourceId: string } => {
+  const target = requireResourceTarget(input);
+  return {
+    resourceType: target.resourceType,
+    resourceId: canonicalTagResourceId(
+      ctx,
+      target.resourceType,
+      target.resourceId,
+    ),
+  };
+};
+
 const AddTagsToResource: OperationHandler = (input, ctx) => {
-  const { resourceType, resourceId } = requireResourceTarget(input);
+  const { resourceType, resourceId } = tagResourceTarget(input, ctx);
   const tags = Array.isArray(input["Tags"]) ? input["Tags"] : undefined;
   if (tags === undefined) {
     throw awsError("ValidationException", "Tags is required.", 400);
@@ -843,7 +873,7 @@ const AddTagsToResource: OperationHandler = (input, ctx) => {
 };
 
 const RemoveTagsFromResource: OperationHandler = (input, ctx) => {
-  const { resourceType, resourceId } = requireResourceTarget(input);
+  const { resourceType, resourceId } = tagResourceTarget(input, ctx);
   const tagKeys = Array.isArray(input["TagKeys"])
     ? (input["TagKeys"] as unknown[]).map((value) => String(value))
     : [];
@@ -865,7 +895,7 @@ const RemoveTagsFromResource: OperationHandler = (input, ctx) => {
 };
 
 const ListTagsForResource: OperationHandler = (input, ctx) => {
-  const { resourceType, resourceId } = requireResourceTarget(input);
+  const { resourceType, resourceId } = tagResourceTarget(input, ctx);
   const existing = ctx.store.get<StoredTags>(tagsKey(resourceType, resourceId));
   const tags = existing?.Tags ?? {};
   const tagList = Object.keys(tags).map((tagKey) => ({

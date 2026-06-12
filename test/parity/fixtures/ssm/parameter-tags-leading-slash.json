@@ -1,0 +1,64 @@
+{
+  "clientPackage": "@aws-sdk/client-ssm",
+  "clientName": "SSMClient",
+  "steps": [
+    {
+      "command": "PutParameterCommand",
+      "input": { "Name": "pm-slash-param", "Value": "value", "Type": "String" },
+      "expected": { "Version": 1 },
+      "ignorePaths": ["$metadata", "Tier"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "AddTagsToResourceCommand",
+      "input": {
+        "ResourceId": "pm-slash-param",
+        "ResourceType": "Parameter",
+        "Tags": [{ "Key": "stripped", "Value": "pm-slash-param" }]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "AddTagsToResourceCommand",
+      "input": {
+        "ResourceId": "/pm-slash-param",
+        "ResourceType": "Parameter",
+        "Tags": [{ "Key": "leading-slash", "Value": "/pm-slash-param" }]
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTagsForResourceCommand",
+      "input": { "ResourceId": "pm-slash-param", "ResourceType": "Parameter" },
+      "expected": {
+        "TagList": [
+          { "Key": "stripped", "Value": "pm-slash-param" },
+          { "Key": "leading-slash", "Value": "/pm-slash-param" }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListTagsForResourceCommand",
+      "input": { "ResourceId": "/pm-slash-param", "ResourceType": "Parameter" },
+      "expected": {
+        "TagList": [
+          { "Key": "stripped", "Value": "pm-slash-param" },
+          { "Key": "leading-slash", "Value": "/pm-slash-param" }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -21,7 +21,11 @@
           "UserPoolTier": "ESSENTIALS"
         }
       },
-      "ignorePaths": ["$metadata", "UserPool.CreationDate", "UserPool.LastModifiedDate"],
+      "ignorePaths": [
+        "$metadata",
+        "UserPool.CreationDate",
+        "UserPool.LastModifiedDate"
+      ],
       "saveAs": "pool",
       "refs": {}
     },
@@ -44,7 +48,11 @@
           "UserPoolTier": "ESSENTIALS"
         }
       },
-      "ignorePaths": ["$metadata", "UserPool.CreationDate", "UserPool.LastModifiedDate"],
+      "ignorePaths": [
+        "$metadata",
+        "UserPool.CreationDate",
+        "UserPool.LastModifiedDate"
+      ],
       "saveAs": null,
       "refs": { "pool.UserPool.Id": "pool" }
     },

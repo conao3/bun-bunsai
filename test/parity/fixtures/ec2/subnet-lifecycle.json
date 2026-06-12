@@ -70,7 +70,10 @@
     {
       "command": "DeleteSubnetCommand",
       "input": { "SubnetId": "${subnet.Subnet.SubnetId}" },
-      "expectedError": { "name": "InvalidSubnetID.NotFound", "statusCode": 400 },
+      "expectedError": {
+        "name": "InvalidSubnetID.NotFound",
+        "statusCode": 400
+      },
       "ignorePaths": [],
       "saveAs": null,
       "refs": { "subnet.Subnet.SubnetId": "subnet" }

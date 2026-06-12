@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ServiceSummary } from "./api";
+import type { ServiceSummary, SnapshotMeta } from "./api";
+import { createSnapshot } from "./api";
 import { Ico, ProtoBadge, ServiceTag, svcInfo } from "./shared";
 import type { Density, LogLayout, Theme } from "./types";
+import { buildSnapshotPath, router } from "./router";
 
 type Scope = { account: string; region: string };
 
-type Tab = "general" | "scope" | "services";
+type Tab = "general" | "services" | "scope" | "persistence";
 
-const tabs: { id: Tab; label: string }[] = [
+export const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
-  { id: "scope", label: "Scope" },
   { id: "services", label: "Services" },
+  { id: "scope", label: "Scope" },
+  { id: "persistence", label: "Persistence" },
 ];
 
 function TabBar({
@@ -203,6 +206,78 @@ function ScopeTab({
   );
 }
 
+export function snapshotCountText(count: number): string {
+  return count === 0
+    ? "保存済みスナップショットはありません"
+    : `${count} 件のスナップショット`;
+}
+
+function snapshotName(): string {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  return `snapshot-${hh}${mm}${ss}`;
+}
+
+function PersistenceTab({
+  snapshots,
+  onRefresh,
+}: {
+  snapshots: SnapshotMeta[];
+  onRefresh: () => void;
+}) {
+  const [dumping, setDumping] = useState(false);
+
+  const handleDump = () => {
+    setDumping(true);
+    createSnapshot(snapshotName())
+      .then(() => onRefresh())
+      .catch(() => {})
+      .finally(() => setDumping(false));
+  };
+
+  return (
+    <div className="settings-section">
+      <div className="settings-row">
+        <div className="settings-label">
+          <div className="settings-label-title">Dump Destination</div>
+        </div>
+        <span className="settings-value-ro">ブラウザダウンロード</span>
+      </div>
+      <div className="settings-sep" />
+      <div className="settings-row">
+        <div className="settings-label">
+          <div className="settings-label-title">スナップショット作成</div>
+          <div className="settings-label-sub">現在の状態を保存します</div>
+        </div>
+        <button
+          className="btn btn-secondary"
+          onClick={handleDump}
+          disabled={dumping}
+        >
+          {dumping ? "ダンプ中…" : "今すぐダンプ"}
+        </button>
+      </div>
+      <div className="settings-sep" />
+      <div className="settings-row">
+        <div className="settings-label">
+          <div className="settings-label-title">スナップショット管理</div>
+          <div className="settings-label-sub">
+            {snapshotCountText(snapshots.length)}
+          </div>
+        </div>
+        <button
+          className="btn btn-secondary"
+          onClick={() => router.push(buildSnapshotPath())}
+        >
+          管理ページへ
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ServicesTab({ services }: { services: ServiceSummary[] }) {
   if (services.length === 0) {
     return (
@@ -251,6 +326,8 @@ export function Settings({
   accounts,
   regions,
   services,
+  snapshots,
+  onRefresh,
 }: {
   theme: Theme;
   setTheme: (t: Theme) => void;
@@ -263,10 +340,12 @@ export function Settings({
   accounts: string[];
   regions: string[];
   services: ServiceSummary[];
+  snapshots: SnapshotMeta[];
+  onRefresh: () => void;
 }) {
   const getTabFromQuery = useCallback((): Tab => {
     const q = new URLSearchParams(location.search).get("tab");
-    if (q === "scope" || q === "services") return q;
+    if (q === "scope" || q === "services" || q === "persistence") return q;
     return "general";
   }, []);
 
@@ -310,6 +389,9 @@ export function Settings({
           />
         )}
         {activeTab === "services" && <ServicesTab services={services} />}
+        {activeTab === "persistence" && (
+          <PersistenceTab snapshots={snapshots} onRefresh={onRefresh} />
+        )}
       </div>
     </div>
   );

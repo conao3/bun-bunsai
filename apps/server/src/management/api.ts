@@ -32,6 +32,8 @@ export type ManagementDeps = {
   store: StateStore;
   log: RequestLog;
   snapshots: SnapshotRegistry;
+  startedAt: number;
+  version: string;
 };
 
 const json = (value: unknown, status = 200): Response =>
@@ -81,6 +83,13 @@ export const handleManagement = async (
   deps: ManagementDeps,
 ): Promise<Response | undefined> => {
   if (!url.pathname.startsWith("/__bunsai/")) return undefined;
+
+  if (url.pathname === "/__bunsai/meta" && req.method === "GET") {
+    return json({
+      uptimeSeconds: Math.floor((Date.now() - deps.startedAt) / 1000),
+      version: deps.version,
+    });
+  }
 
   if (url.pathname === "/__bunsai/services" && req.method === "GET") {
     return json(

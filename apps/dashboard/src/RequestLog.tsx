@@ -233,8 +233,11 @@ function RequestDetail({
         )}
         {tab === "raw" && (
           <>
-            <div className="uppercase-label" style={{ marginBottom: 8 }}>
-              raw request body
+            <div className="flex aic jcsb" style={{ marginBottom: 8 }}>
+              <span className="uppercase-label">raw request body</span>
+              {req.contentType && (
+                <span className="proto-badge">{req.contentType}</span>
+              )}
             </div>
             <CodeBlock text={req.requestBodyText} />
           </>

@@ -40,6 +40,12 @@ export type RequestLogEntry = {
   requestHeaders?: Record<string, string>;
   responseHeaders?: Record<string, string>;
   resourceArn?: string;
+  contentType?: string;
+};
+
+export type ServerMeta = {
+  uptimeSeconds: number;
+  version: string;
 };
 
 export type SnapshotMeta = {
@@ -73,6 +79,10 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
 
 export async function fetchServices(): Promise<ServiceSummary[]> {
   return getJson<ServiceSummary[]>("/services");
+}
+
+export async function fetchMeta(): Promise<ServerMeta> {
+  return getJson<ServerMeta>("/meta");
 }
 
 export async function fetchResources(): Promise<ResourceEntry[]> {

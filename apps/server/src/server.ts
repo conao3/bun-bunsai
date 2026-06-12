@@ -10,6 +10,7 @@ import { findService } from "./services/index.ts";
 import { virtualHostBucket } from "./services/s3.ts";
 import { handleCognitoDiscovery } from "./services/cognito-idp.ts";
 import { handleExecuteApi } from "./services/apigateway.ts";
+import serverPkg from "../package.json" with { type: "json" };
 
 const bodyTextForLog = (body: string | Uint8Array): string => {
   if (typeof body === "string") return body;
@@ -32,6 +33,8 @@ export function createBunsaiApp() {
   const store = createStateStore();
   const log = createRequestLog();
   const snapshots = createSnapshotRegistry();
+  const startedAt = Date.now();
+  const version = (serverPkg as { version?: string }).version ?? "0.0.0";
 
   const gatewayFetch = async (req: Request): Promise<Response> => {
     const start = performance.now();
@@ -84,6 +87,7 @@ export function createBunsaiApp() {
         responseBodyText: bodyTextForLog(serialized.body),
         requestHeaders: headersToRecord(req.headers),
         responseHeaders: unknownRespHeaders,
+        contentType: serialized.contentType,
       });
       return new Response(serialized.body, {
         status: error.statusCode,
@@ -122,6 +126,7 @@ export function createBunsaiApp() {
         responseBodyText: bodyTextForLog(serialized.body),
         requestHeaders: headersToRecord(req.headers),
         responseHeaders: expiredRespHeaders,
+        contentType: serialized.contentType,
       });
       return new Response(serialized.body, {
         status: error.statusCode,
@@ -185,6 +190,7 @@ export function createBunsaiApp() {
       responseBodyText: bodyTextForLog(result.body),
       requestHeaders: headersToRecord(req.headers),
       responseHeaders: headersToRecord(responseHeaders),
+      contentType: result.contentType,
     });
     return new Response(result.body, {
       status: result.statusCode,
@@ -194,7 +200,13 @@ export function createBunsaiApp() {
 
   const managementFetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
-    const managed = await handleManagement(req, url, { store, log, snapshots });
+    const managed = await handleManagement(req, url, {
+      store,
+      log,
+      snapshots,
+      startedAt,
+      version,
+    });
     return managed ?? new Response("not found", { status: 404 });
   };
 

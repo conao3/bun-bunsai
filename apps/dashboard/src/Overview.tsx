@@ -174,18 +174,27 @@ function MiniStream({
   );
 }
 
+const fmtUptime = (seconds: number): string => {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+};
+
 export function Overview({
   services,
   requests,
   scope,
   setScreen,
   connected,
+  uptimeSeconds,
 }: {
   services: ServiceSummary[];
   requests: RequestLogEntry[];
   scope: { account: string; region: string };
   setScreen: (s: Screen) => void;
   connected: boolean;
+  uptimeSeconds?: number;
 }) {
   const scopedRequests = requests.filter(
     (r) => r.account === scope.account && r.region === scope.region,
@@ -229,9 +238,9 @@ export function Overview({
     <div className="content ov-grid">
       <div className="ov-stats">
         <StatCard
-          label="稼働サービス"
-          value={aggregated.length}
-          sub={connected ? "registered" : "接続待ち"}
+          label="稼働時間"
+          value={uptimeSeconds !== undefined ? fmtUptime(uptimeSeconds) : "—"}
+          sub={connected ? "稼働中" : "接続待ち"}
         />
         <StatCard
           label="累計リクエスト"

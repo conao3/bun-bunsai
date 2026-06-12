@@ -1,0 +1,139 @@
+{
+  "clientPackage": "@aws-sdk/client-dynamodb",
+  "clientName": "DynamoDBClient",
+  "steps": [
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "TableName": "parity-ddb-add-expr",
+        "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" }
+        ],
+        "BillingMode": "PAY_PER_REQUEST"
+      },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-add-expr",
+          "TableStatus": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-add-expr",
+        "Item": {
+          "pk": { "S": "foo" },
+          "amount": { "N": "100" },
+          "nr": { "N": "5" }
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UpdateItemCommand",
+      "input": {
+        "TableName": "parity-ddb-add-expr",
+        "Key": { "pk": { "S": "foo" } },
+        "UpdateExpression": "ADD amount :delta",
+        "ExpressionAttributeValues": { ":delta": { "N": "-88.3" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetItemCommand",
+      "input": {
+        "TableName": "parity-ddb-add-expr",
+        "Key": { "pk": { "S": "foo" } }
+      },
+      "expected": {
+        "Item": {
+          "pk": { "S": "foo" },
+          "amount": { "N": "11.7" },
+          "nr": { "N": "5" }
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UpdateItemCommand",
+      "input": {
+        "TableName": "parity-ddb-add-expr",
+        "Key": { "pk": { "S": "foo" } },
+        "UpdateExpression": "ADD amount :delta",
+        "ExpressionAttributeValues": { ":delta": { "N": "25.41" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetItemCommand",
+      "input": {
+        "TableName": "parity-ddb-add-expr",
+        "Key": { "pk": { "S": "foo" } }
+      },
+      "expected": {
+        "Item": {
+          "pk": { "S": "foo" },
+          "amount": { "N": "37.11" },
+          "nr": { "N": "5" }
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UpdateItemCommand",
+      "input": {
+        "TableName": "parity-ddb-add-expr",
+        "Key": { "pk": { "S": "foo" } },
+        "UpdateExpression": "ADD nr :delta",
+        "ExpressionAttributeValues": { ":delta": { "N": "1" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetItemCommand",
+      "input": {
+        "TableName": "parity-ddb-add-expr",
+        "Key": { "pk": { "S": "foo" } }
+      },
+      "expected": {
+        "Item": {
+          "pk": { "S": "foo" },
+          "amount": { "N": "37.11" },
+          "nr": { "N": "6" }
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": { "TableName": "parity-ddb-add-expr" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

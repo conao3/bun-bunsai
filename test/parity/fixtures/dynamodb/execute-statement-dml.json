@@ -1,0 +1,111 @@
+{
+  "clientPackage": "@aws-sdk/client-dynamodb",
+  "clientName": "DynamoDBClient",
+  "steps": [
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "TableName": "parity-ddb-partiql-dml",
+        "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" }
+        ],
+        "BillingMode": "PAY_PER_REQUEST"
+      },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-partiql-dml",
+          "TableStatus": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-partiql-dml",
+        "Item": {
+          "pk": { "S": "msg1" },
+          "body": { "S": "some text" }
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ExecuteStatementCommand",
+      "input": {
+        "Statement": "INSERT INTO \"parity-ddb-partiql-dml\" value {'pk': 'msg3'}"
+      },
+      "expected": {
+        "Items": []
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ExecuteStatementCommand",
+      "input": {
+        "Statement": "UPDATE \"parity-ddb-partiql-dml\" SET body='updated' WHERE pk='msg1'"
+      },
+      "expected": {
+        "Items": []
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetItemCommand",
+      "input": {
+        "TableName": "parity-ddb-partiql-dml",
+        "Key": { "pk": { "S": "msg1" } }
+      },
+      "expected": {
+        "Item": {
+          "pk": { "S": "msg1" },
+          "body": { "S": "updated" }
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ExecuteStatementCommand",
+      "input": {
+        "Statement": "DELETE FROM \"parity-ddb-partiql-dml\" WHERE pk='msg1'"
+      },
+      "expected": {
+        "Items": []
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ScanCommand",
+      "input": { "TableName": "parity-ddb-partiql-dml" },
+      "expected": {
+        "Items": [{ "pk": { "S": "msg3" } }],
+        "Count": 1
+      },
+      "ignorePaths": ["$metadata", "ScannedCount"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": { "TableName": "parity-ddb-partiql-dml" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

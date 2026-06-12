@@ -1,0 +1,87 @@
+{
+  "clientPackage": "@aws-sdk/client-dynamodb",
+  "clientName": "DynamoDBClient",
+  "steps": [
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "TableName": "parity-ddb-remove-list",
+        "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" }
+        ],
+        "BillingMode": "PAY_PER_REQUEST"
+      },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-remove-list",
+          "TableStatus": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-remove-list",
+        "Item": {
+          "pk": { "S": "primary_key" },
+          "user_list": {
+            "L": [
+              { "M": { "name": { "S": "John" }, "surname": { "S": "Doe" } } },
+              { "M": { "name": { "S": "Jane" }, "surname": { "S": "Smith" } } }
+            ]
+          },
+          "some_param": { "NULL": true }
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UpdateItemCommand",
+      "input": {
+        "TableName": "parity-ddb-remove-list",
+        "Key": { "pk": { "S": "primary_key" } },
+        "UpdateExpression": "REMOVE #ulist[0], some_param",
+        "ExpressionAttributeNames": { "#ulist": "user_list" }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetItemCommand",
+      "input": {
+        "TableName": "parity-ddb-remove-list",
+        "Key": { "pk": { "S": "primary_key" } }
+      },
+      "expected": {
+        "Item": {
+          "pk": { "S": "primary_key" },
+          "user_list": {
+            "L": [
+              { "M": { "name": { "S": "Jane" }, "surname": { "S": "Smith" } } }
+            ]
+          }
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": { "TableName": "parity-ddb-remove-list" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

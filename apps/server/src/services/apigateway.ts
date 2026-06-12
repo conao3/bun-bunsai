@@ -4399,9 +4399,9 @@ const enforceAuthorizer = async (
       );
     }
     const token = rawToken.startsWith("Bearer ") ? rawToken.slice(7) : rawToken;
+    let claims: Record<string, unknown>;
     try {
-      const claims = await verifyJwt(token);
-      return claims;
+      claims = await verifyJwt(token);
     } catch {
       return gatewayErrorResponse(
         ctx,
@@ -4411,6 +4411,43 @@ const enforceAuthorizer = async (
         "Unauthorized",
       );
     }
+    const iss = typeof claims["iss"] === "string" ? claims["iss"] : "";
+    const issPoolId = iss.split("/").pop() ?? "";
+    const providerARNs = authorizer.providerARNs ?? [];
+    const poolMatched = providerARNs.some((arn) =>
+      arn.endsWith(`userpool/${issPoolId}`),
+    );
+    if (!poolMatched) {
+      return gatewayErrorResponse(
+        ctx,
+        restApiId,
+        "UNAUTHORIZED",
+        401,
+        "Unauthorized",
+      );
+    }
+    const clientId =
+      typeof claims["aud"] === "string"
+        ? claims["aud"]
+        : typeof claims["client_id"] === "string"
+          ? claims["client_id"]
+          : "";
+    if (clientId) {
+      const cognitoStore = ctx.storeFor("cognito-idp");
+      const pool = cognitoStore.get<{ clients: Record<string, unknown> }>(
+        issPoolId,
+      );
+      if (!pool || !(clientId in pool.clients)) {
+        return gatewayErrorResponse(
+          ctx,
+          restApiId,
+          "UNAUTHORIZED",
+          401,
+          "Unauthorized",
+        );
+      }
+    }
+    return claims;
   }
 
   const token = extractIdentityToken(authorizer.identitySource, req, url);

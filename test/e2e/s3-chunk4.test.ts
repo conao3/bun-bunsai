@@ -182,7 +182,12 @@ describe("S3 chunk-4 ops e2e", () => {
       new UpdateObjectEncryptionCommand({
         Bucket: bucket,
         Key: "secret.txt",
-        ObjectEncryption: { EncryptionType: "SSES3" },
+        ObjectEncryption: {
+          SSEKMS: {
+            KMSKeyArn:
+              "arn:aws:kms:us-east-1:123456789012:key/test-key-id-0001",
+          },
+        },
       }),
     );
 

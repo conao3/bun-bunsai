@@ -3494,13 +3494,12 @@ const s3: ServiceDefinition = {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
       const encryptionInput = input["ObjectEncryption"];
-      const encType =
-        typeof encryptionInput === "object" && encryptionInput !== null
-          ? ((encryptionInput as Record<string, unknown>)["EncryptionType"] as
-              | string
-              | undefined)
-          : undefined;
-      const sseAlgorithm = encType === "SSEKMS" ? "aws:kms" : "AES256";
+      const sseAlgorithm =
+        typeof encryptionInput === "object" &&
+        encryptionInput !== null &&
+        "SSEKMS" in (encryptionInput as Record<string, unknown>)
+          ? "aws:kms"
+          : "AES256";
       const versions = [...(target.objects[key] ?? [])];
       versions[idx] = { ...object, serverSideEncryption: sseAlgorithm };
       ctx.store.set<S3Bucket>(bucket, {

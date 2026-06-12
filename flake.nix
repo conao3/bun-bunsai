@@ -8,7 +8,7 @@
   };
 
   outputs =
-    inputs@{ flake-parts, ... }:
+    inputs@{ flake-parts, nixpkgs, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
@@ -20,7 +20,17 @@
       ];
 
       perSystem =
-        { pkgs, ... }:
+        { system, ... }:
+        let
+          pkgs = import nixpkgs {
+            inherit system;
+            config.allowUnfreePredicate =
+              pkg:
+              builtins.elem (nixpkgs.lib.getName pkg) [
+                "terraform"
+              ];
+          };
+        in
         {
           treefmt = {
             projectRootFile = "flake.nix";

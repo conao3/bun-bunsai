@@ -1,0 +1,21 @@
+{
+  "clientPackage": "@aws-sdk/client-s3",
+  "clientName": "S3Client",
+  "clientConfig": { "forcePathStyle": true },
+  "steps": [
+    {
+      "command": "CreateBucketCommand",
+      "input": {
+        "Bucket": "pm-loc-invalid",
+        "CreateBucketConfiguration": { "LocationConstraint": "us-east-1" }
+      },
+      "expectedError": {
+        "name": "InvalidLocationConstraint",
+        "statusCode": 400
+      },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

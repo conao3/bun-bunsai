@@ -174,8 +174,9 @@ export const dispatch = async (
       input,
     );
     if (invalid !== undefined) {
+      const mapped = service.mapValidationError?.(invalid) ?? invalid;
       return fail(
-        awsError(invalid.code, invalid.message, invalid.statusCode),
+        awsError(mapped.code, mapped.message, mapped.statusCode),
         operation,
       );
     }

@@ -10,6 +10,7 @@ export type ValidationError = {
   message: string;
   statusCode: number;
   senderFault: boolean;
+  member?: string;
 };
 
 const missingFor = (protocol: Protocol, member: string): ValidationError => {
@@ -22,6 +23,7 @@ const missingFor = (protocol: Protocol, member: string): ValidationError => {
         message: `The required parameter ${member} is missing.`,
         statusCode: 400,
         senderFault: true,
+        member,
       };
     case "json":
     case "rest-json":
@@ -30,6 +32,7 @@ const missingFor = (protocol: Protocol, member: string): ValidationError => {
         message: `1 validation error detected: Value null at '${member}' failed to satisfy constraint: Member must not be null`,
         statusCode: 400,
         senderFault: true,
+        member,
       };
   }
 };
@@ -48,6 +51,7 @@ const constraintFor = (
         message: `Value for parameter ${member} is invalid: ${detail}`,
         statusCode: 400,
         senderFault: true,
+        member,
       };
     case "json":
     case "rest-json":
@@ -56,6 +60,7 @@ const constraintFor = (
         message: `1 validation error detected: Value at '${member}' failed to satisfy constraint: ${detail}`,
         statusCode: 400,
         senderFault: true,
+        member,
       };
   }
 };

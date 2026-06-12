@@ -389,6 +389,16 @@ const s3: ServiceDefinition = {
   name: "s3",
   protocol: "rest-xml",
   xmlErrorRoot: "Error",
+  mapValidationError: (error) => {
+    if (error.member?.endsWith("LocationConstraint") === true) {
+      return {
+        code: "InvalidLocationConstraint",
+        message: "The specified location-constraint is not valid",
+        statusCode: 400,
+      };
+    }
+    return undefined;
+  },
   resolveOperation: (req: ParsedRequest): string | undefined => {
     const { bucket, key } = bucketKeyFromPath(req.path);
     if (bucket === undefined) {

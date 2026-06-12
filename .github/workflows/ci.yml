@@ -28,6 +28,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run fmt:check
+      - run: bun maint/bin/gen-status.ts --check
 
   terraform-smoke:
     runs-on: ubuntu-latest

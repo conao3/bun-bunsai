@@ -8,10 +8,10 @@
 | ------------------------ | --------------------------------------------- |
 | Services registered      | **141**                                       |
 | Wire protocols           | **5** (ec2, json, query, rest-json, rest-xml) |
-| Services at 100%         | **141 / 141**                                 |
-| Unimplemented operations | **0**                                         |
-| E2E test files           | **521**                                       |
-| Scenario test files      | **39**                                        |
+| Services at 100%         | **138 / 141**                                 |
+| Unimplemented operations | **169**                                       |
+| E2E test files           | **532**                                       |
+| Scenario test files      | **40**                                        |
 
 ## Features
 
@@ -32,8 +32,8 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | iot                     | rest-json | 272/272 | 6         |
 | glue                    | json      | 265/265 | 26        |
 | iam                     | query     | 176/176 | 14        |
-| cloudfront              | rest-xml  | 178/167 | 6         |
-| rds                     | query     | 164/164 | 8         |
+| cloudfront              | rest-xml  | 45/167  | 6         |
+| rds                     | query     | 164/164 | 9         |
 | ssm                     | json      | 146/146 | 3         |
 | redshift                | query     | 141/141 | 1         |
 | cognito-idp             | json      | 126/126 | 7         |
@@ -42,7 +42,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | pinpoint                | rest-json | 122/122 | 1         |
 | dms                     | json      | 119/119 | 1         |
 | logs                    | json      | 113/113 | 9         |
-| s3                      | rest-xml  | 153/111 | 20        |
+| s3                      | rest-xml  | 68/111  | 23        |
 | sesv2                   | rest-json | 111/111 | 3         |
 | backup                  | rest-json | 109/109 | 2         |
 | lexv2                   | rest-json | 107/107 | 1         |
@@ -64,7 +64,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | lambda                  | rest-json | 85/85   | 10        |
 | codecommit              | json      | 79/79   | 1         |
 | network-firewall        | json      | 79/79   | 1         |
-| sso-admin               | json      | 232/79  | 1         |
+| sso-admin               | json      | 79/79   | 1         |
 | ecs                     | json      | 77/77   | 4         |
 | imagebuilder            | rest-json | 77/77   | 1         |
 | elasticache             | query     | 75/75   | 4         |
@@ -72,7 +72,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | frauddetector           | json      | 73/73   | 1         |
 | route53resolver         | json      | 72/72   | 3         |
 | personalize             | json      | 71/71   | 1         |
-| route53                 | rest-xml  | 240/71  | 8         |
+| route53                 | rest-xml  | 71/71   | 8         |
 | ses                     | query     | 71/71   | 1         |
 | transfer                | json      | 71/71   | 1         |
 | athena                  | json      | 70/70   | 4         |
@@ -89,7 +89,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | codebuild               | json      | 59/59   | 1         |
 | kafka                   | rest-json | 59/59   | 1         |
 | ecr                     | json      | 58/58   | 2         |
-| dynamodb                | json      | 61/57   | 26        |
+| dynamodb                | json      | 57/57   | 28        |
 | eventbridge             | json      | 57/57   | 9         |
 | globalaccelerator       | json      | 56/56   | 1         |
 | wafv2                   | json      | 55/55   | 2         |
@@ -109,7 +109,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | codepipeline            | json      | 44/44   | 1         |
 | transcribe              | json      | 43/43   | 1         |
 | fms                     | json      | 42/42   | 1         |
-| sns                     | query     | 42/42   | 12        |
+| sns                     | query     | 42/42   | 13        |
 | wisdom                  | rest-json | 41/41   | 1         |
 | groundstation           | rest-json | 40/40   | 1         |
 | ivs                     | rest-json | 40/40   | 1         |
@@ -141,7 +141,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | textract                | json      | 25/25   | 1         |
 | mq                      | rest-json | 24/24   | 2         |
 | acm-pca                 | json      | 23/23   | 1         |
-| cognito-identity        | json      | 131/23  | 1         |
+| cognito-identity        | json      | 23/23   | 1         |
 | resourcegroups          | rest-json | 23/23   | 1         |
 | secretsmanager          | json      | 23/23   | 7         |
 | sqs                     | json      | 23/23   | 11        |
@@ -149,7 +149,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | dax                     | json      | 21/21   | 1         |
 | mediastore              | json      | 21/21   | 1         |
 | datapipeline            | json      | 19/19   | 1         |
-| identitystore           | json      | 60/19   | 0         |
+| identitystore           | json      | 19/19   | 0         |
 | keyspaces               | json      | 19/19   | 1         |
 | mediapackage            | rest-json | 19/19   | 1         |
 | signer                  | rest-json | 19/19   | 1         |
@@ -162,7 +162,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | mwaa                    | rest-json | 12/12   | 1         |
 | scheduler               | rest-json | 12/12   | 1         |
 | iot-data                | rest-json | 11/11   | 0         |
-| sts                     | query     | 49/11   | 2         |
+| sts                     | query     | 7/11    | 2         |
 | bedrock-runtime         | rest-json | 10/10   | 0         |
 | pipes                   | rest-json | 10/10   | 1         |
 | cloudcontrol            | json      | 8/8     | 1         |

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import snsModel from "../../../../test/vendor/aws-models/sns.json" with { type: "json" };
+import snsModel from "../../models/sns.json" with { type: "json" };
 import type {
   OperationHandler,
   ScopedStore,

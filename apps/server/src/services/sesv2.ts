@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import sesv2Model from "../../../../test/vendor/aws-models/sesv2.json" with { type: "json" };
+import sesv2Model from "../../models/sesv2.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

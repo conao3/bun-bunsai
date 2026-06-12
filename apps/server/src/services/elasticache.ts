@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import elasticacheModel from "../../../../test/vendor/aws-models/elasticache.json" with { type: "json" };
+import elasticacheModel from "../../models/elasticache.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

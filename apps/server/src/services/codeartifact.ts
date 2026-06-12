@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import codeartifactModel from "../../../../test/vendor/aws-models/codeartifact.json" with { type: "json" };
+import codeartifactModel from "../../models/codeartifact.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import fmsModel from "../../../../test/vendor/aws-models/fms.json" with { type: "json" };
+import fmsModel from "../../models/fms.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

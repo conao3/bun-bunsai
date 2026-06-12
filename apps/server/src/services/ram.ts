@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import ramModel from "../../../../test/vendor/aws-models/ram.json" with { type: "json" };
+import ramModel from "../../models/ram.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

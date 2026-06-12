@@ -1,7 +1,7 @@
 import { awsError } from "../core/framework.ts";
 import { invokeTaskResource } from "../core/events.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import secretsManagerModel from "../../../../test/vendor/aws-models/secretsmanager.json" with { type: "json" };
+import secretsManagerModel from "../../models/secretsmanager.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

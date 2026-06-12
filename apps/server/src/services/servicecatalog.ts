@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import servicecatalogModel from "../../../../test/vendor/aws-models/servicecatalog.json" with { type: "json" };
+import servicecatalogModel from "../../models/servicecatalog.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

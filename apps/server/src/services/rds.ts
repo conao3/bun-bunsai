@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import rdsModel from "../../../../test/vendor/aws-models/rds.json" with { type: "json" };
+import rdsModel from "../../models/rds.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

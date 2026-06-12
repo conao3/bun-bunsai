@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import cognitoIdentityModel from "../../../../test/vendor/aws-models/cognito-identity.json" with { type: "json" };
+import cognitoIdentityModel from "../../models/cognito-identity.json" with { type: "json" };
 import type { ServiceDefinition } from "../core/types.ts";
 
 const model = loadServiceModel(cognitoIdentityModel);

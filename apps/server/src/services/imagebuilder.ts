@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import imagebuilderModel from "../../../../test/vendor/aws-models/imagebuilder.json" with { type: "json" };
+import imagebuilderModel from "../../models/imagebuilder.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

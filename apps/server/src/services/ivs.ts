@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import ivsModel from "../../../../test/vendor/aws-models/ivs.json" with { type: "json" };
+import ivsModel from "../../models/ivs.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

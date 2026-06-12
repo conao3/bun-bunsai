@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import dlmModel from "../../../../test/vendor/aws-models/dlm.json" with { type: "json" };
+import dlmModel from "../../models/dlm.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

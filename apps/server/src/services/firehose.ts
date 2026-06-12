@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import firehoseModel from "../../../../test/vendor/aws-models/firehose.json" with { type: "json" };
+import firehoseModel from "../../models/firehose.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

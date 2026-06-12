@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import medialiveModel from "../../../../test/vendor/aws-models/medialive.json" with { type: "json" };
+import medialiveModel from "../../models/medialive.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

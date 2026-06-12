@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import autoscalingModel from "../../../../test/vendor/aws-models/autoscaling.json" with { type: "json" };
+import autoscalingModel from "../../models/autoscaling.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -1,7 +1,7 @@
 import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import codecommitModel from "../../../../test/vendor/aws-models/codecommit.json" with { type: "json" };
+import codecommitModel from "../../models/codecommit.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -5,7 +5,7 @@ import type {
 } from "../core/types.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import s3Model from "../../../../test/vendor/aws-models/s3.json" with { type: "json" };
+import s3Model from "../../models/s3.json" with { type: "json" };
 import { deliverToArn } from "../core/events.ts";
 
 const model = loadServiceModel(s3Model);

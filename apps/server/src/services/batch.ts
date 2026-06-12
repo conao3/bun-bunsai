@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import batchModel from "../../../../test/vendor/aws-models/batch.json" with { type: "json" };
+import batchModel from "../../models/batch.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

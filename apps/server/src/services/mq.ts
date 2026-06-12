@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import mqModel from "../../../../test/vendor/aws-models/mq.json" with { type: "json" };
+import mqModel from "../../models/mq.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

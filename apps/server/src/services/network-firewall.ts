@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import networkFirewallModel from "../../../../test/vendor/aws-models/network-firewall.json" with { type: "json" };
+import networkFirewallModel from "../../models/network-firewall.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

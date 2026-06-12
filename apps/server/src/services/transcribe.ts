@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import transcribeModel from "../../../../test/vendor/aws-models/transcribe.json" with { type: "json" };
+import transcribeModel from "../../models/transcribe.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import licensemanagerModel from "../../../../test/vendor/aws-models/licensemanager.json" with { type: "json" };
+import licensemanagerModel from "../../models/licensemanager.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

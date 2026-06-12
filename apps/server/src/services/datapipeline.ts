@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import datapipelineModel from "../../../../test/vendor/aws-models/datapipeline.json" with { type: "json" };
+import datapipelineModel from "../../models/datapipeline.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

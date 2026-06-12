@@ -1,7 +1,7 @@
 import { awsError } from "../core/framework.ts";
 import { callerArn as iamCallerArn } from "../core/arn.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import ssmIncidentsModel from "../../../../test/vendor/aws-models/ssm-incidents.json" with { type: "json" };
+import ssmIncidentsModel from "../../models/ssm-incidents.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

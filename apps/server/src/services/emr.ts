@@ -1,7 +1,7 @@
 import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import emrModel from "../../../../test/vendor/aws-models/emr.json" with { type: "json" };
+import emrModel from "../../models/emr.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import wisdomModel from "../../../../test/vendor/aws-models/wisdom.json" with { type: "json" };
+import wisdomModel from "../../models/wisdom.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

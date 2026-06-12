@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import redshiftModel from "../../../../test/vendor/aws-models/redshift.json" with { type: "json" };
+import redshiftModel from "../../models/redshift.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

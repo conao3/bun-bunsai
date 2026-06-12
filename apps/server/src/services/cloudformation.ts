@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import cloudformationModel from "../../../../test/vendor/aws-models/cloudformation.json" with { type: "json" };
+import cloudformationModel from "../../models/cloudformation.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

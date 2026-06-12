@@ -1,7 +1,7 @@
 import { awsError } from "../core/framework.ts";
 import { callerArn } from "../core/arn.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import emrServerlessModel from "../../../../test/vendor/aws-models/emr-serverless.json" with { type: "json" };
+import emrServerlessModel from "../../models/emr-serverless.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

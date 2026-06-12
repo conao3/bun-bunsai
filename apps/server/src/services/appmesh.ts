@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import appmeshModel from "../../../../test/vendor/aws-models/appmesh.json" with { type: "json" };
+import appmeshModel from "../../models/appmesh.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

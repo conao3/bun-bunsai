@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import route53resolverModel from "../../../../test/vendor/aws-models/route53resolver.json" with { type: "json" };
+import route53resolverModel from "../../models/route53resolver.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

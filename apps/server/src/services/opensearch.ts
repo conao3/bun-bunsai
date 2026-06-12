@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import opensearchModel from "../../../../test/vendor/aws-models/opensearch.json" with { type: "json" };
+import opensearchModel from "../../models/opensearch.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import elasticbeanstalkModel from "../../../../test/vendor/aws-models/elasticbeanstalk.json" with { type: "json" };
+import elasticbeanstalkModel from "../../models/elasticbeanstalk.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

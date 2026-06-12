@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import eksModel from "../../../../test/vendor/aws-models/eks.json" with { type: "json" };
+import eksModel from "../../models/eks.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

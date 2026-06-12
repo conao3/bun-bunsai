@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import ssoAdminModel from "../../../../test/vendor/aws-models/sso-admin.json" with { type: "json" };
+import ssoAdminModel from "../../models/sso-admin.json" with { type: "json" };
 import type { ServiceDefinition } from "../core/types.ts";
 
 const model = loadServiceModel(ssoAdminModel);

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import glueModel from "../../../../test/vendor/aws-models/glue.json" with { type: "json" };
+import glueModel from "../../models/glue.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

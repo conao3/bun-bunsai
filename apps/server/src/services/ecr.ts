@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import ecrModel from "../../../../test/vendor/aws-models/ecr.json" with { type: "json" };
+import ecrModel from "../../models/ecr.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

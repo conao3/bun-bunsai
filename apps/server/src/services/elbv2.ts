@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import elbv2Model from "../../../../test/vendor/aws-models/elbv2.json" with { type: "json" };
+import elbv2Model from "../../models/elbv2.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -2,7 +2,7 @@ import { gzipSync } from "node:zlib";
 import { awsError } from "../core/framework.ts";
 import { deliverToArn } from "../core/events.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import logsModel from "../../../../test/vendor/aws-models/logs.json" with { type: "json" };
+import logsModel from "../../models/logs.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

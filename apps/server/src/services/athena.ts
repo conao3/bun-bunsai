@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import athenaModel from "../../../../test/vendor/aws-models/athena.json" with { type: "json" };
+import athenaModel from "../../models/athena.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

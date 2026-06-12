@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import workspacesModel from "../../../../test/vendor/aws-models/workspaces.json" with { type: "json" };
+import workspacesModel from "../../models/workspaces.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import personalizeModel from "../../../../test/vendor/aws-models/personalize.json" with { type: "json" };
+import personalizeModel from "../../models/personalize.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

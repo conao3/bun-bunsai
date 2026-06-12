@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import kafkaModel from "../../../../test/vendor/aws-models/kafka.json" with { type: "json" };
+import kafkaModel from "../../models/kafka.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

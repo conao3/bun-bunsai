@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import kinesisanalyticsv2Model from "../../../../test/vendor/aws-models/kinesisanalyticsv2.json" with { type: "json" };
+import kinesisanalyticsv2Model from "../../models/kinesisanalyticsv2.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import networkmanagerModel from "../../../../test/vendor/aws-models/networkmanager.json" with { type: "json" };
+import networkmanagerModel from "../../models/networkmanager.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

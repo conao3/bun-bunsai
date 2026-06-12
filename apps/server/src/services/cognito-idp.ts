@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import { publicJwks, signJwt, verifyJwt } from "../core/jwt.ts";
-import cognitoIdpModel from "../../../../test/vendor/aws-models/cognito-idp.json" with { type: "json" };
+import cognitoIdpModel from "../../models/cognito-idp.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

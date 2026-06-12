@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import cloudcontrolModel from "../../../../test/vendor/aws-models/cloudcontrol.json" with { type: "json" };
+import cloudcontrolModel from "../../models/cloudcontrol.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

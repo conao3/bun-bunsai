@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import shieldModel from "../../../../test/vendor/aws-models/shield.json" with { type: "json" };
+import shieldModel from "../../models/shield.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import globalacceleratorModel from "../../../../test/vendor/aws-models/globalaccelerator.json" with { type: "json" };
+import globalacceleratorModel from "../../models/globalaccelerator.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

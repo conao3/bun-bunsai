@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import forecastModel from "../../../../test/vendor/aws-models/forecast.json" with { type: "json" };
+import forecastModel from "../../models/forecast.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

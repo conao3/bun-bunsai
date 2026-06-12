@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import greengrassModel from "../../../../test/vendor/aws-models/greengrass.json" with { type: "json" };
+import greengrassModel from "../../models/greengrass.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

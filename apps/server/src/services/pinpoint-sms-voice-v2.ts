@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import smsVoiceModel from "../../../../test/vendor/aws-models/pinpoint-sms-voice-v2.json" with { type: "json" };
+import smsVoiceModel from "../../models/pinpoint-sms-voice-v2.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

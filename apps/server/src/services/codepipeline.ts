@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import codePipelineModel from "../../../../test/vendor/aws-models/codepipeline.json" with { type: "json" };
+import codePipelineModel from "../../models/codepipeline.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

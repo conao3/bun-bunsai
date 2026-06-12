@@ -1,0 +1,64 @@
+{
+  "clientPackage": "@aws-sdk/client-application-auto-scaling",
+  "clientName": "ApplicationAutoScalingClient",
+  "steps": [
+    {
+      "command": "RegisterScalableTargetCommand",
+      "input": {
+        "ServiceNamespace": "sagemaker",
+        "ResourceId": "endpoint/MyEndPoint/variant/MyVariant",
+        "ScalableDimension": "sagemaker:variant:DesiredInstanceCount",
+        "MinCapacity": 1,
+        "MaxCapacity": 8
+      },
+      "expected": {
+        "ScalableTargetARN": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "target",
+      "refs": {}
+    },
+    {
+      "command": "DescribeScalableTargetsCommand",
+      "input": { "ServiceNamespace": "sagemaker" },
+      "expected": {
+        "ScalableTargets": [
+          {
+            "ServiceNamespace": "sagemaker",
+            "ResourceId": "endpoint/MyEndPoint/variant/MyVariant",
+            "ScalableDimension": "sagemaker:variant:DesiredInstanceCount",
+            "MinCapacity": 1,
+            "MaxCapacity": 8,
+            "ScalableTargetARN": "<ANY>",
+            "CreationTime": "<ANY>"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeregisterScalableTargetCommand",
+      "input": {
+        "ServiceNamespace": "sagemaker",
+        "ResourceId": "endpoint/MyEndPoint/variant/MyVariant",
+        "ScalableDimension": "sagemaker:variant:DesiredInstanceCount"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DescribeScalableTargetsCommand",
+      "input": { "ServiceNamespace": "sagemaker" },
+      "expected": {
+        "ScalableTargets": []
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

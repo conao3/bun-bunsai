@@ -1,0 +1,90 @@
+{
+  "clientPackage": "@aws-sdk/client-ec2",
+  "clientName": "EC2Client",
+  "steps": [
+    {
+      "command": "CreateVpcCommand",
+      "input": { "CidrBlock": "10.0.0.0/16" },
+      "expected": {
+        "Vpc": {
+          "CidrBlock": "10.0.0.0/16",
+          "State": "available",
+          "VpcId": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "vpc",
+      "refs": {}
+    },
+    {
+      "command": "CreateSubnetCommand",
+      "input": {
+        "VpcId": "${vpc.Vpc.VpcId}",
+        "CidrBlock": "10.0.0.0/24"
+      },
+      "expected": {
+        "Subnet": {
+          "VpcId": "<ANY>",
+          "SubnetId": "<ANY>",
+          "CidrBlock": "10.0.0.0/24",
+          "State": "available",
+          "AvailableIpAddressCount": 251,
+          "DefaultForAz": false,
+          "MapPublicIpOnLaunch": false,
+          "Tags": []
+        }
+      },
+      "ignorePaths": ["$metadata", "Subnet.AvailabilityZone", "Subnet.OwnerId"],
+      "saveAs": "subnet",
+      "refs": { "vpc.Vpc.VpcId": "vpc" }
+    },
+    {
+      "command": "DescribeSubnetsCommand",
+      "input": { "SubnetIds": ["${subnet.Subnet.SubnetId}"] },
+      "expected": {
+        "Subnets": [
+          {
+            "VpcId": "<ANY>",
+            "SubnetId": "<ANY>",
+            "CidrBlock": "10.0.0.0/24",
+            "State": "available",
+            "AvailableIpAddressCount": 251,
+            "DefaultForAz": false,
+            "MapPublicIpOnLaunch": false,
+            "Tags": []
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "subnet.Subnet.SubnetId": "subnet" }
+    },
+    {
+      "command": "DeleteSubnetCommand",
+      "input": { "SubnetId": "${subnet.Subnet.SubnetId}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "subnet.Subnet.SubnetId": "subnet" }
+    },
+    {
+      "command": "DeleteSubnetCommand",
+      "input": { "SubnetId": "${subnet.Subnet.SubnetId}" },
+      "expectedError": {
+        "name": "InvalidSubnetID.NotFound",
+        "statusCode": 400
+      },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": { "subnet.Subnet.SubnetId": "subnet" }
+    },
+    {
+      "command": "DeleteVpcCommand",
+      "input": { "VpcId": "${vpc.Vpc.VpcId}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "vpc.Vpc.VpcId": "vpc" }
+    }
+  ]
+}

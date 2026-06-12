@@ -1,0 +1,68 @@
+{
+  "clientPackage": "@aws-sdk/client-cognito-identity-provider",
+  "clientName": "CognitoIdentityProviderClient",
+  "steps": [
+    {
+      "command": "CreateUserPoolCommand",
+      "input": { "PoolName": "parity-test-pool" },
+      "expected": {
+        "UserPool": {
+          "Name": "parity-test-pool",
+          "Id": "<ANY>",
+          "Arn": "<ANY>",
+          "Status": "Enabled",
+          "MfaConfiguration": "OFF",
+          "EstimatedNumberOfUsers": 0,
+          "Policies": {},
+          "LambdaConfig": {},
+          "SchemaAttributes": [],
+          "AdminCreateUserConfig": { "AllowAdminCreateUserOnly": false },
+          "DeletionProtection": "INACTIVE",
+          "UserPoolTier": "ESSENTIALS"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "UserPool.CreationDate",
+        "UserPool.LastModifiedDate"
+      ],
+      "saveAs": "pool",
+      "refs": {}
+    },
+    {
+      "command": "DescribeUserPoolCommand",
+      "input": { "UserPoolId": "${pool.UserPool.Id}" },
+      "expected": {
+        "UserPool": {
+          "Name": "parity-test-pool",
+          "Id": "<ANY>",
+          "Arn": "<ANY>",
+          "Status": "Enabled",
+          "MfaConfiguration": "OFF",
+          "EstimatedNumberOfUsers": 0,
+          "Policies": {},
+          "LambdaConfig": {},
+          "SchemaAttributes": [],
+          "AdminCreateUserConfig": { "AllowAdminCreateUserOnly": false },
+          "DeletionProtection": "INACTIVE",
+          "UserPoolTier": "ESSENTIALS"
+        }
+      },
+      "ignorePaths": [
+        "$metadata",
+        "UserPool.CreationDate",
+        "UserPool.LastModifiedDate"
+      ],
+      "saveAs": null,
+      "refs": { "pool.UserPool.Id": "pool" }
+    },
+    {
+      "command": "DeleteUserPoolCommand",
+      "input": { "UserPoolId": "${pool.UserPool.Id}" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": { "pool.UserPool.Id": "pool" }
+    }
+  ]
+}

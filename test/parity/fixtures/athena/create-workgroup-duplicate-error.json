@@ -1,0 +1,30 @@
+{
+  "clientPackage": "@aws-sdk/client-athena",
+  "clientName": "AthenaClient",
+  "steps": [
+    {
+      "command": "CreateWorkGroupCommand",
+      "input": { "Name": "parity-wg-dup" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "CreateWorkGroupCommand",
+      "input": { "Name": "parity-wg-dup" },
+      "expectedError": { "name": "InvalidRequestException", "statusCode": 400 },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteWorkGroupCommand",
+      "input": { "WorkGroup": "parity-wg-dup" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

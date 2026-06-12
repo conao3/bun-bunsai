@@ -1,4 +1,7 @@
 import { readdirSync, readFileSync, writeFileSync } from "fs";
+import { loadOps } from "./ops.ts";
+
+const CHECK_MODE = process.argv.includes("--check");
 
 const SERVICES_DIR = "apps/server/src/services";
 const E2E_DIR = "test/e2e";
@@ -22,48 +25,13 @@ for (const f of serviceFiles) {
   const name = f.replace(".ts", "");
   const src = readFileSync(`${SERVICES_DIR}/${f}`, "utf8");
 
-  const importMatch = src.match(
-    /import\s+\w+\s+from\s+["']([^"']*aws-models[^"']*)["']/,
-  );
-  let total = 0;
-  if (importMatch) {
-    try {
-      const modelPath = importMatch[1].replace(
-        /^.*aws-models\//,
-        "test/vendor/aws-models/",
-      );
-      const model = JSON.parse(readFileSync(modelPath, "utf8"));
-      total = Object.keys(model.operations || {}).length;
-    } catch {}
-  }
+  const { all, impl } = loadOps(name);
+  const total = all.length;
 
   const protocolMatch = src.match(/^\s+protocol:\s+"([^"]+)"/m);
   const protocol = protocolMatch ? protocolMatch[1] : "-";
 
-  const idx = src.lastIndexOf("operations:");
-  let impl = 0;
-  if (idx >= 0) {
-    const after = src.slice(idx);
-    const open = after.indexOf("{");
-    let depth = 0,
-      end = -1;
-    for (let i = open; i < after.length; i++) {
-      const c = after[i];
-      if (c === "{") depth++;
-      else if (c === "}") {
-        depth--;
-        if (depth === 0) {
-          end = i;
-          break;
-        }
-      }
-    }
-    const block = after.slice(open + 1, end);
-    const matches = block.match(/^\s*([A-Z]\w+)\s*[,:]/gm);
-    impl = matches ? matches.length : 0;
-  }
-
-  rows.push({ name, protocol, impl, total, e2eFiles: 0 });
+  rows.push({ name, protocol, impl: impl.size, total, e2eFiles: 0 });
 }
 
 const validRows = rows.filter((r) => r.total > 0);
@@ -154,5 +122,16 @@ ${formatTable(["Service", "Protocol", "Ops", "E2E files"], serviceData)}
 _Models vendored verbatim from botocore 1.43.19 (Apache-2.0). Coverage figures count registered service handlers against the botocore operation set._
 `;
 
-writeFileSync(STATUS_FILE, content);
-console.log(`Wrote ${STATUS_FILE}`);
+if (CHECK_MODE) {
+  const committed = readFileSync(STATUS_FILE, "utf8");
+  if (content !== committed) {
+    console.error(
+      `STATUS.md is out of date. Run: bun maint/bin/gen-status.ts`,
+    );
+    process.exit(1);
+  }
+  console.log("STATUS.md is up to date.");
+} else {
+  writeFileSync(STATUS_FILE, content);
+  console.log(`Wrote ${STATUS_FILE}`);
+}

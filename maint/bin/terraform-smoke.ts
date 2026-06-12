@@ -11,6 +11,19 @@ import {
   DynamoDBClient,
 } from "@aws-sdk/client-dynamodb";
 import { PublishCommand, SNSClient } from "@aws-sdk/client-sns";
+import {
+  InvokeCommand,
+  GetFunctionCommand,
+  LambdaClient,
+} from "@aws-sdk/client-lambda";
+import {
+  DescribeLogGroupsCommand,
+  CloudWatchLogsClient,
+} from "@aws-sdk/client-cloudwatch-logs";
+import {
+  PutEventsCommand,
+  EventBridgeClient,
+} from "@aws-sdk/client-eventbridge";
 import { resolve } from "path";
 
 const tfCheck = Bun.spawnSync(["terraform", "version"], {
@@ -81,6 +94,9 @@ try {
   } as const;
 
   const sqs = new SQSClient({ endpoint, region, credentials });
+  const lambda = new LambdaClient({ endpoint, region, credentials });
+  const logs = new CloudWatchLogsClient({ endpoint, region, credentials });
+  const events = new EventBridgeClient({ endpoint, region, credentials });
   const queueResult = await sqs.send(
     new GetQueueUrlCommand({ QueueName: "tf-smoke-queue" }),
   );
@@ -127,6 +143,55 @@ try {
     throw new Error("SNS→SQS delivery: published message not received");
   console.log("✓ SNS topic + SQS subscription verified");
 
+  const lambdaInvoke = await lambda.send(
+    new InvokeCommand({
+      FunctionName: "tf-smoke-fn",
+      Payload: Buffer.from(JSON.stringify({ test: true })),
+    }),
+  );
+  if (lambdaInvoke.StatusCode !== 200)
+    throw new Error(`Lambda invoke returned status ${lambdaInvoke.StatusCode}`);
+  console.log("✓ Lambda function invoked (status 200)");
+
+  const logGroupsResult = await logs.send(
+    new DescribeLogGroupsCommand({
+      logGroupNamePrefix: "/aws/lambda/tf-smoke-fn",
+    }),
+  );
+  if (
+    !logGroupsResult.logGroups?.some(
+      (g) => g.logGroupName === "/aws/lambda/tf-smoke-fn",
+    )
+  )
+    throw new Error("CloudWatch log group not found");
+  console.log("✓ CloudWatch log group verified");
+
+  const purgeResult = await sqs.send(
+    new ReceiveMessageCommand({ QueueUrl: queueUrl, MaxNumberOfMessages: 10 }),
+  );
+  const beforeEventCount = purgeResult.Messages?.length ?? 0;
+
+  await events.send(
+    new PutEventsCommand({
+      Entries: [
+        {
+          Source: "smoke.test",
+          DetailType: "SmokeTest",
+          Detail: JSON.stringify({ msg: "hello-events" }),
+        },
+      ],
+    }),
+  );
+  const eventsMsg = await sqs.send(
+    new ReceiveMessageCommand({ QueueUrl: queueUrl, MaxNumberOfMessages: 10 }),
+  );
+  const afterEventCount = eventsMsg.Messages?.length ?? 0;
+  if (afterEventCount <= beforeEventCount)
+    throw new Error(
+      "EventBridge→SQS delivery: no new messages after PutEvents",
+    );
+  console.log("✓ EventBridge rule → SQS target verified");
+
   tf(["destroy", "-auto-approve"]);
 
   let sqsGone = false;
@@ -146,6 +211,32 @@ try {
   }
   if (!ddbGone) throw new Error("DynamoDB table still exists after destroy");
   console.log("✓ DynamoDB table gone after destroy");
+
+  let lambdaGone = false;
+  try {
+    await lambda.send(new GetFunctionCommand({ FunctionName: "tf-smoke-fn" }));
+  } catch {
+    lambdaGone = true;
+  }
+  if (!lambdaGone)
+    throw new Error("Lambda function still exists after destroy");
+  console.log("✓ Lambda function gone after destroy");
+
+  let logGroupGone = false;
+  try {
+    const r = await logs.send(
+      new DescribeLogGroupsCommand({
+        logGroupNamePrefix: "/aws/lambda/tf-smoke-fn",
+      }),
+    );
+    if (!r.logGroups?.some((g) => g.logGroupName === "/aws/lambda/tf-smoke-fn"))
+      logGroupGone = true;
+  } catch {
+    logGroupGone = true;
+  }
+  if (!logGroupGone)
+    throw new Error("CloudWatch log group still exists after destroy");
+  console.log("✓ CloudWatch log group gone after destroy");
 
   console.log("terraform-smoke: all checks passed");
 } catch (err) {

@@ -132,6 +132,30 @@ const getCurrentObject = (
   return latest.isDeleteMarker ? undefined : latest;
 };
 
+const versionIndexFor = (versions: S3Object[], versionId: unknown): number => {
+  if (typeof versionId !== "string" || versionId === "") {
+    return versions.length > 0 ? 0 : -1;
+  }
+  return versions.findIndex((v) => matchesNullVersion(versionId, v.versionId));
+};
+
+const ensureVersionDeletable = (
+  object: S3Object,
+  input: Record<string, unknown>,
+): void => {
+  if (object.legalHold === "ON") {
+    throw awsError("AccessDenied", "Access Denied", 403);
+  }
+  const retention = object.retention;
+  if (retention === undefined) return;
+  if (retention.RetainUntilDate <= nowSeconds()) return;
+  const bypass =
+    input["BypassGovernanceRetention"] === true ||
+    input["BypassGovernanceRetention"] === "true";
+  if (retention.Mode === "GOVERNANCE" && bypass) return;
+  throw awsError("AccessDenied", "Access Denied", 403);
+};
+
 const ALL_USERS_URI =
   "http://acs.amazonaws.com/groups/global/AllUsers" as const;
 const AUTH_USERS_URI =
@@ -523,7 +547,7 @@ const s3: ServiceDefinition = {
     return undefined;
   },
   operations: {
-    CreateBucket: (_input, ctx, req) => {
+    CreateBucket: (input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);
       if (bucket === undefined) {
         throw awsError("InvalidBucketName", "bucket name required", 400);
@@ -535,13 +559,16 @@ const s3: ServiceDefinition = {
           409,
         );
       }
+      const lockEnabled =
+        input["ObjectLockEnabledForBucket"] === true ||
+        input["ObjectLockEnabledForBucket"] === "true";
       ctx.store.set<S3Bucket>(bucket, {
         name: bucket,
         creationDate: nowSeconds(),
         objects: {},
         tagSet: [],
         uploads: {},
-        versioningStatus: undefined,
+        versioningStatus: lockEnabled ? "Enabled" : undefined,
         mfaDelete: undefined,
         policy: undefined,
         lifecycleRules: [],
@@ -552,7 +579,7 @@ const s3: ServiceDefinition = {
         publicAccessBlock: undefined,
         logging: undefined,
         accelerateStatus: undefined,
-        objectLock: undefined,
+        objectLock: lockEnabled ? { ObjectLockEnabled: "Enabled" } : undefined,
         acl: undefined,
         replication: undefined,
         requestPayment: "BucketOwner",
@@ -990,6 +1017,7 @@ const s3: ServiceDefinition = {
         );
         if (idx === -1) return {};
         const removed = existing[idx];
+        ensureVersionDeletable(removed, input);
         const filtered = existing.filter((_, i) => i !== idx);
         const objects =
           filtered.length > 0
@@ -1215,13 +1243,24 @@ const s3: ServiceDefinition = {
           400,
         );
       }
-      const sourceRef = copySource.split("?")[0];
+      const [sourceRef, sourceQuery] = copySource.split("?");
       const { bucket: srcBucket, key: srcKey } = bucketKeyFromPath(sourceRef);
       if (srcBucket === undefined || srcKey === undefined) {
         throw awsError("InvalidArgument", "invalid copy source", 400);
       }
       const sourceBucket = getBucket(ctx, srcBucket);
-      const source = getCurrentObject(sourceBucket.objects[srcKey]);
+      const srcVersionId = new URLSearchParams(sourceQuery ?? "").get(
+        "versionId",
+      );
+      const srcVersions = sourceBucket.objects[srcKey];
+      const source =
+        srcVersionId === null
+          ? getCurrentObject(srcVersions)
+          : (srcVersions ?? []).find((v) =>
+              srcVersionId === "null"
+                ? v.versionId === undefined
+                : v.versionId === srcVersionId,
+            );
       if (source === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
@@ -1847,7 +1886,8 @@ const s3: ServiceDefinition = {
       }
       const target = getBucket(ctx, bucket);
       const versions = target.objects[key] ?? [];
-      const object = getCurrentObject(versions);
+      const idx = versionIndexFor(versions, input["VersionId"]);
+      const object = idx === -1 ? undefined : versions[idx];
       if (object === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
@@ -1859,13 +1899,14 @@ const s3: ServiceDefinition = {
       const mode = typeof retRaw.Mode === "string" ? retRaw.Mode : "";
       const retainUntilDate =
         typeof retRaw.RetainUntilDate === "number" ? retRaw.RetainUntilDate : 0;
-      const updated = [
-        {
-          ...object,
-          retention: { Mode: mode, RetainUntilDate: retainUntilDate },
-        },
-        ...versions.slice(1),
-      ];
+      const updated = versions.map((v, i) =>
+        i === idx
+          ? {
+              ...v,
+              retention: { Mode: mode, RetainUntilDate: retainUntilDate },
+            }
+          : v,
+      );
       ctx.store.set<S3Bucket>(bucket, {
         ...target,
         objects: { ...target.objects, [key]: updated },
@@ -1878,7 +1919,8 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
-      const object = getCurrentObject(target.objects[key]);
+      const vs = target.objects[key] ?? [];
+      const object = vs[versionIndexFor(vs, _input["VersionId"])];
       if (object === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
@@ -1891,7 +1933,8 @@ const s3: ServiceDefinition = {
       }
       const target = getBucket(ctx, bucket);
       const versions = target.objects[key] ?? [];
-      const object = getCurrentObject(versions);
+      const idx = versionIndexFor(versions, input["VersionId"]);
+      const object = idx === -1 ? undefined : versions[idx];
       if (object === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }
@@ -1902,7 +1945,9 @@ const s3: ServiceDefinition = {
           : {};
       const status =
         typeof holdRaw.Status === "string" ? holdRaw.Status : "OFF";
-      const updated = [{ ...object, legalHold: status }, ...versions.slice(1)];
+      const updated = versions.map((v, i) =>
+        i === idx ? { ...v, legalHold: status } : v,
+      );
       ctx.store.set<S3Bucket>(bucket, {
         ...target,
         objects: { ...target.objects, [key]: updated },
@@ -1915,7 +1960,8 @@ const s3: ServiceDefinition = {
         throw awsError("InvalidRequest", "bucket and key required", 400);
       }
       const target = getBucket(ctx, bucket);
-      const object = getCurrentObject(target.objects[key]);
+      const vs = target.objects[key] ?? [];
+      const object = vs[versionIndexFor(vs, _input["VersionId"])];
       if (object === undefined) {
         throw awsError("NoSuchKey", "The specified key does not exist.", 404);
       }

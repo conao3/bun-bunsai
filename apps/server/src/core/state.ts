@@ -66,6 +66,44 @@ export const enumerateResources = (
 export const countResources = (store: StateStore, service: string): number =>
   enumerateResources(store, service).length;
 
+const DISPLAY_THRESHOLD = 4096;
+const DISPLAY_PREVIEW = 256;
+
+const isBinaryString = (s: string): boolean => {
+  const sample = s.slice(0, 256);
+  let count = 0;
+  for (let i = 0; i < sample.length; i++) {
+    const c = sample.charCodeAt(i);
+    if ((c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) || c >= 0x7f) {
+      count++;
+    }
+  }
+  return sample.length > 0 && count / sample.length > 0.3;
+};
+
+export const truncateValueForDisplay = (value: unknown): unknown => {
+  if (typeof value === "string") {
+    if (value.length <= DISPLAY_THRESHOLD) return value;
+    const byteLen = new TextEncoder().encode(value).length;
+    if (isBinaryString(value)) return `<binary, ${byteLen} bytes>`;
+    return `${value.slice(0, DISPLAY_PREVIEW)}…(${byteLen} bytes truncated)`;
+  }
+  if (ArrayBuffer.isView(value)) {
+    return `<binary, ${(value as ArrayBufferView).byteLength} bytes>`;
+  }
+  if (Array.isArray(value)) {
+    return value.map(truncateValueForDisplay);
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = truncateValueForDisplay(v);
+    }
+    return out;
+  }
+  return value;
+};
+
 export type StateSnapshot = Map<string, Map<string, unknown>>;
 
 export const dumpState = (store: StateStore): StateSnapshot => {

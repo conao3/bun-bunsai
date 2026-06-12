@@ -9,8 +9,8 @@
 | Services registered      | **141**                                       |
 | Wire protocols           | **5** (ec2, json, query, rest-json, rest-xml) |
 | Services at 100%         | **139 / 141**                                 |
-| Unimplemented operations | **141**                                       |
-| E2E test files           | **534**                                       |
+| Unimplemented operations | **69**                                        |
+| E2E test files           | **535**                                       |
 | Scenario test files      | **40**                                        |
 
 ## Features
@@ -32,7 +32,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | iot                     | rest-json | 272/272 | 6         |
 | glue                    | json      | 265/265 | 26        |
 | iam                     | query     | 176/176 | 14        |
-| cloudfront              | rest-xml  | 45/167  | 6         |
+| cloudfront              | rest-xml  | 117/167 | 7         |
 | rds                     | query     | 164/164 | 9         |
 | ssm                     | json      | 146/146 | 3         |
 | redshift                | query     | 141/141 | 1         |

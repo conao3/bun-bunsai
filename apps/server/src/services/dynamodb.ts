@@ -2963,7 +2963,7 @@ const PutResourcePolicy: OperationHandler = (input, ctx) => {
   if (existing !== undefined && existing.Policy === policy) {
     return { RevisionId: existing.RevisionId };
   }
-  const revisionId = String(Date.now());
+  const revisionId = crypto.randomUUID();
   const stored: StoredResourcePolicy = {
     kind: "resource-policy",
     ResourceArn: resourceArn,

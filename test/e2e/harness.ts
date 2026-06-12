@@ -28,8 +28,8 @@ export type TestApp = {
   gwFetch(url: string, init?: RequestInit): Promise<Response>;
 };
 
-export function startApp(): TestApp {
-  const app = createBunsaiApp();
+export function startApp(options?: { gatewayPort?: number }): TestApp {
+  const app = createBunsaiApp({ gatewayPort: options?.gatewayPort });
   const origin = "http://bunsai.test";
 
   return {

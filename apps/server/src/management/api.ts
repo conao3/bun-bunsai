@@ -34,6 +34,7 @@ export type ManagementDeps = {
   snapshots: SnapshotRegistry;
   startedAt: number;
   version: string;
+  gatewayPort: number;
 };
 
 const json = (value: unknown, status = 200): Response =>
@@ -88,6 +89,7 @@ export const handleManagement = async (
     return json({
       uptimeSeconds: Math.floor((Date.now() - deps.startedAt) / 1000),
       version: deps.version,
+      gatewayPort: deps.gatewayPort,
     });
   }
 

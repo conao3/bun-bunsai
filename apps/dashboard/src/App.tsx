@@ -36,7 +36,6 @@ import type { Density, LogLayout, Screen, Theme } from "./types";
 
 type Scope = { account: string; region: string };
 
-const endpoint = "http://localhost:4566" as const;
 const defaultScope: Scope = { account: "000000000000", region: "us-east-1" };
 const maxLogs = 600 as const;
 
@@ -362,7 +361,7 @@ export function App() {
         resourceCount={scopedResourceCount}
         snapshotCount={snapshots.length}
         connected={connected}
-        endpoint={endpoint}
+        gatewayPort={serverMeta?.gatewayPort}
         uptimeSeconds={serverMeta?.uptimeSeconds}
         version={serverMeta?.version}
       />

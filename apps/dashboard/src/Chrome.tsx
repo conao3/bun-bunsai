@@ -39,7 +39,7 @@ export function Sidebar({
   resourceCount,
   snapshotCount,
   connected,
-  endpoint,
+  gatewayPort,
   uptimeSeconds,
   version,
 }: {
@@ -50,10 +50,11 @@ export function Sidebar({
   resourceCount: number;
   snapshotCount: number;
   connected: boolean;
-  endpoint: string;
+  gatewayPort?: number;
   uptimeSeconds?: number;
   version?: string;
 }) {
+  const endpoint = `http://localhost:${gatewayPort ?? 4566}`;
   const stackState = !connected
     ? "idle"
     : services.some((s) => s.callCount > 0)

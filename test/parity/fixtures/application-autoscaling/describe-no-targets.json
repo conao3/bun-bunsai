@@ -1,0 +1,16 @@
+{
+  "clientPackage": "@aws-sdk/client-application-auto-scaling",
+  "clientName": "ApplicationAutoScalingClient",
+  "steps": [
+    {
+      "command": "DescribeScalableTargetsCommand",
+      "input": { "ServiceNamespace": "cassandra" },
+      "expected": {
+        "ScalableTargets": []
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

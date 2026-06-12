@@ -1,0 +1,14 @@
+{
+  "clientPackage": "@aws-sdk/client-ec2",
+  "clientName": "EC2Client",
+  "steps": [
+    {
+      "command": "DeleteVpcCommand",
+      "input": { "VpcId": "vpc-1234abcd" },
+      "expectedError": { "name": "InvalidVpcID.NotFound", "statusCode": 400 },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

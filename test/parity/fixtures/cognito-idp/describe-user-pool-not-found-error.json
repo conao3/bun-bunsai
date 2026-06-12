@@ -1,0 +1,14 @@
+{
+  "clientPackage": "@aws-sdk/client-cognito-identity-provider",
+  "clientName": "CognitoIdentityProviderClient",
+  "steps": [
+    {
+      "command": "DescribeUserPoolCommand",
+      "input": { "UserPoolId": "us-east-1_FooBar123" },
+      "expectedError": { "name": "ResourceNotFoundException", "statusCode": 400 },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

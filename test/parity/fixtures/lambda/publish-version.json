@@ -1,0 +1,64 @@
+{
+  "clientPackage": "@aws-sdk/client-lambda",
+  "clientName": "LambdaClient",
+  "steps": [
+    {
+      "command": "CreateFunctionCommand",
+      "input": {
+        "FunctionName": "parity-fn-publish",
+        "Runtime": "nodejs20.x",
+        "Role": "arn:aws:iam::000000000000:role/parity-role",
+        "Handler": "index.handler",
+        "Code": { "ZipFile": { "$base64": "UEsgZmFrZSB6aXA=" } }
+      },
+      "expected": {
+        "FunctionName": "parity-fn-publish",
+        "FunctionArn": "<ANY>",
+        "Runtime": "nodejs20.x",
+        "Handler": "index.handler"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PublishVersionCommand",
+      "input": {
+        "FunctionName": "parity-fn-publish",
+        "Description": "v1"
+      },
+      "expected": {
+        "FunctionName": "parity-fn-publish",
+        "Version": "1",
+        "Description": "v1",
+        "FunctionArn": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PublishVersionCommand",
+      "input": {
+        "FunctionName": "parity-fn-publish",
+        "Description": "v2"
+      },
+      "expected": {
+        "FunctionName": "parity-fn-publish",
+        "Version": "2",
+        "Description": "v2"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteFunctionCommand",
+      "input": { "FunctionName": "parity-fn-publish" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

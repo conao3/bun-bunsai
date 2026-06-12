@@ -78,7 +78,7 @@ const fetchMotoTestFiles = async (
     if (entry.name === "__init__.py") continue;
     const bytes = await fetchRaw(entry.path);
     const text = new TextDecoder().decode(bytes);
-    if (!text.includes("@aws_verified")) continue;
+    if (!/@\w*aws_verified/.test(text)) continue;
     await Bun.write(`${destDir}/${entry.name}`, bytes);
     count += 1;
     console.log(`wrote ${destDir}/${entry.name}`);

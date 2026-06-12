@@ -1,0 +1,3564 @@
+import base64
+import ipaddress
+import json
+import os
+import warnings
+from unittest import SkipTest, mock
+from uuid import uuid4
+
+import boto3
+import pytest
+from botocore.exceptions import ClientError
+from freezegun import freeze_time
+
+from moto import mock_aws, settings
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
+from moto.core.types import Base64EncodedString
+from tests import EXAMPLE_AMI_ID, allow_aws_request
+from tests.test_ec2 import ec2_aws_verified
+
+from .helpers import assert_dryrun_error
+
+decode_method = base64.decodebytes
+
+
+@mock_aws
+def test_add_servers():
+    client = boto3.client("ec2", region_name="us-east-1")
+    resp = client.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=2, MaxCount=2)
+    for i in resp["Instances"]:
+        assert i["ImageId"] == EXAMPLE_AMI_ID
+
+    instances = client.describe_instances(
+        InstanceIds=[i["InstanceId"] for i in resp["Instances"]]
+    )["Reservations"][0]["Instances"]
+    assert len(instances) == 2
+    for i in instances:
+        assert i["ImageId"] == EXAMPLE_AMI_ID
+
+
+@freeze_time("2014-01-01 05:00:00")
+@mock_aws
+def test_instance_launch_and_terminate():
+    client = boto3.client("ec2", region_name="us-east-1")
+
+    with pytest.raises(ClientError) as ex:
+        client.run_instances(
+            ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, DryRun=True
+        )
+    assert_dryrun_error(ex)
+
+    reservation = client.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    assert len(reservation["Instances"]) == 1
+    instance = reservation["Instances"][0]
+    assert instance["State"] == {"Code": 0, "Name": "pending"}
+    instance_id = instance["InstanceId"]
+
+    reservations = client.describe_instances(InstanceIds=[instance_id])["Reservations"]
+    assert len(reservations) == 1
+    assert reservations[0]["ReservationId"] == reservation["ReservationId"]
+    instances = reservations[0]["Instances"]
+    assert len(instances) == 1
+    instance = instances[0]
+    assert instance["InstanceId"] == instance_id
+    assert instance["State"] == {"Code": 16, "Name": "running"}
+    if settings.TEST_SERVER_MODE:
+        # Exact value can't be determined in ServerMode
+        assert "LaunchTime" in instance
+    else:
+        launch_time = instance["LaunchTime"].strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        assert launch_time == "2014-01-01T05:00:00.000Z"
+    assert instance["VpcId"] is not None
+    assert instance["Placement"]["AvailabilityZone"] == "us-east-1a"
+
+    root_device_name = instance["RootDeviceName"]
+    mapping = instance["BlockDeviceMappings"][0]
+    assert mapping["DeviceName"] == root_device_name
+    assert mapping["Ebs"]["Status"] == "attached"
+    volume_id = mapping["Ebs"]["VolumeId"]
+    assert volume_id.startswith("vol-")
+
+    volume = client.describe_volumes(VolumeIds=[volume_id])["Volumes"][0]
+    assert volume["Attachments"][0]["InstanceId"] == instance_id
+    assert volume["State"] == "in-use"
+
+    with pytest.raises(ClientError) as ex:
+        client.terminate_instances(InstanceIds=[instance_id], DryRun=True)
+    assert_dryrun_error(ex)
+
+    response = client.terminate_instances(InstanceIds=[instance_id])
+    assert len(response["TerminatingInstances"]) == 1
+    instance = response["TerminatingInstances"][0]
+    assert instance["InstanceId"] == instance_id
+    assert instance["PreviousState"] == {"Code": 16, "Name": "running"}
+    assert instance["CurrentState"] == {"Code": 32, "Name": "shutting-down"}
+
+    reservations = client.describe_instances(InstanceIds=[instance_id])["Reservations"]
+    instance = reservations[0]["Instances"][0]
+    assert instance["State"] == {"Code": 48, "Name": "terminated"}
+
+
+@mock_aws
+def test_instance_terminate_discard_volumes():
+    ec2_resource = boto3.resource("ec2", "us-west-1")
+
+    result = ec2_resource.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        BlockDeviceMappings=[
+            {
+                "DeviceName": "/dev/sda1",
+                "Ebs": {"VolumeSize": 50, "DeleteOnTermination": True},
+            }
+        ],
+    )
+    instance = result[0]
+
+    instance_volume_ids = []
+    for volume in instance.volumes.all():
+        instance_volume_ids.append(volume.volume_id)
+
+    instance.terminate()
+    instance.wait_until_terminated()
+
+    all_volumes_ids = [v.id for v in list(ec2_resource.volumes.all())]
+    for my_id in instance_volume_ids:
+        assert my_id not in all_volumes_ids
+
+
+@mock_aws
+def test_instance_terminate_keep_volumes_explicit():
+    ec2_resource = boto3.resource("ec2", "us-west-1")
+
+    result = ec2_resource.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        BlockDeviceMappings=[
+            {
+                "DeviceName": "/dev/sda1",
+                "Ebs": {"VolumeSize": 50, "DeleteOnTermination": False},
+            }
+        ],
+    )
+    instance = result[0]
+
+    instance_volume_ids = []
+    for volume in instance.volumes.all():
+        instance_volume_ids.append(volume.volume_id)
+
+    instance.terminate()
+    instance.wait_until_terminated()
+
+    all_volumes_ids = [v.id for v in list(ec2_resource.volumes.all())]
+    for my_id in instance_volume_ids:
+        assert my_id in all_volumes_ids
+
+
+@mock_aws
+def test_instance_terminate_keep_volumes_implicit():
+    ec2_resource = boto3.resource("ec2", "us-west-1")
+
+    result = ec2_resource.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 50}}],
+    )
+    instance = result[0]
+
+    instance_volume_ids = []
+    for volume in instance.volumes.all():
+        instance_volume_ids.append(volume.volume_id)
+
+    instance.terminate()
+    instance.wait_until_terminated()
+
+    assert len(instance_volume_ids) == 1
+    volume = ec2_resource.Volume(instance_volume_ids[0])
+    assert volume.state == "available"
+
+
+@mock_aws
+def test_instance_terminate_detach_volumes():
+    ec2_resource = boto3.resource("ec2", "us-west-1")
+    result = ec2_resource.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        BlockDeviceMappings=[
+            {"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 50}},
+            {"DeviceName": "/dev/sda2", "Ebs": {"VolumeSize": 50}},
+        ],
+    )
+    instance = result[0]
+    my_volume_ids = []
+    for volume in instance.volumes.all():
+        my_volume_ids.append(volume.volume_id)
+        response = instance.detach_volume(VolumeId=volume.volume_id)
+        assert response["State"] == "detaching"
+
+    instance.terminate()
+    instance.wait_until_terminated()
+
+    all_volumes_ids = [v.id for v in list(ec2_resource.volumes.all())]
+    for my_id in my_volume_ids:
+        assert my_id in all_volumes_ids
+
+
+@mock_aws
+def test_instance_detach_volume_wrong_path():
+    ec2_resource = boto3.resource("ec2", "us-west-1")
+    result = ec2_resource.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 50}}],
+    )
+    instance = result[0]
+    for volume in instance.volumes.all():
+        with pytest.raises(ClientError) as ex:
+            instance.detach_volume(VolumeId=volume.volume_id, Device="/dev/sdf")
+
+        assert ex.value.response["Error"]["Code"] == "InvalidAttachment.NotFound"
+        assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+        assert (
+            ex.value.response["Error"]["Message"]
+            == f"The volume {volume.volume_id} is not attached to instance {instance.instance_id} as device /dev/sdf"
+        )
+
+
+@mock_aws
+def test_terminate_empty_instances():
+    client = boto3.client("ec2", region_name="us-east-1")
+
+    with pytest.raises(ClientError) as ex:
+        client.terminate_instances(InstanceIds=[])
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert ex.value.response["Error"]["Code"] == "InvalidParameterCombination"
+    assert ex.value.response["Error"]["Message"] == "No instances specified"
+
+
+@freeze_time("2014-01-01 05:00:00")
+@mock_aws
+def test_instance_attach_volume():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    reservation = client.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    instance = ec2.Instance(reservation["Instances"][0]["InstanceId"])
+
+    vol1 = ec2.create_volume(Size=36, AvailabilityZone="us-east-1a")
+    vol1.attach_to_instance(InstanceId=instance.id, Device="/dev/sda1")
+    vol2 = ec2.create_volume(Size=65, AvailabilityZone="us-east-1a")
+    vol2.attach_to_instance(InstanceId=instance.id, Device="/dev/sdb1")
+    vol3 = ec2.create_volume(Size=130, AvailabilityZone="us-east-1a")
+    vol3.attach_to_instance(InstanceId=instance.id, Device="/dev/sdc1")
+
+    instance.reload()
+
+    assert len(instance.block_device_mappings) == 3
+    expected_vol3_id = [
+        m["Ebs"]["VolumeId"]
+        for m in instance.block_device_mappings
+        if m["DeviceName"] == "/dev/sdc1"
+    ][0]
+
+    expected_vol3 = ec2.Volume(expected_vol3_id)
+    assert expected_vol3.attachments[0]["InstanceId"] == instance.id
+    assert expected_vol3.availability_zone == "us-east-1a"
+    assert expected_vol3.state == "in-use"
+    if not settings.TEST_SERVER_MODE:
+        # FreezeTime does not work in ServerMode
+        assert expected_vol3.attachments[0]["AttachTime"] == instance.launch_time
+        assert expected_vol3.create_time == instance.launch_time
+
+
+@mock_aws
+def test_get_instances_by_id():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    reservation = client.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=2, MaxCount=2)
+    instance1 = ec2.Instance(reservation["Instances"][0]["InstanceId"])
+    instance2 = ec2.Instance(reservation["Instances"][1]["InstanceId"])
+
+    reservations = client.describe_instances(InstanceIds=[instance1.id])["Reservations"]
+    assert len(reservations) == 1
+    reservation = reservations[0]
+    assert len(reservation["Instances"]) == 1
+    assert reservation["Instances"][0]["InstanceId"] == instance1.id
+
+    reservations = client.describe_instances(InstanceIds=[instance1.id, instance2.id])[
+        "Reservations"
+    ]
+    assert len(reservations) == 1
+    reservation = reservations[0]
+    assert len(reservation["Instances"]) == 2
+    instance_ids = [instance["InstanceId"] for instance in reservation["Instances"]]
+    assert set(instance_ids) == {instance1.id, instance2.id}
+
+    # Call describe_instances with a bad id should raise an error
+    with pytest.raises(ClientError) as ex:
+        client.describe_instances(InstanceIds=[instance1.id, "i-1234abcd"])
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert "RequestId" in ex.value.response["ResponseMetadata"]
+    assert ex.value.response["Error"]["Code"] == "InvalidInstanceID.NotFound"
+
+
+@mock_aws
+def test_get_paginated_instances():
+    client = boto3.client("ec2", region_name="us-east-1")
+    conn = boto3.resource("ec2", "us-east-1")
+    instances = []
+    for _ in range(12):
+        instances.extend(
+            conn.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+        )
+
+    resp1 = client.describe_instances(MaxResults=5)
+    res1 = resp1["Reservations"]
+    assert len(res1) == 5
+    next_token = resp1["NextToken"]
+
+    assert next_token is not None
+
+    resp2 = client.describe_instances(NextToken=next_token)
+
+    # at least 12 total - 5 from the first call but there may be more from servermode tests
+    assert len(resp2["Reservations"]) >= 7
+
+    for i in instances:
+        i.terminate()
+
+
+@mock_aws
+def test_describe_instances_pagination_error():
+    client = boto3.client("ec2", region_name="us-east-1")
+
+    # Call describe_instances with a bad id should raise an error
+    with pytest.raises(ClientError) as ex:
+        paginator = client.get_paginator("describe_instances").paginate(
+            InstanceIds=["i-12345678"],
+            PaginationConfig={
+                "MaxItems": 9999,
+                "PageSize": 100,
+            },
+        )
+        for page in paginator:
+            dir(page)
+
+    assert ex.value.response["Error"]["Code"] == "InvalidParameterCombination"
+    assert (
+        ex.value.response["Error"]["Message"]
+        == "The parameter instancesSet cannot be used with the parameter maxResults"
+    )
+
+
+@mock_aws
+def test_create_with_tags():
+    ec2 = boto3.client("ec2", region_name="us-west-2")
+    instances = ec2.run_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        InstanceType="t2.micro",
+        TagSpecifications=[
+            {
+                "ResourceType": "instance",
+                "Tags": [
+                    {"Key": "MY_TAG1", "Value": "MY_VALUE1"},
+                    {"Key": "MY_TAG2", "Value": "MY_VALUE2"},
+                ],
+            },
+            {
+                "ResourceType": "instance",
+                "Tags": [{"Key": "MY_TAG3", "Value": "MY_VALUE3"}],
+            },
+        ],
+    )
+    assert "Tags" in instances["Instances"][0]
+    assert len(instances["Instances"][0]["Tags"]) == 3
+
+
+@mock_aws
+def test_create_with_volume_tags():
+    ec2 = boto3.client("ec2", region_name="us-west-2")
+    volume_tags = [
+        {"Key": "MY_TAG1", "Value": "MY_VALUE1"},
+        {"Key": "MY_TAG2", "Value": "MY_VALUE2"},
+    ]
+    instances = ec2.run_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=2,
+        MaxCount=2,
+        InstanceType="t2.micro",
+        TagSpecifications=[{"ResourceType": "volume", "Tags": volume_tags}],
+    ).get("Instances")
+    instance_ids = [i["InstanceId"] for i in instances]
+    instances = (
+        ec2.describe_instances(InstanceIds=instance_ids)
+        .get("Reservations")[0]
+        .get("Instances")
+    )
+    for instance in instances:
+        instance_volume = instance["BlockDeviceMappings"][0]["Ebs"]
+        resp = ec2.describe_volumes(VolumeIds=[instance_volume["VolumeId"]])
+        for volume in resp["Volumes"]:
+            assert sorted(volume["Tags"], key=lambda i: i["Key"]) == volume_tags
+
+
+@mock_aws
+def test_get_instances_filtering_by_state():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=3, MaxCount=3)
+    instance1, instance2, instance3 = reservation
+
+    client.terminate_instances(InstanceIds=[instance1.id])
+
+    instances = retrieve_all_instances(
+        client, [{"Name": "instance-state-name", "Values": ["running"]}]
+    )
+    instance_ids = [i["InstanceId"] for i in instances]
+    # Since we terminated instance1, only instance2 and instance3 should be
+    # returned
+    assert instance1.id not in instance_ids
+    assert instance2.id in instance_ids
+    assert instance3.id in instance_ids
+
+    reservations = client.describe_instances(
+        InstanceIds=[instance2.id],
+        Filters=[{"Name": "instance-state-name", "Values": ["running"]}],
+    )["Reservations"]
+    assert len(reservations) == 1
+    instance_ids = [instance["InstanceId"] for instance in reservations[0]["Instances"]]
+    assert instance_ids == [instance2.id]
+
+    reservations = client.describe_instances(
+        InstanceIds=[instance2.id],
+        Filters=[{"Name": "instance-state-name", "Values": ["terminated"]}],
+    )["Reservations"]
+    assert reservations == []
+
+    # get_all_reservations should still return all 3
+    instances = retrieve_all_instances(client, filters=[])
+    instance_ids = [i["InstanceId"] for i in instances]
+    assert instance1.id in instance_ids
+    assert instance2.id in instance_ids
+    assert instance3.id in instance_ids
+
+    if not settings.TEST_SERVER_MODE:
+        # ServerMode will just throw a generic 500
+        filters = [{"Name": "not-implemented-filter", "Values": ["foobar"]}]
+        with pytest.raises(NotImplementedError):
+            client.describe_instances(Filters=filters)
+
+
+@mock_aws
+def test_get_instances_filtering_by_instance_id():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=3, MaxCount=3)
+    instance1, instance2, _ = reservation
+
+    def _filter(values, exists=True):
+        f = [{"Name": "instance-id", "Values": values}]
+        r = client.describe_instances(Filters=f)["Reservations"]
+        if exists:
+            assert len(r[0]["Instances"]) == len(values)
+            found_ids = [i["InstanceId"] for i in r[0]["Instances"]]
+            assert set(found_ids) == set(values)
+        else:
+            assert len(r) == 0
+
+    _filter(values=[instance1.id])
+    _filter(values=[instance1.id, instance2.id])
+    _filter(values=["non-existing-id"], exists=False)
+
+
+@mock_aws
+def test_get_instances_filtering_by_instance_type():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    instance1 = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, InstanceType="m1.small"
+    )[0]
+    instance2 = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, InstanceType="m1.small"
+    )[0]
+    instance3 = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, InstanceType="t1.micro"
+    )[0]
+
+    instances = retrieve_all_instances(
+        client, [{"Name": "instance-type", "Values": ["m1.small"]}]
+    )
+    instance_ids = [i["InstanceId"] for i in instances]
+    assert instance1.id in set(instance_ids)
+    assert instance2.id in set(instance_ids)
+
+    instances = retrieve_all_instances(
+        client, [{"Name": "instance-type", "Values": ["t1.micro"]}]
+    )
+    instance_ids = [i["InstanceId"] for i in instances]
+    assert instance3.id in instance_ids
+
+    instances = retrieve_all_instances(
+        client, [{"Name": "instance-type", "Values": ["t1.micro", "m1.small"]}]
+    )
+    instance_ids = [i["InstanceId"] for i in instances]
+    assert instance1.id in instance_ids
+    assert instance2.id in instance_ids
+    assert instance3.id in instance_ids
+
+    res = client.describe_instances(
+        Filters=[{"Name": "instance-type", "Values": ["bogus"]}]
+    )
+    assert len(res["Reservations"]) == 0
+
+
+@mock_aws
+def test_get_instances_filtering_by_reason_code():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=3, MaxCount=3)
+    instance1, instance2, instance3 = reservation
+    instance1.stop()
+    instance2.terminate()
+
+    filters = [
+        {"Name": "state-reason-code", "Values": ["Client.UserInitiatedShutdown"]}
+    ]
+    instances = retrieve_all_instances(client, filters)
+    instance_ids = [i["InstanceId"] for i in instances]
+
+    assert instance1.id in instance_ids
+    assert instance2.id in instance_ids
+    assert instance3.id not in instance_ids
+
+    filters = [{"Name": "state-reason-code", "Values": [""]}]
+    instances = retrieve_all_instances(client, filters)
+    instance_ids = [i["InstanceId"] for i in instances]
+    assert instance3.id in instance_ids
+    assert instance1.id not in instance_ids
+    assert instance2.id not in instance_ids
+
+
+@mock_aws
+def test_get_instances_filtering_by_source_dest_check():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=2, MaxCount=2)
+    instance1, instance2 = reservation
+    client.modify_instance_attribute(
+        InstanceId=instance1.id, SourceDestCheck={"Value": False}
+    )
+
+    instances_false = retrieve_all_instances(
+        client, [{"Name": "source-dest-check", "Values": ["false"]}]
+    )
+    instances_true = retrieve_all_instances(
+        client, [{"Name": "source-dest-check", "Values": ["true"]}]
+    )
+
+    assert instance1.id in [i["InstanceId"] for i in instances_false]
+    assert instance2.id not in [i["InstanceId"] for i in instances_false]
+
+    assert instance1.id not in [i["InstanceId"] for i in instances_true]
+    assert instance2.id in [i["InstanceId"] for i in instances_true]
+
+
+@mock_aws
+def test_get_instances_filtering_by_vpc_id():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    vpc1 = ec2.create_vpc(CidrBlock="10.0.0.0/16")
+    subnet1 = ec2.create_subnet(VpcId=vpc1.id, CidrBlock="10.0.0.0/27")
+    reservation1 = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, SubnetId=subnet1.id
+    )
+    instance1 = reservation1[0]
+
+    vpc2 = ec2.create_vpc(CidrBlock="10.1.0.0/16")
+    subnet2 = ec2.create_subnet(VpcId=vpc2.id, CidrBlock="10.1.0.0/27")
+    reservation2 = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, SubnetId=subnet2.id
+    )
+    instance2 = reservation2[0]
+
+    res1 = client.describe_instances(Filters=[{"Name": "vpc-id", "Values": [vpc1.id]}])[
+        "Reservations"
+    ]
+    assert len(res1) == 1
+    assert len(res1[0]["Instances"]) == 1
+    assert res1[0]["Instances"][0]["InstanceId"] == instance1.id
+    assert res1[0]["Instances"][0]["VpcId"] == vpc1.id
+    assert res1[0]["Instances"][0]["SubnetId"] == subnet1.id
+
+    res2 = client.describe_instances(Filters=[{"Name": "vpc-id", "Values": [vpc2.id]}])[
+        "Reservations"
+    ]
+    assert len(res2) == 1
+    assert len(res2[0]["Instances"]) == 1
+    assert res2[0]["Instances"][0]["InstanceId"] == instance2.id
+    assert res2[0]["Instances"][0]["VpcId"] == vpc2.id
+    assert res2[0]["Instances"][0]["SubnetId"] == subnet2.id
+
+
+@mock_aws
+def test_get_instances_filtering_by_dns_name():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    vpc1 = ec2.create_vpc(CidrBlock="10.0.0.0/16")
+    subnet = ec2.create_subnet(VpcId=vpc1.id, CidrBlock="10.0.0.0/27")
+    client.modify_subnet_attribute(
+        SubnetId=subnet.id, MapPublicIpOnLaunch={"Value": True}
+    )
+    reservation1 = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, SubnetId=subnet.id
+    )
+    instance1 = reservation1[0]
+
+    reservation2 = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, SubnetId=subnet.id
+    )
+    instance2 = reservation2[0]
+
+    res1 = client.describe_instances(
+        Filters=[{"Name": "dns-name", "Values": [instance1.public_dns_name]}]
+    )["Reservations"]
+    assert len(res1) == 1
+    assert len(res1[0]["Instances"]) == 1
+    assert res1[0]["Instances"][0]["InstanceId"] == instance1.id
+
+    res2 = client.describe_instances(
+        Filters=[{"Name": "dns-name", "Values": [instance2.public_dns_name]}]
+    )["Reservations"]
+    assert len(res2) == 1
+    assert len(res2[0]["Instances"]) == 1
+    assert res2[0]["Instances"][0]["InstanceId"] == instance2.id
+
+
+@mock_aws
+def test_get_instances_filtering_by_architecture():
+    ec2 = boto3.resource("ec2", region_name="us-west-1")
+    client = boto3.client("ec2", region_name="us-west-1")
+    ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+
+    reservations = client.describe_instances(
+        Filters=[{"Name": "architecture", "Values": ["x86_64"]}]
+    )["Reservations"]
+    # get_all_reservations should return the instance
+    assert len(reservations[0]["Instances"]) == 1
+
+
+@mock_aws
+def test_get_instances_filtering_by_image_id():
+    client = boto3.client("ec2", region_name="us-east-1")
+    conn = boto3.resource("ec2", "us-east-1")
+    conn.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+
+    reservations = client.describe_instances(
+        Filters=[{"Name": "image-id", "Values": [EXAMPLE_AMI_ID]}]
+    )["Reservations"]
+    assert len(reservations[0]["Instances"]) >= 1, "Should return just created instance"
+
+
+@mock_aws
+def test_get_instances_filtering_by_account_id():
+    client = boto3.client("ec2", region_name="us-east-1")
+    conn = boto3.resource("ec2", "us-east-1")
+    instance = conn.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)[0]
+
+    instances = retrieve_all_instances(
+        client, filters=[{"Name": "owner-id", "Values": [ACCOUNT_ID]}]
+    )
+
+    assert instance.id in [i["InstanceId"] for i in instances]
+
+
+@mock_aws
+def test_get_instances_filtering_by_private_dns():
+    client = boto3.client("ec2", region_name="us-east-1")
+    conn = boto3.resource("ec2", "us-east-1")
+    conn.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, PrivateIpAddress="10.0.0.1"
+    )
+    reservations = client.describe_instances(
+        Filters=[{"Name": "private-dns-name", "Values": ["ip-10-0-0-1.ec2.internal"]}]
+    )["Reservations"]
+    assert len(reservations[0]["Instances"]) == 1
+
+
+@mock_aws
+def test_get_instances_filtering_by_ni_private_dns():
+    client = boto3.client("ec2", region_name="us-west-2")
+    conn = boto3.resource("ec2", "us-west-2")
+    conn.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, PrivateIpAddress="10.0.0.1"
+    )
+    reservations = client.describe_instances(
+        Filters=[
+            {
+                "Name": "network-interface.private-dns-name",
+                "Values": ["ip-10-0-0-1.us-west-2.compute.internal"],
+            }
+        ]
+    )["Reservations"]
+    assert len(reservations[0]["Instances"]) == 1
+
+
+@mock_aws
+def test_run_instances_with_unknown_security_group():
+    client = boto3.client("ec2", region_name="us-east-1")
+    sg_id = f"sg-{str(uuid4())[0:6]}"
+    with pytest.raises(ClientError) as exc:
+        client.run_instances(
+            ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, SecurityGroupIds=[sg_id]
+        )
+    err = exc.value.response["Error"]
+    assert err["Code"] == "InvalidGroup.NotFound"
+    assert err["Message"] == f"The security group '{sg_id}' does not exist"
+
+
+@mock_aws
+def test_get_instances_filtering_by_instance_group_name():
+    client = boto3.client("ec2", region_name="us-east-1")
+    sec_group_name = str(uuid4())[0:6]
+    client.create_security_group(Description="test", GroupName=sec_group_name)
+    client.run_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, SecurityGroups=[sec_group_name]
+    )
+    reservations = client.describe_instances(
+        Filters=[{"Name": "instance.group-name", "Values": [sec_group_name]}]
+    )["Reservations"]
+    assert len(reservations[0]["Instances"]) == 1
+
+
+@mock_aws
+def test_get_instances_filtering_by_instance_group_id():
+    client = boto3.client("ec2", region_name="us-east-1")
+    sec_group_name = str(uuid4())[0:6]
+    create_sg = client.create_security_group(
+        Description="test", GroupName=sec_group_name
+    )
+    group_id = create_sg["GroupId"]
+    client.run_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, SecurityGroups=[sec_group_name]
+    )
+    reservations = client.describe_instances(
+        Filters=[{"Name": "instance.group-id", "Values": [group_id]}]
+    )["Reservations"]
+    assert len(reservations[0]["Instances"]) == 1
+
+
+@mock_aws
+def test_get_instances_filtering_by_subnet_id():
+    client = boto3.client("ec2", region_name="us-east-1")
+
+    vpc_cidr = ipaddress.ip_network("192.168.42.0/24")
+    subnet_cidr = ipaddress.ip_network("192.168.42.0/25")
+
+    resp = client.create_vpc(CidrBlock=str(vpc_cidr))
+    vpc_id = resp["Vpc"]["VpcId"]
+
+    resp = client.create_subnet(CidrBlock=str(subnet_cidr), VpcId=vpc_id)
+    subnet_id = resp["Subnet"]["SubnetId"]
+
+    client.run_instances(
+        ImageId=EXAMPLE_AMI_ID, MaxCount=1, MinCount=1, SubnetId=subnet_id
+    )
+
+    reservations = client.describe_instances(
+        Filters=[{"Name": "subnet-id", "Values": [subnet_id]}]
+    )["Reservations"]
+    assert len(reservations) == 1
+
+
+@mock_aws
+def test_get_instances_filtering_by_tag():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=3, MaxCount=3)
+    instance1, instance2, instance3 = reservation
+
+    tag1_name = str(uuid4())[0:6]
+    tag1_val = str(uuid4())
+    tag2_name = str(uuid4())[0:6]
+    tag2_val = str(uuid4())
+    tag3_name = str(uuid4())[0:6]
+
+    instance1.create_tags(
+        Tags=[
+            {"Key": tag1_name, "Value": tag1_val},
+            {"Key": tag2_name, "Value": tag2_val},
+            {"Key": tag3_name, "Value": json.dumps(["entry1", "entry2"])},
+        ]
+    )
+    instance2.create_tags(Tags=[{"Key": tag1_name, "Value": tag1_val}])
+    instance2.create_tags(Tags=[{"Key": tag2_name, "Value": "wrong value"}])
+    instance3.create_tags(Tags=[{"Key": tag2_name, "Value": tag2_val}])
+
+    res = client.describe_instances(
+        Filters=[{"Name": "tag:tag0", "Values": ["value0"]}]
+    )
+    # describe_instances should return no instances
+    assert len(res["Reservations"]) == 0
+
+    res = client.describe_instances(
+        Filters=[{"Name": f"tag:{tag1_name}", "Values": [tag1_val]}]
+    )
+    # describe_instances should return both instances with this tag value
+    assert len(res["Reservations"]) == 1
+    assert len(res["Reservations"][0]["Instances"]) == 2
+    assert res["Reservations"][0]["Instances"][0]["InstanceId"] == instance1.id
+    assert res["Reservations"][0]["Instances"][1]["InstanceId"] == instance2.id
+
+    res = client.describe_instances(
+        Filters=[
+            {"Name": f"tag:{tag1_name}", "Values": [tag1_val]},
+            {"Name": f"tag:{tag2_name}", "Values": [tag2_val]},
+        ]
+    )
+    # describe_instances should return the instance with both tag values
+    assert len(res["Reservations"]) == 1
+    assert len(res["Reservations"][0]["Instances"]) == 1
+    assert res["Reservations"][0]["Instances"][0]["InstanceId"] == instance1.id
+
+    res = client.describe_instances(
+        Filters=[{"Name": f"tag:{tag2_name}", "Values": [tag2_val, "bogus"]}]
+    )
+    # describe_instances should return both instances with one of the
+    # acceptable tag values
+    assert len(res["Reservations"]) == 1
+    assert len(res["Reservations"][0]["Instances"]) == 2
+    assert res["Reservations"][0]["Instances"][0]["InstanceId"] == instance1.id
+    assert res["Reservations"][0]["Instances"][1]["InstanceId"] == instance3.id
+
+    # We should be able to use tags containing special characters
+    res = client.describe_instances(
+        Filters=[
+            {"Name": f"tag:{tag3_name}", "Values": [json.dumps(["entry1", "entry2"])]}
+        ]
+    )
+    assert len(res["Reservations"]) == 1
+    assert len(res["Reservations"][0]["Instances"]) == 1
+    assert res["Reservations"][0]["Instances"][0]["InstanceId"] == instance1.id
+
+
+@mock_aws
+def test_get_instances_filtering_by_tag_value():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=3, MaxCount=3)
+    instance1, instance2, instance3 = reservation
+
+    tag1_name = str(uuid4())[0:6]
+    tag1_val = str(uuid4())
+    tag2_name = str(uuid4())[0:6]
+    tag2_val = str(uuid4())
+    instance1.create_tags(Tags=[{"Key": tag1_name, "Value": tag1_val}])
+    instance1.create_tags(Tags=[{"Key": tag2_name, "Value": tag2_val}])
+    instance2.create_tags(Tags=[{"Key": tag1_name, "Value": tag1_val}])
+    instance2.create_tags(Tags=[{"Key": tag2_name, "Value": "wrong value"}])
+    instance3.create_tags(Tags=[{"Key": tag2_name, "Value": tag2_val}])
+
+    res = client.describe_instances(
+        Filters=[{"Name": "tag-value", "Values": ["value0"]}]
+    )
+    # describe_instances should return no instances
+    assert len(res["Reservations"]) == 0
+
+    res = client.describe_instances(
+        Filters=[{"Name": "tag-value", "Values": [tag1_val]}]
+    )
+    # describe_instances should return both instances with this tag value
+    assert len(res["Reservations"]) == 1
+    assert len(res["Reservations"][0]["Instances"]) == 2
+    assert res["Reservations"][0]["Instances"][0]["InstanceId"] == instance1.id
+    assert res["Reservations"][0]["Instances"][1]["InstanceId"] == instance2.id
+
+    res = client.describe_instances(
+        Filters=[{"Name": "tag-value", "Values": [tag2_val, tag1_val]}]
+    )
+    # describe_instances should return both instances with one of the
+    # acceptable tag values
+    assert len(res["Reservations"]) == 1
+    assert len(res["Reservations"][0]["Instances"]) == 3
+    assert res["Reservations"][0]["Instances"][0]["InstanceId"] == instance1.id
+    assert res["Reservations"][0]["Instances"][1]["InstanceId"] == instance2.id
+    assert res["Reservations"][0]["Instances"][2]["InstanceId"] == instance3.id
+
+    res = client.describe_instances(
+        Filters=[{"Name": "tag-value", "Values": [tag2_val, "bogus"]}]
+    )
+    # describe_instances should return both instances with one of the
+    # acceptable tag values
+    assert len(res["Reservations"]) == 1
+    assert len(res["Reservations"][0]["Instances"]) == 2
+    assert res["Reservations"][0]["Instances"][0]["InstanceId"] == instance1.id
+    assert res["Reservations"][0]["Instances"][1]["InstanceId"] == instance3.id
+
+
+@mock_aws
+def test_get_instances_filtering_by_tag_name():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=3, MaxCount=3)
+    instance1, instance2, instance3 = reservation
+
+    tag1 = str(uuid4())
+    tag3 = str(uuid4())
+
+    instance1.create_tags(Tags=[{"Key": tag1, "Value": ""}])
+    instance1.create_tags(Tags=[{"Key": "tag2", "Value": ""}])
+    instance2.create_tags(Tags=[{"Key": tag1, "Value": ""}])
+    instance2.create_tags(Tags=[{"Key": "tag2X", "Value": ""}])
+    instance3.create_tags(Tags=[{"Key": tag3, "Value": ""}])
+
+    res = client.describe_instances(Filters=[{"Name": "tag-key", "Values": ["tagX"]}])
+    # describe_instances should return no instances
+    assert len(res["Reservations"]) == 0
+
+    res = client.describe_instances(Filters=[{"Name": "tag-key", "Values": [tag1]}])
+    # describe_instances should return both instances with this tag value
+    assert len(res["Reservations"]) == 1
+    assert len(res["Reservations"][0]["Instances"]) == 2
+    assert res["Reservations"][0]["Instances"][0]["InstanceId"] == instance1.id
+    assert res["Reservations"][0]["Instances"][1]["InstanceId"] == instance2.id
+
+    res = client.describe_instances(
+        Filters=[{"Name": "tag-key", "Values": [tag1, tag3]}]
+    )
+    # describe_instances should return both instances with one of the
+    # acceptable tag values
+    assert len(res["Reservations"]) == 1
+    assert len(res["Reservations"][0]["Instances"]) == 3
+    assert res["Reservations"][0]["Instances"][0]["InstanceId"] == instance1.id
+    assert res["Reservations"][0]["Instances"][1]["InstanceId"] == instance2.id
+    assert res["Reservations"][0]["Instances"][2]["InstanceId"] == instance3.id
+
+
+@mock_aws
+def test_instance_start_and_stop():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=2, MaxCount=2)
+    instance1, instance2 = reservation
+
+    instance_ids = [instance1.id, instance2.id]
+
+    with pytest.raises(ClientError) as ex:
+        client.stop_instances(InstanceIds=instance_ids, DryRun=True)
+    assert_dryrun_error(ex)
+
+    stopped_instances = client.stop_instances(InstanceIds=instance_ids)[
+        "StoppingInstances"
+    ]
+
+    for instance in stopped_instances:
+        assert instance["PreviousState"] == {"Code": 16, "Name": "running"}
+        assert instance["CurrentState"] == {"Code": 64, "Name": "stopping"}
+
+    instance1.reload()
+    assert instance1.state == {"Code": 80, "Name": "stopped"}
+    assert instance1.state_transition_reason.startswith("User initiated")
+
+    with pytest.raises(ClientError) as ex:
+        client.start_instances(InstanceIds=[instance1.id], DryRun=True)
+    assert_dryrun_error(ex)
+
+    instance1.reload()
+    # The DryRun-operation did not change anything
+    assert instance1.state == {"Code": 80, "Name": "stopped"}
+
+    started_instances = client.start_instances(InstanceIds=[instance1.id])[
+        "StartingInstances"
+    ]
+    assert started_instances[0]["CurrentState"] == {"Code": 0, "Name": "pending"}
+    assert started_instances[0]["PreviousState"] == {"Code": 80, "Name": "stopped"}
+
+
+@mock_aws
+def test_instance_reboot():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    response = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    instance = response[0]
+    assert instance.state == {"Code": 0, "Name": "pending"}
+    instance.reload()
+    assert instance.state == {"Code": 16, "Name": "running"}
+
+    with pytest.raises(ClientError) as ex:
+        instance.reboot(DryRun=True)
+    assert_dryrun_error(ex)
+
+    assert instance.state == {"Code": 16, "Name": "running"}
+
+    instance.reboot()
+    assert instance.state == {"Code": 16, "Name": "running"}
+
+
+@mock_aws
+def test_instance_attribute_instance_type():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    response = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    instance = response[0]
+    assert instance.instance_type == "m1.small"
+
+    with pytest.raises(ClientError) as ex:
+        instance.modify_attribute(InstanceType={"Value": "m1.medium"}, DryRun=True)
+    assert_dryrun_error(ex)
+
+    instance.modify_attribute(InstanceType={"Value": "m1.medium"})
+
+    assert instance.instance_type == "m1.medium"
+    assert instance.describe_attribute(Attribute="instanceType")["InstanceType"] == {
+        "Value": "m1.medium"
+    }
+
+
+@mock_aws
+def test_modify_instance_attribute_security_groups():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    response = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    instance = response[0]
+    old_groups = instance.describe_attribute(Attribute="groupSet")["Groups"]
+    assert old_groups == []
+
+    sg_id = ec2.create_security_group(
+        GroupName=str(uuid4()), Description="this is a test security group"
+    ).id
+    sg_id2 = ec2.create_security_group(
+        GroupName=str(uuid4()), Description="this is a test security group 2"
+    ).id
+
+    with pytest.raises(ClientError) as ex:
+        instance.modify_attribute(Groups=[sg_id, sg_id2], DryRun=True)
+    assert_dryrun_error(ex)
+
+    instance.modify_attribute(Groups=[sg_id, sg_id2])
+
+    new_groups = instance.describe_attribute(Attribute="groupSet")["Groups"]
+    assert len(new_groups) == 2
+    assert {"GroupId": sg_id} in new_groups
+    assert {"GroupId": sg_id2} in new_groups
+
+
+@mock_aws
+def test_instance_attribute_user_data():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    res = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    instance = res[0]
+    user_data = Base64EncodedString.from_raw_string("this is my user data")
+    with pytest.raises(ClientError) as ex:
+        instance.modify_attribute(UserData={"Value": user_data.as_bytes()}, DryRun=True)
+    assert_dryrun_error(ex)
+
+    instance.modify_attribute(UserData={"Value": user_data.as_bytes()})
+
+    attribute = instance.describe_attribute(Attribute="userData")["UserData"]
+    assert attribute["Value"] == str(user_data)
+
+
+@mock_aws
+def test_instance_attribute_source_dest_check():
+    ec2 = boto3.resource("ec2", region_name="us-west-1")
+    instance = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)[0]
+
+    instance_attribute = instance.describe_attribute(Attribute="sourceDestCheck")
+    assert instance_attribute.get("SourceDestCheck") == {"Value": True}
+
+    # Set to false (note: Boto converts bool to string, eg 'false')
+
+    with pytest.raises(ClientError) as ex:
+        instance.modify_attribute(SourceDestCheck={"Value": False}, DryRun=True)
+    assert_dryrun_error(ex)
+
+    instance.modify_attribute(SourceDestCheck={"Value": False})
+
+    instance_attribute = instance.describe_attribute(Attribute="sourceDestCheck")
+    assert instance_attribute.get("SourceDestCheck") == {"Value": False}
+
+    # Set back to true
+    instance.modify_attribute(SourceDestCheck={"Value": True})
+
+    instance_attribute = instance.describe_attribute(Attribute="sourceDestCheck")
+    assert instance_attribute.get("SourceDestCheck") == {"Value": True}
+
+
+@mock_aws
+def test_user_data_with_run_instance():
+    user_data = b"some user data"
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, UserData=user_data
+    )[0]
+
+    attribute = instance.describe_attribute(Attribute="userData")["UserData"]
+    retrieved_user_data = attribute["Value"].encode("utf-8")
+    decoded_user_data = decode_method(retrieved_user_data)
+    assert decoded_user_data == b"some user data"
+
+
+@mock_aws
+def test_run_instance_with_security_group_name():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+
+    sec_group_name = str(uuid4())[0:6]
+
+    with pytest.raises(ClientError) as ex:
+        ec2.create_security_group(
+            GroupName=sec_group_name, Description="d", DryRun=True
+        )
+    assert_dryrun_error(ex)
+
+    group = ec2.create_security_group(
+        GroupName=sec_group_name, Description="some description"
+    )
+
+    res = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, SecurityGroups=[sec_group_name]
+    )
+    instance = res[0]
+
+    assert instance.security_groups == [
+        {"GroupName": sec_group_name, "GroupId": group.id}
+    ]
+
+
+@mock_aws
+def test_run_instance_with_security_group_id():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    sec_group_name = str(uuid4())
+    group = ec2.create_security_group(
+        GroupName=sec_group_name, Description="some description"
+    )
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, SecurityGroupIds=[group.id]
+    )[0]
+
+    assert instance.security_groups == [
+        {"GroupName": sec_group_name, "GroupId": group.id}
+    ]
+
+
+@mock_aws
+@pytest.mark.parametrize("hibernate", [True, False])
+def test_run_instance_with_additional_args(hibernate):
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        InstanceType="t1.micro",
+        Placement={"AvailabilityZone": "us-east-1b"},
+        HibernationOptions={"Configured": hibernate},
+    )[0]
+
+    assert instance.instance_type == "t1.micro"
+    assert instance.placement["AvailabilityZone"] == "us-east-1b"
+    assert instance.hibernation_options == {"Configured": hibernate}
+
+    reservations = client.describe_instances(InstanceIds=[instance.id])["Reservations"]
+    instance = reservations[0]["Instances"][0]
+    assert instance["HibernationOptions"] == {"Configured": hibernate}
+
+
+@mock_aws
+def test_run_instance_with_default_placement():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    instance = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)[0]
+
+    assert instance.placement["AvailabilityZone"] == "us-east-1a"
+
+
+@mock_aws
+@mock.patch(
+    "moto.ec2.models.instances.settings.EC2_ENABLE_INSTANCE_TYPE_VALIDATION",
+    new_callable=mock.PropertyMock(return_value=True),
+)
+def test_run_instance_with_invalid_instance_type(m_flag):
+    if settings.TEST_SERVER_MODE:
+        raise SkipTest(
+            "It is not possible to set the environment variable in server mode"
+        )
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    with pytest.raises(ClientError) as ex:
+        ec2.create_instances(
+            ImageId=EXAMPLE_AMI_ID,
+            InstanceType="invalid_type",
+            MinCount=1,
+            MaxCount=1,
+            Placement={"AvailabilityZone": "us-east-1b"},
+        )
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert (
+        ex.value.response["Error"]["Message"]
+        == "The instance type 'invalid_type' does not exist"
+    )
+    assert m_flag is True
+
+
+@mock_aws
+def test_run_instance_with_availability_zone_not_from_region():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    with pytest.raises(ClientError) as ex:
+        ec2.create_instances(
+            ImageId=EXAMPLE_AMI_ID,
+            InstanceType="t2.nano",
+            MinCount=1,
+            MaxCount=1,
+            Placement={"AvailabilityZone": "us-west-1b"},
+        )
+
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert (
+        ex.value.response["Error"]["Message"]
+        == "Invalid Availability Zone (us-west-1b)"
+    )
+
+
+@mock_aws
+def test_run_instance_with_subnet():
+    client = boto3.client("ec2", region_name="eu-central-1")
+
+    ip_networks = [
+        (ipaddress.ip_network("10.0.0.0/16"), ipaddress.ip_network("10.0.99.0/24")),
+        (
+            ipaddress.ip_network("192.168.42.0/24"),
+            ipaddress.ip_network("192.168.42.0/25"),
+        ),
+    ]
+
+    # Tests instances are created with the correct IPs
+    for vpc_cidr, subnet_cidr in ip_networks:
+        resp = client.create_vpc(
+            CidrBlock=str(vpc_cidr),
+            AmazonProvidedIpv6CidrBlock=False,
+            DryRun=False,
+            InstanceTenancy="default",
+        )
+        vpc_id = resp["Vpc"]["VpcId"]
+
+        resp = client.create_subnet(CidrBlock=str(subnet_cidr), VpcId=vpc_id)
+        subnet_id = resp["Subnet"]["SubnetId"]
+
+        resp = client.run_instances(
+            ImageId=EXAMPLE_AMI_ID, MaxCount=1, MinCount=1, SubnetId=subnet_id
+        )
+        instance = resp["Instances"][0]
+        assert instance["SubnetId"] == subnet_id
+
+        priv_ipv4 = ipaddress.ip_address(str(instance["PrivateIpAddress"]))
+        assert priv_ipv4 in subnet_cidr
+
+
+@mock_aws
+def test_run_instance_with_specified_private_ipv4():
+    client = boto3.client("ec2", region_name="eu-central-1")
+
+    vpc_cidr = ipaddress.ip_network("192.168.42.0/24")
+    subnet_cidr = ipaddress.ip_network("192.168.42.0/25")
+
+    resp = client.create_vpc(
+        CidrBlock=str(vpc_cidr),
+        AmazonProvidedIpv6CidrBlock=False,
+        DryRun=False,
+        InstanceTenancy="default",
+    )
+    vpc_id = resp["Vpc"]["VpcId"]
+
+    resp = client.create_subnet(CidrBlock=str(subnet_cidr), VpcId=vpc_id)
+    subnet_id = resp["Subnet"]["SubnetId"]
+
+    resp = client.run_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MaxCount=1,
+        MinCount=1,
+        SubnetId=subnet_id,
+        PrivateIpAddress="192.168.42.5",
+    )
+    instance = resp["Instances"][0]
+    assert instance["SubnetId"] == subnet_id
+    assert instance["PrivateIpAddress"] == "192.168.42.5"
+
+
+@mock_aws
+def test_run_instance_with_placement():
+    client = boto3.client("ec2", region_name="eu-central-1")
+    host_id = "h-asdfasdfasdf"
+
+    instance = client.run_instances(
+        ImageId=EXAMPLE_AMI_ID, MaxCount=1, MinCount=1, Placement={"HostId": host_id}
+    )["Instances"][0]
+    instance_id = instance["InstanceId"]
+    assert instance["Placement"]["HostId"] == host_id
+
+    resp = client.describe_instances(InstanceIds=[instance_id])["Reservations"][0][
+        "Instances"
+    ][0]
+    assert resp["Placement"]["HostId"] == host_id
+
+
+@mock_aws
+def test_run_instance_mapped_public_ipv4():
+    client = boto3.client("ec2", region_name="eu-central-1")
+
+    vpc_cidr = ipaddress.ip_network("192.168.42.0/24")
+    subnet_cidr = ipaddress.ip_network("192.168.42.0/25")
+
+    resp = client.create_vpc(
+        CidrBlock=str(vpc_cidr),
+        AmazonProvidedIpv6CidrBlock=False,
+        DryRun=False,
+        InstanceTenancy="default",
+    )
+    vpc_id = resp["Vpc"]["VpcId"]
+
+    resp = client.create_subnet(CidrBlock=str(subnet_cidr), VpcId=vpc_id)
+    subnet_id = resp["Subnet"]["SubnetId"]
+    client.modify_subnet_attribute(
+        SubnetId=subnet_id, MapPublicIpOnLaunch={"Value": True}
+    )
+
+    resp = client.run_instances(
+        ImageId=EXAMPLE_AMI_ID, MaxCount=1, MinCount=1, SubnetId=subnet_id
+    )
+    instance = resp["Instances"][0]
+    assert "PublicDnsName" in instance
+    assert "PublicIpAddress" in instance
+    assert len(instance["PublicDnsName"]) > 0
+    assert len(instance["PublicIpAddress"]) > 0
+
+
+@mock_aws
+def test_run_instance_with_nic_autocreated():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")
+    subnet = ec2.create_subnet(VpcId=vpc.id, CidrBlock="10.0.0.0/18")
+    security_group1 = ec2.create_security_group(
+        GroupName=str(uuid4()), Description="n/a"
+    )
+    security_group2 = ec2.create_security_group(
+        GroupName=str(uuid4()), Description="n/a"
+    )
+    private_ip = "10.0.0.1"
+
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        SubnetId=subnet.id,
+        SecurityGroups=[security_group1.group_name],
+        SecurityGroupIds=[security_group2.group_id],
+        PrivateIpAddress=private_ip,
+    )[0]
+
+    instance_eni = instance.network_interfaces_attribute
+    assert len(instance_eni) == 1
+
+    nii = instance_eni[0]["NetworkInterfaceId"]
+
+    my_enis = client.describe_network_interfaces(NetworkInterfaceIds=[nii])[
+        "NetworkInterfaces"
+    ]
+    assert len(my_enis) == 1
+    eni = my_enis[0]
+
+    assert instance.subnet_id == subnet.id
+    assert len(instance.security_groups) == 2
+    assert {group["GroupId"] for group in instance.security_groups} == {
+        security_group1.id,
+        security_group2.id,
+    }
+
+    assert eni["SubnetId"] == subnet.id
+    assert len(eni["Groups"]) == 2
+    assert {group["GroupId"] for group in eni["Groups"]} == {
+        security_group1.id,
+        security_group2.id,
+    }
+    assert len(eni["PrivateIpAddresses"]) == 1
+    assert eni["PrivateIpAddresses"][0]["PrivateIpAddress"] == private_ip
+
+
+@mock_aws
+def test_run_instance_with_nic_preexisting():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")
+    subnet = ec2.create_subnet(VpcId=vpc.id, CidrBlock="10.0.0.0/18")
+    security_group1 = ec2.create_security_group(
+        GroupName=str(uuid4()), Description="n/a"
+    )
+    security_group2 = ec2.create_security_group(
+        GroupName=str(uuid4()), Description="n/a"
+    )
+    private_ip = "54.0.0.1"
+    eni = ec2.create_network_interface(
+        SubnetId=subnet.id,
+        PrivateIpAddress=private_ip,
+        Groups=[security_group1.group_id],
+    )
+
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        NetworkInterfaces=[{"DeviceIndex": 0, "NetworkInterfaceId": eni.id}],
+        SecurityGroupIds=[security_group2.group_id],
+    )[0]
+
+    assert instance.subnet_id == subnet.id
+
+    nii = instance.network_interfaces_attribute[0]["NetworkInterfaceId"]
+
+    all_enis = client.describe_network_interfaces(NetworkInterfaceIds=[nii])[
+        "NetworkInterfaces"
+    ]
+    assert len(all_enis) == 1
+
+    instance_enis = instance.network_interfaces_attribute
+    assert len(instance_enis) == 1
+    instance_eni = instance_enis[0]
+    assert instance_eni["NetworkInterfaceId"] == eni.id
+
+    assert instance_eni["SubnetId"] == subnet.id
+    assert len(instance_eni["Groups"]) == 2
+    assert {group["GroupId"] for group in instance_eni["Groups"]} == {
+        security_group1.id,
+        security_group2.id,
+    }
+    assert len(instance_eni["PrivateIpAddresses"]) == 1
+    assert instance_eni["PrivateIpAddresses"][0]["PrivateIpAddress"] == private_ip
+
+
+@mock_aws
+def test_run_instance_with_new_nic_and_security_groups():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    security_group1 = ec2.create_security_group(
+        GroupName=str(uuid4()), Description="n/a"
+    )
+    security_group2 = ec2.create_security_group(
+        GroupName=str(uuid4()), Description="n/a"
+    )
+
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        NetworkInterfaces=[
+            {
+                "DeviceIndex": 0,
+                "Groups": [security_group1.group_id, security_group2.group_id],
+            }
+        ],
+    )[0]
+
+    nii = instance.network_interfaces_attribute[0]["NetworkInterfaceId"]
+
+    all_enis = client.describe_network_interfaces(NetworkInterfaceIds=[nii])[
+        "NetworkInterfaces"
+    ]
+    assert len(all_enis) == 1
+
+    instance_enis = instance.network_interfaces_attribute
+    assert len(instance_enis) == 1
+    instance_eni = instance_enis[0]
+
+    assert len(instance_eni["Groups"]) == 2
+    assert {group["GroupId"] for group in instance_eni["Groups"]} == {
+        security_group1.id,
+        security_group2.id,
+    }
+
+
+@mock_aws
+def test_instance_with_nic_attach_detach():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")
+    subnet = ec2.create_subnet(VpcId=vpc.id, CidrBlock="10.0.0.0/18")
+    security_group1 = ec2.create_security_group(
+        GroupName=str(uuid4()), Description="n/a"
+    )
+    security_group2 = ec2.create_security_group(
+        GroupName=str(uuid4()), Description="n/a"
+    )
+
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        SecurityGroupIds=[security_group1.group_id],
+    )[0]
+
+    eni = ec2.create_network_interface(SubnetId=subnet.id, Groups=[security_group2.id])
+    eni_id = eni.id
+
+    # Check initial instance and ENI data
+    assert len(instance.network_interfaces_attribute) == 1
+
+    assert [group["GroupId"] for group in eni.groups] == [security_group2.id]
+
+    # Attach
+    with pytest.raises(ClientError) as ex:
+        client.attach_network_interface(
+            NetworkInterfaceId=eni_id,
+            InstanceId=instance.id,
+            DeviceIndex=1,
+            DryRun=True,
+        )
+    assert_dryrun_error(ex)
+
+    client.attach_network_interface(
+        NetworkInterfaceId=eni_id, InstanceId=instance.id, DeviceIndex=1
+    )
+
+    # Check attached instance and ENI data
+    instance.reload()
+    assert len(instance.network_interfaces_attribute) == 2
+    instance_eni = instance.network_interfaces_attribute[1]
+    assert instance_eni["NetworkInterfaceId"] == eni_id
+    assert len(instance_eni["Groups"]) == 2
+    assert {group["GroupId"] for group in instance_eni["Groups"]} == {
+        security_group1.id,
+        security_group2.id,
+    }
+
+    eni = client.describe_network_interfaces(
+        Filters=[{"Name": "network-interface-id", "Values": [eni_id]}]
+    )["NetworkInterfaces"][0]
+    assert len(eni["Groups"]) == 2
+    assert {group["GroupId"] for group in eni["Groups"]} == {
+        security_group1.id,
+        security_group2.id,
+    }
+
+    # Detach
+    with pytest.raises(ClientError) as ex:
+        client.detach_network_interface(
+            AttachmentId=instance_eni["Attachment"]["AttachmentId"], DryRun=True
+        )
+    assert_dryrun_error(ex)
+
+    client.detach_network_interface(
+        AttachmentId=instance_eni["Attachment"]["AttachmentId"]
+    )
+
+    # Check detached instance and ENI data
+    instance.reload()
+    assert len(instance.network_interfaces_attribute) == 1
+
+    eni = client.describe_network_interfaces(
+        Filters=[{"Name": "network-interface-id", "Values": [eni_id]}]
+    )["NetworkInterfaces"][0]
+    assert [group["GroupId"] for group in eni["Groups"]] == [security_group2.id]
+
+    # Detach with invalid attachment ID
+    with pytest.raises(ClientError) as ex:
+        client.detach_network_interface(AttachmentId="eni-attach-1234abcd")
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert "RequestId" in ex.value.response["ResponseMetadata"]
+    assert ex.value.response["Error"]["Code"] == "InvalidAttachmentID.NotFound"
+
+
+@mock_aws
+def test_ec2_classic_has_public_ip_address():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    instance = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)[0]
+    assert instance.public_ip_address is not None
+    assert instance.public_ip_address.replace(".", "-") in instance.public_dns_name
+    assert instance.private_ip_address is not None
+    assert instance.private_ip_address.replace(".", "-") in instance.private_dns_name
+
+
+@mock_aws
+def test_run_instance_with_keypair():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, KeyName="keypair_name"
+    )[0]
+
+    assert instance.key_name == "keypair_name"
+
+
+@mock_aws
+def test_describe_instances_with_keypair_filter():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    for i in range(3):
+        key_name = "kp-single" if i % 2 else "kp-multiple"
+        ec2.create_instances(
+            ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, KeyName=key_name
+        )
+    test_data = [
+        (["kp-single"], 1),
+        (["kp-multiple"], 2),
+        (["kp-single", "kp-multiple"], 3),
+    ]
+    for filter_values, expected_instance_count in test_data:
+        _filter = [{"Name": "key-name", "Values": filter_values}]
+        instances_found = list(ec2.instances.filter(Filters=_filter))
+        assert len(instances_found) == expected_instance_count
+
+
+@mock_aws
+@mock.patch(
+    "moto.ec2.models.instances.settings.ENABLE_KEYPAIR_VALIDATION",
+    new_callable=mock.PropertyMock(return_value=True),
+)
+def test_run_instance_with_invalid_keypair(m_flag):
+    if settings.TEST_SERVER_MODE:
+        raise SkipTest(
+            "It is not possible to set the environment variable in server mode"
+        )
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    keypair_name = "keypair_name"
+    ec2.create_key_pair(KeyName=keypair_name)
+
+    with pytest.raises(ClientError) as ex:
+        ec2.create_instances(
+            ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, KeyName="not a key name"
+        )[0]
+
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert ex.value.response["Error"]["Code"] == "InvalidKeyPair.NotFound"
+    assert m_flag is True
+
+
+@mock_aws
+def test_run_instance_with_block_device_mappings():
+    ec2_client = boto3.client("ec2", region_name="us-east-1")
+
+    kwargs = {
+        "MinCount": 1,
+        "MaxCount": 1,
+        "ImageId": EXAMPLE_AMI_ID,
+        "KeyName": "the_key",
+        "InstanceType": "t1.micro",
+        "BlockDeviceMappings": [{"DeviceName": "/dev/sda2", "Ebs": {"VolumeSize": 50}}],
+    }
+
+    instance_id = ec2_client.run_instances(**kwargs)["Instances"][0]["InstanceId"]
+
+    instances = ec2_client.describe_instances(InstanceIds=[instance_id])
+    volume = instances["Reservations"][0]["Instances"][0]["BlockDeviceMappings"][0][
+        "Ebs"
+    ]
+
+    volumes = ec2_client.describe_volumes(VolumeIds=[volume["VolumeId"]])
+    assert volumes["Volumes"][0]["Size"] == 50
+
+
+@mock_aws
+def test_run_instance_with_block_device_mappings_missing_ebs():
+    ec2_client = boto3.client("ec2", region_name="us-east-1")
+
+    kwargs = {
+        "MinCount": 1,
+        "MaxCount": 1,
+        "ImageId": EXAMPLE_AMI_ID,
+        "KeyName": "the_key",
+        "InstanceType": "t1.micro",
+        "BlockDeviceMappings": [{"DeviceName": "/dev/sda2"}],
+    }
+    with pytest.raises(ClientError) as ex:
+        ec2_client.run_instances(**kwargs)
+
+    assert ex.value.response["Error"]["Code"] == "MissingParameter"
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert (
+        ex.value.response["Error"]["Message"]
+        == "The request must contain the parameter ebs"
+    )
+
+
+@mock_aws
+def test_run_instance_with_block_device_mappings_using_no_device():
+    ec2_client = boto3.client("ec2", region_name="us-east-1")
+
+    kwargs = {
+        "MinCount": 1,
+        "MaxCount": 1,
+        "ImageId": EXAMPLE_AMI_ID,
+        "KeyName": "the_key",
+        "InstanceType": "t1.micro",
+        "BlockDeviceMappings": [{"DeviceName": "/dev/sda2", "NoDevice": ""}],
+    }
+    resp = ec2_client.run_instances(**kwargs)
+    instance_id = resp["Instances"][0]["InstanceId"]
+
+    instances = ec2_client.describe_instances(InstanceIds=[instance_id])
+    # Assuming that /dev/sda2 is not the root device and that there is a /dev/sda1, boto would
+    # create an instance with one block device instead of two.  However, moto's modeling of
+    # BlockDeviceMappings is simplified, so we will accept that moto creates an instance without
+    # block devices for now
+    # assert "BlockDeviceMappings" not in instances["Reservations"][0]["Instances"][0]
+
+    # moto gives the key with an empty list instead of not having it at all, that's also fine
+    assert instances["Reservations"][0]["Instances"][0]["BlockDeviceMappings"] == []
+
+    # passing a string other than "" with NoDevice should raise InvalidRequest
+    kwargs["BlockDeviceMappings"][0]["NoDevice"] = "yes"
+    with pytest.raises(ClientError) as ex:
+        ec2_client.run_instances(**kwargs)
+
+    assert ex.value.response["Error"]["Code"] == "InvalidRequest"
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert ex.value.response["Error"]["Message"] == "The request received was invalid"
+
+
+@mock_aws
+def test_run_instance_with_block_device_mappings_missing_size():
+    ec2_client = boto3.client("ec2", region_name="us-east-1")
+
+    kwargs = {
+        "MinCount": 1,
+        "MaxCount": 1,
+        "ImageId": EXAMPLE_AMI_ID,
+        "KeyName": "the_key",
+        "InstanceType": "t1.micro",
+        "BlockDeviceMappings": [
+            {"DeviceName": "/dev/sda2", "Ebs": {"VolumeType": "standard"}}
+        ],
+    }
+    with pytest.raises(ClientError) as ex:
+        ec2_client.run_instances(**kwargs)
+
+    assert ex.value.response["Error"]["Code"] == "MissingParameter"
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert (
+        ex.value.response["Error"]["Message"]
+        == "The request must contain the parameter size or snapshotId"
+    )
+
+
+@mock_aws
+def test_run_instance_with_block_device_mappings_from_snapshot():
+    ec2_client = boto3.client("ec2", region_name="us-east-1")
+    ec2_resource = boto3.resource("ec2", region_name="us-east-1")
+
+    volume_details = {
+        "AvailabilityZone": "1a",
+        "Size": 30,
+    }
+
+    volume = ec2_resource.create_volume(**volume_details)
+    snapshot = volume.create_snapshot()
+    kwargs = {
+        "MinCount": 1,
+        "MaxCount": 1,
+        "ImageId": EXAMPLE_AMI_ID,
+        "KeyName": "the_key",
+        "InstanceType": "t1.micro",
+        "BlockDeviceMappings": [
+            {"DeviceName": "/dev/sda2", "Ebs": {"SnapshotId": snapshot.snapshot_id}}
+        ],
+    }
+
+    resp = ec2_client.run_instances(**kwargs)
+    instance_id = resp["Instances"][0]["InstanceId"]
+
+    instances = ec2_client.describe_instances(InstanceIds=[instance_id])
+    volume = instances["Reservations"][0]["Instances"][0]["BlockDeviceMappings"][0][
+        "Ebs"
+    ]
+
+    volumes = ec2_client.describe_volumes(VolumeIds=[volume["VolumeId"]])
+
+    assert volumes["Volumes"][0]["Size"] == 30
+    assert volumes["Volumes"][0]["SnapshotId"] == snapshot.snapshot_id
+
+
+@mock_aws
+@pytest.mark.requires_clean_slate
+def test_describe_instance_status_no_instances():
+    client = boto3.client("ec2", region_name="us-east-1")
+    all_status = client.describe_instance_status()["InstanceStatuses"]
+    assert len(all_status) == 0
+
+
+@mock_aws
+def test_describe_instance_status_with_instances():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    instance = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)[0]
+
+    all_status = client.describe_instance_status()["InstanceStatuses"]
+    instance_ids = [s["InstanceId"] for s in all_status]
+    assert instance.id in instance_ids
+
+    my_status = [s for s in all_status if s["InstanceId"] == instance.id][0]
+    assert my_status["InstanceStatus"]["Status"] == "ok"
+    assert my_status["SystemStatus"]["Status"] == "ok"
+
+
+@mock_aws
+def test_describe_instance_status_with_instance_filter_deprecated():
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    client = boto3.client("ec2", region_name="us-east-1")
+
+    # We want to filter based on this one
+    instance = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)[0]
+
+    # This is just to setup the test
+    ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+
+    all_status = client.describe_instance_status(InstanceIds=[instance.id])[
+        "InstanceStatuses"
+    ]
+    assert len(all_status) == 1
+    assert all_status[0]["InstanceId"] == instance.id
+
+    # Call get_all_instance_status with a bad id should raise an error
+    with pytest.raises(ClientError) as ex:
+        client.describe_instance_status(InstanceIds=[instance.id, "i-1234abcd"])
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert "RequestId" in ex.value.response["ResponseMetadata"]
+    assert ex.value.response["Error"]["Code"] == "InvalidInstanceID.NotFound"
+
+
+@mock_aws
+def test_describe_instance_credit_specifications():
+    conn = boto3.client("ec2", region_name="us-west-1")
+
+    # We want to filter based on this one
+    reservation = conn.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    result = conn.describe_instance_credit_specifications(
+        InstanceIds=[reservation["Instances"][0]["InstanceId"]]
+    )
+    assert (
+        result["InstanceCreditSpecifications"][0]["InstanceId"]
+        == reservation["Instances"][0]["InstanceId"]
+    )
+
+
+@mock_aws
+def test_describe_instance_status_with_instance_filter():
+    conn = boto3.client("ec2", region_name="us-west-1")
+
+    # We want to filter based on this one
+    reservation = conn.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=3, MaxCount=3)
+    instance1 = reservation["Instances"][0]
+    instance2 = reservation["Instances"][1]
+    instance3 = reservation["Instances"][2]
+    conn.stop_instances(InstanceIds=[instance1["InstanceId"]])
+    stopped_instance_ids = [instance1["InstanceId"]]
+    running_instance_ids = sorted([instance2["InstanceId"], instance3["InstanceId"]])
+    all_instance_ids = sorted(stopped_instance_ids + running_instance_ids)
+
+    # Filter instance using the state name
+    state_name_filter = {
+        "running_and_stopped": [
+            {"Name": "instance-state-name", "Values": ["running", "stopped"]}
+        ],
+        "running": [{"Name": "instance-state-name", "Values": ["running"]}],
+        "stopped": [{"Name": "instance-state-name", "Values": ["stopped"]}],
+    }
+
+    found_statuses = conn.describe_instance_status(
+        IncludeAllInstances=True, Filters=state_name_filter["running_and_stopped"]
+    )["InstanceStatuses"]
+    found_instance_ids = [status["InstanceId"] for status in found_statuses]
+    for _id in all_instance_ids:
+        assert _id in found_instance_ids
+
+    found_statuses = conn.describe_instance_status(
+        IncludeAllInstances=True, Filters=state_name_filter["running"]
+    )["InstanceStatuses"]
+    found_instance_ids = [status["InstanceId"] for status in found_statuses]
+    for _id in stopped_instance_ids:
+        assert _id not in found_instance_ids
+    for _id in running_instance_ids:
+        assert _id in found_instance_ids
+
+    found_statuses = conn.describe_instance_status(
+        IncludeAllInstances=True, Filters=state_name_filter["stopped"]
+    )["InstanceStatuses"]
+    found_instance_ids = [status["InstanceId"] for status in found_statuses]
+    for _id in stopped_instance_ids:
+        assert _id in found_instance_ids
+    for _id in running_instance_ids:
+        assert _id not in found_instance_ids
+
+    # Filter instance using the state code
+    state_code_filter = {
+        "running_and_stopped": [
+            {"Name": "instance-state-code", "Values": ["16", "80"]}
+        ],
+        "running": [{"Name": "instance-state-code", "Values": ["16"]}],
+        "stopped": [{"Name": "instance-state-code", "Values": ["80"]}],
+    }
+
+    found_statuses = conn.describe_instance_status(
+        IncludeAllInstances=True, Filters=state_code_filter["running_and_stopped"]
+    )["InstanceStatuses"]
+    found_instance_ids = [status["InstanceId"] for status in found_statuses]
+    for _id in all_instance_ids:
+        assert _id in found_instance_ids
+
+    found_statuses = conn.describe_instance_status(
+        IncludeAllInstances=True, Filters=state_code_filter["running"]
+    )["InstanceStatuses"]
+    found_instance_ids = [status["InstanceId"] for status in found_statuses]
+    for _id in stopped_instance_ids:
+        assert _id not in found_instance_ids
+    for _id in running_instance_ids:
+        assert _id in found_instance_ids
+
+    found_statuses = conn.describe_instance_status(
+        IncludeAllInstances=True, Filters=state_code_filter["stopped"]
+    )["InstanceStatuses"]
+    found_instance_ids = [status["InstanceId"] for status in found_statuses]
+    for _id in stopped_instance_ids:
+        assert _id in found_instance_ids
+    for _id in running_instance_ids:
+        assert _id not in found_instance_ids
+
+    # Filter instance using the state code and state name
+    state_code_filter = {
+        "running_and_stopped": [
+            {"Name": "instance-state-code", "Values": ["16", "80"]},
+            {"Name": "instance-state-name", "Values": ["running", "stopped"]},
+        ],
+        "running": [
+            {"Name": "instance-state-code", "Values": ["16"]},
+            {"Name": "instance-state-name", "Values": ["running"]},
+        ],
+        "stopped": [
+            {"Name": "instance-state-code", "Values": ["80"]},
+            {"Name": "instance-state-name", "Values": ["stopped"]},
+        ],
+        "contradiction": [
+            {"Name": "instance-state-code", "Values": ["80"]},
+            {"Name": "instance-state-name", "Values": ["running"]},
+        ],
+    }
+
+    found_statuses = conn.describe_instance_status(
+        IncludeAllInstances=True, Filters=state_code_filter["running_and_stopped"]
+    )["InstanceStatuses"]
+    found_instance_ids = [status["InstanceId"] for status in found_statuses]
+    for _id in all_instance_ids:
+        assert _id in found_instance_ids
+
+    found_statuses = conn.describe_instance_status(
+        IncludeAllInstances=True, Filters=state_code_filter["running"]
+    )["InstanceStatuses"]
+    found_instance_ids = [status["InstanceId"] for status in found_statuses]
+    for _id in stopped_instance_ids:
+        assert _id not in found_instance_ids
+    for _id in running_instance_ids:
+        assert _id in found_instance_ids
+
+    found_statuses = conn.describe_instance_status(
+        IncludeAllInstances=True, Filters=state_code_filter["stopped"]
+    )["InstanceStatuses"]
+    found_instance_ids = [status["InstanceId"] for status in found_statuses]
+    for _id in stopped_instance_ids:
+        assert _id in found_instance_ids
+    for _id in running_instance_ids:
+        assert _id not in found_instance_ids
+
+    found_statuses = conn.describe_instance_status(
+        IncludeAllInstances=True, Filters=state_code_filter["contradiction"]
+    )["InstanceStatuses"]
+    assert len(found_statuses) == 0
+
+
+@mock_aws
+def test_describe_instance_status_with_non_running_instances():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=3, MaxCount=3)
+    instance1, instance2, instance3 = reservation
+    instance1.stop()
+    instance2.terminate()
+
+    all_running_status = client.describe_instance_status()["InstanceStatuses"]
+    assert instance1.id not in [status["InstanceId"] for status in all_running_status]
+    assert instance2.id not in [status["InstanceId"] for status in all_running_status]
+    assert instance3.id in [status["InstanceId"] for status in all_running_status]
+
+    my_status = [s for s in all_running_status if s["InstanceId"] == instance3.id][0]
+    assert my_status["InstanceState"] == {"Code": 16, "Name": "running"}
+
+    all_status = client.describe_instance_status(IncludeAllInstances=True)[
+        "InstanceStatuses"
+    ]
+    assert instance1.id in [status["InstanceId"] for status in all_status]
+    assert instance2.id in [status["InstanceId"] for status in all_status]
+    assert instance3.id in [status["InstanceId"] for status in all_status]
+
+    status1 = next((s for s in all_status if s["InstanceId"] == instance1.id), None)
+    assert status1["InstanceState"] == {"Code": 80, "Name": "stopped"}
+
+    status2 = next((s for s in all_status if s["InstanceId"] == instance2.id), None)
+    assert status2["InstanceState"] == {"Code": 48, "Name": "terminated"}
+
+    status3 = next((s for s in all_status if s["InstanceId"] == instance3.id), None)
+    assert status3["InstanceState"] == {"Code": 16, "Name": "running"}
+
+
+@mock_aws
+def test_describe_instance_status_with_partial_instance_ids():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=3, MaxCount=3)
+    instance1, instance2, instance3 = reservation
+
+    all_status = client.describe_instance_status(
+        InstanceIds=[instance1.id, instance3.id]
+    )["InstanceStatuses"]
+    assert instance1.id in [status["InstanceId"] for status in all_status]
+    assert instance2.id not in [status["InstanceId"] for status in all_status]
+    assert instance3.id in [status["InstanceId"] for status in all_status]
+
+
+@mock_aws
+def test_describe_instance_status_with_partial_instance_id_stopped():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=3, MaxCount=3)
+    instance1, instance2, instance3 = reservation
+    instance1.stop()
+
+    all_running_status = client.describe_instance_status(
+        InstanceIds=[instance1.id, instance2.id, instance3.id]
+    )["InstanceStatuses"]
+    assert instance1.id not in [status["InstanceId"] for status in all_running_status]
+    assert instance2.id in [status["InstanceId"] for status in all_running_status]
+    assert instance3.id in [status["InstanceId"] for status in all_running_status]
+
+    all_status = client.describe_instance_status(
+        InstanceIds=[instance1.id, instance2.id, instance3.id], IncludeAllInstances=True
+    )["InstanceStatuses"]
+    assert instance1.id in [status["InstanceId"] for status in all_status]
+    assert instance2.id in [status["InstanceId"] for status in all_status]
+    assert instance3.id in [status["InstanceId"] for status in all_status]
+
+
+@mock_aws
+def test_describe_instance_status_with_stopped_instance_filter_and_instance_ids():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+    reservation = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    instance1 = reservation[0]
+    instance1.stop()
+
+    stopped_status = client.describe_instance_status(
+        InstanceIds=[instance1.id],
+        Filters=[{"Name": "instance-state-name", "Values": ["stopped"]}],
+    )["InstanceStatuses"]
+    assert instance1.id not in [status["InstanceId"] for status in stopped_status]
+
+    all_status = client.describe_instance_status(
+        InstanceIds=[instance1.id],
+        Filters=[{"Name": "instance-state-name", "Values": ["stopped"]}],
+        IncludeAllInstances=True,
+    )["InstanceStatuses"]
+    assert instance1.id in [status["InstanceId"] for status in all_status]
+
+
+@mock_aws
+def test_get_instance_by_security_group():
+    client = boto3.client("ec2", region_name="us-east-1")
+    ec2 = boto3.resource("ec2", region_name="us-east-1")
+
+    instance = ec2.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)[0]
+
+    security_group = ec2.create_security_group(
+        GroupName=str(uuid4())[0:6], Description="test"
+    )
+
+    with pytest.raises(ClientError) as ex:
+        client.modify_instance_attribute(
+            InstanceId=instance.id, Groups=[security_group.id], DryRun=True
+        )
+    assert_dryrun_error(ex)
+
+    client.modify_instance_attribute(InstanceId=instance.id, Groups=[security_group.id])
+
+    instance.reload()
+    security_group_instances = instance.describe_attribute(Attribute="groupSet")[
+        "Groups"
+    ]
+
+    assert len(security_group_instances) == 1
+    assert security_group_instances == [{"GroupId": security_group.id}]
+
+
+@mock_aws
+def test_modify_delete_on_termination():
+    ec2_client = boto3.resource("ec2", region_name="us-west-1")
+    result = ec2_client.create_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    instance = result[0]
+    instance.load()
+    assert instance.block_device_mappings[0]["Ebs"]["DeleteOnTermination"] is True
+    instance.modify_attribute(
+        BlockDeviceMappings=[
+            {"DeviceName": "/dev/sda1", "Ebs": {"DeleteOnTermination": False}}
+        ]
+    )
+    instance.load()
+    assert instance.block_device_mappings[0]["Ebs"]["DeleteOnTermination"] is False
+
+
+@mock_aws
+def test_create_instance_with_default_options():
+    client = boto3.client("ec2", region_name="eu-west-1")
+
+    def assert_instance(instance):
+        # TODO: Add additional asserts for default instance response
+        assert instance["ImageId"] == EXAMPLE_AMI_ID
+        assert "KeyName" not in instance
+
+    resp = client.run_instances(ImageId=EXAMPLE_AMI_ID, MaxCount=1, MinCount=1)
+    assert_instance(resp["Instances"][0])
+
+    resp = client.describe_instances(InstanceIds=[resp["Instances"][0]["InstanceId"]])
+    assert_instance(resp["Reservations"][0]["Instances"][0])
+
+
+@mock_aws
+def test_create_instance_ebs_optimized():
+    ec2_resource = boto3.resource("ec2", region_name="eu-west-1")
+
+    instance = ec2_resource.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MaxCount=1, MinCount=1, EbsOptimized=True
+    )[0]
+    instance.load()
+    assert instance.ebs_optimized is True
+
+    instance.modify_attribute(EbsOptimized={"Value": False})
+    instance.load()
+    assert instance.ebs_optimized is False
+
+    instance = ec2_resource.create_instances(
+        ImageId=EXAMPLE_AMI_ID, MaxCount=1, MinCount=1
+    )[0]
+    instance.load()
+    assert instance.ebs_optimized is False
+
+
+@mock_aws
+def test_run_multiple_instances_in_same_command():
+    instance_count = 4
+    client = boto3.client("ec2", region_name="us-east-1")
+    instances = client.run_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=instance_count, MaxCount=instance_count
+    )
+    reservation_id = instances["ReservationId"]
+
+    # TODO: use this filter when implemented
+    # client.describe_instances(Filters=[{"Name": "reservation-id", "Values": [instances["ReservationId"]]}])["Reservations"]
+    all_reservations = retrieve_all_reservations(client)
+    my_reservation = [
+        r for r in all_reservations if r["ReservationId"] == reservation_id
+    ][0]
+
+    assert len(my_reservation["Instances"]) == instance_count
+
+    instances = my_reservation["Instances"]
+    for i in range(0, instance_count):
+        assert instances[i]["AmiLaunchIndex"] == i
+
+
+@mock_aws
+def test_describe_instance_attribute():
+    client = boto3.client("ec2", region_name="us-east-1")
+    security_group_id = client.create_security_group(
+        GroupName=str(uuid4()), Description="this is a test security group"
+    )["GroupId"]
+    resp = client.run_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        SecurityGroupIds=[security_group_id],
+    )
+    instance_id = resp["Instances"][0]["InstanceId"]
+
+    valid_instance_attributes = [
+        "instanceType",
+        "kernel",
+        "ramdisk",
+        "userData",
+        "disableApiTermination",
+        "instanceInitiatedShutdownBehavior",
+        "rootDeviceName",
+        "blockDeviceMapping",
+        "productCodes",
+        "sourceDestCheck",
+        "groupSet",
+        "ebsOptimized",
+        "sriovNetSupport",
+        "disableApiStop",
+    ]
+
+    for valid_instance_attribute in valid_instance_attributes:
+        response = client.describe_instance_attribute(
+            InstanceId=instance_id, Attribute=valid_instance_attribute
+        )
+        if valid_instance_attribute == "groupSet":
+            assert "Groups" in response
+            assert len(response["Groups"]) == 1
+            assert response["Groups"][0]["GroupId"] == security_group_id
+        elif valid_instance_attribute == "userData":
+            assert "UserData" in response
+            assert response["UserData"] == {}
+
+    invalid_instance_attributes = [
+        "abc",
+        "Kernel",
+        "RamDisk",
+        "userdata",
+        "iNsTaNcEtYpE",
+    ]
+
+    for invalid_instance_attribute in invalid_instance_attributes:
+        with pytest.raises(ClientError) as ex:
+            client.describe_instance_attribute(
+                InstanceId=instance_id, Attribute=invalid_instance_attribute
+            )
+        assert ex.value.response["Error"]["Code"] == "InvalidParameterValue"
+        assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+        message = f"Value ({invalid_instance_attribute}) for parameter attribute is invalid. Unknown attribute."
+        assert ex.value.response["Error"]["Message"] == message
+
+
+@ec2_aws_verified()
+@pytest.mark.aws_verified
+@mock.patch(
+    "moto.ec2.models.instances.settings.ENABLE_AMI_VALIDATION",
+    new_callable=mock.PropertyMock(return_value=True),
+)
+def test_error_on_invalid_ami(m_flag, ec2_client=None):
+    if settings.TEST_SERVER_MODE:
+        raise SkipTest("Can't capture warnings in server mode.")
+    with pytest.raises(ClientError) as ex:
+        ec2_client.run_instances(ImageId="ami-abcd1234", MinCount=1, MaxCount=1)
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert ex.value.response["Error"]["Code"] == "InvalidAMIID.NotFound"
+    assert (
+        ex.value.response["Error"]["Message"]
+        == "The image id '[ami-abcd1234]' does not exist"
+    )
+
+    assert m_flag is True
+
+
+@mock_aws
+@mock.patch(
+    "moto.ec2.models.instances.settings.ENABLE_AMI_VALIDATION",
+    new_callable=mock.PropertyMock(return_value=True),
+)
+def test_error_on_invalid_ami_format(m_flag):
+    if settings.TEST_SERVER_MODE:
+        raise SkipTest(
+            "It is not possible to set the environment variable in server mode"
+        )
+    ec2 = boto3.resource("ec2", "us-east-1")
+    with pytest.raises(ClientError) as ex:
+        ec2.create_instances(ImageId="invalid-ami-format", MinCount=1, MaxCount=1)
+    assert ex.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    assert ex.value.response["Error"]["Code"] == "InvalidAMIID.Malformed"
+    assert (
+        ex.value.response["Error"]["Message"]
+        == 'Invalid id: "invalid-ami-format" (expecting "ami-...")'
+    )
+
+    assert m_flag is True
+
+
+@mock_aws
+def test_filter_wildcard_in_specified_tag_only():
+    ec2_client = boto3.client("ec2", region_name="us-west-1")
+
+    name = str(uuid4())[0:6]
+    tags_name = [{"Key": "Name", "Value": f"{name} in wonderland"}]
+    ec2_client.run_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MaxCount=1,
+        MinCount=1,
+        TagSpecifications=[{"ResourceType": "instance", "Tags": tags_name}],
+    )
+
+    tags_owner = [{"Key": "Owner", "Value": f"{name} in wonderland"}]
+    ec2_client.run_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MaxCount=1,
+        MinCount=1,
+        TagSpecifications=[{"ResourceType": "instance", "Tags": tags_owner}],
+    )
+
+    # should only match the Name tag
+    response = ec2_client.describe_instances(
+        Filters=[{"Name": "tag:Name", "Values": [f"*{name}*"]}]
+    )
+    instances = [i for r in response["Reservations"] for i in r["Instances"]]
+    assert len(instances) == 1
+    assert instances[0]["Tags"][0]["Key"] == "Name"
+
+
+@mock_aws
+def test_instance_termination_protection():
+    client = boto3.client("ec2", region_name="us-west-1")
+
+    resp = client.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    instance_id = resp["Instances"][0]["InstanceId"]
+
+    client.modify_instance_attribute(
+        InstanceId=instance_id, DisableApiTermination={"Value": True}
+    )
+    client.stop_instances(InstanceIds=[instance_id], Force=True)
+
+    with pytest.raises(ClientError) as ex:
+        client.terminate_instances(InstanceIds=[instance_id])
+    error = ex.value.response["Error"]
+    assert error["Code"] == "OperationNotPermitted"
+    assert (
+        f"The instance '{instance_id}' may not be terminated"
+        in ex.value.response["Error"]["Message"]
+    )
+
+    # Use alternate request syntax for setting attribute.
+    client.modify_instance_attribute(
+        InstanceId=instance_id, Attribute="disableApiTermination", Value="false"
+    )
+    client.terminate_instances(InstanceIds=[instance_id])
+
+    resp = client.describe_instances(InstanceIds=[instance_id])
+    instances = resp["Reservations"][0]["Instances"]
+    assert len(instances) == 1
+    instance = instances[0]
+    assert instance["State"]["Name"] == "terminated"
+
+
+@mock_aws
+def test_instance_stop_protection():
+    client = boto3.client("ec2", region_name="us-west-1")
+
+    response = client.run_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, DisableApiStop=True
+    )
+    instance_id = response["Instances"][0]["InstanceId"]
+
+    response = client.describe_instance_attribute(
+        InstanceId=instance_id, Attribute="disableApiStop"
+    )
+    assert response["DisableApiStop"]["Value"] is True
+
+    # can't stop an instance with stop protection
+    with pytest.raises(ClientError) as ex:
+        client.stop_instances(InstanceIds=[instance_id])
+    error = ex.value.response["Error"]
+    assert error["Code"] == "OperationNotPermitted"
+
+    # stopping an instance without stop protection works
+    client.modify_instance_attribute(
+        InstanceId=instance_id, Attribute="disableApiStop", Value="false"
+    )
+    response = client.stop_instances(InstanceIds=[instance_id])
+    assert response["StoppingInstances"][0]["CurrentState"]["Name"] in [
+        "stopping",
+        "stopped",
+    ]
+
+    # Run instance without stop protection
+    response = client.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    instance_id = response["Instances"][0]["InstanceId"]
+
+    # Enable it afterwards
+    # Note that we're using the DisableApiStop here, instead of Attribute="disableApiStop", to verify both work
+    client.modify_instance_attribute(
+        InstanceId=instance_id, DisableApiStop={"Value": True}
+    )
+
+    # Verify it's set
+    response = client.describe_instance_attribute(
+        InstanceId=instance_id, Attribute="disableApiStop"
+    )
+    assert response["DisableApiStop"]["Value"] is True
+
+    with pytest.raises(ClientError) as ex:
+        client.stop_instances(InstanceIds=[instance_id])
+    assert ex.value.response["Error"]["Code"] == "OperationNotPermitted"
+
+    # Verify we can disable it
+    client.modify_instance_attribute(
+        InstanceId=instance_id, DisableApiStop={"Value": False}
+    )
+
+    # Verify it's set
+    response = client.describe_instance_attribute(
+        InstanceId=instance_id, Attribute="disableApiStop"
+    )
+    assert response["DisableApiStop"]["Value"] is False
+
+    client.stop_instances(InstanceIds=[instance_id])
+
+
+@mock_aws
+def test_terminate_unknown_instances():
+    client = boto3.client("ec2", region_name="us-west-1")
+
+    # Correct error message for single unknown instance
+    with pytest.raises(ClientError) as ex:
+        client.terminate_instances(InstanceIds=["i-12345678"])
+    error = ex.value.response["Error"]
+    assert error["Code"] == "InvalidInstanceID.NotFound"
+    assert error["Message"] == "The instance ID 'i-12345678' does not exist"
+
+    # Correct error message for multiple unknown instances
+    with pytest.raises(ClientError) as ex:
+        client.terminate_instances(InstanceIds=["i-12345678", "i-12345668"])
+    error = ex.value.response["Error"]
+    assert error["Code"] == "InvalidInstanceID.NotFound"
+    assert error["Message"] == "The instance IDs 'i-12345678, i-12345668' do not exist"
+
+    # Create an instance
+    resp = client.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    instance_id = resp["Instances"][0]["InstanceId"]
+
+    # Correct error message if one instance is known
+    with pytest.raises(ClientError) as ex:
+        client.terminate_instances(InstanceIds=["i-12345678", instance_id])
+    error = ex.value.response["Error"]
+    assert error["Code"] == "InvalidInstanceID.NotFound"
+    assert error["Message"] == "The instance ID 'i-12345678' does not exist"
+
+    # status = still running
+    resp = client.describe_instances(InstanceIds=[instance_id])
+    instance = resp["Reservations"][0]["Instances"][0]
+    assert instance["State"]["Name"] == "running"
+
+
+@mock_aws
+def test_instance_lifecycle():
+    ec2_resource = boto3.resource("ec2", "us-west-1")
+
+    result = ec2_resource.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        BlockDeviceMappings=[
+            {
+                "DeviceName": "/dev/sda1",
+                "Ebs": {"VolumeSize": 50, "DeleteOnTermination": True},
+            }
+        ],
+    )
+    instance = result[0]
+
+    assert instance.instance_lifecycle is None
+
+
+# The default AMIs are not loaded for our test case, to speed things up
+# But we do need it for this specific test
+@mock.patch.dict(os.environ, {"MOTO_EC2_LOAD_DEFAULT_AMIS": "true"})
+@mock_aws
+@pytest.mark.parametrize(
+    "launch_template_kind", ("LaunchTemplateId", "LaunchTemplateName")
+)
+def test_create_instance_with_launch_template_id_produces_no_warning(
+    launch_template_kind,
+):
+    if settings.TEST_SERVER_MODE:
+        raise SkipTest("Can't set environment variables in ServerMode")
+    client, resource = (
+        boto3.client("ec2", region_name="us-west-1"),
+        boto3.resource("ec2", region_name="us-west-1"),
+    )
+
+    template = client.create_launch_template(
+        LaunchTemplateName=str(uuid4()), LaunchTemplateData={"ImageId": EXAMPLE_AMI_ID}
+    )["LaunchTemplate"]
+
+    with warnings.catch_warnings(record=True) as ws:
+        resource.create_instances(
+            MinCount=1,
+            MaxCount=1,
+            LaunchTemplate={launch_template_kind: template[launch_template_kind]},
+        )
+    # We could have other warnings in this method, coming from botocore for instance
+    # But we should not receive a warning that the AMI could not be found
+    messages = [str(w.message) for w in ws]
+    assert all("Could not find AMI" not in msg for msg in messages)
+
+
+@mock_aws
+def test_create_instance_from_launch_template__process_tags():
+    client = boto3.client("ec2", region_name="us-west-1")
+
+    template = client.create_launch_template(
+        LaunchTemplateName=str(uuid4()),
+        LaunchTemplateData={
+            "ImageId": EXAMPLE_AMI_ID,
+            "TagSpecifications": [
+                {"ResourceType": "instance", "Tags": [{"Key": "k", "Value": "v"}]}
+            ],
+        },
+    )["LaunchTemplate"]
+
+    instance = client.run_instances(
+        MinCount=1,
+        MaxCount=1,
+        LaunchTemplate={"LaunchTemplateId": template["LaunchTemplateId"]},
+    )["Instances"][0]
+
+    assert instance["Tags"] == [
+        {"Key": "k", "Value": "v"},
+        {"Key": "aws:ec2launchtemplate:id", "Value": template["LaunchTemplateId"]},
+        {"Key": "aws:ec2launchtemplate:version", "Value": "1"},
+    ]
+
+
+@mock_aws
+def test_run_instance_and_associate_public_ip():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")
+    subnet = ec2.create_subnet(VpcId=vpc.id, CidrBlock="10.0.0.0/18")
+
+    # Do not pass AssociatePublicIpAddress-argument
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        NetworkInterfaces=[{"DeviceIndex": 0, "SubnetId": subnet.id}],
+    )[0]
+    interfaces = instance.network_interfaces_attribute
+    addresses = interfaces[0]["PrivateIpAddresses"][0]
+    assert addresses["Primary"] is True
+    assert "PrivateIpAddress" in addresses
+    assert "Association" not in addresses
+
+    # Pass AssociatePublicIpAddress=False
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        NetworkInterfaces=[
+            {"DeviceIndex": 0, "SubnetId": subnet.id, "AssociatePublicIpAddress": False}
+        ],
+    )[0]
+    interfaces = instance.network_interfaces_attribute
+    addresses = interfaces[0]["PrivateIpAddresses"][0]
+    assert addresses["Primary"] is True
+    assert "PrivateIpAddress" in addresses
+    assert "Association" not in addresses
+
+    # Pass AssociatePublicIpAddress=True
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        NetworkInterfaces=[
+            {"DeviceIndex": 0, "SubnetId": subnet.id, "AssociatePublicIpAddress": True}
+        ],
+    )[0]
+    interfaces = instance.network_interfaces_attribute
+    addresses = interfaces[0]["PrivateIpAddresses"][0]
+    assert addresses["Primary"] is True
+    assert "PrivateIpAddress" in addresses
+    assert "Association" in addresses
+    # Only now should we have a PublicIp
+    assert addresses["Association"]["IpOwnerId"] == ACCOUNT_ID
+    assert "PublicIp" in addresses["Association"]
+
+
+@mock_aws
+def test_run_instance_cannot_have_subnet_and_networkinterface_parameter():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")
+    subnet = ec2.create_subnet(VpcId=vpc.id, CidrBlock="10.0.0.0/18")
+
+    with pytest.raises(ClientError) as exc:
+        ec2.create_instances(
+            ImageId=EXAMPLE_AMI_ID,
+            MinCount=1,
+            MaxCount=1,
+            SubnetId=subnet.id,
+            NetworkInterfaces=[{"DeviceIndex": 0}],
+        )
+    err = exc.value.response["Error"]
+    assert err["Code"] == "InvalidParameterCombination"
+    assert (
+        err["Message"]
+        == "Network interfaces and an instance-level subnet ID may not be specified on the same request"
+    )
+
+
+@mock_aws
+def test_run_instance_in_subnet_with_nic_private_ip():
+    vpc_cidr_block = "10.26.0.0/16"
+    subnet_cidr_block = "10.26.1.0/24"
+    private_ip = "10.26.1.3"
+    ec2 = boto3.resource("ec2", region_name="eu-west-1")
+    vpc = ec2.create_vpc(CidrBlock=vpc_cidr_block)
+    subnet = ec2.create_subnet(
+        VpcId=vpc.id,
+        CidrBlock=subnet_cidr_block,
+    )
+    my_interface = {
+        "SubnetId": subnet.id,
+        "DeviceIndex": 0,
+        "PrivateIpAddress": private_ip,
+    }
+    [instance] = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, NetworkInterfaces=[my_interface], MinCount=1, MaxCount=1
+    )
+    assert instance.private_ip_address == private_ip
+
+    interfaces = instance.network_interfaces_attribute
+    address = interfaces[0]["PrivateIpAddresses"][0]
+    assert "Association" not in address
+
+
+@mock_aws
+def test_run_instance_in_subnet_with_nic_private_ip_and_public_association():
+    vpc_cidr_block = "10.26.0.0/16"
+    subnet_cidr_block = "10.26.1.0/24"
+    primary_private_ip = "10.26.1.3"
+    other_private_ip = "10.26.1.4"
+    ec2 = boto3.resource("ec2", region_name="eu-west-1")
+    vpc = ec2.create_vpc(CidrBlock=vpc_cidr_block)
+    subnet = ec2.create_subnet(
+        VpcId=vpc.id,
+        CidrBlock=subnet_cidr_block,
+    )
+    my_interface = {
+        "SubnetId": subnet.id,
+        "DeviceIndex": 0,
+        "AssociatePublicIpAddress": True,
+        "PrivateIpAddresses": [
+            {"Primary": True, "PrivateIpAddress": primary_private_ip},
+            {"Primary": False, "PrivateIpAddress": other_private_ip},
+        ],
+    }
+    [instance] = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, NetworkInterfaces=[my_interface], MinCount=1, MaxCount=1
+    )
+    assert instance.private_ip_address == primary_private_ip
+
+    interfaces = instance.network_interfaces_attribute
+    address = interfaces[0]["PrivateIpAddresses"][0]
+    assert address["Association"]["IpOwnerId"] == ACCOUNT_ID
+
+
+@mock_aws
+def test_describe_instances_dryrun():
+    client = boto3.client("ec2", region_name="us-east-1")
+
+    with pytest.raises(ClientError) as ex:
+        client.describe_instances(DryRun=True)
+    assert_dryrun_error(ex)
+
+
+@mock_aws
+def test_describe_instances_filter_vpcid_via_networkinterface():
+    vpc_cidr_block = "10.26.0.0/16"
+    subnet_cidr_block = "10.26.1.0/24"
+    ec2 = boto3.resource("ec2", region_name="eu-west-1")
+    vpc = ec2.create_vpc(CidrBlock=vpc_cidr_block)
+    subnet = ec2.create_subnet(
+        VpcId=vpc.id, CidrBlock=subnet_cidr_block, AvailabilityZone="eu-west-1a"
+    )
+    my_interface = {
+        "SubnetId": subnet.id,
+        "DeviceIndex": 0,
+        "PrivateIpAddresses": [{"Primary": True, "PrivateIpAddress": "10.26.1.3"}],
+    }
+    instance = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID, NetworkInterfaces=[my_interface], MinCount=1, MaxCount=1
+    )[0]
+
+    _filter = [{"Name": "vpc-id", "Values": [vpc.id]}]
+    found = list(ec2.instances.filter(Filters=_filter))
+    assert len(found) == 1
+    assert found == [instance]
+
+
+@mock_aws
+def test_instance_iam_instance_profile():
+    ec2_resource = boto3.resource("ec2", "us-west-1")
+    iam = boto3.client("iam", "us-west-1")
+    profile_name = "fake_profile"
+    profile = iam.create_instance_profile(
+        InstanceProfileName=profile_name,
+    )
+
+    result1 = ec2_resource.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        IamInstanceProfile={
+            "Name": profile_name,
+        },
+    )
+    instance = result1[0]
+    assert "Arn" in instance.iam_instance_profile
+    assert "Id" in instance.iam_instance_profile
+    assert profile["InstanceProfile"]["Arn"] == instance.iam_instance_profile["Arn"]
+
+    result2 = ec2_resource.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        IamInstanceProfile={
+            "Arn": profile["InstanceProfile"]["Arn"],
+        },
+    )
+    instance = result2[0]
+    assert "Arn" in instance.iam_instance_profile
+    assert "Id" in instance.iam_instance_profile
+    assert profile["InstanceProfile"]["Arn"] == instance.iam_instance_profile["Arn"]
+
+    tag_key = str(uuid4())[0:6]
+    with pytest.raises(ClientError) as exc:
+        ec2_resource.create_instances(
+            ImageId=EXAMPLE_AMI_ID,
+            MinCount=1,
+            MaxCount=1,
+            IamInstanceProfile={"Arn": "unknown:instance:profile"},
+            TagSpecifications=[
+                {"ResourceType": "instance", "Tags": [{"Key": tag_key, "Value": "val"}]}
+            ],
+        )
+    err = exc.value.response["Error"]
+    assert err["Code"] == "NoSuchEntity"
+    assert err["Message"] == "Instance profile unknown:instance:profile not found"
+
+    ec2_client = boto3.client("ec2", "us-west-1")
+    filters = [{"Name": "tag-key", "Values": [tag_key]}]
+    assert retrieve_all_instances(ec2_client, filters) == []
+
+
+def retrieve_all_reservations(client, filters=None):
+    resp = client.describe_instances(Filters=filters or [])
+    all_reservations = resp["Reservations"]
+    next_token = resp.get("NextToken")
+    while next_token:
+        resp = client.describe_instances(Filters=filters or [], NextToken=next_token)
+        all_reservations.extend(resp["Reservations"])
+        next_token = resp.get("NextToken")
+    return all_reservations
+
+
+def retrieve_all_instances(client, filters=None):
+    reservations = retrieve_all_reservations(client, filters)
+    return [i for r in reservations for i in r["Instances"]]
+
+
+@mock_aws
+def test_run_multiple_instances_with_single_nic_template():
+    ec2 = boto3.resource("ec2", "us-west-1")
+    client = boto3.client("ec2", "us-west-1")
+    vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")
+    subnet = ec2.create_subnet(VpcId=vpc.id, CidrBlock="10.0.0.0/18")
+    security_group1 = ec2.create_security_group(
+        GroupName=str(uuid4()), Description="n/a"
+    )
+
+    instances = ec2.create_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=2,
+        MaxCount=2,
+        NetworkInterfaces=[
+            {
+                "AssociatePublicIpAddress": False,
+                "DeleteOnTermination": True,
+                "DeviceIndex": 0,
+                "Groups": [security_group1.group_id],
+                "SubnetId": subnet.id,
+                "InterfaceType": "interface",
+            }
+        ],
+    )
+
+    enis = []
+
+    for instance in instances:
+        instance_eni = instance.network_interfaces_attribute
+        assert len(instance_eni) == 1
+
+        nii = instance_eni[0]["NetworkInterfaceId"]
+
+        my_enis = client.describe_network_interfaces(NetworkInterfaceIds=[nii])[
+            "NetworkInterfaces"
+        ]
+        assert len(my_enis) == 1
+        eni = my_enis[0]
+
+        assert instance.subnet_id == subnet.id
+
+        assert eni["SubnetId"] == subnet.id
+        assert len(eni["Groups"]) == 1
+        assert [group["GroupId"] for group in eni["Groups"]] == [security_group1.id]
+        assert len(eni["PrivateIpAddresses"]) == 1
+        assert eni["PrivateIpAddresses"][0]["PrivateIpAddress"] is not None
+
+        enis.append(eni)
+
+    instance_0_ip = enis[0]["PrivateIpAddresses"][0]["PrivateIpAddress"]
+    instance_1_ip = enis[1]["PrivateIpAddresses"][0]["PrivateIpAddress"]
+
+    assert instance_0_ip != instance_1_ip
+
+
+@mock_aws
+def test_describe_instance_without_enhanced_monitoring():
+    conn = boto3.client("ec2", region_name="us-west-1")
+
+    instance = conn.run_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, Monitoring={"Enabled": True}
+    )
+    assert instance["Instances"][0]["Monitoring"] == {"State": "enabled"}
+
+    result = conn.describe_instances(
+        InstanceIds=[instance["Instances"][0]["InstanceId"]]
+    )["Reservations"][0]["Instances"]
+
+    assert result[0]["Monitoring"] == {"State": "enabled"}
+
+
+@mock_aws
+def test_describe_instance_with_enhanced_monitoring():
+    conn = boto3.client("ec2", region_name="us-west-1")
+
+    instance = conn.run_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, Monitoring={"Enabled": False}
+    )
+    assert instance["Instances"][0]["Monitoring"] == {"State": "disabled"}
+
+    result = conn.describe_instances(
+        InstanceIds=[instance["Instances"][0]["InstanceId"]]
+    )["Reservations"][0]["Instances"]
+
+    assert result[0]["Monitoring"] == {"State": "disabled"}
+
+
+@mock_aws
+def test_instance_with_ipv6_address():
+    ec2_client = boto3.client("ec2", "us-east-1")
+    # Build a VPC.
+    vpc = ec2_client.create_vpc(
+        CidrBlock="10.0.0.0/16",
+        AmazonProvidedIpv6CidrBlock=True,
+    )["Vpc"]
+
+    # The IPv6 CIDR for the subnet needs to be /64; the block associated with the VPC will be /56.
+    ipv6_subnet_cidr = vpc["Ipv6CidrBlockAssociationSet"][0]["Ipv6CidrBlock"]
+    ipv6_subnet_cidr = ipv6_subnet_cidr[:-2] + "64"
+
+    # Build a subnet.
+    subnet = ec2_client.create_subnet(
+        VpcId=vpc["VpcId"], CidrBlock="10.0.0.0/24", Ipv6CidrBlock=ipv6_subnet_cidr
+    )["Subnet"]
+    assert "Ipv6CidrBlockAssociationSet" in subnet
+
+    # Build a security group.
+    security_group_id = ec2_client.create_security_group(
+        GroupName="ipv6-test",
+        Description="Test security group.",
+        VpcId=vpc["VpcId"],
+    )["GroupId"]
+
+    # Launch the instance.
+    instance = ec2_client.run_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        InstanceType="t3.nano",
+        MinCount=1,
+        MaxCount=1,
+        Ipv6AddressCount=1,
+        SecurityGroupIds=[security_group_id],
+        SubnetId=subnet["SubnetId"],
+    )["Instances"][0]
+
+    assert len(instance["NetworkInterfaces"]) == 1
+    assert len(instance["NetworkInterfaces"][0]["Ipv6Addresses"]) == 1
+
+
+@mock_aws
+def test_instance_without_default_subnet():
+    # Ensure that in an account without a default subnet, launching instances without specifying a subnet raises.
+    client = boto3.client("ec2", region_name="ap-south-1")
+
+    # Delete all VPCs and subnets
+    subnets = client.describe_subnets()
+    for subnet in subnets["Subnets"]:
+        client.delete_subnet(SubnetId=subnet["SubnetId"])
+    vpcs = client.describe_vpcs()
+    for vpc in vpcs["Vpcs"]:
+        client.delete_vpc(VpcId=vpc["VpcId"])
+
+    # RunInstances must raise
+    with pytest.raises(ClientError) as exc:
+        client.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    assert exc.value.response["Error"]["Code"] == "VPCIdNotSpecified"
+    assert (
+        exc.value.response["Error"]["Message"]
+        == "No default VPC for this user. GroupName is only supported for EC2-Classic and default VPC."
+    )
+
+    # Create default VPC but without default subnets
+    default_vpc_id = client.create_default_vpc()["Vpc"]["VpcId"]
+    subnets = client.describe_subnets()
+    for subnet in subnets["Subnets"]:
+        client.delete_subnet(SubnetId=subnet["SubnetId"])
+
+    # Ensure RunInstances raises
+    with pytest.raises(ClientError) as exc:
+        client.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    assert exc.value.response["Error"]["Code"] == "MissingInput"
+    assert (
+        exc.value.response["Error"]["Message"]
+        == f"No subnets found for the default VPC '{default_vpc_id}'. Please specify a subnet."
+    )
+
+    # Create default subnet in an AZ
+    client.create_default_subnet(AvailabilityZone="ap-south-1c")
+
+    # Ensure RunInstances without a subnet, in a different AZ raises
+    with pytest.raises(ClientError) as exc:
+        client.run_instances(
+            ImageId=EXAMPLE_AMI_ID,
+            MinCount=1,
+            MaxCount=1,
+            Placement={"AvailabilityZone": "ap-south-1b"},
+        )
+    assert exc.value.response["Error"]["Code"] == "InvalidInput"
+    assert (
+        exc.value.response["Error"]["Message"]
+        == "No default subnet for availability zone: 'ap-south-1b'."
+    )
+
+    # Ensure RunInstances without a subnet where a default subnet exists succeeds
+    client.run_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        Placement={"AvailabilityZone": "ap-south-1c"},
+    )
+
+    # Create another VPC and subnet
+    vpc = client.create_vpc(CidrBlock="10.0.0.0/16")["Vpc"]
+    subnet = client.create_subnet(VpcId=vpc["VpcId"], CidrBlock="10.0.1.0/24")["Subnet"]
+
+    # Ensure RunInstances with a subnet specified succeeds
+    client.run_instances(
+        ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1, SubnetId=subnet["SubnetId"]
+    )
+
+
+@mock_aws
+def test_modify_instance_metadata_options():
+    ec2 = boto3.client("ec2", region_name="us-west-2")
+
+    instances = ec2.run_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        InstanceType="t2.micro",
+    ).get("Instances")
+
+    instance_id = [i["InstanceId"] for i in instances]
+
+    # Verify the original
+    metadata_options = instances[0]["MetadataOptions"]
+    assert metadata_options == {
+        "HttpTokens": "optional",
+        "HttpPutResponseHopLimit": 1,
+        "HttpEndpoint": "enabled",
+        "HttpProtocolIpv6": "disabled",
+        "InstanceMetadataTags": "disabled",
+        "State": "applied",
+    }
+
+    # Change the defaults
+    ec2.modify_instance_metadata_options(
+        InstanceId=instance_id[0],
+        HttpTokens="required",
+        HttpPutResponseHopLimit=2,
+        HttpEndpoint="disabled",
+        DryRun=False,
+        HttpProtocolIpv6="enabled",
+        InstanceMetadataTags="enabled",
+    )
+
+    response = ec2.describe_instances(InstanceIds=instance_id)
+
+    # Verify the updated fields
+    updated_metadata_options = response["Reservations"][0]["Instances"][0][
+        "MetadataOptions"
+    ]
+    assert updated_metadata_options == {
+        "HttpTokens": "required",
+        "HttpPutResponseHopLimit": 2,
+        "HttpEndpoint": "disabled",
+        "HttpProtocolIpv6": "enabled",
+        "InstanceMetadataTags": "enabled",
+        "State": "applied",
+    }
+
+
+def test_metadata_options_hop_limit_none():
+    from moto.ec2.models.instances import MetadataOptions
+
+    # when None is explicitly passed (e.g. from missing input in CloudFormation args or missing keys mapped to None)
+    options = MetadataOptions(options={"HttpPutResponseHopLimit": None})
+    assert options.http_put_response_hop_limit == 1
+
+    # when passing a valid int
+    options = MetadataOptions(options={"HttpPutResponseHopLimit": 5})
+    assert options.http_put_response_hop_limit == 5
+
+    # when the key isn't provided at all
+    options = MetadataOptions(options={})
+    assert options.http_put_response_hop_limit == 1
+
+
+@mock_aws
+def test_run_instances_default_response():
+    ec2 = boto3.client("ec2", region_name="us-west-2")
+    resp = ec2.run_instances(
+        ImageId=EXAMPLE_AMI_ID,
+        MinCount=1,
+        MaxCount=1,
+        InstanceType="t2.micro",
+    )
+    assert "ReservationId" in resp
+    assert resp["OwnerId"] == ACCOUNT_ID
+    assert resp["Groups"] == []
+    instance = resp["Instances"][0]
+    assert instance["AmiLaunchIndex"] == 0
+    assert instance["Architecture"] == "x86_64"
+    assert len(instance["BlockDeviceMappings"]) == 1
+    bdm = instance["BlockDeviceMappings"][0]
+    assert bdm["DeviceName"] == "/dev/sda1"
+    assert bdm["Ebs"]["DeleteOnTermination"] is True
+    assert bdm["Ebs"]["Status"] == "attached"
+    assert "ClientToken" in instance
+    assert instance["EbsOptimized"] is False
+    assert instance["Hypervisor"] == "xen"
+    assert instance["ImageId"] == EXAMPLE_AMI_ID
+    assert "InstanceId" in instance
+    assert instance["InstanceType"] == "t2.micro"
+    assert instance["KernelId"] == "None"
+    assert "LaunchTime" in instance
+    mo = instance["MetadataOptions"]
+    assert mo["HttpEndpoint"] == "enabled"
+    assert mo["HttpProtocolIpv6"] == "disabled"
+    assert mo["HttpPutResponseHopLimit"] == 1
+    assert mo["HttpTokens"] == "optional"
+    assert mo["InstanceMetadataTags"] == "disabled"
+    monitoring = instance["Monitoring"]
+    assert monitoring["State"] == "disabled"
+    assert len(instance["NetworkInterfaces"]) == 1
+    nif = instance["NetworkInterfaces"][0]
+    assert nif["Association"]["IpOwnerId"] == ACCOUNT_ID
+    assert "PublicIp" in nif["Association"]
+    nif_attachment = nif["Attachment"]
+    assert "AttachTime" in nif_attachment
+    assert "AttachmentId" in nif_attachment
+    assert nif_attachment["DeleteOnTermination"] is False
+    assert nif_attachment["DeviceIndex"] == 0
+    assert nif_attachment["Status"] == "attached"
+    assert nif["Description"] == "Primary network interface"
+    nif_groups = nif["Groups"]
+    assert len(nif_groups) == 1
+    assert "GroupId" in nif_groups[0]
+    assert nif_groups[0]["GroupName"] == "default"
+    assert "MacAddress" in nif
+    assert "NetworkInterfaceId" in nif
+    assert nif["OwnerId"] == ACCOUNT_ID
+    assert len(nif["PrivateIpAddresses"]) == 1
+    private_ip = nif["PrivateIpAddresses"][0]
+    assert private_ip["Primary"] is True
+    assert (
+        private_ip["PrivateIpAddress"]
+        == nif["PrivateIpAddress"]
+        == instance["PrivateIpAddress"]
+    )
+    assert private_ip["Association"]["IpOwnerId"] == ACCOUNT_ID
+    assert private_ip["Association"]["PublicIp"] == instance["PublicIpAddress"]
+    assert nif["SourceDestCheck"] is True
+    assert nif["Status"] == "in-use"
+    assert nif["SubnetId"] == instance["SubnetId"]
+    assert nif["VpcId"] == instance["VpcId"]
+    placement = instance["Placement"]
+    assert placement["AvailabilityZone"].startswith("us-west-2")
+    assert placement["GroupName"] == ""
+    assert placement["Tenancy"] == "default"
+    private_ip_address_name = instance["PrivateIpAddress"].replace(".", "-")
+    assert (
+        instance["PrivateDnsName"]
+        == f"ip-{private_ip_address_name}.us-west-2.compute.internal"
+    )
+    public_ip_address_name = instance["PublicIpAddress"].replace(".", "-")
+    assert (
+        instance["PublicDnsName"]
+        == f"ec2-{public_ip_address_name}.us-west-2.compute.amazonaws.com"
+    )
+    assert instance["RootDeviceName"] == "/dev/sda1"
+    assert instance["RootDeviceType"] == "ebs"
+    assert instance["SecurityGroups"] == []
+    assert instance["SourceDestCheck"] is True
+    assert instance["State"] == {"Code": 0, "Name": "pending"}
+    assert instance["StateReason"] == {"Code": "", "Message": ""}
+    assert instance["StateTransitionReason"] == ""
+    assert "Tags" not in instance
+    assert instance["VirtualizationType"] == "paravirtual"
+    assert "VpcId" in instance
+
+
+@mock_aws
+def test_get_instance_uefi_data():
+    client = boto3.client("ec2", region_name="us-east-1")
+    resp = client.run_instances(ImageId=EXAMPLE_AMI_ID, MinCount=1, MaxCount=1)
+    instance_id = resp["Instances"][0]["InstanceId"]
+    resp = client.get_instance_uefi_data(InstanceId=instance_id)
+    assert resp["InstanceId"] == instance_id
+    # Implementation is just a stub at the moment, so just check that value exists.
+    assert "UefiData" in resp
+
+
+def test_block_device_status_conversion():
+    """Test EBS block device status conversion."""
+    from moto.ec2.models.instances import Instance
+
+    assert Instance.get_block_device_status("in-use") == "attached"
+
+    assert Instance.get_block_device_status("available") == "detached"
+
+    assert Instance.get_block_device_status("creating") == "creating"
+    assert Instance.get_block_device_status("deleting") == "deleting"
+
+
+def _get_ami_id(ec2_client):
+    if not allow_aws_request():
+        # Running in mock mode - use test AMI
+        return EXAMPLE_AMI_ID
+
+    # Running against real AWS - get latest Amazon Linux AMI
+    ssm_client = boto3.client("ssm", region_name=ec2_client.meta.region_name)
+    kernel_61 = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64"
+    return ssm_client.get_parameter(Name=kernel_61)["Parameter"]["Value"]
+
+
+def _create_default_launch_template(ec2_client):
+    template_name = str(uuid4())
+    ami_id = _get_ami_id(ec2_client)
+    return ec2_client.create_launch_template(
+        LaunchTemplateName=template_name,
+        LaunchTemplateData={
+            "ImageId": ami_id,
+            "TagSpecifications": [
+                {"ResourceType": "instance", "Tags": [{"Key": "k", "Value": "v1"}]}
+            ],
+        },
+    )["LaunchTemplate"]
+
+
+def _verify_instance_tags(
+    instance, expected_template_id, expected_template_version, expected_user_tags
+):
+    tags = {tag["Key"]: tag["Value"] for tag in instance["Tags"]}
+    assert tags["aws:ec2launchtemplate:id"] == expected_template_id
+    assert tags["aws:ec2launchtemplate:version"] == expected_template_version
+    for key, value in expected_user_tags.items():
+        assert tags[key] == value
+
+
+def _run_instance_from_template(
+    ec2_client,
+    template_id=None,
+    template_name=None,
+    version=None,
+    **instance_kwargs,
+):
+    launch_template_spec = {}
+    if template_id:
+        launch_template_spec["LaunchTemplateId"] = template_id
+    elif template_name:
+        launch_template_spec["LaunchTemplateName"] = template_name
+    else:
+        raise ValueError("Either template_id or template_name must be provided.")
+    if version:
+        launch_template_spec["Version"] = version
+
+    instance = ec2_client.run_instances(
+        MinCount=1,
+        MaxCount=1,
+        LaunchTemplate=launch_template_spec,
+        **instance_kwargs,
+    )["Instances"][0]
+    return instance
+
+
+@ec2_aws_verified()
+@pytest.mark.aws_verified
+def test_create_instance_from_launch_template_single_template_version(ec2_client=None):
+    template = _create_default_launch_template(ec2_client)
+    template_id = template["LaunchTemplateId"]
+
+    instance = _run_instance_from_template(ec2_client, template_id)
+    instance_id = instance["InstanceId"]
+
+    try:
+        try:
+            _verify_instance_tags(
+                instance,
+                expected_template_id=template_id,
+                expected_template_version="1",
+                expected_user_tags={"k": "v1"},
+            )
+        finally:
+            # Clean up instance
+            ec2_client.terminate_instances(InstanceIds=[instance_id])
+
+    finally:
+        # Clean up launch template
+        ec2_client.delete_launch_template(LaunchTemplateId=template_id)
+
+
+@ec2_aws_verified()
+@pytest.mark.aws_verified
+@pytest.mark.parametrize("version_specified", ["2", "$Latest"])
+def test_create_instance_from_launch_template_latest_non_default_version(
+    version_specified, ec2_client=None
+):
+    ec2_client = boto3.client("ec2", region_name="us-east-1")
+    ami_id = _get_ami_id(ec2_client)
+
+    template = _create_default_launch_template(ec2_client)
+    template_id = template["LaunchTemplateId"]
+
+    # Create a new version of the launch template with different user tags
+    ec2_client.create_launch_template_version(
+        LaunchTemplateId=template_id,
+        LaunchTemplateData={
+            "ImageId": ami_id,
+            "TagSpecifications": [
+                {"ResourceType": "instance", "Tags": [{"Key": "k", "Value": "v2"}]}
+            ],
+        },
+    )
+
+    instance = _run_instance_from_template(
+        ec2_client, template_id, version=version_specified
+    )
+    instance_id = instance["InstanceId"]
+
+    try:
+        try:
+            _verify_instance_tags(
+                instance,
+                expected_template_id=template_id,
+                expected_template_version="2",
+                expected_user_tags={"k": "v2"},
+            )
+
+        finally:
+            # Clean up instance
+            ec2_client.terminate_instances(InstanceIds=[instance_id])
+
+    finally:
+        # Clean up launch template
+        ec2_client.delete_launch_template(LaunchTemplateId=template_id)
+
+
+@ec2_aws_verified()
+@pytest.mark.aws_verified
+@pytest.mark.parametrize("version_specified", ["1", "$Default"])
+def test_create_instance_from_launch_template_default_version(
+    version_specified, ec2_client=None
+):
+    ec2_client = boto3.client("ec2", region_name="us-east-1")
+    ami_id = _get_ami_id(ec2_client)
+
+    template = _create_default_launch_template(ec2_client)
+    template_id = template["LaunchTemplateId"]
+
+    # Create a new version of the launch template with different user tags
+    ec2_client.create_launch_template_version(
+        LaunchTemplateId=template_id,
+        LaunchTemplateData={
+            "ImageId": ami_id,
+            "TagSpecifications": [
+                {"ResourceType": "instance", "Tags": [{"Key": "k", "Value": "v2"}]}
+            ],
+        },
+    )
+
+    instance = _run_instance_from_template(
+        ec2_client, template_id, version=version_specified
+    )
+    instance_id = instance["InstanceId"]
+
+    try:
+        try:
+            _verify_instance_tags(
+                instance,
+                expected_template_id=template_id,
+                expected_template_version="1",
+                expected_user_tags={"k": "v1"},
+            )
+        finally:
+            # Clean up instance
+            ec2_client.terminate_instances(InstanceIds=[instance_id])
+
+    finally:
+        # Clean up launch template
+        ec2_client.delete_launch_template(LaunchTemplateId=template_id)
+
+
+@ec2_aws_verified()
+@pytest.mark.aws_verified
+@pytest.mark.parametrize("version_specified", ["2", "$Latest", "$Default"])
+def test_create_instance_from_launch_template_latest_and_default_version(
+    version_specified, ec2_client=None
+):
+    ec2_client = boto3.client("ec2", region_name="us-east-1")
+    ami_id = _get_ami_id(ec2_client)
+
+    template = _create_default_launch_template(ec2_client)
+    template_id = template["LaunchTemplateId"]
+
+    # Create a new version of the launch template with different user tags
+    ec2_client.create_launch_template_version(
+        LaunchTemplateId=template_id,
+        LaunchTemplateData={
+            "ImageId": ami_id,
+            "TagSpecifications": [
+                {"ResourceType": "instance", "Tags": [{"Key": "k", "Value": "v2"}]}
+            ],
+        },
+    )
+
+    # Set the default version to be the second version, so that both $Latest and $Default point to the same version
+    ec2_client.modify_launch_template(LaunchTemplateId=template_id, DefaultVersion="2")
+
+    instance = _run_instance_from_template(
+        ec2_client, template_id, version=version_specified
+    )
+    instance_id = instance["InstanceId"]
+
+    try:
+        try:
+            _verify_instance_tags(
+                instance,
+                expected_template_id=template_id,
+                expected_template_version="2",
+                expected_user_tags={"k": "v2"},
+            )
+        finally:
+            # Clean up instance
+            ec2_client.terminate_instances(InstanceIds=[instance_id])
+
+    finally:
+        # Clean up launch template
+        ec2_client.delete_launch_template(LaunchTemplateId=template_id)
+
+
+_LT_USER_DATA_SCRIPT = b"#!/bin/bash\necho from-template"
+_LT_USER_DATA_B64 = base64.b64encode(_LT_USER_DATA_SCRIPT).decode()
+
+
+@ec2_aws_verified(
+    create_launch_template=True,
+    launch_template_data={"InstanceType": "t2.micro", "UserData": _LT_USER_DATA_B64},
+)
+@pytest.mark.aws_verified
+def test_run_instances__user_data_from_launch_template(
+    ec2_client=None, launch_template_name=None
+):
+    """UserData in a launch template is applied when not supplied in RunInstances."""
+    ami_id = _get_ami_id(ec2_client)
+    instance = _run_instance_from_template(
+        ec2_client, template_name=launch_template_name, ImageId=ami_id
+    )
+    instance_id = instance["InstanceId"]
+    try:
+        attr = ec2_client.describe_instance_attribute(
+            InstanceId=instance_id, Attribute="userData"
+        )
+        assert attr["UserData"]["Value"] == _LT_USER_DATA_B64
+    finally:
+        ec2_client.terminate_instances(InstanceIds=[instance_id])
+
+
+@ec2_aws_verified(
+    create_launch_template=True,
+    launch_template_data={"InstanceType": "t2.micro", "UserData": _LT_USER_DATA_B64},
+)
+@pytest.mark.aws_verified
+def test_run_instances__user_data_override_takes_priority(
+    ec2_client=None, launch_template_name=None
+):
+    """Explicit UserData in RunInstances overrides the launch template value."""
+    ami_id = _get_ami_id(ec2_client)
+    request_script = "#!/bin/bash\necho from-request"
+    expected_b64 = base64.b64encode(request_script.encode()).decode()
+
+    instance = _run_instance_from_template(
+        ec2_client,
+        template_name=launch_template_name,
+        ImageId=ami_id,
+        UserData=request_script,
+    )
+    instance_id = instance["InstanceId"]
+    try:
+        attr = ec2_client.describe_instance_attribute(
+            InstanceId=instance_id, Attribute="userData"
+        )
+        assert attr["UserData"]["Value"] == expected_b64
+    finally:
+        ec2_client.terminate_instances(InstanceIds=[instance_id])
+
+
+@ec2_aws_verified(
+    create_launch_template=True,
+    launch_template_data={"InstanceType": "t2.micro"},
+)
+@pytest.mark.aws_verified
+def test_run_instances__instance_type_from_launch_template(
+    ec2_client=None, launch_template_name=None
+):
+    """InstanceType in a launch template is applied when not supplied in RunInstances."""
+    ami_id = _get_ami_id(ec2_client)
+    instance = _run_instance_from_template(
+        ec2_client, template_name=launch_template_name, ImageId=ami_id
+    )
+    instance_id = instance["InstanceId"]
+    try:
+        assert instance["InstanceType"] == "t2.micro"
+        attr = ec2_client.describe_instance_attribute(
+            InstanceId=instance_id, Attribute="instanceType"
+        )
+        assert attr["InstanceType"]["Value"] == "t2.micro"
+        describe_instances = ec2_client.describe_instances(InstanceIds=[instance_id])
+        assert (
+            describe_instances["Reservations"][0]["Instances"][0]["InstanceType"]
+            == "t2.micro"
+        )
+    finally:
+        ec2_client.terminate_instances(InstanceIds=[instance_id])
+
+
+@ec2_aws_verified(
+    create_launch_template=True,
+    launch_template_data={"InstanceType": "t2.micro"},
+)
+@pytest.mark.aws_verified
+def test_run_instances__instance_type_override_takes_priority(
+    ec2_client=None, launch_template_name=None
+):
+    """Explicit InstanceType in RunInstances overrides the launch template value."""
+    ami_id = _get_ami_id(ec2_client)
+    resp = ec2_client.run_instances(
+        MinCount=1,
+        MaxCount=1,
+        ImageId=ami_id,
+        LaunchTemplate={"LaunchTemplateName": launch_template_name},
+        InstanceType="t2.small",
+    )
+    instance_id = resp["Instances"][0]["InstanceId"]
+    try:
+        assert resp["Instances"][0]["InstanceType"] == "t2.small"
+        attr = ec2_client.describe_instance_attribute(
+            InstanceId=instance_id, Attribute="instanceType"
+        )
+        assert attr["InstanceType"]["Value"] == "t2.small"
+        describe_instances = ec2_client.describe_instances(InstanceIds=[instance_id])
+        assert (
+            describe_instances["Reservations"][0]["Instances"][0]["InstanceType"]
+            == "t2.small"
+        )
+    finally:
+        ec2_client.terminate_instances(InstanceIds=[instance_id])
+
+
+@ec2_aws_verified()
+# Verified against AWS, but is flaky - that's why we do not run it against AWS
+# @pytest.mark.aws_verified
+def test_run_instances__key_name_from_launch_template(ec2_client=None):
+    """KeyName in a launch template is applied when not supplied in RunInstances."""
+    ami_id = _get_ami_id(ec2_client)
+    key_name = f"test-key-{str(uuid4())[0:8]}"
+    lt_name = str(uuid4())
+    ec2_client.create_key_pair(KeyName=key_name)
+    ec2_client.create_launch_template(
+        LaunchTemplateName=lt_name,
+        LaunchTemplateData={"InstanceType": "t2.micro", "KeyName": key_name},
+    )
+    instance = _run_instance_from_template(
+        ec2_client, template_name=lt_name, ImageId=ami_id
+    )
+    instance_id = instance["InstanceId"]
+    try:
+        assert instance["KeyName"] == key_name
+        describe_instances = ec2_client.describe_instances(InstanceIds=[instance_id])
+        assert (
+            describe_instances["Reservations"][0]["Instances"][0]["KeyName"] == key_name
+        )
+    finally:
+        ec2_client.terminate_instances(InstanceIds=[instance_id])
+        ec2_client.delete_launch_template(LaunchTemplateName=lt_name)
+        ec2_client.delete_key_pair(KeyName=key_name)
+
+
+@ec2_aws_verified()
+# @pytest.mark.aws_verified
+# Verified against AWS, but it's flaky - that's why it's disabled against AWS
+def test_run_instances__security_group_ids_from_launch_template(ec2_client=None):
+    """SecurityGroupIds in a launch template are applied when not supplied in RunInstances."""
+    ami_id = _get_ami_id(ec2_client)
+    vpc_id = ec2_client.create_vpc(CidrBlock="10.0.0.0/16")["Vpc"]["VpcId"]
+    subnet_id = ec2_client.create_subnet(
+        VpcId=vpc_id,
+        CidrBlock="10.0.1.0/24",
+        AvailabilityZone=ec2_client.meta.region_name + "a",
+    )["Subnet"]["SubnetId"]
+    sg_id = ec2_client.create_security_group(
+        GroupName=f"test-sg-{str(uuid4())[0:6]}",
+        Description="test",
+        VpcId=vpc_id,
+    )["GroupId"]
+    lt_name = str(uuid4())
+    ec2_client.create_launch_template(
+        LaunchTemplateName=lt_name,
+        LaunchTemplateData={
+            "InstanceType": "t2.micro",
+            "SecurityGroupIds": [sg_id],
+        },
+    )
+    instance = _run_instance_from_template(
+        ec2_client, template_name=lt_name, ImageId=ami_id, SubnetId=subnet_id
+    )
+    instance_id = instance["InstanceId"]
+    try:
+        instance_sg_ids = [g["GroupId"] for g in instance["SecurityGroups"]]
+        assert sg_id in instance_sg_ids
+        attr = ec2_client.describe_instance_attribute(
+            InstanceId=instance_id, Attribute="groupSet"
+        )
+        attr_sg_ids = [g["GroupId"] for g in attr["Groups"]]
+        assert sg_id in attr_sg_ids
+        describe_instances = ec2_client.describe_instances(InstanceIds=[instance_id])
+        instance_sg_ids = [
+            g["GroupId"]
+            for g in describe_instances["Reservations"][0]["Instances"][0][
+                "SecurityGroups"
+            ]
+        ]
+        assert sg_id in instance_sg_ids
+    finally:
+        ec2_client.terminate_instances(InstanceIds=[instance_id])
+        ec2_client.delete_launch_template(LaunchTemplateName=lt_name)
+        ec2_client.delete_security_group(GroupId=sg_id)
+        ec2_client.delete_subnet(SubnetId=subnet_id)
+        ec2_client.delete_vpc(VpcId=vpc_id)

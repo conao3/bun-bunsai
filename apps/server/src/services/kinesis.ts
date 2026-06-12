@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import kinesisModel from "../../../../test/vendor/aws-models/kinesis.json" with { type: "json" };
+import kinesisModel from "../../models/kinesis.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 const usage = `Usage: bun scripts/aws-model-op.ts <service> [operation]
 
-Extract operation shape from test/vendor/aws-models/<service>.json without
+Extract operation shape from apps/server/models/<service>.json without
 loading the whole file into the agent context.
 
 Examples:
@@ -27,7 +27,7 @@ const withShapes = args.includes("--with-shapes");
 
 const modelPath = resolve(
   process.cwd(),
-  "test/vendor/aws-models",
+  "apps/server/models",
   `${service}.json`,
 );
 

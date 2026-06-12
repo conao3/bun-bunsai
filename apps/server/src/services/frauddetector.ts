@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import frauddetectorModel from "../../../../test/vendor/aws-models/frauddetector.json" with { type: "json" };
+import frauddetectorModel from "../../models/frauddetector.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

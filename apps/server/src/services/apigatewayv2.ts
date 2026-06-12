@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import apigatewayv2Model from "../../../../test/vendor/aws-models/apigatewayv2.json" with { type: "json" };
+import apigatewayv2Model from "../../models/apigatewayv2.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

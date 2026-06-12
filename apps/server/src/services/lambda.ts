@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import lambdaModel from "../../../../test/vendor/aws-models/lambda.json" with { type: "json" };
+import lambdaModel from "../../models/lambda.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

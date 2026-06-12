@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import pipesModel from "../../../../test/vendor/aws-models/pipes.json" with { type: "json" };
+import pipesModel from "../../models/pipes.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

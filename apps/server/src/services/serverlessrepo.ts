@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import serverlessrepoModel from "../../../../test/vendor/aws-models/serverlessrepo.json" with { type: "json" };
+import serverlessrepoModel from "../../models/serverlessrepo.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

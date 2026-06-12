@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import signerModel from "../../../../test/vendor/aws-models/signer.json" with { type: "json" };
+import signerModel from "../../models/signer.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

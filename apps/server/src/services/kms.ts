@@ -1,7 +1,7 @@
 import nodeCrypto from "node:crypto";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import kmsModel from "../../../../test/vendor/aws-models/kms.json" with { type: "json" };
+import kmsModel from "../../models/kms.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

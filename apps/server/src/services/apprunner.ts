@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import apprunnerModel from "../../../../test/vendor/aws-models/apprunner.json" with { type: "json" };
+import apprunnerModel from "../../models/apprunner.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

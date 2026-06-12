@@ -2,7 +2,7 @@ import type { ServiceDefinition } from "../core/types.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import { callerArn, parseArn } from "../core/arn.ts";
-import stsModel from "../../../../test/vendor/aws-models/sts.json" with { type: "json" };
+import stsModel from "../../models/sts.json" with { type: "json" };
 
 const defaultAccount = "000000000000" as const;
 

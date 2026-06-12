@@ -4,7 +4,7 @@ import { invokeTaskResource } from "../core/events.ts";
 import { scopedStore } from "../core/state.ts";
 import type { StateStore } from "../core/state.ts";
 import { verifyJwt } from "../core/jwt.ts";
-import apigatewayModel from "../../../../test/vendor/aws-models/apigateway.json" with { type: "json" };
+import apigatewayModel from "../../models/apigateway.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

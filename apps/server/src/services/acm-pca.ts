@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import acmPcaModel from "../../../../test/vendor/aws-models/acm-pca.json" with { type: "json" };
+import acmPcaModel from "../../models/acm-pca.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

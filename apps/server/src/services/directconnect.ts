@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import directconnectModel from "../../../../test/vendor/aws-models/directconnect.json" with { type: "json" };
+import directconnectModel from "../../models/directconnect.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

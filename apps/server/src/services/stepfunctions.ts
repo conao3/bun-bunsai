@@ -2,7 +2,7 @@ import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import { invokeTaskResource } from "../core/events.ts";
 import { parseArn } from "../core/arn.ts";
-import stepFunctionsModel from "../../../../test/vendor/aws-models/stepfunctions.json" with { type: "json" };
+import stepFunctionsModel from "../../models/stepfunctions.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

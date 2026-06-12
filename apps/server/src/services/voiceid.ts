@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import voiceidModel from "../../../../test/vendor/aws-models/voiceid.json" with { type: "json" };
+import voiceidModel from "../../models/voiceid.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

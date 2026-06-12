@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import mediatailorModel from "../../../../test/vendor/aws-models/mediatailor.json" with { type: "json" };
+import mediatailorModel from "../../models/mediatailor.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import sagemakerModel from "../../../../test/vendor/aws-models/sagemaker.json" with { type: "json" };
+import sagemakerModel from "../../models/sagemaker.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

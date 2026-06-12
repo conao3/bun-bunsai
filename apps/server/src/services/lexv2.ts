@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import lexv2Model from "../../../../test/vendor/aws-models/lexv2.json" with { type: "json" };
+import lexv2Model from "../../models/lexv2.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

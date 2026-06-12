@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import guarddutyModel from "../../../../test/vendor/aws-models/guardduty.json" with { type: "json" };
+import guarddutyModel from "../../models/guardduty.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

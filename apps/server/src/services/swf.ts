@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import swfModel from "../../../../test/vendor/aws-models/swf.json" with { type: "json" };
+import swfModel from "../../models/swf.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import verifiedpermissionsModel from "../../../../test/vendor/aws-models/verifiedpermissions.json" with { type: "json" };
+import verifiedpermissionsModel from "../../models/verifiedpermissions.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

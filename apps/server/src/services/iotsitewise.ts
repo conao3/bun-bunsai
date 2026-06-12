@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import iotsitewiseModel from "../../../../test/vendor/aws-models/iotsitewise.json" with { type: "json" };
+import iotsitewiseModel from "../../models/iotsitewise.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

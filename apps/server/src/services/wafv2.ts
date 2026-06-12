@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import wafv2Model from "../../../../test/vendor/aws-models/wafv2.json" with { type: "json" };
+import wafv2Model from "../../models/wafv2.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

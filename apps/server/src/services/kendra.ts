@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import kendraModel from "../../../../test/vendor/aws-models/kendra.json" with { type: "json" };
+import kendraModel from "../../models/kendra.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

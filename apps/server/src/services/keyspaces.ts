@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import keyspacesModel from "../../../../test/vendor/aws-models/keyspaces.json" with { type: "json" };
+import keyspacesModel from "../../models/keyspaces.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

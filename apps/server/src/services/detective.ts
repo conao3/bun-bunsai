@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import detectiveModel from "../../../../test/vendor/aws-models/detective.json" with { type: "json" };
+import detectiveModel from "../../models/detective.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

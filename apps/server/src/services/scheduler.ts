@@ -1,7 +1,7 @@
 import { awsError } from "../core/framework.ts";
 import { deliverToArn } from "../core/events.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import schedulerModel from "../../../../test/vendor/aws-models/scheduler.json" with { type: "json" };
+import schedulerModel from "../../models/scheduler.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

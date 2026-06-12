@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import codebuildModel from "../../../../test/vendor/aws-models/codebuild.json" with { type: "json" };
+import codebuildModel from "../../models/codebuild.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

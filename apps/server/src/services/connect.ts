@@ -1,7 +1,7 @@
 import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import connectModel from "../../../../test/vendor/aws-models/connect.json" with { type: "json" };
+import connectModel from "../../models/connect.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

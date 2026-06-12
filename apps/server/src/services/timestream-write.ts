@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import timestreamWriteModel from "../../../../test/vendor/aws-models/timestream-write.json" with { type: "json" };
+import timestreamWriteModel from "../../models/timestream-write.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

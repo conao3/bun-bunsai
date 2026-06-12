@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import ioteventsModel from "../../../../test/vendor/aws-models/iotevents.json" with { type: "json" };
+import ioteventsModel from "../../models/iotevents.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

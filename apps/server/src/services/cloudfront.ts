@@ -5,7 +5,7 @@ import type {
 } from "../core/types.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import cloudfrontModel from "../../../../test/vendor/aws-models/cloudfront.json" with { type: "json" };
+import cloudfrontModel from "../../models/cloudfront.json" with { type: "json" };
 
 const model = loadServiceModel(cloudfrontModel);
 

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import comprehendModel from "../../../../test/vendor/aws-models/comprehend.json" with { type: "json" };
+import comprehendModel from "../../models/comprehend.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

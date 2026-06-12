@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import mediastoreModel from "../../../../test/vendor/aws-models/mediastore.json" with { type: "json" };
+import mediastoreModel from "../../models/mediastore.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

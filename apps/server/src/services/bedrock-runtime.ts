@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import bedrockRuntimeModel from "../../../../test/vendor/aws-models/bedrock-runtime.json" with { type: "json" };
+import bedrockRuntimeModel from "../../models/bedrock-runtime.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

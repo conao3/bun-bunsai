@@ -5,7 +5,7 @@ import type {
 } from "../core/types.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import route53Model from "../../../../test/vendor/aws-models/route53.json" with { type: "json" };
+import route53Model from "../../models/route53.json" with { type: "json" };
 
 const model = loadServiceModel(route53Model);
 

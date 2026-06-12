@@ -15,7 +15,7 @@ import type {
 } from "../core/expressions/types.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import dynamodbModel from "../../../../test/vendor/aws-models/dynamodb.json" with { type: "json" };
+import dynamodbModel from "../../models/dynamodb.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

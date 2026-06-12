@@ -2,7 +2,7 @@ import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
 import { scopedStore } from "../core/state.ts";
 import type { StateStore } from "../core/state.ts";
-import cloudtrailModel from "../../../../test/vendor/aws-models/cloudtrail.json" with { type: "json" };
+import cloudtrailModel from "../../models/cloudtrail.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import datasyncModel from "../../../../test/vendor/aws-models/datasync.json" with { type: "json" };
+import datasyncModel from "../../models/datasync.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

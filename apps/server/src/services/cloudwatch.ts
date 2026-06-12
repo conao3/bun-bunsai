@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import cloudwatchModel from "../../../../test/vendor/aws-models/cloudwatch.json" with { type: "json" };
+import cloudwatchModel from "../../models/cloudwatch.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

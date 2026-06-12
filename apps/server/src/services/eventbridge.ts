@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import eventBridgeModel from "../../../../test/vendor/aws-models/eventbridge.json" with { type: "json" };
+import eventBridgeModel from "../../models/eventbridge.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import storagegatewayModel from "../../../../test/vendor/aws-models/storagegateway.json" with { type: "json" };
+import storagegatewayModel from "../../models/storagegateway.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

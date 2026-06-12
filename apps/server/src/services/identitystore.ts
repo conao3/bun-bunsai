@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import identitystoreModel from "../../../../test/vendor/aws-models/identitystore.json" with { type: "json" };
+import identitystoreModel from "../../models/identitystore.json" with { type: "json" };
 import type { ServiceDefinition } from "../core/types.ts";
 
 const model = loadServiceModel(identitystoreModel);

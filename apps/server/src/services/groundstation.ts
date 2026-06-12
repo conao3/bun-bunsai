@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import groundstationModel from "../../../../test/vendor/aws-models/groundstation.json" with { type: "json" };
+import groundstationModel from "../../models/groundstation.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

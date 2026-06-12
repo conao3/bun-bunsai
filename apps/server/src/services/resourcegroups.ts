@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import resourcegroupsModel from "../../../../test/vendor/aws-models/resourcegroups.json" with { type: "json" };
+import resourcegroupsModel from "../../models/resourcegroups.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

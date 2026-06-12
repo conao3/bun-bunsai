@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import daxModel from "../../../../test/vendor/aws-models/dax.json" with { type: "json" };
+import daxModel from "../../models/dax.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

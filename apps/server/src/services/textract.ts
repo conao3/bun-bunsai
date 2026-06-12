@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import textractModel from "../../../../test/vendor/aws-models/textract.json" with { type: "json" };
+import textractModel from "../../models/textract.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

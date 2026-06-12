@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import pinpointModel from "../../../../test/vendor/aws-models/pinpoint.json" with { type: "json" };
+import pinpointModel from "../../models/pinpoint.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

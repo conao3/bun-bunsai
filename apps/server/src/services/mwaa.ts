@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import mwaaModel from "../../../../test/vendor/aws-models/mwaa.json" with { type: "json" };
+import mwaaModel from "../../models/mwaa.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

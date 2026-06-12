@@ -1,7 +1,7 @@
 import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import ecsModel from "../../../../test/vendor/aws-models/ecs.json" with { type: "json" };
+import ecsModel from "../../models/ecs.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,

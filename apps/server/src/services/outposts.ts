@@ -1,6 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { loadServiceModel } from "../core/shapes.ts";
-import outpostsModel from "../../../../test/vendor/aws-models/outposts.json" with { type: "json" };
+import outpostsModel from "../../models/outposts.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,

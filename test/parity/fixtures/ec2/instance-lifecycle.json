@@ -1,0 +1,64 @@
+{
+  "clientPackage": "@aws-sdk/client-ec2",
+  "clientName": "EC2Client",
+  "steps": [
+    {
+      "command": "RunInstancesCommand",
+      "input": {
+        "ImageId": "ami-12345678",
+        "InstanceType": "t2.micro",
+        "MinCount": 1,
+        "MaxCount": 1
+      },
+      "expected": {
+        "Instances": [
+          {
+            "ImageId": "ami-12345678",
+            "InstanceType": "t2.micro",
+            "State": { "Code": 0, "Name": "pending" }
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata", "ReservationId", "OwnerId"],
+      "saveAs": "run",
+      "refs": {}
+    },
+    {
+      "command": "DescribeInstancesCommand",
+      "input": {
+        "InstanceIds": ["${run.Instances.0.InstanceId}"]
+      },
+      "expected": {
+        "Reservations": [
+          {
+            "Instances": [
+              {
+                "State": "<ANY>"
+              }
+            ]
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "TerminateInstancesCommand",
+      "input": {
+        "InstanceIds": ["${run.Instances.0.InstanceId}"]
+      },
+      "expected": {
+        "TerminatingInstances": [
+          {
+            "CurrentState": { "Code": 32, "Name": "shutting-down" },
+            "PreviousState": "<ANY>"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

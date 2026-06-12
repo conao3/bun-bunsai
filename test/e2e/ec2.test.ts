@@ -38,7 +38,7 @@ describe("ec2 e2e", () => {
     expect(instances.length).toBe(2);
     const ids = instances.map((instance) => instance.InstanceId ?? "");
     for (const id of ids) expect(id.startsWith("i-")).toBe(true);
-    expect(instances[0]?.State?.Name).toBe("running");
+    expect(instances[0]?.State?.Name).toBe("pending");
     expect(instances[0]?.ImageId).toBe("ami-12345678");
 
     const described = await client.send(
@@ -53,7 +53,7 @@ describe("ec2 e2e", () => {
     const stopped = await client.send(
       new StopInstancesCommand({ InstanceIds: ids }),
     );
-    expect(stopped.StoppingInstances?.[0]?.CurrentState?.Name).toBe("stopped");
+    expect(stopped.StoppingInstances?.[0]?.CurrentState?.Name).toBe("stopping");
 
     const started = await client.send(
       new StartInstancesCommand({ InstanceIds: ids }),
@@ -64,9 +64,10 @@ describe("ec2 e2e", () => {
       new TerminateInstancesCommand({ InstanceIds: ids }),
     );
     expect(terminated.TerminatingInstances?.[0]?.CurrentState?.Name).toBe(
-      "terminated",
+      "shutting-down",
     );
 
+    await Bun.sleep(1100);
     const afterTerminate = await client.send(new DescribeInstancesCommand({}));
     const remaining = (afterTerminate.Reservations ?? []).flatMap(
       (reservation) =>

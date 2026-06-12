@@ -36,15 +36,17 @@ describe("ec2 CON-1869 fidelity gaps", () => {
     );
     const id = run.Instances?.[0]?.InstanceId ?? "";
     expect(id.startsWith("i-")).toBe(true);
-    expect(run.Instances?.[0]?.State?.Name).toBe("running");
+    expect(run.Instances?.[0]?.State?.Name).toBe("pending");
 
     const afterRun = await client.send(
       new DescribeInstancesCommand({ InstanceIds: [id] }),
     );
     const inst0 = afterRun.Reservations?.[0]?.Instances?.[0];
-    expect(inst0?.State?.Name).toBe("running");
+    expect(inst0?.State?.Name).toBe("pending");
 
+    await Bun.sleep(1100);
     await client.send(new StopInstancesCommand({ InstanceIds: [id] }));
+    await Bun.sleep(1100);
     const afterStop = await client.send(
       new DescribeInstancesCommand({ InstanceIds: [id] }),
     );
@@ -64,9 +66,10 @@ describe("ec2 CON-1869 fidelity gaps", () => {
       new TerminateInstancesCommand({ InstanceIds: [id] }),
     );
     expect(terminated.TerminatingInstances?.[0]?.CurrentState?.Name).toBe(
-      "terminated",
+      "shutting-down",
     );
 
+    await Bun.sleep(1100);
     const defaultList = await client.send(new DescribeInstancesCommand({}));
     const defaultIds = (defaultList.Reservations ?? []).flatMap((r) =>
       (r.Instances ?? []).map((i) => i.InstanceId),
@@ -94,7 +97,9 @@ describe("ec2 CON-1869 fidelity gaps", () => {
       }),
     );
     const id = run.Instances?.[0]?.InstanceId ?? "";
+    await Bun.sleep(1100);
     await client.send(new StopInstancesCommand({ InstanceIds: [id] }));
+    await Bun.sleep(1100);
 
     const stoppedList = await client.send(
       new DescribeInstancesCommand({

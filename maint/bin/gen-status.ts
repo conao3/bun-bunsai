@@ -125,9 +125,7 @@ _Models vendored verbatim from botocore 1.43.19 (Apache-2.0). Coverage figures c
 if (CHECK_MODE) {
   const committed = readFileSync(STATUS_FILE, "utf8");
   if (content !== committed) {
-    console.error(
-      `STATUS.md is out of date. Run: bun maint/bin/gen-status.ts`,
-    );
+    console.error(`STATUS.md is out of date. Run: bun maint/bin/gen-status.ts`);
     process.exit(1);
   }
   console.log("STATUS.md is up to date.");

@@ -380,7 +380,17 @@ const DeregisterScalableTarget: OperationHandler = (input, ctx) => {
   const resourceId = requireString(input, "ResourceId");
   const dimension = requireString(input, "ScalableDimension");
 
-  const target = getTarget(ctx, ns, resourceId, dimension);
+  const stored = ctx.store.get<StoredScalableTarget>(
+    targetKey(ns, resourceId, dimension),
+  );
+  if (stored === undefined) {
+    throw awsError(
+      "ValidationException",
+      `No scalable target found for the scalable dimension ${dimension} under service namespace ${ns} with resource ID ${resourceId}.`,
+      400,
+    );
+  }
+  const target = stored;
 
   ctx.store.delete(targetKey(ns, resourceId, dimension));
   ctx.store.delete(tagKey(target.ScalableTargetARN));

@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import forecastModel from "../../models/forecast.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(forecastModel);
+const model = lazyServiceModel(
+  () => import("../../models/forecast.json", { with: { type: "json" } }),
+  { targetPrefix: "AmazonForecast" },
+);
 
 type StoredDataset = {
   DatasetArn: string;

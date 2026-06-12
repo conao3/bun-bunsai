@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import resourcegroupsModel from "../../models/resourcegroups.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(resourcegroupsModel);
+const model = lazyServiceModel(
+  () => import("../../models/resourcegroups.json", { with: { type: "json" } }),
+);
 
 const groupPrefix = "group:" as const;
 const taskPrefix = "task:" as const;

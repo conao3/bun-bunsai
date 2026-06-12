@@ -10,6 +10,7 @@ import {
 } from "./shapes.ts";
 import type {
   AwsError,
+  LazyServiceModel,
   ParsedRequest,
   ServiceContext,
   ServiceDefinition,
@@ -79,6 +80,15 @@ const errorShapeFor = (
   return { shape: undefined, wireCode: code };
 };
 
+const resolveModel = (
+  m: ServiceModel | LazyServiceModel | undefined,
+): Promise<ServiceModel | undefined> | ServiceModel | undefined => {
+  if (m === undefined) return undefined;
+  if ((m as LazyServiceModel)._lazy === true)
+    return (m as LazyServiceModel).resolve();
+  return m as ServiceModel;
+};
+
 export const dispatch = async (
   service: ServiceDefinition,
   req: ParsedRequest,
@@ -86,7 +96,7 @@ export const dispatch = async (
   requestId?: string,
 ): Promise<DispatchResult> => {
   const operation = resolveOperationName(service, req);
-  const model = service.model;
+  const model = await resolveModel(service.model);
   const xmlRoot = service.xmlErrorRoot;
   const fail = (error: AwsError, op: string): DispatchResult => {
     let serialized;

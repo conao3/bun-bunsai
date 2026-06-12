@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import transferModel from "../../models/transfer.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(transferModel);
+const model = lazyServiceModel(
+  () => import("../../models/transfer.json", { with: { type: "json" } }),
+  { targetPrefix: "TransferService" },
+);
 
 type StoredUser = {
   Arn: string;

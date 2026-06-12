@@ -1,13 +1,14 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import elasticacheModel from "../../models/elasticache.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(elasticacheModel);
+const model = lazyServiceModel(
+  () => import("../../models/elasticache.json", { with: { type: "json" } }),
+);
 
 type StoredCacheNode = {
   CacheNodeId: string;

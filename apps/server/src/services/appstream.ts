@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import appstreamModel from "../../models/appstream.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(appstreamModel);
+const model = lazyServiceModel(
+  () => import("../../models/appstream.json", { with: { type: "json" } }),
+  { targetPrefix: "PhotonAdminProxyService" },
+);
 
 type StoredFleet = {
   Arn: string;

@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import apigatewayv2Model from "../../models/apigatewayv2.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(apigatewayv2Model);
+const model = lazyServiceModel(
+  () => import("../../models/apigatewayv2.json", { with: { type: "json" } }),
+);
 
 type StoredCors = {
   allowCredentials: boolean | undefined;

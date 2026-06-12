@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import timestreamQueryModel from "../../models/timestream-query.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -9,7 +8,11 @@ import type {
 } from "../core/types.ts";
 import { recordPrefix, type StoredRecord } from "./timestream-write.ts";
 
-const model = loadServiceModel(timestreamQueryModel);
+const model = lazyServiceModel(
+  () =>
+    import("../../models/timestream-query.json", { with: { type: "json" } }),
+  { targetPrefix: "Timestream_20181101" },
+);
 
 const scheduledQueryPrefix = "scheduled-query:" as const;
 const sqTokenPrefix = "sq-token:" as const;

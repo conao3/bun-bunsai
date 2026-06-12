@@ -1,13 +1,16 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import servicediscoveryModel from "../../models/servicediscovery.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(servicediscoveryModel);
+const model = lazyServiceModel(
+  () =>
+    import("../../models/servicediscovery.json", { with: { type: "json" } }),
+  { targetPrefix: "Route53AutoNaming_v20170314" },
+);
 
 type StoredNamespace = {
   Id: string;

@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import dmsModel from "../../models/dms.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(dmsModel);
+const model = lazyServiceModel(
+  () => import("../../models/dms.json", { with: { type: "json" } }),
+  { targetPrefix: "AmazonDMSv20160101" },
+);
 
 type StoredReplicationInstance = {
   ReplicationInstanceIdentifier: string;

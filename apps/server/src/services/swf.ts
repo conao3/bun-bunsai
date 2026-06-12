@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import swfModel from "../../models/swf.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(swfModel);
+const model = lazyServiceModel(
+  () => import("../../models/swf.json", { with: { type: "json" } }),
+  { targetPrefix: "SimpleWorkflowService" },
+);
 
 type StoredDomain = {
   name: string;

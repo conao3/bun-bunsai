@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import kafkaModel from "../../models/kafka.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(kafkaModel);
+const model = lazyServiceModel(
+  () => import("../../models/kafka.json", { with: { type: "json" } }),
+);
 
 type ClusterType = "PROVISIONED" | "SERVERLESS";
 type ClusterState =

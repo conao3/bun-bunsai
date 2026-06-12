@@ -8,9 +8,9 @@
 | ------------------------ | --------------------------------------------- |
 | Services registered      | **141**                                       |
 | Wire protocols           | **5** (ec2, json, query, rest-json, rest-xml) |
-| Services at 100%         | **138 / 141**                                 |
-| Unimplemented operations | **134**                                       |
-| E2E test files           | **535**                                       |
+| Services at 100%         | **139 / 141**                                 |
+| Unimplemented operations | **58**                                        |
+| E2E test files           | **536**                                       |
 | Scenario test files      | **40**                                        |
 
 ## Features
@@ -32,7 +32,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | iot                     | rest-json | 272/272 | 6         |
 | glue                    | json      | 265/265 | 26        |
 | iam                     | query     | 176/176 | 14        |
-| cloudfront              | rest-xml  | 45/167  | 6         |
+| cloudfront              | rest-xml  | 117/167 | 7         |
 | rds                     | query     | 164/164 | 9         |
 | ssm                     | json      | 146/146 | 3         |
 | redshift                | query     | 141/141 | 1         |
@@ -162,7 +162,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | mwaa                    | rest-json | 12/12   | 1         |
 | scheduler               | rest-json | 12/12   | 1         |
 | iot-data                | rest-json | 11/11   | 0         |
-| sts                     | query     | 7/11    | 2         |
+| sts                     | query     | 11/11   | 2         |
 | bedrock-runtime         | rest-json | 10/10   | 0         |
 | pipes                   | rest-json | 10/10   | 1         |
 | cloudcontrol            | json      | 8/8     | 1         |

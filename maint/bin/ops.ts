@@ -10,7 +10,9 @@ export type OpsResult = {
 export function loadOps(name: string): OpsResult {
   const src = readFileSync(`apps/server/src/services/${name}.ts`, "utf8");
 
-  const importMatch = src.match(/from\s+["'][^"']*models\/([^"']+\.json)["']/);
+  const importMatch = src.match(
+    /(?:from|import\()\s*["'][^"']*models\/([^"']+\.json)["']/,
+  );
   if (!importMatch) {
     return { modelPath: null, all: [], impl: new Set(), missing: [] };
   }

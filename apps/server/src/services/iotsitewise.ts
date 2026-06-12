@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import iotsitewiseModel from "../../models/iotsitewise.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(iotsitewiseModel);
+const model = lazyServiceModel(
+  () => import("../../models/iotsitewise.json", { with: { type: "json" } }),
+);
 
 const assetModelPrefix = "asset-model:" as const;
 const assetModelCompositePrefix = "asset-model-composite:" as const;

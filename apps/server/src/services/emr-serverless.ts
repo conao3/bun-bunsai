@@ -1,7 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { callerArn } from "../core/arn.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import emrServerlessModel from "../../models/emr-serverless.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -9,7 +8,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(emrServerlessModel);
+const model = lazyServiceModel(
+  () => import("../../models/emr-serverless.json", { with: { type: "json" } }),
+);
 
 const applicationPrefix = "application:" as const;
 const jobRunPrefix = "jobrun:" as const;

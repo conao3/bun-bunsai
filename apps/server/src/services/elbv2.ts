@@ -1,13 +1,14 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import elbv2Model from "../../models/elbv2.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(elbv2Model);
+const model = lazyServiceModel(
+  () => import("../../models/elbv2.json", { with: { type: "json" } }),
+);
 
 type StoredLoadBalancer = {
   LoadBalancerArn: string;

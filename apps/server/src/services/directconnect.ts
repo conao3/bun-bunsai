@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import directconnectModel from "../../models/directconnect.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(directconnectModel);
+const model = lazyServiceModel(
+  () => import("../../models/directconnect.json", { with: { type: "json" } }),
+  { targetPrefix: "OvertureService" },
+);
 
 type StoredConnection = {
   ownerAccount: string;

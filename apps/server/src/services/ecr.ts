@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import ecrModel from "../../models/ecr.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(ecrModel);
+const model = lazyServiceModel(
+  () => import("../../models/ecr.json", { with: { type: "json" } }),
+  { targetPrefix: "AmazonEC2ContainerRegistry_V20150921" },
+);
 
 type StoredImage = {
   imageDigest: string;

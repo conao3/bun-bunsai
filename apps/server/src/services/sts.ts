@@ -1,12 +1,13 @@
 import type { ServiceDefinition } from "../core/types.ts";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
+import { lazyServiceModel } from "../core/shapes.ts";
 import { callerArn, parseArn } from "../core/arn.ts";
-import stsModel from "../../models/sts.json" with { type: "json" };
 
 const defaultAccount = "000000000000" as const;
 
-const model = loadServiceModel(stsModel);
+const model = lazyServiceModel(
+  () => import("../../models/sts.json", { with: { type: "json" } }),
+);
 
 const accountOf = (ctx: { account: string }): string =>
   ctx.account === "" ? defaultAccount : ctx.account;
@@ -234,6 +235,73 @@ const sts = {
         Issuer: issuer,
         Audience: "https://signin.aws.amazon.com/saml",
         NameQualifier: "bunsai-name-qualifier",
+      };
+    },
+    AssumeRoot: (input, ctx) => {
+      const acct = accountOf(ctx);
+      const params = input as {
+        TargetPrincipal?: string;
+        TaskPolicyArn?: { arn?: string };
+        DurationSeconds?: number;
+      };
+      if (!params.TargetPrincipal) {
+        throw awsError("ValidationError", "TargetPrincipal is required", 400);
+      }
+      if (!params.TaskPolicyArn) {
+        throw awsError("ValidationError", "TaskPolicyArn is required", 400);
+      }
+      const duration = params.DurationSeconds ?? 900;
+      const sessionName = "bunsai-root-session";
+      const roleName = "root";
+      return {
+        Credentials: issueCredentials(acct, duration, {
+          roleName,
+          sessionName,
+        }),
+        SourceIdentity: "bunsai-root",
+      };
+    },
+    GetAccessKeyInfo: (input) => {
+      const params = input as { AccessKeyId?: string };
+      const keyId = params.AccessKeyId ?? "";
+      const account: string = /^(?:ASIA|AKIA)\d{12}/.test(keyId)
+        ? keyId.slice(4, 16)
+        : defaultAccount;
+      return { Account: account };
+    },
+    GetDelegatedAccessToken: (input) => {
+      const params = input as { TradeInToken?: string };
+      if (!params.TradeInToken) {
+        throw awsError(
+          "ExpiredTradeInTokenException",
+          "TradeInToken is required",
+          400,
+        );
+      }
+      return {
+        Credentials: issueCredentials(defaultAccount, 3600),
+        PackedPolicySize: 6,
+        AssumedPrincipal: `arn:aws:iam::${defaultAccount}:user/bunsai`,
+      };
+    },
+    GetWebIdentityToken: (input) => {
+      const params = input as {
+        Audience?: string[];
+        SigningAlgorithm?: string;
+        DurationSeconds?: number;
+      };
+      if (!params.Audience || params.Audience.length === 0) {
+        throw awsError("ValidationError", "Audience is required", 400);
+      }
+      if (!params.SigningAlgorithm) {
+        throw awsError("ValidationError", "SigningAlgorithm is required", 400);
+      }
+      const duration = params.DurationSeconds ?? 300;
+      const expiration = Math.floor(Date.now() / 1000) + duration;
+      return {
+        WebIdentityToken:
+          "eyJhbGciOiJSUzI1NiJ9.bunsai-web-identity-payload.bunsai-signature",
+        Expiration: expiration,
       };
     },
   },

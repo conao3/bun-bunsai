@@ -1,13 +1,16 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import globalacceleratorModel from "../../models/globalaccelerator.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(globalacceleratorModel);
+const model = lazyServiceModel(
+  () =>
+    import("../../models/globalaccelerator.json", { with: { type: "json" } }),
+  { targetPrefix: "GlobalAccelerator_V20180706" },
+);
 
 type StoredAccelerator = {
   AcceleratorArn: string;

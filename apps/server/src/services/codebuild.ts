@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import codebuildModel from "../../models/codebuild.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(codebuildModel);
+const model = lazyServiceModel(
+  () => import("../../models/codebuild.json", { with: { type: "json" } }),
+  { targetPrefix: "CodeBuild_20161006" },
+);
 
 type StoredProject = {
   name: string;

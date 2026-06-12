@@ -1,14 +1,16 @@
 import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import ecsModel from "../../models/ecs.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(ecsModel);
+const model = lazyServiceModel(
+  () => import("../../models/ecs.json", { with: { type: "json" } }),
+  { targetPrefix: "AmazonEC2ContainerServiceV20141113" },
+);
 
 type StoredCluster = {
   clusterName: string;

@@ -1,9 +1,11 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import identitystoreModel from "../../models/identitystore.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type { ServiceDefinition } from "../core/types.ts";
 
-const model = loadServiceModel(identitystoreModel);
+const model = lazyServiceModel(
+  () => import("../../models/identitystore.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSIdentityStore" },
+);
 
 const validIdentityStoreId = "d-bunsai0001" as const;
 

@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import wisdomModel from "../../models/wisdom.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(wisdomModel);
+const model = lazyServiceModel(
+  () => import("../../models/wisdom.json", { with: { type: "json" } }),
+);
 
 const knowledgeBasePrefix = "knowledgeBase:" as const;
 const assistantPrefix = "assistant:" as const;

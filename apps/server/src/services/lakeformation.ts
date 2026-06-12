@@ -1,14 +1,15 @@
 import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import lakeformationModel from "../../models/lakeformation.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(lakeformationModel);
+const model = lazyServiceModel(
+  () => import("../../models/lakeformation.json", { with: { type: "json" } }),
+);
 
 const resourcePrefix = "resource:" as const;
 const lftagPrefix = "lftag:" as const;

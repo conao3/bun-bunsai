@@ -1,13 +1,18 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import applicationAutoscalingModel from "../../models/application-autoscaling.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(applicationAutoscalingModel);
+const model = lazyServiceModel(
+  () =>
+    import("../../models/application-autoscaling.json", {
+      with: { type: "json" },
+    }),
+  { targetPrefix: "AnyScaleFrontendService" },
+);
 
 type StoredScalableTarget = {
   ServiceNamespace: string;

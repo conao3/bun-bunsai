@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import route53resolverModel from "../../models/route53resolver.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(route53resolverModel);
+const model = lazyServiceModel(
+  () => import("../../models/route53resolver.json", { with: { type: "json" } }),
+  { targetPrefix: "Route53Resolver" },
+);
 
 type IpAddressEntry = {
   IpId: string;

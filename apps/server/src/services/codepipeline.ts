@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import codePipelineModel from "../../models/codepipeline.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(codePipelineModel);
+const model = lazyServiceModel(
+  () => import("../../models/codepipeline.json", { with: { type: "json" } }),
+  { targetPrefix: "CodePipeline_20150709" },
+);
 
 type StoredPipeline = {
   declaration: Record<string, unknown>;

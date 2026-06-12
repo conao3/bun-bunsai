@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import voiceidModel from "../../models/voiceid.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(voiceidModel);
+const model = lazyServiceModel(
+  () => import("../../models/voiceid.json", { with: { type: "json" } }),
+  { targetPrefix: "VoiceID" },
+);
 
 const domainPrefix = "domain:" as const;
 const speakerPrefix = "speaker:" as const;

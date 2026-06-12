@@ -1,14 +1,16 @@
 import { createHash } from "node:crypto";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import kinesisModel from "../../models/kinesis.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(kinesisModel);
+const model = lazyServiceModel(
+  () => import("../../models/kinesis.json", { with: { type: "json" } }),
+  { targetPrefix: "Kinesis_20131202" },
+);
 
 type StoredRecord = {
   SequenceNumber: string;

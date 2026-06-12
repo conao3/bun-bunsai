@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import mediastoreModel from "../../models/mediastore.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(mediastoreModel);
+const model = lazyServiceModel(
+  () => import("../../models/mediastore.json", { with: { type: "json" } }),
+  { targetPrefix: "MediaStore_20170901" },
+);
 
 type StoredContainer = {
   Name: string;

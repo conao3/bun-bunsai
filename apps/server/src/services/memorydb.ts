@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import memorydbModel from "../../models/memorydb.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(memorydbModel);
+const model = lazyServiceModel(
+  () => import("../../models/memorydb.json", { with: { type: "json" } }),
+  { targetPrefix: "AmazonMemoryDB" },
+);
 
 type StoredCluster = {
   Name: string;

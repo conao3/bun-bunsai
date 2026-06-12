@@ -1,5 +1,6 @@
 import type {
   ErrorTrait,
+  LazyServiceModel,
   ListShape,
   MapShape,
   Member,
@@ -228,7 +229,7 @@ const normalizeOperation = (
   return op;
 };
 
-export const loadServiceModel = (json: ServiceModelJson): ServiceModel => {
+const loadServiceModel = (json: ServiceModelJson): ServiceModel => {
   const operations: Record<string, OperationModel> = {};
   for (const [name, raw] of Object.entries(json.operations ?? {}))
     operations[name] = normalizeOperation(name, raw);
@@ -236,6 +237,25 @@ export const loadServiceModel = (json: ServiceModelJson): ServiceModel => {
     metadata: json.metadata ?? {},
     operations,
     registry: loadRegistry(json.shapes),
+  };
+};
+
+export const lazyServiceModel = (
+  thunk: () => Promise<{ default: ServiceModelJson }>,
+  meta?: { targetPrefix?: string },
+): LazyServiceModel => {
+  let cache: ServiceModel | undefined;
+  return {
+    _lazy: true,
+    ...(meta?.targetPrefix !== undefined
+      ? { targetPrefix: meta.targetPrefix }
+      : {}),
+    resolve: async () => {
+      if (cache !== undefined) return cache;
+      const { default: json } = await thunk();
+      cache = loadServiceModel(json);
+      return cache;
+    },
   };
 };
 

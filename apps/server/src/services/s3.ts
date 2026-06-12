@@ -4,11 +4,12 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import s3Model from "../../models/s3.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import { deliverToArn } from "../core/events.ts";
 
-const model = loadServiceModel(s3Model);
+const model = lazyServiceModel(
+  () => import("../../models/s3.json", { with: { type: "json" } }),
+);
 
 type S3Object = {
   key: string;

@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import transcribeModel from "../../models/transcribe.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(transcribeModel);
+const model = lazyServiceModel(
+  () => import("../../models/transcribe.json", { with: { type: "json" } }),
+  { targetPrefix: "Transcribe" },
+);
 
 type StoredJob = {
   TranscriptionJobName: string;

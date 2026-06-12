@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import fsxModel from "../../models/fsx.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(fsxModel);
+const model = lazyServiceModel(
+  () => import("../../models/fsx.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSSimbaAPIService_v20180301" },
+);
 
 type StoredFileSystem = {
   OwnerId: string;

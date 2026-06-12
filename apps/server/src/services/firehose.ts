@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import firehoseModel from "../../models/firehose.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(firehoseModel);
+const model = lazyServiceModel(
+  () => import("../../models/firehose.json", { with: { type: "json" } }),
+  { targetPrefix: "Firehose_20150804" },
+);
 
 const streamPrefix = "stream:" as const;
 

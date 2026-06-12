@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import cloudcontrolModel from "../../models/cloudcontrol.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(cloudcontrolModel);
+const model = lazyServiceModel(
+  () => import("../../models/cloudcontrol.json", { with: { type: "json" } }),
+  { targetPrefix: "CloudApiService" },
+);
 
 const uuid = (): string => crypto.randomUUID();
 

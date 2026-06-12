@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import acmPcaModel from "../../models/acm-pca.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(acmPcaModel);
+const model = lazyServiceModel(
+  () => import("../../models/acm-pca.json", { with: { type: "json" } }),
+  { targetPrefix: "ACMPrivateCA" },
+);
 
 type StoredCA = {
   Arn: string;

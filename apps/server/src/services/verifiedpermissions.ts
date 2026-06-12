@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import verifiedpermissionsModel from "../../models/verifiedpermissions.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,11 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(verifiedpermissionsModel);
+const model = lazyServiceModel(
+  () =>
+    import("../../models/verifiedpermissions.json", { with: { type: "json" } }),
+  { targetPrefix: "VerifiedPermissions" },
+);
 
 const storePrefix = "ps:" as const;
 const policyPrefix = "policy:" as const;

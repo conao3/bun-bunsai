@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import cloudformationModel from "../../models/cloudformation.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
@@ -8,7 +7,9 @@ import type {
 } from "../core/types.ts";
 import { serviceBaseUrl } from "./_endpoint.ts";
 
-const model = loadServiceModel(cloudformationModel);
+const model = lazyServiceModel(
+  () => import("../../models/cloudformation.json", { with: { type: "json" } }),
+);
 
 type StackResource = {
   LogicalResourceId: string;

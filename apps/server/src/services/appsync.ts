@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import appsyncModel from "../../models/appsync.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(appsyncModel);
+const model = lazyServiceModel(
+  () => import("../../models/appsync.json", { with: { type: "json" } }),
+);
 
 const apiPrefix = "api:" as const;
 const keyPrefix = "apikey:" as const;

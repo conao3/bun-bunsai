@@ -1,14 +1,15 @@
 import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import ec2Model from "../../models/ec2.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(ec2Model);
+const model = lazyServiceModel(
+  () => import("../../models/ec2.json", { with: { type: "json" } }),
+);
 
 type Tag = {
   Key: string;

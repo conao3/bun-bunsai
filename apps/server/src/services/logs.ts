@@ -1,15 +1,17 @@
 import { gzipSync } from "node:zlib";
 import { awsError } from "../core/framework.ts";
 import { deliverToArn } from "../core/events.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import logsModel from "../../models/logs.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(logsModel);
+const model = lazyServiceModel(
+  () => import("../../models/logs.json", { with: { type: "json" } }),
+  { targetPrefix: "Logs_20140328" },
+);
 
 type StoredEvent = {
   timestamp: number;

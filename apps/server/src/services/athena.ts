@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import athenaModel from "../../models/athena.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(athenaModel);
+const model = lazyServiceModel(
+  () => import("../../models/athena.json", { with: { type: "json" } }),
+  { targetPrefix: "AmazonAthena" },
+);
 
 const executionPrefix = "qe:" as const;
 const workGroupPrefix = "wg:" as const;

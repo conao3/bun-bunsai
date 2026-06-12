@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import mediaconvertModel from "../../models/mediaconvert.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(mediaconvertModel);
+const model = lazyServiceModel(
+  () => import("../../models/mediaconvert.json", { with: { type: "json" } }),
+);
 
 const queuePrefix = "queue:" as const;
 const presetPrefix = "preset:" as const;

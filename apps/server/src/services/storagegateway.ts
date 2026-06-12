@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import storagegatewayModel from "../../models/storagegateway.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(storagegatewayModel);
+const model = lazyServiceModel(
+  () => import("../../models/storagegateway.json", { with: { type: "json" } }),
+  { targetPrefix: "StorageGateway_20130630" },
+);
 
 type StoredGateway = {
   GatewayId: string;

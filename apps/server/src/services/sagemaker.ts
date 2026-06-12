@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import sagemakerModel from "../../models/sagemaker.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(sagemakerModel);
+const model = lazyServiceModel(
+  () => import("../../models/sagemaker.json", { with: { type: "json" } }),
+  { targetPrefix: "SageMaker" },
+);
 
 type StoredModel = {
   ModelName: string;

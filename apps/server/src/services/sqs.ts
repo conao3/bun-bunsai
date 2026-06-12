@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import sqsModel from "../../models/sqs.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ScopedStore,
@@ -10,7 +9,10 @@ import type {
 import { notifyEventSource, registerTarget } from "../core/events.ts";
 import { serviceBaseUrl } from "./_endpoint.ts";
 
-const model = loadServiceModel(sqsModel);
+const model = lazyServiceModel(
+  () => import("../../models/sqs.json", { with: { type: "json" } }),
+  { targetPrefix: "AmazonSQS" },
+);
 
 type StoredMessage = {
   MessageId: string;

@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import greengrassModel from "../../models/greengrass.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(greengrassModel);
+const model = lazyServiceModel(
+  () => import("../../models/greengrass.json", { with: { type: "json" } }),
+);
 
 const groupPrefix = "group:" as const;
 const defPrefix = "def:" as const;

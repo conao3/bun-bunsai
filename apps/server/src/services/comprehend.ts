@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import comprehendModel from "../../models/comprehend.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(comprehendModel);
+const model = lazyServiceModel(
+  () => import("../../models/comprehend.json", { with: { type: "json" } }),
+  { targetPrefix: "Comprehend_20171127" },
+);
 
 type StoredEndpoint = {
   EndpointArn: string;

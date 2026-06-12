@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import elasticbeanstalkModel from "../../models/elasticbeanstalk.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(elasticbeanstalkModel);
+const model = lazyServiceModel(
+  () =>
+    import("../../models/elasticbeanstalk.json", { with: { type: "json" } }),
+);
 
 type StoredApplication = {
   ApplicationArn: string;

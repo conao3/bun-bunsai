@@ -1,13 +1,14 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import rdsModel from "../../models/rds.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(rdsModel);
+const model = lazyServiceModel(
+  () => import("../../models/rds.json", { with: { type: "json" } }),
+);
 
 type StoredEndpoint = {
   Address: string;

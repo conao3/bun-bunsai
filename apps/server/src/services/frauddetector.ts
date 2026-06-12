@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import frauddetectorModel from "../../models/frauddetector.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(frauddetectorModel);
+const model = lazyServiceModel(
+  () => import("../../models/frauddetector.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSHawksNestServiceFacade" },
+);
 
 type StoredDetector = {
   detectorId: string;

@@ -4,10 +4,11 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import route53Model from "../../models/route53.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 
-const model = loadServiceModel(route53Model);
+const model = lazyServiceModel(
+  () => import("../../models/route53.json", { with: { type: "json" } }),
+);
 
 type ResourceRecord = {
   Value: string;

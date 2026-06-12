@@ -4,10 +4,11 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import cloudfrontModel from "../../models/cloudfront.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 
-const model = loadServiceModel(cloudfrontModel);
+const model = lazyServiceModel(
+  () => import("../../models/cloudfront.json", { with: { type: "json" } }),
+);
 
 const apiPrefix = "/2020-05-31/distribution";
 const cachePolicyPrefix = "/2020-05-31/cache-policy";

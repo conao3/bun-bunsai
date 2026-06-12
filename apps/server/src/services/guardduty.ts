@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import guarddutyModel from "../../models/guardduty.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(guarddutyModel);
+const model = lazyServiceModel(
+  () => import("../../models/guardduty.json", { with: { type: "json" } }),
+);
 
 type StoredDetector = {
   DetectorId: string;

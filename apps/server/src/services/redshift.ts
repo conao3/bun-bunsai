@@ -1,13 +1,14 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import redshiftModel from "../../models/redshift.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(redshiftModel);
+const model = lazyServiceModel(
+  () => import("../../models/redshift.json", { with: { type: "json" } }),
+);
 
 type StoredCluster = {
   ClusterIdentifier: string;

@@ -1,7 +1,6 @@
 import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import dataexchangeModel from "../../models/dataexchange.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -9,7 +8,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(dataexchangeModel);
+const model = lazyServiceModel(
+  () => import("../../models/dataexchange.json", { with: { type: "json" } }),
+);
 
 const dataSetPrefix = "data-set:" as const;
 const revisionPrefix = "revision:" as const;

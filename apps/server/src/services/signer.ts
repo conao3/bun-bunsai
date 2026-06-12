@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import signerModel from "../../models/signer.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(signerModel);
+const model = lazyServiceModel(
+  () => import("../../models/signer.json", { with: { type: "json" } }),
+);
 
 const profilePrefix = "profile:" as const;
 const jobPrefix = "job:" as const;

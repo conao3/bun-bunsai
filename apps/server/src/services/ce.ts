@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import ceModel from "../../models/ce.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(ceModel);
+const model = lazyServiceModel(
+  () => import("../../models/ce.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSInsightsIndexService" },
+);
 
 type StoredCostCategory = Record<string, unknown> & {
   CostCategoryArn: string;

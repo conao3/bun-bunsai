@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import fmsModel from "../../models/fms.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(fmsModel);
+const model = lazyServiceModel(
+  () => import("../../models/fms.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSFMS_20180101" },
+);
 
 type StoredPolicy = Record<string, unknown> & {
   PolicyId: string;

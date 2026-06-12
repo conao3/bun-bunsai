@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import imagebuilderModel from "../../models/imagebuilder.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(imagebuilderModel);
+const model = lazyServiceModel(
+  () => import("../../models/imagebuilder.json", { with: { type: "json" } }),
+);
 
 const pipelinePrefix = "pipeline:" as const;
 const componentPrefix = "component:" as const;

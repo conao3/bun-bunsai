@@ -1,9 +1,11 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import ssoAdminModel from "../../models/sso-admin.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type { ServiceDefinition } from "../core/types.ts";
 
-const model = loadServiceModel(ssoAdminModel);
+const model = lazyServiceModel(
+  () => import("../../models/sso-admin.json", { with: { type: "json" } }),
+  { targetPrefix: "SWBExternalService" },
+);
 
 const instanceArn = "arn:aws:sso:::instance/ssoins-bunsai0000000001" as const;
 const identityStoreId = "d-bunsai0001" as const;

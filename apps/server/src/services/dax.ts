@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import daxModel from "../../models/dax.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(daxModel);
+const model = lazyServiceModel(
+  () => import("../../models/dax.json", { with: { type: "json" } }),
+  { targetPrefix: "AmazonDAXV3" },
+);
 
 type StoredCluster = {
   ClusterName: string;

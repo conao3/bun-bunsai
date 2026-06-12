@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import eksModel from "../../models/eks.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(eksModel);
+const model = lazyServiceModel(
+  () => import("../../models/eks.json", { with: { type: "json" } }),
+);
 
 type StoredCluster = {
   name: string;

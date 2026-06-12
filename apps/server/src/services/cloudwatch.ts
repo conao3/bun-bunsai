@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import cloudwatchModel from "../../models/cloudwatch.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(cloudwatchModel);
+const model = lazyServiceModel(
+  () => import("../../models/cloudwatch.json", { with: { type: "json" } }),
+  { targetPrefix: "GraniteServiceVersion20100801" },
+);
 
 type Dimension = {
   Name: string;

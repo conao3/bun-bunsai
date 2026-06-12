@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import pinpointModel from "../../models/pinpoint.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(pinpointModel);
+const model = lazyServiceModel(
+  () => import("../../models/pinpoint.json", { with: { type: "json" } }),
+);
 
 const appPrefix = "app:" as const;
 const campPrefix = "camp:" as const;

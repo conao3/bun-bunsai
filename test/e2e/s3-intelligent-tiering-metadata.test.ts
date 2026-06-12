@@ -72,9 +72,7 @@ describe("S3 intelligent-tiering and metadata config ops e2e", () => {
     const listed = await client.send(
       new ListBucketIntelligentTieringConfigurationsCommand({ Bucket: bucket }),
     );
-    expect(
-      (listed.IntelligentTieringConfigurationList ?? []).length,
-    ).toBe(2);
+    expect((listed.IntelligentTieringConfigurationList ?? []).length).toBe(2);
     expect(listed.IsTruncated).toBe(false);
 
     await client.send(
@@ -87,9 +85,9 @@ describe("S3 intelligent-tiering and metadata config ops e2e", () => {
     const listedAfter = await client.send(
       new ListBucketIntelligentTieringConfigurationsCommand({ Bucket: bucket }),
     );
-    expect(
-      (listedAfter.IntelligentTieringConfigurationList ?? []).length,
-    ).toBe(1);
+    expect((listedAfter.IntelligentTieringConfigurationList ?? []).length).toBe(
+      1,
+    );
     expect(listedAfter.IntelligentTieringConfigurationList?.[0]?.Id).toBe(
       "tier2",
     );
@@ -122,7 +120,9 @@ describe("S3 intelligent-tiering and metadata config ops e2e", () => {
     );
 
     await expect(
-      client.send(new GetBucketMetadataConfigurationCommand({ Bucket: bucket })),
+      client.send(
+        new GetBucketMetadataConfigurationCommand({ Bucket: bucket }),
+      ),
     ).rejects.toThrow();
   });
 
@@ -134,7 +134,8 @@ describe("S3 intelligent-tiering and metadata config ops e2e", () => {
         Bucket: bucket,
         MetadataTableConfiguration: {
           S3TablesDestination: {
-            TableBucketArn: "arn:aws:s3tables:us-east-1:123456789012:bucket/test",
+            TableBucketArn:
+              "arn:aws:s3tables:us-east-1:123456789012:bucket/test",
             TableName: "metadata",
           },
         },

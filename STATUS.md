@@ -8,9 +8,9 @@
 | ------------------------ | --------------------------------------------- |
 | Services registered      | **141**                                       |
 | Wire protocols           | **5** (ec2, json, query, rest-json, rest-xml) |
-| Services at 100%         | **140 / 141**                                 |
-| Unimplemented operations | **8**                                         |
-| E2E test files           | **537**                                       |
+| Services at 100%         | **141 / 141**                                 |
+| Unimplemented operations | **0**                                         |
+| E2E test files           | **538**                                       |
 | Scenario test files      | **40**                                        |
 
 ## Features
@@ -42,7 +42,7 @@ Sorted by total modeled operations (descending). `impl/total` counts handler ent
 | pinpoint                | rest-json | 122/122 | 1         |
 | dms                     | json      | 119/119 | 1         |
 | logs                    | json      | 113/113 | 9         |
-| s3                      | rest-xml  | 103/111 | 26        |
+| s3                      | rest-xml  | 111/111 | 27        |
 | sesv2                   | rest-json | 111/111 | 3         |
 | backup                  | rest-json | 109/109 | 2         |
 | lexv2                   | rest-json | 107/107 | 1         |

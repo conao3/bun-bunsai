@@ -4,13 +4,47 @@ A stateful AWS mock server built in [Bun](https://bun.sh). Think LocalStack, reb
 
 `bunsai` reads the same service definitions the AWS SDK ships internally (botocore `service-2.json` / Smithy models) and drives all protocol encoding/decoding from that model data, so adding or extending a service is a matter of writing handlers — not hand-rolling wire formats.
 
-> **Status:** **141 AWS services** across all 5 AWS wire protocols. **138 services at 100%** operation coverage and growing via automated PR-driven development. See [STATUS.md](./STATUS.md) for the live coverage table.
+> **Status:** **141 AWS services** across all 5 AWS wire protocols. **All 141 services at 100% modeled-operation coverage** — 150+ parity fixtures verified against real AWS and 3 validation layers (e2e / conformance / parity). See [STATUS.md](./STATUS.md) for the live coverage table.
 
 ## Quick Start
 
+### Option A — Single binary (GitHub Releases)
+
+Download the pre-built binary for your platform from the [Releases](https://github.com/conao3/bun-bunsai/releases) page, then:
+
+```sh
+# linux-x64
+curl -fLo bunsai https://github.com/conao3/bun-bunsai/releases/latest/download/bunsai-linux-x64
+chmod +x bunsai
+./bunsai
+```
+
+```sh
+# macOS (Apple Silicon)
+curl -fLo bunsai https://github.com/conao3/bun-bunsai/releases/latest/download/bunsai-darwin-arm64
+chmod +x bunsai
+./bunsai
+```
+
+Point any AWS SDK or CLI at the running server:
+
+```sh
+aws --endpoint-url http://localhost:4566 \
+    --region us-east-1 \
+    sqs create-queue --queue-name my-queue
+```
+
+### Option B — bunx (no install)
+
+```sh
+bunx <PACKAGE_NAME>
+```
+
+### Option C — From source
+
 ```sh
 bun install
-bun run dev    # AWS gateway on :4566 + management dashboard on :5666
+bun apps/server/src/cli.ts   # AWS gateway on :4566 + management dashboard on :5666
 ```
 
 | Port   | Purpose                                          |
@@ -24,6 +58,23 @@ Override the default ports with environment variables:
 | ---------------- | ------- | ----------------------- |
 | `BUNSAI_PORT`    | `4566`  | AWS gateway listen port |
 | `BUNSAI_UI_PORT` | `5666`  | Dashboard listen port   |
+
+## Performance
+
+Startup time and memory footprint measured on a Linux x64 host (3 runs, median; metric: time-to-first-STS-response).
+
+| Implementation                         | Startup (median) | RSS     |
+| -------------------------------------- | ---------------- | ------- |
+| bunsai — single binary (linux-x64)     | ~0.7–1.4 s       | ~237 MB |
+| LocalStack 3.8.1 — `docker run` (cold) | ~3.88 s          | ~404 MB |
+
+Reproduce with:
+
+```sh
+bun maint/bin/bench-startup.ts [<bin-path>] [<localstack-image>]
+# default bin-path: /tmp/bunsai-bench-bin (built on first run)
+# default image:    localstack/localstack:latest
+```
 
 ## Pointing Clients at bunsai
 
@@ -123,7 +174,9 @@ curl -X POST http://localhost:5666/__bunsai/snapshots/<id>/restore
 
 ## Scope / Limitations
 
-- **In-memory state** — all resources live in process memory; a restart clears everything. Use [snapshots](#state-snapshots) to mitigate.
+- **In-memory state** — all resources live in process memory; state does not persist across process restarts. Use [snapshots](#state-snapshots) to checkpoint and restore state across runs.
+- **Lambda — Node.js / Bun runtimes only** — bunsai executes Lambda functions using Node.js or Bun handlers. Functions that target other runtimes (Python, Java, Go, .NET, etc.) receive `Runtime.Unsupported`. For multi-runtime Lambda testing, run bunsai alongside LocalStack.
+- **SigV4 not validated** — request signatures are accepted unconditionally; any key/secret pair works.
 - **IAM not enforced** — any credential pair (including `test`/`test`) is accepted; policies are ignored.
 - **No `rpcv2Cbor` protocol** — AWS is rolling out a new binary protocol that bunsai does not yet support.
 - **No event-stream APIs** — streaming operations such as `Kinesis SubscribeToShard` are not supported.
@@ -210,10 +263,11 @@ bun run fmt      # Prettier (--write; use fmt:check in CI)
 bun run build    # production server build
 ```
 
-Two test layers (see [`STATUS.md`](./STATUS.md)):
+Three test layers (see [`STATUS.md`](./STATUS.md)):
 
 - **L0 / e2e** — real `@aws-sdk/v3` clients drive the `bunsai` gateway handler in-process (no HTTP, via a custom `requestHandler`) and assert full round-trips (`test/e2e/`).
 - **L1 / conformance** — botocore protocol test suite (`test/conformance/`) drives the codec in-process.
+- **L2 / parity** — 150+ recorded real-AWS responses replayed against the mock to verify behavioral fidelity (`test/parity/`).
 
 Coverage and gap tools:
 

@@ -4,6 +4,7 @@ import { decideAutoSelect } from "./autoSelect";
 import type { Selection } from "./autoSelect";
 import { groupResourcesByPrefix } from "./groupByPrefix";
 import { useLocation } from "./router";
+import { isSizeWarn } from "./resourceBrowserUtils";
 import {
   CodeBlock,
   EmptyState,
@@ -180,7 +181,12 @@ function S3BucketDetail({ value }: { value: S3BucketShape }) {
               style={{ gridTemplateColumns: cols }}
             >
               <span className="r-key mono">{o.key}</span>
-              <span className="mono">{fmtBytes(o.size)}</span>
+              <span className="mono">
+                {fmtBytes(o.size)}
+                {isSizeWarn(o.size) && (
+                  <span className="badge size-warn">large</span>
+                )}
+              </span>
               <span className="mono">
                 {new Date(o.lastModified).toLocaleString()}
               </span>

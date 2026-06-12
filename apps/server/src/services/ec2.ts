@@ -25,6 +25,9 @@ type StoredInstance = {
   VpcId: string | undefined;
   ReservationId: string;
   Tags: Tag[];
+  LaunchTime?: number;
+  StopRequestTime?: number;
+  TerminateRequestTime?: number;
   MetadataOptions?: {
     HttpTokens?: string;
     HttpPutResponseHopLimit?: number;
@@ -1224,6 +1227,28 @@ type StoredSpotFleetRequest = {
   Tags: Tag[];
 };
 
+const nowSec = (): number => Math.floor(Date.now() / 1000);
+
+const instanceState = (
+  instance: StoredInstance,
+): { Code: number; Name: string } => {
+  const t = nowSec();
+  if (instance.TerminateRequestTime !== undefined) {
+    if (t - instance.TerminateRequestTime >= 1)
+      return { Code: 48, Name: "terminated" };
+    return { Code: 32, Name: "shutting-down" };
+  }
+  if (instance.StopRequestTime !== undefined) {
+    if (t - instance.StopRequestTime >= 1) return { Code: 80, Name: "stopped" };
+    return { Code: 64, Name: "stopping" };
+  }
+  if (instance.LaunchTime !== undefined) {
+    if (t - instance.LaunchTime >= 1) return { Code: 16, Name: "running" };
+    return { Code: 0, Name: "pending" };
+  }
+  return instance.State;
+};
+
 const hexId = (prefix: string): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let hex = "";
@@ -1657,16 +1682,18 @@ const RunInstances: OperationHandler = (input, ctx) => {
   for (let i = 0; i < count; i += 1) {
     const id = hexId("i");
     const octet = 10 + (i % 240);
+    const launchTime = nowSec();
     const instance: StoredInstance = {
       InstanceId: id,
       ImageId: imageId,
       InstanceType: instanceType,
-      State: { Code: 16, Name: "running" },
+      State: { Code: 0, Name: "pending" },
       PrivateIpAddress: `10.0.0.${octet}`,
       SubnetId: subnetId,
       VpcId: undefined,
       ReservationId: reservationId,
       Tags: [],
+      LaunchTime: launchTime,
     };
     ctx.store.set(instanceKey(id), instance);
     instances.push(instance);
@@ -1678,7 +1705,7 @@ const RunInstances: OperationHandler = (input, ctx) => {
       InstanceId: instance.InstanceId,
       ImageId: instance.ImageId,
       InstanceType: instance.InstanceType,
-      State: instance.State,
+      State: instanceState(instance),
       PrivateIpAddress: instance.PrivateIpAddress,
       SubnetId: instance.SubnetId,
       VpcId: instance.VpcId,
@@ -1731,9 +1758,10 @@ const DescribeInstances: OperationHandler = (input, ctx) => {
       !instanceIdFilter.includes(instance.InstanceId)
     )
       return false;
+    const state = instanceState(instance);
     if (stateFilter.length > 0) {
-      if (!stateFilter.includes(instance.State.Name)) return false;
-    } else if (instance.State.Name === "terminated") {
+      if (!stateFilter.includes(state.Name)) return false;
+    } else if (state.Name === "terminated") {
       return false;
     }
     for (const tf of tagFilters) {
@@ -1758,7 +1786,7 @@ const DescribeInstances: OperationHandler = (input, ctx) => {
           InstanceId: instance.InstanceId,
           ImageId: instance.ImageId,
           InstanceType: instance.InstanceType,
-          State: instance.State,
+          State: instanceState(instance),
           PrivateIpAddress: instance.PrivateIpAddress,
           SubnetId: instance.SubnetId,
           VpcId: instance.VpcId,
@@ -1789,8 +1817,11 @@ const transitionInstances = (
         400,
       );
     }
-    const previous = instance.State;
+    const previous = instanceState(instance);
     instance.State = current;
+    instance.LaunchTime = undefined;
+    instance.StopRequestTime = undefined;
+    instance.TerminateRequestTime = undefined;
     ctx.store.set(instanceKey(id), instance);
     changes.push({
       InstanceId: id,
@@ -1803,10 +1834,33 @@ const transitionInstances = (
 
 const TerminateInstances: OperationHandler = (input, ctx) => {
   const ids = stringList(input["InstanceIds"]);
-  const changes = transitionInstances(ctx, ids, {
-    Code: 48,
-    Name: "terminated",
-  });
+  const terminateTime = nowSec();
+  const changes: {
+    InstanceId: string;
+    CurrentState: unknown;
+    PreviousState: unknown;
+  }[] = [];
+  for (const id of ids) {
+    const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+    if (instance === undefined) {
+      throw awsError(
+        "InvalidInstanceID.NotFound",
+        `The instance ID '${id}' does not exist`,
+        400,
+      );
+    }
+    const previous = instanceState(instance);
+    instance.State = { Code: 32, Name: "shutting-down" };
+    instance.TerminateRequestTime = terminateTime;
+    instance.LaunchTime = undefined;
+    instance.StopRequestTime = undefined;
+    ctx.store.set(instanceKey(id), instance);
+    changes.push({
+      InstanceId: id,
+      PreviousState: previous,
+      CurrentState: instanceState(instance),
+    });
+  }
   return { TerminatingInstances: changes };
 };
 
@@ -1818,7 +1872,33 @@ const StartInstances: OperationHandler = (input, ctx) => {
 
 const StopInstances: OperationHandler = (input, ctx) => {
   const ids = stringList(input["InstanceIds"]);
-  const changes = transitionInstances(ctx, ids, { Code: 80, Name: "stopped" });
+  const stopTime = nowSec();
+  const changes: {
+    InstanceId: string;
+    CurrentState: unknown;
+    PreviousState: unknown;
+  }[] = [];
+  for (const id of ids) {
+    const instance = ctx.store.get<StoredInstance>(instanceKey(id));
+    if (instance === undefined) {
+      throw awsError(
+        "InvalidInstanceID.NotFound",
+        `The instance ID '${id}' does not exist`,
+        400,
+      );
+    }
+    const previous = instanceState(instance);
+    instance.State = { Code: 64, Name: "stopping" };
+    instance.StopRequestTime = stopTime;
+    instance.LaunchTime = undefined;
+    instance.TerminateRequestTime = undefined;
+    ctx.store.set(instanceKey(id), instance);
+    changes.push({
+      InstanceId: id,
+      PreviousState: previous,
+      CurrentState: instanceState(instance),
+    });
+  }
   return { StoppingInstances: changes };
 };
 
@@ -11068,7 +11148,7 @@ const DescribeInstanceImageMetadata: OperationHandler = (input, ctx) => {
       InstanceType: instance.InstanceType,
       LaunchTime: undefined,
       AvailabilityZone: "us-east-1a",
-      State: instance.State,
+      State: instanceState(instance),
       ImageMetadata: { ImageId: instance.ImageId },
       Tags: instance.Tags,
     })),
@@ -11092,7 +11172,7 @@ const DescribeInstanceStatus: OperationHandler = (input, ctx) => {
     InstanceStatuses: instances.map((instance) => ({
       InstanceId: instance.InstanceId,
       AvailabilityZone: `${ctx.region}a`,
-      InstanceState: instance.State,
+      InstanceState: instanceState(instance),
       InstanceStatus: {
         Status: "ok",
         Details: [{ Name: "reachability", Status: "passed" }],

@@ -41,6 +41,7 @@ test("RebootInstances: instance stays running after reboot", async () => {
 
   await client.send(new RebootInstancesCommand({ InstanceIds: [instanceId] }));
 
+  await Bun.sleep(1100);
   const descRes = await client.send(
     new DescribeInstancesCommand({ InstanceIds: [instanceId] }),
   );

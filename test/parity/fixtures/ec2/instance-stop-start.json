@@ -1,0 +1,42 @@
+{
+  "clientPackage": "@aws-sdk/client-ec2",
+  "clientName": "EC2Client",
+  "steps": [
+    {
+      "command": "RunInstancesCommand",
+      "input": {
+        "ImageId": "ami-12345678",
+        "InstanceType": "t2.micro",
+        "MinCount": 1,
+        "MaxCount": 1
+      },
+      "expected": {
+        "Instances": [
+          {
+            "State": { "Code": 0, "Name": "pending" }
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata", "ReservationId", "OwnerId"],
+      "saveAs": "run2",
+      "refs": {}
+    },
+    {
+      "command": "StopInstancesCommand",
+      "input": {
+        "InstanceIds": ["${run2.Instances.0.InstanceId}"]
+      },
+      "expected": {
+        "StoppingInstances": [
+          {
+            "CurrentState": { "Code": 64, "Name": "stopping" },
+            "PreviousState": "<ANY>"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

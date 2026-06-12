@@ -62,7 +62,10 @@ describe("S3 ownership / abac / policy-status / delete-encryption e2e", () => {
     const client = s3();
 
     await client.send(
-      new PutBucketAbacCommand({ Bucket: bucket, AbacStatus: { Status: "Enabled" } }),
+      new PutBucketAbacCommand({
+        Bucket: bucket,
+        AbacStatus: { Status: "Enabled" },
+      }),
     );
 
     const result = await client.send(

@@ -32,6 +32,15 @@ const fieldLevelEncryptionKey = "fle#";
 const fieldLevelEncryptionProfileKey = "flep#";
 const keyGroupKey = "keygroup#";
 const tagKey = "tag#";
+const functionKey = "function#";
+const keyValueStoreKey = "kvs#";
+const originRequestPolicyKey = "orpolicy#";
+const realtimeLogConfigKey = "rtlogconfig#";
+const responseHeadersPolicyKey = "rhpolicy#";
+const streamingDistributionKey = "streamdist#";
+const trustStoreKey = "truststore#";
+const vpcOriginKey = "vpcorigin#";
+const resourcePolicyKey = "respolicy#";
 
 type StoredDistribution = {
   id: string;
@@ -158,6 +167,80 @@ type StoredFieldLevelEncryptionProfile = {
 
 type StoredKeyGroup = {
   id: string;
+  lastModifiedTime: string;
+  etag: string;
+  config: Record<string, unknown>;
+};
+
+type StoredFunction = {
+  name: string;
+  arn: string;
+  status: string;
+  stage: string;
+  createdTime: string;
+  lastModifiedTime: string;
+  etag: string;
+  functionCode: string;
+  config: Record<string, unknown>;
+};
+
+type StoredKeyValueStore = {
+  name: string;
+  id: string;
+  arn: string;
+  status: string;
+  createdTime: string;
+  lastModifiedTime: string;
+  etag: string;
+  comment: string;
+};
+
+type StoredOriginRequestPolicy = {
+  id: string;
+  lastModifiedTime: string;
+  etag: string;
+  config: Record<string, unknown>;
+};
+
+type StoredRealtimeLogConfig = {
+  arn: string;
+  name: string;
+  samplingRate: number;
+  fields: string[];
+  endPoints: unknown[];
+};
+
+type StoredResponseHeadersPolicy = {
+  id: string;
+  lastModifiedTime: string;
+  etag: string;
+  config: Record<string, unknown>;
+};
+
+type StoredStreamingDistribution = {
+  id: string;
+  arn: string;
+  status: string;
+  lastModifiedTime: string;
+  domainName: string;
+  etag: string;
+  config: Record<string, unknown>;
+};
+
+type StoredTrustStore = {
+  id: string;
+  name: string;
+  arn: string;
+  status: string;
+  lastModifiedTime: string;
+  etag: string;
+};
+
+type StoredVpcOrigin = {
+  id: string;
+  arn: string;
+  status: string;
+  createdTime: string;
   lastModifiedTime: string;
   etag: string;
   config: Record<string, unknown>;
@@ -305,6 +388,76 @@ const keyGroupView = (entry: StoredKeyGroup) => ({
   Id: entry.id,
   LastModifiedTime: entry.lastModifiedTime,
   KeyGroupConfig: entry.config,
+});
+
+const functionView = (entry: StoredFunction) => ({
+  Name: entry.name,
+  FunctionARN: entry.arn,
+  Status: entry.status,
+  FunctionMetadata: {
+    FunctionARN: entry.arn,
+    Stage: entry.stage,
+    CreatedTime: entry.createdTime,
+    LastModifiedTime: entry.lastModifiedTime,
+  },
+  FunctionConfig: entry.config,
+});
+
+const keyValueStoreView = (entry: StoredKeyValueStore) => ({
+  Name: entry.name,
+  Id: entry.id,
+  ARN: entry.arn,
+  Status: entry.status,
+  CreatedTime: entry.createdTime,
+  LastModifiedTime: entry.lastModifiedTime,
+  Comment: entry.comment,
+});
+
+const originRequestPolicyView = (entry: StoredOriginRequestPolicy) => ({
+  Id: entry.id,
+  LastModifiedTime: entry.lastModifiedTime,
+  OriginRequestPolicyConfig: entry.config,
+});
+
+const realtimeLogConfigView = (entry: StoredRealtimeLogConfig) => ({
+  ARN: entry.arn,
+  Name: entry.name,
+  SamplingRate: entry.samplingRate,
+  Fields: entry.fields,
+  EndPoints: entry.endPoints,
+});
+
+const responseHeadersPolicyView = (entry: StoredResponseHeadersPolicy) => ({
+  Id: entry.id,
+  LastModifiedTime: entry.lastModifiedTime,
+  ResponseHeadersPolicyConfig: entry.config,
+});
+
+const streamingDistributionView = (entry: StoredStreamingDistribution) => ({
+  Id: entry.id,
+  ARN: entry.arn,
+  Status: entry.status,
+  LastModifiedTime: entry.lastModifiedTime,
+  DomainName: entry.domainName,
+  ActiveTrustedSigners: { Enabled: false, Quantity: 0 },
+  StreamingDistributionConfig: entry.config,
+});
+
+const trustStoreView = (entry: StoredTrustStore) => ({
+  Id: entry.id,
+  Name: entry.name,
+  ARN: entry.arn,
+  Status: entry.status,
+  LastModifiedTime: entry.lastModifiedTime,
+});
+
+const vpcOriginView = (entry: StoredVpcOrigin) => ({
+  Id: entry.id,
+  ARN: entry.arn,
+  Status: entry.status,
+  CreatedTime: entry.createdTime,
+  LastModifiedTime: entry.lastModifiedTime,
+  VpcOriginEndpointConfig: entry.config,
 });
 
 const getCachePolicyEntry = (
@@ -536,6 +689,127 @@ const getMonitoringSub = (
   return found;
 };
 
+const getFunction = (ctx: ServiceContext, name: string): StoredFunction => {
+  const found = ctx.store.get<StoredFunction>(functionKey + name);
+  if (found === undefined) {
+    throw awsError(
+      "NoSuchFunctionExists",
+      `The specified function does not exist: ${name}`,
+      404,
+    );
+  }
+  return found;
+};
+
+const getKeyValueStore = (
+  ctx: ServiceContext,
+  name: string,
+): StoredKeyValueStore => {
+  const found = ctx.store.get<StoredKeyValueStore>(keyValueStoreKey + name);
+  if (found === undefined) {
+    throw awsError(
+      "EntityNotFound",
+      `The specified key value store does not exist: ${name}`,
+      404,
+    );
+  }
+  return found;
+};
+
+const getOriginRequestPolicy = (
+  ctx: ServiceContext,
+  id: string,
+): StoredOriginRequestPolicy => {
+  const found = ctx.store.get<StoredOriginRequestPolicy>(
+    originRequestPolicyKey + id,
+  );
+  if (found === undefined) {
+    throw awsError(
+      "NoSuchOriginRequestPolicy",
+      `The specified origin request policy does not exist: ${id}`,
+      404,
+    );
+  }
+  return found;
+};
+
+const getRealtimeLogConfig = (
+  ctx: ServiceContext,
+  nameOrArn: string,
+): StoredRealtimeLogConfig => {
+  const all = ctx.store
+    .list<StoredRealtimeLogConfig>()
+    .filter((e) => e.key.startsWith(realtimeLogConfigKey))
+    .map((e) => e.value);
+  const found = all.find((e) => e.name === nameOrArn || e.arn === nameOrArn);
+  if (found === undefined) {
+    throw awsError(
+      "NoSuchRealtimeLogConfig",
+      `The specified real-time log configuration does not exist: ${nameOrArn}`,
+      404,
+    );
+  }
+  return found;
+};
+
+const getResponseHeadersPolicy = (
+  ctx: ServiceContext,
+  id: string,
+): StoredResponseHeadersPolicy => {
+  const found = ctx.store.get<StoredResponseHeadersPolicy>(
+    responseHeadersPolicyKey + id,
+  );
+  if (found === undefined) {
+    throw awsError(
+      "NoSuchResponseHeadersPolicy",
+      `The specified response headers policy does not exist: ${id}`,
+      404,
+    );
+  }
+  return found;
+};
+
+const getStreamingDistribution = (
+  ctx: ServiceContext,
+  id: string,
+): StoredStreamingDistribution => {
+  const found = ctx.store.get<StoredStreamingDistribution>(
+    streamingDistributionKey + id,
+  );
+  if (found === undefined) {
+    throw awsError(
+      "NoSuchStreamingDistribution",
+      `The specified streaming distribution does not exist: ${id}`,
+      404,
+    );
+  }
+  return found;
+};
+
+const getTrustStore = (ctx: ServiceContext, id: string): StoredTrustStore => {
+  const found = ctx.store.get<StoredTrustStore>(trustStoreKey + id);
+  if (found === undefined) {
+    throw awsError(
+      "EntityNotFound",
+      `The specified trust store does not exist: ${id}`,
+      404,
+    );
+  }
+  return found;
+};
+
+const getVpcOrigin = (ctx: ServiceContext, id: string): StoredVpcOrigin => {
+  const found = ctx.store.get<StoredVpcOrigin>(vpcOriginKey + id);
+  if (found === undefined) {
+    throw awsError(
+      "EntityNotFound",
+      `The specified VPC origin does not exist: ${id}`,
+      404,
+    );
+  }
+  return found;
+};
+
 const nonDistributionPrefixes = [
   cachePolicyKey,
   publicKeyKey,
@@ -553,6 +827,15 @@ const nonDistributionPrefixes = [
   fieldLevelEncryptionProfileKey,
   keyGroupKey,
   tagKey,
+  functionKey,
+  keyValueStoreKey,
+  originRequestPolicyKey,
+  realtimeLogConfigKey,
+  responseHeadersPolicyKey,
+  streamingDistributionKey,
+  trustStoreKey,
+  vpcOriginKey,
+  resourcePolicyKey,
 ] as const;
 
 const getDistributions = (ctx: ServiceContext): StoredDistribution[] =>
@@ -1011,6 +1294,194 @@ const cloudfront: ServiceDefinition = {
 
     if (path.startsWith("/2020-05-31/distributionsByVpcOriginId/")) {
       if (method === "GET") return "ListDistributionsByVpcOriginId";
+      return undefined;
+    }
+
+    if (
+      path === "/2020-05-31/function" ||
+      path.startsWith("/2020-05-31/function/")
+    ) {
+      const rest = path.slice("/2020-05-31/function".length).replace(/\/$/, "");
+      if (rest === "") {
+        if (method === "GET") return "ListFunctions";
+        if (method === "POST") return "CreateFunction";
+        return undefined;
+      }
+      const fnSegs = rest.slice(1).split("/");
+      if (fnSegs.length === 1) {
+        if (method === "GET") return "GetFunction";
+        if (method === "PUT") return "UpdateFunction";
+        if (method === "DELETE") return "DeleteFunction";
+        return undefined;
+      }
+      if (fnSegs.length === 2) {
+        if (fnSegs[1] === "describe" && method === "GET")
+          return "DescribeFunction";
+        if (fnSegs[1] === "publish" && method === "POST")
+          return "PublishFunction";
+        if (fnSegs[1] === "test" && method === "POST") return "TestFunction";
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (
+      path === "/2020-05-31/key-value-store" ||
+      path.startsWith("/2020-05-31/key-value-store/")
+    ) {
+      const rest = path
+        .slice("/2020-05-31/key-value-store".length)
+        .replace(/\/$/, "");
+      if (rest === "") {
+        if (method === "GET") return "ListKeyValueStores";
+        if (method === "POST") return "CreateKeyValueStore";
+        return undefined;
+      }
+      if (method === "GET") return "DescribeKeyValueStore";
+      if (method === "PUT") return "UpdateKeyValueStore";
+      if (method === "DELETE") return "DeleteKeyValueStore";
+      return undefined;
+    }
+
+    if (
+      path === "/2020-05-31/origin-request-policy" ||
+      path.startsWith("/2020-05-31/origin-request-policy/")
+    ) {
+      const rest = path
+        .slice("/2020-05-31/origin-request-policy".length)
+        .replace(/\/$/, "");
+      if (rest === "") {
+        if (method === "GET") return "ListOriginRequestPolicies";
+        if (method === "POST") return "CreateOriginRequestPolicy";
+        return undefined;
+      }
+      if (rest.endsWith("/config")) {
+        if (method === "GET") return "GetOriginRequestPolicyConfig";
+        return undefined;
+      }
+      if (method === "GET") return "GetOriginRequestPolicy";
+      if (method === "PUT") return "UpdateOriginRequestPolicy";
+      if (method === "DELETE") return "DeleteOriginRequestPolicy";
+      return undefined;
+    }
+
+    if (path === "/2020-05-31/realtime-log-config") {
+      if (method === "GET") return "ListRealtimeLogConfigs";
+      if (method === "POST") return "CreateRealtimeLogConfig";
+      if (method === "PUT") return "UpdateRealtimeLogConfig";
+      return undefined;
+    }
+
+    if (path === "/2020-05-31/get-realtime-log-config") {
+      if (method === "POST") return "GetRealtimeLogConfig";
+      return undefined;
+    }
+
+    if (path === "/2020-05-31/delete-realtime-log-config") {
+      if (method === "POST") return "DeleteRealtimeLogConfig";
+      return undefined;
+    }
+
+    if (
+      path === "/2020-05-31/response-headers-policy" ||
+      path.startsWith("/2020-05-31/response-headers-policy/")
+    ) {
+      const rest = path
+        .slice("/2020-05-31/response-headers-policy".length)
+        .replace(/\/$/, "");
+      if (rest === "") {
+        if (method === "GET") return "ListResponseHeadersPolicies";
+        if (method === "POST") return "CreateResponseHeadersPolicy";
+        return undefined;
+      }
+      if (rest.endsWith("/config")) {
+        if (method === "GET") return "GetResponseHeadersPolicyConfig";
+        return undefined;
+      }
+      if (method === "GET") return "GetResponseHeadersPolicy";
+      if (method === "PUT") return "UpdateResponseHeadersPolicy";
+      if (method === "DELETE") return "DeleteResponseHeadersPolicy";
+      return undefined;
+    }
+
+    if (
+      path === "/2020-05-31/streaming-distribution" ||
+      path.startsWith("/2020-05-31/streaming-distribution/")
+    ) {
+      const rest = path
+        .slice("/2020-05-31/streaming-distribution".length)
+        .replace(/\/$/, "");
+      if (rest === "") {
+        if (method === "GET") return "ListStreamingDistributions";
+        if (method === "POST") {
+          if (query.has("WithTags"))
+            return "CreateStreamingDistributionWithTags";
+          return "CreateStreamingDistribution";
+        }
+        return undefined;
+      }
+      if (rest.endsWith("/config")) {
+        if (method === "GET") return "GetStreamingDistributionConfig";
+        if (method === "PUT") return "UpdateStreamingDistribution";
+        return undefined;
+      }
+      if (method === "GET") return "GetStreamingDistribution";
+      if (method === "DELETE") return "DeleteStreamingDistribution";
+      return undefined;
+    }
+
+    if (
+      path === "/2020-05-31/trust-store" ||
+      path.startsWith("/2020-05-31/trust-store/")
+    ) {
+      const rest = path
+        .slice("/2020-05-31/trust-store".length)
+        .replace(/\/$/, "");
+      if (rest === "") {
+        if (method === "POST") return "CreateTrustStore";
+        return undefined;
+      }
+      if (method === "GET") return "GetTrustStore";
+      if (method === "PUT") return "UpdateTrustStore";
+      if (method === "DELETE") return "DeleteTrustStore";
+      return undefined;
+    }
+
+    if (path === "/2020-05-31/trust-stores") {
+      if (method === "POST") return "ListTrustStores";
+      return undefined;
+    }
+
+    if (
+      path === "/2020-05-31/vpc-origin" ||
+      path.startsWith("/2020-05-31/vpc-origin/")
+    ) {
+      const rest = path
+        .slice("/2020-05-31/vpc-origin".length)
+        .replace(/\/$/, "");
+      if (rest === "") {
+        if (method === "GET") return "ListVpcOrigins";
+        if (method === "POST") return "CreateVpcOrigin";
+        return undefined;
+      }
+      if (method === "GET") return "GetVpcOrigin";
+      if (method === "PUT") return "UpdateVpcOrigin";
+      if (method === "DELETE") return "DeleteVpcOrigin";
+      return undefined;
+    }
+
+    if (path === "/2020-05-31/put-resource-policy") {
+      if (method === "POST") return "PutResourcePolicy";
+      return undefined;
+    }
+
+    if (path === "/2020-05-31/get-resource-policy") {
+      if (method === "POST") return "GetResourcePolicy";
+      return undefined;
+    }
+
+    if (path === "/2020-05-31/delete-resource-policy") {
+      if (method === "POST") return "DeleteResourcePolicy";
       return undefined;
     }
 
@@ -3238,6 +3709,863 @@ const cloudfront: ServiceDefinition = {
           Items: dists.map((d) => d.id),
         },
       };
+    },
+    CreateFunction: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      const existing = ctx.store.get<StoredFunction>(functionKey + name);
+      if (existing !== undefined) {
+        throw awsError(
+          "FunctionAlreadyExists",
+          `A function with the name ${name} already exists.`,
+          409,
+        );
+      }
+      const now = new Date().toISOString();
+      const entry: StoredFunction = {
+        name,
+        arn: `arn:aws:cloudfront::${ctx.account}:function/${name}`,
+        status: "UNPUBLISHED",
+        stage: "DEVELOPMENT",
+        createdTime: now,
+        lastModifiedTime: now,
+        etag: generateId("ETAG"),
+        functionCode:
+          typeof input["FunctionCode"] === "string"
+            ? input["FunctionCode"]
+            : "",
+        config: asRecord(input["FunctionConfig"]),
+      };
+      ctx.store.set<StoredFunction>(functionKey + name, entry);
+      return {
+        FunctionSummary: functionView(entry),
+        Location: `https://cloudfront.amazonaws.com/2020-05-31/function/${name}`,
+        ETag: entry.etag,
+      };
+    },
+    GetFunction: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      const entry = getFunction(ctx, name);
+      return {
+        FunctionCode: entry.functionCode,
+        FunctionSummary: functionView(entry),
+        ContentType: "application/octet-stream",
+        ETag: entry.etag,
+      };
+    },
+    DescribeFunction: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      const entry = getFunction(ctx, name);
+      return {
+        FunctionSummary: functionView(entry),
+        ETag: entry.etag,
+      };
+    },
+    UpdateFunction: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      const entry = getFunction(ctx, name);
+      const updated: StoredFunction = {
+        ...entry,
+        functionCode:
+          typeof input["FunctionCode"] === "string"
+            ? input["FunctionCode"]
+            : entry.functionCode,
+        config:
+          input["FunctionConfig"] !== undefined
+            ? asRecord(input["FunctionConfig"])
+            : entry.config,
+        lastModifiedTime: new Date().toISOString(),
+        etag: generateId("ETAG"),
+      };
+      ctx.store.set<StoredFunction>(functionKey + name, updated);
+      return {
+        FunctionSummary: functionView(updated),
+        ETag: updated.etag,
+      };
+    },
+    DeleteFunction: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      getFunction(ctx, name);
+      ctx.store.delete(functionKey + name);
+      return {};
+    },
+    ListFunctions: (_input, ctx) => {
+      const entries = ctx.store
+        .list<StoredFunction>()
+        .filter((e) => e.key.startsWith(functionKey))
+        .map((e) => e.value);
+      return {
+        FunctionList: {
+          MaxItems: 100,
+          IsTruncated: false,
+          Quantity: entries.length,
+          Items: entries.map(functionView),
+        },
+      };
+    },
+    PublishFunction: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      const entry = getFunction(ctx, name);
+      const updated: StoredFunction = {
+        ...entry,
+        status: "DEPLOYED",
+        stage: "LIVE",
+        lastModifiedTime: new Date().toISOString(),
+        etag: generateId("ETAG"),
+      };
+      ctx.store.set<StoredFunction>(functionKey + name, updated);
+      return {
+        FunctionSummary: functionView(updated),
+      };
+    },
+    TestFunction: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      getFunction(ctx, name);
+      return {
+        TestResult: {
+          ComputeUtilization: "0",
+          FunctionExecutionLogs: [],
+          FunctionErrorMessage: "",
+          FunctionOutput: "",
+        },
+      };
+    },
+    CreateKeyValueStore: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      const existing = ctx.store.get<StoredKeyValueStore>(
+        keyValueStoreKey + name,
+      );
+      if (existing !== undefined) {
+        throw awsError(
+          "EntityAlreadyExists",
+          `A key value store with the name ${name} already exists.`,
+          409,
+        );
+      }
+      const now = new Date().toISOString();
+      const id = generateId("KVS");
+      const entry: StoredKeyValueStore = {
+        name,
+        id,
+        arn: `arn:aws:cloudfront::${ctx.account}:key-value-store/${id}`,
+        status: "READY",
+        createdTime: now,
+        lastModifiedTime: now,
+        etag: generateId("ETAG"),
+        comment: typeof input["Comment"] === "string" ? input["Comment"] : "",
+      };
+      ctx.store.set<StoredKeyValueStore>(keyValueStoreKey + name, entry);
+      return {
+        KeyValueStore: keyValueStoreView(entry),
+        ETag: entry.etag,
+        Location: `https://cloudfront.amazonaws.com/2020-05-31/key-value-store/${name}`,
+      };
+    },
+    DescribeKeyValueStore: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      const entry = getKeyValueStore(ctx, name);
+      return {
+        KeyValueStore: keyValueStoreView(entry),
+        ETag: entry.etag,
+      };
+    },
+    UpdateKeyValueStore: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      const entry = getKeyValueStore(ctx, name);
+      const updated: StoredKeyValueStore = {
+        ...entry,
+        comment:
+          typeof input["Comment"] === "string"
+            ? input["Comment"]
+            : entry.comment,
+        lastModifiedTime: new Date().toISOString(),
+        etag: generateId("ETAG"),
+      };
+      ctx.store.set<StoredKeyValueStore>(keyValueStoreKey + name, updated);
+      return {
+        KeyValueStore: keyValueStoreView(updated),
+        ETag: updated.etag,
+      };
+    },
+    DeleteKeyValueStore: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      getKeyValueStore(ctx, name);
+      ctx.store.delete(keyValueStoreKey + name);
+      return {};
+    },
+    ListKeyValueStores: (_input, ctx) => {
+      const entries = ctx.store
+        .list<StoredKeyValueStore>()
+        .filter((e) => e.key.startsWith(keyValueStoreKey))
+        .map((e) => e.value);
+      return {
+        KeyValueStoreList: {
+          MaxItems: 100,
+          IsTruncated: false,
+          Quantity: entries.length,
+          Items: entries.map(keyValueStoreView),
+        },
+      };
+    },
+    CreateOriginRequestPolicy: (input, ctx) => {
+      const config = asRecord(input["OriginRequestPolicyConfig"]);
+      const id = generateId("ORP");
+      const now = new Date().toISOString();
+      const entry: StoredOriginRequestPolicy = {
+        id,
+        lastModifiedTime: now,
+        etag: generateId("ETAG"),
+        config,
+      };
+      ctx.store.set<StoredOriginRequestPolicy>(
+        originRequestPolicyKey + id,
+        entry,
+      );
+      return {
+        OriginRequestPolicy: originRequestPolicyView(entry),
+        Location: `https://cloudfront.amazonaws.com/2020-05-31/origin-request-policy/${id}`,
+        ETag: entry.etag,
+      };
+    },
+    GetOriginRequestPolicy: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getOriginRequestPolicy(ctx, id);
+      return {
+        OriginRequestPolicy: originRequestPolicyView(entry),
+        ETag: entry.etag,
+      };
+    },
+    GetOriginRequestPolicyConfig: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getOriginRequestPolicy(ctx, id);
+      return {
+        OriginRequestPolicyConfig: entry.config,
+        ETag: entry.etag,
+      };
+    },
+    UpdateOriginRequestPolicy: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getOriginRequestPolicy(ctx, id);
+      const updated: StoredOriginRequestPolicy = {
+        ...entry,
+        config: asRecord(input["OriginRequestPolicyConfig"]),
+        lastModifiedTime: new Date().toISOString(),
+        etag: generateId("ETAG"),
+      };
+      ctx.store.set<StoredOriginRequestPolicy>(
+        originRequestPolicyKey + id,
+        updated,
+      );
+      return {
+        OriginRequestPolicy: originRequestPolicyView(updated),
+        ETag: updated.etag,
+      };
+    },
+    DeleteOriginRequestPolicy: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      getOriginRequestPolicy(ctx, id);
+      ctx.store.delete(originRequestPolicyKey + id);
+      return {};
+    },
+    ListOriginRequestPolicies: (_input, ctx) => {
+      const entries = ctx.store
+        .list<StoredOriginRequestPolicy>()
+        .filter((e) => e.key.startsWith(originRequestPolicyKey))
+        .map((e) => e.value);
+      return {
+        OriginRequestPolicyList: {
+          MaxItems: 100,
+          IsTruncated: false,
+          Quantity: entries.length,
+          Items: entries.map((e) => ({
+            Type: "custom",
+            OriginRequestPolicy: originRequestPolicyView(e),
+          })),
+        },
+      };
+    },
+    CreateRealtimeLogConfig: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      const arn = `arn:aws:cloudfront::${ctx.account}:realtime-log-config/${name}`;
+      const entry: StoredRealtimeLogConfig = {
+        arn,
+        name,
+        samplingRate:
+          typeof input["SamplingRate"] === "number" ? input["SamplingRate"] : 1,
+        fields: Array.isArray(input["Fields"])
+          ? (input["Fields"] as string[])
+          : [],
+        endPoints: Array.isArray(input["EndPoints"])
+          ? (input["EndPoints"] as unknown[])
+          : [],
+      };
+      ctx.store.set<StoredRealtimeLogConfig>(
+        realtimeLogConfigKey + name,
+        entry,
+      );
+      return {
+        RealtimeLogConfig: realtimeLogConfigView(entry),
+      };
+    },
+    GetRealtimeLogConfig: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      const arn = typeof input["ARN"] === "string" ? input["ARN"] : undefined;
+      const key = name ?? arn;
+      if (key === undefined || key === "") {
+        throw awsError(
+          "InvalidArgument",
+          "Either Name or ARN is required",
+          400,
+        );
+      }
+      const entry = getRealtimeLogConfig(ctx, key);
+      return {
+        RealtimeLogConfig: realtimeLogConfigView(entry),
+      };
+    },
+    UpdateRealtimeLogConfig: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      const arn = typeof input["ARN"] === "string" ? input["ARN"] : undefined;
+      const key = name ?? arn;
+      if (key === undefined || key === "") {
+        throw awsError(
+          "InvalidArgument",
+          "Either Name or ARN is required",
+          400,
+        );
+      }
+      const entry = getRealtimeLogConfig(ctx, key);
+      const updated: StoredRealtimeLogConfig = {
+        ...entry,
+        samplingRate:
+          typeof input["SamplingRate"] === "number"
+            ? input["SamplingRate"]
+            : entry.samplingRate,
+        fields: Array.isArray(input["Fields"])
+          ? (input["Fields"] as string[])
+          : entry.fields,
+        endPoints: Array.isArray(input["EndPoints"])
+          ? (input["EndPoints"] as unknown[])
+          : entry.endPoints,
+      };
+      ctx.store.set<StoredRealtimeLogConfig>(
+        realtimeLogConfigKey + entry.name,
+        updated,
+      );
+      return {
+        RealtimeLogConfig: realtimeLogConfigView(updated),
+      };
+    },
+    DeleteRealtimeLogConfig: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      const arn = typeof input["ARN"] === "string" ? input["ARN"] : undefined;
+      const key = name ?? arn;
+      if (key === undefined || key === "") {
+        throw awsError(
+          "InvalidArgument",
+          "Either Name or ARN is required",
+          400,
+        );
+      }
+      const entry = getRealtimeLogConfig(ctx, key);
+      ctx.store.delete(realtimeLogConfigKey + entry.name);
+      return {};
+    },
+    ListRealtimeLogConfigs: (_input, ctx) => {
+      const entries = ctx.store
+        .list<StoredRealtimeLogConfig>()
+        .filter((e) => e.key.startsWith(realtimeLogConfigKey))
+        .map((e) => e.value);
+      return {
+        RealtimeLogConfigs: {
+          MaxItems: 100,
+          IsTruncated: false,
+          Quantity: entries.length,
+          Items: entries.map(realtimeLogConfigView),
+        },
+      };
+    },
+    CreateResponseHeadersPolicy: (input, ctx) => {
+      const config = asRecord(input["ResponseHeadersPolicyConfig"]);
+      const id = generateId("RHP");
+      const now = new Date().toISOString();
+      const entry: StoredResponseHeadersPolicy = {
+        id,
+        lastModifiedTime: now,
+        etag: generateId("ETAG"),
+        config,
+      };
+      ctx.store.set<StoredResponseHeadersPolicy>(
+        responseHeadersPolicyKey + id,
+        entry,
+      );
+      return {
+        ResponseHeadersPolicy: responseHeadersPolicyView(entry),
+        Location: `https://cloudfront.amazonaws.com/2020-05-31/response-headers-policy/${id}`,
+        ETag: entry.etag,
+      };
+    },
+    GetResponseHeadersPolicy: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getResponseHeadersPolicy(ctx, id);
+      return {
+        ResponseHeadersPolicy: responseHeadersPolicyView(entry),
+        ETag: entry.etag,
+      };
+    },
+    GetResponseHeadersPolicyConfig: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getResponseHeadersPolicy(ctx, id);
+      return {
+        ResponseHeadersPolicyConfig: entry.config,
+        ETag: entry.etag,
+      };
+    },
+    UpdateResponseHeadersPolicy: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getResponseHeadersPolicy(ctx, id);
+      const updated: StoredResponseHeadersPolicy = {
+        ...entry,
+        config: asRecord(input["ResponseHeadersPolicyConfig"]),
+        lastModifiedTime: new Date().toISOString(),
+        etag: generateId("ETAG"),
+      };
+      ctx.store.set<StoredResponseHeadersPolicy>(
+        responseHeadersPolicyKey + id,
+        updated,
+      );
+      return {
+        ResponseHeadersPolicy: responseHeadersPolicyView(updated),
+        ETag: updated.etag,
+      };
+    },
+    DeleteResponseHeadersPolicy: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      getResponseHeadersPolicy(ctx, id);
+      ctx.store.delete(responseHeadersPolicyKey + id);
+      return {};
+    },
+    ListResponseHeadersPolicies: (_input, ctx) => {
+      const entries = ctx.store
+        .list<StoredResponseHeadersPolicy>()
+        .filter((e) => e.key.startsWith(responseHeadersPolicyKey))
+        .map((e) => e.value);
+      return {
+        ResponseHeadersPolicyList: {
+          MaxItems: 100,
+          IsTruncated: false,
+          Quantity: entries.length,
+          Items: entries.map((e) => ({
+            Type: "custom",
+            ResponseHeadersPolicy: responseHeadersPolicyView(e),
+          })),
+        },
+      };
+    },
+    CreateStreamingDistribution: (input, ctx) => {
+      const config = asRecord(input["StreamingDistributionConfig"]);
+      const id = generateId("E");
+      const domainName = `${id.toLowerCase()}.cloudfront.net`;
+      const now = new Date().toISOString();
+      const entry: StoredStreamingDistribution = {
+        id,
+        arn: `arn:aws:cloudfront::${ctx.account}:streaming-distribution/${id}`,
+        status: "Deployed",
+        lastModifiedTime: now,
+        domainName,
+        etag: generateId("ETAG"),
+        config,
+      };
+      ctx.store.set<StoredStreamingDistribution>(
+        streamingDistributionKey + id,
+        entry,
+      );
+      return {
+        StreamingDistribution: streamingDistributionView(entry),
+        Location: `https://cloudfront.amazonaws.com/2020-05-31/streaming-distribution/${id}`,
+        ETag: entry.etag,
+      };
+    },
+    CreateStreamingDistributionWithTags: (input, ctx) => {
+      const configWithTags = asRecord(
+        input["StreamingDistributionConfigWithTags"],
+      );
+      const config = asRecord(configWithTags["StreamingDistributionConfig"]);
+      const id = generateId("E");
+      const domainName = `${id.toLowerCase()}.cloudfront.net`;
+      const now = new Date().toISOString();
+      const entry: StoredStreamingDistribution = {
+        id,
+        arn: `arn:aws:cloudfront::${ctx.account}:streaming-distribution/${id}`,
+        status: "Deployed",
+        lastModifiedTime: now,
+        domainName,
+        etag: generateId("ETAG"),
+        config,
+      };
+      ctx.store.set<StoredStreamingDistribution>(
+        streamingDistributionKey + id,
+        entry,
+      );
+      return {
+        StreamingDistribution: streamingDistributionView(entry),
+        Location: `https://cloudfront.amazonaws.com/2020-05-31/streaming-distribution/${id}`,
+        ETag: entry.etag,
+      };
+    },
+    GetStreamingDistribution: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getStreamingDistribution(ctx, id);
+      return {
+        StreamingDistribution: streamingDistributionView(entry),
+        ETag: entry.etag,
+      };
+    },
+    GetStreamingDistributionConfig: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getStreamingDistribution(ctx, id);
+      return {
+        StreamingDistributionConfig: entry.config,
+        ETag: entry.etag,
+      };
+    },
+    UpdateStreamingDistribution: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getStreamingDistribution(ctx, id);
+      const updated: StoredStreamingDistribution = {
+        ...entry,
+        config: asRecord(input["StreamingDistributionConfig"]),
+        lastModifiedTime: new Date().toISOString(),
+        etag: generateId("ETAG"),
+      };
+      ctx.store.set<StoredStreamingDistribution>(
+        streamingDistributionKey + id,
+        updated,
+      );
+      return {
+        StreamingDistribution: streamingDistributionView(updated),
+        ETag: updated.etag,
+      };
+    },
+    DeleteStreamingDistribution: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      getStreamingDistribution(ctx, id);
+      ctx.store.delete(streamingDistributionKey + id);
+      return {};
+    },
+    ListStreamingDistributions: (_input, ctx) => {
+      const entries = ctx.store
+        .list<StoredStreamingDistribution>()
+        .filter((e) => e.key.startsWith(streamingDistributionKey))
+        .map((e) => e.value);
+      return {
+        StreamingDistributionList: {
+          Marker: "",
+          MaxItems: 100,
+          IsTruncated: false,
+          Quantity: entries.length,
+          Items: entries.map(streamingDistributionView),
+        },
+      };
+    },
+    CreateTrustStore: (input, ctx) => {
+      const name =
+        typeof input["Name"] === "string" ? input["Name"] : undefined;
+      if (name === undefined || name === "") {
+        throw awsError("InvalidArgument", "Name is required", 400);
+      }
+      const id = generateId("TS");
+      const now = new Date().toISOString();
+      const entry: StoredTrustStore = {
+        id,
+        name,
+        arn: `arn:aws:cloudfront::${ctx.account}:trust-store/${id}`,
+        status: "Active",
+        lastModifiedTime: now,
+        etag: generateId("ETAG"),
+      };
+      ctx.store.set<StoredTrustStore>(trustStoreKey + id, entry);
+      return {
+        TrustStore: trustStoreView(entry),
+        Location: `https://cloudfront.amazonaws.com/2020-05-31/trust-store/${id}`,
+        ETag: entry.etag,
+      };
+    },
+    GetTrustStore: (input, ctx) => {
+      const id =
+        typeof input["Identifier"] === "string"
+          ? input["Identifier"]
+          : typeof input["Id"] === "string"
+            ? input["Id"]
+            : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Identifier is required", 400);
+      }
+      const entry = getTrustStore(ctx, id);
+      return {
+        TrustStore: trustStoreView(entry),
+        ETag: entry.etag,
+      };
+    },
+    UpdateTrustStore: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getTrustStore(ctx, id);
+      const updated: StoredTrustStore = {
+        ...entry,
+        lastModifiedTime: new Date().toISOString(),
+        etag: generateId("ETAG"),
+      };
+      ctx.store.set<StoredTrustStore>(trustStoreKey + id, updated);
+      return {
+        TrustStore: trustStoreView(updated),
+        ETag: updated.etag,
+      };
+    },
+    DeleteTrustStore: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      getTrustStore(ctx, id);
+      ctx.store.delete(trustStoreKey + id);
+      return {};
+    },
+    ListTrustStores: (_input, ctx) => {
+      const entries = ctx.store
+        .list<StoredTrustStore>()
+        .filter((e) => e.key.startsWith(trustStoreKey))
+        .map((e) => e.value);
+      return {
+        TrustStoreList: entries.map(trustStoreView),
+      };
+    },
+    CreateVpcOrigin: (input, ctx) => {
+      const config = asRecord(input["VpcOriginEndpointConfig"]);
+      const id = generateId("VO");
+      const now = new Date().toISOString();
+      const entry: StoredVpcOrigin = {
+        id,
+        arn: `arn:aws:cloudfront::${ctx.account}:vpc-origin/${id}`,
+        status: "Deployed",
+        createdTime: now,
+        lastModifiedTime: now,
+        etag: generateId("ETAG"),
+        config,
+      };
+      ctx.store.set<StoredVpcOrigin>(vpcOriginKey + id, entry);
+      return {
+        VpcOrigin: vpcOriginView(entry),
+        Location: `https://cloudfront.amazonaws.com/2020-05-31/vpc-origin/${id}`,
+        ETag: entry.etag,
+      };
+    },
+    GetVpcOrigin: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getVpcOrigin(ctx, id);
+      return {
+        VpcOrigin: vpcOriginView(entry),
+        ETag: entry.etag,
+      };
+    },
+    UpdateVpcOrigin: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getVpcOrigin(ctx, id);
+      const updated: StoredVpcOrigin = {
+        ...entry,
+        config: asRecord(input["VpcOriginEndpointConfig"]),
+        lastModifiedTime: new Date().toISOString(),
+        etag: generateId("ETAG"),
+      };
+      ctx.store.set<StoredVpcOrigin>(vpcOriginKey + id, updated);
+      return {
+        VpcOrigin: vpcOriginView(updated),
+        ETag: updated.etag,
+      };
+    },
+    DeleteVpcOrigin: (input, ctx) => {
+      const id = typeof input["Id"] === "string" ? input["Id"] : undefined;
+      if (id === undefined || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const entry = getVpcOrigin(ctx, id);
+      ctx.store.delete(vpcOriginKey + id);
+      return {
+        VpcOrigin: vpcOriginView(entry),
+        ETag: entry.etag,
+      };
+    },
+    ListVpcOrigins: (_input, ctx) => {
+      const entries = ctx.store
+        .list<StoredVpcOrigin>()
+        .filter((e) => e.key.startsWith(vpcOriginKey))
+        .map((e) => e.value);
+      return {
+        VpcOriginList: {
+          MaxItems: 100,
+          IsTruncated: false,
+          Quantity: entries.length,
+          Items: entries.map(vpcOriginView),
+        },
+      };
+    },
+    PutResourcePolicy: (input, ctx) => {
+      const resourceArn =
+        typeof input["ResourceArn"] === "string"
+          ? input["ResourceArn"]
+          : undefined;
+      if (resourceArn === undefined || resourceArn === "") {
+        throw awsError("InvalidArgument", "ResourceArn is required", 400);
+      }
+      const policyDocument =
+        typeof input["PolicyDocument"] === "string"
+          ? input["PolicyDocument"]
+          : "";
+      ctx.store.set(resourcePolicyKey + resourceArn, {
+        resourceArn,
+        policyDocument,
+      });
+      return {
+        ResourceArn: resourceArn,
+        PolicyDocument: policyDocument,
+      };
+    },
+    GetResourcePolicy: (input, ctx) => {
+      const resourceArn =
+        typeof input["ResourceArn"] === "string"
+          ? input["ResourceArn"]
+          : undefined;
+      if (resourceArn === undefined || resourceArn === "") {
+        throw awsError("InvalidArgument", "ResourceArn is required", 400);
+      }
+      const stored = ctx.store.get<{
+        resourceArn: string;
+        policyDocument: string;
+      }>(resourcePolicyKey + resourceArn);
+      if (stored === undefined) {
+        throw awsError(
+          "EntityNotFound",
+          `No resource policy found for ${resourceArn}`,
+          404,
+        );
+      }
+      return {
+        ResourceArn: stored.resourceArn,
+        PolicyDocument: stored.policyDocument,
+      };
+    },
+    DeleteResourcePolicy: (input, ctx) => {
+      const resourceArn =
+        typeof input["ResourceArn"] === "string"
+          ? input["ResourceArn"]
+          : undefined;
+      if (resourceArn === undefined || resourceArn === "") {
+        throw awsError("InvalidArgument", "ResourceArn is required", 400);
+      }
+      const stored = ctx.store.get(resourcePolicyKey + resourceArn);
+      if (stored === undefined) {
+        throw awsError(
+          "EntityNotFound",
+          `No resource policy found for ${resourceArn}`,
+          404,
+        );
+      }
+      ctx.store.delete(resourcePolicyKey + resourceArn);
+      return {};
     },
   },
   model,

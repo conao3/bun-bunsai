@@ -83,7 +83,8 @@ describe("C5 hardening: projection compaction", () => {
       new GetItemCommand({
         TableName: table,
         Key: { pk: { S: "k" } },
-        ProjectionExpression: "a.list[1].c",
+        ProjectionExpression: "a.#list[1].c",
+        ExpressionAttributeNames: { "#list": "list" },
       }),
     );
     expect(got.Item).toEqual({

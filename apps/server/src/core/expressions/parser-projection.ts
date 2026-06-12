@@ -9,7 +9,7 @@ const failValidation = (message: string): never => {
 
 export const parseProjectionExpression = (
   expression: string,
-  bindings: Pick<AttributeBindings, "names">,
+  bindings: Pick<AttributeBindings, "names" | "allowReservedWords">,
 ): ProjectionAST => {
   const stream = createTokenStream(tokenize(expression));
   if (stream.peek().kind === "eof") {

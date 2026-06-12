@@ -140,7 +140,8 @@ describe("DynamoDB FilterExpression with full operator coverage", () => {
       new ScanCommand({
         TableName: table,
         FilterExpression:
-          "attribute_exists(tags) AND attribute_not_exists(missing)",
+          "attribute_exists(tags) AND attribute_not_exists(#missing)",
+        ExpressionAttributeNames: { "#missing": "missing" },
       }),
     );
     expect((exists.Items ?? []).map((it) => it.pk?.S ?? "").sort()).toEqual([

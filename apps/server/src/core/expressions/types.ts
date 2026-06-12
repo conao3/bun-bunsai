@@ -3,6 +3,7 @@ export type AttributeValue = Record<string, unknown>;
 export type AttributeBindings = {
   names: Record<string, string>;
   values: Record<string, AttributeValue>;
+  allowReservedWords?: boolean;
 };
 
 export type TokenKind =

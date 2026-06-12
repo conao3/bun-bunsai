@@ -14,6 +14,7 @@ const evaluate = (
   const ast = parseConditionExpression(expression, {
     names: bindings.names ?? {},
     values: bindings.values ?? {},
+    allowReservedWords: true,
   });
   return evaluateCondition(ast, item);
 };

@@ -49,7 +49,8 @@ describe("dynamodb PartiQL hardening (c7)", () => {
       new UpdateItemCommand({
         TableName: expr,
         Key: { pk: { S: "x" } },
-        UpdateExpression: "SET counter = counter + :inc",
+        UpdateExpression: "SET #counter = #counter + :inc",
+        ExpressionAttributeNames: { "#counter": "counter" },
         ExpressionAttributeValues: { ":inc": { N: "5" } },
       }),
     );

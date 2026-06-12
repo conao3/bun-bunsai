@@ -8,7 +8,10 @@ const project = (
   item: Record<string, AttributeValue>,
   names: Record<string, string> = {},
 ): Record<string, AttributeValue> => {
-  const ast = parseProjectionExpression(expression, { names });
+  const ast = parseProjectionExpression(expression, {
+    names,
+    allowReservedWords: true,
+  });
   return projectItem(ast, item);
 };
 

@@ -2261,7 +2261,11 @@ const partiQLWhereMatch = (
       values[name] = { N: literal };
       return name;
     });
-  const ast = parseConditionExpression(replaced, { names: {}, values });
+  const ast = parseConditionExpression(replaced, {
+    names: {},
+    values,
+    allowReservedWords: true,
+  });
   return evaluateCondition(ast, item);
 };
 
@@ -2455,7 +2459,11 @@ const executePartiQL = (
       setClause,
       parameters.slice(0, setParamCount),
     );
-    const ast = parseUpdateExpression(expression, { names: {}, values });
+    const ast = parseUpdateExpression(expression, {
+      names: {},
+      values,
+      allowReservedWords: true,
+    });
     const whereParams = parameters.slice(setParamCount);
     const allItems = Object.values(table.items);
     const matched =

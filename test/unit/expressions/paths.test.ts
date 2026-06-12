@@ -16,7 +16,7 @@ import type { AttributeValue } from "../../../apps/server/src/core/expressions/t
 
 const parse = (expression: string, names: Record<string, string> = {}) => {
   const stream = createTokenStream(tokenize(expression));
-  const path = parseAttributePath(stream, { names });
+  const path = parseAttributePath(stream, { names, allowReservedWords: true });
   return { path, rest: stream.peek().kind };
 };
 
@@ -141,5 +141,29 @@ describe("pathsOverlap", () => {
     const a = parse("a[0]").path;
     const b = parse("a[1]").path;
     expect(pathsOverlap(a, b)).toBe(false);
+  });
+});
+
+describe("reserved words", () => {
+  test("bare reserved word is rejected", () => {
+    const stream = createTokenStream(tokenize("size"));
+    expect(() => parseAttributePath(stream, { names: {} })).toThrow(
+      /reserved keyword: size/,
+    );
+  });
+
+  test("aliased reserved word resolves", () => {
+    const stream = createTokenStream(tokenize("#s"));
+    const path = parseAttributePath(stream, { names: { "#s": "size" } });
+    expect(path.root).toBe("size");
+  });
+
+  test("allowReservedWords bypasses the check", () => {
+    const stream = createTokenStream(tokenize("size"));
+    const path = parseAttributePath(stream, {
+      names: {},
+      allowReservedWords: true,
+    });
+    expect(path.root).toBe("size");
   });
 });

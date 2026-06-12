@@ -148,7 +148,8 @@ test("UpdateExpression nested paths, list ops and functions", async () => {
     new UpdateItemCommand({
       TableName: table,
       Key: { pk: { S: "u1" } },
-      UpdateExpression: "SET doc.however = :v, doc.items[0] = :n",
+      UpdateExpression: "SET doc.however = :v, doc.#items[0] = :n",
+      ExpressionAttributeNames: { "#items": "items" },
       ExpressionAttributeValues: { ":v": { S: "x" }, ":n": { N: "99" } },
     }),
   );
@@ -160,7 +161,8 @@ test("UpdateExpression nested paths, list ops and functions", async () => {
     new UpdateItemCommand({
       TableName: table,
       Key: { pk: { S: "u1" } },
-      UpdateExpression: "SET counter = if_not_exists(counter, :d)",
+      UpdateExpression: "SET #counter = if_not_exists(#counter, :d)",
+      ExpressionAttributeNames: { "#counter": "counter" },
       ExpressionAttributeValues: { ":d": { N: "0" } },
     }),
   );
@@ -258,4 +260,49 @@ test("expression validation errors", async () => {
       }),
     ),
   ).rejects.toMatchObject({ name: "ValidationException" });
+});
+
+test("reserved keywords in expressions", async () => {
+  await put({ pk: { S: "r1" }, size: { N: "1" }, s: { S: "hello" } });
+
+  expect(
+    client.send(
+      new UpdateItemCommand({
+        TableName: table,
+        Key: { pk: { S: "r1" } },
+        UpdateExpression: "SET size = :v",
+        ExpressionAttributeValues: { ":v": { N: "2" } },
+      }),
+    ),
+  ).rejects.toMatchObject({ name: "ValidationException" });
+
+  await client.send(
+    new UpdateItemCommand({
+      TableName: table,
+      Key: { pk: { S: "r1" } },
+      UpdateExpression: "SET #s = :v",
+      ExpressionAttributeNames: { "#s": "size" },
+      ExpressionAttributeValues: { ":v": { N: "2" } },
+    }),
+  );
+  const item = await get("r1");
+  expect(item?.size?.N).toBe("2");
+
+  expect(
+    put(
+      { pk: { S: "r1" } },
+      {
+        ConditionExpression: "exists = :v",
+        ExpressionAttributeValues: { ":v": { N: "1" } },
+      },
+    ),
+  ).rejects.toMatchObject({ name: "ValidationException" });
+
+  await put(
+    { pk: { S: "r1" }, s: { S: "hello" } },
+    {
+      ConditionExpression: "size(s) > :n",
+      ExpressionAttributeValues: { ":n": { N: "3" } },
+    },
+  );
 });

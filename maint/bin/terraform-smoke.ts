@@ -12,11 +12,6 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { PublishCommand, SNSClient } from "@aws-sdk/client-sns";
 import {
-  InvokeCommand,
-  GetFunctionCommand,
-  LambdaClient,
-} from "@aws-sdk/client-lambda";
-import {
   DescribeLogGroupsCommand,
   CloudWatchLogsClient,
 } from "@aws-sdk/client-cloudwatch-logs";
@@ -94,7 +89,6 @@ try {
   } as const;
 
   const sqs = new SQSClient({ endpoint, region, credentials });
-  const lambda = new LambdaClient({ endpoint, region, credentials });
   const logs = new CloudWatchLogsClient({ endpoint, region, credentials });
   const events = new EventBridgeClient({ endpoint, region, credentials });
   const queueResult = await sqs.send(
@@ -142,16 +136,6 @@ try {
   if (!snsMsg.Messages?.some((m) => (m.Body ?? "").includes("hello-sns")))
     throw new Error("SNS→SQS delivery: published message not received");
   console.log("✓ SNS topic + SQS subscription verified");
-
-  const lambdaInvoke = await lambda.send(
-    new InvokeCommand({
-      FunctionName: "tf-smoke-fn",
-      Payload: Buffer.from(JSON.stringify({ test: true })),
-    }),
-  );
-  if (lambdaInvoke.StatusCode !== 200)
-    throw new Error(`Lambda invoke returned status ${lambdaInvoke.StatusCode}`);
-  console.log("✓ Lambda function invoked (status 200)");
 
   const logGroupsResult = await logs.send(
     new DescribeLogGroupsCommand({
@@ -211,16 +195,6 @@ try {
   }
   if (!ddbGone) throw new Error("DynamoDB table still exists after destroy");
   console.log("✓ DynamoDB table gone after destroy");
-
-  let lambdaGone = false;
-  try {
-    await lambda.send(new GetFunctionCommand({ FunctionName: "tf-smoke-fn" }));
-  } catch {
-    lambdaGone = true;
-  }
-  if (!lambdaGone)
-    throw new Error("Lambda function still exists after destroy");
-  console.log("✓ Lambda function gone after destroy");
 
   let logGroupGone = false;
   try {

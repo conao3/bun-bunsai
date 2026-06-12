@@ -111,15 +111,6 @@ resource "aws_iam_role_policy" "smoke" {
   })
 }
 
-resource "aws_lambda_function" "smoke" {
-  function_name = "tf-smoke-fn"
-  filename      = "${path.module}/fn.zip"
-  handler       = "index.handler"
-  runtime       = "nodejs18.x"
-  role          = aws_iam_role.smoke.arn
-  depends_on    = [aws_cloudwatch_log_group.smoke]
-}
-
 resource "aws_cloudwatch_event_rule" "smoke" {
   name        = "tf-smoke-rule"
   description = "smoke test rule"

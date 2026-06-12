@@ -1,0 +1,107 @@
+{
+  "clientPackage": "@aws-sdk/client-dynamodb",
+  "clientName": "DynamoDBClient",
+  "steps": [
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "TableName": "parity-ddb-query-kce",
+        "KeySchema": [
+          { "AttributeName": "pk", "KeyType": "HASH" },
+          { "AttributeName": "sk", "KeyType": "RANGE" }
+        ],
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" },
+          { "AttributeName": "sk", "AttributeType": "S" }
+        ],
+        "BillingMode": "PAY_PER_REQUEST"
+      },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-query-kce",
+          "TableStatus": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-kce",
+        "Item": { "pk": { "S": "TEST" }, "sk": { "S": "aa" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-kce",
+        "Item": { "pk": { "S": "TEST" }, "sk": { "S": "ab" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-kce",
+        "Item": { "pk": { "S": "TEST" }, "sk": { "S": "ac" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "QueryCommand",
+      "input": {
+        "TableName": "parity-ddb-query-kce",
+        "KeyConditionExpression": "#0 = :0 AND begins_with(#1, :1)",
+        "ExpressionAttributeNames": { "#0": "pk", "#1": "sk" },
+        "ExpressionAttributeValues": {
+          ":0": { "S": "TEST" },
+          ":1": { "S": "a" }
+        }
+      },
+      "expected": { "Count": 3 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "QueryCommand",
+      "input": {
+        "TableName": "parity-ddb-query-kce",
+        "KeyConditionExpression": "#0 = :0 AND #1 BETWEEN :1 AND :2",
+        "ExpressionAttributeNames": { "#0": "pk", "#1": "sk" },
+        "ExpressionAttributeValues": {
+          ":0": { "S": "TEST" },
+          ":1": { "S": "ab" },
+          ":2": { "S": "ab" }
+        }
+      },
+      "expected": {
+        "Count": 1,
+        "Items": [{ "pk": { "S": "TEST" }, "sk": { "S": "ab" } }]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": { "TableName": "parity-ddb-query-kce" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

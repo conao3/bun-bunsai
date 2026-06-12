@@ -252,11 +252,63 @@ const PutSecretValue: OperationHandler = (input, ctx) => {
   };
 };
 
+type SecretFilter = { Key?: string; Values?: string[] };
+
+const secretMatchesFilter = (
+  secret: StoredSecret,
+  filter: SecretFilter,
+): boolean => {
+  const values = filter.Values ?? [];
+  if (values.length === 0) return true;
+  const tags = (secret.Tags ?? []) as { Key?: string; Value?: string }[];
+  const tagKeys = tags.map((t) => t.Key ?? "");
+  const tagValues = tags.map((t) => t.Value ?? "");
+  const fieldsFor = (key: string | undefined): string[] => {
+    switch (key) {
+      case "name":
+        return [secret.Name];
+      case "description":
+        return [secret.Description ?? ""];
+      case "tag-key":
+        return tagKeys;
+      case "tag-value":
+        return tagValues;
+      case "primary-region":
+        return [];
+      case "owning-service":
+        return [];
+      case "all":
+      case undefined:
+        return [
+          secret.Name,
+          secret.Description ?? "",
+          ...tagKeys,
+          ...tagValues,
+        ];
+      default:
+        return [];
+    }
+  };
+  const fields = fieldsFor(filter.Key);
+  return values.some((value) => {
+    const negated = value.startsWith("!");
+    const needle = (negated ? value.slice(1) : value).toLowerCase();
+    const hit = fields.some((field) => field.toLowerCase().includes(needle));
+    return negated ? !hit : hit;
+  });
+};
+
 const ListSecrets: OperationHandler = (input, ctx) => {
   const includeDeleted = input["IncludePlannedDeletion"] === true;
+  const filters = Array.isArray(input["Filters"])
+    ? (input["Filters"] as SecretFilter[])
+    : [];
   const secretList = ctx.store
     .list<StoredSecret>()
     .filter((entry) => includeDeleted || entry.value.DeletedDate === undefined)
+    .filter((entry) =>
+      filters.every((filter) => secretMatchesFilter(entry.value, filter)),
+    )
     .map((entry) => ({
       ARN: entry.value.ARN,
       Name: entry.value.Name,

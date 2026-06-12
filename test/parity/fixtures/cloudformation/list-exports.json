@@ -1,0 +1,78 @@
+{
+  "clientPackage": "@aws-sdk/client-cloudformation",
+  "clientName": "CloudFormationClient",
+  "steps": [
+    {
+      "command": "CreateStackCommand",
+      "input": {
+        "StackName": "pm-with-exports",
+        "TemplateBody": "{\"AWSTemplateFormatVersion\": \"2010-09-09\", \"Description\": \"Stack 1\", \"Resources\": {\"myqueue\": {\"Type\": \"AWS::SQS::Queue\"}}, \"Outputs\": {\"StackVPC\": {\"Description\": \"The ID of the VPC\", \"Value\": \"VPCID\", \"Export\": {\"Name\": \"My-VPC-ID\"}}}}"
+      },
+      "expected": { "StackId": "<ANY>" },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "stack",
+      "refs": {}
+    },
+    {
+      "command": "DescribeStacksCommand",
+      "input": { "StackName": "pm-with-exports" },
+      "expected": {
+        "Stacks": [
+          {
+            "StackName": "pm-with-exports",
+            "Outputs": [
+              {
+                "OutputKey": "StackVPC",
+                "OutputValue": "VPCID",
+                "Description": "The ID of the VPC",
+                "ExportName": "My-VPC-ID"
+              }
+            ]
+          }
+        ]
+      },
+      "ignorePaths": [
+        "$metadata",
+        "Stacks.0.StackId",
+        "Stacks.0.CreationTime",
+        "Stacks.0.StackStatus",
+        "Stacks.0.DisableRollback",
+        "Stacks.0.NotificationARNs",
+        "Stacks.0.RollbackConfiguration",
+        "Stacks.0.Tags",
+        "Stacks.0.DriftInformation",
+        "Stacks.0.EnableTerminationProtection",
+        "Stacks.0.Description",
+        "Stacks.0.Parameters",
+        "Stacks.0.Capabilities",
+        "Stacks.0.LastUpdatedTime"
+      ],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "ListExportsCommand",
+      "input": {},
+      "expected": {
+        "Exports": [
+          {
+            "ExportingStackId": "<ANY>",
+            "Name": "My-VPC-ID",
+            "Value": "VPCID"
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteStackCommand",
+      "input": { "StackName": "pm-with-exports" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

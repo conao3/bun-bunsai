@@ -656,6 +656,11 @@ body {
   color: var(--body);
   font-weight: 500;
 }
+.badge.size-warn {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+  margin-left: 6px;
+}
 
 .status-chip {
   font-family: var(--mono);

@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { RequestLogEntry } from "./api";
+import { matchesOpFilter } from "./requestLogFilters";
 import type { LogLayout } from "./types";
 import {
   CodeBlock,
@@ -370,6 +371,8 @@ export function RequestLog({
   onSelect,
   svcFilter,
   onSvcFilter,
+  opFilter,
+  onOpFilter,
   statusFilter,
   onStatusFilter,
   q,
@@ -386,6 +389,8 @@ export function RequestLog({
   onSelect: (id: string | null) => void;
   svcFilter: string[];
   onSvcFilter: (v: string[]) => void;
+  opFilter: string[];
+  onOpFilter: (v: string[]) => void;
   statusFilter: string;
   onStatusFilter: (v: StatusFilter) => void;
   q: string;
@@ -411,12 +416,18 @@ export function RequestLog({
     [requests],
   );
 
+  const operationOptions = useMemo(
+    () => [...new Set(requests.map((r) => r.operation))].sort(),
+    [requests],
+  );
+
   const filtered = useMemo(() => {
     const needle = qInput.toLowerCase();
     return requests.filter((r) => {
       if (r.account !== scope.account || r.region !== scope.region)
         return false;
       if (svcFilter.length && !svcFilter.includes(r.service)) return false;
+      if (!matchesOpFilter(r.operation, opFilter)) return false;
       if (statusFilter !== "all" && statusClass(r.statusCode) !== statusFilter)
         return false;
       if (
@@ -428,7 +439,7 @@ export function RequestLog({
         return false;
       return true;
     });
-  }, [requests, scope, svcFilter, statusFilter, qInput]);
+  }, [requests, scope, svcFilter, opFilter, statusFilter, qInput]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -489,6 +500,12 @@ export function RequestLog({
           selected={svcFilter}
           onChange={onSvcFilter}
           render={(o) => svcInfo(o).name}
+        />
+        <MultiFilter
+          label="Operation"
+          options={operationOptions}
+          selected={opFilter}
+          onChange={onOpFilter}
         />
         <div className="segmented">
           {statusFilters.map((s) => (

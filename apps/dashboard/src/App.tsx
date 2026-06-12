@@ -322,6 +322,10 @@ export function App() {
     const raw = loc.query.get("svc");
     return raw ? raw.split(",").filter(Boolean) : [];
   }, [loc.query]);
+  const opFilter = useMemo(() => {
+    const raw = loc.query.get("op");
+    return raw ? raw.split(",").filter(Boolean) : [];
+  }, [loc.query]);
   const statusFilter = statusFilters.includes(
     loc.query.get("status") as StatusFilter,
   )
@@ -332,6 +336,11 @@ export function App() {
   const onSvcFilter = useCallback(
     (next: string[]) =>
       setQuery("svc", next.length ? next.join(",") : null, true),
+    [setQuery],
+  );
+  const onOpFilter = useCallback(
+    (next: string[]) =>
+      setQuery("op", next.length ? next.join(",") : null, true),
     [setQuery],
   );
   const onStatusFilter = useCallback(
@@ -390,6 +399,8 @@ export function App() {
             onSelect={setSelId}
             svcFilter={svcFilter}
             onSvcFilter={onSvcFilter}
+            opFilter={opFilter}
+            onOpFilter={onOpFilter}
             statusFilter={statusFilter}
             onStatusFilter={onStatusFilter}
             q={q}

@@ -6,6 +6,7 @@ import {
   dumpState,
   enumerateResources,
   restoreState,
+  truncateValueForDisplay,
 } from "../core/state.ts";
 import type { StateSnapshot, StateStore } from "../core/state.ts";
 import { services } from "../services/index.ts";
@@ -107,7 +108,10 @@ export const handleManagement = async (
 
   if (url.pathname === "/__bunsai/resources" && req.method === "GET") {
     const filter = url.searchParams.get("service") ?? undefined;
-    return json(enumerateResources(deps.store, filter));
+    const resources = enumerateResources(deps.store, filter);
+    return json(
+      resources.map((r) => ({ ...r, value: truncateValueForDisplay(r.value) })),
+    );
   }
 
   if (url.pathname === "/__bunsai/logs" && req.method === "GET") {

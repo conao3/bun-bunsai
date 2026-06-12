@@ -1,0 +1,15 @@
+bun-bunsai (bunsai)
+Copyright 2026 conao3
+
+This product is licensed under the Apache License, Version 2.0.
+
+This product includes protocol compliance test data from Botocore (Apache-2.0).
+
+The vendored Botocore protocol test data lives under
+test/vendor/botocore-protocol-tests/ together with the upstream LICENSE.txt
+and NOTICE. The upstream NOTICE is reproduced below.
+
+------------------------------------------------------------------------
+
+Botocore
+Copyright 2012-2022 Amazon.com, Inc. or its affiliates. All Rights Reserved.

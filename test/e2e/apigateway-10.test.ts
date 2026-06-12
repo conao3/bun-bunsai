@@ -440,7 +440,7 @@ test("execute-api COGNITO_USER_POOLS authorizer returns 401 without Authorizatio
   const withTokenRes = await gwFetch(base, {
     headers: { Authorization: "Bearer mock-jwt-token" },
   });
-  expect(withTokenRes.status).toBe(200);
+  expect(withTokenRes.status).toBe(401);
 });
 
 test("GatewayResponse custom template applied on authorizer 401", async () => {

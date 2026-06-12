@@ -3,6 +3,7 @@ import { loadServiceModel } from "../core/shapes.ts";
 import { invokeTaskResource } from "../core/events.ts";
 import { scopedStore } from "../core/state.ts";
 import type { StateStore } from "../core/state.ts";
+import { verifyJwt } from "../core/jwt.ts";
 import apigatewayModel from "../../../../test/vendor/aws-models/apigateway.json" with { type: "json" };
 import type {
   OperationHandler,
@@ -4384,11 +4385,11 @@ const enforceAuthorizer = async (
   authorizer: StoredAuthorizer,
   req: Request,
   url: URL,
-): Promise<Response | undefined> => {
+): Promise<Response | Record<string, unknown> | undefined> => {
   if (authorizer.type === "COGNITO_USER_POOLS") {
-    const token =
+    const rawToken =
       req.headers.get("Authorization") ?? req.headers.get("authorization");
-    if (!token) {
+    if (!rawToken) {
       return gatewayErrorResponse(
         ctx,
         restApiId,
@@ -4397,7 +4398,19 @@ const enforceAuthorizer = async (
         "Unauthorized",
       );
     }
-    return undefined;
+    const token = rawToken.startsWith("Bearer ") ? rawToken.slice(7) : rawToken;
+    try {
+      const claims = await verifyJwt(token);
+      return claims;
+    } catch {
+      return gatewayErrorResponse(
+        ctx,
+        restApiId,
+        "UNAUTHORIZED",
+        401,
+        "Unauthorized",
+      );
+    }
   }
 
   const token = extractIdentityToken(authorizer.identitySource, req, url);
@@ -4651,6 +4664,7 @@ const dispatchLambdaProxy = async (
   stage: StoredStage,
   integration: StoredIntegration,
   ctx: ServiceContext,
+  authorizerClaims?: Record<string, unknown>,
 ): Promise<Response> => {
   const functionArn = integration.uri
     ? lambdaArnFromUri(integration.uri)
@@ -4681,6 +4695,9 @@ const dispatchLambdaProxy = async (
       stage: stageName,
       resourcePath: url.pathname,
       httpMethod: req.method,
+      ...(authorizerClaims !== undefined
+        ? { authorizer: { claims: authorizerClaims } }
+        : {}),
     },
     body: bodyText || null,
     isBase64Encoded: false,
@@ -4759,6 +4776,7 @@ export const handleExecuteApi = async (
   );
   if (method === undefined) return missingAuthToken();
 
+  let authorizerClaims: Record<string, unknown> | undefined;
   if (
     (method.authorizationType === "CUSTOM" ||
       method.authorizationType === "COGNITO_USER_POOLS") &&
@@ -4768,14 +4786,15 @@ export const handleExecuteApi = async (
       authorizerKey(restApiId, method.authorizerId),
     );
     if (authorizer) {
-      const authError = await enforceAuthorizer(
+      const authResult = await enforceAuthorizer(
         ctx,
         restApiId,
         authorizer,
         req,
         url,
       );
-      if (authError !== undefined) return authError;
+      if (authResult instanceof Response) return authResult;
+      if (authResult !== undefined) authorizerClaims = authResult;
     }
   }
 
@@ -4824,6 +4843,7 @@ export const handleExecuteApi = async (
       stage,
       integration,
       ctx,
+      authorizerClaims,
     );
   }
 

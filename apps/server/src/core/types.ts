@@ -187,6 +187,13 @@ export type ServiceDefinition = {
   model?: ServiceModel;
   matches?: (req: ParsedRequest) => boolean;
   xmlErrorRoot?: string;
+  mapValidationError?: (error: {
+    code: string;
+    message: string;
+    statusCode: number;
+    senderFault: boolean;
+    member?: string;
+  }) => { code: string; message: string; statusCode: number } | undefined;
 };
 
 export type RequestLogEntry = {

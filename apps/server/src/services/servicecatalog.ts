@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import servicecatalogModel from "../../models/servicecatalog.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(servicecatalogModel);
+const model = lazyServiceModel(
+  () => import("../../models/servicecatalog.json", { with: { type: "json" } }),
+  { targetPrefix: "AWS242ServiceCatalogService" },
+);
 
 type Tag = {
   Key: string;

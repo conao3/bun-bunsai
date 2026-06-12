@@ -1,10 +1,9 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
+import { lazyServiceModel } from "../core/shapes.ts";
 import { invokeTaskResource } from "../core/events.ts";
 import { scopedStore } from "../core/state.ts";
 import type { StateStore } from "../core/state.ts";
 import { verifyJwt } from "../core/jwt.ts";
-import apigatewayModel from "../../models/apigateway.json" with { type: "json" };
 import type {
   OperationHandler,
   ParsedRequest,
@@ -12,7 +11,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(apigatewayModel);
+const model = lazyServiceModel(
+  () => import("../../models/apigateway.json", { with: { type: "json" } }),
+);
 
 type StoredRestApi = {
   id: string;

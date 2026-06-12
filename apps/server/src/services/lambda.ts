@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import lambdaModel from "../../models/lambda.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -18,7 +17,9 @@ import {
 } from "../core/events.ts";
 import { parseArn, resourceName } from "../core/arn.ts";
 
-const model = loadServiceModel(lambdaModel);
+const model = lazyServiceModel(
+  () => import("../../models/lambda.json", { with: { type: "json" } }),
+);
 
 type StoredFunction = {
   FunctionName: string;

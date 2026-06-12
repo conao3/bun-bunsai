@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import glueModel from "../../models/glue.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(glueModel);
+const model = lazyServiceModel(
+  () => import("../../models/glue.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSGlue" },
+);
 
 type StoredTable = {
   input: Record<string, unknown>;

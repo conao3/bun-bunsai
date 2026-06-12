@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import amplifyModel from "../../models/amplify.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(amplifyModel);
+const model = lazyServiceModel(
+  () => import("../../models/amplify.json", { with: { type: "json" } }),
+);
 
 type StoredApp = {
   appId: string;

@@ -1,15 +1,17 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
+import { lazyServiceModel } from "../core/shapes.ts";
 import { invokeTaskResource } from "../core/events.ts";
 import { parseArn } from "../core/arn.ts";
-import stepFunctionsModel from "../../models/stepfunctions.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(stepFunctionsModel);
+const model = lazyServiceModel(
+  () => import("../../models/stepfunctions.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSStepFunctions" },
+);
 
 type StoredStateMachine = {
   stateMachineArn: string;

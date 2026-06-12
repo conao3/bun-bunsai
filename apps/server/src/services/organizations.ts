@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import organizationsModel from "../../models/organizations.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(organizationsModel);
+const model = lazyServiceModel(
+  () => import("../../models/organizations.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSOrganizationsV20161128" },
+);
 
 type StoredOrganization = {
   Id: string;

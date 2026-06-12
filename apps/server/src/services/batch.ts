@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import batchModel from "../../models/batch.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(batchModel);
+const model = lazyServiceModel(
+  () => import("../../models/batch.json", { with: { type: "json" } }),
+);
 
 type StoredComputeEnvironment = {
   computeEnvironmentName: string;

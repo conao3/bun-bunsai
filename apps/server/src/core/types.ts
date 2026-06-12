@@ -179,12 +179,18 @@ export type ServiceModel = {
   registry: ShapeRegistry;
 };
 
+export type LazyServiceModel = {
+  readonly _lazy: true;
+  readonly targetPrefix?: string;
+  readonly resolve: () => Promise<ServiceModel>;
+};
+
 export type ServiceDefinition = {
   name: string;
   protocol: Protocol;
   operations: Record<string, OperationHandler>;
   resolveOperation?: (req: ParsedRequest) => string | undefined;
-  model?: ServiceModel;
+  model?: ServiceModel | LazyServiceModel;
   matches?: (req: ParsedRequest) => boolean;
   xmlErrorRoot?: string;
   mapValidationError?: (error: {

@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import ssmContactsModel from "../../models/ssm-contacts.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(ssmContactsModel);
+const model = lazyServiceModel(
+  () => import("../../models/ssm-contacts.json", { with: { type: "json" } }),
+  { targetPrefix: "SSMContacts" },
+);
 
 const contactPrefix = "contact:" as const;
 const channelPrefix = "channel:" as const;

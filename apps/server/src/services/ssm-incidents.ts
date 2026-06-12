@@ -1,7 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { callerArn as iamCallerArn } from "../core/arn.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import ssmIncidentsModel from "../../models/ssm-incidents.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -9,7 +8,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(ssmIncidentsModel);
+const model = lazyServiceModel(
+  () => import("../../models/ssm-incidents.json", { with: { type: "json" } }),
+);
 
 const responsePlanPrefix = "response-plan:" as const;
 const incidentPrefix = "incident:" as const;

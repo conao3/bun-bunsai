@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import bedrockRuntimeModel from "../../models/bedrock-runtime.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(bedrockRuntimeModel);
+const model = lazyServiceModel(
+  () => import("../../models/bedrock-runtime.json", { with: { type: "json" } }),
+);
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();

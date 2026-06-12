@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import datapipelineModel from "../../models/datapipeline.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(datapipelineModel);
+const model = lazyServiceModel(
+  () => import("../../models/datapipeline.json", { with: { type: "json" } }),
+  { targetPrefix: "DataPipeline" },
+);
 
 type StoredField = {
   key: string;

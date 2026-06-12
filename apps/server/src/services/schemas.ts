@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import schemasModel from "../../models/schemas.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(schemasModel);
+const model = lazyServiceModel(
+  () => import("../../models/schemas.json", { with: { type: "json" } }),
+);
 
 const registryPrefix = "registry:" as const;
 const schemaPrefix = "schema:" as const;

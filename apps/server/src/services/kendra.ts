@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import kendraModel from "../../models/kendra.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(kendraModel);
+const model = lazyServiceModel(
+  () => import("../../models/kendra.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSKendraFrontendService" },
+);
 
 type StoredIndex = {
   Id: string;

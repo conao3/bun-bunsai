@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import acmModel from "../../models/acm.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(acmModel);
+const model = lazyServiceModel(
+  () => import("../../models/acm.json", { with: { type: "json" } }),
+  { targetPrefix: "CertificateManager" },
+);
 
 type StoredDomainValidationOption = {
   DomainName: string;

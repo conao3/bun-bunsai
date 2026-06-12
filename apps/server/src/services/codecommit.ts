@@ -1,14 +1,16 @@
 import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import codecommitModel from "../../models/codecommit.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(codecommitModel);
+const model = lazyServiceModel(
+  () => import("../../models/codecommit.json", { with: { type: "json" } }),
+  { targetPrefix: "CodeCommit_20150413" },
+);
 
 type StoredRepository = {
   accountId: string;

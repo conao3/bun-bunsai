@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import backupModel from "../../models/backup.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(backupModel);
+const model = lazyServiceModel(
+  () => import("../../models/backup.json", { with: { type: "json" } }),
+);
 
 const vaultPrefix = "vault:" as const;
 const planPrefix = "plan:" as const;

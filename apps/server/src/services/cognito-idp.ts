@@ -1,15 +1,17 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
+import { lazyServiceModel } from "../core/shapes.ts";
 import { publicJwks, signJwt, verifyJwt } from "../core/jwt.ts";
-import cognitoIdpModel from "../../models/cognito-idp.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(cognitoIdpModel);
+const model = lazyServiceModel(
+  () => import("../../models/cognito-idp.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSCognitoIdentityProviderService" },
+);
 
 type Attribute = {
   Name: string;

@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import appmeshModel from "../../models/appmesh.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(appmeshModel);
+const model = lazyServiceModel(
+  () => import("../../models/appmesh.json", { with: { type: "json" } }),
+);
 
 const meshPrefix = "mesh:" as const;
 const vnPrefix = "vn:" as const;

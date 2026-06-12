@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import fisModel from "../../models/fis.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(fisModel);
+const model = lazyServiceModel(
+  () => import("../../models/fis.json", { with: { type: "json" } }),
+);
 
 const tmplPrefix = "tmpl:" as const;
 const expPrefix = "exp:" as const;

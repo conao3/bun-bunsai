@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import keyspacesModel from "../../models/keyspaces.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(keyspacesModel);
+const model = lazyServiceModel(
+  () => import("../../models/keyspaces.json", { with: { type: "json" } }),
+  { targetPrefix: "KeyspacesService" },
+);
 
 type StoredKeyspace = {
   keyspaceName: string;

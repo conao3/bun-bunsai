@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import mediapackageModel from "../../models/mediapackage.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(mediapackageModel);
+const model = lazyServiceModel(
+  () => import("../../models/mediapackage.json", { with: { type: "json" } }),
+);
 
 const channelPrefix = "channel:" as const;
 const originEndpointPrefix = "origin_endpoint:" as const;

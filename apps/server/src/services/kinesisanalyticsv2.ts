@@ -1,13 +1,16 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import kinesisanalyticsv2Model from "../../models/kinesisanalyticsv2.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(kinesisanalyticsv2Model);
+const model = lazyServiceModel(
+  () =>
+    import("../../models/kinesisanalyticsv2.json", { with: { type: "json" } }),
+  { targetPrefix: "KinesisAnalytics_20180523" },
+);
 
 type ApplicationStatus =
   | "DELETING"

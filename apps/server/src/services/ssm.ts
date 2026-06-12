@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import ssmModel from "../../models/ssm.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(ssmModel);
+const model = lazyServiceModel(
+  () => import("../../models/ssm.json", { with: { type: "json" } }),
+  { targetPrefix: "AmazonSSM" },
+);
 
 type StoredParameter = {
   Name: string;

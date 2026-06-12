@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import codeartifactModel from "../../models/codeartifact.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(codeartifactModel);
+const model = lazyServiceModel(
+  () => import("../../models/codeartifact.json", { with: { type: "json" } }),
+);
 
 const domainPrefix = "domain:" as const;
 const repoPrefix = "repo:" as const;

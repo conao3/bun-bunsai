@@ -1,9 +1,12 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import cognitoIdentityModel from "../../models/cognito-identity.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type { ServiceDefinition } from "../core/types.ts";
 
-const model = loadServiceModel(cognitoIdentityModel);
+const model = lazyServiceModel(
+  () =>
+    import("../../models/cognito-identity.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSCognitoIdentityService" },
+);
 
 const defaultAccount = "000000000000" as const;
 const fedTokenPrefix = "FQoGZXIvYXdzEXAMPLEtokenfedbunsai" as const;

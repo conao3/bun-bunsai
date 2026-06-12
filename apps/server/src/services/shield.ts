@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import shieldModel from "../../models/shield.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(shieldModel);
+const model = lazyServiceModel(
+  () => import("../../models/shield.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSShield_20160616" },
+);
 
 type StoredProtection = {
   Id: string;

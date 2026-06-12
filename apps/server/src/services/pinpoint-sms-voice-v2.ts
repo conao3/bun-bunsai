@@ -1,13 +1,18 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import smsVoiceModel from "../../models/pinpoint-sms-voice-v2.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(smsVoiceModel);
+const model = lazyServiceModel(
+  () =>
+    import("../../models/pinpoint-sms-voice-v2.json", {
+      with: { type: "json" },
+    }),
+  { targetPrefix: "PinpointSMSVoiceV2" },
+);
 
 const configurationSetPrefix = "configuration-set:" as const;
 const phonePrefix = "phone:" as const;

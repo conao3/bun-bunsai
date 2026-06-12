@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import pipesModel from "../../models/pipes.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -10,7 +9,9 @@ import type {
 import { deliverToArn, registerEventSource } from "../core/events.ts";
 import { parseArn } from "../core/arn.ts";
 
-const model = loadServiceModel(pipesModel);
+const model = lazyServiceModel(
+  () => import("../../models/pipes.json", { with: { type: "json" } }),
+);
 
 const pipePrefix = "pipe:" as const;
 

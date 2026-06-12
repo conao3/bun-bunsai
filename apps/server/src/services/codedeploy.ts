@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import codedeployModel from "../../models/codedeploy.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(codedeployModel);
+const model = lazyServiceModel(
+  () => import("../../models/codedeploy.json", { with: { type: "json" } }),
+  { targetPrefix: "CodeDeploy_20141006" },
+);
 
 type StoredApplication = {
   applicationId: string;

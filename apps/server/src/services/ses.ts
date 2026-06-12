@@ -1,13 +1,14 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import sesModel from "../../models/ses.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(sesModel);
+const model = lazyServiceModel(
+  () => import("../../models/ses.json", { with: { type: "json" } }),
+);
 
 type StoredIdentity = {
   Identity: string;

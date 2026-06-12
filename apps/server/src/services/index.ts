@@ -1,5 +1,10 @@
 import { pickService } from "../core/router.ts";
-import type { ParsedRequest, ServiceDefinition } from "../core/types.ts";
+import type {
+  LazyServiceModel,
+  ParsedRequest,
+  ServiceDefinition,
+  ServiceModel,
+} from "../core/types.ts";
 import sts from "./sts.ts";
 import s3 from "./s3.ts";
 import sqs from "./sqs.ts";
@@ -291,11 +296,16 @@ export const findService = (
   path?: string,
   target?: string,
 ): ServiceDefinition | undefined => {
-  const candidates = services.filter(
-    (s) =>
-      s.name === name ||
-      s.model?.metadata?.targetPrefix?.toLowerCase() === name,
-  );
+  const candidates = services.filter((s) => {
+    if (s.name === name) return true;
+    const model = s.model;
+    if (model === undefined) return false;
+    const prefix =
+      (model as LazyServiceModel)._lazy === true
+        ? (model as LazyServiceModel).targetPrefix
+        : (model as ServiceModel).metadata?.targetPrefix;
+    return prefix?.toLowerCase() === name;
+  });
   if (candidates.length <= 1) return candidates[0];
   if (target !== undefined) {
     const req = { path: path ?? "/", target } as ParsedRequest;

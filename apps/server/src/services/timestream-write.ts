@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import timestreamWriteModel from "../../models/timestream-write.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,11 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(timestreamWriteModel);
+const model = lazyServiceModel(
+  () =>
+    import("../../models/timestream-write.json", { with: { type: "json" } }),
+  { targetPrefix: "Timestream_20181101" },
+);
 
 const dbPrefix = "db:" as const;
 const tablePrefix = "table:" as const;

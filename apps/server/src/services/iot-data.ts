@@ -1,13 +1,14 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import iotDataModel from "../../models/iot-data.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(iotDataModel);
+const model = lazyServiceModel(
+  () => import("../../models/iot-data.json", { with: { type: "json" } }),
+);
 
 type ShadowState = {
   desired: Record<string, unknown>;

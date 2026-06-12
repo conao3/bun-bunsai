@@ -75,8 +75,9 @@ const serviceFromHost = (host: string | null): string | undefined => {
   const labels = hostname.split(".");
   const first = labels[0];
   if (first === undefined || first === "") return undefined;
-  if (first === "localhost" || /^\d+$/.test(first)) return undefined;
+  if (first === "localhost") return undefined;
   if (labels[1] === "execute-api") return "execute-api";
+  if (/^\d+$/.test(first)) return undefined;
   if (first === "s3" || first.startsWith("s3-")) return "s3";
   return first.toLowerCase();
 };

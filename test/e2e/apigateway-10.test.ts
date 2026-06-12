@@ -605,3 +605,12 @@ test("Stage canarySettings round-trip", async () => {
   expect(updated.canarySettings?.percentTraffic).toBe(25);
   expect(updated.canarySettings?.useStageCache).toBe(true);
 });
+
+test("execute-api host routing works for an all-digit api id", async () => {
+  const res = await gwFetch(
+    "http://1234567890.execute-api.us-east-1.localhost/v1/anything",
+  );
+  const body = (await res.json()) as { message?: string };
+  expect(body.message ?? "").not.toContain("is not emulated by bunsai");
+  expect(res.status).toBe(403);
+});

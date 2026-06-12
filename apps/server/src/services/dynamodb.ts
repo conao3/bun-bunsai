@@ -899,9 +899,38 @@ const applyAddValue = (
   return operand;
 };
 
+const ensureValuesUsed = (input: Record<string, unknown>): void => {
+  const rawValues = input["ExpressionAttributeValues"];
+  const provided =
+    typeof rawValues === "object" && rawValues !== null
+      ? Object.keys(rawValues)
+      : [];
+  if (provided.length === 0) return;
+  const used = new Set<string>();
+  for (const field of [
+    "UpdateExpression",
+    "ConditionExpression",
+    "FilterExpression",
+    "KeyConditionExpression",
+  ]) {
+    const expr = input[field];
+    if (typeof expr !== "string") continue;
+    for (const match of expr.matchAll(/:[A-Za-z0-9_]+/g)) used.add(match[0]);
+  }
+  const unused = provided.filter((key) => !used.has(key));
+  if (unused.length > 0) {
+    throw awsError(
+      "ValidationException",
+      `Value provided in ExpressionAttributeValues unused in expressions: keys: {${unused.join(", ")}}`,
+      400,
+    );
+  }
+};
+
 const UpdateItem: OperationHandler = (input, ctx) => {
   const name = requireString(input, "TableName");
   const table = requireTable(ctx, name);
+  ensureValuesUsed(input);
   const key = keyFromKeyInput(table, asItem(input["Key"]));
   const previous = table.items[key];
   ensureConditionPasses(input, previous);

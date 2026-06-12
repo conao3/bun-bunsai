@@ -10,6 +10,7 @@ import {
   DeleteAliasCommand,
   DeleteCodeSigningConfigCommand,
   DeleteEventSourceMappingCommand,
+  DeleteFunctionCodeSigningConfigCommand,
   DeleteFunctionConcurrencyCommand,
   DeleteFunctionEventInvokeConfigCommand,
   DeleteLayerVersionCommand,
@@ -356,6 +357,7 @@ test("Lambda CodeSigningConfig lifecycle", async () => {
     new GetFunctionCodeSigningConfigCommand({ FunctionName: name }),
   );
   expect(fnCsc.CodeSigningConfigArn).toBe(arn);
+  expect(fnCsc.FunctionName).toBeDefined();
 
   const byConfig = await client.send(
     new ListFunctionsByCodeSigningConfigCommand({
@@ -365,8 +367,30 @@ test("Lambda CodeSigningConfig lifecycle", async () => {
   expect(byConfig.FunctionArns?.length).toBeGreaterThan(0);
 
   await client.send(
+    new DeleteFunctionCodeSigningConfigCommand({ FunctionName: name }),
+  );
+
+  const fnCscAfterDelete = await client.send(
+    new GetFunctionCodeSigningConfigCommand({ FunctionName: name }),
+  );
+  expect(fnCscAfterDelete.FunctionName).toBeDefined();
+  expect(fnCscAfterDelete.CodeSigningConfigArn).toBeUndefined();
+
+  await client.send(
     new DeleteCodeSigningConfigCommand({ CodeSigningConfigArn: arn }),
   );
+});
+
+test("Lambda GetFunctionCodeSigningConfig with no config set returns 200", async () => {
+  const client = lambda();
+  const name = "bunsai-ops-csc-empty";
+  await createFn(client, name);
+
+  const result = await client.send(
+    new GetFunctionCodeSigningConfigCommand({ FunctionName: name }),
+  );
+  expect(result.FunctionName).toBeDefined();
+  expect(result.CodeSigningConfigArn).toBeUndefined();
 });
 
 test("Lambda FunctionEventInvokeConfig lifecycle", async () => {

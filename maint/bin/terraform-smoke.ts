@@ -19,6 +19,11 @@ import {
   PutEventsCommand,
   EventBridgeClient,
 } from "@aws-sdk/client-eventbridge";
+import {
+  InvokeCommand,
+  GetFunctionCommand,
+  LambdaClient,
+} from "@aws-sdk/client-lambda";
 import { resolve } from "path";
 
 const tfCheck = Bun.spawnSync(["terraform", "version"], {
@@ -91,6 +96,7 @@ try {
   const sqs = new SQSClient({ endpoint, region, credentials });
   const logs = new CloudWatchLogsClient({ endpoint, region, credentials });
   const events = new EventBridgeClient({ endpoint, region, credentials });
+  const lambda = new LambdaClient({ endpoint, region, credentials });
   const queueResult = await sqs.send(
     new GetQueueUrlCommand({ QueueName: "tf-smoke-queue" }),
   );
@@ -176,6 +182,25 @@ try {
     );
   console.log("✓ EventBridge rule → SQS target verified");
 
+  const invokeResult = await lambda.send(
+    new InvokeCommand({
+      FunctionName: "tf-smoke-fn",
+      Payload: JSON.stringify({ ping: true }),
+    }),
+  );
+  if (invokeResult.StatusCode !== 200)
+    throw new Error(
+      `Lambda invoke: expected 200, got ${invokeResult.StatusCode}`,
+    );
+  const invokePayload = JSON.parse(
+    Buffer.from(invokeResult.Payload!).toString(),
+  ) as { statusCode: number; body: string };
+  if (invokePayload.statusCode !== 200)
+    throw new Error(
+      `Lambda invoke payload statusCode: expected 200, got ${invokePayload.statusCode}`,
+    );
+  console.log("✓ Lambda function invoked successfully");
+
   tf(["destroy", "-auto-approve"]);
 
   let sqsGone = false;
@@ -211,6 +236,16 @@ try {
   if (!logGroupGone)
     throw new Error("CloudWatch log group still exists after destroy");
   console.log("✓ CloudWatch log group gone after destroy");
+
+  let lambdaGone = false;
+  try {
+    await lambda.send(new GetFunctionCommand({ FunctionName: "tf-smoke-fn" }));
+  } catch {
+    lambdaGone = true;
+  }
+  if (!lambdaGone)
+    throw new Error("Lambda function still exists after destroy");
+  console.log("✓ Lambda function gone after destroy");
 
   console.log("terraform-smoke: all checks passed");
 } catch (err) {

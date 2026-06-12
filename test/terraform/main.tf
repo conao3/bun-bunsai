@@ -124,3 +124,13 @@ resource "aws_cloudwatch_event_target" "smoke" {
   rule = aws_cloudwatch_event_rule.smoke.name
   arn  = aws_sqs_queue.smoke.arn
 }
+
+resource "aws_lambda_function" "smoke" {
+  function_name = "tf-smoke-fn"
+  role          = aws_iam_role.smoke.arn
+  filename      = "${path.module}/fn.zip"
+  handler       = "index.handler"
+  runtime       = "nodejs20.x"
+
+  depends_on = [aws_iam_role_policy.smoke]
+}

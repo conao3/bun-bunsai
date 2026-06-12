@@ -1397,11 +1397,7 @@ const GetFunctionCodeSigningConfig: OperationHandler = (input, ctx) => {
   const fn = requireFunction(ctx, functionNameFromInput(input));
   const stored = ctx.store.get<{ arn: string }>(fnCscKey(fn.FunctionName));
   if (stored === undefined) {
-    throw awsError(
-      "ResourceNotFoundException",
-      `No code signing config for function: ${fn.FunctionName}`,
-      404,
-    );
+    return { FunctionName: fn.FunctionName };
   }
   return { CodeSigningConfigArn: stored.arn, FunctionName: fn.FunctionName };
 };

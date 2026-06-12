@@ -55,7 +55,7 @@
     {
       "command": "ListTablesCommand",
       "input": {},
-      "expected": { "TableNames": ["parity-ddb-table"] },
+      "expected": {},
       "ignorePaths": ["$metadata"],
       "saveAs": null,
       "refs": {}

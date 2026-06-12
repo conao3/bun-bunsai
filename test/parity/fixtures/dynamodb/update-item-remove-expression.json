@@ -1,0 +1,76 @@
+{
+  "clientPackage": "@aws-sdk/client-dynamodb",
+  "clientName": "DynamoDBClient",
+  "steps": [
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "TableName": "parity-ddb-remove",
+        "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" }
+        ],
+        "BillingMode": "PAY_PER_REQUEST"
+      },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-remove",
+          "TableStatus": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-remove",
+        "Item": {
+          "pk": { "S": "foo" },
+          "item": { "S": "bar" }
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UpdateItemCommand",
+      "input": {
+        "TableName": "parity-ddb-remove",
+        "Key": { "pk": { "S": "foo" } },
+        "UpdateExpression": "REMOVE non_existent_attribute"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetItemCommand",
+      "input": {
+        "TableName": "parity-ddb-remove",
+        "Key": { "pk": { "S": "foo" } }
+      },
+      "expected": {
+        "Item": {
+          "pk": { "S": "foo" },
+          "item": { "S": "bar" }
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": { "TableName": "parity-ddb-remove" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

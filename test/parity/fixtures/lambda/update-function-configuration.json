@@ -1,0 +1,59 @@
+{
+  "clientPackage": "@aws-sdk/client-lambda",
+  "clientName": "LambdaClient",
+  "steps": [
+    {
+      "command": "CreateFunctionCommand",
+      "input": {
+        "FunctionName": "parity-fn-update-config",
+        "Runtime": "nodejs20.x",
+        "Role": "arn:aws:iam::000000000000:role/parity-role",
+        "Handler": "index.handler",
+        "Code": { "ZipFile": { "$base64": "UEsgZmFrZSB6aXA=" } },
+        "Description": "test lambda function",
+        "Timeout": 3,
+        "MemorySize": 128
+      },
+      "expected": {
+        "FunctionName": "parity-fn-update-config",
+        "Runtime": "nodejs20.x",
+        "Handler": "index.handler",
+        "Timeout": 3,
+        "MemorySize": 128,
+        "Description": "test lambda function"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UpdateFunctionConfigurationCommand",
+      "input": {
+        "FunctionName": "parity-fn-update-config",
+        "Description": "updated test lambda function",
+        "Handler": "lib/handler",
+        "Runtime": "nodejs18.x",
+        "Timeout": 7
+      },
+      "expected": {
+        "FunctionName": "parity-fn-update-config",
+        "Description": "updated test lambda function",
+        "Handler": "lib/handler",
+        "Runtime": "nodejs18.x",
+        "Timeout": 7,
+        "MemorySize": 128
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteFunctionCommand",
+      "input": { "FunctionName": "parity-fn-update-config" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

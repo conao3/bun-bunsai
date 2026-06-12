@@ -1,0 +1,91 @@
+{
+  "clientPackage": "@aws-sdk/client-dynamodb",
+  "clientName": "DynamoDBClient",
+  "steps": [
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "TableName": "parity-ddb-gsi",
+        "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" },
+          { "AttributeName": "gsi_pk", "AttributeType": "S" },
+          { "AttributeName": "gsi_sk", "AttributeType": "S" }
+        ],
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "test_gsi",
+            "KeySchema": [
+              { "AttributeName": "gsi_pk", "KeyType": "HASH" },
+              { "AttributeName": "gsi_sk", "KeyType": "RANGE" }
+            ],
+            "Projection": { "ProjectionType": "KEYS_ONLY" },
+            "ProvisionedThroughput": {
+              "ReadCapacityUnits": 1,
+              "WriteCapacityUnits": 1
+            }
+          }
+        ],
+        "ProvisionedThroughput": {
+          "ReadCapacityUnits": 1,
+          "WriteCapacityUnits": 5
+        }
+      },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-gsi",
+          "TableStatus": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-gsi",
+        "Item": {
+          "pk": { "S": "pk-1" },
+          "gsi_pk": { "S": "gsi-pk" },
+          "gsi_sk": { "S": "gsi-sk" },
+          "someAttribute": { "S": "lore ipsum" }
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "QueryCommand",
+      "input": {
+        "TableName": "parity-ddb-gsi",
+        "IndexName": "test_gsi",
+        "KeyConditionExpression": "gsi_pk = :gsi_pk",
+        "ExpressionAttributeValues": { ":gsi_pk": { "S": "gsi-pk" } }
+      },
+      "expected": {
+        "Count": 1,
+        "Items": [
+          {
+            "pk": { "S": "pk-1" },
+            "gsi_pk": { "S": "gsi-pk" },
+            "gsi_sk": { "S": "gsi-sk" }
+          }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": { "TableName": "parity-ddb-gsi" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

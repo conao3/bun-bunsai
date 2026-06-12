@@ -1,0 +1,70 @@
+{
+  "clientPackage": "@aws-sdk/client-dynamodb",
+  "clientName": "DynamoDBClient",
+  "steps": [
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "TableName": "parity-ddb-map",
+        "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" }
+        ],
+        "BillingMode": "PAY_PER_REQUEST"
+      },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-map",
+          "TableStatus": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-map",
+        "Item": {
+          "pk": { "S": "example_id" },
+          "d": { "M": { "hello": { "S": "h" }, "world": { "S": "w" } } }
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "UpdateItemCommand",
+      "input": {
+        "TableName": "parity-ddb-map",
+        "Key": { "pk": { "S": "example_id" } },
+        "UpdateExpression": "SET d.hello = :h, d.world = :w",
+        "ExpressionAttributeValues": {
+          ":h": { "S": "H" },
+          ":w": { "S": "W" }
+        },
+        "ReturnValues": "ALL_NEW"
+      },
+      "expected": {
+        "Attributes": {
+          "pk": { "S": "example_id" },
+          "d": { "M": { "hello": { "S": "H" }, "world": { "S": "W" } } }
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": { "TableName": "parity-ddb-map" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

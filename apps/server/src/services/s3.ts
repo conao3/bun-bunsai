@@ -85,6 +85,11 @@ type S3Bucket = {
   analyticsConfigs: Record<string, unknown>;
   inventoryConfigs: Record<string, unknown>;
   metricsConfigs: Record<string, unknown>;
+  intelligentTieringConfigs: Record<string, unknown>;
+  metadataConfiguration: Record<string, unknown> | undefined;
+  metadataTableConfiguration: Record<string, unknown> | undefined;
+  metadataInventoryTableConfiguration: Record<string, unknown> | undefined;
+  metadataJournalTableConfiguration: Record<string, unknown> | undefined;
 };
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
@@ -453,6 +458,11 @@ const s3: ServiceDefinition = {
       const hasAnalytics = req.query.has("analytics");
       const hasInventory = req.query.has("inventory");
       const hasMetrics = req.query.has("metrics");
+      const hasIntelligentTiering = req.query.has("intelligent-tiering");
+      const hasMetadataConfiguration = req.query.has("metadataConfiguration");
+      const hasMetadataTable = req.query.has("metadataTable");
+      const hasMetadataInventoryTable = req.query.has("metadataInventoryTable");
+      const hasMetadataJournalTable = req.query.has("metadataJournalTable");
       if (req.method === "PUT") {
         if (hasTagging) return "PutBucketTagging";
         if (hasVersioning) return "PutBucketVersioning";
@@ -472,6 +482,12 @@ const s3: ServiceDefinition = {
         if (hasAnalytics) return "PutBucketAnalyticsConfiguration";
         if (hasInventory) return "PutBucketInventoryConfiguration";
         if (hasMetrics) return "PutBucketMetricsConfiguration";
+        if (hasIntelligentTiering)
+          return "PutBucketIntelligentTieringConfiguration";
+        if (hasMetadataInventoryTable)
+          return "UpdateBucketMetadataInventoryTableConfiguration";
+        if (hasMetadataJournalTable)
+          return "UpdateBucketMetadataJournalTableConfiguration";
         return "CreateBucket";
       }
       if (req.method === "DELETE") {
@@ -485,6 +501,11 @@ const s3: ServiceDefinition = {
         if (hasAnalytics) return "DeleteBucketAnalyticsConfiguration";
         if (hasInventory) return "DeleteBucketInventoryConfiguration";
         if (hasMetrics) return "DeleteBucketMetricsConfiguration";
+        if (hasIntelligentTiering)
+          return "DeleteBucketIntelligentTieringConfiguration";
+        if (hasMetadataConfiguration)
+          return "DeleteBucketMetadataConfiguration";
+        if (hasMetadataTable) return "DeleteBucketMetadataTableConfiguration";
         return "DeleteBucket";
       }
       if (req.method === "GET") {
@@ -517,12 +538,21 @@ const s3: ServiceDefinition = {
           return req.query.has("id")
             ? "GetBucketMetricsConfiguration"
             : "ListBucketMetricsConfigurations";
+        if (hasIntelligentTiering)
+          return req.query.has("id")
+            ? "GetBucketIntelligentTieringConfiguration"
+            : "ListBucketIntelligentTieringConfigurations";
+        if (hasMetadataConfiguration) return "GetBucketMetadataConfiguration";
+        if (hasMetadataTable) return "GetBucketMetadataTableConfiguration";
         if (req.query.has("versions")) return "ListObjectVersions";
         if (req.query.get("list-type") === "2") return "ListObjectsV2";
         return "ListObjects";
       }
       if (req.method === "POST") {
         if (req.query.has("delete")) return "DeleteObjects";
+        if (hasMetadataConfiguration)
+          return "CreateBucketMetadataConfiguration";
+        if (hasMetadataTable) return "CreateBucketMetadataTableConfiguration";
         return undefined;
       }
       if (req.method === "HEAD") return "HeadBucket";
@@ -610,6 +640,11 @@ const s3: ServiceDefinition = {
         analyticsConfigs: {},
         inventoryConfigs: {},
         metricsConfigs: {},
+        intelligentTieringConfigs: {},
+        metadataConfiguration: undefined,
+        metadataTableConfiguration: undefined,
+        metadataInventoryTableConfiguration: undefined,
+        metadataJournalTableConfiguration: undefined,
       });
       return { Location: `/${bucket}` };
     },
@@ -2332,6 +2367,211 @@ const s3: ServiceDefinition = {
         NextContinuationToken: isTruncated ? page[page.length - 1] : undefined,
         MetricsConfigurationList: list,
       };
+    },
+    PutBucketIntelligentTieringConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const config = input["IntelligentTieringConfiguration"];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        intelligentTieringConfigs: {
+          ...target.intelligentTieringConfigs,
+          [id]: config,
+        },
+      });
+      return {};
+    },
+    GetBucketIntelligentTieringConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const config = target.intelligentTieringConfigs[id];
+      if (config === undefined) {
+        throw awsError(
+          "NoSuchConfiguration",
+          "The specified configuration does not exist",
+          404,
+        );
+      }
+      return { IntelligentTieringConfiguration: config };
+    },
+    DeleteBucketIntelligentTieringConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const id = req.query.get("id");
+      if (typeof id !== "string" || id === "") {
+        throw awsError("InvalidArgument", "Id is required", 400);
+      }
+      const { [id]: _removed, ...rest } = target.intelligentTieringConfigs;
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        intelligentTieringConfigs: rest,
+      });
+      return {};
+    },
+    ListBucketIntelligentTieringConfigurations: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const continuationToken = req.query.get("continuation-token");
+      const allIds = Object.keys(target.intelligentTieringConfigs).sort();
+      const startIdx =
+        continuationToken !== null
+          ? allIds.findIndex((id) => id > continuationToken)
+          : 0;
+      const page = allIds.slice(
+        startIdx < 0 ? allIds.length : startIdx,
+        (startIdx < 0 ? allIds.length : startIdx) + 100,
+      );
+      const isTruncated = page.length === 100 && startIdx + 100 < allIds.length;
+      const list = page.map((id) => target.intelligentTieringConfigs[id]);
+      return {
+        IsTruncated: isTruncated,
+        ContinuationToken: continuationToken ?? undefined,
+        NextContinuationToken: isTruncated ? page[page.length - 1] : undefined,
+        IntelligentTieringConfigurationList: list,
+      };
+    },
+    CreateBucketMetadataConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["MetadataConfiguration"];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        metadataConfiguration:
+          typeof config === "object" && config !== null
+            ? (config as Record<string, unknown>)
+            : {},
+      });
+      return {};
+    },
+    GetBucketMetadataConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if (target.metadataConfiguration === undefined) {
+        throw awsError(
+          "NoSuchConfiguration",
+          "The specified configuration does not exist",
+          404,
+        );
+      }
+      return {
+        GetBucketMetadataConfigurationResult: target.metadataConfiguration,
+      };
+    },
+    DeleteBucketMetadataConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        metadataConfiguration: undefined,
+      });
+      return {};
+    },
+    CreateBucketMetadataTableConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["MetadataTableConfiguration"];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        metadataTableConfiguration:
+          typeof config === "object" && config !== null
+            ? (config as Record<string, unknown>)
+            : {},
+      });
+      return {};
+    },
+    GetBucketMetadataTableConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      if (target.metadataTableConfiguration === undefined) {
+        throw awsError(
+          "NoSuchConfiguration",
+          "The specified configuration does not exist",
+          404,
+        );
+      }
+      return {
+        GetBucketMetadataTableConfigurationResult:
+          target.metadataTableConfiguration,
+      };
+    },
+    DeleteBucketMetadataTableConfiguration: (_input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        metadataTableConfiguration: undefined,
+      });
+      return {};
+    },
+    UpdateBucketMetadataInventoryTableConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["InventoryTableConfiguration"];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        metadataInventoryTableConfiguration:
+          typeof config === "object" && config !== null
+            ? (config as Record<string, unknown>)
+            : {},
+      });
+      return {};
+    },
+    UpdateBucketMetadataJournalTableConfiguration: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const config = input["JournalTableConfiguration"];
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        metadataJournalTableConfiguration:
+          typeof config === "object" && config !== null
+            ? (config as Record<string, unknown>)
+            : {},
+      });
+      return {};
     },
     PutBucketCors: (input, ctx, req) => {
       const { bucket } = bucketKeyFromPath(req.path);

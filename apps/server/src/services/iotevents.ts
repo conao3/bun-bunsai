@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import ioteventsModel from "../../models/iotevents.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(ioteventsModel);
+const model = lazyServiceModel(
+  () => import("../../models/iotevents.json", { with: { type: "json" } }),
+);
 
 const inputPrefix = "input:" as const;
 const detectorModelPrefix = "detectorModel:" as const;

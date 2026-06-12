@@ -14,15 +14,17 @@ import type {
   UpdateAST,
 } from "../core/expressions/types.ts";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import dynamodbModel from "../../models/dynamodb.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(dynamodbModel);
+const model = lazyServiceModel(
+  () => import("../../models/dynamodb.json", { with: { type: "json" } }),
+  { targetPrefix: "DynamoDB_20120810" },
+);
 
 type AttributeValue = Record<string, unknown>;
 

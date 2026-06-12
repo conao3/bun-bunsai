@@ -1,14 +1,16 @@
 import { awsError } from "../core/framework.ts";
 import { invokeTaskResource } from "../core/events.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import secretsManagerModel from "../../models/secretsmanager.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(secretsManagerModel);
+const model = lazyServiceModel(
+  () => import("../../models/secretsmanager.json", { with: { type: "json" } }),
+  { targetPrefix: "secretsmanager" },
+);
 
 type StoredVersion = {
   VersionId: string;

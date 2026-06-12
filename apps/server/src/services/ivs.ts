@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import ivsModel from "../../models/ivs.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(ivsModel);
+const model = lazyServiceModel(
+  () => import("../../models/ivs.json", { with: { type: "json" } }),
+);
 
 const channelPrefix = "channel:" as const;
 const streamKeyPrefix = "streamKey:" as const;

@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import workspacesModel from "../../models/workspaces.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(workspacesModel);
+const model = lazyServiceModel(
+  () => import("../../models/workspaces.json", { with: { type: "json" } }),
+  { targetPrefix: "WorkspacesService" },
+);
 
 type StoredTag = {
   Key: string;

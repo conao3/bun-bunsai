@@ -1,13 +1,16 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import networkFirewallModel from "../../models/network-firewall.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(networkFirewallModel);
+const model = lazyServiceModel(
+  () =>
+    import("../../models/network-firewall.json", { with: { type: "json" } }),
+  { targetPrefix: "NetworkFirewall_20201112" },
+);
 
 type TagEntry = { Key: string | undefined; Value: string | undefined };
 

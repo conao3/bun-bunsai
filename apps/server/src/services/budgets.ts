@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import budgetsModel from "../../models/budgets.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(budgetsModel);
+const model = lazyServiceModel(
+  () => import("../../models/budgets.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSBudgetServiceGateway" },
+);
 
 type StoredBudget = Record<string, unknown> & {
   BudgetName: string;

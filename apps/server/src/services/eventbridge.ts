@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import eventBridgeModel from "../../models/eventbridge.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
@@ -8,7 +7,10 @@ import type {
 } from "../core/types.ts";
 import { deliverToArn } from "../core/events.ts";
 
-const model = loadServiceModel(eventBridgeModel);
+const model = lazyServiceModel(
+  () => import("../../models/eventbridge.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSEvents" },
+);
 
 type StoredRule = {
   Name: string;

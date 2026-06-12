@@ -1,7 +1,6 @@
 import { awsError } from "../core/framework.ts";
 import { deliverToArn } from "../core/events.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import schedulerModel from "../../models/scheduler.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -9,7 +8,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(schedulerModel);
+const model = lazyServiceModel(
+  () => import("../../models/scheduler.json", { with: { type: "json" } }),
+);
 
 const schedulePrefix = "schedule:" as const;
 

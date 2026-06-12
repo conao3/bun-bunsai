@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import groundstationModel from "../../models/groundstation.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(groundstationModel);
+const model = lazyServiceModel(
+  () => import("../../models/groundstation.json", { with: { type: "json" } }),
+);
 
 const missionProfilePrefix = "missionProfile:" as const;
 const configPrefix = "config:" as const;

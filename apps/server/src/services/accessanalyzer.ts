@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import accessanalyzerModel from "../../models/accessanalyzer.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(accessanalyzerModel);
+const model = lazyServiceModel(
+  () => import("../../models/accessanalyzer.json", { with: { type: "json" } }),
+);
 
 const analyzerPrefix = "analyzer:" as const;
 const archiveRulePrefix = "archiveRule:" as const;

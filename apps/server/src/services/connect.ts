@@ -1,7 +1,6 @@
 import { callerArn } from "../core/arn.ts";
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import connectModel from "../../models/connect.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -9,7 +8,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(connectModel);
+const model = lazyServiceModel(
+  () => import("../../models/connect.json", { with: { type: "json" } }),
+);
 
 const instancePrefix = "instance:" as const;
 const phoneNumberPrefix = "phone-number:" as const;

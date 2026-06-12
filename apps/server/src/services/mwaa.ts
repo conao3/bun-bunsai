@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import mwaaModel from "../../models/mwaa.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(mwaaModel);
+const model = lazyServiceModel(
+  () => import("../../models/mwaa.json", { with: { type: "json" } }),
+);
 
 const environmentPrefix = "environment:" as const;
 const tagsPrefix = "tags:" as const;

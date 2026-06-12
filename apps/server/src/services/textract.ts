@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import textractModel from "../../models/textract.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(textractModel);
+const model = lazyServiceModel(
+  () => import("../../models/textract.json", { with: { type: "json" } }),
+  { targetPrefix: "Textract" },
+);
 
 type Block = {
   BlockType: string;

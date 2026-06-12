@@ -1,15 +1,17 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
+import { lazyServiceModel } from "../core/shapes.ts";
 import { scopedStore } from "../core/state.ts";
 import type { StateStore } from "../core/state.ts";
-import cloudtrailModel from "../../models/cloudtrail.json" with { type: "json" };
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(cloudtrailModel);
+const model = lazyServiceModel(
+  () => import("../../models/cloudtrail.json", { with: { type: "json" } }),
+  { targetPrefix: "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101" },
+);
 
 type StoredTrail = {
   Name: string;

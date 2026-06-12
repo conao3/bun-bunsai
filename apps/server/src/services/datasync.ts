@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import datasyncModel from "../../models/datasync.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(datasyncModel);
+const model = lazyServiceModel(
+  () => import("../../models/datasync.json", { with: { type: "json" } }),
+  { targetPrefix: "FmrsService" },
+);
 
 type StoredAgent = {
   AgentArn: string;

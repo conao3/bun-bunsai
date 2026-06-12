@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import licensemanagerModel from "../../models/licensemanager.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(licensemanagerModel);
+const model = lazyServiceModel(
+  () => import("../../models/licensemanager.json", { with: { type: "json" } }),
+  { targetPrefix: "AWSLicenseManager" },
+);
 
 type StoredLicenseConfiguration = {
   LicenseConfigurationId: string;

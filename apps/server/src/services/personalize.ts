@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import personalizeModel from "../../models/personalize.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(personalizeModel);
+const model = lazyServiceModel(
+  () => import("../../models/personalize.json", { with: { type: "json" } }),
+  { targetPrefix: "AmazonPersonalize" },
+);
 
 const schemaPrefix = "schema:" as const;
 const datasetGroupPrefix = "dsg:" as const;

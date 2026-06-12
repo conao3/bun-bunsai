@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import apprunnerModel from "../../models/apprunner.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(apprunnerModel);
+const model = lazyServiceModel(
+  () => import("../../models/apprunner.json", { with: { type: "json" } }),
+  { targetPrefix: "AppRunner" },
+);
 
 const servicePrefix = "service:" as const;
 const autoScalingPrefix = "autoscaling:" as const;

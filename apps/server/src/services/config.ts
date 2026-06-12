@@ -1,13 +1,15 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import configModel from "../../models/config.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(configModel);
+const model = lazyServiceModel(
+  () => import("../../models/config.json", { with: { type: "json" } }),
+  { targetPrefix: "StarlingDoveService" },
+);
 
 type StoredRule = Record<string, unknown> & { ConfigRuleName: string };
 type StoredRecorder = Record<string, unknown> & { name: string };

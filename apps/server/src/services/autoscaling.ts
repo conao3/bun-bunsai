@@ -1,13 +1,14 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import autoscalingModel from "../../models/autoscaling.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ServiceContext,
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(autoscalingModel);
+const model = lazyServiceModel(
+  () => import("../../models/autoscaling.json", { with: { type: "json" } }),
+);
 
 type StoredLaunchConfiguration = {
   LaunchConfigurationName: string;

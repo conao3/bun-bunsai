@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import snsModel from "../../models/sns.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ScopedStore,
@@ -11,7 +10,9 @@ import { deliverToArn, registerTarget } from "../core/events.ts";
 import { parseArn, resourceName } from "../core/arn.ts";
 import { serviceBaseUrl } from "./_endpoint.ts";
 
-const model = loadServiceModel(snsModel);
+const model = lazyServiceModel(
+  () => import("../../models/sns.json", { with: { type: "json" } }),
+);
 
 type StoredTopic = {
   TopicArn: string;

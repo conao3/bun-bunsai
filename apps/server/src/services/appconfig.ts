@@ -1,6 +1,5 @@
 import { awsError } from "../core/framework.ts";
-import { loadServiceModel } from "../core/shapes.ts";
-import appconfigModel from "../../models/appconfig.json" with { type: "json" };
+import { lazyServiceModel } from "../core/shapes.ts";
 import type {
   OperationHandler,
   ParsedRequest,
@@ -8,7 +7,9 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 
-const model = loadServiceModel(appconfigModel);
+const model = lazyServiceModel(
+  () => import("../../models/appconfig.json", { with: { type: "json" } }),
+);
 
 const applicationPrefix = "application:" as const;
 const environmentPrefix = "environment:" as const;

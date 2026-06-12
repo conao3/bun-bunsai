@@ -9,6 +9,7 @@ import { deliverToArn } from "../core/events.ts";
 
 const model = lazyServiceModel(
   () => import("../../models/s3.json", { with: { type: "json" } }),
+  { targetPrefix: "s3express" },
 );
 
 type S3Object = {
@@ -437,7 +438,11 @@ const s3: ServiceDefinition = {
   resolveOperation: (req: ParsedRequest): string | undefined => {
     const { bucket, key } = bucketKeyFromPath(req.path);
     if (bucket === undefined) {
-      if (req.method === "GET") return "ListBuckets";
+      if (req.method === "GET") {
+        if (req.query.has("max-directory-buckets"))
+          return "ListDirectoryBuckets";
+        return "ListBuckets";
+      }
       return undefined;
     }
     if (key === undefined) {
@@ -519,6 +524,7 @@ const s3: ServiceDefinition = {
         return "DeleteBucket";
       }
       if (req.method === "GET") {
+        if (req.query.has("session")) return "CreateSession";
         if (hasTagging) return "GetBucketTagging";
         if (hasLocation) return "GetBucketLocation";
         if (hasUploads) return "ListMultipartUploads";
@@ -562,6 +568,8 @@ const s3: ServiceDefinition = {
         return "ListObjects";
       }
       if (req.method === "POST") {
+        if (bucket === "WriteGetObjectResponse")
+          return "WriteGetObjectResponse";
         if (req.query.has("delete")) return "DeleteObjects";
         if (hasMetadataConfiguration)
           return "CreateBucketMetadataConfiguration";
@@ -581,6 +589,8 @@ const s3: ServiceDefinition = {
     if (req.method === "POST") {
       if (hasUploads) return "CreateMultipartUpload";
       if (hasUploadId) return "CompleteMultipartUpload";
+      if (req.query.has("restore")) return "RestoreObject";
+      if (req.query.has("select")) return "SelectObjectContent";
       return undefined;
     }
     if (req.method === "PUT") {
@@ -589,6 +599,8 @@ const s3: ServiceDefinition = {
           return "UploadPartCopy";
         return "UploadPart";
       }
+      if (req.query.has("renameObject")) return "RenameObject";
+      if (req.query.has("encryption")) return "UpdateObjectEncryption";
       if (hasObjectTagging) return "PutObjectTagging";
       if (hasObjectAcl) return "PutObjectAcl";
       if (hasRetention) return "PutObjectRetention";
@@ -598,6 +610,7 @@ const s3: ServiceDefinition = {
     }
     if (req.method === "GET") {
       if (hasUploadId) return "ListParts";
+      if (req.query.has("torrent")) return "GetObjectTorrent";
       if (hasObjectTagging) return "GetObjectTagging";
       if (hasObjectAcl) return "GetObjectAcl";
       if (hasRetention) return "GetObjectRetention";
@@ -3164,6 +3177,342 @@ const s3: ServiceDefinition = {
           `</ListVersionsResult>`,
         ].join(""),
       };
+    },
+    ListDirectoryBuckets: (_input, ctx) => {
+      const all = ctx.store.list<S3Bucket>();
+      const directoryBuckets = all.filter((b) =>
+        b.value.name.endsWith("--x-s3"),
+      );
+      return {
+        Buckets: directoryBuckets.map((b) => ({
+          Name: b.value.name,
+          CreationDate: b.value.creationDate,
+        })),
+      };
+    },
+    CreateSession: (input, ctx, req) => {
+      const { bucket } = bucketKeyFromPath(req.path);
+      if (bucket === undefined) {
+        throw awsError("InvalidBucketName", "bucket name required", 400);
+      }
+      getBucket(ctx, bucket);
+      const mode =
+        typeof input["SessionMode"] === "string"
+          ? input["SessionMode"]
+          : "ReadWrite";
+      const expiry = nowSeconds() + 3600;
+      return {
+        Credentials: {
+          AccessKeyId: "ASIAIOSFODNN7EXAMPLE",
+          SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+          SessionToken: `bunsai-session-${mode}-${bucket}-${expiry}`,
+          Expiration: expiry,
+        },
+      };
+    },
+    GetObjectTorrent: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const object = getCurrentObject(target.objects[key]);
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const enc = new TextEncoder();
+      const bencode = (v: unknown): Uint8Array => {
+        if (typeof v === "string") {
+          const bytes = enc.encode(v);
+          return concatBytes([enc.encode(`${bytes.length}:`), bytes]);
+        }
+        if (typeof v === "number") {
+          return enc.encode(`i${Math.floor(v)}e`);
+        }
+        if (Array.isArray(v)) {
+          return concatBytes([
+            enc.encode("l"),
+            ...v.map(bencode),
+            enc.encode("e"),
+          ]);
+        }
+        if (typeof v === "object" && v !== null) {
+          const obj = v as Record<string, unknown>;
+          const entries = Object.entries(obj).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0,
+          );
+          return concatBytes([
+            enc.encode("d"),
+            ...entries.flatMap(([k, val]) => [bencode(k), bencode(val)]),
+            enc.encode("e"),
+          ]);
+        }
+        return enc.encode("0:");
+      };
+      const torrentInfo = {
+        length: object.size,
+        name: key,
+        "piece length": 262144,
+        pieces: md5Hex(object.body),
+      };
+      const body = bencode({ info: torrentInfo });
+      return { Body: body, ContentLength: body.byteLength };
+    },
+    RenameObject: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const rawSource =
+        typeof input["RenameSource"] === "string"
+          ? input["RenameSource"]
+          : undefined;
+      if (rawSource === undefined) {
+        throw awsError("InvalidRequest", "RenameSource header required", 400);
+      }
+      const srcKey = decodeURIComponent(
+        rawSource.startsWith("/") ? rawSource.slice(1) : rawSource,
+      );
+      const srcParts = srcKey.split("/");
+      const srcObjectKey =
+        srcParts.length > 1 ? srcParts.slice(1).join("/") : srcParts[0];
+      const srcVersions = target.objects[srcObjectKey];
+      if (!srcVersions || srcVersions.length === 0) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const srcObject = getCurrentObject(srcVersions);
+      if (srcObject === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const destIfNoneMatch = input["DestinationIfNoneMatch"];
+      if (destIfNoneMatch === "*") {
+        const existing = getCurrentObject(target.objects[key]);
+        if (existing !== undefined) {
+          throw awsError(
+            "PreconditionFailed",
+            "At least one of the pre-conditions you specified did not hold",
+            412,
+          );
+        }
+      }
+      const destIfMatch =
+        typeof input["DestinationIfMatch"] === "string"
+          ? input["DestinationIfMatch"]
+          : undefined;
+      if (destIfMatch !== undefined) {
+        const existing = getCurrentObject(target.objects[key]);
+        if (
+          existing === undefined ||
+          !etagMatches(destIfMatch, existing.etag)
+        ) {
+          throw awsError(
+            "PreconditionFailed",
+            "At least one of the pre-conditions you specified did not hold",
+            412,
+          );
+        }
+      }
+      const versioned = target.versioningStatus === "Enabled";
+      const newVersionId = versioned ? generateVersionId() : undefined;
+      const movedObject: S3Object = {
+        ...srcObject,
+        key,
+        versionId: newVersionId,
+        lastModified: nowSeconds(),
+      };
+      const destVersions = target.objects[key] ?? [];
+      const updatedObjects = {
+        ...target.objects,
+        [key]: versioned ? [movedObject, ...destVersions] : [movedObject],
+      };
+      const srcRemaining = srcVersions.slice(1);
+      if (srcRemaining.length === 0) {
+        delete updatedObjects[srcObjectKey];
+      } else {
+        updatedObjects[srcObjectKey] = srcRemaining;
+      }
+      ctx.store.set<S3Bucket>(bucket, { ...target, objects: updatedObjects });
+      return {};
+    },
+    RestoreObject: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const requestedVersionId =
+        typeof input["VersionId"] === "string" ? input["VersionId"] : undefined;
+      const idx = versionIndexFor(
+        target.objects[key] ?? [],
+        requestedVersionId,
+      );
+      if (idx === -1) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const object = (target.objects[key] ?? [])[idx];
+      if (object === undefined || object.isDeleteMarker) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      if (
+        object.storageClass !== "GLACIER" &&
+        object.storageClass !== "DEEP_ARCHIVE" &&
+        object.storageClass !== "GLACIER_IR"
+      ) {
+        throw awsError(
+          "ObjectAlreadyInActiveTierError",
+          "The source object of a RESTORE request is not in GLACIER or DEEP_ARCHIVE storage class",
+          403,
+        );
+      }
+      const restoreRequest = input["RestoreRequest"];
+      const days =
+        typeof restoreRequest === "object" && restoreRequest !== null
+          ? ((restoreRequest as Record<string, unknown>)["Days"] as
+              | number
+              | undefined)
+          : undefined;
+      const restoreExpiry = nowSeconds() + (days ?? 1) * 86400;
+      const versions = [...(target.objects[key] ?? [])];
+      versions[idx] = { ...object, storageClass: "STANDARD" };
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        objects: { ...target.objects, [key]: versions },
+      });
+      return {
+        $headers: {
+          "x-amz-restore-output-path": `${bucket}/${key}?restore-expiry=${restoreExpiry}`,
+        },
+      };
+    },
+    SelectObjectContent: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const object = getCurrentObject(target.objects[key]);
+      if (object === undefined) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const crc32Table = (() => {
+        const t = new Uint32Array(256);
+        for (let i = 0; i < 256; i++) {
+          let c = i;
+          for (let j = 0; j < 8; j++) {
+            c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+          }
+          t[i] = c >>> 0;
+        }
+        return t;
+      })();
+      const crc32 = (bytes: Uint8Array): number => {
+        let crc = 0xffffffff;
+        for (const b of bytes)
+          crc = (crc32Table[(crc ^ b) & 0xff] ^ (crc >>> 8)) >>> 0;
+        return (crc ^ 0xffffffff) >>> 0;
+      };
+      const enc = new TextEncoder();
+      const buildMessage = (
+        hdrs: [string, string][],
+        payload: Uint8Array,
+      ): Uint8Array => {
+        const hdrBytes: number[] = [];
+        for (const [n, v] of hdrs) {
+          const nb = enc.encode(n);
+          const vb = enc.encode(v);
+          hdrBytes.push(
+            nb.length,
+            ...nb,
+            7,
+            (vb.length >> 8) & 0xff,
+            vb.length & 0xff,
+            ...vb,
+          );
+        }
+        const hb = new Uint8Array(hdrBytes);
+        const total = 4 + 4 + 4 + hb.length + payload.length + 4;
+        const buf = new Uint8Array(total);
+        const dv = new DataView(buf.buffer);
+        dv.setUint32(0, total, false);
+        dv.setUint32(4, hb.length, false);
+        dv.setUint32(8, crc32(buf.subarray(0, 8)), false);
+        buf.set(hb, 12);
+        buf.set(payload, 12 + hb.length);
+        dv.setUint32(
+          12 + hb.length + payload.length,
+          crc32(buf.subarray(0, 12 + hb.length + payload.length)),
+          false,
+        );
+        return buf;
+      };
+      const statsPayload = enc.encode(
+        `<Stats><BytesScanned>${object.size}</BytesScanned><BytesProcessed>${object.size}</BytesProcessed><BytesReturned>0</BytesReturned></Stats>`,
+      );
+      const statsMsg = buildMessage(
+        [
+          [":message-type", "event"],
+          [":event-type", "Stats"],
+          [":content-type", "application/xml"],
+        ],
+        statsPayload,
+      );
+      const endMsg = buildMessage(
+        [
+          [":message-type", "event"],
+          [":event-type", "End"],
+          [":content-type", "application/octet-stream"],
+        ],
+        new Uint8Array(0),
+      );
+      const body = concatBytes([statsMsg, endMsg]);
+      return {
+        __xml: body as unknown as string,
+        $headers: {
+          "content-type": "application/vnd.amazon.eventstream",
+          "transfer-encoding": "chunked",
+        },
+      };
+    },
+    UpdateObjectEncryption: (input, ctx, req) => {
+      const { bucket, key } = bucketKeyFromPath(req.path);
+      if (bucket === undefined || key === undefined) {
+        throw awsError("InvalidRequest", "bucket and key required", 400);
+      }
+      const target = getBucket(ctx, bucket);
+      const requestedVersionId =
+        typeof input["VersionId"] === "string" ? input["VersionId"] : undefined;
+      const idx = versionIndexFor(
+        target.objects[key] ?? [],
+        requestedVersionId,
+      );
+      if (idx === -1) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const object = (target.objects[key] ?? [])[idx];
+      if (object === undefined || object.isDeleteMarker) {
+        throw awsError("NoSuchKey", "The specified key does not exist.", 404);
+      }
+      const encryptionInput = input["ObjectEncryption"];
+      const encType =
+        typeof encryptionInput === "object" && encryptionInput !== null
+          ? ((encryptionInput as Record<string, unknown>)["EncryptionType"] as
+              | string
+              | undefined)
+          : undefined;
+      const sseAlgorithm = encType === "SSEKMS" ? "aws:kms" : "AES256";
+      const versions = [...(target.objects[key] ?? [])];
+      versions[idx] = { ...object, serverSideEncryption: sseAlgorithm };
+      ctx.store.set<S3Bucket>(bucket, {
+        ...target,
+        objects: { ...target.objects, [key]: versions },
+      });
+      return {};
+    },
+    WriteGetObjectResponse: (input, _ctx) => {
+      const statusCode =
+        typeof input["StatusCode"] === "number" ? input["StatusCode"] : 200;
+      return { __xml: "", $status: statusCode };
     },
   },
   model,

@@ -14,6 +14,7 @@ const update = (
   const ast = parseUpdateExpression(expression, {
     names: bindings.names ?? {},
     values: bindings.values ?? {},
+    allowReservedWords: true,
   });
   return applyUpdate(ast, item);
 };

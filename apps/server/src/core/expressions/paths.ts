@@ -1,5 +1,6 @@
 import { awsError } from "../framework.ts";
 import { resolveName } from "./bindings.ts";
+import { RESERVED_WORDS } from "./reserved-words.ts";
 import type { TokenStream } from "./lexer.ts";
 import type {
   AttributeBindings,
@@ -17,15 +18,23 @@ const failValidation = (message: string): never => {
 const resolveRoot = (
   text: string,
   kind: "ident" | "nameRef",
-  bindings: Pick<AttributeBindings, "names">,
+  bindings: Pick<AttributeBindings, "names" | "allowReservedWords">,
 ): string => {
   if (kind === "nameRef") return resolveName(text, bindings);
+  if (
+    bindings.allowReservedWords !== true &&
+    RESERVED_WORDS.has(text.toUpperCase())
+  ) {
+    failValidation(
+      `Attribute name is a reserved keyword; reserved keyword: ${text}`,
+    );
+  }
   return text;
 };
 
 export const parseAttributePath = (
   stream: TokenStream,
-  bindings: Pick<AttributeBindings, "names">,
+  bindings: Pick<AttributeBindings, "names" | "allowReservedWords">,
 ): AttributePath => {
   const head = stream.peek();
   if (head.kind !== "ident" && head.kind !== "nameRef") {

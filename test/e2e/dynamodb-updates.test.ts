@@ -67,8 +67,12 @@ describe("DynamoDB UpdateExpression deep features", () => {
         TableName: table,
         Key: { pk: { S: "k1" } },
         UpdateExpression:
-          "SET counter = counter + :inc, owner = if_not_exists(#o, :default), list = list_append(list, :more)",
-        ExpressionAttributeNames: { "#o": "owner" },
+          "SET #counter = #counter + :inc, #o = if_not_exists(#o, :default), #list = list_append(#list, :more)",
+        ExpressionAttributeNames: {
+          "#o": "owner",
+          "#counter": "counter",
+          "#list": "list",
+        },
         ExpressionAttributeValues: {
           ":inc": { N: "0.5" },
           ":default": { S: "alice" },
@@ -86,7 +90,8 @@ describe("DynamoDB UpdateExpression deep features", () => {
       new UpdateItemCommand({
         TableName: table,
         Key: { pk: { S: "k1" } },
-        UpdateExpression: "SET counter = counter - :step",
+        UpdateExpression: "SET #counter = #counter - :step",
+        ExpressionAttributeNames: { "#counter": "counter" },
         ExpressionAttributeValues: { ":step": { N: "0.1" } },
       }),
     );
@@ -98,7 +103,8 @@ describe("DynamoDB UpdateExpression deep features", () => {
       new UpdateItemCommand({
         TableName: table,
         Key: { pk: { S: "k1" } },
-        UpdateExpression: "SET owner = if_not_exists(owner, :ignored)",
+        UpdateExpression: "SET #owner = if_not_exists(#owner, :ignored)",
+        ExpressionAttributeNames: { "#owner": "owner" },
         ExpressionAttributeValues: { ":ignored": { S: "ignored" } },
       }),
     );

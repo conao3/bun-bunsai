@@ -34,7 +34,7 @@ const parseValueOperand = (
 
 const requireBareKeyPath = (
   stream: TokenStream,
-  bindings: Pick<AttributeBindings, "names">,
+  bindings: Pick<AttributeBindings, "names" | "allowReservedWords">,
 ): { path: ReturnType<typeof parseAttributePath> } => {
   const path = parseAttributePath(stream, bindings);
   if (path.steps.length > 0) {

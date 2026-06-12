@@ -160,7 +160,8 @@ describe("DynamoDB TransactWriteItems rollback semantics", () => {
               ConditionCheck: {
                 TableName: table,
                 Key: { pk: { S: "k2" } },
-                ConditionExpression: "attribute_exists(missing)",
+                ConditionExpression: "attribute_exists(#missing)",
+                ExpressionAttributeNames: { "#missing": "missing" },
               },
             },
           ],

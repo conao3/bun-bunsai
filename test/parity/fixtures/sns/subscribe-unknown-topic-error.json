@@ -1,0 +1,18 @@
+{
+  "clientPackage": "@aws-sdk/client-sns",
+  "clientName": "SNSClient",
+  "steps": [
+    {
+      "command": "SubscribeCommand",
+      "input": {
+        "TopicArn": "arn:aws:sns:us-east-1:000000000000:some-topic",
+        "Protocol": "sqs",
+        "Endpoint": "asdf"
+      },
+      "expectedError": { "name": "NotFoundException", "statusCode": 404 },
+      "ignorePaths": [],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "clientPackage": "@aws-sdk/client-s3",
+  "clientName": "S3Client",
+  "clientConfig": { "forcePathStyle": true },
+  "steps": [
+    {
+      "command": "CreateBucketCommand",
+      "input": { "Bucket": "pm-delmiss" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "Location"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutObjectCommand",
+      "input": { "Bucket": "pm-delmiss", "Key": "key1", "Body": "some value" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "ETag", "ServerSideEncryption"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutObjectCommand",
+      "input": { "Bucket": "pm-delmiss", "Key": "key3", "Body": "some value" },
+      "expected": {},
+      "ignorePaths": ["$metadata", "ETag", "ServerSideEncryption"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteObjectsCommand",
+      "input": {
+        "Bucket": "pm-delmiss",
+        "Delete": {
+          "Objects": [
+            { "Key": "unknown" },
+            { "Key": "key1" },
+            { "Key": "key3" },
+            { "Key": "typo" }
+          ]
+        }
+      },
+      "expected": {
+        "Deleted": [
+          { "Key": "unknown" },
+          { "Key": "key1" },
+          { "Key": "key3" },
+          { "Key": "typo" }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

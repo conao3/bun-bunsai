@@ -2391,12 +2391,18 @@ const parsePartiQLUpdate = (
 ): { expression: string; values: Record<string, AttributeValue> } => {
   const values: Record<string, AttributeValue> = {};
   let counter = 0;
+  let litCounter = 0;
   const expression = `SET ${setClause
     .replace(/"([A-Za-z_][A-Za-z0-9_]*)"/g, "$1")
     .replace(/\?/g, () => {
       const name = `:_s_${counter}`;
       const v = params[counter++];
       if (v !== undefined) values[name] = v;
+      return name;
+    })
+    .replace(/'((?:[^']|'')*)'/g, (_full, contents: string) => {
+      const name = `:_lit_${litCounter++}`;
+      values[name] = { S: contents.replace(/''/g, "'") };
       return name;
     })}`;
   return { expression, values };
@@ -2901,15 +2907,21 @@ const ListContributorInsights: OperationHandler = (input, ctx) => {
   };
 };
 
+const requireTableByArn = (ctx: ServiceContext, arn: string): void => {
+  const tableName = tableNameFromArn(arn);
+  requireTable(ctx, tableName);
+};
+
 const GetResourcePolicy: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceArn");
+  requireTableByArn(ctx, resourceArn);
   const stored = ctx.store.get<StoredResourcePolicy>(
     resourcePolicyKey(resourceArn),
   );
   if (stored === undefined) {
     throw awsError(
       "PolicyNotFoundException",
-      `No resource-based policy found for the resource: ${resourceArn}`,
+      `Resource-based policy not found for the provided ResourceArn: ${resourceArn}`,
       400,
     );
   }
@@ -2919,6 +2931,38 @@ const GetResourcePolicy: OperationHandler = (input, ctx) => {
 const PutResourcePolicy: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceArn");
   const policy = requireString(input, "Policy");
+  const expectedRevisionId =
+    typeof input["ExpectedRevisionId"] === "string"
+      ? input["ExpectedRevisionId"]
+      : undefined;
+  requireTableByArn(ctx, resourceArn);
+  const tableName = tableNameFromArn(resourceArn);
+  const existing = ctx.store.get<StoredResourcePolicy>(
+    resourcePolicyKey(resourceArn),
+  );
+  if (expectedRevisionId !== undefined) {
+    if (expectedRevisionId === "NO_POLICY") {
+      if (existing !== undefined) {
+        throw awsError(
+          "PolicyNotFoundException",
+          `Resource-based policy not found for the provided ResourceArn: Requested policy update expecting none to be present for table ${tableName}, but a policy exists with revision id ${existing.RevisionId}.`,
+          400,
+        );
+      }
+    } else if (
+      existing === undefined ||
+      existing.RevisionId !== expectedRevisionId
+    ) {
+      throw awsError(
+        "PolicyNotFoundException",
+        `Resource-based policy not found for the provided ResourceArn: Requested update for policy with revision id ${expectedRevisionId}, but the policy associated to target table ${tableName} has revision id ${existing?.RevisionId ?? "none"}.`,
+        400,
+      );
+    }
+  }
+  if (existing !== undefined && existing.Policy === policy) {
+    return { RevisionId: existing.RevisionId };
+  }
   const revisionId = String(Date.now());
   const stored: StoredResourcePolicy = {
     kind: "resource-policy",
@@ -2932,9 +2976,24 @@ const PutResourcePolicy: OperationHandler = (input, ctx) => {
 
 const DeleteResourcePolicy: OperationHandler = (input, ctx) => {
   const resourceArn = requireString(input, "ResourceArn");
+  requireTableByArn(ctx, resourceArn);
   const stored = ctx.store.get<StoredResourcePolicy>(
     resourcePolicyKey(resourceArn),
   );
+  const expectedRevisionId =
+    typeof input["ExpectedRevisionId"] === "string"
+      ? input["ExpectedRevisionId"]
+      : undefined;
+  if (expectedRevisionId !== undefined) {
+    if (stored === undefined || stored.RevisionId !== expectedRevisionId) {
+      const tableName = tableNameFromArn(resourceArn);
+      throw awsError(
+        "PolicyNotFoundException",
+        `Resource-based policy not found for the provided ResourceArn: Requested update for policy with revision id ${expectedRevisionId}, but the policy associated to target table ${tableName} has revision id ${stored?.RevisionId ?? "none"}.`,
+        400,
+      );
+    }
+  }
   const revisionId = stored?.RevisionId ?? "";
   ctx.store.delete(resourcePolicyKey(resourceArn));
   return { RevisionId: revisionId };
@@ -3019,6 +3078,16 @@ const ExecuteStatement: OperationHandler = (input, ctx) => {
   return { Items: items };
 };
 
+const tableNameFromStatement = (stmt: string): string | undefined => {
+  const s = stmt.trim();
+  const m =
+    /^SELECT\s+.*?\s+FROM\s+"?([^"\s.]+)/is.exec(s) ??
+    /^INSERT\s+INTO\s+"?([^"\s]+)/is.exec(s) ??
+    /^UPDATE\s+"?([^"\s]+)/is.exec(s) ??
+    /^DELETE\s+FROM\s+"?([^"\s]+)/is.exec(s);
+  return m?.[1];
+};
+
 const BatchExecuteStatement: OperationHandler = (input, ctx) => {
   const statements = Array.isArray(input["Statements"])
     ? (input["Statements"] as Record<string, unknown>[])
@@ -3030,17 +3099,28 @@ const BatchExecuteStatement: OperationHandler = (input, ctx) => {
     const parameters = Array.isArray(stmt["Parameters"])
       ? (stmt["Parameters"] as AttributeValue[])
       : [];
+    const parsedTableName = tableNameFromStatement(statement);
     try {
       const items = executePartiQL(statement, parameters, ctx);
-      responses.push(items[0] !== undefined ? { Item: items[0] } : {});
+      const resp: Record<string, unknown> = {};
+      if (parsedTableName !== undefined) resp["TableName"] = parsedTableName;
+      if (items[0] !== undefined) resp["Item"] = items[0];
+      responses.push(resp);
     } catch (err) {
       const e = err as Record<string, unknown>;
-      responses.push({
+      const resp: Record<string, unknown> = {
         Error: {
           Code: String(e["code"] ?? "InternalServerError"),
           Message: String(e["message"] ?? ""),
         },
-      });
+      };
+      if (
+        parsedTableName !== undefined &&
+        String(e["code"] ?? "") !== "ResourceNotFoundException"
+      ) {
+        resp["TableName"] = parsedTableName;
+      }
+      responses.push(resp);
     }
   }
   return { Responses: responses };

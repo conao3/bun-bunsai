@@ -1,0 +1,191 @@
+{
+  "clientPackage": "@aws-sdk/client-dynamodb",
+  "clientName": "DynamoDBClient",
+  "steps": [
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "TableName": "parity-ddb-respolicy",
+        "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" }
+        ],
+        "BillingMode": "PAY_PER_REQUEST"
+      },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-respolicy",
+          "TableStatus": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "tbl",
+      "refs": {}
+    },
+    {
+      "command": "GetResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}"
+      },
+      "expectedError": {
+        "name": "PolicyNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}unknown"
+      },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}unknown",
+        "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+      },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}",
+        "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"dynamodb:*\"],\"Resource\":\"*\",\"Principal\":{\"AWS\":\"123456789012\"}}]}"
+      },
+      "expected": {
+        "RevisionId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "rp1",
+      "refs": {}
+    },
+    {
+      "command": "GetResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}"
+      },
+      "expected": {
+        "RevisionId": "<ANY>",
+        "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"dynamodb:*\"],\"Resource\":\"*\",\"Principal\":{\"AWS\":\"123456789012\"}}]}"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}",
+        "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"dynamodb:*\"],\"Resource\":\"*\",\"Principal\":{\"AWS\":\"123456789012\"}}]}"
+      },
+      "expected": {
+        "RevisionId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}",
+        "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"dynamodb:PutItem\"],\"Resource\":\"*\",\"Principal\":{\"AWS\":\"123456789012\"}}]}"
+      },
+      "expected": {
+        "RevisionId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "rp2",
+      "refs": {}
+    },
+    {
+      "command": "PutResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}",
+        "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"dynamodb:GetItem\"],\"Resource\":\"*\",\"Principal\":{\"AWS\":\"123456789012\"}}]}",
+        "ExpectedRevisionId": "${rp2.RevisionId}"
+      },
+      "expected": {
+        "RevisionId": "<ANY>"
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "rp3",
+      "refs": {}
+    },
+    {
+      "command": "DeleteResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}unknown"
+      },
+      "expectedError": {
+        "name": "ResourceNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}",
+        "ExpectedRevisionId": "${rp2.RevisionId}"
+      },
+      "expectedError": {
+        "name": "PolicyNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}",
+        "ExpectedRevisionId": "${rp3.RevisionId}"
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "GetResourcePolicyCommand",
+      "input": {
+        "ResourceArn": "${tbl.TableDescription.TableArn}"
+      },
+      "expectedError": {
+        "name": "PolicyNotFoundException",
+        "statusCode": 400
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": { "TableName": "parity-ddb-respolicy" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

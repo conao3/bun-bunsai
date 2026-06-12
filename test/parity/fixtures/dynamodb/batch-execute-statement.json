@@ -1,0 +1,102 @@
+{
+  "clientPackage": "@aws-sdk/client-dynamodb",
+  "clientName": "DynamoDBClient",
+  "steps": [
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "TableName": "parity-ddb-batch-stmt",
+        "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }],
+        "AttributeDefinitions": [
+          { "AttributeName": "id", "AttributeType": "S" }
+        ],
+        "BillingMode": "PAY_PER_REQUEST"
+      },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-batch-stmt",
+          "TableStatus": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-batch-stmt",
+        "Item": {
+          "id": { "S": "msg1" },
+          "body": { "S": "some text" }
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-batch-stmt",
+        "Item": {
+          "id": { "S": "msg2" },
+          "body": { "S": "n/a" },
+          "unique": { "S": "key" }
+        }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "BatchExecuteStatementCommand",
+      "input": {
+        "Statements": [
+          {
+            "Statement": "select id from parity-ddb-batch-stmt where id = ?",
+            "Parameters": [{ "S": "msg1" }]
+          },
+          {
+            "Statement": "select * from parity-ddb-batch-stmt where id = ?",
+            "Parameters": [{ "S": "msg2" }]
+          },
+          {
+            "Statement": "select * from parity-ddb-batch-stmt where id = ?",
+            "Parameters": [{ "S": "no-such" }]
+          }
+        ]
+      },
+      "expected": {
+        "Responses": [
+          {
+            "TableName": "parity-ddb-batch-stmt",
+            "Item": { "id": { "S": "msg1" } }
+          },
+          {
+            "TableName": "parity-ddb-batch-stmt",
+            "Item": {
+              "id": { "S": "msg2" },
+              "body": { "S": "n/a" },
+              "unique": { "S": "key" }
+            }
+          },
+          { "TableName": "parity-ddb-batch-stmt" }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": { "TableName": "parity-ddb-batch-stmt" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

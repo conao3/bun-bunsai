@@ -1,0 +1,18 @@
+{
+  "clientPackage": "@aws-sdk/client-application-auto-scaling",
+  "clientName": "ApplicationAutoScalingClient",
+  "steps": [
+    {
+      "command": "DeregisterScalableTargetCommand",
+      "input": {
+        "ServiceNamespace": "ecs",
+        "ResourceId": "service/ghost-cluster/ghost-service",
+        "ScalableDimension": "ecs:service:DesiredCount"
+      },
+      "expectedError": { "name": "ValidationException", "statusCode": 400 },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

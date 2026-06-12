@@ -260,7 +260,7 @@ test("Unregistered target raises ObjectNotFoundException", async () => {
         ScalableDimension: "ecs:service:DesiredCount",
       }),
     ),
-  ).rejects.toThrow();
+  ).rejects.toMatchObject({ name: "ValidationException" });
 });
 
 test("Tags round-trip", async () => {

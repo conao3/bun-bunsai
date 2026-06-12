@@ -1,0 +1,195 @@
+{
+  "clientPackage": "@aws-sdk/client-dynamodb",
+  "clientName": "DynamoDBClient",
+  "steps": [
+    {
+      "command": "CreateTableCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "KeySchema": [
+          { "AttributeName": "pk", "KeyType": "HASH" },
+          { "AttributeName": "sk", "KeyType": "RANGE" }
+        ],
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" },
+          { "AttributeName": "sk", "AttributeType": "S" }
+        ],
+        "BillingMode": "PAY_PER_REQUEST"
+      },
+      "expected": {
+        "TableDescription": {
+          "TableName": "parity-ddb-query-pag",
+          "TableStatus": "<ANY>"
+        }
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "Item": { "pk": { "S": "the-key" }, "sk": { "S": "0" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "Item": { "pk": { "S": "the-key" }, "sk": { "S": "1" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "Item": { "pk": { "S": "the-key" }, "sk": { "S": "2" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "Item": { "pk": { "S": "the-key" }, "sk": { "S": "3" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "Item": { "pk": { "S": "the-key" }, "sk": { "S": "4" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "Item": { "pk": { "S": "the-key" }, "sk": { "S": "5" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "Item": { "pk": { "S": "the-key" }, "sk": { "S": "6" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "Item": { "pk": { "S": "the-key" }, "sk": { "S": "7" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "Item": { "pk": { "S": "the-key" }, "sk": { "S": "8" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "PutItemCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "Item": { "pk": { "S": "the-key" }, "sk": { "S": "9" } }
+      },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "QueryCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "KeyConditionExpression": "pk = :pk",
+        "ExpressionAttributeValues": { ":pk": { "S": "the-key" } },
+        "Limit": 6
+      },
+      "expected": {
+        "Count": 6,
+        "ScannedCount": 6,
+        "Items": [
+          { "pk": { "S": "the-key" }, "sk": { "S": "0" } },
+          { "pk": { "S": "the-key" }, "sk": { "S": "1" } },
+          { "pk": { "S": "the-key" }, "sk": { "S": "2" } },
+          { "pk": { "S": "the-key" }, "sk": { "S": "3" } },
+          { "pk": { "S": "the-key" }, "sk": { "S": "4" } },
+          { "pk": { "S": "the-key" }, "sk": { "S": "5" } }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": "page1",
+      "refs": {}
+    },
+    {
+      "command": "QueryCommand",
+      "input": {
+        "TableName": "parity-ddb-query-pag",
+        "KeyConditionExpression": "pk = :pk",
+        "ExpressionAttributeValues": { ":pk": { "S": "the-key" } },
+        "Limit": 6,
+        "ExclusiveStartKey": "${page1.LastEvaluatedKey}"
+      },
+      "expected": {
+        "Count": 4,
+        "ScannedCount": 4,
+        "Items": [
+          { "pk": { "S": "the-key" }, "sk": { "S": "6" } },
+          { "pk": { "S": "the-key" }, "sk": { "S": "7" } },
+          { "pk": { "S": "the-key" }, "sk": { "S": "8" } },
+          { "pk": { "S": "the-key" }, "sk": { "S": "9" } }
+        ]
+      },
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    },
+    {
+      "command": "DeleteTableCommand",
+      "input": { "TableName": "parity-ddb-query-pag" },
+      "expected": {},
+      "ignorePaths": ["$metadata"],
+      "saveAs": null,
+      "refs": {}
+    }
+  ]
+}

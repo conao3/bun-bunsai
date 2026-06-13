@@ -177,7 +177,7 @@ curl -X POST http://localhost:4566/__bunsai/snapshots/<id>/restore
 ## Scope / Limitations
 
 - **In-memory state** — all resources live in process memory; state does not persist across process restarts. Use [snapshots](#state-snapshots) to checkpoint and restore state across runs.
-- **Lambda — Node.js / Bun runtimes only** — bunsai executes Lambda functions using Node.js or Bun handlers. Functions that target other runtimes (Python, Java, Go, .NET, etc.) receive `Runtime.Unsupported`. For multi-runtime Lambda testing, run bunsai alongside LocalStack.
+- **Lambda — host-spawn execution** — bunsai runs Lambda functions by spawning the host language runtime via `Bun.spawn`. `nodejs*` is executed by the in-process Bun for low latency; `python*`, `ruby*`, `java*`, `dotnet*`, `provided.al*` and `go1.x` invoke the matching host interpreter (`python3` / `ruby` / `java` / `dotnet`, or the zip's `bootstrap` binary for `provided.al*`). If the required host runtime is not installed, the handler invocation returns `Runtime.NotReady`. Override the interpreter path with `BUNSAI_LAMBDA_PYTHON` / `BUNSAI_LAMBDA_RUBY` / `BUNSAI_LAMBDA_JAVA` / `BUNSAI_LAMBDA_DOTNET`. Memory / CPU limits, VPC config and per-invocation cold-start isolation are not enforced; the spawned process runs with bunsai's host privileges.
 - **SigV4 not validated** — request signatures are accepted unconditionally; any key/secret pair works.
 - **IAM not enforced** — any credential pair (including `test`/`test`) is accepted; policies are ignored.
 - **No `rpcv2Cbor` protocol** — AWS is rolling out a new binary protocol that bunsai does not yet support.

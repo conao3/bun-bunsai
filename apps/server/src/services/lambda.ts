@@ -8,8 +8,8 @@ import type {
   ServiceDefinition,
 } from "../core/types.ts";
 import { unzip } from "./lambda/zip.ts";
-import { executeNodeHandler } from "./lambda/runtime.ts";
-import type { LambdaExecution } from "./lambda/runtime.ts";
+import { executeHandler } from "./lambda/runtime/registry.ts";
+import type { LambdaExecution } from "./lambda/runtime/types.ts";
 import {
   registerEventSource,
   registerTarget,
@@ -317,7 +317,7 @@ const runFunction = async (
       }
     }
   }
-  return executeNodeHandler({
+  return executeHandler({
     files: mergedFiles,
     handler: fn.Handler,
     runtime: fn.Runtime,
@@ -429,6 +429,18 @@ const Invoke: OperationHandler = async (input, ctx) => {
       ExecutedVersion: fn.Version,
     };
   }
+  if (execution.kind === "host_runtime_missing") {
+    return {
+      StatusCode: 200,
+      FunctionError: "Unhandled",
+      Payload: jsonPayload({
+        errorType: "Runtime.NotReady",
+        errorMessage: `Runtime ${execution.runtime} requires a host interpreter that is not available: ${execution.reason}`,
+        trace: [],
+      }),
+      ExecutedVersion: fn.Version,
+    };
+  }
   const logResult =
     stringOrUndefined(input["LogType"]) === "Tail"
       ? Buffer.from(execution.logs.slice(-4096)).toString("base64")
@@ -493,6 +505,13 @@ registerTaskInvoker("lambda", async (ctx, functionArn, payload) => {
       ok: false,
       error: "Lambda.AWSLambdaException",
       cause: `Runtime ${execution.runtime ?? "unknown"} is not supported`,
+    };
+  }
+  if (execution.kind === "host_runtime_missing") {
+    return {
+      ok: false,
+      error: "Lambda.AWSLambdaException",
+      cause: `Runtime ${execution.runtime} requires a host interpreter that is not available: ${execution.reason}`,
     };
   }
   const cause =

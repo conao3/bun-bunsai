@@ -5,8 +5,20 @@ import type {
   RuntimeAdapter,
 } from "./types.ts";
 import { nodeViaBunAdapter } from "./adapters/node-via-bun.ts";
+import { pythonAdapter } from "./adapters/python.ts";
+import { rubyAdapter } from "./adapters/ruby.ts";
+import { javaAdapter } from "./adapters/java.ts";
+import { dotnetAdapter } from "./adapters/dotnet.ts";
+import { goProvidedAdapter } from "./adapters/go-provided.ts";
 
-const adapters: RuntimeAdapter[] = [nodeViaBunAdapter];
+const adapters: RuntimeAdapter[] = [
+  nodeViaBunAdapter,
+  pythonAdapter,
+  rubyAdapter,
+  javaAdapter,
+  dotnetAdapter,
+  goProvidedAdapter,
+];
 
 const probeCache: Map<string, ProbeResult> = new Map();
 

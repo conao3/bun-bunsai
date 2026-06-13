@@ -17,8 +17,16 @@ test("findAdapter resolves nodejs* to the node-via-bun adapter", () => {
 });
 
 test("findAdapter returns undefined for an unknown runtime", () => {
-  expect(findAdapter("python3.13")).toBeUndefined();
+  expect(findAdapter("wasm1.0")).toBeUndefined();
   expect(findAdapter(undefined)).toBeUndefined();
+});
+
+test("findAdapter resolves each supported runtime family", () => {
+  expect(findAdapter("python3.13")?.id).toBe("python");
+  expect(findAdapter("ruby3.3")?.id).toBe("ruby");
+  expect(findAdapter("java21")?.id).toBe("java");
+  expect(findAdapter("dotnet8")?.id).toBe("dotnet");
+  expect(findAdapter("provided.al2023")?.id).toBe("go-provided");
 });
 
 test("probeAdapter reports node-via-bun as ready (bun is in-process)", async () => {

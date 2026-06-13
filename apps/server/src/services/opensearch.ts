@@ -1868,6 +1868,7 @@ const pathSegments = (path: string): string[] =>
 const opensearch = {
   name: "es",
   protocol: "rest-json",
+  matches: (req: ParsedRequest): boolean => req.path.startsWith("/2021-01-01/"),
   resolveOperation: (req: ParsedRequest): string | undefined => {
     const parts = pathSegments(req.path);
     if (parts[0] !== "2021-01-01") return undefined;

@@ -155,7 +155,11 @@
     "@types/bun": "^1.3.14",
     "knip": "^6.16.1",
     "prettier": "^3.8.4",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "@aws-sdk/client-resource-groups-tagging-api": "^3.1068.0",
+    "@aws-sdk/client-support": "^3.1068.0",
+    "@aws-sdk/client-s3-control": "^3.1068.0",
+    "@aws-sdk/client-elasticsearch-service": "^3.1068.0"
   },
   "dependencies": {
     "@aws-sdk/client-acm-pca": "^3.1068.0",

@@ -146,6 +146,11 @@ import ssoAdmin from "./sso-admin.ts";
 import identitystore from "./identitystore.ts";
 import serverlessrepo from "./serverlessrepo.ts";
 import fis from "./fis.ts";
+import dynamodbstreams from "./dynamodbstreams.ts";
+import resourcegroupstaggingapi from "./resourcegroupstaggingapi.ts";
+import support from "./support.ts";
+import s3control from "./s3control.ts";
+import es from "./es.ts";
 
 export const services: ServiceDefinition[] = [
   sts,
@@ -289,6 +294,11 @@ export const services: ServiceDefinition[] = [
   identitystore,
   serverlessrepo,
   fis,
+  dynamodbstreams,
+  resourcegroupstaggingapi,
+  support,
+  s3control,
+  es,
 ];
 
 export const findService = (

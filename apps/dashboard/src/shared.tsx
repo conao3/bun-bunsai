@@ -547,6 +547,20 @@ export const serviceMeta: Record<
     color: "#d09068",
     resourceLabel: "Applications",
   },
+  tagging: {
+    name: "Resource Groups Tagging API",
+    tag: "Tagging",
+    kind: "Cross-service tags",
+    color: "#a48d3c",
+    resourceLabel: "Tagged resources",
+  },
+  support: {
+    name: "Support",
+    tag: "Support",
+    kind: "Support cases",
+    color: "#7a98c0",
+    resourceLabel: "Cases",
+  },
   dms: {
     name: "DMS",
     tag: "DMS",

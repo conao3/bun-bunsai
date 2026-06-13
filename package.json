@@ -5,9 +5,9 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "bun --filter @bunsai/server dev",
-    "start": "bun --filter @bunsai/server start",
-    "dev:server": "bun --filter @bunsai/server dev",
+    "dev": "bun --filter @conao3/bunsai dev",
+    "start": "bun --filter @conao3/bunsai start",
+    "dev:server": "bun --filter @conao3/bunsai dev",
     "dev:dashboard": "bun --filter @bunsai/dashboard dev",
     "build": "bun --filter '*' build",
     "lint": "tsc -p apps/server && tsc -p apps/dashboard && NODE_OPTIONS=--max-old-space-size=6144 tsc -p . && knip",

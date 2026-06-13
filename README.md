@@ -37,7 +37,7 @@ aws --endpoint-url http://localhost:4566 \
 ### Option B — bunx (no install)
 
 ```sh
-bunx <PACKAGE_NAME>
+bunx @conao3/bunsai
 ```
 
 ### Option C — From source

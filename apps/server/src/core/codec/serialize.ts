@@ -6,12 +6,14 @@ import type {
   Shape,
   ShapeRegistry,
   StructureShape,
+  TimestampFormat,
   XmlNamespace,
 } from "../types.ts";
 import {
   blobToBase64,
   contentTypes,
   epochSecondsToTimestamp,
+  toEpochSeconds,
   jsonContentType,
   memberShape,
   scalarToWireString,
@@ -50,32 +52,42 @@ const jsonValue = (
   registry: ShapeRegistry,
   shape: Shape | undefined,
   value: unknown,
+  defaultTimestampFormat: TimestampFormat,
 ): unknown => {
   if (value === null || value === undefined) return value;
   if (shape === undefined) return value;
   if (shape.type === "structure") {
     if (Object.keys(shape.members).length === 0) return value;
-    return jsonStructure(registry, shape, value);
+    return jsonStructure(registry, shape, value, defaultTimestampFormat);
   }
   if (shape.type === "list") {
     if (!Array.isArray(value)) return value;
     const itemShape = memberShape(registry, shape.member);
-    return value.map((item) => jsonValue(registry, itemShape, item));
+    return value.map((item) =>
+      jsonValue(registry, itemShape, item, defaultTimestampFormat),
+    );
   }
   if (shape.type === "map") {
     if (typeof value !== "object") return value;
     const valueShape = memberShape(registry, shape.value);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>))
-      out[k] = jsonValue(registry, valueShape, v);
+      out[k] = jsonValue(registry, valueShape, v, defaultTimestampFormat);
     return out;
   }
   if (shape.type === "blob") return blobToBase64(value);
   if (shape.type === "timestamp") {
-    const fmt = shape.timestampFormat;
-    if (fmt === undefined || fmt === "unixTimestamp")
-      return typeof value === "number" ? value : Number(value);
-    return epochSecondsToTimestamp(value, fmt);
+    const fmt = shape.timestampFormat ?? defaultTimestampFormat;
+    if (typeof value === "string") {
+      if (fmt !== "unixTimestamp") return value;
+      const n = Number(value);
+      if (!Number.isNaN(n)) return n;
+      const parsed = Date.parse(value);
+      return Number.isNaN(parsed) ? value : parsed / 1000;
+    }
+    const seconds = toEpochSeconds(value);
+    if (fmt === "unixTimestamp") return seconds;
+    return epochSecondsToTimestamp(seconds, fmt);
   }
   if (typeof value === "bigint") return Number(value);
   return value;
@@ -85,6 +97,7 @@ const jsonStructure = (
   registry: ShapeRegistry,
   shape: StructureShape,
   value: unknown,
+  defaultTimestampFormat: TimestampFormat,
 ): Record<string, unknown> => {
   if (typeof value !== "object" || value === null) return {};
   const source = value as Record<string, unknown>;
@@ -94,13 +107,21 @@ const jsonStructure = (
     const v = source[name];
     if (v === undefined) continue;
     const wire = member.jsonName ?? member.locationName ?? name;
-    out[wire] = jsonValue(registry, memberShape(registry, member), v);
+    out[wire] = jsonValue(
+      registry,
+      memberShape(registry, member),
+      v,
+      defaultTimestampFormat,
+    );
   }
   for (const [k, v] of Object.entries(source)) {
     if (shape.members[k] === undefined && v !== undefined) out[k] = v;
   }
   return out;
 };
+
+const jsonDefaultTimestampFormat = (_protocol: Protocol): TimestampFormat =>
+  "unixTimestamp";
 
 const xmlValue = (
   registry: ShapeRegistry,
@@ -353,6 +374,7 @@ const bodyMembersOf = (shape: StructureShape): StructureShape => {
 
 const serializeRest = (req: SerializeRequest): CodecResult => {
   const { protocol, registry, shape } = req;
+  const restDefaultTsFmt = jsonDefaultTimestampFormat(protocol);
   const isXml = protocol === "rest-xml";
   const contentType = isXml
     ? contentTypes["rest-xml"]
@@ -423,7 +445,9 @@ const serializeRest = (req: SerializeRequest): CodecResult => {
         };
       }
       return {
-        body: JSON.stringify(jsonStructure(registry, memberSh, v)),
+        body: JSON.stringify(
+          jsonStructure(registry, memberSh, v, restDefaultTsFmt),
+        ),
         contentType,
         headers,
         ...(statusCode !== undefined ? { statusCode } : {}),
@@ -447,7 +471,7 @@ const serializeRest = (req: SerializeRequest): CodecResult => {
         ...(statusCode !== undefined ? { statusCode } : {}),
       };
     return {
-      body: JSON.stringify(jsonValue(registry, memberSh, v)),
+      body: JSON.stringify(jsonValue(registry, memberSh, v, restDefaultTsFmt)),
       contentType,
       headers,
       ...(statusCode !== undefined ? { statusCode } : {}),
@@ -478,7 +502,7 @@ const serializeRest = (req: SerializeRequest): CodecResult => {
     };
   }
   const body = hasBody
-    ? JSON.stringify(jsonStructure(registry, shape, source))
+    ? JSON.stringify(jsonStructure(registry, shape, source, restDefaultTsFmt))
     : "{}";
   return {
     body,
@@ -517,7 +541,7 @@ const serializeJson = (req: SerializeRequest): CodecResult => {
   const { registry, shape } = req;
   const value =
     shape !== undefined && shape.type === "structure"
-      ? jsonStructure(registry, shape, req.result ?? {})
+      ? jsonStructure(registry, shape, req.result ?? {}, "unixTimestamp")
       : (req.result ?? {});
   return {
     body: JSON.stringify(value),

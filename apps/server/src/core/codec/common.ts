@@ -122,12 +122,19 @@ const fractionalSuffix = (seconds: number): string => {
   return `.${String(millis).padStart(3, "0").replace(/0+$/, "")}`;
 };
 
+export const toEpochSeconds = (value: unknown): number => {
+  if (value instanceof Date) return value.getTime() / 1000;
+  if (typeof value === "number") return value;
+  if (typeof value === "bigint") return Number(value);
+  return Number(value);
+};
+
 export const epochSecondsToTimestamp = (
   value: unknown,
   format: TimestampFormat | undefined,
 ): string => {
   if (typeof value === "string") return value;
-  const seconds = typeof value === "number" ? value : Number(value);
+  const seconds = toEpochSeconds(value);
   if (Number.isNaN(seconds)) return String(value);
   const date = new Date(seconds * 1000);
   switch (format) {

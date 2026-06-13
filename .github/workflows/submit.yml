@@ -134,5 +134,6 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       - run: npm install -g npm@latest
+      - run: cp README.md apps/server/README.md
       - working-directory: apps/server
         run: npm publish --provenance --access public

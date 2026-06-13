@@ -46,7 +46,7 @@ export function startApp(options?: { gatewayPort?: number }): TestApp {
         }
         const qs = search.size ? `?${search}` : "";
         const headers = { ...request.headers, host: request.hostname };
-        const res = await app.gatewayFetch(
+        const res = await app.unifiedFetch(
           new Request(`${origin}${request.path}${qs}`, {
             method: request.method,
             headers,
@@ -73,12 +73,10 @@ export function startApp(options?: { gatewayPort?: number }): TestApp {
       },
     },
     uiFetch(path, init) {
-      return Promise.resolve(
-        app.managementFetch(new Request(`${origin}${path}`, init)),
-      );
+      return app.unifiedFetch(new Request(`${origin}${path}`, init));
     },
     gwFetch(url, init) {
-      return app.gatewayFetch(new Request(url, init));
+      return app.unifiedFetch(new Request(url, init));
     },
   };
 }

@@ -12,15 +12,11 @@ if (cliCheck.exitCode !== 0) {
 const tmpServer = Bun.serve({ port: 0, fetch: () => new Response("ok") });
 const port = tmpServer.port;
 await tmpServer.stop();
-const tmpUiServer = Bun.serve({ port: 0, fetch: () => new Response("ok") });
-const uiPort = tmpUiServer.port;
-await tmpUiServer.stop();
 
 const serverProc = Bun.spawn(["bun", "apps/server/src/index.ts"], {
   env: {
     ...process.env,
     BUNSAI_PORT: String(port),
-    BUNSAI_UI_PORT: String(uiPort),
   },
   stdout: "pipe",
   stderr: "pipe",

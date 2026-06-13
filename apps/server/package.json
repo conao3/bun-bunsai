@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "start": "NODE_ENV=production bun src/index.ts",
-    "build": "bun build src/index.ts --outdir=dist --target=bun"
+    "build": "bun build src/index.ts --outdir=dist --target=bun",
+    "prepack": "bun run scripts/prepack-dashboard.ts",
+    "postpack": "bun run scripts/postpack-dashboard.ts"
   },
   "description": "Local AWS emulator - a LocalStack alternative on Bun",
   "bin": {

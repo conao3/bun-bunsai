@@ -603,7 +603,7 @@ test("CodePipeline AcknowledgeJob nonce validation", async () => {
         }
       }
       const qs = search.size ? `?${search}` : "";
-      const res = await app.gatewayFetch(
+      const res = await app.unifiedFetch(
         new Request(`${origin}${request.path}${qs}`, {
           method: request.method,
           headers: { ...request.headers, host: request.hostname },

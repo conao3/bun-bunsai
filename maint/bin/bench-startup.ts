@@ -48,13 +48,11 @@ type Sample = { startupMs: number; rssMb: number | undefined };
 
 const benchBunsai = async (binPath: string): Promise<Sample> => {
   const port = await freePort();
-  const uiPort = await freePort();
   const t0 = performance.now();
   const proc = Bun.spawn([binPath], {
     env: {
       ...process.env,
       BUNSAI_PORT: String(port),
-      BUNSAI_UI_PORT: String(uiPort),
       NODE_ENV: "production",
     },
     stdout: "ignore",

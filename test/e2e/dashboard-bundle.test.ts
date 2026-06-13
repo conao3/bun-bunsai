@@ -3,19 +3,17 @@ import { createBunsaiServers } from "../../apps/server/src/server.ts";
 import dashboard from "../../apps/server/src/dashboard/index.html";
 
 const devServers = createBunsaiServers({
-  awsPort: 0,
-  uiPort: 0,
+  port: 0,
   dashboard,
   hmr: true,
 });
 
 afterAll(() => {
-  devServers.awsServer.stop(true);
-  devServers.uiServer.stop(true);
+  devServers.server.stop(true);
 });
 
 async function fetchChunks(serverUrl: URL): Promise<string> {
-  const res = await fetch(`${serverUrl}/`);
+  const res = await fetch(`${serverUrl}__dashboard/`);
   expect(res.status).toBe(200);
   const html = await res.text();
   const srcs = [...html.matchAll(/src="([^"]+\.js[^"]*)"/g)].map((m) => m[1]);
@@ -31,7 +29,7 @@ async function fetchChunks(serverUrl: URL): Promise<string> {
 }
 
 test("dev bundle (hmr:true) contains jsxDEV", async () => {
-  const js = await fetchChunks(devServers.uiServer.url);
+  const js = await fetchChunks(devServers.server.url);
   expect(js).toContain("jsxDEV");
 });
 

@@ -1,5 +1,6 @@
 import { dispatch } from "./core/framework.ts";
 import { serializeError } from "./core/protocol.ts";
+import { isAwsRequest } from "./core/is-aws-request.ts";
 import { createRequestLog, recordLog } from "./core/log.ts";
 import { buildParsedRequest, routeRequest } from "./core/router.ts";
 import { createStateStore } from "./core/state.ts";
@@ -212,39 +213,39 @@ export function createBunsaiApp(options?: { gatewayPort?: number }) {
     return managed ?? new Response("not found", { status: 404 });
   };
 
-  return { gatewayFetch, managementFetch, store, log };
+  const unifiedFetch = async (req: Request): Promise<Response> => {
+    const url = new URL(req.url);
+    if (url.pathname.startsWith("/__bunsai/")) return managementFetch(req);
+    if (isAwsRequest(req, url)) return gatewayFetch(req);
+    return Response.redirect(`${url.origin}/__dashboard/`, 302);
+  };
+
+  return { unifiedFetch, store, log };
 }
 
 export function createBunsaiServers(options: {
-  awsPort: number;
-  uiPort: number;
+  port: number;
   dashboard?: import("bun").HTMLBundle;
   hmr?: boolean;
 }) {
-  const app = createBunsaiApp({ gatewayPort: options.awsPort });
+  const app = createBunsaiApp({ gatewayPort: options.port });
+  const development = options.hmr ? { hmr: true } : false;
 
-  const awsServer = Bun.serve({
-    port: options.awsPort,
-    fetch: app.gatewayFetch,
-  });
-
-  const uiServer =
+  const server =
     options.dashboard === undefined
       ? Bun.serve({
-          port: options.uiPort,
+          port: options.port,
           idleTimeout: 0,
-          development: options.hmr ? { hmr: true } : false,
-          routes: { "/__bunsai/*": app.managementFetch },
+          development,
+          fetch: app.unifiedFetch,
         })
       : Bun.serve({
-          port: options.uiPort,
+          port: options.port,
           idleTimeout: 0,
-          development: options.hmr ? { hmr: true } : false,
-          routes: {
-            "/__bunsai/*": app.managementFetch,
-            "/*": options.dashboard,
-          },
+          development,
+          routes: { "/__dashboard/*": options.dashboard },
+          fetch: app.unifiedFetch,
         });
 
-  return { awsServer, uiServer, store: app.store, log: app.log };
+  return { server, store: app.store, log: app.log };
 }

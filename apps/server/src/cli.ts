@@ -6,8 +6,7 @@ const usage = `bunsai - local AWS emulator
 Usage: bunsai [options]
 
 Options:
-  --port <n>     AWS gateway port (default 4566, env BUNSAI_PORT)
-  --ui-port <n>  management + dashboard port (default 5666, env BUNSAI_UI_PORT)
+  --port <n>     listen port for AWS gateway + dashboard (default 4566, env BUNSAI_PORT)
   --version      print version and exit
   --help         show this help
 `;
@@ -31,8 +30,6 @@ if (args.includes("--version") || args.includes("-v")) {
 
 const port = readFlag("--port");
 if (port !== undefined) Bun.env.BUNSAI_PORT = port;
-const uiPort = readFlag("--ui-port");
-if (uiPort !== undefined) Bun.env.BUNSAI_UI_PORT = uiPort;
 if (Bun.env.NODE_ENV === undefined) Bun.env.NODE_ENV = "production";
 
 await import("./index.ts");

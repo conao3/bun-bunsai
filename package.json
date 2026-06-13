@@ -8,7 +8,7 @@
     "dev": "bun --filter @conao3/bunsai dev",
     "start": "bun --filter @conao3/bunsai start",
     "dev:server": "bun --filter @conao3/bunsai dev",
-    "dev:dashboard": "bun --filter @bunsai/dashboard dev",
+    "dev:dashboard": "bun --filter @conao3/bunsai-dashboard dev",
     "build": "bun --filter '*' build",
     "lint": "tsc -p apps/server && tsc -p apps/dashboard && NODE_OPTIONS=--max-old-space-size=6144 tsc -p . && knip",
     "fmt": "prettier --write .",

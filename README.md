@@ -44,20 +44,22 @@ bunx @conao3/bunsai
 
 ```sh
 bun install
-bun apps/server/src/cli.ts   # AWS gateway on :4566 + management dashboard on :5666
+bun apps/server/src/cli.ts   # AWS gateway + dashboard on :4566
 ```
 
-| Port   | Purpose                                          |
-| ------ | ------------------------------------------------ |
-| `4566` | AWS gateway — point any AWS SDK or CLI here      |
-| `5666` | Management API + React dashboard (`/__bunsai/*`) |
+bunsai listens on a single port. The same origin serves the AWS gateway, the management API, and the React dashboard:
 
-Override the default ports with environment variables:
+| Port   | Purpose                                                                           |
+| ------ | --------------------------------------------------------------------------------- |
+| `4566` | AWS gateway (signed requests) + `/__bunsai/*` management API + `/__dashboard/` UI |
 
-| Variable         | Default | Description             |
-| ---------------- | ------- | ----------------------- |
-| `BUNSAI_PORT`    | `4566`  | AWS gateway listen port |
-| `BUNSAI_UI_PORT` | `5666`  | Dashboard listen port   |
+Visiting `http://localhost:4566/` in a browser redirects to `/__dashboard/`. Any request carrying SigV4 / `X-Amz-Target` / a presigned URL is dispatched to the AWS gateway regardless of path.
+
+Override the default port with an environment variable:
+
+| Variable      | Default | Description |
+| ------------- | ------- | ----------- |
+| `BUNSAI_PORT` | `4566`  | Listen port |
 
 ## Performance
 
@@ -145,7 +147,7 @@ provider "aws" {
 
 ## Dashboard
 
-Open `http://localhost:5666` to access the management dashboard:
+Open `http://localhost:4566/` in a browser (you will be redirected to `/__dashboard/`) to access the management dashboard:
 
 - **Overview** — per-service call counts, protocol, and status at a glance.
 - **Request Log** — live stream of every AWS API call with request/response detail.
@@ -161,15 +163,15 @@ Open the **Snapshots** tab in the dashboard to save and restore snapshots intera
 
 ```sh
 # Save a snapshot (optional name in body)
-curl -X POST http://localhost:5666/__bunsai/snapshots \
+curl -X POST http://localhost:4566/__bunsai/snapshots \
   -H 'Content-Type: application/json' \
   -d '{"name": "after-seed"}'
 
 # List saved snapshots
-curl http://localhost:5666/__bunsai/snapshots
+curl http://localhost:4566/__bunsai/snapshots
 
 # Restore a snapshot by id
-curl -X POST http://localhost:5666/__bunsai/snapshots/<id>/restore
+curl -X POST http://localhost:4566/__bunsai/snapshots/<id>/restore
 ```
 
 ## Scope / Limitations
@@ -227,9 +229,9 @@ Bun workspaces monorepo:
 - **`apps/server`** — the emulator backend. Zero runtime dependencies.
   - `src/core/` — router, framework, shapes, codec, state, log.
   - `src/services/` — one file per AWS service, registered in `services/index.ts`.
-- **`apps/dashboard`** — React 19 management UI (served on port `5666`).
+- **`apps/dashboard`** — React 19 management UI, bundled into the server and served alongside the AWS gateway on `BUNSAI_PORT`.
 
-### Management API (port 5666)
+### Management API
 
 | Endpoint                             | Method   | Description                                                       |
 | ------------------------------------ | -------- | ----------------------------------------------------------------- |

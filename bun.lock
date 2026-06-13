@@ -171,9 +171,13 @@
     },
     "apps/server": {
       "name": "@conao3/bunsai",
-      "version": "1.0.1",
+      "version": "1.1.0",
       "bin": {
         "bunsai": "src/cli.ts",
+      },
+      "dependencies": {
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
       },
     },
   },

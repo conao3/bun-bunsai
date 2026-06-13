@@ -6,7 +6,8 @@
       "project": ["test/**/*.ts", "scripts/**/*.ts"]
     },
     "apps/server": {
-      "project": ["src/**/*.ts"]
+      "project": ["src/**/*.ts"],
+      "ignoreDependencies": ["react", "react-dom"]
     },
     "apps/dashboard": {
       "entry": ["src/frontend.tsx", "src/dev-server.ts"],

@@ -157,7 +157,7 @@ describe("IAM scenario e2e: app permission setup", () => {
     await client.send(new DeletePolicyCommand({ PolicyArn: policyArn }));
   });
 
-  test("DeleteConflict guards: attachment残/inline残でDeleteRole失敗、detach後成功", async () => {
+  test("DeleteConflict guards: DeleteRole fails when attachments or inline policies remain, succeeds after detach", async () => {
     const client = iam();
     const roleName = "scenario-guard-role";
     const policyName = "scenario-guard-policy";
@@ -240,7 +240,7 @@ describe("IAM scenario e2e: app permission setup", () => {
     ).resolves.toBeDefined();
   });
 
-  test("DeleteConflict guard: attach残でDeletePolicy失敗、detach後成功", async () => {
+  test("DeleteConflict guard: DeletePolicy fails when attachments remain, succeeds after detach", async () => {
     const client = iam();
     const roleName = "scenario-policy-guard-role";
     const policyName = "scenario-policy-guard-policy";

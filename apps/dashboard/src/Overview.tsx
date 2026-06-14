@@ -90,7 +90,7 @@ function ServiceCard({
       </div>
 
       {resCount === 0 && callCount === 0 ? (
-        <div className="svc-empty">まだ操作がありません</div>
+        <div className="svc-empty">No activity yet</div>
       ) : (
         <div className="svc-stats">
           <div>
@@ -99,11 +99,11 @@ function ServiceCard({
           </div>
           <div>
             <div className="n mono">{callCount}</div>
-            <div className="l">直近のコール</div>
+            <div className="l">Recent calls</div>
           </div>
           <div>
             <div className={`n mono${errCount ? " err" : ""}`}>{errCount}</div>
-            <div className="l">エラー</div>
+            <div className="l">Errors</div>
           </div>
         </div>
       )}
@@ -133,13 +133,13 @@ function MiniStream({
   return (
     <div className="card flush">
       <div className="card-head" style={{ padding: "14px 16px 0", margin: 0 }}>
-        <span className="t">直近の API コール</span>
+        <span className="t">Recent API calls</span>
         <span style={{ flex: 1 }} />
         <button
           className="btn btn-sm btn-ghost"
           onClick={() => setScreen("log")}
         >
-          Request Log を開く
+          Open Request Log
           <Ico.chevR width="13" height="13" />
         </button>
       </div>
@@ -147,7 +147,7 @@ function MiniStream({
         <div style={{ padding: "10px 16px 20px" }}>
           <div className="ms-empty">
             <StatusDot state="running" pulse />
-            <span>コール待ち受け中 — まだリクエストがありません</span>
+            <span>Waiting for calls — no requests yet</span>
           </div>
         </div>
       ) : (
@@ -221,12 +221,12 @@ export function Overview({
       <div className="content">
         <EmptyState
           glyph={<Ico.overview width="26" height="26" />}
-          title="スタックに接続できません"
+          title="Cannot connect to the stack"
           sub={
             <>
-              management API (<span className="mono">/__bunsai</span>)
-              からの応答がありません。 bunsai
-              スタックを起動すると、稼働サービスとコールがここに表示されます。
+              No response from the management API (
+              <span className="mono">/__bunsai</span>). Start the bunsai stack
+              and active services and calls will appear here.
             </>
           }
         />
@@ -238,31 +238,31 @@ export function Overview({
     <div className="content ov-grid">
       <div className="ov-stats">
         <StatCard
-          label="稼働時間"
+          label="Uptime"
           value={uptimeSeconds !== undefined ? fmtUptime(uptimeSeconds) : "—"}
-          sub={connected ? "稼働中" : "接続待ち"}
+          sub={connected ? "Running" : "Awaiting connection"}
         />
         <StatCard
-          label="累計リクエスト"
+          label="Total requests"
           value={total.toLocaleString()}
-          sub={total ? "累計受信" : "受信待ち"}
+          sub={total ? "Received" : "Awaiting traffic"}
         />
         <StatCard
-          label="エラー率"
+          label="Error rate"
           value={errRate}
           unit="%"
           tone={totErr > 0 ? "error" : undefined}
-          sub={total ? `${totErr} 件 / ${total} 件` : "—"}
+          sub={total ? `${totErr} / ${total}` : "—"}
         />
         <StatCard
-          label="平均レイテンシ"
+          label="Avg latency"
           value={avgLat}
           unit={total ? "ms" : ""}
-          sub="ローカル処理"
+          sub="Local processing"
         />
       </div>
 
-      {totErr > 0 && (
+      {totErr >= 3 && total > 0 && totErr / total >= 0.1 && (
         <div className="ov-alert">
           <Ico.warn
             width="18"
@@ -271,11 +271,12 @@ export function Overview({
           />
           <div>
             <strong style={{ color: "var(--ink)" }}>
-              エラーを返したコールがあります。
+              Some calls returned errors.
             </strong>
             <span style={{ color: "var(--body)" }}>
               {" "}
-              直近で {totErr} 件の 4xx/5xx を検出しました。
+              Detected {totErr} 4xx/5xx call{totErr === 1 ? "" : "s"} in the
+              recent window.
             </span>
           </div>
           <button
@@ -283,21 +284,21 @@ export function Overview({
             style={{ marginLeft: "auto" }}
             onClick={() => setScreen("log")}
           >
-            エラーを調査
+            Investigate
           </button>
         </div>
       )}
 
       <div>
         <div className="flex aic" style={{ marginBottom: 12 }}>
-          <span className="uppercase-label">起動中のサービス</span>
+          <span className="uppercase-label">Active services</span>
           <span className="badge pill mono" style={{ marginLeft: 10 }}>
-            {aggregated.length} 稼働
+            {aggregated.length} running
           </span>
         </div>
         {aggregated.length === 0 ? (
           <div className="card">
-            <div className="svc-empty">登録済みサービスがありません</div>
+            <div className="svc-empty">No services registered</div>
           </div>
         ) : (
           <div className="svc-grid">

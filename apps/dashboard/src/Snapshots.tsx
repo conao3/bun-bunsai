@@ -55,21 +55,21 @@ function RestoreModal({
     >
       <div
         role="dialog"
-        aria-label="スナップショットのリストア確認"
+        aria-label="Confirm snapshot restore"
         aria-modal="true"
         className="modal-dialog"
       >
         <div className="modal-head">
-          <span className="modal-title">リストアの確認</span>
+          <span className="modal-title">Confirm restore</span>
         </div>
         <div className="modal-body">
           <p className="modal-desc">
-            <span className="mono">{snapshot.name}</span>{" "}
-            のリストアを実行すると、以下のサービスの状態が上書きされます:
+            Restoring <span className="mono">{snapshot.name}</span> will
+            overwrite the state of the following services:
           </p>
           <div className="modal-svc-list">
             {snapshot.services.length === 0 ? (
-              <span className="muted">サービスなし</span>
+              <span className="muted">No services</span>
             ) : (
               snapshot.services.map((svc) => <ServiceTag key={svc} svc={svc} />)
             )}
@@ -77,14 +77,14 @@ function RestoreModal({
         </div>
         <div className="modal-foot">
           <button className="btn btn-secondary" onClick={onCancel}>
-            キャンセル
+            Cancel
           </button>
           <button
             className="btn btn-primary"
             ref={confirmRef}
             onClick={onConfirm}
           >
-            リストアを実行
+            Restore
           </button>
         </div>
       </div>
@@ -139,22 +139,22 @@ export function Snapshots({
             disabled={dumping}
           >
             <Ico.snapshot width="15" height="15" />
-            {dumping ? "ダンプ中…" : "現在の状態をダンプ"}
+            {dumping ? "Dumping…" : "Dump current state"}
           </button>
         </div>
 
         {snapshots.length === 0 ? (
           <EmptyState
             glyph={<Ico.snapshot width="22" height="22" />}
-            title="スナップショットがありません"
-            sub="サービスの現在の状態を保存し、後でリストアできます。"
+            title="No snapshots"
+            sub="Save the current service state and restore it later."
             action={
               <button
                 className="btn btn-secondary"
                 onClick={handleDump}
                 disabled={dumping}
               >
-                最初のダンプを作成
+                Create the first dump
               </button>
             }
           />
@@ -163,10 +163,10 @@ export function Snapshots({
             <table className="snap-table">
               <thead>
                 <tr>
-                  <th>名前</th>
-                  <th>作成時刻</th>
-                  <th>サービス</th>
-                  <th>サイズ</th>
+                  <th>Name</th>
+                  <th>Created at</th>
+                  <th>Services</th>
+                  <th>Size</th>
                   <th></th>
                 </tr>
               </thead>
@@ -189,11 +189,11 @@ export function Snapshots({
                           className="btn btn-sm btn-secondary"
                           onClick={() => setRestoreTarget(snap)}
                         >
-                          リストア
+                          Restore
                         </button>
                         <button
                           className="btn btn-sm btn-ghost"
-                          aria-label={`${snap.name} を削除`}
+                          aria-label={`Delete ${snap.name}`}
                           onClick={() => handleDelete(snap.id)}
                         >
                           <Ico.trash width="13" height="13" />

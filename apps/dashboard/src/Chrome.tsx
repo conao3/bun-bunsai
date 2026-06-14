@@ -60,7 +60,7 @@ export function Sidebar({
     : services.some((s) => s.callCount > 0)
       ? "running"
       : "idle";
-  const stackLabel = !connected ? "停止" : "稼働中";
+  const stackLabel = !connected ? "Stopped" : "Running";
   const stackSub = !connected ? "Stack not reachable" : "All services healthy";
   const counts: Record<Screen, number | null> = {
     overview: null,
@@ -222,7 +222,7 @@ function ScopeSeg({
       {open && (
         <Popover anchor={ref.current} onClose={() => setOpen(false)}>
           <div className="grp uppercase-label">{k}</div>
-          {options.length === 0 && <div className="opt muted">該当なし</div>}
+          {options.length === 0 && <div className="opt muted">No matches</div>}
           {options.map((o) => (
             <button
               key={o}

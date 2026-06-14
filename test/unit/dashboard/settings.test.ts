@@ -31,14 +31,14 @@ describe("tabs", () => {
 
 describe("snapshotCountText", () => {
   test("zero snapshots → empty message", () => {
-    expect(snapshotCountText(0)).toBe("保存済みスナップショットはありません");
+    expect(snapshotCountText(0)).toBe("No saved snapshots");
   });
 
   test("one snapshot → count message", () => {
-    expect(snapshotCountText(1)).toBe("1 件のスナップショット");
+    expect(snapshotCountText(1)).toBe("1 snapshot");
   });
 
   test("multiple snapshots → count message", () => {
-    expect(snapshotCountText(5)).toBe("5 件のスナップショット");
+    expect(snapshotCountText(5)).toBe("5 snapshots");
   });
 });

@@ -18,10 +18,10 @@ import {
 } from "./shared";
 
 const detailTabs = [
-  { id: "interpreted", label: "解釈後パラメータ" },
-  { id: "raw", label: "生ボディ" },
-  { id: "headers", label: "ヘッダ" },
-  { id: "response", label: "レスポンス" },
+  { id: "interpreted", label: "Parsed params" },
+  { id: "raw", label: "Raw body" },
+  { id: "headers", label: "Headers" },
+  { id: "response", label: "Response" },
 ] as const;
 type DetailTab = (typeof detailTabs)[number]["id"];
 
@@ -143,7 +143,7 @@ function RequestDetail({
           <StatusChip status={req.statusCode} />
           <ProtoBadge protocol={req.protocol} />
         </div>
-        <button className="icon-btn" onClick={onClose} aria-label="閉じる">
+        <button className="icon-btn" onClick={onClose} aria-label="Close">
           <Ico.close width="17" height="17" />
         </button>
       </div>
@@ -332,27 +332,27 @@ function RequestNotFound({
       className={`detail ${logLayout === "bottom" ? "bottom-panel" : "drawer"}`}
       role="dialog"
       aria-modal="true"
-      aria-label="リクエストが見つかりません"
+      aria-label="Request not found"
     >
       <div className="detail-head">
         <div />
-        <button className="icon-btn" onClick={onClose} aria-label="閉じる">
+        <button className="icon-btn" onClick={onClose} aria-label="Close">
           <Ico.close width="17" height="17" />
         </button>
       </div>
       <EmptyState
         glyph={<Ico.search width="26" height="26" />}
-        title="リクエストが見つかりません"
+        title="Request not found"
         sub={
           <>
             <span className="mono">{id}</span>
             <br />
-            ログは直近 600 件のみ保持されます
+            Only the last 600 entries are kept
           </>
         }
         action={
           <button className="btn btn-sm btn-secondary" onClick={onClose}>
-            閉じる
+            Close
           </button>
         }
       />
@@ -482,7 +482,7 @@ export function RequestLog({
           ) : (
             <Ico.play width="14" height="14" />
           )}
-          {live ? "一時停止" : "ライブ再開"}
+          {live ? "Pause" : "Resume"}
         </button>
         <div className={`live-ind ${live && connected ? "on" : ""}`}>
           <StatusDot
@@ -529,8 +529,8 @@ export function RequestLog({
           <input
             className="input"
             type="search"
-            aria-label="operation, service, request id を検索"
-            placeholder="operation, service, request id を検索…"
+            aria-label="Search operation, service, or request id"
+            placeholder="Search operation, service, request id…"
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
           />
@@ -539,7 +539,7 @@ export function RequestLog({
         <div className="gb-spacer" />
         <span className="count-badge mono">
           {filtered.length}
-          <span className="cb-lbl">件</span>
+          <span className="cb-lbl">calls</span>
         </span>
         {errCount > 0 && (
           <span className="count-badge mono err">
@@ -553,7 +553,7 @@ export function RequestLog({
           disabled={requests.length === 0}
         >
           <Ico.trash width="14" height="14" />
-          クリア
+          Clear
         </button>
       </div>
 
@@ -564,14 +564,14 @@ export function RequestLog({
           {requests.length === 0 ? (
             <EmptyState
               glyph={<Ico.log width="26" height="26" />}
-              title="リクエストを待っています"
+              title="Waiting for requests"
               sub={
                 <>
-                  スタックは <span className="mono">http://localhost:4566</span>{" "}
-                  で待ち受け中です。
+                  The stack is listening on{" "}
+                  <span className="mono">http://localhost:4566</span>.
                   {connected
-                    ? " AWS SDK や CLI からコールが届くと、ここにライブで流れます。"
-                    : " management API への接続を待っています。"}
+                    ? " Calls from AWS SDKs and CLIs will stream here live."
+                    : " Waiting for management API connection."}
                 </>
               }
               action={
@@ -582,12 +582,12 @@ export function RequestLog({
                   {live ? (
                     <>
                       <Ico.pause width="15" height="15" />
-                      ライブ受信中
+                      Live
                     </>
                   ) : (
                     <>
                       <Ico.play width="15" height="15" />
-                      ライブ受信を開始
+                      Start live
                     </>
                   )}
                 </button>
@@ -596,17 +596,17 @@ export function RequestLog({
           ) : filtered.length === 0 ? (
             <EmptyState
               glyph={<Ico.search width="24" height="24" />}
-              title="一致するコールがありません"
-              sub="フィルタや検索条件を変更してください。"
+              title="No matching calls"
+              sub="Adjust the filters or search query."
             />
           ) : (
             <>
               <div className="log-thead">
-                <span className="c-time">時刻</span>
-                <span className="c-svc">サービス</span>
-                <span className="c-op">オペレーション</span>
-                <span className="c-status">ステータス</span>
-                <span className="c-lat">レイテンシ</span>
+                <span className="c-time">Time</span>
+                <span className="c-svc">Service</span>
+                <span className="c-op">Operation</span>
+                <span className="c-status">Status</span>
+                <span className="c-lat">Latency</span>
                 <span className="c-scope">region</span>
               </div>
               <div
@@ -626,7 +626,7 @@ export function RequestLog({
               {!stick && newCount > 0 && (
                 <button className="jump-pill" onClick={jumpDown}>
                   <Ico.caret width="14" height="14" />
-                  {newCount} 件の新着
+                  {newCount} new
                 </button>
               )}
             </>

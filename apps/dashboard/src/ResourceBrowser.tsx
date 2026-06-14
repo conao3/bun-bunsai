@@ -154,7 +154,7 @@ function S3BucketDetail({ value }: { value: S3BucketShape }) {
       <div className="res-toolbar">
         <input
           className="input"
-          placeholder="prefix フィルタ"
+          placeholder="Prefix filter"
           value={prefix}
           onChange={(e) => setPrefix(e.target.value)}
           style={{ width: 220 }}
@@ -170,7 +170,7 @@ function S3BucketDetail({ value }: { value: S3BucketShape }) {
         {filtered.length === 0 ? (
           <div className="res-row" style={{ gridTemplateColumns: "1fr" }}>
             <span style={{ color: "var(--muted-soft)" }}>
-              {prefix ? "一致するオブジェクトなし" : "オブジェクトなし"}
+              {prefix ? "No matching objects" : "No objects"}
             </span>
           </div>
         ) : (
@@ -232,7 +232,7 @@ function SQSQueueDetail({ value }: { value: SQSQueueShape }) {
       {firstMessage && (
         <>
           <div className="uppercase-label" style={{ margin: "6px 0 8px" }}>
-            先頭メッセージ
+            First message
           </div>
           <CodeBlock text={prettyMaybeJson(firstMessage.Body)} highlight />
         </>
@@ -270,7 +270,7 @@ function DynamoDBDetail({ value }: { value: DynamoTableShape }) {
       {sampleItems.length > 0 && (
         <>
           <div className="uppercase-label" style={{ margin: "6px 0 8px" }}>
-            items (先頭 {sampleItems.length} 件)
+            items (first {sampleItems.length})
           </div>
           <CodeBlock text={JSON.stringify(sampleItems, null, 2)} highlight />
         </>
@@ -322,7 +322,7 @@ function SecretsManagerDetail({ value }: { value: SecretShape }) {
           height="16"
           style={{ color: "var(--amber)", flexShrink: 0 }}
         />
-        SecretString はマスクされています
+        SecretString is masked
       </div>
     </>
   );
@@ -377,7 +377,7 @@ function ResourceTree({
             {isOpen && (
               <div className="tree-children">
                 {items.length === 0 ? (
-                  <div className="tree-empty">なし</div>
+                  <div className="tree-empty">empty</div>
                 ) : (
                   (() => {
                     const groups = groupResourcesByPrefix(
@@ -561,18 +561,14 @@ export function ResourceBrowser({
         {scoped.length === 0 ? (
           <EmptyState
             glyph={<Ico.browser width="26" height="26" />}
-            title={
-              loaded
-                ? "このスコープにリソースはありません"
-                : "リソースを読み込み中…"
-            }
+            title={loaded ? "No resources in this scope" : "Loading resources…"}
             sub={
               <>
-                スコープ <span className="mono">{scope.region}</span>{" "}
-                にはまだリソースがありません。
+                Scope <span className="mono">{scope.region}</span> has no
+                resources yet.
                 {connected
-                  ? " SDK / CLI で作成すると表示されます。"
-                  : " management API への接続を待っています。"}
+                  ? " They will appear here once created via an SDK or CLI."
+                  : " Waiting for management API connection."}
               </>
             }
           />
@@ -581,8 +577,8 @@ export function ResourceBrowser({
         ) : (
           <EmptyState
             glyph={<Ico.browser width="26" height="26" />}
-            title="リソースを選択"
-            sub="左のツリーからリソースを選ぶと、保存された状態がここに表示されます。"
+            title="Select a resource"
+            sub="Pick a resource from the tree on the left to inspect its stored state here."
           />
         )}
       </div>

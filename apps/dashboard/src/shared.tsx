@@ -1227,9 +1227,9 @@ export function svcInfo(svc: string) {
 }
 
 const dotLabel: Record<"running" | "error" | "idle", string> = {
-  running: "稼働中",
-  error: "エラー",
-  idle: "停止",
+  running: "Running",
+  error: "Error",
+  idle: "Idle",
 };
 
 export function StatusDot({

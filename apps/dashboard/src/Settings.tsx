@@ -111,7 +111,7 @@ function GeneralTab({
       <div className="settings-sep" />
       <div className="settings-row">
         <div className="settings-label">
-          <div className="settings-label-title">情報密度</div>
+          <div className="settings-label-title">Density</div>
         </div>
         <div className="segmented">
           <button
@@ -119,21 +119,21 @@ function GeneralTab({
             onClick={() => setDensity("compact")}
             aria-pressed={density === "compact"}
           >
-            コンパクト
+            Compact
           </button>
           <button
             className={density === "spacious" ? "on" : ""}
             onClick={() => setDensity("spacious")}
             aria-pressed={density === "spacious"}
           >
-            ゆったり
+            Comfortable
           </button>
         </div>
       </div>
       <div className="settings-sep" />
       <div className="settings-row">
         <div className="settings-label">
-          <div className="settings-label-title">Request Log 詳細の表示位置</div>
+          <div className="settings-label-title">Request Log detail layout</div>
         </div>
         <div className="segmented">
           <button
@@ -141,14 +141,14 @@ function GeneralTab({
             onClick={() => setLogLayout("drawer")}
             aria-pressed={logLayout === "drawer"}
           >
-            右ドロワー
+            Right drawer
           </button>
           <button
             className={logLayout === "bottom" ? "on" : ""}
             onClick={() => setLogLayout("bottom")}
             aria-pressed={logLayout === "bottom"}
           >
-            下部パネル
+            Bottom panel
           </button>
         </div>
       </div>
@@ -208,8 +208,8 @@ function ScopeTab({
 
 export function snapshotCountText(count: number): string {
   return count === 0
-    ? "保存済みスナップショットはありません"
-    : `${count} 件のスナップショット`;
+    ? "No saved snapshots"
+    : `${count} snapshot${count === 1 ? "" : "s"}`;
 }
 
 function snapshotName(): string {
@@ -243,26 +243,26 @@ function PersistenceTab({
         <div className="settings-label">
           <div className="settings-label-title">Dump Destination</div>
         </div>
-        <span className="settings-value-ro">ブラウザダウンロード</span>
+        <span className="settings-value-ro">Browser download</span>
       </div>
       <div className="settings-sep" />
       <div className="settings-row">
         <div className="settings-label">
-          <div className="settings-label-title">スナップショット作成</div>
-          <div className="settings-label-sub">現在の状態を保存します</div>
+          <div className="settings-label-title">Create snapshot</div>
+          <div className="settings-label-sub">Save the current state</div>
         </div>
         <button
           className="btn btn-secondary"
           onClick={handleDump}
           disabled={dumping}
         >
-          {dumping ? "ダンプ中…" : "今すぐダンプ"}
+          {dumping ? "Dumping…" : "Dump now"}
         </button>
       </div>
       <div className="settings-sep" />
       <div className="settings-row">
         <div className="settings-label">
-          <div className="settings-label-title">スナップショット管理</div>
+          <div className="settings-label-title">Manage snapshots</div>
           <div className="settings-label-sub">
             {snapshotCountText(snapshots.length)}
           </div>
@@ -271,7 +271,7 @@ function PersistenceTab({
           className="btn btn-secondary"
           onClick={() => router.push(buildSnapshotPath())}
         >
-          管理ページへ
+          Open
         </button>
       </div>
     </div>

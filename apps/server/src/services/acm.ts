@@ -571,8 +571,7 @@ const PutAccountConfiguration: OperationHandler = (input, ctx) => {
   if (cached !== undefined) return cached as Record<string, unknown>;
 
   const expiryEvents = input["ExpiryEvents"] as
-    | { DaysBeforeExpiry?: number }
-    | undefined;
+    { DaysBeforeExpiry?: number } | undefined;
   const config: AccountConfig = { ExpiryEvents: expiryEvents };
   ctx.store.set(accountConfigKey, config);
   const result = {};
@@ -674,8 +673,7 @@ const SearchCertificates: OperationHandler = (input, ctx) => {
   const nextTokenInput =
     typeof input["NextToken"] === "string" ? input["NextToken"] : undefined;
   const filterStatement = input["FilterStatement"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const sortBy =
     typeof input["SortBy"] === "string"
       ? (input["SortBy"] as string)

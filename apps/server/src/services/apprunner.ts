@@ -464,8 +464,7 @@ const isConnectionUsedByService = (
     .some((e) => {
       const src = e.value.SourceConfiguration;
       const codeRepo = src["CodeRepository"] as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       const authCfg = (
         codeRepo?.["CodeConfiguration"] as Record<string, unknown> | undefined
       )?.["AuthenticationConfiguration"] as Record<string, unknown> | undefined;
@@ -482,8 +481,7 @@ const isVpcConnectorUsedByService = (
     .some((e) => {
       const network = e.value.NetworkConfiguration;
       const egress = network["EgressConfiguration"] as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       return egress?.["VpcConnectorArn"] === vpcConnectorArn;
     });
 
@@ -789,8 +787,7 @@ const UpdateService: OperationHandler = (input, ctx) => {
           InstanceRoleArn:
             stringOrUndefined(instance["InstanceRoleArn"]) ??
             (service.InstanceConfiguration["InstanceRoleArn"] as
-              | string
-              | undefined),
+              string | undefined),
         }
       : service.InstanceConfiguration,
     HealthCheckConfiguration:

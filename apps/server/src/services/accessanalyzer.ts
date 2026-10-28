@@ -663,11 +663,9 @@ const ListFindingsV2: OperationHandler = (input, ctx) => {
     .filter((f) => applyFindingFilter(f, filterCriteria))
     .sort((a, b) => {
       const av = (a as unknown as Record<string, unknown>)[sortAttr] as
-        | number
-        | string;
+        number | string;
       const bv = (b as unknown as Record<string, unknown>)[sortAttr] as
-        | number
-        | string;
+        number | string;
       const cmp = av < bv ? -1 : av > bv ? 1 : 0;
       return sortOrder === "ASC" ? cmp : -cmp;
     });

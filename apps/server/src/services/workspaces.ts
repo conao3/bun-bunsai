@@ -118,8 +118,7 @@ type StoredWorkspacesPool = {
     ActiveUserSessions: number;
   };
   ApplicationSettings:
-    | { Status: string; SettingsGroup: string | undefined }
-    | undefined;
+    { Status: string; SettingsGroup: string | undefined } | undefined;
   TimeoutSettings: Record<string, unknown> | undefined;
   RunningMode: string | undefined;
 };

@@ -90,8 +90,7 @@ describe("cognito-idp MFA e2e", () => {
     });
     expect(initNoMfa.status).toBe(200);
     const noMfaResult = initNoMfa.body["AuthenticationResult"] as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect(noMfaResult?.["AccessToken"]).toBeDefined();
     const accessToken = noMfaResult?.["AccessToken"] as string;
 
@@ -143,8 +142,7 @@ describe("cognito-idp MFA e2e", () => {
     });
     expect(responded.status).toBe(200);
     const authResult = responded.body["AuthenticationResult"] as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect(authResult?.["AccessToken"]).toBeDefined();
     expect(authResult?.["TokenType"]).toBe("Bearer");
 

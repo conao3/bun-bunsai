@@ -141,8 +141,7 @@ test("UpdateMonitoringSchedule → DescribeMonitoringSchedule reflects update", 
   );
   expect(described.MonitoringScheduleName).toBe(name);
   const config = described.MonitoringScheduleConfig as
-    | { MonitoringType?: string }
-    | undefined;
+    { MonitoringType?: string } | undefined;
   expect(config?.MonitoringType).toBe("ModelQuality");
 });
 

@@ -3369,8 +3369,7 @@ const s3: ServiceDefinition = {
       const days =
         typeof restoreRequest === "object" && restoreRequest !== null
           ? ((restoreRequest as Record<string, unknown>)["Days"] as
-              | number
-              | undefined)
+              number | undefined)
           : undefined;
       const restoreExpiry = nowSeconds() + (days ?? 1) * 86400;
       const versions = [...(target.objects[key] ?? [])];

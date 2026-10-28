@@ -26,8 +26,7 @@ const region = "us-east-1";
 const credentials = { accessKeyId: "test", secretAccessKey: "test" } as const;
 
 type GetObjectCommandOutputBody =
-  | { transformToString: () => Promise<string> }
-  | undefined;
+  { transformToString: () => Promise<string> } | undefined;
 
 const readBody = async (body: GetObjectCommandOutputBody): Promise<string> => {
   if (body === undefined) return "";

@@ -507,8 +507,7 @@ const ListFoundationModels: OperationHandler = (input, ctx) => {
   const byOutputModality = input["byOutputModality"] as string | undefined;
   const byInferenceType = input["byInferenceType"] as string | undefined;
   const byCustomizationType = input["byCustomizationType"] as
-    | string
-    | undefined;
+    string | undefined;
 
   let filtered = all;
   if (byProvider)
@@ -648,20 +647,15 @@ const CreateGuardrail: OperationHandler = (input, ctx) => {
     status: "READY",
     version: "DRAFT",
     contentPolicy: input["contentPolicyConfig"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     wordPolicy: input["wordPolicyConfig"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     sensitiveInformationPolicy: input["sensitiveInformationPolicyConfig"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     topicPolicy: input["topicPolicyConfig"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     contextualGroundingPolicy: input["contextualGroundingPolicyConfig"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     createdAt: now,
     updatedAt: now,
     blockedInputMessaging:
@@ -725,15 +719,13 @@ const UpdateGuardrail: OperationHandler = (input, ctx) => {
       gr.wordPolicy,
     sensitiveInformationPolicy:
       (input["sensitiveInformationPolicyConfig"] as
-        | Record<string, unknown>
-        | undefined) ?? gr.sensitiveInformationPolicy,
+        Record<string, unknown> | undefined) ?? gr.sensitiveInformationPolicy,
     topicPolicy:
       (input["topicPolicyConfig"] as Record<string, unknown> | undefined) ??
       gr.topicPolicy,
     contextualGroundingPolicy:
       (input["contextualGroundingPolicyConfig"] as
-        | Record<string, unknown>
-        | undefined) ?? gr.contextualGroundingPolicy,
+        Record<string, unknown> | undefined) ?? gr.contextualGroundingPolicy,
     blockedInputMessaging:
       (input["blockedInputMessaging"] as string) ?? gr.blockedInputMessaging,
     blockedOutputsMessaging:

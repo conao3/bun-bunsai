@@ -866,8 +866,7 @@ const ProvideAnomalyFeedback: OperationHandler = (input, ctx) => {
 
 const GetAnomalies: OperationHandler = (input, ctx) => {
   const dateInterval = input["DateInterval"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   if (
     !dateInterval ||
     typeof dateInterval["StartDate"] !== "string" ||
@@ -880,8 +879,7 @@ const GetAnomalies: OperationHandler = (input, ctx) => {
   const monitorArn = input["MonitorArn"];
   const feedbackFilter = input["Feedback"];
   const totalImpactFilter = input["TotalImpact"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
 
   const monitorArns: string[] =
     typeof monitorArn === "string" && monitorArn !== ""

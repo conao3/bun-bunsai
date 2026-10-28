@@ -1594,8 +1594,7 @@ const matchLookupAttr = (
 
 const LookupEvents: OperationHandler = (input, ctx) => {
   const attrs = input["LookupAttributes"] as
-    | { AttributeKey: string; AttributeValue: string }[]
-    | undefined;
+    { AttributeKey: string; AttributeValue: string }[] | undefined;
   const startTime = input["StartTime"] as number | undefined;
   const endTime = input["EndTime"] as number | undefined;
   const maxResults = (input["MaxResults"] as number | undefined) ?? 50;

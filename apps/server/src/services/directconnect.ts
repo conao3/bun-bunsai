@@ -893,8 +893,7 @@ const DescribeInterconnectLoa: OperationHandler = (input, ctx) => {
 
 const CreateLag: OperationHandler = (input, ctx) => {
   const numberOfConnections = input["numberOfConnections"] as
-    | number
-    | undefined;
+    number | undefined;
   const location = requireString(input, "location");
   const connectionsBandwidth = requireString(input, "connectionsBandwidth");
   const lagName = requireString(input, "lagName");

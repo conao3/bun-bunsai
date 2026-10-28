@@ -541,8 +541,7 @@ const ListResourceRequests: OperationHandler = (input, ctx) => {
     typeof input["NextToken"] === "string" ? input["NextToken"] : undefined;
 
   const rawFilter = input["ResourceRequestStatusFilter"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const filterTypes = Array.isArray(rawFilter?.["Operations"])
     ? (rawFilter["Operations"] as string[])
     : undefined;

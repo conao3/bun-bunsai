@@ -62,8 +62,7 @@ test("UpdateDomain → DescribeDomain reflects update", async () => {
   );
   expect(described.DomainId).toBe(domainId);
   const settings = described.DefaultUserSettings as
-    | { ExecutionRole?: string }
-    | undefined;
+    { ExecutionRole?: string } | undefined;
   expect(settings?.ExecutionRole).toBe(
     "arn:aws:iam::123456789012:role/updated",
   );

@@ -1373,8 +1373,7 @@ const UpdateCodeSigningConfig: OperationHandler = (input, ctx) => {
   const description = stringOrUndefined(input["Description"]);
   if (description !== undefined) csc.Description = description;
   const allowedPublishers = input["AllowedPublishers"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   if (allowedPublishers !== undefined) {
     csc.AllowedPublishers = {
       SigningProfileVersionArns: stringListOf(
@@ -1383,8 +1382,7 @@ const UpdateCodeSigningConfig: OperationHandler = (input, ctx) => {
     };
   }
   const policies = input["CodeSigningPolicies"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   if (policies !== undefined) {
     const policy = stringOrUndefined(policies["UntrustedArtifactOnDeployment"]);
     if (policy !== undefined)

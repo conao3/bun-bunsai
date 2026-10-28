@@ -296,8 +296,7 @@ const ConfigureLogs: OperationHandler = (input, ctx) => {
     ...channel,
     EgressAccessLogs: input["EgressAccessLogs"] as EgressAccessLogs | undefined,
     IngressAccessLogs: input["IngressAccessLogs"] as
-      | IngressAccessLogs
-      | undefined,
+      IngressAccessLogs | undefined,
   };
   ctx.store.set(channelKey(id), updated);
   return updated;

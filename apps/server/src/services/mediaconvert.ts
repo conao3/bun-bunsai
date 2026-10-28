@@ -956,8 +956,7 @@ const GetJobsQueryResults: OperationHandler = (input, ctx) => {
     .filter((entry) => entry.key.startsWith(jobPrefix))
     .map((entry) => entry.value);
   const filterList = query.FilterList as
-    | Array<{ Key?: string; Values?: string[] }>
-    | undefined;
+    Array<{ Key?: string; Values?: string[] }> | undefined;
   if (filterList !== undefined && filterList.length > 0) {
     jobs = jobs.filter((job) =>
       filterList.some((filter) => {

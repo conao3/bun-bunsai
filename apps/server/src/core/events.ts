@@ -22,8 +22,7 @@ export type EventSourceConsumer = (
 ) => boolean | Promise<boolean>;
 
 export type TaskInvokeResult =
-  | { ok: true; result: unknown }
-  | { ok: false; error: string; cause: string };
+  { ok: true; result: unknown } | { ok: false; error: string; cause: string };
 
 export type TaskInvoker = (
   ctx: ServiceContext,

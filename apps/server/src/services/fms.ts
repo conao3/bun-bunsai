@@ -54,8 +54,7 @@ const loadPolicy = (ctx: ServiceContext, policyId: string): StoredPolicy => {
 
 const toSummary = (policy: StoredPolicy): Record<string, unknown> => {
   const data = policy["SecurityServicePolicyData"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   return {
     PolicyArn: policy["PolicyArn"],
     PolicyId: policy["PolicyId"],
@@ -766,8 +765,7 @@ const GetProtectionStatus: OperationHandler = (input, ctx) => {
   const policyId = requireString(input as Record<string, unknown>, "PolicyId");
   const policy = loadPolicy(ctx, policyId);
   const data = policy["SecurityServicePolicyData"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const serviceType = (data?.["Type"] as string | undefined) ?? "WAFV2";
   return {
     AdminAccountId: ctx.account,

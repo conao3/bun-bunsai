@@ -111,8 +111,7 @@ describe("cognito TOTP MFA scenario: associate → verify → enable → challen
     });
     expect(initAuth.status).toBe(200);
     const authResult = initAuth.body["AuthenticationResult"] as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect(authResult?.["AccessToken"]).toBeDefined();
     const accessToken = authResult?.["AccessToken"] as string;
 
@@ -160,8 +159,7 @@ describe("cognito TOTP MFA scenario: associate → verify → enable → challen
     });
     expect(respond.status).toBe(200);
     const mfaResult = respond.body["AuthenticationResult"] as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect(mfaResult?.["AccessToken"]).toBeDefined();
     expect(mfaResult?.["TokenType"]).toBe("Bearer");
     expect(mfaResult?.["IdToken"]).toBeDefined();

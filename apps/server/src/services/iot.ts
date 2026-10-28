@@ -1075,8 +1075,7 @@ const UpdateThing: OperationHandler = (input, ctx) => {
     ? undefined
     : (str(data["thingTypeName"]) ?? stored.thingTypeName);
   const attributePayload = data["attributePayload"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   let attributes = { ...stored.attributes };
   if (attributePayload) {
     const newAttrs =
@@ -1210,8 +1209,7 @@ const CreateThingType: OperationHandler = (input, ctx) => {
   const thingTypeId = crypto.randomUUID();
   const arn = thingTypeArn(ctx, thingTypeName);
   const props = data["thingTypeProperties"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const stored: StoredThingType = {
     thingTypeName,
     thingTypeArn: arn,
@@ -1308,8 +1306,7 @@ const CreateThingGroup: OperationHandler = (input, ctx) => {
   const thingGroupId = crypto.randomUUID();
   const arn = thingGroupArn(ctx, thingGroupName);
   const props = data["thingGroupProperties"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const parentGroupName = str(data["parentGroupName"]);
   if (parentGroupName) requireThingGroup(ctx, parentGroupName);
   const stored: StoredThingGroup = {
@@ -1363,8 +1360,7 @@ const UpdateThingGroup: OperationHandler = (input, ctx) => {
     );
   }
   const props = data["thingGroupProperties"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const updated = {
     ...stored,
     thingGroupDescription:
@@ -4341,8 +4337,7 @@ const CreateSecurityProfile: OperationHandler = (input, ctx) => {
     behaviors: data["behaviors"] as unknown[] | undefined,
     alertTargets: data["alertTargets"],
     additionalMetricsToRetainV2: data["additionalMetricsToRetainV2"] as
-      | unknown[]
-      | undefined,
+      unknown[] | undefined,
     metricsExportConfig: data["metricsExportConfig"],
     version: 1,
     createdAt: now,
@@ -4703,11 +4698,9 @@ const StartDetectMitigationActionsTask: OperationHandler = (input, ctx) => {
     actions,
     violationEventOccurrenceRange: data["violationEventOccurrenceRange"],
     includeOnlyActiveViolations: data["includeOnlyActiveViolations"] as
-      | boolean
-      | undefined,
+      boolean | undefined,
     includeSuppressedAlerts: data["includeSuppressedAlerts"] as
-      | boolean
-      | undefined,
+      boolean | undefined,
     taskStatus: "SUCCESSFUL",
     taskStartTime: now,
     taskEndTime: now,
@@ -4876,8 +4869,7 @@ const CreateBillingGroup: OperationHandler = (input, ctx) => {
   const billingGroupId = crypto.randomUUID();
   const arn = billingGroupArn(ctx, billingGroupName);
   const props = data["billingGroupProperties"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const stored: StoredBillingGroup = {
     billingGroupName,
     billingGroupArn: arn,
@@ -4927,8 +4919,7 @@ const UpdateBillingGroup: OperationHandler = (input, ctx) => {
     );
   }
   const props = data["billingGroupProperties"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const updated = {
     ...stored,
     billingGroupDescription:
@@ -5044,8 +5035,7 @@ const CreateDynamicThingGroup: OperationHandler = (input, ctx) => {
   const thingGroupId = crypto.randomUUID();
   const arn = thingGroupArn(ctx, thingGroupName);
   const props = data["thingGroupProperties"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const stored: StoredDynamicThingGroup = {
     thingGroupName,
     thingGroupArn: arn,
@@ -5087,8 +5077,7 @@ const UpdateDynamicThingGroup: OperationHandler = (input, ctx) => {
     );
   }
   const props = data["thingGroupProperties"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const updated: StoredDynamicThingGroup = {
     ...stored,
     thingGroupDescription:
@@ -5805,8 +5794,7 @@ const CreateOTAUpdate: OperationHandler = (input, ctx) => {
     files: (data["files"] as unknown[]) ?? [],
     roleArn: requireStr(data, "roleArn"),
     additionalParameters: data["additionalParameters"] as
-      | Record<string, string>
-      | undefined,
+      Record<string, string> | undefined,
     otaUpdateStatus: "CREATE_COMPLETE",
     createdAt: now,
     lastModifiedAt: now,
@@ -6018,14 +6006,12 @@ const ListStreams: OperationHandler = (input, ctx) => {
 const CreateTopicRuleDestination: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const cfg = data["destinationConfiguration"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const id = `${nowSeconds()}-dest`;
   const arn = destinationArnOf(ctx, id);
   const now = nowSeconds();
   const httpUrlCfg = cfg?.["httpUrlConfiguration"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const stored: StoredDestination = {
     arn,
     status: "IN_PROGRESS",
@@ -6248,8 +6234,7 @@ const DeleteV2LoggingLevel: OperationHandler = (input, ctx) => {
 const SetLoggingOptions: OperationHandler = (input, ctx) => {
   const data = input as Record<string, unknown>;
   const payload = data["loggingOptionsPayload"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const existing = ctx.store.get<StoredLoggingOptions>(loggingOptionsKey) ?? {};
   ctx.store.set(loggingOptionsKey, {
     ...existing,

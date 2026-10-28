@@ -22,7 +22,7 @@ jobs:
     outputs:
       new_version: ${{ steps.bump.outputs.new_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
       - id: bump
@@ -76,12 +76,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: v${{ needs.version-bump.outputs.new_version }}
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: >
           bun build --compile apps/server/src/index.ts
@@ -90,7 +90,7 @@ jobs:
       - run: |
           cd dist-release
           sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: dist-release/*
@@ -103,11 +103,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.version-bump.outputs.new_version }}
           draft: false
@@ -126,15 +126,15 @@ jobs:
       name: npm
       url: https://www.npmjs.com/package/@conao3/bunsai
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: v${{ needs.version-bump.outputs.new_version }}
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.13
-      - uses: actions/setup-node@v4
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 26
           registry-url: https://registry.npmjs.org
       - run: npm install -g npm@latest
       - run: cp README.md apps/server/README.md

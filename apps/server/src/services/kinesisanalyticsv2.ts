@@ -327,14 +327,12 @@ const CreateApplication: OperationHandler = (input, ctx) => {
   const arn = appArn(ctx.region, ctx.account, name);
   const tags: Record<string, string> = {};
   const inputTags = input.Tags as
-    | Array<{ Key: string; Value: string }>
-    | undefined;
+    Array<{ Key: string; Value: string }> | undefined;
   if (inputTags) {
     for (const { Key, Value } of inputTags) tags[Key] = Value;
   }
   const rawConfig = input.ApplicationConfiguration as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const appConfig =
     rawConfig !== undefined ? configToDescription(rawConfig) : undefined;
   const app: StoredApplication = {
@@ -363,8 +361,7 @@ const CreateApplication: OperationHandler = (input, ctx) => {
     versionHistory: [],
   };
   const cwOptions = input.CloudWatchLoggingOptions as
-    | Array<{ LogStreamARN: string }>
-    | undefined;
+    Array<{ LogStreamARN: string }> | undefined;
   if (cwOptions) {
     for (const opt of cwOptions) {
       app.cloudWatchLoggingOptionDescriptions.push({
@@ -934,8 +931,7 @@ const CreateApplicationSnapshot: OperationHandler = (input, ctx) => {
   const app = requireApp(ctx, appName);
   const snapshotDesc = app.applicationConfiguration
     ?.ApplicationSnapshotConfigurationDescription as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   if (snapshotDesc?.SnapshotsEnabled === false) {
     throw awsError(
       "UnsupportedOperationException",

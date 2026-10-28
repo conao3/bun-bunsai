@@ -1986,8 +1986,7 @@ const ListEventPredictions: OperationHandler = (input, ctx) => {
     input["detectorVersionId"] as { value?: string } | undefined
   )?.value;
   const timeRange = input["predictionTimeRange"] as
-    | { startTime?: string; endTime?: string }
-    | undefined;
+    { startTime?: string; endTime?: string } | undefined;
 
   const all = ctx.store
     .list<StoredPrediction>()

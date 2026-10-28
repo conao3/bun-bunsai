@@ -458,8 +458,7 @@ const RegisterActivityType: OperationHandler = (input, ctx) => {
     );
   }
   const taskListInput = input["defaultTaskList"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const at: StoredActivityType = {
     domain,
     name,
@@ -610,8 +609,7 @@ const RegisterWorkflowType: OperationHandler = (input, ctx) => {
     );
   }
   const taskListInput = input["defaultTaskList"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const wt: StoredWorkflowType = {
     domain,
     name,
@@ -775,8 +773,7 @@ const StartWorkflowExecution: OperationHandler = (input, ctx) => {
 
   const runId = `run-${nextId(ctx, "runId")}`;
   const taskListInput = input["taskList"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const taskListName =
     (taskListInput?.["name"] as string | undefined) ??
     wt.defaultTaskList?.name ??
@@ -894,8 +891,7 @@ const ListOpenWorkflowExecutions: OperationHandler = (input, ctx) => {
   const typeFilter = input["typeFilter"] as Record<string, unknown> | undefined;
   const tagFilter = input["tagFilter"] as Record<string, unknown> | undefined;
   const executionFilter = input["executionFilter"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const maximumPageSize =
     typeof input["maximumPageSize"] === "number"
       ? (input["maximumPageSize"] as number)
@@ -944,11 +940,9 @@ const ListClosedWorkflowExecutions: OperationHandler = (input, ctx) => {
   const typeFilter = input["typeFilter"] as Record<string, unknown> | undefined;
   const tagFilter = input["tagFilter"] as Record<string, unknown> | undefined;
   const executionFilter = input["executionFilter"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const closeStatusFilter = input["closeStatusFilter"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const maximumPageSize =
     typeof input["maximumPageSize"] === "number"
       ? (input["maximumPageSize"] as number)
@@ -1236,8 +1230,7 @@ const RespondDecisionTaskCompleted: OperationHandler = (input, ctx) => {
       ] as Record<string, unknown>;
       if (!attrs) continue;
       const activityType = attrs["activityType"] as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       const activityId = attrs["activityId"] as string;
       const atName = activityType?.["name"] as string | undefined;
       const atVersion = activityType?.["version"] as string | undefined;
@@ -1271,8 +1264,7 @@ const RespondDecisionTaskCompleted: OperationHandler = (input, ctx) => {
       });
       const activityTaskToken = `at-${nextId(ctx, "taskToken")}`;
       const atTaskList = attrs["taskList"] as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       const atTaskListName =
         (atTaskList?.["name"] as string | undefined) ?? ex.taskListName;
       const atTask: StoredActivityTask = {
@@ -1294,8 +1286,7 @@ const RespondDecisionTaskCompleted: OperationHandler = (input, ctx) => {
       ctx.store.set(activityTaskKey(activityTaskToken), atTask);
     } else if (decisionType === "CompleteWorkflowExecution") {
       const attrs = decision["completeWorkflowExecutionDecisionAttributes"] as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       addEvent(ex, "WorkflowExecutionCompleted", {
         workflowExecutionCompletedEventAttributes: {
           result: stringOrUndefined(attrs?.["result"]),
@@ -1307,8 +1298,7 @@ const RespondDecisionTaskCompleted: OperationHandler = (input, ctx) => {
       ex.closeTimestamp = nowSeconds();
     } else if (decisionType === "FailWorkflowExecution") {
       const attrs = decision["failWorkflowExecutionDecisionAttributes"] as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       addEvent(ex, "WorkflowExecutionFailed", {
         workflowExecutionFailedEventAttributes: {
           reason: stringOrUndefined(attrs?.["reason"]),
@@ -1321,8 +1311,7 @@ const RespondDecisionTaskCompleted: OperationHandler = (input, ctx) => {
       ex.closeTimestamp = nowSeconds();
     } else if (decisionType === "CancelWorkflowExecution") {
       const attrs = decision["cancelWorkflowExecutionDecisionAttributes"] as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       addEvent(ex, "WorkflowExecutionCanceled", {
         workflowExecutionCanceledEventAttributes: {
           details: stringOrUndefined(attrs?.["details"]),

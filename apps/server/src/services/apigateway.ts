@@ -971,8 +971,7 @@ const CreateRestApi: OperationHandler = (input, ctx) => {
     apiKeySource: stringOrUndefined(input["apiKeySource"]) ?? "HEADER",
     disableExecuteApiEndpoint: input["disableExecuteApiEndpoint"] === true,
     endpointConfiguration: (input["endpointConfiguration"] as
-      | { types: string[] }
-      | undefined) ?? { types: ["EDGE"] },
+      { types: string[] } | undefined) ?? { types: ["EDGE"] },
   };
   ctx.store.set(restApiKey(id), api);
   const root: StoredResource = {
@@ -4555,8 +4554,7 @@ const findResourceMatch = (
   resourcePath: string,
 ): { resource: StoredResource; params: Record<string, string> } | undefined => {
   let greedy:
-    | { resource: StoredResource; params: Record<string, string> }
-    | undefined;
+    { resource: StoredResource; params: Record<string, string> } | undefined;
   for (const entry of resources) {
     const pattern = entry.value.path;
     const params = matchResourcePath(pattern, resourcePath);

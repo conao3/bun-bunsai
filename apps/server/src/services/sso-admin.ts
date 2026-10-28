@@ -287,8 +287,7 @@ const ssoAdmin: ServiceDefinition = {
         };
         ctx.store.set(instKey(instanceArn), inst);
         const tags = input["Tags"] as
-          | Array<{ Key: string; Value: string }>
-          | undefined;
+          Array<{ Key: string; Value: string }> | undefined;
         if (tags && tags.length > 0) {
           const existingTags =
             ctx.store.get<Record<string, string>>(tagsKey(instanceArn)) ?? {};
@@ -404,8 +403,7 @@ const ssoAdmin: ServiceDefinition = {
       };
       ctx.store.set(psKey(arn), ps);
       const tags = input["Tags"] as
-        | Array<{ Key: string; Value: string }>
-        | undefined;
+        Array<{ Key: string; Value: string }> | undefined;
       if (tags && tags.length > 0) {
         const existing_tags =
           ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
@@ -1066,8 +1064,7 @@ const ssoAdmin: ServiceDefinition = {
       };
       ctx.store.set(appKey(arn), app);
       const tags = input["Tags"] as
-        | Array<{ Key: string; Value: string }>
-        | undefined;
+        Array<{ Key: string; Value: string }> | undefined;
       if (tags && tags.length > 0) {
         const existingTags =
           ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};
@@ -1464,8 +1461,7 @@ const ssoAdmin: ServiceDefinition = {
       };
       ctx.store.set(ttiKey(arn), tti);
       const tags = input["Tags"] as
-        | Array<{ Key: string; Value: string }>
-        | undefined;
+        Array<{ Key: string; Value: string }> | undefined;
       if (tags && tags.length > 0) {
         const existingTags =
           ctx.store.get<Record<string, string>>(tagsKey(arn)) ?? {};

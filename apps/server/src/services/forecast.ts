@@ -730,8 +730,7 @@ const DeleteDatasetImportJob: OperationHandler = (input, ctx) => {
 const CreateAutoPredictor: OperationHandler = (input, ctx) => {
   const PredictorName = requireString(input, "PredictorName");
   const dataConfig = input["DataConfig"] as
-    | { DatasetGroupArn?: string }
-    | undefined;
+    { DatasetGroupArn?: string } | undefined;
   const referencePredictorArn = stringOrUndefined(
     input["ReferencePredictorArn"],
   );
@@ -813,8 +812,7 @@ const CreatePredictor: OperationHandler = (input, ctx) => {
     );
   }
   const inputDataConfig = input["InputDataConfig"] as
-    | { DatasetGroupArn?: string }
-    | undefined;
+    { DatasetGroupArn?: string } | undefined;
   const DatasetGroupArn = inputDataConfig?.DatasetGroupArn;
   if (DatasetGroupArn !== undefined) {
     requireDatasetGroup(ctx, DatasetGroupArn);

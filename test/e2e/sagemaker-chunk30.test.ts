@@ -204,8 +204,7 @@ test("UpdateUserProfile → DescribeUserProfile reflects update", async () => {
   );
   expect(described.UserProfileName).toBe(userName);
   const settings = described.UserSettings as
-    | { ExecutionRole?: string }
-    | undefined;
+    { ExecutionRole?: string } | undefined;
   expect(settings?.ExecutionRole).toBe(
     "arn:aws:iam::123456789012:role/updated",
   );
@@ -249,8 +248,7 @@ test("UpdateWorkteam → DescribeWorkteam reflects update", async () => {
     }),
   );
   const updatedTeam = updated.Workteam as
-    | { WorkteamName?: string; Description?: string }
-    | undefined;
+    { WorkteamName?: string; Description?: string } | undefined;
   expect(updatedTeam?.WorkteamName).toBe(wtName);
   expect(updatedTeam?.Description).toBe("updated description");
 
@@ -291,8 +289,7 @@ test("UpdateWorkforce reflects update", async () => {
     new DescribeWorkforceCommand({ WorkforceName: name }),
   );
   const wf = described.Workforce as
-    | { SourceIpConfig?: { Cidrs?: string[] } }
-    | undefined;
+    { SourceIpConfig?: { Cidrs?: string[] } } | undefined;
   expect(wf?.SourceIpConfig?.Cidrs).toContain("10.0.0.0/8");
 });
 

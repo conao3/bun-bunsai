@@ -653,8 +653,7 @@ const ListLicenses: OperationHandler = (input, ctx) => {
         if (name === "ProductSKU") return v.ProductSKU;
         if (name === "Fingerprint")
           return (v.Issuer as Record<string, unknown>)?.["Fingerprint"] as
-            | string
-            | undefined;
+            string | undefined;
         if (name === "Status") return v.Status;
         return undefined;
       }),
@@ -824,8 +823,7 @@ const ListDistributedGrants: OperationHandler = (input, ctx) => {
           );
           if (name === "ProductSKU") return current?.ProductSKU;
           return (current?.Issuer as Record<string, unknown>)?.["Name"] as
-            | string
-            | undefined;
+            string | undefined;
         }
         return undefined;
       }),
@@ -1409,8 +1407,8 @@ const UpdateServiceSettings: OperationHandler = (input, ctx) => {
       stringOrUndefined(input["SnsTopicArn"]) ?? existing?.SnsTopicArn,
     OrganizationConfiguration:
       (input["OrganizationConfiguration"] as
-        | Record<string, unknown>
-        | undefined) ?? existing?.OrganizationConfiguration,
+        Record<string, unknown> | undefined) ??
+      existing?.OrganizationConfiguration,
     EnableCrossAccountsDiscovery:
       typeof input["EnableCrossAccountsDiscovery"] === "boolean"
         ? input["EnableCrossAccountsDiscovery"]

@@ -71,8 +71,7 @@ const stubTextFromBody = (
 ): string => {
   if (isAnthropicModel(modelId)) {
     const messages = body["messages"] as
-      | Array<Record<string, unknown>>
-      | undefined;
+      Array<Record<string, unknown>> | undefined;
     const lastMsg = messages?.[messages.length - 1];
     const content = lastMsg?.["content"];
     const prompt =
@@ -147,8 +146,7 @@ const Converse: OperationHandler = (input, _ctx) => {
   requireKnownModel(modelId);
 
   const messages = input["messages"] as
-    | Array<Record<string, unknown>>
-    | undefined;
+    Array<Record<string, unknown>> | undefined;
   const lastMsg = messages?.[messages.length - 1];
   const content = lastMsg?.["content"];
   const promptText =

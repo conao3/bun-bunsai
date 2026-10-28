@@ -155,21 +155,16 @@ const cognitoIdentity: ServiceDefinition = {
         AllowUnauthenticatedIdentities: allowUnauth ?? false,
         AllowClassicFlow: input["AllowClassicFlow"] as boolean | undefined,
         SupportedLoginProviders: input["SupportedLoginProviders"] as
-          | Record<string, string>
-          | undefined,
+          Record<string, string> | undefined,
         DeveloperProviderName: input["DeveloperProviderName"] as
-          | string
-          | undefined,
+          string | undefined,
         OpenIdConnectProviderARNs: input["OpenIdConnectProviderARNs"] as
-          | string[]
-          | undefined,
+          string[] | undefined,
         CognitoIdentityProviders: input["CognitoIdentityProviders"] as
-          | CognitoIdentityProvider[]
-          | undefined,
+          CognitoIdentityProvider[] | undefined,
         SamlProviderARNs: input["SamlProviderARNs"] as string[] | undefined,
         IdentityPoolTags: input["IdentityPoolTags"] as
-          | Record<string, string>
-          | undefined,
+          Record<string, string> | undefined,
       };
 
       ctx.store.set(poolKey(poolId), pool);
@@ -656,8 +651,7 @@ const cognitoIdentity: ServiceDefinition = {
       const poolId = input["IdentityPoolId"] as string;
       const roles = input["Roles"] as Record<string, string> | undefined;
       const roleMappings = input["RoleMappings"] as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
 
       const pool = ctx.store.get<StoredIdentityPool>(poolKey(poolId));
       if (!pool) {
@@ -721,8 +715,7 @@ const cognitoIdentity: ServiceDefinition = {
 
       const useDefaults = input["UseDefaults"] as boolean | undefined;
       const principalTags = input["PrincipalTags"] as
-        | Record<string, string>
-        | undefined;
+        Record<string, string> | undefined;
 
       const stored: StoredPrincipalTags = {
         UseDefaults: useDefaults ?? true,
@@ -865,8 +858,7 @@ const cognitoIdentity: ServiceDefinition = {
       }
 
       const developerUserIdentifier = input["DeveloperUserIdentifier"] as
-        | string
-        | undefined;
+        string | undefined;
       const identityIdInput = input["IdentityId"] as string | undefined;
       const maxResults = (input["MaxResults"] as number) || 10;
 

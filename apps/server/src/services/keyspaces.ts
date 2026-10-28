@@ -309,8 +309,7 @@ const UpdateKeyspace: OperationHandler = (input, ctx) => {
   const name = requireString(input, "keyspaceName");
   const keyspace = requireKeyspace(ctx, name);
   const spec = input["replicationSpecification"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const updated: StoredKeyspace = {
     ...keyspace,
     replicationStrategy:

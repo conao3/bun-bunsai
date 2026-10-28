@@ -985,8 +985,7 @@ const UpdateAccountSettings: OperationHandler = (input, ctx) => {
   const inputStatus =
     typeof commitment === "object" && commitment !== null
       ? ((commitment as Record<string, unknown>)["Status"] as
-          | string
-          | undefined)
+          string | undefined)
       : undefined;
   const status = inputStatus ?? "DISABLED";
   const updated: Record<string, unknown> = { Status: status };

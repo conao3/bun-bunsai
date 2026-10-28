@@ -2246,8 +2246,7 @@ const AdminInitiateAuth: OperationHandler = async (input, ctx) => {
       );
     }
     const mfaSettings = user.mfaPreferences["SoftwareTokenMfaSettings"] as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     if (mfaSettings?.["Enabled"] === true) {
       const sessionToken = randomBytes(32).toString("hex");
       const challengeSession: MfaChallengeSession = {
@@ -2412,8 +2411,7 @@ const InitiateAuth: OperationHandler = async (input, ctx) => {
       );
     }
     const mfaSettings = user.mfaPreferences["SoftwareTokenMfaSettings"] as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     if (mfaSettings?.["Enabled"] === true) {
       const sessionToken = randomBytes(32).toString("hex");
       const challengeSession: MfaChallengeSession = {
@@ -2880,8 +2878,7 @@ const GetUser: OperationHandler = async (input, ctx) => {
     typeof input["AccessToken"] === "string" ? input["AccessToken"] : "";
   const { user, username } = await validateAccessToken(accessToken, ctx);
   const mfaSettings = user.mfaPreferences["SoftwareTokenMfaSettings"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const softwareEnabled = mfaSettings?.["Enabled"] === true;
   return {
     Username: username,

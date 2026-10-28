@@ -863,8 +863,7 @@ const ListResolverEndpoints: OperationHandler = (input, ctx) => {
   const nextToken = input["NextToken"] as string | undefined;
   const filters =
     (input["Filters"] as
-      | Array<{ Name: string; Values: string[] }>
-      | undefined) ?? [];
+      Array<{ Name: string; Values: string[] }> | undefined) ?? [];
 
   let all = ctx.store
     .list<StoredEndpoint>()
@@ -1130,8 +1129,7 @@ const ListResolverRules: OperationHandler = (input, ctx) => {
   const nextToken = input["NextToken"] as string | undefined;
   const filters =
     (input["Filters"] as
-      | Array<{ Name: string; Values: string[] }>
-      | undefined) ?? [];
+      Array<{ Name: string; Values: string[] }> | undefined) ?? [];
 
   for (const f of filters) {
     if (!VALID_RULE_FILTER_NAMES.has(f.Name)) {
@@ -1258,8 +1256,7 @@ const ListResolverRuleAssociations: OperationHandler = (input, ctx) => {
   const nextToken = input["NextToken"] as string | undefined;
   const filters =
     (input["Filters"] as
-      | Array<{ Name: string; Values: string[] }>
-      | undefined) ?? [];
+      Array<{ Name: string; Values: string[] }> | undefined) ?? [];
 
   const all = ctx.store
     .list<StoredRuleAssociation>()
@@ -1624,8 +1621,7 @@ const ListFirewallRules: OperationHandler = (input, ctx) => {
 const BatchCreateFirewallRule: OperationHandler = (input, ctx) => {
   const items =
     (input["CreateFirewallRuleEntries"] as
-      | Array<Record<string, unknown>>
-      | undefined) ?? [];
+      Array<Record<string, unknown>> | undefined) ?? [];
   const created: Record<string, unknown>[] = [];
   const ruleGroupIds = new Set<string>();
   for (const item of items) {
@@ -1658,8 +1654,7 @@ const BatchCreateFirewallRule: OperationHandler = (input, ctx) => {
 const BatchDeleteFirewallRule: OperationHandler = (input, ctx) => {
   const items =
     (input["DeleteFirewallRuleEntries"] as
-      | Array<Record<string, unknown>>
-      | undefined) ?? [];
+      Array<Record<string, unknown>> | undefined) ?? [];
   const deleted: Record<string, unknown>[] = [];
   const ruleGroupIds = new Set<string>();
   for (const item of items) {
@@ -1680,8 +1675,7 @@ const BatchDeleteFirewallRule: OperationHandler = (input, ctx) => {
 const BatchUpdateFirewallRule: OperationHandler = (input, ctx) => {
   const items =
     (input["UpdateFirewallRuleEntries"] as
-      | Array<Record<string, unknown>>
-      | undefined) ?? [];
+      Array<Record<string, unknown>> | undefined) ?? [];
   const updated: Record<string, unknown>[] = [];
   for (const item of items) {
     const ruleGroupId = item["FirewallRuleGroupId"] as string;
@@ -1913,8 +1907,7 @@ const ListResolverQueryLogConfigs: OperationHandler = (input, ctx) => {
   const nextToken = input["NextToken"] as string | undefined;
   const filters =
     (input["Filters"] as
-      | Array<{ Name: string; Values: string[] }>
-      | undefined) ?? [];
+      Array<{ Name: string; Values: string[] }> | undefined) ?? [];
   let all = ctx.store
     .list<StoredQueryLogConfig>()
     .filter((e) => e.key.startsWith("qlconfig/"))
@@ -2009,8 +2002,7 @@ const ListResolverQueryLogConfigAssociations: OperationHandler = (
   const nextToken = input["NextToken"] as string | undefined;
   const filters =
     (input["Filters"] as
-      | Array<{ Name: string; Values: string[] }>
-      | undefined) ?? [];
+      Array<{ Name: string; Values: string[] }> | undefined) ?? [];
   let all = ctx.store
     .list<StoredQueryLogConfigAssociation>()
     .filter((e) => e.key.startsWith("qlassoc/"))

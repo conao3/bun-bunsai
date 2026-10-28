@@ -540,20 +540,15 @@ const CreateConfigurationSet: OperationHandler = (input, ctx) => {
   const stored: StoredConfigurationSetV2 = {
     ConfigurationSetName: name,
     TrackingOptions: input["TrackingOptions"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     DeliveryOptions: input["DeliveryOptions"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     ReputationOptions: input["ReputationOptions"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     SendingOptions: input["SendingOptions"] as
-      | { SendingEnabled: boolean }
-      | undefined,
+      { SendingEnabled: boolean } | undefined,
     SuppressionOptions: input["SuppressionOptions"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     VdmOptions: input["VdmOptions"] as Record<string, unknown> | undefined,
     Tags: (input["Tags"] as Tag[] | undefined) ?? [],
     EventDestinations: [],
@@ -632,28 +627,22 @@ const CreateConfigurationSetEventDestination: OperationHandler = (
     );
   }
   const destConfig = input["EventDestination"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const dest: StoredEventDestinationV2 = {
     Name: destName,
     Enabled: (destConfig?.["Enabled"] as boolean | undefined) ?? false,
     MatchingEventTypes:
       (destConfig?.["MatchingEventTypes"] as string[] | undefined) ?? [],
     KinesisFirehoseDestination: destConfig?.["KinesisFirehoseDestination"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     CloudWatchDestination: destConfig?.["CloudWatchDestination"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     SnsDestination: destConfig?.["SnsDestination"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     PinpointDestination: destConfig?.["PinpointDestination"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     SesDestination: destConfig?.["SesDestination"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
   };
   stored.EventDestinations.push(dest);
   ctx.store.set(configSetKey(name), stored);
@@ -676,28 +665,22 @@ const UpdateConfigurationSetEventDestination: OperationHandler = (
     );
   }
   const destConfig = input["EventDestination"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   stored.EventDestinations[idx] = {
     Name: destName,
     Enabled: (destConfig?.["Enabled"] as boolean | undefined) ?? false,
     MatchingEventTypes:
       (destConfig?.["MatchingEventTypes"] as string[] | undefined) ?? [],
     KinesisFirehoseDestination: destConfig?.["KinesisFirehoseDestination"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     CloudWatchDestination: destConfig?.["CloudWatchDestination"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     SnsDestination: destConfig?.["SnsDestination"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     PinpointDestination: destConfig?.["PinpointDestination"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     SesDestination: destConfig?.["SesDestination"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
   };
   ctx.store.set(configSetKey(name), stored);
   return {};
@@ -1816,8 +1799,7 @@ const PutAccountSuppressionAttributes: OperationHandler = (input, ctx) => {
 const PutAccountVdmAttributes: OperationHandler = (input, ctx) => {
   const acc = getAccount(ctx);
   acc.VdmAttributes = input["VdmAttributes"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   ctx.store.set(accountKey(), acc);
   return {};
 };
@@ -1836,8 +1818,7 @@ const PutConfigurationSetVdmOptions: OperationHandler = (input, ctx) => {
   const name = input["ConfigurationSetName"] as string;
   const stored = requireConfigSet(ctx, name);
   stored.VdmOptions = input["VdmOptions"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   ctx.store.set(configSetKey(name), stored);
   return {};
 };
@@ -1849,8 +1830,7 @@ const PutEmailIdentityConfigurationSetAttributes: OperationHandler = (
   const identity = input["EmailIdentity"] as string;
   const stored = requireIdentity(ctx, identity);
   stored.ConfigurationSetName = input["ConfigurationSetName"] as
-    | string
-    | undefined;
+    string | undefined;
   ctx.store.set(identityKey(identity), stored);
   return {};
 };
@@ -1924,8 +1904,7 @@ const CreateTenant: OperationHandler = (input, ctx) => {
     Tags: (input["Tags"] as Tag[] | undefined) ?? [],
     SendingStatus: "ENABLED",
     SuppressionAttributes: input["SuppressionAttributes"] as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
   };
   ctx.store.set(tenantKey(name), stored);
   return {
@@ -2312,8 +2291,7 @@ const UpdateReputationEntityCustomerManagedStatus: OperationHandler = (
     CustomerManagedStatus: undefined,
   };
   stored.CustomerManagedStatus = input["CustomerManagedStatus"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   ctx.store.set(key, stored);
   return {};
 };
@@ -2330,8 +2308,7 @@ const UpdateReputationEntityPolicy: OperationHandler = (input, ctx) => {
     CustomerManagedStatus: undefined,
   };
   stored.ReputationManagementPolicy = input["ReputationManagementPolicy"] as
-    | string
-    | undefined;
+    string | undefined;
   ctx.store.set(key, stored);
   return {};
 };

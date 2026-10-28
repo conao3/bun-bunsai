@@ -588,8 +588,7 @@ const PutBackupPolicy: OperationHandler = (input, ctx) => {
   }
   requireFileSystem(ctx, fileSystemId);
   const backupPolicyInput = input["BackupPolicy"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const status = stringOrUndefined(backupPolicyInput?.["Status"]) ?? "DISABLED";
   const stored: StoredBackupPolicy = { fileSystemId, status };
   ctx.store.set(backupKey(fileSystemId), stored);

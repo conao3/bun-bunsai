@@ -39,8 +39,7 @@ export type TokenKind =
 export type Token = { kind: TokenKind; text: string; start: number };
 
 export type PathStep =
-  | { kind: "field"; name: string }
-  | { kind: "index"; index: number };
+  { kind: "field"; name: string } | { kind: "index"; index: number };
 
 export type AttributePath = {
   root: string;
@@ -53,16 +52,7 @@ export type Operand =
   | { kind: "size"; path: AttributePath };
 
 export type AttributeTypeCode =
-  | "S"
-  | "SS"
-  | "N"
-  | "NS"
-  | "B"
-  | "BS"
-  | "BOOL"
-  | "NULL"
-  | "L"
-  | "M";
+  "S" | "SS" | "N" | "NS" | "B" | "BS" | "BOOL" | "NULL" | "L" | "M";
 
 export type ConditionAST =
   | {

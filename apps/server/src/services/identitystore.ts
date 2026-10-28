@@ -289,8 +289,7 @@ const identitystore: ServiceDefinition = {
         if (segments.length >= 2) {
           const subKey = toPascal(segments[1]);
           const parent = (user as Record<string, unknown>)[topKey] as
-            | Record<string, unknown>
-            | undefined;
+            Record<string, unknown> | undefined;
           if (op.AttributeValue === null || op.AttributeValue === undefined) {
             if (parent) delete parent[subKey];
           } else {
@@ -343,8 +342,7 @@ const identitystore: ServiceDefinition = {
       const storeId = input["IdentityStoreId"] as string;
       requireValidStore(storeId);
       const filters = input["Filters"] as
-        | Array<{ AttributePath: string; AttributeValue: string }>
-        | undefined;
+        Array<{ AttributePath: string; AttributeValue: string }> | undefined;
       let all = ctx.store
         .list<StoredUser>()
         .filter((e) => e.key.startsWith(`is:user:${storeId}:`))
@@ -532,8 +530,7 @@ const identitystore: ServiceDefinition = {
       const storeId = input["IdentityStoreId"] as string;
       requireValidStore(storeId);
       const filters = input["Filters"] as
-        | Array<{ AttributePath: string; AttributeValue: string }>
-        | undefined;
+        Array<{ AttributePath: string; AttributeValue: string }> | undefined;
       let all = ctx.store
         .list<StoredGroup>()
         .filter((e) => e.key.startsWith(`is:group:${storeId}:`))

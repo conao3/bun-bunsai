@@ -246,8 +246,7 @@ describe("cognito-idp USER_SRP_AUTH e2e", () => {
 
     expect(responded.status).toBe(200);
     const authResult = responded.body["AuthenticationResult"] as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect(authResult?.["AccessToken"]).toBeDefined();
     expect(authResult?.["IdToken"]).toBeDefined();
     expect(authResult?.["TokenType"]).toBe("Bearer");

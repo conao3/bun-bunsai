@@ -107,7 +107,7 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - uses: softprops/action-gh-release@v3.0.3
+      - uses: softprops/action-gh-release@v3.0.4
         with:
           tag_name: v${{ needs.version-bump.outputs.new_version }}
           draft: false

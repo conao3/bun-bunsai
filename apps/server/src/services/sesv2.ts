@@ -2332,6 +2332,11 @@ const sesv2: ServiceDefinition = {
 
     if (parts[2] === "outbound-emails" && m === "POST") return "SendEmail";
 
+    if (parts[2] === "list-identities" && m === "POST")
+      return "ListEmailIdentities";
+    if (parts[2] === "list-configuration-sets" && m === "POST")
+      return "ListConfigurationSets";
+
     if (parts[2] === "identities") {
       if (parts.length === 3) {
         if (m === "GET") return "ListEmailIdentities";

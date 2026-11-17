@@ -105,7 +105,7 @@
     "@aws-sdk/client-mq": "^3.1169.0",
     "@aws-sdk/client-mwaa": "^3.1169.0",
     "@aws-sdk/client-neptune": "^3.1169.0",
-    "@aws-sdk/client-network-firewall": "3.1168.0",
+    "@aws-sdk/client-network-firewall": "3.1169.0",
     "@aws-sdk/client-networkmanager": "^3.1169.0",
     "@aws-sdk/client-opensearch": "^3.1169.0",
     "@aws-sdk/client-organizations": "^3.1169.0",

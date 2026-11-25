@@ -350,7 +350,7 @@ function ResourceTree({
           scope
         </span>
         <span className="mono" style={{ fontSize: 11.5, color: "var(--body)" }}>
-          {scope.account} · {scope.region}
+          {scope.account} / {scope.region}
         </span>
       </div>
       {services.map((svc) => {
@@ -452,7 +452,7 @@ function ResourceDetail({
           className="mono"
           style={{ fontSize: 11, color: "var(--muted-soft)", marginTop: 6 }}
         >
-          {s.name} · {entry.account} · {entry.region}
+          {s.name} / {entry.account} / {entry.region}
         </div>
         {arn && (
           <div

@@ -1423,7 +1423,7 @@ export function MultiFilter({
         <Ico.filter width="13" height="13" />
         <span>
           {label}
-          {all ? "" : ` · ${selected.length}`}
+          {all ? "" : ` / ${selected.length}`}
         </span>
         <Ico.caret
           width="12"

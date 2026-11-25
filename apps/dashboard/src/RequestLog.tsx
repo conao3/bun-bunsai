@@ -155,7 +155,7 @@ function RequestDetail({
         </div>
         {req.method && req.path && (
           <div className="kv-row">
-            <span className="k">Method · Path</span>
+            <span className="k">Method / Path</span>
             <span className="v mono">
               {req.method} {req.path}
             </span>
@@ -182,7 +182,7 @@ function RequestDetail({
         <div className="kv-row">
           <span className="k">Scope</span>
           <span className="v">
-            {req.account} · {req.region}
+            {req.account} / {req.region}
           </span>
         </div>
       </div>

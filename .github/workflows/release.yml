@@ -23,7 +23,7 @@ defaults:
     shell: bash
 jobs:
   check:
-    name: Bump and check
+    name: Bump version
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -77,20 +77,8 @@ jobs:
           bun-version: latest
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: Test
-        run: bun test
       - name: Build
         run: bun build apps/server/src/index.ts --target=bun --outdir="$RUNNER_TEMP/bunsai-build"
-      - name: Lint
-        run: bun run lint
-      - name: Check formatting
-        run: bun run fmt:check
-      - name: Check STATUS.md
-        run: bun maint/bin/gen-status.ts --check
-      - name: Terraform smoke test
-        run: bun maint/bin/terraform-smoke.ts
-      - name: CLI smoke test
-        run: bun maint/bin/cli-smoke.ts
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: 26

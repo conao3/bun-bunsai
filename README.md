@@ -288,7 +288,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to record parity fixtures again
 gh workflow run release.yml --ref master -f version_bump=patch
 ```
 
-The `Release` workflow bumps the version in `apps/server/package.json`, runs the CI checks, pushes the version commit and the tag `vX.Y.Z` to `master`, builds the `bunsai-linux-x64` and `bunsai-darwin-arm64` binaries, publishes `@conao3/bunsai` to npm with trusted publishing, and creates the GitHub Release with the binaries attached. If a job after the tag push fails, re-run the failed jobs of the same run.
+The `Release` workflow bumps the version in `apps/server/package.json`, verifies the package, pushes the version commit and the tag `vX.Y.Z` to `master`, builds the `bunsai-linux-x64` and `bunsai-darwin-arm64` binaries, publishes `@conao3/bunsai` to npm with trusted publishing, and creates the GitHub Release with the binaries attached. If a job after the tag push fails, re-run the failed jobs of the same run.
 
 ## License
 

@@ -282,6 +282,14 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to record parity fixtures again
 
 > AWS service models under `test/vendor/aws-models/` are vendored verbatim from [botocore](https://github.com/boto/botocore) (tag `1.43.19`, Apache-2.0). See `test/vendor/PROVENANCE.md`.
 
+## Releasing
+
+```sh
+gh workflow run release.yml --ref master -f version_bump=patch
+```
+
+The `Release` workflow bumps the version in `apps/server/package.json`, runs the CI checks, pushes the version commit and the tag `vX.Y.Z` to `master`, builds the `bunsai-linux-x64` and `bunsai-darwin-arm64` binaries, publishes `@conao3/bunsai` to npm with trusted publishing, and creates the GitHub Release with the binaries attached. If a job after the tag push fails, re-run the failed jobs of the same run.
+
 ## License
 
 [Apache-2.0](./LICENSE). Copyright bunsai contributors.

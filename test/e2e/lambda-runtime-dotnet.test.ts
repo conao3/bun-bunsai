@@ -97,6 +97,7 @@ test(".NET handler invokes end-to-end (skipped if host runtime missing)", async 
         Runtime: "dotnet8",
         Role: "arn:aws:iam::000000000000:role/test",
         Handler: "MyAssembly::MyNamespace.Handler::HandleRequest",
+        Timeout: 120,
         Code: { ZipFile: zipBytes },
       }),
     );
@@ -107,9 +108,13 @@ test(".NET handler invokes end-to-end (skipped if host runtime missing)", async 
         Payload: new TextEncoder().encode('"hello"'),
       }),
     );
-    const text = new TextDecoder().decode(invoke.Payload);
-    expect(text.length).toBeGreaterThan(0);
+    expect(invoke.StatusCode).toBe(200);
+    expect(invoke.FunctionError).toBeUndefined();
+    const payload = JSON.parse(
+      new TextDecoder().decode(invoke.Payload),
+    ) as string;
+    expect(JSON.parse(payload)).toEqual({ statusCode: 200, ok: true });
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
-});
+}, 300_000);

@@ -35,7 +35,7 @@ begin
   handler_file = ENV["__BUNSAI_HANDLER_FILE"]
   handler_name = ENV["__BUNSAI_HANDLER_NAME"]
   load handler_file
-  unless respond_to?(handler_name)
+  unless respond_to?(handler_name, true)
     write.call({ "ok" => false, "errorType" => "Runtime.HandlerNotFound", "errorMessage" => "#{handler_name} is not defined", "trace" => [] })
   else
     result = method(handler_name).call(event: event, context: context)

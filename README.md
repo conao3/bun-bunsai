@@ -1,4 +1,23 @@
-# bunsai
+<p align="center">
+  <img src="docs/assets/banner.png" alt="bunsai: Local AWS API emulator built with Bun (LocalStack alternative)" width="880">
+</p>
+
+<p align="center"><strong>Local AWS API emulator built with Bun (LocalStack alternative)</strong></p>
+
+<p align="center">
+  <a href="https://github.com/conao3/bun-bunsai/releases"><img src="https://img.shields.io/github/v/tag/conao3/bun-bunsai" alt="Latest tag"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/conao3/bun-bunsai" alt="License: Apache-2.0"></a>
+  <a href="https://github.com/conao3/bun-bunsai/stargazers"><img src="https://img.shields.io/github/stars/conao3/bun-bunsai?style=flat" alt="GitHub stars"></a>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Install</a> |
+  <a href="#pointing-clients-at-bunsai">Usage</a> |
+  <a href="CONTRIBUTING.md">Contribution</a> |
+  <a href="#license">License</a>
+</p>
+
+<h1>bunsai</h1>
 
 A stateful AWS mock server built in [Bun](https://bun.sh). Think LocalStack, rebuilt from scratch as a zero-dependency Bun process.
 

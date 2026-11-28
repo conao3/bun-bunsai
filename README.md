@@ -34,6 +34,12 @@ aws --endpoint-url http://localhost:4566 \
     sqs create-queue --queue-name my-queue
 ```
 
+Every call shows up in the dashboard at `http://localhost:4566/`:
+
+![Request Log screen with the detail panel of a failed S3 GetObject call](./images/request-log.png)
+
+_Screenshots in this README show demo data in the dark theme._
+
 ### Option B — bunx (no install)
 
 ```sh
@@ -147,6 +153,12 @@ provider "aws" {
 
 ## Dashboard
 
+![Overview screen with per-service resource, call and error counts](./images/overview.png)
+
+![Resource Browser screen showing the items of a DynamoDB table](./images/resource-browser.png)
+
+_Overview and Resource Browser with demo data in the dark theme._
+
 Open `http://localhost:4566/` in a browser (you will be redirected to `/__dashboard/`) to access the management dashboard:
 
 - **Overview** — per-service call counts, protocol, and status at a glance.
@@ -156,6 +168,10 @@ Open `http://localhost:4566/` in a browser (you will be redirected to `/__dashbo
 - **Settings** — runtime configuration.
 
 ## State Snapshots
+
+![Snapshots screen listing three saved state snapshots](./images/snapshots.png)
+
+_Snapshots with demo data in the dark theme._
 
 bunsai is in-memory: restarting the process clears all state. Snapshots let you checkpoint and restore the full store without restarting.
 
